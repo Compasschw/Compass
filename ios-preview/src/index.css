@@ -1,0 +1,49 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ios-blue: #007AFF;
+  --color-ios-green: #34C759;
+  --color-ios-red: #FF3B30;
+  --color-ios-orange: #FF9500;
+  --color-ios-yellow: #FFCC00;
+  --color-ios-purple: #AF52DE;
+  --color-ios-bg: #F2F2F7;
+  --color-ios-card: #FFFFFF;
+  --color-ios-separator: #C6C6C8;
+  --color-ios-label: #000000;
+  --color-ios-secondary-label: #3C3C43;
+  --color-ios-tertiary-label: #8E8E93;
+  --color-ios-fill: #E5E5EA;
+  --color-compass-green: #00B050;
+  --color-compass-blue: #0077B6;
+  --font-ios: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif;
+}
+
+#root {
+  min-height: 100vh;
+  background: #1a1a1a;
+}
+
+/* Scrollbar hidden inside phone frame */
+.ios-scroll::-webkit-scrollbar {
+  display: none;
+}
+.ios-scroll {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
