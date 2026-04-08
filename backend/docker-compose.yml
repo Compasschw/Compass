@@ -1,0 +1,36 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: compass
+      POSTGRES_USER: compass
+      POSTGRES_PASSWORD: compass_dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U compass"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://compass:compass_dev_password@db:5432/compass
+      SECRET_KEY: dev-secret-key-change-in-production
+      AWS_REGION: us-west-2
+      S3_BUCKET_PHI: compass-phi-dev
+      S3_BUCKET_PUBLIC: compass-public-dev
+      CORS_ORIGINS: '["http://localhost:5173","https://joincompasschw.com"]'
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./app:/code/app
+
+volumes:
+  pgdata:
