@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 
 // Landing pages
+import { WaitlistLandingPage } from './features/landing/WaitlistLandingPage';
 import { LandingPageA } from './features/landing/LandingPageA';
 import { LandingPageB } from './features/landing/LandingPageB';
 import { LandingPageC } from './features/landing/LandingPageC';
@@ -79,7 +80,7 @@ export default function App() {
       <Route path="/" element={<RootRedirect />} />
 
       {/* Public marketing page */}
-      <Route path="/landing" element={<LandingPageA />} />
+      <Route path="/landing" element={<WaitlistLandingPage />} />
       <Route path="/landing/a" element={<LandingPageA />} />
       <Route path="/landing/b" element={<LandingPageB />} />
       <Route path="/landing/c" element={<LandingPageC />} />

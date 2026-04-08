@@ -1,30 +1,43 @@
 @import "tailwindcss";
 
 @theme {
-  --color-primary: #00B050;
-  --color-primary-dark: #008F40;
-  --color-primary-light: #D0F0D0;
-  --color-medical-blue: #0077B6;
-  --color-medical-blue-dark: #005A8C;
-  --color-surface: #F8FAFB;
+  /* ─── Warm palette ─── */
+  --color-primary: #2C3E2D;
+  --color-primary-dark: #1E2E1F;
+  --color-primary-hover: #3A5240;
+  --color-accent: #6B8F71;
+  --color-accent-light: rgba(107,143,113,0.1);
+  --color-warm-bg: #FBF7F0;
+  --color-warm-bg-dark: #F0EBE3;
+  --color-warm-bg-darker: #EDE5D8;
   --color-card: #FFFFFF;
-  --color-text-primary: #1A1A1A;
-  --color-text-secondary: #555555;
-  --color-text-muted: #AAAAAA;
-  --color-border: #E5E7EB;
+  --color-text-primary: #2C3E2D;
+  --color-text-secondary: #7A7A6E;
+  --color-text-muted: #BBBBAA;
+  --color-chw-accent: #D4B896;
+  --color-member-accent: #6B8F71;
+  --color-border: rgba(44,62,45,0.06);
   --color-danger: #DC2626;
   --color-warning: #F59E0B;
-  --color-success: #00B050;
-  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
-  --radius-card: 12px;
-  --radius-button: 8px;
-  --radius-input: 8px;
+  --color-success: #6B8F71;
+
+  /* ─── Typography ─── */
+  --font-sans: 'Outfit', 'Inter', system-ui, -apple-system, sans-serif;
+
+  /* ─── Radii ─── */
+  --radius-card: 20px;
+  --radius-button: 12px;
+  --radius-input: 12px;
 }
 
 *,
 *::before,
 *::after {
   box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 html,
@@ -36,9 +49,9 @@ body,
 }
 
 body {
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
-  background-color: #F8FAFB;
-  color: #1A1A1A;
+  font-family: 'Outfit', 'Inter', system-ui, -apple-system, sans-serif;
+  background-color: #FBF7F0;
+  color: #2C3E2D;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -47,4 +60,10 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+}
+
+/* ─── Landing page animations ─── */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
