@@ -17,6 +17,8 @@ import { MemberOnboarding } from './features/onboarding/MemberOnboarding';
 
 // Layout
 import { Layout } from './shared/components/Layout';
+import { WaitlistAdmin } from './features/admin/WaitlistAdmin';
+import { LegalPage } from './features/legal/LegalPage';
 
 // CHW pages
 import { CHWDashboard } from './features/chw/CHWDashboard';
@@ -42,10 +44,14 @@ import { MemberCalendar } from './features/member/MemberCalendar';
  * Redirects unauthenticated users to /login.
  * Renders children inside the authenticated Layout shell when authenticated.
  */
-function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated } = useAuth();
+function ProtectedRoute({ children, requiredRole }: { children: React.ReactNode; requiredRole?: 'chw' | 'member' }) {
+  const { isAuthenticated, userRole } = useAuth();
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
+  }
+  if (requiredRole && userRole !== requiredRole) {
+    const home = userRole === 'chw' ? '/chw/dashboard' : '/member/home';
+    return <Navigate to={home} replace />;
   }
   return <Layout>{children}</Layout>;
 }
@@ -97,7 +103,7 @@ export default function App() {
       <Route
         path="/chw/dashboard"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="chw">
             <CHWDashboard />
           </ProtectedRoute>
         }
@@ -105,7 +111,7 @@ export default function App() {
       <Route
         path="/chw/requests"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="chw">
             <CHWRequests />
           </ProtectedRoute>
         }
@@ -113,7 +119,7 @@ export default function App() {
       <Route
         path="/chw/sessions"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="chw">
             <CHWSessions />
           </ProtectedRoute>
         }
@@ -121,7 +127,7 @@ export default function App() {
       <Route
         path="/chw/earnings"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="chw">
             <CHWEarnings />
           </ProtectedRoute>
         }
@@ -129,7 +135,7 @@ export default function App() {
       <Route
         path="/chw/profile"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="chw">
             <CHWProfile />
           </ProtectedRoute>
         }
@@ -139,7 +145,7 @@ export default function App() {
       <Route
         path="/member/home"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="member">
             <MemberHome />
           </ProtectedRoute>
         }
@@ -147,7 +153,7 @@ export default function App() {
       <Route
         path="/member/find"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="member">
             <MemberFind />
           </ProtectedRoute>
         }
@@ -155,7 +161,7 @@ export default function App() {
       <Route
         path="/member/sessions"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="member">
             <MemberSessions />
           </ProtectedRoute>
         }
@@ -163,7 +169,7 @@ export default function App() {
       <Route
         path="/member/roadmap"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="member">
             <MemberRoadmap />
           </ProtectedRoute>
         }
@@ -171,7 +177,7 @@ export default function App() {
       <Route
         path="/member/profile"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="member">
             <MemberProfile />
           </ProtectedRoute>
         }
@@ -181,7 +187,7 @@ export default function App() {
       <Route
         path="/chw/calendar"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="chw">
             <CHWCalendar />
           </ProtectedRoute>
         }
@@ -189,11 +195,20 @@ export default function App() {
       <Route
         path="/member/calendar"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="member">
             <MemberCalendar />
           </ProtectedRoute>
         }
       />
+
+      {/* Legal pages */}
+      <Route path="/privacy" element={<LegalPage page="privacy" />} />
+      <Route path="/terms" element={<LegalPage page="terms" />} />
+      <Route path="/hipaa" element={<LegalPage page="hipaa" />} />
+      <Route path="/contact" element={<LegalPage page="contact" />} />
+
+      {/* Admin */}
+      <Route path="/admin/waitlist" element={<WaitlistAdmin />} />
 
       {/* Catch-all — redirect to root */}
       <Route path="*" element={<Navigate to="/" replace />} />

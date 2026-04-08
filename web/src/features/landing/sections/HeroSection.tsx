@@ -130,7 +130,7 @@ function PathCard({
             {ctaLabel} &rarr;
           </span>
         ) : (
-          <span className="inline-flex items-center gap-2 rounded-[12px] border-[1.5px] border-[rgba(44,62,45,0.18)] bg-transparent px-[26px] py-[13px] text-[14px] font-semibold text-primary transition-all group-hover:-translate-y-px group-hover:border-[rgba(44,62,45,0.35)]">
+          <span className="inline-flex items-center gap-2 rounded-[20px] border-[1.5px] border-[rgba(44,62,45,0.18)] bg-transparent px-[26px] py-[13px] text-[14px] font-semibold text-primary transition-all group-hover:-translate-y-px group-hover:border-[rgba(44,62,45,0.35)]">
             {ctaLabel} &rarr;
           </span>
         )}

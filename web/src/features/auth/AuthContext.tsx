@@ -7,7 +7,7 @@ import {
 } from 'react';
 import type { UserRole } from '../../data/mock';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// --- Types ---
 
 interface AuthState {
   isAuthenticated: boolean;
@@ -16,51 +16,53 @@ interface AuthState {
 }
 
 interface AuthContextValue extends AuthState {
-  /**
-   * Mock login — sets role and name in state without any real network call.
-   * In a real implementation this would call an auth API.
-   */
   login: (role: UserRole, name: string) => void;
-  /** Clears auth state and returns the user to the login screen. */
   logout: () => void;
 }
 
-// ─── Context ──────────────────────────────────────────────────────────────────
+// --- Session persistence ---
+
+const SESSION_KEY = 'compass_auth';
+
+function loadSession(): AuthState {
+  try {
+    const stored = sessionStorage.getItem(SESSION_KEY);
+    if (stored) return JSON.parse(stored) as AuthState;
+  } catch { /* ignore */ }
+  return { isAuthenticated: false, userRole: null, userName: null };
+}
+
+function saveSession(state: AuthState) {
+  try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(state)); } catch { /* ignore */ }
+}
+
+function clearSession() {
+  try { sessionStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
+}
+
+// --- Context ---
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-// ─── Provider ─────────────────────────────────────────────────────────────────
+// --- Provider ---
 
 interface AuthProviderProps {
   children: ReactNode;
 }
 
-/**
- * Provides mock authentication state to the entire app.
- * No tokens, cookies, or network requests are involved — this is purely
- * in-memory state for the interactive mockup.
- */
 export function AuthProvider({ children }: AuthProviderProps) {
-  const [authState, setAuthState] = useState<AuthState>({
-    isAuthenticated: false,
-    userRole: null,
-    userName: null,
-  });
+  const [authState, setAuthState] = useState<AuthState>(loadSession);
 
   const login = useCallback((role: UserRole, name: string) => {
-    setAuthState({
-      isAuthenticated: true,
-      userRole: role,
-      userName: name,
-    });
+    const state: AuthState = { isAuthenticated: true, userRole: role, userName: name };
+    setAuthState(state);
+    saveSession(state);
   }, []);
 
   const logout = useCallback(() => {
-    setAuthState({
-      isAuthenticated: false,
-      userRole: null,
-      userName: null,
-    });
+    const state: AuthState = { isAuthenticated: false, userRole: null, userName: null };
+    setAuthState(state);
+    clearSession();
   }, []);
 
   return (
@@ -70,12 +72,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
   );
 }
 
-// ─── Hook ─────────────────────────────────────────────────────────────────────
+// --- Hook ---
 
-/**
- * Consume authentication state from anywhere in the tree.
- * Throws if used outside of AuthProvider to surface misconfiguration early.
- */
 export function useAuth(): AuthContextValue {
   const ctx = useContext(AuthContext);
   if (ctx === null) {

@@ -76,7 +76,7 @@ function WaitlistForm({ onSubmit }: { onSubmit: (e: FormEvent<HTMLFormElement>) 
           required
           onChange={(e) => setRoleSelected(e.target.value !== '')}
           defaultValue=""
-          className="w-full cursor-pointer appearance-none rounded-[12px] border-[1.5px] border-[rgba(44,62,45,0.12)] bg-warm-bg px-[18px] py-[14px] text-[15px] outline-none transition-all focus:border-accent focus:shadow-[0_0_0_3px_rgba(107,143,113,0.1)]"
+          className="w-full cursor-pointer appearance-none rounded-[20px] border-[1.5px] border-[rgba(44,62,45,0.12)] bg-warm-bg px-[18px] py-[14px] text-[15px] outline-none transition-all focus:border-accent focus:shadow-[0_0_0_3px_rgba(107,143,113,0.1)]"
           style={{
             fontFamily: "'Outfit', sans-serif",
             color: roleSelected ? '#2C3E2D' : '#7A7A6E',
@@ -134,7 +134,7 @@ function FormField({
         name={id}
         placeholder={placeholder}
         required={required}
-        className="w-full rounded-[12px] border-[1.5px] border-[rgba(44,62,45,0.12)] bg-warm-bg px-[18px] py-[14px] text-[15px] text-primary placeholder-text-muted outline-none transition-all focus:border-accent focus:shadow-[0_0_0_3px_rgba(107,143,113,0.1)]"
+        className="w-full rounded-[20px] border-[1.5px] border-[rgba(44,62,45,0.12)] bg-warm-bg px-[18px] py-[14px] text-[15px] text-primary placeholder-text-muted outline-none transition-all focus:border-accent focus:shadow-[0_0_0_3px_rgba(107,143,113,0.1)]"
         style={{ fontFamily: "'Outfit', sans-serif" }}
       />
     </div>

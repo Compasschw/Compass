@@ -25,24 +25,24 @@ export function StatCard({
   label,
   value,
   subtext,
-  iconBg = 'bg-[#D0F0D0]',
+  iconBg = 'bg-[rgba(107,143,113,0.15)]',
   className = '',
 }: StatCardProps) {
   return (
     <div
-      className={`bg-white rounded-[12px] shadow-sm border border-[#E5E7EB] p-4 flex items-start gap-3 ${className}`}
+      className={`bg-white rounded-[20px] shadow-sm border border-[rgba(44,62,45,0.1)] p-4 flex items-start gap-3 ${className}`}
     >
       <div
-        className={`${iconBg} rounded-[8px] p-2.5 flex items-center justify-center shrink-0`}
+        className={`${iconBg} rounded-[12px] p-2.5 flex items-center justify-center shrink-0`}
         aria-hidden="true"
       >
         {icon}
       </div>
       <div className="min-w-0">
-        <p className="text-xs text-[#AAAAAA] font-medium uppercase tracking-wide truncate">
+        <p className="text-xs text-[#8B9B8D] font-medium uppercase tracking-wide truncate">
           {label}
         </p>
-        <p className="text-xl font-semibold text-[#1A1A1A] leading-tight mt-0.5">
+        <p className="text-xl font-semibold text-[#2C3E2D] leading-tight mt-0.5">
           {value}
         </p>
         {subtext && (

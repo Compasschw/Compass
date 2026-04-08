@@ -19,10 +19,10 @@ export function PlaceholderPage({
 }: PlaceholderPageProps) {
   return (
     <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
-      <div className="w-14 h-14 rounded-full bg-[#E5E7EB] flex items-center justify-center mb-4">
-        <Construction size={26} className="text-[#AAAAAA]" aria-hidden="true" />
+      <div className="w-14 h-14 rounded-full bg-[rgba(44,62,45,0.1)] flex items-center justify-center mb-4">
+        <Construction size={26} className="text-[#8B9B8D]" aria-hidden="true" />
       </div>
-      <h1 className="text-xl font-semibold text-[#1A1A1A] mb-2">{title}</h1>
+      <h1 className="text-xl font-semibold text-[#2C3E2D] mb-2">{title}</h1>
       <p className="text-sm text-[#555555] max-w-xs">{description}</p>
     </div>
   );

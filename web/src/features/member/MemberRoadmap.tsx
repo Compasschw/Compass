@@ -71,7 +71,7 @@ function ProgressBar({ value, label, size = 'sm' }: ProgressBarProps) {
   const height = size === 'md' ? 'h-2.5' : 'h-1.5';
   return (
     <div
-      className={`w-full bg-[#E5E7EB] rounded-full ${height}`}
+      className={`w-full bg-[rgba(44,62,45,0.1)] rounded-full ${height}`}
       role="progressbar"
       aria-valuenow={value}
       aria-valuemin={0}
@@ -79,7 +79,7 @@ function ProgressBar({ value, label, size = 'sm' }: ProgressBarProps) {
       aria-label={label}
     >
       <div
-        className={`bg-[#00B050] ${height} rounded-full transition-all duration-500`}
+        className={`bg-[#2C3E2D] ${height} rounded-full transition-all duration-500`}
         style={{ width: `${value}%` }}
       />
     </div>
@@ -93,7 +93,7 @@ interface GoalCardProps {
 function GoalCard({ goal }: GoalCardProps) {
   return (
     <article
-      className="bg-white rounded-[12px] border border-[#E5E7EB] p-5"
+      className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] p-5"
       aria-label={`Goal: ${goal.title}`}
     >
       <div className="flex items-start gap-4">
@@ -109,7 +109,7 @@ function GoalCard({ goal }: GoalCardProps) {
         <div className="flex-1 min-w-0">
           {/* Title + badge */}
           <div className="flex items-start justify-between gap-2 mb-1">
-            <p className="text-sm font-bold text-[#1A1A1A]">{goal.title}</p>
+            <p className="text-sm font-bold text-[#2C3E2D]">{goal.title}</p>
             <Badge variant="vertical" value={goal.category} />
           </div>
 
@@ -119,14 +119,14 @@ function GoalCard({ goal }: GoalCardProps) {
               ? `${goal.sessionsCompleted} session${goal.sessionsCompleted !== 1 ? 's' : ''} completed`
               : 'Just getting started'}
             {' · '}
-            <span className="text-[#00B050] font-medium">{statusLabel(goal.status)}</span>
+            <span className="text-[#6B8F71] font-medium">{statusLabel(goal.status)}</span>
           </p>
 
           {/* Progress bar with percentage */}
           <div className="mb-2">
             <div className="flex items-center justify-between mb-1.5">
-              <span className="text-xs text-[#AAAAAA]">Progress</span>
-              <span className="text-xs font-bold text-[#1A1A1A]">
+              <span className="text-xs text-[#8B9B8D]">Progress</span>
+              <span className="text-xs font-bold text-[#2C3E2D]">
                 {goal.progress}%
               </span>
             </div>
@@ -138,7 +138,7 @@ function GoalCard({ goal }: GoalCardProps) {
           </div>
 
           {/* Footer meta */}
-          <p className="text-xs text-[#AAAAAA] mt-2">
+          <p className="text-xs text-[#8B9B8D] mt-2">
             CHW Sessions: {goal.sessionsCompleted}
             {' · '}
             Next: {formatNextSession(goal.nextSession)}
@@ -203,17 +203,17 @@ function AddGoalModal({ onClose, onAdd }: AddGoalModalProps) {
     >
       <div className="bg-white rounded-[16px] w-full max-w-lg shadow-xl">
         {/* Header */}
-        <div className="flex items-center justify-between p-5 border-b border-[#E5E7EB]">
+        <div className="flex items-center justify-between p-5 border-b border-[rgba(44,62,45,0.1)]">
           <h2
             id="add-goal-modal-heading"
-            className="text-base font-bold text-[#1A1A1A]"
+            className="text-base font-bold text-[#2C3E2D]"
           >
             Add a New Goal
           </h2>
           <button
             type="button"
             onClick={onClose}
-            className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-[#F8FAFB] text-[#AAAAAA] hover:text-[#555555] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0077B6]"
+            className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-[#FBF7F0] text-[#8B9B8D] hover:text-[#555555] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0077B6]"
             aria-label="Close modal"
           >
             <X size={18} aria-hidden="true" />
@@ -223,7 +223,7 @@ function AddGoalModal({ onClose, onAdd }: AddGoalModalProps) {
         <form onSubmit={handleSubmit} className="p-5 space-y-5">
           {/* Category selection */}
           <fieldset>
-            <legend className="text-sm font-semibold text-[#1A1A1A] mb-3">
+            <legend className="text-sm font-semibold text-[#2C3E2D] mb-3">
               Category
             </legend>
             <div className="space-y-2">
@@ -236,24 +236,24 @@ function AddGoalModal({ onClose, onAdd }: AddGoalModalProps) {
                     onClick={() => setSelectedVertical(option.key)}
                     aria-pressed={isSelected}
                     className={[
-                      'w-full flex items-center gap-3 px-4 py-3 rounded-[10px] border text-left transition-all focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00B050]',
+                      'w-full flex items-center gap-3 px-4 py-3 rounded-[10px] border text-left transition-all focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6B8F71]',
                       isSelected
-                        ? 'border-[#00B050] bg-[#D0F0D0]/40'
-                        : 'border-[#E5E7EB] bg-white hover:border-[#00B050]/50',
+                        ? 'border-[#6B8F71] bg-[rgba(107,143,113,0.15)]/40'
+                        : 'border-[rgba(44,62,45,0.1)] bg-white hover:border-[#6B8F71]/50',
                     ].join(' ')}
                   >
                     <span className="text-xl" role="img" aria-hidden="true">
                       {option.emoji}
                     </span>
                     <span
-                      className={`text-sm font-medium ${isSelected ? 'text-[#00B050]' : 'text-[#1A1A1A]'}`}
+                      className={`text-sm font-medium ${isSelected ? 'text-[#6B8F71]' : 'text-[#2C3E2D]'}`}
                     >
                       {option.label}
                     </span>
                     {isSelected && (
                       <CheckCircle
                         size={16}
-                        className="text-[#00B050] ml-auto shrink-0"
+                        className="text-[#6B8F71] ml-auto shrink-0"
                         aria-hidden="true"
                       />
                     )}
@@ -267,7 +267,7 @@ function AddGoalModal({ onClose, onAdd }: AddGoalModalProps) {
           <div>
             <label
               htmlFor="goal-title"
-              className="text-sm font-semibold text-[#1A1A1A] block mb-2"
+              className="text-sm font-semibold text-[#2C3E2D] block mb-2"
             >
               Goal Title
             </label>
@@ -279,21 +279,21 @@ function AddGoalModal({ onClose, onAdd }: AddGoalModalProps) {
               placeholder="e.g. Enroll in CalFresh by June"
               maxLength={80}
               required
-              className="w-full px-3 py-2.5 rounded-[8px] border border-[#E5E7EB] text-sm text-[#1A1A1A] placeholder:text-[#AAAAAA] focus:outline-none focus:ring-2 focus:ring-[#00B050]/30 focus:border-[#00B050] transition-colors"
+              className="w-full px-3 py-2.5 rounded-[12px] border border-[rgba(44,62,45,0.1)] text-sm text-[#2C3E2D] placeholder:text-[#8B9B8D] focus:outline-none focus:ring-2 focus:ring-[#6B8F71]/30 focus:border-[#6B8F71] transition-colors"
             />
           </div>
 
           {/* Target date */}
           <div>
-            <label className="text-sm font-semibold text-[#1A1A1A] block mb-2">
+            <label className="text-sm font-semibold text-[#2C3E2D] block mb-2">
               Target Date{' '}
-              <span className="text-[#AAAAAA] font-normal">(optional)</span>
+              <span className="text-[#8B9B8D] font-normal">(optional)</span>
             </label>
             <div className="flex gap-2">
               <select
                 value={month}
                 onChange={(e) => setMonth(e.target.value)}
-                className="flex-1 px-3 py-2.5 rounded-[8px] border border-[#E5E7EB] text-sm text-[#1A1A1A] bg-white focus:outline-none focus:ring-2 focus:ring-[#00B050]/30 focus:border-[#00B050] transition-colors"
+                className="flex-1 px-3 py-2.5 rounded-[12px] border border-[rgba(44,62,45,0.1)] text-sm text-[#2C3E2D] bg-white focus:outline-none focus:ring-2 focus:ring-[#6B8F71]/30 focus:border-[#6B8F71] transition-colors"
                 aria-label="Target month"
               >
                 <option value="">Month</option>
@@ -306,7 +306,7 @@ function AddGoalModal({ onClose, onAdd }: AddGoalModalProps) {
               <select
                 value={year}
                 onChange={(e) => setYear(e.target.value)}
-                className="w-24 px-3 py-2.5 rounded-[8px] border border-[#E5E7EB] text-sm text-[#1A1A1A] bg-white focus:outline-none focus:ring-2 focus:ring-[#00B050]/30 focus:border-[#00B050] transition-colors"
+                className="w-24 px-3 py-2.5 rounded-[12px] border border-[rgba(44,62,45,0.1)] text-sm text-[#2C3E2D] bg-white focus:outline-none focus:ring-2 focus:ring-[#6B8F71]/30 focus:border-[#6B8F71] transition-colors"
                 aria-label="Target year"
               >
                 {YEARS.map((y) => (
@@ -322,7 +322,7 @@ function AddGoalModal({ onClose, onAdd }: AddGoalModalProps) {
           <button
             type="submit"
             disabled={!isValid}
-            className="w-full bg-[#00B050] hover:bg-[#008F40] active:bg-[#007A38] disabled:bg-[#E5E7EB] disabled:text-[#AAAAAA] disabled:cursor-not-allowed text-white text-sm font-semibold py-3 rounded-[8px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00B050]"
+            className="w-full bg-[#2C3E2D] hover:bg-[#3A5240] active:bg-[#243D25] disabled:bg-[rgba(44,62,45,0.1)] disabled:text-[#8B9B8D] disabled:cursor-not-allowed text-white text-sm font-semibold py-3 rounded-[12px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6B8F71]"
           >
             Add Goal
           </button>
@@ -375,16 +375,16 @@ export function MemberRoadmap() {
       {/* Overall progress card */}
       <section
         aria-labelledby="overall-progress-heading"
-        className="bg-white rounded-[12px] border border-[#E5E7EB] p-5"
+        className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] p-5"
       >
         <div className="flex items-center justify-between mb-3">
           <h3
             id="overall-progress-heading"
-            className="text-sm font-bold text-[#1A1A1A]"
+            className="text-sm font-bold text-[#2C3E2D]"
           >
             Overall Progress
           </h3>
-          <span className="text-2xl font-bold text-[#00B050]">
+          <span className="text-2xl font-bold text-[#6B8F71]">
             {overallProgress}%
           </span>
         </div>
@@ -393,7 +393,7 @@ export function MemberRoadmap() {
           label={`Overall health journey progress: ${overallProgress}%`}
           size="md"
         />
-        <p className="text-xs text-[#AAAAAA] mt-2">
+        <p className="text-xs text-[#8B9B8D] mt-2">
           {goalList.length} active goal{goalList.length !== 1 ? 's' : ''} in progress
         </p>
       </section>
@@ -402,7 +402,7 @@ export function MemberRoadmap() {
       <section aria-labelledby="active-goals-heading">
         <h3
           id="active-goals-heading"
-          className="text-sm font-semibold text-[#1A1A1A] uppercase tracking-wide mb-3"
+          className="text-sm font-semibold text-[#2C3E2D] uppercase tracking-wide mb-3"
         >
           Active Goals
         </h3>
@@ -415,14 +415,14 @@ export function MemberRoadmap() {
           </div>
         ) : (
           <div
-            className="bg-white rounded-[12px] border border-[#E5E7EB] p-10 flex flex-col items-center gap-3 text-center"
+            className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] p-10 flex flex-col items-center gap-3 text-center"
             role="status"
           >
             <span className="text-4xl" role="img" aria-label="Target">
               🎯
             </span>
-            <p className="text-sm font-semibold text-[#1A1A1A]">No active goals yet</p>
-            <p className="text-xs text-[#AAAAAA] max-w-xs">
+            <p className="text-sm font-semibold text-[#2C3E2D]">No active goals yet</p>
+            <p className="text-xs text-[#8B9B8D] max-w-xs">
               Add your first health goal to start tracking your progress.
             </p>
           </div>
@@ -433,24 +433,24 @@ export function MemberRoadmap() {
       <section aria-labelledby="timeline-heading">
         <h3
           id="timeline-heading"
-          className="text-sm font-semibold text-[#1A1A1A] uppercase tracking-wide mb-3"
+          className="text-sm font-semibold text-[#2C3E2D] uppercase tracking-wide mb-3"
         >
           Timeline
         </h3>
 
-        <div className="bg-white rounded-[12px] border border-[#E5E7EB] p-4">
+        <div className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] p-4">
           <div className="flex items-center gap-3">
             <div
-              className="w-10 h-10 rounded-[8px] bg-blue-50 border border-blue-100 flex items-center justify-center shrink-0"
+              className="w-10 h-10 rounded-[12px] bg-blue-50 border border-blue-100 flex items-center justify-center shrink-0"
               aria-hidden="true"
             >
               <CalendarDays size={18} className="text-[#0077B6]" />
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-xs text-[#AAAAAA] uppercase tracking-wide font-medium mb-0.5">
+              <p className="text-xs text-[#8B9B8D] uppercase tracking-wide font-medium mb-0.5">
                 Projected Completion
               </p>
-              <p className="text-sm font-bold text-[#1A1A1A]">
+              <p className="text-sm font-bold text-[#2C3E2D]">
                 Goal Completion: December 2026
               </p>
               <p className="text-xs text-[#555555] mt-0.5">
@@ -460,7 +460,7 @@ export function MemberRoadmap() {
           </div>
 
           {/* Simple milestone strip */}
-          <div className="mt-4 pt-4 border-t border-[#E5E7EB]">
+          <div className="mt-4 pt-4 border-t border-[rgba(44,62,45,0.1)]">
             <div className="flex items-center gap-0 overflow-x-auto pb-1">
               {[
                 { label: 'Apr', done: true },
@@ -479,18 +479,18 @@ export function MemberRoadmap() {
                         step.isFinal
                           ? 'bg-[#0077B6] ring-2 ring-[#0077B6]/30'
                           : step.done
-                          ? 'bg-[#00B050]'
-                          : 'bg-[#E5E7EB]',
+                          ? 'bg-[#2C3E2D]'
+                          : 'bg-[rgba(44,62,45,0.1)]',
                       ].join(' ')}
                       aria-hidden="true"
                     />
-                    <span className="text-[10px] text-[#AAAAAA] font-medium">
+                    <span className="text-[10px] text-[#8B9B8D] font-medium">
                       {step.label}
                     </span>
                   </div>
                   {idx < 6 && (
                     <div
-                      className="h-px w-8 sm:w-12 bg-[#E5E7EB] shrink-0"
+                      className="h-px w-8 sm:w-12 bg-[rgba(44,62,45,0.1)] shrink-0"
                       aria-hidden="true"
                     />
                   )}
@@ -505,7 +505,7 @@ export function MemberRoadmap() {
       <button
         type="button"
         onClick={() => setShowAddModal(true)}
-        className="w-full flex items-center justify-center gap-2 bg-white border-2 border-dashed border-[#00B050] text-[#00B050] hover:bg-[#D0F0D0]/20 active:bg-[#D0F0D0]/40 text-sm font-semibold py-3.5 rounded-[12px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00B050]"
+        className="w-full flex items-center justify-center gap-2 bg-white border-2 border-dashed border-[#6B8F71] text-[#6B8F71] hover:bg-[rgba(107,143,113,0.15)]/20 active:bg-[rgba(107,143,113,0.15)]/40 text-sm font-semibold py-3.5 rounded-[12px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6B8F71]"
         aria-label="Add a new health goal"
       >
         <Plus size={18} aria-hidden="true" />

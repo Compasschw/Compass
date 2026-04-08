@@ -144,7 +144,7 @@ function DiagnosisCodeSelector({ selectedCodes, onToggle }: DiagnosisCodeSelecto
     <div>
       <label
         htmlFor="dx-search"
-        className="block text-xs font-semibold text-[#1A1A1A] uppercase tracking-wide mb-2"
+        className="block text-xs font-semibold text-[#2C3E2D] uppercase tracking-wide mb-2"
       >
         Diagnosis Codes (ICD-10 Z-Codes)
         <span className="ml-1 text-red-500" aria-hidden="true">*</span>
@@ -154,7 +154,7 @@ function DiagnosisCodeSelector({ selectedCodes, onToggle }: DiagnosisCodeSelecto
       <div className="relative mb-3">
         <Search
           size={14}
-          className="absolute left-3 top-1/2 -translate-y-1/2 text-[#AAAAAA] pointer-events-none"
+          className="absolute left-3 top-1/2 -translate-y-1/2 text-[#8B9B8D] pointer-events-none"
           aria-hidden="true"
         />
         <input
@@ -163,13 +163,13 @@ function DiagnosisCodeSelector({ selectedCodes, onToggle }: DiagnosisCodeSelecto
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search by code or description..."
-          className="w-full pl-8 pr-3 py-2 text-sm border border-[#E5E7EB] rounded-[8px] bg-white text-[#1A1A1A] placeholder:text-[#AAAAAA] focus:outline-none focus:ring-2 focus:ring-[#00B050] focus:border-[#00B050]"
+          className="w-full pl-8 pr-3 py-2 text-sm border border-[rgba(44,62,45,0.1)] rounded-[12px] bg-white text-[#2C3E2D] placeholder:text-[#8B9B8D] focus:outline-none focus:ring-2 focus:ring-[#6B8F71] focus:border-[#6B8F71]"
         />
       </div>
 
       {/* Code list grouped by category */}
       <div
-        className="border border-[#E5E7EB] rounded-[8px] bg-white overflow-y-auto"
+        className="border border-[rgba(44,62,45,0.1)] rounded-[12px] bg-white overflow-y-auto"
         style={{ minHeight: '120px', maxHeight: '220px' }}
         role="group"
         aria-label="Diagnosis code selection"
@@ -179,8 +179,8 @@ function DiagnosisCodeSelector({ selectedCodes, onToggle }: DiagnosisCodeSelecto
           if (!codes || codes.length === 0) return null;
           return (
             <div key={cat}>
-              <div className="px-3 py-1.5 bg-[#F8FAFB] border-b border-[#E5E7EB] sticky top-0">
-                <span className="text-[10px] font-semibold uppercase tracking-widest text-[#AAAAAA]">
+              <div className="px-3 py-1.5 bg-[#FBF7F0] border-b border-[rgba(44,62,45,0.1)] sticky top-0">
+                <span className="text-[10px] font-semibold uppercase tracking-widest text-[#8B9B8D]">
                   {zCodeCategoryLabels[cat]}
                 </span>
               </div>
@@ -191,7 +191,7 @@ function DiagnosisCodeSelector({ selectedCodes, onToggle }: DiagnosisCodeSelecto
                     key={dx.code}
                     className={[
                       'flex items-start gap-3 px-3 py-2.5 cursor-pointer transition-colors border-b border-[#F3F4F6] last:border-b-0',
-                      isSelected ? 'bg-[#F0FBF4]' : 'hover:bg-[#F8FAFB]',
+                      isSelected ? 'bg-[rgba(107,143,113,0.08)]' : 'hover:bg-[#FBF7F0]',
                     ].join(' ')}
                   >
                     <input
@@ -204,20 +204,20 @@ function DiagnosisCodeSelector({ selectedCodes, onToggle }: DiagnosisCodeSelecto
                       className={[
                         'w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 mt-0.5 transition-colors',
                         isSelected
-                          ? 'border-[#00B050] bg-[#00B050]'
+                          ? 'border-[#6B8F71] bg-[#2C3E2D]'
                           : 'border-[#D1D5DB] bg-white',
                       ].join(' ')}
                       aria-hidden="true"
                     >
                       {isSelected && <Check size={9} className="text-white" strokeWidth={3} />}
                     </span>
-                    <span className="flex-1 min-w-0 text-xs text-[#1A1A1A] leading-relaxed">
+                    <span className="flex-1 min-w-0 text-xs text-[#2C3E2D] leading-relaxed">
                       <span className="font-mono font-semibold text-[#0077B6]">{dx.code}</span>
                       {' — '}
-                      <span className={dx.isArchived ? 'text-[#AAAAAA]' : ''}>
+                      <span className={dx.isArchived ? 'text-[#8B9B8D]' : ''}>
                         {dx.description}
                         {dx.isArchived && (
-                          <em className="ml-1 text-[#AAAAAA] not-italic text-[10px]">
+                          <em className="ml-1 text-[#8B9B8D] not-italic text-[10px]">
                             (Archived)
                           </em>
                         )}
@@ -230,7 +230,7 @@ function DiagnosisCodeSelector({ selectedCodes, onToggle }: DiagnosisCodeSelecto
           );
         })}
         {filtered.length === 0 && (
-          <div className="px-3 py-6 text-center text-xs text-[#AAAAAA]">
+          <div className="px-3 py-6 text-center text-xs text-[#8B9B8D]">
             No codes match your search.
           </div>
         )}
@@ -244,7 +244,7 @@ function DiagnosisCodeSelector({ selectedCodes, onToggle }: DiagnosisCodeSelecto
             return (
               <span
                 key={code}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#D0F0D0] text-[#00B050] text-xs font-semibold"
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-[rgba(107,143,113,0.15)] text-[#6B8F71] text-xs font-semibold"
               >
                 {code}
                 <button
@@ -365,12 +365,12 @@ function SessionDocumentationModal({
       {/* Modal panel */}
       <div className="relative bg-white rounded-[16px] w-full max-w-lg shadow-xl flex flex-col max-h-[90vh]">
         {/* Fixed header */}
-        <div className="px-6 pt-6 pb-4 border-b border-[#E5E7EB] shrink-0">
+        <div className="px-6 pt-6 pb-4 border-b border-[rgba(44,62,45,0.1)] shrink-0">
           <div className="flex items-start justify-between gap-3">
             <div>
               <h2
                 id="doc-modal-title"
-                className="text-lg font-bold text-[#1A1A1A]"
+                className="text-lg font-bold text-[#2C3E2D]"
               >
                 Session Documentation
               </h2>
@@ -382,7 +382,7 @@ function SessionDocumentationModal({
             <button
               type="button"
               onClick={onCancel}
-              className="p-1.5 rounded-[6px] text-[#AAAAAA] hover:text-[#555555] hover:bg-[#F8FAFB] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00B050]"
+              className="p-1.5 rounded-[6px] text-[#8B9B8D] hover:text-[#555555] hover:bg-[#FBF7F0] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6B8F71]"
               aria-label="Cancel documentation"
             >
               <X size={18} aria-hidden="true" />
@@ -396,7 +396,7 @@ function SessionDocumentationModal({
           <div>
             <label
               htmlFor="doc-summary"
-              className="block text-xs font-semibold text-[#1A1A1A] uppercase tracking-wide mb-2"
+              className="block text-xs font-semibold text-[#2C3E2D] uppercase tracking-wide mb-2"
             >
               Session Summary
               <span className="ml-1 text-red-500" aria-hidden="true">*</span>
@@ -407,13 +407,13 @@ function SessionDocumentationModal({
               value={summary}
               onChange={(e) => setSummary(e.target.value)}
               placeholder="Describe what was accomplished in this session..."
-              className="w-full text-sm text-[#1A1A1A] border border-[#E5E7EB] rounded-[8px] p-3 resize-none focus:outline-none focus:ring-2 focus:ring-[#00B050] focus:border-[#00B050] placeholder:text-[#AAAAAA]"
+              className="w-full text-sm text-[#2C3E2D] border border-[rgba(44,62,45,0.1)] rounded-[12px] p-3 resize-none focus:outline-none focus:ring-2 focus:ring-[#6B8F71] focus:border-[#6B8F71] placeholder:text-[#8B9B8D]"
             />
           </div>
 
           {/* Resources referred */}
           <div>
-            <p className="text-xs font-semibold text-[#1A1A1A] uppercase tracking-wide mb-2">
+            <p className="text-xs font-semibold text-[#2C3E2D] uppercase tracking-wide mb-2">
               Resources Referred
             </p>
             <div className="flex flex-wrap gap-2" role="group" aria-label="Select resources referred">
@@ -428,8 +428,8 @@ function SessionDocumentationModal({
                     className={[
                       'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-all',
                       isSelected
-                        ? 'bg-[#D0F0D0] border-[#00B050] text-[#00B050]'
-                        : 'bg-white border-[#E5E7EB] text-[#555555] hover:border-[#00B050]/50',
+                        ? 'bg-[rgba(107,143,113,0.15)] border-[#6B8F71] text-[#6B8F71]'
+                        : 'bg-white border-[rgba(44,62,45,0.1)] text-[#555555] hover:border-[#6B8F71]/50',
                     ].join(' ')}
                   >
                     {isSelected && (
@@ -444,7 +444,7 @@ function SessionDocumentationModal({
 
           {/* Member goals discussed */}
           <div>
-            <p className="text-xs font-semibold text-[#1A1A1A] uppercase tracking-wide mb-2">
+            <p className="text-xs font-semibold text-[#2C3E2D] uppercase tracking-wide mb-2">
               Member Goals Discussed
             </p>
             <div className="space-y-2" role="group" aria-label="Select member goals discussed">
@@ -454,10 +454,10 @@ function SessionDocumentationModal({
                   <label
                     key={goal}
                     className={[
-                      'flex items-center gap-3 px-3 py-2 rounded-[8px] border cursor-pointer transition-colors',
+                      'flex items-center gap-3 px-3 py-2 rounded-[12px] border cursor-pointer transition-colors',
                       isChecked
-                        ? 'border-[#00B050] bg-[#F0FBF4]'
-                        : 'border-[#E5E7EB] bg-white hover:border-[#00B050]/40',
+                        ? 'border-[#6B8F71] bg-[rgba(107,143,113,0.08)]'
+                        : 'border-[rgba(44,62,45,0.1)] bg-white hover:border-[#6B8F71]/40',
                     ].join(' ')}
                   >
                     <input
@@ -470,14 +470,14 @@ function SessionDocumentationModal({
                       className={[
                         'w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors',
                         isChecked
-                          ? 'border-[#00B050] bg-[#00B050]'
+                          ? 'border-[#6B8F71] bg-[#2C3E2D]'
                           : 'border-[#D1D5DB] bg-white',
                       ].join(' ')}
                       aria-hidden="true"
                     >
                       {isChecked && <Check size={9} className="text-white" strokeWidth={3} />}
                     </span>
-                    <span className={`text-sm ${isChecked ? 'text-[#00B050] font-medium' : 'text-[#1A1A1A]'}`}>
+                    <span className={`text-sm ${isChecked ? 'text-[#6B8F71] font-medium' : 'text-[#2C3E2D]'}`}>
                       {goal}
                     </span>
                   </label>
@@ -488,7 +488,7 @@ function SessionDocumentationModal({
 
           {/* Follow-up */}
           <div>
-            <p className="text-xs font-semibold text-[#1A1A1A] uppercase tracking-wide mb-2">
+            <p className="text-xs font-semibold text-[#2C3E2D] uppercase tracking-wide mb-2">
               Follow-Up Needed?
             </p>
             <div className="flex gap-2 mb-3">
@@ -497,10 +497,10 @@ function SessionDocumentationModal({
                 onClick={() => setFollowUpNeeded(true)}
                 aria-pressed={followUpNeeded === true}
                 className={[
-                  'flex-1 py-2 rounded-[8px] text-sm font-semibold border transition-all',
+                  'flex-1 py-2 rounded-[12px] text-sm font-semibold border transition-all',
                   followUpNeeded === true
-                    ? 'bg-[#00B050] border-[#00B050] text-white'
-                    : 'bg-white border-[#E5E7EB] text-[#555555] hover:border-[#00B050]/50',
+                    ? 'bg-[#2C3E2D] border-[#6B8F71] text-white'
+                    : 'bg-white border-[rgba(44,62,45,0.1)] text-[#555555] hover:border-[#6B8F71]/50',
                 ].join(' ')}
               >
                 Yes
@@ -510,10 +510,10 @@ function SessionDocumentationModal({
                 onClick={() => setFollowUpNeeded(false)}
                 aria-pressed={followUpNeeded === false}
                 className={[
-                  'flex-1 py-2 rounded-[8px] text-sm font-semibold border transition-all',
+                  'flex-1 py-2 rounded-[12px] text-sm font-semibold border transition-all',
                   followUpNeeded === false
                     ? 'bg-[#555555] border-[#555555] text-white'
-                    : 'bg-white border-[#E5E7EB] text-[#555555] hover:border-[#555555]/50',
+                    : 'bg-white border-[rgba(44,62,45,0.1)] text-[#555555] hover:border-[#555555]/50',
                 ].join(' ')}
               >
                 No
@@ -533,7 +533,7 @@ function SessionDocumentationModal({
                   value={followUpDate}
                   onChange={(e) => setFollowUpDate(e.target.value)}
                   min={new Date().toISOString().split('T')[0]}
-                  className="w-full text-sm border border-[#E5E7EB] rounded-[8px] px-3 py-2.5 text-[#1A1A1A] focus:outline-none focus:ring-2 focus:ring-[#00B050] focus:border-[#00B050]"
+                  className="w-full text-sm border border-[rgba(44,62,45,0.1)] rounded-[12px] px-3 py-2.5 text-[#2C3E2D] focus:outline-none focus:ring-2 focus:ring-[#6B8F71] focus:border-[#6B8F71]"
                 />
               </div>
             )}
@@ -549,7 +549,7 @@ function SessionDocumentationModal({
           <div>
             <label
               htmlFor="procedure-code"
-              className="block text-xs font-semibold text-[#1A1A1A] uppercase tracking-wide mb-2"
+              className="block text-xs font-semibold text-[#2C3E2D] uppercase tracking-wide mb-2"
             >
               Procedure and Modifiers *
             </label>
@@ -557,7 +557,7 @@ function SessionDocumentationModal({
               id="procedure-code"
               value={selectedProcedureCode}
               onChange={(e) => setSelectedProcedureCode(e.target.value)}
-              className="w-full text-sm border border-[#E5E7EB] rounded-[8px] px-3 py-2.5 text-[#1A1A1A] bg-white focus:outline-none focus:ring-2 focus:ring-[#00B050] focus:border-[#00B050]"
+              className="w-full text-sm border border-[rgba(44,62,45,0.1)] rounded-[12px] px-3 py-2.5 text-[#2C3E2D] bg-white focus:outline-none focus:ring-2 focus:ring-[#6B8F71] focus:border-[#6B8F71]"
             >
               {procedureCodes.map((pc) => (
                 <option key={pc.code} value={pc.code}>
@@ -565,7 +565,7 @@ function SessionDocumentationModal({
                 </option>
               ))}
             </select>
-            <p className="text-xs text-[#AAAAAA] mt-1.5">
+            <p className="text-xs text-[#8B9B8D] mt-1.5">
               Select the service type based on number of people served in this session.
             </p>
           </div>
@@ -574,7 +574,7 @@ function SessionDocumentationModal({
           <div>
             <label
               htmlFor="units-to-bill"
-              className="block text-xs font-semibold text-[#1A1A1A] uppercase tracking-wide mb-2"
+              className="block text-xs font-semibold text-[#2C3E2D] uppercase tracking-wide mb-2"
             >
               Units to Bill
             </label>
@@ -585,9 +585,9 @@ function SessionDocumentationModal({
               max={16}
               value={unitsToBill}
               onChange={(e) => setUnitsToBill(Math.max(1, parseInt(e.target.value, 10) || 1))}
-              className="w-full text-sm border border-[#E5E7EB] rounded-[8px] px-3 py-2.5 text-[#1A1A1A] font-semibold focus:outline-none focus:ring-2 focus:ring-[#00B050] focus:border-[#00B050]"
+              className="w-full text-sm border border-[rgba(44,62,45,0.1)] rounded-[12px] px-3 py-2.5 text-[#2C3E2D] font-semibold focus:outline-none focus:ring-2 focus:ring-[#6B8F71] focus:border-[#6B8F71]"
             />
-            <p className="text-xs text-[#AAAAAA] mt-1.5">
+            <p className="text-xs text-[#8B9B8D] mt-1.5">
               Based on {durationMinutes} min = {autoUnits}{' '}
               {autoUnits === 1 ? 'unit' : 'units'} @ $26.66/unit
               {unitsToBill !== autoUnits && (
@@ -597,13 +597,13 @@ function SessionDocumentationModal({
             <div className="mt-2 flex items-center gap-4 text-xs">
               <span className="text-[#555555]">
                 Gross:{' '}
-                <span className="font-semibold text-[#1A1A1A]">
+                <span className="font-semibold text-[#2C3E2D]">
                   {formatCurrency(grossAmount)}
                 </span>
               </span>
               <span className="text-[#555555]">
                 Net (85%):{' '}
-                <span className="font-semibold text-[#00B050]">
+                <span className="font-semibold text-[#6B8F71]">
                   {formatCurrency(netAmount)}
                 </span>
               </span>
@@ -612,9 +612,9 @@ function SessionDocumentationModal({
         </div>
 
         {/* Fixed footer */}
-        <div className="px-6 py-4 border-t border-[#E5E7EB] shrink-0">
+        <div className="px-6 py-4 border-t border-[rgba(44,62,45,0.1)] shrink-0">
           {!isValid && (
-            <p className="text-xs text-[#AAAAAA] text-center mb-3">
+            <p className="text-xs text-[#8B9B8D] text-center mb-3">
               {summary.trim().length === 0 && diagnosisCodeSelection.length === 0
                 ? 'Add a summary and at least one diagnosis code to submit.'
                 : summary.trim().length === 0
@@ -626,7 +626,7 @@ function SessionDocumentationModal({
             type="button"
             onClick={handleSubmit}
             disabled={!isValid || submitting}
-            className="w-full flex items-center justify-center gap-2 bg-[#00B050] hover:bg-[#008F40] disabled:bg-[#D0F0D0] disabled:cursor-not-allowed text-white text-sm font-semibold py-3 rounded-[8px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00B050]"
+            className="w-full flex items-center justify-center gap-2 bg-[#2C3E2D] hover:bg-[#3A5240] disabled:bg-[rgba(107,143,113,0.15)] disabled:cursor-not-allowed text-white text-sm font-semibold py-3 rounded-[12px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6B8F71]"
           >
             {submitting ? (
               <>
@@ -666,9 +666,9 @@ function Toast({ message, onDismiss }: ToastProps) {
     <div
       role="status"
       aria-live="polite"
-      className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2.5 bg-[#1A1A1A] text-white text-sm font-medium px-5 py-3 rounded-[12px] shadow-lg"
+      className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2.5 bg-[#2C3E2D] text-white text-sm font-medium px-5 py-3 rounded-[20px] shadow-lg"
     >
-      <span className="w-5 h-5 rounded-full bg-[#00B050] flex items-center justify-center shrink-0">
+      <span className="w-5 h-5 rounded-full bg-[#2C3E2D] flex items-center justify-center shrink-0">
         <Check size={11} className="text-white" strokeWidth={3} aria-hidden="true" />
       </span>
       {message}
@@ -706,7 +706,7 @@ function ActiveSessionCard({
 
   return (
     <article
-      className="bg-white rounded-[12px] border border-[#E5E7EB] overflow-hidden"
+      className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] overflow-hidden"
       aria-label={`Session with ${session.memberName}`}
     >
       {/* Card body */}
@@ -714,7 +714,7 @@ function ActiveSessionCard({
         <div className="flex items-start gap-3">
           {/* Vertical icon */}
           <div
-            className="w-10 h-10 rounded-[8px] bg-[#D0F0D0] flex items-center justify-center shrink-0"
+            className="w-10 h-10 rounded-[12px] bg-[rgba(107,143,113,0.15)] flex items-center justify-center shrink-0"
             aria-hidden="true"
           >
             <VerticalIcon vertical={session.vertical} size={18} />
@@ -723,7 +723,7 @@ function ActiveSessionCard({
           {/* Content */}
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap mb-1">
-              <span className="text-sm font-semibold text-[#1A1A1A]">
+              <span className="text-sm font-semibold text-[#2C3E2D]">
                 {session.memberName}
               </span>
               <Badge variant="vertical" value={session.vertical} />
@@ -753,7 +753,7 @@ function ActiveSessionCard({
           <button
             type="button"
             onClick={() => onToggleExpand(session.id)}
-            className="p-1 rounded-[6px] text-[#AAAAAA] hover:text-[#555555] hover:bg-[#F8FAFB] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00B050]"
+            className="p-1 rounded-[6px] text-[#8B9B8D] hover:text-[#555555] hover:bg-[#FBF7F0] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6B8F71]"
             aria-expanded={isExpanded}
             aria-label={isExpanded ? 'Collapse session details' : 'Expand session details'}
           >
@@ -767,7 +767,7 @@ function ActiveSessionCard({
             <button
               type="button"
               onClick={() => onEnd(session.id)}
-              className="w-full flex items-center justify-center gap-2 bg-red-50 border border-red-200 hover:bg-red-100 text-red-700 text-sm font-semibold py-2.5 rounded-[8px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-400"
+              className="w-full flex items-center justify-center gap-2 bg-red-50 border border-red-200 hover:bg-red-100 text-red-700 text-sm font-semibold py-2.5 rounded-[12px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-400"
               aria-label={`End session with ${session.memberName}`}
             >
               <StopCircle size={15} aria-hidden="true" />
@@ -777,7 +777,7 @@ function ActiveSessionCard({
             <button
               type="button"
               onClick={() => onStart(session.id)}
-              className="w-full flex items-center justify-center gap-2 bg-[#00B050] hover:bg-[#008F40] active:bg-[#007A38] text-white text-sm font-semibold py-2.5 rounded-[8px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00B050]"
+              className="w-full flex items-center justify-center gap-2 bg-[#2C3E2D] hover:bg-[#3A5240] active:bg-[#243D25] text-white text-sm font-semibold py-2.5 rounded-[12px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6B8F71]"
               aria-label={`Start session with ${session.memberName}`}
             >
               <Play size={15} aria-hidden="true" />
@@ -789,13 +789,13 @@ function ActiveSessionCard({
 
       {/* Recording section — phone sessions in progress only */}
       {showRecording && (
-        <div className="border-t border-[#E5E7EB] p-4 bg-[#F8FAFB]">
+        <div className="border-t border-[rgba(44,62,45,0.1)] p-4 bg-[#FBF7F0]">
           {/* Not yet recording and no saved recording */}
           {!recordingState.isRecording && !recordingState.savedAt && !recordingState.showConsentPrompt && (
             <button
               type="button"
               onClick={() => onRecordingAction(session.id, 'request-consent')}
-              className="w-full flex items-center justify-center gap-2 border border-[#E5E7EB] bg-white hover:bg-[#F0FBF4] hover:border-[#00B050]/50 text-[#555555] hover:text-[#00B050] text-sm font-medium py-2.5 rounded-[8px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00B050]"
+              className="w-full flex items-center justify-center gap-2 border border-[rgba(44,62,45,0.1)] bg-white hover:bg-[rgba(107,143,113,0.08)] hover:border-[#6B8F71]/50 text-[#555555] hover:text-[#6B8F71] text-sm font-medium py-2.5 rounded-[12px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6B8F71]"
               aria-label="Start recording this call"
             >
               <Mic size={15} aria-hidden="true" />
@@ -805,8 +805,8 @@ function ActiveSessionCard({
 
           {/* Consent prompt */}
           {recordingState.showConsentPrompt && !recordingState.isRecording && (
-            <div className="bg-white rounded-[8px] border border-[#E5E7EB] p-4">
-              <p className="text-sm font-semibold text-[#1A1A1A] mb-1">Consent required</p>
+            <div className="bg-white rounded-[12px] border border-[rgba(44,62,45,0.1)] p-4">
+              <p className="text-sm font-semibold text-[#2C3E2D] mb-1">Consent required</p>
               <p className="text-xs text-[#555555] leading-relaxed mb-4">
                 This call will be recorded for documentation purposes. Do you have verbal consent
                 from the member?
@@ -815,7 +815,7 @@ function ActiveSessionCard({
                 <button
                   type="button"
                   onClick={() => onRecordingAction(session.id, 'confirm-consent')}
-                  className="flex-1 flex items-center justify-center gap-1.5 bg-[#00B050] hover:bg-[#008F40] text-white text-sm font-semibold py-2 rounded-[8px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00B050]"
+                  className="flex-1 flex items-center justify-center gap-1.5 bg-[#2C3E2D] hover:bg-[#3A5240] text-white text-sm font-semibold py-2 rounded-[12px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6B8F71]"
                 >
                   <Check size={13} aria-hidden="true" />
                   Yes, Record
@@ -823,7 +823,7 @@ function ActiveSessionCard({
                 <button
                   type="button"
                   onClick={() => onRecordingAction(session.id, 'cancel-consent')}
-                  className="flex-1 flex items-center justify-center gap-1.5 bg-white border border-[#E5E7EB] hover:bg-[#F8FAFB] text-[#555555] text-sm font-semibold py-2 rounded-[8px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#555555]"
+                  className="flex-1 flex items-center justify-center gap-1.5 bg-white border border-[rgba(44,62,45,0.1)] hover:bg-[#FBF7F0] text-[#555555] text-sm font-semibold py-2 rounded-[12px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#555555]"
                 >
                   Cancel
                 </button>
@@ -833,7 +833,7 @@ function ActiveSessionCard({
 
           {/* Recording in progress */}
           {recordingState.isRecording && (
-            <div className="bg-white rounded-[8px] border border-red-200 p-3">
+            <div className="bg-white rounded-[12px] border border-red-200 p-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Circle
@@ -864,8 +864,8 @@ function ActiveSessionCard({
 
           {/* Recording saved confirmation */}
           {recordingState.savedAt && !recordingState.isRecording && (
-            <div className="flex items-center gap-2 text-sm text-[#00B050]">
-              <span className="w-5 h-5 rounded-full bg-[#D0F0D0] flex items-center justify-center shrink-0">
+            <div className="flex items-center gap-2 text-sm text-[#6B8F71]">
+              <span className="w-5 h-5 rounded-full bg-[rgba(107,143,113,0.15)] flex items-center justify-center shrink-0">
                 <Check size={11} strokeWidth={3} aria-hidden="true" />
               </span>
               <span className="font-medium">Recording saved</span>
@@ -876,10 +876,10 @@ function ActiveSessionCard({
 
       {/* Expanded notes section */}
       {isExpanded && (
-        <div className="border-t border-[#E5E7EB] p-4 bg-[#F8FAFB]">
+        <div className="border-t border-[rgba(44,62,45,0.1)] p-4 bg-[#FBF7F0]">
           <label
             htmlFor={`notes-${session.id}`}
-            className="block text-xs font-semibold text-[#1A1A1A] uppercase tracking-wide mb-2"
+            className="block text-xs font-semibold text-[#2C3E2D] uppercase tracking-wide mb-2"
           >
             Session Notes
           </label>
@@ -889,7 +889,7 @@ function ActiveSessionCard({
             value={localNotes}
             onChange={(e) => onNotesChange(session.id, e.target.value)}
             placeholder="Document your session notes here…"
-            className="w-full text-sm text-[#1A1A1A] bg-white border border-[#E5E7EB] rounded-[8px] p-3 resize-none focus:outline-none focus:ring-2 focus:ring-[#00B050] focus:border-[#00B050] placeholder:text-[#AAAAAA]"
+            className="w-full text-sm text-[#2C3E2D] bg-white border border-[rgba(44,62,45,0.1)] rounded-[12px] p-3 resize-none focus:outline-none focus:ring-2 focus:ring-[#6B8F71] focus:border-[#6B8F71] placeholder:text-[#8B9B8D]"
           />
         </div>
       )}
@@ -916,13 +916,13 @@ function CompletedSessionCard({
 
   return (
     <article
-      className="bg-white rounded-[12px] border border-[#E5E7EB] overflow-hidden"
+      className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] overflow-hidden"
       aria-label={`Completed session with ${session.memberName}`}
     >
       {/* Card body — clickable to expand */}
       <button
         type="button"
-        className="w-full text-left p-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#00B050] focus-visible:rounded-[12px]"
+        className="w-full text-left p-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#6B8F71] focus-visible:rounded-[12px]"
         onClick={() => onToggleExpand(session.id)}
         aria-expanded={isExpanded}
         aria-label={`${isExpanded ? 'Collapse' : 'Expand'} details for session with ${session.memberName}`}
@@ -930,7 +930,7 @@ function CompletedSessionCard({
         <div className="flex items-start gap-3">
           {/* Vertical icon */}
           <div
-            className="w-10 h-10 rounded-[8px] bg-[#F8FAFB] border border-[#E5E7EB] flex items-center justify-center shrink-0"
+            className="w-10 h-10 rounded-[12px] bg-[#FBF7F0] border border-[rgba(44,62,45,0.1)] flex items-center justify-center shrink-0"
             aria-hidden="true"
           >
             <VerticalIcon vertical={session.vertical} size={18} />
@@ -939,7 +939,7 @@ function CompletedSessionCard({
           {/* Content */}
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap mb-1">
-              <span className="text-sm font-semibold text-[#1A1A1A]">
+              <span className="text-sm font-semibold text-[#2C3E2D]">
                 {session.memberName}
               </span>
               <Badge variant="vertical" value={session.vertical} />
@@ -962,18 +962,18 @@ function CompletedSessionCard({
             {/* Billing summary row */}
             <div className="flex items-center gap-3 mt-2">
               {session.unitsBilled != null && (
-                <span className="text-xs text-[#AAAAAA]">
+                <span className="text-xs text-[#8B9B8D]">
                   {session.unitsBilled} {session.unitsBilled === 1 ? 'unit' : 'units'}
                 </span>
               )}
               {gross > 0 && (
                 <>
-                  <span className="text-xs text-[#AAAAAA]">·</span>
+                  <span className="text-xs text-[#8B9B8D]">·</span>
                   <span className="text-xs text-[#555555]">
                     {formatCurrency(gross)} gross
                   </span>
-                  <span className="text-xs text-[#AAAAAA]">·</span>
-                  <span className="text-xs font-semibold text-[#00B050]">
+                  <span className="text-xs text-[#8B9B8D]">·</span>
+                  <span className="text-xs font-semibold text-[#6B8F71]">
                     {formatCurrency(net)} net
                   </span>
                 </>
@@ -982,7 +982,7 @@ function CompletedSessionCard({
           </div>
 
           {/* Chevron */}
-          <span className="text-[#AAAAAA] mt-0.5" aria-hidden="true">
+          <span className="text-[#8B9B8D] mt-0.5" aria-hidden="true">
             {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
           </span>
         </div>
@@ -990,11 +990,11 @@ function CompletedSessionCard({
 
       {/* Expanded detail section */}
       {isExpanded && (
-        <div className="border-t border-[#E5E7EB] p-4 bg-[#F8FAFB] space-y-4">
+        <div className="border-t border-[rgba(44,62,45,0.1)] p-4 bg-[#FBF7F0] space-y-4">
           {/* Notes */}
           {session.notes && (
             <div>
-              <p className="text-xs font-semibold text-[#1A1A1A] uppercase tracking-wide mb-1.5">
+              <p className="text-xs font-semibold text-[#2C3E2D] uppercase tracking-wide mb-1.5">
                 Session Notes
               </p>
               <p className="text-sm text-[#555555] leading-relaxed">{session.notes}</p>
@@ -1004,7 +1004,7 @@ function CompletedSessionCard({
           {/* Documentation summary if present */}
           {session.documentation && (
             <div>
-              <p className="text-xs font-semibold text-[#1A1A1A] uppercase tracking-wide mb-1.5">
+              <p className="text-xs font-semibold text-[#2C3E2D] uppercase tracking-wide mb-1.5">
                 Documentation
               </p>
               <p className="text-sm text-[#555555] leading-relaxed">
@@ -1015,7 +1015,7 @@ function CompletedSessionCard({
                   {session.documentation.diagnosisCodes.map((code) => (
                     <span
                       key={code}
-                      className="inline-flex items-center px-2 py-0.5 rounded-full bg-[#D0F0D0] text-[#00B050] text-xs font-semibold"
+                      className="inline-flex items-center px-2 py-0.5 rounded-full bg-[rgba(107,143,113,0.15)] text-[#6B8F71] text-xs font-semibold"
                     >
                       {code}
                     </span>
@@ -1027,30 +1027,30 @@ function CompletedSessionCard({
 
           {/* Duration breakdown */}
           <div>
-            <p className="text-xs font-semibold text-[#1A1A1A] uppercase tracking-wide mb-2">
+            <p className="text-xs font-semibold text-[#2C3E2D] uppercase tracking-wide mb-2">
               Duration Breakdown
             </p>
             <div className="grid grid-cols-2 gap-2 text-xs">
               {session.startedAt && (
                 <>
-                  <span className="text-[#AAAAAA]">Started</span>
-                  <span className="text-[#1A1A1A] font-medium text-right">
+                  <span className="text-[#8B9B8D]">Started</span>
+                  <span className="text-[#2C3E2D] font-medium text-right">
                     {formatDate(session.startedAt)}
                   </span>
                 </>
               )}
               {session.endedAt && (
                 <>
-                  <span className="text-[#AAAAAA]">Ended</span>
-                  <span className="text-[#1A1A1A] font-medium text-right">
+                  <span className="text-[#8B9B8D]">Ended</span>
+                  <span className="text-[#2C3E2D] font-medium text-right">
                     {formatDate(session.endedAt)}
                   </span>
                 </>
               )}
               {session.durationMinutes != null && (
                 <>
-                  <span className="text-[#AAAAAA]">Duration</span>
-                  <span className="text-[#1A1A1A] font-medium text-right">
+                  <span className="text-[#8B9B8D]">Duration</span>
+                  <span className="text-[#2C3E2D] font-medium text-right">
                     {session.durationMinutes} minutes
                   </span>
                 </>
@@ -1061,23 +1061,23 @@ function CompletedSessionCard({
           {/* Billing info */}
           {session.unitsBilled != null && (
             <div>
-              <p className="text-xs font-semibold text-[#1A1A1A] uppercase tracking-wide mb-2">
+              <p className="text-xs font-semibold text-[#2C3E2D] uppercase tracking-wide mb-2">
                 Billing Info
               </p>
               <div className="grid grid-cols-2 gap-2 text-xs">
-                <span className="text-[#AAAAAA]">Units Billed</span>
-                <span className="text-[#1A1A1A] font-medium text-right">
+                <span className="text-[#8B9B8D]">Units Billed</span>
+                <span className="text-[#2C3E2D] font-medium text-right">
                   {session.unitsBilled}
                 </span>
-                <span className="text-[#AAAAAA]">Gross Amount</span>
-                <span className="text-[#1A1A1A] font-medium text-right">
+                <span className="text-[#8B9B8D]">Gross Amount</span>
+                <span className="text-[#2C3E2D] font-medium text-right">
                   {formatCurrency(session.grossAmount ?? 0)}
                 </span>
-                <span className="text-[#AAAAAA]">Net Payout (85%)</span>
-                <span className="font-semibold text-[#00B050] text-right">
+                <span className="text-[#8B9B8D]">Net Payout (85%)</span>
+                <span className="font-semibold text-[#6B8F71] text-right">
                   {formatCurrency(session.netAmount ?? 0)}
                 </span>
-                <span className="text-[#AAAAAA]">Billing Status</span>
+                <span className="text-[#8B9B8D]">Billing Status</span>
                 <span
                   className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium w-fit ml-auto ${billingStatusStyles[billingStatus]}`}
                 >
@@ -1318,7 +1318,7 @@ export function CHWSessions() {
       <div
         role="tablist"
         aria-label="Session tabs"
-        className="flex border-b border-[#E5E7EB]"
+        className="flex border-b border-[rgba(44,62,45,0.1)]"
       >
         {tabs.map((tab) => {
           const isActive = activeTab === tab.key;
@@ -1330,10 +1330,10 @@ export function CHWSessions() {
               aria-selected={isActive}
               onClick={() => setActiveTab(tab.key)}
               className={[
-                'flex items-center gap-2 px-4 py-3 text-sm font-semibold border-b-2 -mb-px transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00B050]',
+                'flex items-center gap-2 px-4 py-3 text-sm font-semibold border-b-2 -mb-px transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6B8F71]',
                 isActive
-                  ? 'border-[#00B050] text-[#00B050]'
-                  : 'border-transparent text-[#AAAAAA] hover:text-[#555555]',
+                  ? 'border-[#6B8F71] text-[#6B8F71]'
+                  : 'border-transparent text-[#8B9B8D] hover:text-[#555555]',
               ].join(' ')}
             >
               {tab.label}
@@ -1341,8 +1341,8 @@ export function CHWSessions() {
                 className={[
                   'inline-flex items-center justify-center w-5 h-5 rounded-full text-xs font-bold',
                   isActive
-                    ? 'bg-[#D0F0D0] text-[#00B050]'
-                    : 'bg-[#F8FAFB] text-[#AAAAAA]',
+                    ? 'bg-[rgba(107,143,113,0.15)] text-[#6B8F71]'
+                    : 'bg-[#FBF7F0] text-[#8B9B8D]',
                 ].join(' ')}
                 aria-label={`${tab.count} ${tab.label.toLowerCase()} sessions`}
               >
@@ -1375,14 +1375,14 @@ export function CHWSessions() {
             </div>
           ) : (
             <div
-              className="bg-white rounded-[12px] border border-[#E5E7EB] p-10 flex flex-col items-center gap-3 text-center"
+              className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] p-10 flex flex-col items-center gap-3 text-center"
               role="status"
             >
-              <div className="w-12 h-12 rounded-full bg-[#F8FAFB] border border-[#E5E7EB] flex items-center justify-center">
-                <CalendarClock size={22} className="text-[#AAAAAA]" aria-hidden="true" />
+              <div className="w-12 h-12 rounded-full bg-[#FBF7F0] border border-[rgba(44,62,45,0.1)] flex items-center justify-center">
+                <CalendarClock size={22} className="text-[#8B9B8D]" aria-hidden="true" />
               </div>
-              <p className="text-sm font-semibold text-[#1A1A1A]">No active sessions</p>
-              <p className="text-xs text-[#AAAAAA]">
+              <p className="text-sm font-semibold text-[#2C3E2D]">No active sessions</p>
+              <p className="text-xs text-[#8B9B8D]">
                 Accept a request to schedule your next session.
               </p>
             </div>
@@ -1412,14 +1412,14 @@ export function CHWSessions() {
             </div>
           ) : (
             <div
-              className="bg-white rounded-[12px] border border-[#E5E7EB] p-10 flex flex-col items-center gap-3 text-center"
+              className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] p-10 flex flex-col items-center gap-3 text-center"
               role="status"
             >
-              <div className="w-12 h-12 rounded-full bg-[#F8FAFB] border border-[#E5E7EB] flex items-center justify-center">
-                <CheckCheck size={22} className="text-[#AAAAAA]" aria-hidden="true" />
+              <div className="w-12 h-12 rounded-full bg-[#FBF7F0] border border-[rgba(44,62,45,0.1)] flex items-center justify-center">
+                <CheckCheck size={22} className="text-[#8B9B8D]" aria-hidden="true" />
               </div>
-              <p className="text-sm font-semibold text-[#1A1A1A]">No completed sessions yet</p>
-              <p className="text-xs text-[#AAAAAA]">
+              <p className="text-sm font-semibold text-[#2C3E2D]">No completed sessions yet</p>
+              <p className="text-xs text-[#8B9B8D]">
                 Completed sessions will appear here with full billing details.
               </p>
             </div>

@@ -70,21 +70,21 @@ const TIMELINE_STEPS: TimelineStep[] = [
     title: 'Request',
     description:
       'Member submits their need — housing, food, mental health, or healthcare. Takes less than 3 minutes.',
-    icon: <MapPin size={22} className="text-[#00B050]" aria-hidden="true" />,
+    icon: <MapPin size={22} className="text-[#6B8F71]" aria-hidden="true" />,
   },
   {
     number: '02',
     title: 'Match',
     description:
       'Our algorithm instantly finds a CHW who speaks your language and knows your neighborhood.',
-    icon: <Zap size={22} className="text-[#00B050]" aria-hidden="true" />,
+    icon: <Zap size={22} className="text-[#6B8F71]" aria-hidden="true" />,
   },
   {
     number: '03',
     title: 'Navigate',
     description:
       'Your CHW guides you through the system, tracks your goals, and stays with you until you succeed.',
-    icon: <Compass size={22} className="text-[#00B050]" aria-hidden="true" />,
+    icon: <Compass size={22} className="text-[#6B8F71]" aria-hidden="true" />,
   },
 ];
 
@@ -185,14 +185,14 @@ function GlowStat({ stat }: { stat: ImpactStat }) {
       <span
         className="text-5xl md:text-6xl font-bold tabular-nums"
         style={{
-          color: '#00B050',
+          color: '#6B8F71',
           textShadow: '0 0 40px rgba(0,176,80,0.5), 0 0 80px rgba(0,176,80,0.2)',
         }}
         aria-label={stat.value}
       >
         {displayed}
       </span>
-      <p className="mt-3 text-sm text-[#AAAAAA] font-medium max-w-[140px] leading-snug">
+      <p className="mt-3 text-sm text-[#8B9B8D] font-medium max-w-[140px] leading-snug">
         {stat.label}
       </p>
     </div>
@@ -250,11 +250,11 @@ function HowItWorksTimeline() {
     <div ref={sectionRef} className="relative">
       {/* Desktop connecting track */}
       <div
-        className="hidden lg:block absolute top-[52px] left-[calc(16.67%)] right-[calc(16.67%)] h-[2px] bg-[#E5E7EB] overflow-hidden"
+        className="hidden lg:block absolute top-[52px] left-[calc(16.67%)] right-[calc(16.67%)] h-[2px] bg-[rgba(44,62,45,0.1)] overflow-hidden"
         aria-hidden="true"
       >
         <div
-          className="h-full bg-[#00B050] origin-left"
+          className="h-full bg-[#2C3E2D] origin-left"
           style={{
             transform: sectionInView ? 'scaleX(1)' : 'scaleX(0)',
             transition: 'transform 1.2s cubic-bezier(0.4, 0, 0.2, 1) 400ms',
@@ -267,15 +267,15 @@ function HowItWorksTimeline() {
           <AnimateIn key={step.title} direction="up" delay={index * 150}>
             <div className="flex flex-col items-center text-center">
               {/* Node */}
-              <div className="relative z-10 w-[52px] h-[52px] rounded-full border-2 border-[#00B050] bg-white flex items-center justify-center mb-6 shadow-[0_0_0_6px_rgba(0,176,80,0.08)]">
-                <span className="text-sm font-bold text-[#00B050]">{step.number}</span>
+              <div className="relative z-10 w-[52px] h-[52px] rounded-full border-2 border-[#6B8F71] bg-white flex items-center justify-center mb-6 shadow-[0_0_0_6px_rgba(0,176,80,0.08)]">
+                <span className="text-sm font-bold text-[#6B8F71]">{step.number}</span>
               </div>
 
-              <div className="bg-white rounded-2xl border border-[#E5E7EB] p-7 shadow-sm hover:shadow-md transition-shadow w-full">
-                <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-[#F0FBF4] mb-4 mx-auto">
+              <div className="bg-white rounded-2xl border border-[rgba(44,62,45,0.1)] p-7 shadow-sm hover:shadow-md transition-shadow w-full">
+                <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-[rgba(107,143,113,0.08)] mb-4 mx-auto">
                   {step.icon}
                 </div>
-                <h3 className="text-xl font-bold text-[#1A1A1A] mb-3">{step.title}</h3>
+                <h3 className="text-xl font-bold text-[#2C3E2D] mb-3">{step.title}</h3>
                 <p className="text-sm text-[#555555] leading-relaxed">{step.description}</p>
               </div>
             </div>
@@ -295,10 +295,10 @@ function BentoCard({ card }: { card: BentoCard }) {
   const baseStyles = 'rounded-2xl overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:shadow-xl';
 
   const variantStyles: Record<BentoCard['variant'], string> = {
-    'green-gradient': 'bg-gradient-to-br from-[#00B050] to-[#008F40] text-white',
-    'dark': 'bg-[#1A1A1A] text-white',
-    'white': 'bg-white border border-[#E5E7EB] text-[#1A1A1A]',
-    'minimal': 'bg-[#F8FAFB] border border-[#E5E7EB] text-[#1A1A1A]',
+    'green-gradient': 'bg-gradient-to-br from-[#6B8F71] to-[#4A7A50] text-white',
+    'dark': 'bg-[#2C3E2D] text-white',
+    'white': 'bg-white border border-[rgba(44,62,45,0.1)] text-[#2C3E2D]',
+    'minimal': 'bg-[#FBF7F0] border border-[rgba(44,62,45,0.1)] text-[#2C3E2D]',
   };
 
   return (
@@ -353,10 +353,10 @@ function EarnWhileHelpContent() {
   return (
     <>
       <div className="flex items-center gap-2 mb-2">
-        <DollarSign size={18} className="text-[#00B050]" aria-hidden="true" />
-        <span className="text-xs font-semibold uppercase tracking-widest text-[#AAAAAA]">Earn While You Help</span>
+        <DollarSign size={18} className="text-[#6B8F71]" aria-hidden="true" />
+        <span className="text-xs font-semibold uppercase tracking-widest text-[#8B9B8D]">Earn While You Help</span>
       </div>
-      <h3 className="text-xl font-bold text-[#1A1A1A] mb-3">
+      <h3 className="text-xl font-bold text-[#2C3E2D] mb-3">
         $26.66/unit Medi-Cal reimbursement.
       </h3>
       <p className="text-sm text-[#555555] leading-relaxed mb-5">
@@ -364,13 +364,13 @@ function EarnWhileHelpContent() {
         The more you help, the more you earn.
       </p>
       {/* Mini earnings preview */}
-      <div className="rounded-xl bg-[#F0FBF4] border border-[#D0F0D0] p-4 mt-auto">
-        <p className="text-xs font-semibold text-[#AAAAAA] mb-3">This Week</p>
+      <div className="rounded-xl bg-[rgba(107,143,113,0.08)] border border-[#D0F0D0] p-4 mt-auto">
+        <p className="text-xs font-semibold text-[#8B9B8D] mb-3">This Week</p>
         <div className="flex items-end justify-between gap-1.5">
           {[6, 9, 5, 12, 8, 11, 7].map((h, i) => (
             <div key={i} className="flex-1 flex flex-col items-center gap-1">
               <div
-                className="w-full rounded-t-sm bg-[#00B050]"
+                className="w-full rounded-t-sm bg-[#2C3E2D]"
                 style={{ height: `${h * 4}px`, opacity: 0.6 + (h / 40) }}
               />
             </div>
@@ -378,7 +378,7 @@ function EarnWhileHelpContent() {
         </div>
         <div className="flex items-center justify-between mt-3">
           <span className="text-xs text-[#555555]">7 sessions</span>
-          <span className="text-sm font-bold text-[#00B050]">$186.62</span>
+          <span className="text-sm font-bold text-[#6B8F71]">$186.62</span>
         </div>
       </div>
     </>
@@ -408,7 +408,7 @@ function GoalRoadmapContent() {
             </div>
             <div className="h-1.5 rounded-full bg-white/20 overflow-hidden">
               <div
-                className="h-full rounded-full bg-[#00B050]"
+                className="h-full rounded-full bg-[#2C3E2D]"
                 style={{ width: `${g.pct}%` }}
               />
             </div>
@@ -422,12 +422,12 @@ function GoalRoadmapContent() {
 function HipaaContent() {
   return (
     <div className="flex flex-col items-center justify-center h-full text-center gap-3">
-      <div className="w-12 h-12 rounded-xl bg-[#F0FBF4] flex items-center justify-center">
-        <Shield size={22} className="text-[#00B050]" aria-hidden="true" />
+      <div className="w-12 h-12 rounded-xl bg-[rgba(107,143,113,0.08)] flex items-center justify-center">
+        <Shield size={22} className="text-[#6B8F71]" aria-hidden="true" />
       </div>
-      <p className="text-base font-bold text-[#1A1A1A]">HIPAA Compliant</p>
+      <p className="text-base font-bold text-[#2C3E2D]">HIPAA Compliant</p>
       <div className="flex items-center gap-1.5">
-        <CheckCircle2 size={14} className="text-[#00B050]" aria-hidden="true" />
+        <CheckCircle2 size={14} className="text-[#6B8F71]" aria-hidden="true" />
         <span className="text-xs text-[#555555]">End-to-end encrypted</span>
       </div>
     </div>
@@ -440,7 +440,7 @@ function CalendarContent() {
       <div className="w-12 h-12 rounded-xl bg-[#EFF6FF] flex items-center justify-center">
         <Calendar size={22} className="text-[#0077B6]" aria-hidden="true" />
       </div>
-      <p className="text-base font-bold text-[#1A1A1A]">Calendar Sync</p>
+      <p className="text-base font-bold text-[#2C3E2D]">Calendar Sync</p>
       <p className="text-xs text-[#555555] leading-snug max-w-[140px]">
         Google Calendar, Apple, Outlook
       </p>
@@ -452,14 +452,14 @@ function VerticalsContent() {
   return (
     <>
       <div className="flex items-center gap-2 mb-3">
-        <span className="text-xs font-semibold uppercase tracking-widest text-[#AAAAAA]">5 Service Verticals</span>
+        <span className="text-xs font-semibold uppercase tracking-widest text-[#8B9B8D]">5 Service Verticals</span>
       </div>
-      <h3 className="text-2xl font-bold text-[#1A1A1A] mb-4">
+      <h3 className="text-2xl font-bold text-[#2C3E2D] mb-4">
         Every need, covered.
       </h3>
       <div className="flex flex-wrap gap-2.5 flex-1 content-start">
         {[
-          { label: 'Housing', icon: <Home size={13} />, color: '#00B050', bg: '#F0FBF4' },
+          { label: 'Housing', icon: <Home size={13} />, color: '#6B8F71', bg: 'rgba(107,143,113,0.08)' },
           { label: 'Food', icon: <Utensils size={13} />, color: '#F59E0B', bg: '#FFFBEB' },
           { label: 'Mental Health', icon: <Brain size={13} />, color: '#8B5CF6', bg: '#F5F3FF' },
           { label: 'Rehab', icon: <Repeat2 size={13} />, color: '#0077B6', bg: '#EFF6FF' },
@@ -541,7 +541,7 @@ export function LandingPageC() {
           backgroundColor: heroPast ? 'rgba(255,255,255,0.97)' : 'rgba(0,0,0,0.6)',
           backdropFilter: 'blur(12px)',
           WebkitBackdropFilter: 'blur(12px)',
-          borderBottom: heroPast ? '1px solid #E5E7EB' : '1px solid rgba(255,255,255,0.08)',
+          borderBottom: heroPast ? '1px solid rgba(44,62,45,0.1)' : '1px solid rgba(255,255,255,0.08)',
         }}
         role="banner"
       >
@@ -555,14 +555,14 @@ export function LandingPageC() {
             className="flex items-center gap-2.5 shrink-0"
             aria-label="CompassCHW home"
           >
-            <div className="w-8 h-8 rounded-lg bg-[#00B050] flex items-center justify-center shadow-[0_0_12px_rgba(0,176,80,0.4)]">
+            <div className="w-8 h-8 rounded-lg bg-[#2C3E2D] flex items-center justify-center shadow-[0_0_12px_rgba(0,176,80,0.4)]">
               <Compass size={17} className="text-white" aria-hidden="true" />
             </div>
             <span
               className="text-[17px] font-bold transition-colors duration-300"
-              style={{ color: heroPast ? '#1A1A1A' : '#FFFFFF' }}
+              style={{ color: heroPast ? '#2C3E2D' : '#FFFFFF' }}
             >
-              <span className="text-[#00B050]">Compass</span>CHW
+              <span className="text-[#6B8F71]">Compass</span>CHW
             </span>
           </Link>
 
@@ -576,7 +576,7 @@ export function LandingPageC() {
                   className="text-sm font-medium transition-colors duration-300"
                   style={{ color: heroPast ? '#555555' : 'rgba(255,255,255,0.7)' }}
                   onMouseEnter={(e) => {
-                    (e.target as HTMLElement).style.color = heroPast ? '#1A1A1A' : '#FFFFFF';
+                    (e.target as HTMLElement).style.color = heroPast ? '#2C3E2D' : '#FFFFFF';
                   }}
                   onMouseLeave={(e) => {
                     (e.target as HTMLElement).style.color = heroPast ? '#555555' : 'rgba(255,255,255,0.7)';
@@ -599,7 +599,7 @@ export function LandingPageC() {
             </Link>
             <Link
               to="/register"
-              className="text-sm font-semibold bg-[#00B050] hover:bg-[#008F40] text-white px-5 py-2 rounded-lg transition-all duration-200"
+              className="text-sm font-semibold bg-[#2C3E2D] hover:bg-[#3A5240] text-white px-5 py-2 rounded-lg transition-all duration-200"
               style={{
                 boxShadow: heroPast
                   ? '0 1px 3px rgba(0,0,0,0.1)'
@@ -614,7 +614,7 @@ export function LandingPageC() {
           <button
             type="button"
             className="md:hidden p-2 rounded-lg transition-colors"
-            style={{ color: heroPast ? '#1A1A1A' : 'rgba(255,255,255,0.8)' }}
+            style={{ color: heroPast ? '#2C3E2D' : 'rgba(255,255,255,0.8)' }}
             aria-label={mobileMenuOpen ? 'Close menu' : 'Open menu'}
             aria-expanded={mobileMenuOpen}
             aria-controls="mobile-nav"
@@ -631,7 +631,7 @@ export function LandingPageC() {
             className="md:hidden px-5 py-5 flex flex-col gap-4"
             style={{
               backgroundColor: heroPast ? '#FFFFFF' : '#0A0A0A',
-              borderTop: heroPast ? '1px solid #E5E7EB' : '1px solid rgba(255,255,255,0.08)',
+              borderTop: heroPast ? '1px solid rgba(44,62,45,0.1)' : '1px solid rgba(255,255,255,0.08)',
             }}
             role="dialog"
             aria-label="Mobile navigation menu"
@@ -642,14 +642,14 @@ export function LandingPageC() {
                 href={item.href}
                 onClick={(e) => handleAnchorClick(e, item.href)}
                 className="text-base font-medium py-1 transition-colors"
-                style={{ color: heroPast ? '#1A1A1A' : '#FFFFFF' }}
+                style={{ color: heroPast ? '#2C3E2D' : '#FFFFFF' }}
               >
                 {item.label}
               </a>
             ))}
             <div
               className="pt-4 flex flex-col gap-3"
-              style={{ borderTop: heroPast ? '1px solid #E5E7EB' : '1px solid rgba(255,255,255,0.1)' }}
+              style={{ borderTop: heroPast ? '1px solid rgba(44,62,45,0.1)' : '1px solid rgba(255,255,255,0.1)' }}
             >
               <Link
                 to="/login"
@@ -661,7 +661,7 @@ export function LandingPageC() {
               </Link>
               <Link
                 to="/register"
-                className="text-sm font-semibold bg-[#00B050] hover:bg-[#008F40] text-white px-5 py-2.5 rounded-lg text-center transition-colors shadow-[0_0_20px_rgba(0,176,80,0.3)]"
+                className="text-sm font-semibold bg-[#2C3E2D] hover:bg-[#3A5240] text-white px-5 py-2.5 rounded-lg text-center transition-colors shadow-[0_0_20px_rgba(0,176,80,0.3)]"
                 onClick={() => setMobileMenuOpen(false)}
               >
                 Get Started
@@ -711,7 +711,7 @@ export function LandingPageC() {
             aria-label="81% engagement target"
           >
             <span className="text-2xl font-bold text-white">81%</span>
-            <span className="text-xs text-[#AAAAAA] mt-0.5">engagement target</span>
+            <span className="text-xs text-[#8B9B8D] mt-0.5">engagement target</span>
           </div>
 
           {/* Floating glass stat — bottom left */}
@@ -726,7 +726,7 @@ export function LandingPageC() {
             aria-label="$26.66 per unit rate"
           >
             <span className="text-2xl font-bold text-white">$26.66</span>
-            <span className="text-xs text-[#AAAAAA] mt-0.5">per unit rate</span>
+            <span className="text-xs text-[#8B9B8D] mt-0.5">per unit rate</span>
           </div>
 
           {/* Main hero content */}
@@ -737,10 +737,10 @@ export function LandingPageC() {
               style={{
                 background: 'rgba(0,176,80,0.12)',
                 border: '1px solid rgba(0,176,80,0.3)',
-                color: '#00B050',
+                color: '#6B8F71',
               }}
             >
-              <span className="w-1.5 h-1.5 rounded-full bg-[#00B050] animate-pulse" aria-hidden="true" />
+              <span className="w-1.5 h-1.5 rounded-full bg-[#2C3E2D] animate-pulse" aria-hidden="true" />
               Now available in Los Angeles, CA
             </div>
 
@@ -753,7 +753,7 @@ export function LandingPageC() {
               <span
                 className="block"
                 style={{
-                  color: '#00B050',
+                  color: '#6B8F71',
                   textShadow: '0 0 60px rgba(0,176,80,0.4)',
                 }}
               >
@@ -762,7 +762,7 @@ export function LandingPageC() {
             </h1>
 
             {/* Sub-copy */}
-            <p className="mt-7 text-lg md:text-xl text-[#AAAAAA] leading-relaxed max-w-2xl mx-auto">
+            <p className="mt-7 text-lg md:text-xl text-[#8B9B8D] leading-relaxed max-w-2xl mx-auto">
               The first gig-economy marketplace connecting Community Health Workers
               with people who need help navigating housing, food, mental health, and
               healthcare systems.
@@ -774,7 +774,7 @@ export function LandingPageC() {
                 to="/register"
                 className="group relative inline-flex items-center gap-2 text-base font-semibold text-white px-8 py-4 rounded-xl transition-all duration-200 hover:-translate-y-0.5"
                 style={{
-                  background: '#00B050',
+                  background: '#2C3E2D',
                   boxShadow: '0 0 0 0 rgba(0,176,80,0.4)',
                   animation: 'glow-pulse 2.5s ease-in-out infinite',
                 }}
@@ -816,12 +816,12 @@ export function LandingPageC() {
         >
           <div className="max-w-6xl mx-auto">
             <AnimateIn className="mb-14 text-center">
-              <p className="text-xs font-semibold uppercase tracking-widest text-[#00B050] mb-3">
+              <p className="text-xs font-semibold uppercase tracking-widest text-[#6B8F71] mb-3">
                 Platform
               </p>
               <h2
                 id="features-heading"
-                className="text-5xl font-bold text-[#1A1A1A] tracking-tight"
+                className="text-5xl font-bold text-[#2C3E2D] tracking-tight"
               >
                 Everything you need.
               </h2>
@@ -846,17 +846,17 @@ export function LandingPageC() {
         <section
           id="how-it-works"
           className="py-24 px-5 scroll-mt-16"
-          style={{ background: '#F8FAFB' }}
+          style={{ background: '#FBF7F0' }}
           aria-labelledby="how-it-works-heading"
         >
           <div className="max-w-5xl mx-auto">
             <AnimateIn className="mb-16 text-center">
-              <p className="text-xs font-semibold uppercase tracking-widest text-[#00B050] mb-3">
+              <p className="text-xs font-semibold uppercase tracking-widest text-[#6B8F71] mb-3">
                 The Process
               </p>
               <h2
                 id="how-it-works-heading"
-                className="text-5xl font-bold text-[#1A1A1A] tracking-tight"
+                className="text-5xl font-bold text-[#2C3E2D] tracking-tight"
               >
                 How CompassCHW Works
               </h2>
@@ -881,19 +881,19 @@ export function LandingPageC() {
             <AnimateIn direction="left">
               <article
                 className="rounded-2xl p-9 flex flex-col h-full"
-                style={{ background: '#1A1A1A' }}
+                style={{ background: '#2C3E2D' }}
                 aria-label="For Community Members"
               >
                 <span
                   className="inline-flex items-center self-start text-xs font-semibold px-3 py-1 rounded-full mb-6"
-                  style={{ background: 'rgba(0,176,80,0.15)', color: '#00B050' }}
+                  style={{ background: 'rgba(0,176,80,0.15)', color: '#6B8F71' }}
                 >
                   For Community Members
                 </span>
                 <h3 className="text-2xl font-bold text-white leading-snug mb-3">
                   Free healthcare navigation, covered by your health plan.
                 </h3>
-                <p className="text-sm text-[#AAAAAA] leading-relaxed mb-7">
+                <p className="text-sm text-[#8B9B8D] leading-relaxed mb-7">
                   A dedicated CHW guides you through the system —
                   housing, food, healthcare, and more. At zero cost to you.
                 </p>
@@ -902,7 +902,7 @@ export function LandingPageC() {
                     <li key={f.text} className="flex items-start gap-3">
                       <div
                         className="w-1.5 h-1.5 rounded-full mt-1.5 shrink-0"
-                        style={{ background: '#00B050' }}
+                        style={{ background: '#2C3E2D' }}
                         aria-hidden="true"
                       />
                       <span className="text-sm text-[#CCCCCC]">{f.text}</span>
@@ -911,7 +911,7 @@ export function LandingPageC() {
                 </ul>
                 <Link
                   to="/register"
-                  className="inline-flex items-center justify-center gap-2 text-sm font-semibold text-[#1A1A1A] bg-white hover:bg-[#F0FBF4] px-6 py-3 rounded-xl transition-colors self-start"
+                  className="inline-flex items-center justify-center gap-2 text-sm font-semibold text-[#2C3E2D] bg-white hover:bg-[rgba(107,143,113,0.08)] px-6 py-3 rounded-xl transition-colors self-start"
                 >
                   Find Help
                   <ArrowRight size={15} aria-hidden="true" />
@@ -923,7 +923,7 @@ export function LandingPageC() {
             <AnimateIn direction="right">
               <article
                 className="rounded-2xl p-9 flex flex-col h-full border"
-                style={{ background: '#FFFFFF', borderColor: '#E5E7EB' }}
+                style={{ background: '#FFFFFF', borderColor: 'rgba(44,62,45,0.1)' }}
                 aria-label="For Community Health Workers"
               >
                 <span
@@ -932,7 +932,7 @@ export function LandingPageC() {
                 >
                   For CHWs
                 </span>
-                <h3 className="text-2xl font-bold text-[#1A1A1A] leading-snug mb-3">
+                <h3 className="text-2xl font-bold text-[#2C3E2D] leading-snug mb-3">
                   Flexible work, Medi-Cal reimbursement, meaningful impact.
                 </h3>
                 <p className="text-sm text-[#555555] leading-relaxed mb-7">
@@ -994,7 +994,7 @@ export function LandingPageC() {
 
           <div className="relative z-10 max-w-5xl mx-auto text-center">
             <AnimateIn>
-              <p className="text-xs font-semibold uppercase tracking-widest text-[#00B050] mb-3">
+              <p className="text-xs font-semibold uppercase tracking-widest text-[#6B8F71] mb-3">
                 By the Numbers
               </p>
               <h2
@@ -1024,7 +1024,7 @@ export function LandingPageC() {
         <section
           className="relative py-28 px-5 overflow-hidden"
           aria-labelledby="cta-heading"
-          style={{ background: 'linear-gradient(135deg, #00B050 0%, #008F40 50%, #007A35 100%)' }}
+          style={{ background: 'linear-gradient(135deg, #6B8F71 0%, #4A7A50 50%, #3A5240 100%)' }}
         >
           {/* Noise/texture overlay */}
           <div
@@ -1049,7 +1049,7 @@ export function LandingPageC() {
               <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
                 <Link
                   to="/register"
-                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 font-semibold text-[#00B050] bg-white hover:bg-[#F0FBF4] px-8 py-4 rounded-xl text-base transition-colors shadow-lg"
+                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 font-semibold text-[#6B8F71] bg-white hover:bg-[rgba(107,143,113,0.08)] px-8 py-4 rounded-xl text-base transition-colors shadow-lg"
                 >
                   Get Started Free
                 </Link>
@@ -1081,11 +1081,11 @@ export function LandingPageC() {
             className="flex items-center gap-2 shrink-0"
             aria-label="CompassCHW home"
           >
-            <div className="w-7 h-7 rounded-lg bg-[#00B050] flex items-center justify-center">
+            <div className="w-7 h-7 rounded-lg bg-[#2C3E2D] flex items-center justify-center">
               <Compass size={14} className="text-white" aria-hidden="true" />
             </div>
             <span className="text-sm font-bold text-white">
-              <span className="text-[#00B050]">Compass</span>CHW
+              <span className="text-[#6B8F71]">Compass</span>CHW
             </span>
           </Link>
 
@@ -1104,7 +1104,7 @@ export function LandingPageC() {
               <a
                 key={link.label}
                 href={link.href}
-                className="text-xs text-[#555555] hover:text-[#AAAAAA] transition-colors"
+                className="text-xs text-[#555555] hover:text-[#8B9B8D] transition-colors"
               >
                 {link.label}
               </a>

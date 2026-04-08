@@ -137,14 +137,14 @@ function StepBasicInfo({ data, onChange }: StepBasicInfoProps) {
   return (
     <div className="space-y-5">
       <div>
-        <h2 className="text-xl font-semibold text-[#1A1A1A] mb-1">Welcome to CompassCHW</h2>
+        <h2 className="text-xl font-semibold text-[#2C3E2D] mb-1">Welcome to CompassCHW</h2>
         <p className="text-sm text-[#555555]">
           Let's get you set up. A few quick questions to connect you with the right support.
         </p>
       </div>
 
       <div>
-        <label htmlFor="member-first-name" className="block text-sm font-medium text-[#1A1A1A] mb-1.5">
+        <label htmlFor="member-first-name" className="block text-sm font-medium text-[#2C3E2D] mb-1.5">
           First name
         </label>
         <input
@@ -156,12 +156,12 @@ function StepBasicInfo({ data, onChange }: StepBasicInfoProps) {
             onChange({ ...data, firstName: e.target.value })
           }
           placeholder="Rosa"
-          className="w-full rounded-[8px] border border-[#E5E7EB] px-3.5 py-2.5 text-sm text-[#1A1A1A] placeholder:text-[#AAAAAA] focus:outline-none focus:ring-2 focus:ring-[#00B050] focus:border-transparent transition"
+          className="w-full rounded-[12px] border border-[rgba(44,62,45,0.1)] px-3.5 py-2.5 text-sm text-[#2C3E2D] placeholder:text-[#8B9B8D] focus:outline-none focus:ring-2 focus:ring-[#6B8F71] focus:border-transparent transition"
         />
       </div>
 
       <div>
-        <label htmlFor="member-zip" className="block text-sm font-medium text-[#1A1A1A] mb-1.5">
+        <label htmlFor="member-zip" className="block text-sm font-medium text-[#2C3E2D] mb-1.5">
           ZIP code
         </label>
         <input
@@ -174,13 +174,13 @@ function StepBasicInfo({ data, onChange }: StepBasicInfoProps) {
             onChange({ ...data, zipCode: e.target.value })
           }
           placeholder="90031"
-          className="w-full rounded-[8px] border border-[#E5E7EB] px-3.5 py-2.5 text-sm text-[#1A1A1A] placeholder:text-[#AAAAAA] focus:outline-none focus:ring-2 focus:ring-[#00B050] focus:border-transparent transition"
+          className="w-full rounded-[12px] border border-[rgba(44,62,45,0.1)] px-3.5 py-2.5 text-sm text-[#2C3E2D] placeholder:text-[#8B9B8D] focus:outline-none focus:ring-2 focus:ring-[#6B8F71] focus:border-transparent transition"
         />
-        <p className="text-xs text-[#AAAAAA] mt-1">Used to find CHWs near you.</p>
+        <p className="text-xs text-[#8B9B8D] mt-1">Used to find CHWs near you.</p>
       </div>
 
       <div>
-        <label htmlFor="member-language" className="block text-sm font-medium text-[#1A1A1A] mb-1.5">
+        <label htmlFor="member-language" className="block text-sm font-medium text-[#2C3E2D] mb-1.5">
           Preferred language
         </label>
         <div className="relative">
@@ -188,7 +188,7 @@ function StepBasicInfo({ data, onChange }: StepBasicInfoProps) {
             id="member-language"
             value={data.preferredLanguage}
             onChange={(e) => onChange({ ...data, preferredLanguage: e.target.value })}
-            className="w-full rounded-[8px] border border-[#E5E7EB] px-3.5 py-2.5 pr-9 text-sm text-[#1A1A1A] bg-white appearance-none focus:outline-none focus:ring-2 focus:ring-[#00B050] focus:border-transparent transition cursor-pointer"
+            className="w-full rounded-[12px] border border-[rgba(44,62,45,0.1)] px-3.5 py-2.5 pr-9 text-sm text-[#2C3E2D] bg-white appearance-none focus:outline-none focus:ring-2 focus:ring-[#6B8F71] focus:border-transparent transition cursor-pointer"
           >
             <option value="" disabled>
               Select a language
@@ -201,7 +201,7 @@ function StepBasicInfo({ data, onChange }: StepBasicInfoProps) {
           </select>
           <ChevronDown
             size={16}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-[#AAAAAA] pointer-events-none"
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-[#8B9B8D] pointer-events-none"
             aria-hidden="true"
           />
         </div>
@@ -228,10 +228,10 @@ function StepHealthAssessment({ data, onChange }: StepHealthProps) {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-semibold text-[#1A1A1A] mb-1">Health & needs assessment</h2>
+        <h2 className="text-xl font-semibold text-[#2C3E2D] mb-1">Health & needs assessment</h2>
         <p className="text-sm text-[#555555]">
           In the past 12 months, have you had difficulty with any of the following?{' '}
-          <span className="text-[#AAAAAA]">(select all that apply)</span>
+          <span className="text-[#8B9B8D]">(select all that apply)</span>
         </p>
       </div>
 
@@ -243,10 +243,10 @@ function StepHealthAssessment({ data, onChange }: StepHealthProps) {
             <label
               key={key}
               className={[
-                'flex items-start gap-3.5 rounded-[12px] border px-4 py-3.5 cursor-pointer transition-all select-none',
+                'flex items-start gap-3.5 rounded-[20px] border px-4 py-3.5 cursor-pointer transition-all select-none',
                 checked
-                  ? 'border-[#00B050] bg-[#F0FBF4]'
-                  : 'border-[#E5E7EB] bg-white hover:border-[#00B050]/40 hover:bg-[#F8FAFB]',
+                  ? 'border-[#6B8F71] bg-[rgba(107,143,113,0.08)]'
+                  : 'border-[rgba(44,62,45,0.1)] bg-white hover:border-[#6B8F71]/40 hover:bg-[#FBF7F0]',
               ].join(' ')}
             >
               <input
@@ -258,7 +258,7 @@ function StepHealthAssessment({ data, onChange }: StepHealthProps) {
               <span
                 className={[
                   'mt-0.5 w-5 h-5 rounded-[4px] border-2 flex items-center justify-center flex-shrink-0 transition-colors',
-                  checked ? 'border-[#00B050] bg-[#00B050]' : 'border-[#D1D5DB] bg-white',
+                  checked ? 'border-[#6B8F71] bg-[#2C3E2D]' : 'border-[#D1D5DB] bg-white',
                 ].join(' ')}
                 aria-hidden="true"
               >
@@ -266,7 +266,7 @@ function StepHealthAssessment({ data, onChange }: StepHealthProps) {
               </span>
               <div className="flex-1 min-w-0">
                 <span
-                  className={`block text-sm font-semibold ${checked ? 'text-[#00B050]' : 'text-[#1A1A1A]'}`}
+                  className={`block text-sm font-semibold ${checked ? 'text-[#6B8F71]' : 'text-[#2C3E2D]'}`}
                 >
                   {label}
                 </span>
@@ -281,7 +281,7 @@ function StepHealthAssessment({ data, onChange }: StepHealthProps) {
 
       {/* Urgency radio */}
       <div>
-        <p className="text-sm font-medium text-[#1A1A1A] mb-3">
+        <p className="text-sm font-medium text-[#2C3E2D] mb-3">
           How urgent is your need for support?
         </p>
         <div className="space-y-2.5">
@@ -291,10 +291,10 @@ function StepHealthAssessment({ data, onChange }: StepHealthProps) {
               <label
                 key={value}
                 className={[
-                  'flex items-start gap-3.5 rounded-[12px] border px-4 py-3.5 cursor-pointer transition-all select-none',
+                  'flex items-start gap-3.5 rounded-[20px] border px-4 py-3.5 cursor-pointer transition-all select-none',
                   selected
                     ? 'border-[#0077B6] bg-[#F0F7FF]'
-                    : 'border-[#E5E7EB] bg-white hover:border-[#0077B6]/40 hover:bg-[#F8FAFB]',
+                    : 'border-[rgba(44,62,45,0.1)] bg-white hover:border-[#0077B6]/40 hover:bg-[#FBF7F0]',
                 ].join(' ')}
               >
                 <input
@@ -343,7 +343,7 @@ function StepInsurance({ data, onChange }: StepInsuranceProps) {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-semibold text-[#1A1A1A] mb-1">Insurance information</h2>
+        <h2 className="text-xl font-semibold text-[#2C3E2D] mb-1">Insurance information</h2>
         <p className="text-sm text-[#555555]">
           Optional — sharing your insurance helps CHWs coordinate care that's covered for you.
         </p>
@@ -353,17 +353,17 @@ function StepInsurance({ data, onChange }: StepInsuranceProps) {
       <div>
         <label
           htmlFor="member-insurance"
-          className="block text-sm font-medium text-[#1A1A1A] mb-1.5"
+          className="block text-sm font-medium text-[#2C3E2D] mb-1.5"
         >
           Insurance provider{' '}
-          <span className="text-[#AAAAAA] font-normal">(optional)</span>
+          <span className="text-[#8B9B8D] font-normal">(optional)</span>
         </label>
         <div className="relative">
           <select
             id="member-insurance"
             value={data.insuranceProvider}
             onChange={(e) => onChange({ ...data, insuranceProvider: e.target.value })}
-            className="w-full rounded-[8px] border border-[#E5E7EB] px-3.5 py-2.5 pr-9 text-sm text-[#1A1A1A] bg-white appearance-none focus:outline-none focus:ring-2 focus:ring-[#00B050] focus:border-transparent transition cursor-pointer"
+            className="w-full rounded-[12px] border border-[rgba(44,62,45,0.1)] px-3.5 py-2.5 pr-9 text-sm text-[#2C3E2D] bg-white appearance-none focus:outline-none focus:ring-2 focus:ring-[#6B8F71] focus:border-transparent transition cursor-pointer"
           >
             <option value="">Select your provider (or skip)</option>
             {INSURANCE_PROVIDER_OPTIONS.map((opt) => (
@@ -374,7 +374,7 @@ function StepInsurance({ data, onChange }: StepInsuranceProps) {
           </select>
           <ChevronDown
             size={16}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-[#AAAAAA] pointer-events-none"
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-[#8B9B8D] pointer-events-none"
             aria-hidden="true"
           />
         </div>
@@ -384,7 +384,7 @@ function StepInsurance({ data, onChange }: StepInsuranceProps) {
       <button
         type="button"
         aria-disabled="true"
-        className="w-full border-2 border-[#00B050] text-[#00B050] hover:bg-[#F0FBF4] font-semibold py-2.5 rounded-[8px] text-sm transition-colors flex items-center justify-center gap-2"
+        className="w-full border-2 border-[#6B8F71] text-[#6B8F71] hover:bg-[rgba(107,143,113,0.08)] font-semibold py-2.5 rounded-[12px] text-sm transition-colors flex items-center justify-center gap-2"
         onClick={() => {/* placeholder: insurance OAuth/connection flow */}}
       >
         <svg
@@ -403,13 +403,13 @@ function StepInsurance({ data, onChange }: StepInsuranceProps) {
         </svg>
         Connect Insurance Provider
       </button>
-      <p className="text-xs text-[#AAAAAA] -mt-3 text-center">
+      <p className="text-xs text-[#8B9B8D] -mt-3 text-center">
         Securely link your plan to auto-verify eligibility (coming soon)
       </p>
 
       {/* Info callout */}
-      <div className="rounded-[12px] border border-[#E5E7EB] bg-[#F8FAFB] px-4 py-4">
-        <p className="text-xs font-semibold text-[#1A1A1A] mb-2">Why we ask</p>
+      <div className="rounded-[20px] border border-[rgba(44,62,45,0.1)] bg-[#FBF7F0] px-4 py-4">
+        <p className="text-xs font-semibold text-[#2C3E2D] mb-2">Why we ask</p>
         <p className="text-xs text-[#555555] leading-relaxed">
           CHWs can bill Medi-Cal for services on your behalf. Knowing your plan lets them
           check covered services before your session — at no cost to you.
@@ -457,7 +457,7 @@ function StepWelcome({ firstName, onGetStarted }: StepWelcomeProps) {
       <div className="relative mb-6">
         {/* Decorative confetti dots */}
         <div className="absolute -top-3 -left-6 flex gap-1" aria-hidden="true">
-          {['#00B050', '#0077B6', '#F59E0B', '#DC2626'].map((color, i) => (
+          {['#6B8F71', '#0077B6', '#F59E0B', '#DC2626'].map((color, i) => (
             <span
               key={i}
               className="w-2.5 h-2.5 rounded-sm rotate-12 opacity-80"
@@ -466,7 +466,7 @@ function StepWelcome({ firstName, onGetStarted }: StepWelcomeProps) {
           ))}
         </div>
         <div className="absolute -top-3 -right-6 flex gap-1" aria-hidden="true">
-          {['#F59E0B', '#00B050', '#0077B6', '#DC2626'].map((color, i) => (
+          {['#F59E0B', '#6B8F71', '#0077B6', '#DC2626'].map((color, i) => (
             <span
               key={i}
               className="w-2.5 h-2.5 rounded-sm opacity-80"
@@ -476,11 +476,11 @@ function StepWelcome({ firstName, onGetStarted }: StepWelcomeProps) {
         </div>
 
         <div className="w-20 h-20 rounded-full bg-gradient-to-br from-[#D0F0D0] to-[#B0E8C8] flex items-center justify-center">
-          <Sparkles size={36} className="text-[#00B050]" />
+          <Sparkles size={36} className="text-[#6B8F71]" />
         </div>
       </div>
 
-      <h2 className="text-2xl font-bold text-[#1A1A1A] mb-1">
+      <h2 className="text-2xl font-bold text-[#2C3E2D] mb-1">
         Welcome to CompassCHW{firstName ? `, ${firstName}` : ''}!
       </h2>
       <p className="text-sm text-[#555555] max-w-xs leading-relaxed mb-8">
@@ -489,7 +489,7 @@ function StepWelcome({ firstName, onGetStarted }: StepWelcomeProps) {
       </p>
 
       {/* Points award card */}
-      <div className="w-full rounded-[12px] border-2 border-[#00B050] bg-gradient-to-br from-[#F0FBF4] to-[#E8F7EE] px-6 py-5 mb-6">
+      <div className="w-full rounded-[20px] border-2 border-[#6B8F71] bg-gradient-to-br from-[rgba(107,143,113,0.08)] to-[#E8F7EE] px-6 py-5 mb-6">
         <div className="flex items-center justify-center gap-2 mb-1">
           <Zap size={18} className="text-[#F59E0B]" />
           <p className="text-xs font-semibold text-[#555555] uppercase tracking-wide">
@@ -499,13 +499,13 @@ function StepWelcome({ firstName, onGetStarted }: StepWelcomeProps) {
         </div>
         <div className="flex items-baseline justify-center gap-1.5 mb-2">
           <span
-            className="text-5xl font-black text-[#00B050] tabular-nums"
+            className="text-5xl font-black text-[#6B8F71] tabular-nums"
             aria-live="polite"
             aria-label={`${pointsDisplayed} engagement points`}
           >
             {pointsDisplayed}
           </span>
-          <span className="text-lg font-bold text-[#00B050]">pts</span>
+          <span className="text-lg font-bold text-[#6B8F71]">pts</span>
         </div>
         <p className="text-xs text-[#555555]">for completing your profile</p>
 
@@ -523,7 +523,7 @@ function StepWelcome({ firstName, onGetStarted }: StepWelcomeProps) {
 
       {/* How it works */}
       <div className="w-full text-left mb-8">
-        <p className="text-xs font-semibold text-[#AAAAAA] uppercase tracking-wide mb-3 text-center">
+        <p className="text-xs font-semibold text-[#8B9B8D] uppercase tracking-wide mb-3 text-center">
           What's next
         </p>
         <div className="space-y-2.5">
@@ -533,9 +533,9 @@ function StepWelcome({ firstName, onGetStarted }: StepWelcomeProps) {
             { icon: '🎯', text: 'Set goals and track your progress over time' },
             { icon: '⭐', text: 'Earn more points for every session and milestone' },
           ].map(({ icon, text }, i) => (
-            <div key={i} className="flex items-center gap-3 rounded-[8px] bg-[#F8FAFB] border border-[#E5E7EB] px-3.5 py-2.5">
+            <div key={i} className="flex items-center gap-3 rounded-[12px] bg-[#FBF7F0] border border-[rgba(44,62,45,0.1)] px-3.5 py-2.5">
               <span className="text-base" role="img" aria-hidden="true">{icon}</span>
-              <span className="text-sm text-[#1A1A1A]">{text}</span>
+              <span className="text-sm text-[#2C3E2D]">{text}</span>
             </div>
           ))}
         </div>
@@ -544,7 +544,7 @@ function StepWelcome({ firstName, onGetStarted }: StepWelcomeProps) {
       <button
         type="button"
         onClick={onGetStarted}
-        className="w-full inline-flex items-center justify-center gap-2 bg-[#00B050] hover:bg-[#008F40] text-white font-semibold py-3 rounded-[8px] text-sm transition-colors"
+        className="w-full inline-flex items-center justify-center gap-2 bg-[#2C3E2D] hover:bg-[#3A5240] text-white font-semibold py-3 rounded-[12px] text-sm transition-colors"
       >
         Get Started
         <ArrowRight size={16} />
@@ -578,7 +578,7 @@ function StepDots({ currentStep, totalSteps, labels }: StepDotsProps) {
                 <div
                   className={[
                     'flex-1 h-0.5 transition-colors',
-                    stepNumber === 1 ? 'invisible' : isCompleted || isCurrent ? 'bg-[#00B050]' : 'bg-[#E5E7EB]',
+                    stepNumber === 1 ? 'invisible' : isCompleted || isCurrent ? 'bg-[#2C3E2D]' : 'bg-[rgba(44,62,45,0.1)]',
                   ].join(' ')}
                   aria-hidden="true"
                 />
@@ -587,10 +587,10 @@ function StepDots({ currentStep, totalSteps, labels }: StepDotsProps) {
                   className={[
                     'w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 transition-all',
                     isCompleted
-                      ? 'bg-[#00B050] text-white'
+                      ? 'bg-[#2C3E2D] text-white'
                       : isCurrent
                       ? 'bg-[#0077B6] text-white ring-4 ring-[#0077B6]/20'
-                      : 'bg-[#E5E7EB] text-[#AAAAAA]',
+                      : 'bg-[rgba(44,62,45,0.1)] text-[#8B9B8D]',
                   ].join(' ')}
                 >
                   {isCompleted ? (
@@ -603,7 +603,7 @@ function StepDots({ currentStep, totalSteps, labels }: StepDotsProps) {
                 <div
                   className={[
                     'flex-1 h-0.5 transition-colors',
-                    stepNumber === totalSteps ? 'invisible' : isCompleted ? 'bg-[#00B050]' : 'bg-[#E5E7EB]',
+                    stepNumber === totalSteps ? 'invisible' : isCompleted ? 'bg-[#2C3E2D]' : 'bg-[rgba(44,62,45,0.1)]',
                   ].join(' ')}
                   aria-hidden="true"
                 />
@@ -612,7 +612,7 @@ function StepDots({ currentStep, totalSteps, labels }: StepDotsProps) {
               <span
                 className={[
                   'text-[10px] font-medium mt-1.5 text-center leading-tight',
-                  isCurrent ? 'text-[#0077B6]' : isCompleted ? 'text-[#00B050]' : 'text-[#AAAAAA]',
+                  isCurrent ? 'text-[#0077B6]' : isCompleted ? 'text-[#6B8F71]' : 'text-[#8B9B8D]',
                 ].join(' ')}
               >
                 {labels[i]}
@@ -699,19 +699,19 @@ export function MemberOnboarding() {
   const isWelcomeStep = step === TOTAL_STEPS;
 
   return (
-    <div className="min-h-screen bg-[#F8FAFB] flex flex-col items-center justify-center px-4 py-12">
-      <div className="w-full max-w-lg bg-white rounded-[12px] shadow-sm border border-[#E5E7EB] px-6 sm:px-10 py-10">
+    <div className="min-h-screen bg-[#FBF7F0] flex flex-col items-center justify-center px-4 py-12">
+      <div className="w-full max-w-lg bg-white rounded-[20px] shadow-sm border border-[rgba(44,62,45,0.1)] px-6 sm:px-10 py-10">
         {/* Logo */}
         <div className="flex flex-col items-center mb-8">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-[#00B050] flex items-center justify-center">
+            <div className="w-9 h-9 rounded-xl bg-[#2C3E2D] flex items-center justify-center">
               <Compass size={20} className="text-white" aria-hidden="true" />
             </div>
-            <span className="text-lg font-bold text-[#1A1A1A] tracking-tight">
-              Compass<span className="text-[#00B050]">CHW</span>
+            <span className="text-lg font-bold text-[#2C3E2D] tracking-tight">
+              Compass<span className="text-[#6B8F71]">CHW</span>
             </span>
           </div>
-          <p className="text-xs text-[#AAAAAA] mt-1">
+          <p className="text-xs text-[#8B9B8D] mt-1">
             {isWelcomeStep ? 'You\'re all set!' : 'New member setup — takes about 2 minutes'}
           </p>
         </div>
@@ -735,18 +735,18 @@ export function MemberOnboarding() {
 
         {/* Navigation — hidden on welcome step (it has its own CTA) */}
         {!isWelcomeStep && (
-          <div className="flex items-center justify-between mt-8 pt-6 border-t border-[#E5E7EB]">
+          <div className="flex items-center justify-between mt-8 pt-6 border-t border-[rgba(44,62,45,0.1)]">
             <button
               type="button"
               onClick={handleBack}
               disabled={step === 1}
-              className="inline-flex items-center gap-1.5 text-sm font-medium text-[#555555] hover:text-[#1A1A1A] disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-[#555555] hover:text-[#2C3E2D] disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
             >
               <ArrowLeft size={15} />
               Back
             </button>
 
-            <span className="text-xs text-[#AAAAAA]">
+            <span className="text-xs text-[#8B9B8D]">
               Step {step} of {TOTAL_STEPS - 1}
             </span>
 
@@ -754,7 +754,7 @@ export function MemberOnboarding() {
               type="button"
               onClick={handleNext}
               disabled={!canProceed()}
-              className="inline-flex items-center gap-1.5 bg-[#00B050] hover:bg-[#008F40] disabled:bg-[#D0F0D0] disabled:cursor-not-allowed text-white font-semibold px-5 py-2.5 rounded-[8px] text-sm transition-colors"
+              className="inline-flex items-center gap-1.5 bg-[#2C3E2D] hover:bg-[#3A5240] disabled:bg-[rgba(107,143,113,0.15)] disabled:cursor-not-allowed text-white font-semibold px-5 py-2.5 rounded-[12px] text-sm transition-colors"
             >
               {step === 3 ? 'Finish' : 'Continue'}
               <ArrowRight size={15} />

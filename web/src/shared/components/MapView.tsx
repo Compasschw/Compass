@@ -8,7 +8,7 @@
  * that renders <MapView> (or import it once in your app entry point).
  */
 
-import { useEffect, useRef } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -24,8 +24,8 @@ export interface MapMarker {
   type: 'chw' | 'resource';
   /** Hex color for the marker background */
   color: string;
-  /** HTML string rendered inside the Leaflet popup */
-  popupContent: string;
+  /** React node rendered inside the Leaflet popup */
+  popupContent: React.ReactNode;
 }
 
 export interface MapViewProps {
@@ -182,11 +182,9 @@ export function MapView({
             icon={buildDivIcon(marker)}
           >
             <Popup>
-              {/* Popup content is injected as HTML for flexible formatting */}
-              <div
-                dangerouslySetInnerHTML={{ __html: marker.popupContent }}
-                style={{ fontSize: '13px', lineHeight: 1.5, minWidth: '140px' }}
-              />
+              <div style={{ fontSize: '13px', lineHeight: 1.5, minWidth: '140px' }}>
+                {marker.popupContent}
+              </div>
             </Popup>
           </Marker>
         ))}

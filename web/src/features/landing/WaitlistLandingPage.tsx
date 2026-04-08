@@ -93,7 +93,11 @@ function WaitlistForm() {
 
   function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    // Frontend-only: toggle success state
+    const entry = { ...form, submittedAt: new Date().toISOString() };
+    const existing = JSON.parse(localStorage.getItem('compass_waitlist') || '[]') as Record<string, unknown>[];
+    existing.push(entry);
+    localStorage.setItem('compass_waitlist', JSON.stringify(existing));
+    console.log('[Compass Waitlist] New signup:', entry);
     setSubmitted(true);
   }
 
@@ -550,6 +554,11 @@ function BottomCTA() {
 
   function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    const entry = { email, submittedAt: new Date().toISOString() };
+    const existing = JSON.parse(localStorage.getItem('compass_waitlist') || '[]') as Record<string, unknown>[];
+    existing.push(entry);
+    localStorage.setItem('compass_waitlist', JSON.stringify(existing));
+    console.log('[Compass Waitlist] New signup:', entry);
     setSubmitted(true);
   }
 
@@ -652,10 +661,10 @@ function Footer() {
 
         {/* Links */}
         <div className="flex flex-wrap gap-6">
-          {['Privacy', 'Terms', 'HIPAA', 'Contact'].map((link) => (
+          {[['Privacy','/privacy'],['Terms','/terms'],['HIPAA','/hipaa'],['Contact','/contact']].map(([link, href]) => (
             <a
               key={link}
-              href="#"
+              href={href}
               className="text-xs no-underline transition-colors"
               style={{ color: 'rgba(251,247,240,0.5)' }}
               onMouseEnter={(e) =>

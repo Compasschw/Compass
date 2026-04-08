@@ -65,7 +65,7 @@ const RESOURCE_MARKERS: MapMarker[] = [
     label: '🛒',
     type: 'resource',
     color: '#F59E0B',
-    popupContent: '<strong style="color:#1A1A1A">LA Regional Food Bank</strong><br/><span style="color:#555555">Food Pantry</span>',
+    popupContent: (<><strong style={{ color: "#2C3E2D" }}>LA Regional Food Bank</strong><br/><span style={{ color: "#555" }}>Food Pantry</span></>),
   },
   {
     id: 'res-housing-1',
@@ -74,7 +74,7 @@ const RESOURCE_MARKERS: MapMarker[] = [
     label: '🏠',
     type: 'resource',
     color: '#3B82F6',
-    popupContent: '<strong style="color:#1A1A1A">Union Rescue Mission</strong><br/><span style="color:#555555">Emergency Shelter</span>',
+    popupContent: (<><strong style={{ color: "#2C3E2D" }}>Union Rescue Mission</strong><br/><span style={{ color: "#555" }}>Emergency Shelter</span></>),
   },
   {
     id: 'res-housing-2',
@@ -83,7 +83,7 @@ const RESOURCE_MARKERS: MapMarker[] = [
     label: '🏠',
     type: 'resource',
     color: '#3B82F6',
-    popupContent: '<strong style="color:#1A1A1A">LAMP Community</strong><br/><span style="color:#555555">Supportive Housing</span>',
+    popupContent: (<><strong style={{ color: "#2C3E2D" }}>LAMP Community</strong><br/><span style={{ color: "#555" }}>Supportive Housing</span></>),
   },
   {
     id: 'res-health-1',
@@ -92,7 +92,7 @@ const RESOURCE_MARKERS: MapMarker[] = [
     label: '🏥',
     type: 'resource',
     color: '#0D9488',
-    popupContent: "<strong style=\"color:#1A1A1A\">St. John's Well Child Center</strong><br/><span style=\"color:#555555\">Community Clinic</span>",
+    popupContent: (<><strong style={{ color: '#2C3E2D' }}>{"St. John's Well Child Center"}</strong><br/><span style={{ color: '#555' }}>Community Clinic</span></>),
   },
   {
     id: 'res-mh-1',
@@ -101,7 +101,7 @@ const RESOURCE_MARKERS: MapMarker[] = [
     label: '🧠',
     type: 'resource',
     color: '#7C3AED',
-    popupContent: '<strong style="color:#1A1A1A">Didi Hirsch Mental Health</strong><br/><span style="color:#555555">Mental Health Services</span>',
+    popupContent: (<><strong style={{ color: "#2C3E2D" }}>Didi Hirsch Mental Health</strong><br/><span style={{ color: "#555" }}>Mental Health Services</span></>),
   },
   {
     id: 'res-health-2',
@@ -110,7 +110,7 @@ const RESOURCE_MARKERS: MapMarker[] = [
     label: '🏥',
     type: 'resource',
     color: '#0D9488',
-    popupContent: '<strong style="color:#1A1A1A">APLA Health</strong><br/><span style="color:#555555">Community Clinic</span>',
+    popupContent: (<><strong style={{ color: "#2C3E2D" }}>APLA Health</strong><br/><span style={{ color: "#555" }}>Community Clinic</span></>),
   },
   {
     id: 'res-mh-2',
@@ -119,7 +119,7 @@ const RESOURCE_MARKERS: MapMarker[] = [
     label: '🧠',
     type: 'resource',
     color: '#7C3AED',
-    popupContent: '<strong style="color:#1A1A1A">LA LGBT Center</strong><br/><span style="color:#555555">Mental Health &amp; Wellness</span>',
+    popupContent: (<><strong style={{ color: "#2C3E2D" }}>LA LGBT Center</strong><br/><span style={{ color: "#555" }}>Mental Health &amp; Wellness</span></>),
   },
   {
     id: 'res-rehab-1',
@@ -128,7 +128,7 @@ const RESOURCE_MARKERS: MapMarker[] = [
     label: '💪',
     type: 'resource',
     color: '#EF4444',
-    popupContent: '<strong style="color:#1A1A1A">Midnight Mission</strong><br/><span style="color:#555555">Rehab &amp; Recovery</span>',
+    popupContent: (<><strong style={{ color: "#2C3E2D" }}>Midnight Mission</strong><br/><span style={{ color: "#555" }}>Rehab &amp; Recovery</span></>),
   },
 ];
 
@@ -136,7 +136,7 @@ const RESOURCE_MARKERS: MapMarker[] = [
 
 function getInitialsBackground(initials: string): string {
   const backgrounds = [
-    'bg-[#D0F0D0] text-[#00B050]',
+    'bg-[rgba(107,143,113,0.15)] text-[#6B8F71]',
     'bg-blue-100 text-[#0077B6]',
     'bg-purple-100 text-purple-700',
     'bg-amber-100 text-amber-700',
@@ -157,9 +157,9 @@ function Toast({ message }: ToastProps) {
     <div
       role="status"
       aria-live="polite"
-      className="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-[#1A1A1A] text-white text-sm font-medium px-4 py-3 rounded-[12px] shadow-lg max-w-[calc(100vw-2rem)]"
+      className="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-[#2C3E2D] text-white text-sm font-medium px-4 py-3 rounded-[20px] shadow-lg max-w-[calc(100vw-2rem)]"
     >
-      <CheckCircle size={16} className="text-[#00B050] shrink-0" aria-hidden="true" />
+      <CheckCircle size={16} className="text-[#6B8F71] shrink-0" aria-hidden="true" />
       {message}
     </div>
   );
@@ -181,7 +181,7 @@ function StarDisplay({ rating, size = 12 }: StarDisplayProps) {
           className={
             i < full
               ? 'text-yellow-400 fill-yellow-400'
-              : 'text-[#E5E7EB] fill-[#E5E7EB]'
+              : 'text-[rgba(44,62,45,0.1)] fill-[rgba(44,62,45,0.1)]'
           }
           aria-hidden="true"
         />
@@ -244,7 +244,7 @@ function ScheduleModal({ chw, onClose, onSubmit }: ScheduleModalProps) {
     >
       <div className="bg-white rounded-[16px] w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-xl">
         {/* Modal header */}
-        <div className="flex items-center justify-between p-5 border-b border-[#E5E7EB]">
+        <div className="flex items-center justify-between p-5 border-b border-[rgba(44,62,45,0.1)]">
           <div className="flex items-center gap-3">
             <div
               className={`w-10 h-10 rounded-full ${initColorClass} flex items-center justify-center font-bold text-sm shrink-0`}
@@ -255,19 +255,19 @@ function ScheduleModal({ chw, onClose, onSubmit }: ScheduleModalProps) {
             <div>
               <h2
                 id="schedule-modal-heading"
-                className="text-base font-bold text-[#1A1A1A]"
+                className="text-base font-bold text-[#2C3E2D]"
               >
                 {step === 'form'
                   ? `Schedule with ${chw.name.split(' ')[0]}`
                   : 'Consent for Services'}
               </h2>
-              <p className="text-xs text-[#AAAAAA]">{chw.name}</p>
+              <p className="text-xs text-[#8B9B8D]">{chw.name}</p>
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-[#F8FAFB] text-[#AAAAAA] hover:text-[#555555] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0077B6]"
+            className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-[#FBF7F0] text-[#8B9B8D] hover:text-[#555555] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0077B6]"
             aria-label="Close modal"
           >
             <X size={18} aria-hidden="true" />
@@ -279,7 +279,7 @@ function ScheduleModal({ chw, onClose, onSubmit }: ScheduleModalProps) {
           <form onSubmit={handleFormContinue} className="p-5 space-y-5">
             {/* What do you need help with */}
             <fieldset>
-              <legend className="text-sm font-semibold text-[#1A1A1A] mb-3">
+              <legend className="text-sm font-semibold text-[#2C3E2D] mb-3">
                 What do you need help with?
               </legend>
               <div className="space-y-2">
@@ -292,24 +292,24 @@ function ScheduleModal({ chw, onClose, onSubmit }: ScheduleModalProps) {
                       onClick={() => setSelectedVertical(option.key)}
                       aria-pressed={isSelected}
                       className={[
-                        'w-full flex items-center gap-3 px-4 py-3 rounded-[10px] border text-left transition-all focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00B050]',
+                        'w-full flex items-center gap-3 px-4 py-3 rounded-[10px] border text-left transition-all focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6B8F71]',
                         isSelected
-                          ? 'border-[#00B050] bg-[#D0F0D0]/40'
-                          : 'border-[#E5E7EB] bg-white hover:border-[#00B050]/50',
+                          ? 'border-[#6B8F71] bg-[rgba(107,143,113,0.15)]/40'
+                          : 'border-[rgba(44,62,45,0.1)] bg-white hover:border-[#6B8F71]/50',
                       ].join(' ')}
                     >
                       <span className="text-xl" role="img" aria-hidden="true">
                         {option.emoji}
                       </span>
                       <span
-                        className={`text-sm font-medium ${isSelected ? 'text-[#00B050]' : 'text-[#1A1A1A]'}`}
+                        className={`text-sm font-medium ${isSelected ? 'text-[#6B8F71]' : 'text-[#2C3E2D]'}`}
                       >
                         {option.label}
                       </span>
                       {isSelected && (
                         <CheckCircle
                           size={16}
-                          className="text-[#00B050] ml-auto shrink-0"
+                          className="text-[#6B8F71] ml-auto shrink-0"
                           aria-hidden="true"
                         />
                       )}
@@ -321,7 +321,7 @@ function ScheduleModal({ chw, onClose, onSubmit }: ScheduleModalProps) {
 
             {/* Urgency */}
             <fieldset>
-              <legend className="text-sm font-semibold text-[#1A1A1A] mb-3">Urgency</legend>
+              <legend className="text-sm font-semibold text-[#2C3E2D] mb-3">Urgency</legend>
               <div className="flex gap-2">
                 {urgencyOptions.map((option) => {
                   const isSelected = urgency === option.key;
@@ -329,10 +329,10 @@ function ScheduleModal({ chw, onClose, onSubmit }: ScheduleModalProps) {
                     <label
                       key={option.key}
                       className={[
-                        'flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded-[8px] border cursor-pointer text-sm font-medium transition-all',
+                        'flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded-[12px] border cursor-pointer text-sm font-medium transition-all',
                         isSelected
-                          ? 'border-[#00B050] bg-[#D0F0D0]/40 text-[#00B050]'
-                          : 'border-[#E5E7EB] bg-white text-[#555555] hover:border-[#00B050]/50',
+                          ? 'border-[#6B8F71] bg-[rgba(107,143,113,0.15)]/40 text-[#6B8F71]'
+                          : 'border-[rgba(44,62,45,0.1)] bg-white text-[#555555] hover:border-[#6B8F71]/50',
                       ].join(' ')}
                     >
                       <input
@@ -352,7 +352,7 @@ function ScheduleModal({ chw, onClose, onSubmit }: ScheduleModalProps) {
 
             {/* Preferred mode */}
             <fieldset>
-              <legend className="text-sm font-semibold text-[#1A1A1A] mb-3">
+              <legend className="text-sm font-semibold text-[#2C3E2D] mb-3">
                 Preferred Mode
               </legend>
               <div className="flex gap-2">
@@ -362,10 +362,10 @@ function ScheduleModal({ chw, onClose, onSubmit }: ScheduleModalProps) {
                     <label
                       key={option.key}
                       className={[
-                        'flex-1 flex items-center justify-center px-3 py-2.5 rounded-[8px] border cursor-pointer text-sm font-medium transition-all',
+                        'flex-1 flex items-center justify-center px-3 py-2.5 rounded-[12px] border cursor-pointer text-sm font-medium transition-all',
                         isSelected
                           ? 'border-[#0077B6] bg-blue-50 text-[#0077B6]'
-                          : 'border-[#E5E7EB] bg-white text-[#555555] hover:border-[#0077B6]/50',
+                          : 'border-[rgba(44,62,45,0.1)] bg-white text-[#555555] hover:border-[#0077B6]/50',
                       ].join(' ')}
                     >
                       <input
@@ -387,9 +387,9 @@ function ScheduleModal({ chw, onClose, onSubmit }: ScheduleModalProps) {
             <div>
               <label
                 htmlFor="schedule-description"
-                className="text-sm font-semibold text-[#1A1A1A] block mb-2"
+                className="text-sm font-semibold text-[#2C3E2D] block mb-2"
               >
-                Description <span className="text-[#AAAAAA] font-normal">(optional)</span>
+                Description <span className="text-[#8B9B8D] font-normal">(optional)</span>
               </label>
               <textarea
                 id="schedule-description"
@@ -397,7 +397,7 @@ function ScheduleModal({ chw, onClose, onSubmit }: ScheduleModalProps) {
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="Briefly describe what you need help with..."
                 rows={3}
-                className="w-full px-3 py-2.5 rounded-[8px] border border-[#E5E7EB] text-sm text-[#1A1A1A] placeholder:text-[#AAAAAA] resize-none focus:outline-none focus:ring-2 focus:ring-[#00B050]/30 focus:border-[#00B050] transition-colors"
+                className="w-full px-3 py-2.5 rounded-[12px] border border-[rgba(44,62,45,0.1)] text-sm text-[#2C3E2D] placeholder:text-[#8B9B8D] resize-none focus:outline-none focus:ring-2 focus:ring-[#6B8F71]/30 focus:border-[#6B8F71] transition-colors"
               />
             </div>
 
@@ -405,7 +405,7 @@ function ScheduleModal({ chw, onClose, onSubmit }: ScheduleModalProps) {
             <button
               type="submit"
               disabled={selectedVertical === null}
-              className="w-full bg-[#00B050] hover:bg-[#008F40] active:bg-[#007A38] disabled:bg-[#E5E7EB] disabled:text-[#AAAAAA] disabled:cursor-not-allowed text-white text-sm font-semibold py-3 rounded-[8px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00B050]"
+              className="w-full bg-[#2C3E2D] hover:bg-[#3A5240] active:bg-[#243D25] disabled:bg-[rgba(44,62,45,0.1)] disabled:text-[#8B9B8D] disabled:cursor-not-allowed text-white text-sm font-semibold py-3 rounded-[12px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6B8F71]"
             >
               Continue &rarr;
             </button>
@@ -429,7 +429,7 @@ function ScheduleModal({ chw, onClose, onSubmit }: ScheduleModalProps) {
             {/* Info card */}
             <div className="flex items-start gap-3 bg-blue-50 border border-blue-100 rounded-[12px] p-4">
               <div
-                className="w-9 h-9 rounded-[8px] bg-[#0077B6]/10 flex items-center justify-center shrink-0 mt-0.5"
+                className="w-9 h-9 rounded-[12px] bg-[#0077B6]/10 flex items-center justify-center shrink-0 mt-0.5"
                 aria-hidden="true"
               >
                 <ShieldCheck size={18} className="text-[#0077B6]" />
@@ -457,7 +457,7 @@ function ScheduleModal({ chw, onClose, onSubmit }: ScheduleModalProps) {
                       'w-5 h-5 rounded-[4px] border-2 flex items-center justify-center transition-all',
                       consentChecked
                         ? 'bg-[#0077B6] border-[#0077B6]'
-                        : 'bg-white border-[#E5E7EB] group-hover:border-[#0077B6]/50',
+                        : 'bg-white border-[rgba(44,62,45,0.1)] group-hover:border-[#0077B6]/50',
                     ].join(' ')}
                     onClick={() => setConsentChecked((prev) => !prev)}
                   >
@@ -466,7 +466,7 @@ function ScheduleModal({ chw, onClose, onSubmit }: ScheduleModalProps) {
                     )}
                   </div>
                 </div>
-                <span className="text-sm font-medium text-[#1A1A1A] leading-relaxed select-none">
+                <span className="text-sm font-medium text-[#2C3E2D] leading-relaxed select-none">
                   I consent to receive Community Health Worker services
                 </span>
               </label>
@@ -476,7 +476,7 @@ function ScheduleModal({ chw, onClose, onSubmit }: ScheduleModalProps) {
             <div>
               <label
                 htmlFor="consent-signature"
-                className="text-sm font-semibold text-[#1A1A1A] block mb-2"
+                className="text-sm font-semibold text-[#2C3E2D] block mb-2"
               >
                 Type your full name as signature
               </label>
@@ -487,7 +487,7 @@ function ScheduleModal({ chw, onClose, onSubmit }: ScheduleModalProps) {
                 onChange={(e) => setTypedSignature(e.target.value)}
                 placeholder="Your full name"
                 autoComplete="name"
-                className="w-full px-3 py-2.5 rounded-[8px] border border-[#E5E7EB] text-sm text-[#1A1A1A] placeholder:text-[#AAAAAA] focus:outline-none focus:ring-2 focus:ring-[#0077B6]/30 focus:border-[#0077B6] transition-colors"
+                className="w-full px-3 py-2.5 rounded-[12px] border border-[rgba(44,62,45,0.1)] text-sm text-[#2C3E2D] placeholder:text-[#8B9B8D] focus:outline-none focus:ring-2 focus:ring-[#0077B6]/30 focus:border-[#0077B6] transition-colors"
                 style={{ fontStyle: 'italic' }}
               />
             </div>
@@ -496,7 +496,7 @@ function ScheduleModal({ chw, onClose, onSubmit }: ScheduleModalProps) {
             <button
               type="submit"
               disabled={consentSubmitDisabled}
-              className="w-full bg-[#0077B6] hover:bg-[#005A8C] active:bg-[#004A78] disabled:bg-[#E5E7EB] disabled:text-[#AAAAAA] disabled:cursor-not-allowed text-white text-sm font-semibold py-3 rounded-[8px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0077B6]"
+              className="w-full bg-[#0077B6] hover:bg-[#005A8C] active:bg-[#004A78] disabled:bg-[rgba(44,62,45,0.1)] disabled:text-[#8B9B8D] disabled:cursor-not-allowed text-white text-sm font-semibold py-3 rounded-[12px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0077B6]"
             >
               Submit Request
             </button>
@@ -519,7 +519,7 @@ function CHWCard({ chw, onSchedule }: CHWCardProps) {
 
   return (
     <article
-      className="bg-white rounded-[12px] border border-[#E5E7EB] p-4"
+      className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] p-4"
       aria-label={`${chw.name}, CHW`}
     >
       <div className="flex items-start gap-3">
@@ -535,13 +535,13 @@ function CHWCard({ chw, onSchedule }: CHWCardProps) {
         <div className="flex-1 min-w-0">
           {/* Name row */}
           <div className="flex items-start justify-between gap-2 mb-1">
-            <p className="text-sm font-bold text-[#1A1A1A]">{chw.name}</p>
+            <p className="text-sm font-bold text-[#2C3E2D]">{chw.name}</p>
           </div>
 
           {/* Rating + experience */}
           <div className="flex items-center gap-3 mb-2">
             <StarDisplay rating={chw.rating} />
-            <span className="text-xs text-[#AAAAAA]">
+            <span className="text-xs text-[#8B9B8D]">
               {chw.yearsExperience} yrs exp
             </span>
           </div>
@@ -555,7 +555,7 @@ function CHWCard({ chw, onSchedule }: CHWCardProps) {
 
           {/* Languages */}
           <p className="text-xs text-[#555555] mb-2">
-            <span className="font-medium text-[#AAAAAA] uppercase tracking-wide text-[10px] mr-1">
+            <span className="font-medium text-[#8B9B8D] uppercase tracking-wide text-[10px] mr-1">
               Languages:
             </span>
             {chw.languages.join(', ')}
@@ -571,7 +571,7 @@ function CHWCard({ chw, onSchedule }: CHWCardProps) {
             <button
               type="button"
               onClick={() => onSchedule(chw)}
-              className="bg-[#00B050] hover:bg-[#008F40] active:bg-[#007A38] text-white text-xs font-semibold px-4 py-2 rounded-[8px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00B050]"
+              className="bg-[#2C3E2D] hover:bg-[#3A5240] active:bg-[#243D25] text-white text-xs font-semibold px-4 py-2 rounded-[12px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6B8F71]"
               aria-label={`Schedule a session with ${chw.name}`}
             >
               Schedule
@@ -622,21 +622,24 @@ export function MemberFind() {
           const coords = CHW_COORDINATES[c.zipCode];
           // Slightly jitter markers sharing the same zip so they don't stack
           const jitter = () => (Math.random() - 0.5) * 0.008;
-          const specializations = c.specializations
-            .map((s) => `<span style="display:inline-block;padding:2px 6px;background:#D0F0D0;color:#00B050;border-radius:4px;font-size:11px;margin:1px 2px">${s.replace('_', ' ')}</span>`)
-            .join('');
           return {
             id: c.id,
             lat: coords.lat + jitter(),
             lng: coords.lng + jitter(),
             label: c.avatar,
             type: 'chw' as const,
-            color: '#00B050',
-            popupContent: `
-              <strong style="color:#1A1A1A;font-size:14px">${c.name}</strong><br/>
-              <span style="color:#555555;font-size:12px">${c.yearsExperience} yrs exp · ★ ${c.rating}</span><br/>
-              <div style="margin-top:6px">${specializations}</div>
-            `,
+            color: '#6B8F71',
+            popupContent: (
+              <>
+                <strong style={{ color: '#2C3E2D', fontSize: '14px' }}>{c.name}</strong><br/>
+                <span style={{ color: '#555', fontSize: '12px' }}>{c.yearsExperience} yrs exp · ★ {c.rating}</span>
+                <div style={{ marginTop: '6px', display: 'flex', flexWrap: 'wrap' as const, gap: '2px' }}>
+                  {c.specializations.map((s) => (
+                    <span key={s} style={{ display: 'inline-block', padding: '2px 6px', background: 'rgba(107,143,113,0.15)', color: '#6B8F71', borderRadius: '4px', fontSize: '11px' }}>{s.replace('_', ' ')}</span>
+                  ))}
+                </div>
+              </>
+            ),
           };
         }),
     [availableChws],
@@ -713,10 +716,10 @@ export function MemberFind() {
               aria-selected={isActive}
               onClick={() => setActiveFilter(tab.key)}
               className={[
-                'shrink-0 px-3.5 py-1.5 text-sm font-medium rounded-full border transition-all whitespace-nowrap focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00B050]',
+                'shrink-0 px-3.5 py-1.5 text-sm font-medium rounded-full border transition-all whitespace-nowrap focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6B8F71]',
                 isActive
-                  ? 'bg-[#00B050] border-[#00B050] text-white'
-                  : 'bg-white border-[#E5E7EB] text-[#555555] hover:border-[#00B050] hover:text-[#00B050]',
+                  ? 'bg-[#2C3E2D] border-[#6B8F71] text-white'
+                  : 'bg-white border-[rgba(44,62,45,0.1)] text-[#555555] hover:border-[#6B8F71] hover:text-[#6B8F71]',
               ].join(' ')}
             >
               {tab.label}
@@ -724,7 +727,7 @@ export function MemberFind() {
                 <span
                   className={[
                     'ml-1.5 text-xs font-semibold',
-                    isActive ? 'text-white/80' : 'text-[#AAAAAA]',
+                    isActive ? 'text-white/80' : 'text-[#8B9B8D]',
                   ].join(' ')}
                 >
                   {count}
@@ -740,7 +743,7 @@ export function MemberFind() {
         <div className="flex items-center justify-between mb-2">
           <h3
             id="map-section-heading"
-            className="text-sm font-semibold text-[#1A1A1A] uppercase tracking-wide"
+            className="text-sm font-semibold text-[#2C3E2D] uppercase tracking-wide"
           >
             Local Healthcare Map
           </h3>
@@ -748,7 +751,7 @@ export function MemberFind() {
             <span className="flex items-center gap-1">
               <span
                 className="inline-block w-3 h-3 rounded-full"
-                style={{ background: '#00B050' }}
+                style={{ background: '#2C3E2D' }}
                 aria-hidden="true"
               />
               CHWs
@@ -778,7 +781,7 @@ export function MemberFind() {
       <section aria-labelledby="available-chws-heading">
         <h3
           id="available-chws-heading"
-          className="text-sm font-semibold text-[#1A1A1A] uppercase tracking-wide mb-3"
+          className="text-sm font-semibold text-[#2C3E2D] uppercase tracking-wide mb-3"
         >
           Available CHWs
         </h3>
@@ -791,14 +794,14 @@ export function MemberFind() {
           </div>
         ) : (
           <div
-            className="bg-white rounded-[12px] border border-[#E5E7EB] p-10 flex flex-col items-center gap-3 text-center"
+            className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] p-10 flex flex-col items-center gap-3 text-center"
             role="status"
           >
-            <div className="w-12 h-12 rounded-full bg-[#F8FAFB] border border-[#E5E7EB] flex items-center justify-center">
-              <Inbox size={22} className="text-[#AAAAAA]" aria-hidden="true" />
+            <div className="w-12 h-12 rounded-full bg-[#FBF7F0] border border-[rgba(44,62,45,0.1)] flex items-center justify-center">
+              <Inbox size={22} className="text-[#8B9B8D]" aria-hidden="true" />
             </div>
-            <p className="text-sm font-semibold text-[#1A1A1A]">No CHWs available</p>
-            <p className="text-xs text-[#AAAAAA] max-w-xs">
+            <p className="text-sm font-semibold text-[#2C3E2D]">No CHWs available</p>
+            <p className="text-xs text-[#8B9B8D] max-w-xs">
               No available CHWs match this category right now. Try a different filter or
               check back soon.
             </p>
@@ -815,7 +818,7 @@ export function MemberFind() {
             </div>
           ),
         )}
-        <p className="text-xs text-[#AAAAAA]">Icons represent service specializations</p>
+        <p className="text-xs text-[#8B9B8D]">Icons represent service specializations</p>
       </div>
     </div>
   );

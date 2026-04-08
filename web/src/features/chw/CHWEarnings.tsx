@@ -135,7 +135,7 @@ export function CHWEarnings() {
         aria-labelledby="hero-earnings-heading"
         className="relative overflow-hidden rounded-[12px] p-6"
         style={{
-          background: 'linear-gradient(135deg, #00B050 0%, #008F40 60%, #006A30 100%)',
+          background: 'linear-gradient(135deg, #2C3E2D 0%, #3A5240 60%, #1A2E1B 100%)',
         }}
       >
         {/* Decorative background circle */}
@@ -170,11 +170,11 @@ export function CHWEarnings() {
       {/* ── Stat cards ── */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard
-          icon={<DollarSign size={18} className="text-[#00B050]" />}
+          icon={<DollarSign size={18} className="text-[#6B8F71]" />}
           label="This Month"
           value={formatCurrency(earningsSummary.thisMonth)}
           subtext="Apr 2026"
-          iconBg="bg-[#D0F0D0]"
+          iconBg="bg-[rgba(107,143,113,0.15)]"
         />
         <StatCard
           icon={<TrendingUp size={18} className="text-[#0077B6]" />}
@@ -203,12 +203,12 @@ export function CHWEarnings() {
       <section aria-labelledby="scenario-heading">
         <h3
           id="scenario-heading"
-          className="text-sm font-semibold text-[#1A1A1A] uppercase tracking-wide mb-3"
+          className="text-sm font-semibold text-[#2C3E2D] uppercase tracking-wide mb-3"
         >
           Earnings Scenarios
         </h3>
 
-        <div className="bg-white rounded-[12px] border border-[#E5E7EB] overflow-hidden">
+        <div className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] overflow-hidden">
           {/* Table — scrollable on narrow screens */}
           <div className="overflow-x-auto">
             <table
@@ -216,7 +216,7 @@ export function CHWEarnings() {
               aria-label="Daily earnings scenarios by workload"
             >
               <thead>
-                <tr className="bg-[#F8FAFB] border-b border-[#E5E7EB]">
+                <tr className="bg-[#FBF7F0] border-b border-[rgba(44,62,45,0.1)]">
                   <th
                     scope="col"
                     className="text-left text-xs font-semibold text-[#555555] uppercase tracking-wide px-4 py-3"
@@ -237,7 +237,7 @@ export function CHWEarnings() {
                   </th>
                   <th
                     scope="col"
-                    className="text-right text-xs font-semibold text-[#00B050] uppercase tracking-wide px-4 py-3 whitespace-nowrap"
+                    className="text-right text-xs font-semibold text-[#6B8F71] uppercase tracking-wide px-4 py-3 whitespace-nowrap"
                   >
                     Net P1/day
                   </th>
@@ -249,17 +249,17 @@ export function CHWEarnings() {
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[#E5E7EB]">
+              <tbody className="divide-y divide-[rgba(44,62,45,0.1)]">
                 {earningsScenarios.map((scenario, index) => (
                   <tr
                     key={scenario.label}
-                    className={index % 2 === 0 ? 'bg-white' : 'bg-[#F8FAFB]/50'}
+                    className={index % 2 === 0 ? 'bg-white' : 'bg-[#FBF7F0]/50'}
                   >
                     <td className="px-4 py-3">
-                      <span className="font-semibold text-[#1A1A1A]">
+                      <span className="font-semibold text-[#2C3E2D]">
                         {scenario.label}
                       </span>
-                      <span className="block text-xs text-[#AAAAAA] mt-0.5">
+                      <span className="block text-xs text-[#8B9B8D] mt-0.5">
                         {scenario.description}
                       </span>
                     </td>
@@ -269,7 +269,7 @@ export function CHWEarnings() {
                     <td className="px-4 py-3 text-right text-[#555555]">
                       {formatCurrency(scenario.grossPerDay)}
                     </td>
-                    <td className="px-4 py-3 text-right font-semibold text-[#00B050]">
+                    <td className="px-4 py-3 text-right font-semibold text-[#6B8F71]">
                       {formatCurrency(scenario.netP1PerDay)}
                     </td>
                     <td className="px-4 py-3 text-right font-semibold text-[#0077B6]">
@@ -282,8 +282,8 @@ export function CHWEarnings() {
           </div>
 
           {/* Footnote */}
-          <div className="px-4 py-3 border-t border-[#E5E7EB] bg-[#F8FAFB]">
-            <p className="text-xs text-[#AAAAAA] leading-relaxed">
+          <div className="px-4 py-3 border-t border-[rgba(44,62,45,0.1)] bg-[#FBF7F0]">
+            <p className="text-xs text-[#8B9B8D] leading-relaxed">
               P1 = Phase 1 (Pear Suite platform). P2 = Phase 2 (direct Medi-Cal billing).
               Rate: $26.66/unit (15 min).
             </p>
@@ -295,13 +295,13 @@ export function CHWEarnings() {
       <section aria-labelledby="payouts-heading">
         <h3
           id="payouts-heading"
-          className="text-sm font-semibold text-[#1A1A1A] uppercase tracking-wide mb-3"
+          className="text-sm font-semibold text-[#2C3E2D] uppercase tracking-wide mb-3"
         >
           Recent Payouts
         </h3>
 
         {completedSessions.length > 0 ? (
-          <div className="bg-white rounded-[12px] border border-[#E5E7EB] divide-y divide-[#E5E7EB]">
+          <div className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] divide-y divide-[rgba(44,62,45,0.1)]">
             {completedSessions.map((session) => {
               const status = derivePayoutStatus(session.id);
               return (
@@ -311,7 +311,7 @@ export function CHWEarnings() {
                 >
                   {/* Vertical icon */}
                   <div
-                    className="w-9 h-9 rounded-[8px] bg-[#F8FAFB] border border-[#E5E7EB] flex items-center justify-center shrink-0"
+                    className="w-9 h-9 rounded-[12px] bg-[#FBF7F0] border border-[rgba(44,62,45,0.1)] flex items-center justify-center shrink-0"
                     aria-hidden="true"
                   >
                     <VerticalIcon vertical={session.vertical} size={16} />
@@ -319,10 +319,10 @@ export function CHWEarnings() {
 
                   {/* Details */}
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-[#1A1A1A] truncate">
+                    <p className="text-sm font-semibold text-[#2C3E2D] truncate">
                       {session.memberName}
                     </p>
-                    <p className="text-xs text-[#AAAAAA]">
+                    <p className="text-xs text-[#8B9B8D]">
                       {formatShortDate(session.scheduledAt)}
                       {session.unitsBilled != null && (
                         <> · {session.unitsBilled} {session.unitsBilled === 1 ? 'unit' : 'units'}</>
@@ -334,7 +334,7 @@ export function CHWEarnings() {
 
                   {/* Amount + status */}
                   <div className="text-right shrink-0">
-                    <p className="text-sm font-bold text-[#1A1A1A]">
+                    <p className="text-sm font-bold text-[#2C3E2D]">
                       {formatCurrency(session.netAmount ?? 0)}
                     </p>
                     <span
@@ -349,14 +349,14 @@ export function CHWEarnings() {
           </div>
         ) : (
           <div
-            className="bg-white rounded-[12px] border border-[#E5E7EB] p-10 flex flex-col items-center gap-3 text-center"
+            className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] p-10 flex flex-col items-center gap-3 text-center"
             role="status"
           >
-            <div className="w-12 h-12 rounded-full bg-[#F8FAFB] border border-[#E5E7EB] flex items-center justify-center">
-              <DollarSign size={22} className="text-[#AAAAAA]" aria-hidden="true" />
+            <div className="w-12 h-12 rounded-full bg-[#FBF7F0] border border-[rgba(44,62,45,0.1)] flex items-center justify-center">
+              <DollarSign size={22} className="text-[#8B9B8D]" aria-hidden="true" />
             </div>
-            <p className="text-sm font-semibold text-[#1A1A1A]">No payouts yet</p>
-            <p className="text-xs text-[#AAAAAA]">
+            <p className="text-sm font-semibold text-[#2C3E2D]">No payouts yet</p>
+            <p className="text-xs text-[#8B9B8D]">
               Complete sessions to start earning.
             </p>
           </div>
@@ -364,15 +364,15 @@ export function CHWEarnings() {
       </section>
 
       {/* Payout schedule note */}
-      <div className="bg-white rounded-[12px] border border-[#E5E7EB] p-4 flex items-center gap-3">
+      <div className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] p-4 flex items-center gap-3">
         <div
-          className="w-9 h-9 rounded-[8px] bg-[#D0F0D0] flex items-center justify-center shrink-0"
+          className="w-9 h-9 rounded-[12px] bg-[rgba(107,143,113,0.15)] flex items-center justify-center shrink-0"
           aria-hidden="true"
         >
-          <Banknote size={18} className="text-[#00B050]" />
+          <Banknote size={18} className="text-[#6B8F71]" />
         </div>
         <p className="text-sm text-[#555555]">
-          <span className="font-semibold text-[#1A1A1A]">Payout schedule: </span>
+          <span className="font-semibold text-[#2C3E2D]">Payout schedule: </span>
           Payouts are processed weekly via direct deposit, every Friday for the prior week's approved sessions.
         </p>
       </div>

@@ -21,7 +21,7 @@ interface LayoutProps {
  */
 export function Layout({ children }: LayoutProps) {
   return (
-    <div className="flex min-h-screen bg-[#F8FAFB]">
+    <div className="flex min-h-screen bg-[#FBF7F0]">
       <Sidebar />
 
       <div className="flex-1 flex flex-col min-w-0">

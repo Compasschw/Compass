@@ -162,7 +162,7 @@ function ProfilePicture({
           />
         ) : (
           <div
-            className="w-full h-full rounded-full bg-[#D0F0D0] border-4 border-white shadow-md flex items-center justify-center font-bold text-[#00B050] text-xl"
+            className="w-full h-full rounded-full bg-[rgba(107,143,113,0.15)] border-4 border-white shadow-md flex items-center justify-center font-bold text-[#6B8F71] text-xl"
             aria-hidden="true"
           >
             {initials}
@@ -173,7 +173,7 @@ function ProfilePicture({
         <button
           type="button"
           onClick={handleClick}
-          className="absolute inset-0 bg-black/40 rounded-full flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity cursor-pointer focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00B050]"
+          className="absolute inset-0 bg-black/40 rounded-full flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity cursor-pointer focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6B8F71]"
           aria-label="Change profile picture"
         >
           <Camera size={18} className="text-white" aria-hidden="true" />
@@ -193,7 +193,7 @@ function ProfilePicture({
         <button
           type="button"
           onClick={onImageRemove}
-          className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-[#1A1A1A] border-2 border-white flex items-center justify-center hover:bg-red-600 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-500"
+          className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-[#2C3E2D] border-2 border-white flex items-center justify-center hover:bg-red-600 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-500"
           aria-label="Remove profile picture"
         >
           <X size={10} className="text-white" strokeWidth={3} aria-hidden="true" />
@@ -214,7 +214,7 @@ function SectionHeader({ id, children }: SectionHeaderProps) {
   return (
     <h3
       id={id}
-      className="text-sm font-semibold text-[#1A1A1A] uppercase tracking-wide mb-3"
+      className="text-sm font-semibold text-[#2C3E2D] uppercase tracking-wide mb-3"
     >
       {children}
     </h3>
@@ -231,14 +231,14 @@ function InfoRow({ icon, label, value }: InfoRowProps) {
   return (
     <div className="flex items-center gap-3">
       <div
-        className="w-9 h-9 rounded-[8px] bg-[#F8FAFB] border border-[#E5E7EB] flex items-center justify-center shrink-0"
+        className="w-9 h-9 rounded-[12px] bg-[#FBF7F0] border border-[rgba(44,62,45,0.1)] flex items-center justify-center shrink-0"
         aria-hidden="true"
       >
         {icon}
       </div>
       <div className="flex-1 min-w-0">
-        <p className="text-xs text-[#AAAAAA] uppercase tracking-wide font-medium">{label}</p>
-        <p className="text-sm font-medium text-[#1A1A1A] truncate">{value}</p>
+        <p className="text-xs text-[#8B9B8D] uppercase tracking-wide font-medium">{label}</p>
+        <p className="text-sm font-medium text-[#2C3E2D] truncate">{value}</p>
       </div>
     </div>
   );
@@ -256,9 +256,9 @@ function ToggleSwitch({ id, checked, onChange, label, description }: ToggleSwitc
   return (
     <div className="flex items-center justify-between gap-4">
       <label htmlFor={id} className="flex-1 cursor-pointer">
-        <p className="text-sm font-medium text-[#1A1A1A]">{label}</p>
+        <p className="text-sm font-medium text-[#2C3E2D]">{label}</p>
         {description && (
-          <p className="text-xs text-[#AAAAAA] mt-0.5">{description}</p>
+          <p className="text-xs text-[#8B9B8D] mt-0.5">{description}</p>
         )}
       </label>
       <button
@@ -269,8 +269,8 @@ function ToggleSwitch({ id, checked, onChange, label, description }: ToggleSwitc
         aria-label={label}
         onClick={() => onChange(!checked)}
         className={[
-          'relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00B050]',
-          checked ? 'bg-[#00B050]' : 'bg-[#E5E7EB]',
+          'relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6B8F71]',
+          checked ? 'bg-[#2C3E2D]' : 'bg-[rgba(44,62,45,0.1)]',
         ].join(' ')}
       >
         <span
@@ -288,13 +288,13 @@ function ToggleSwitch({ id, checked, onChange, label, description }: ToggleSwitc
 // ─── Input helpers ────────────────────────────────────────────────────────────
 
 const inputClass =
-  'w-full rounded-[8px] border border-[#E5E7EB] px-3 py-2.5 text-sm text-[#1A1A1A] bg-white focus:outline-none focus:ring-2 focus:ring-[#00B050] focus:border-[#00B050] transition-colors placeholder:text-[#AAAAAA]';
+  'w-full rounded-[12px] border border-[rgba(44,62,45,0.1)] px-3 py-2.5 text-sm text-[#2C3E2D] bg-white focus:outline-none focus:ring-2 focus:ring-[#6B8F71] focus:border-[#6B8F71] transition-colors placeholder:text-[#8B9B8D]';
 
 function FieldLabel({ htmlFor, children }: { htmlFor: string; children: React.ReactNode }) {
   return (
     <label
       htmlFor={htmlFor}
-      className="block text-xs text-[#AAAAAA] uppercase tracking-wide font-medium mb-1"
+      className="block text-xs text-[#8B9B8D] uppercase tracking-wide font-medium mb-1"
     >
       {children}
     </label>
@@ -308,10 +308,10 @@ function Toast({ message, onDismiss }: { message: string; onDismiss: () => void 
     <div
       role="status"
       aria-live="polite"
-      className="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2.5 bg-[#1A1A1A] text-white text-sm font-medium px-5 py-3 rounded-[12px] shadow-lg cursor-pointer max-w-[calc(100vw-2rem)]"
+      className="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2.5 bg-[#2C3E2D] text-white text-sm font-medium px-5 py-3 rounded-[20px] shadow-lg cursor-pointer max-w-[calc(100vw-2rem)]"
       onClick={onDismiss}
     >
-      <span className="w-5 h-5 rounded-full bg-[#00B050] flex items-center justify-center shrink-0">
+      <span className="w-5 h-5 rounded-full bg-[#2C3E2D] flex items-center justify-center shrink-0">
         <Check size={11} className="text-white" strokeWidth={3} aria-hidden="true" />
       </span>
       {message}
@@ -441,7 +441,7 @@ export function MemberProfile() {
       {/* ── Profile header ── */}
       <section
         aria-labelledby="member-profile-heading"
-        className="bg-white rounded-[12px] border border-[#E5E7EB] p-5"
+        className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] p-5"
       >
         <div className="flex items-center gap-4">
           <ProfilePicture
@@ -456,11 +456,11 @@ export function MemberProfile() {
               <div className="min-w-0">
                 <h2
                   id="member-profile-heading"
-                  className="text-lg font-bold text-[#1A1A1A] truncate"
+                  className="text-lg font-bold text-[#2C3E2D] truncate"
                 >
                   {display.firstName}
                 </h2>
-                <p className="text-xs text-[#AAAAAA] mt-0.5">Member since {MEMBER_SINCE}</p>
+                <p className="text-xs text-[#8B9B8D] mt-0.5">Member since {MEMBER_SINCE}</p>
                 <div className="flex items-center gap-1.5 mt-1.5">
                   <VerticalIcon vertical={display.primaryNeed} size={13} />
                   <span className="text-xs text-[#555555]">
@@ -474,7 +474,7 @@ export function MemberProfile() {
                 <button
                   type="button"
                   onClick={handleStartEdit}
-                  className="flex items-center gap-1.5 text-sm font-semibold text-[#00B050] border border-[#00B050] hover:bg-[#00B050]/10 px-3 py-2 rounded-[8px] transition-colors shrink-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00B050]"
+                  className="flex items-center gap-1.5 text-sm font-semibold text-[#6B8F71] border border-[#6B8F71] hover:bg-[#2C3E2D]/10 px-3 py-2 rounded-[12px] transition-colors shrink-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6B8F71]"
                   aria-label="Edit profile"
                 >
                   <Pencil size={14} aria-hidden="true" />
@@ -489,20 +489,20 @@ export function MemberProfile() {
       {/* ── Rewards ── */}
       <section
         aria-labelledby="rewards-heading"
-        className="bg-[#D0F0D0]/50 border border-[#00B050]/20 rounded-[12px] p-4 space-y-4"
+        className="bg-[rgba(107,143,113,0.15)]/50 border border-[#6B8F71]/20 rounded-[12px] p-4 space-y-4"
       >
         {/* Balance row */}
         <div className="flex items-center gap-3">
           <div
-            className="w-9 h-9 rounded-[8px] bg-[#00B050]/10 flex items-center justify-center shrink-0"
+            className="w-9 h-9 rounded-[12px] bg-[#2C3E2D]/10 flex items-center justify-center shrink-0"
             aria-hidden="true"
           >
-            <Gift size={18} className="text-[#00B050]" />
+            <Gift size={18} className="text-[#6B8F71]" />
           </div>
           <div>
-            <h3 id="rewards-heading" className="text-sm font-bold text-[#1A1A1A]">
+            <h3 id="rewards-heading" className="text-sm font-bold text-[#2C3E2D]">
               You have{' '}
-              <span className="text-[#00B050]">{member.rewardsBalance} points!</span>
+              <span className="text-[#6B8F71]">{member.rewardsBalance} points!</span>
             </h3>
             <p className="text-xs text-[#555555]">
               Earned through completed sessions and goals
@@ -517,10 +517,10 @@ export function MemberProfile() {
             onClick={handleToggleHistory}
             aria-expanded={showHistory}
             className={[
-              'flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-[8px] border transition-all focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00B050]',
+              'flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-[12px] border transition-all focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6B8F71]',
               showHistory
-                ? 'bg-[#00B050] border-[#00B050] text-white'
-                : 'border-[#00B050] text-[#00B050] hover:bg-[#00B050]/10',
+                ? 'bg-[#2C3E2D] border-[#6B8F71] text-white'
+                : 'border-[#6B8F71] text-[#6B8F71] hover:bg-[#2C3E2D]/10',
             ].join(' ')}
           >
             <Star size={13} aria-hidden="true" />
@@ -536,10 +536,10 @@ export function MemberProfile() {
             onClick={handleToggleCatalog}
             aria-expanded={showCatalog}
             className={[
-              'flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-[8px] border transition-all focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00B050]',
+              'flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-[12px] border transition-all focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6B8F71]',
               showCatalog
-                ? 'bg-[#00B050] border-[#00B050] text-white'
-                : 'border-[#00B050] text-[#00B050] hover:bg-[#00B050]/10',
+                ? 'bg-[#2C3E2D] border-[#6B8F71] text-white'
+                : 'border-[#6B8F71] text-[#6B8F71] hover:bg-[#2C3E2D]/10',
             ].join(' ')}
           >
             <Gift size={13} aria-hidden="true" />
@@ -555,16 +555,16 @@ export function MemberProfile() {
         {/* Points History panel */}
         {showHistory && (
           <div
-            className="bg-white rounded-[12px] border border-[#E5E7EB] overflow-hidden"
+            className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] overflow-hidden"
             role="region"
             aria-label="Points history"
           >
-            <div className="px-4 py-3 border-b border-[#E5E7EB]">
-              <p className="text-xs font-semibold text-[#1A1A1A] uppercase tracking-wide">
+            <div className="px-4 py-3 border-b border-[rgba(44,62,45,0.1)]">
+              <p className="text-xs font-semibold text-[#2C3E2D] uppercase tracking-wide">
                 Points History
               </p>
             </div>
-            <ul className="divide-y divide-[#E5E7EB]">
+            <ul className="divide-y divide-[rgba(44,62,45,0.1)]">
               {mockRewardHistory.map((entry: RewardHistoryEntry) => {
                 const isEarned = entry.points > 0;
                 return (
@@ -572,22 +572,22 @@ export function MemberProfile() {
                     <span
                       className={[
                         'text-base leading-none shrink-0',
-                        isEarned ? 'text-[#00B050]' : 'text-red-500',
+                        isEarned ? 'text-[#6B8F71]' : 'text-red-500',
                       ].join(' ')}
                       aria-hidden="true"
                     >
                       ●
                     </span>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-[#1A1A1A] truncate">
+                      <p className="text-sm font-medium text-[#2C3E2D] truncate">
                         {entry.description}
                       </p>
-                      <p className="text-xs text-[#AAAAAA] mt-0.5">{entry.date}</p>
+                      <p className="text-xs text-[#8B9B8D] mt-0.5">{entry.date}</p>
                     </div>
                     <span
                       className={[
                         'text-sm font-semibold shrink-0',
-                        isEarned ? 'text-[#00B050]' : 'text-red-500',
+                        isEarned ? 'text-[#6B8F71]' : 'text-red-500',
                       ].join(' ')}
                     >
                       {isEarned ? `+${entry.points}` : entry.points}
@@ -602,12 +602,12 @@ export function MemberProfile() {
         {/* Redemption Catalog panel */}
         {showCatalog && (
           <div
-            className="bg-white rounded-[12px] border border-[#E5E7EB] overflow-hidden"
+            className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] overflow-hidden"
             role="region"
             aria-label="Redemption catalog"
           >
-            <div className="px-4 py-3 border-b border-[#E5E7EB]">
-              <p className="text-xs font-semibold text-[#1A1A1A] uppercase tracking-wide">
+            <div className="px-4 py-3 border-b border-[rgba(44,62,45,0.1)]">
+              <p className="text-xs font-semibold text-[#2C3E2D] uppercase tracking-wide">
                 Redeem Points
               </p>
             </div>
@@ -617,7 +617,7 @@ export function MemberProfile() {
                 return (
                   <div
                     key={item.id}
-                    className="flex flex-col items-start gap-1.5 bg-[#F8FAFB] border border-[#E5E7EB] rounded-[10px] p-3"
+                    className="flex flex-col items-start gap-1.5 bg-[#FBF7F0] border border-[rgba(44,62,45,0.1)] rounded-[10px] p-3"
                   >
                     <span
                       className="text-2xl leading-none"
@@ -626,10 +626,10 @@ export function MemberProfile() {
                     >
                       {item.emoji}
                     </span>
-                    <p className="text-sm font-bold text-[#1A1A1A] leading-snug">
+                    <p className="text-sm font-bold text-[#2C3E2D] leading-snug">
                       {item.name}
                     </p>
-                    <p className="text-xs text-[#AAAAAA] leading-snug">{item.description}</p>
+                    <p className="text-xs text-[#8B9B8D] leading-snug">{item.description}</p>
                     <p className="text-xs font-semibold text-[#555555] mt-auto">
                       {item.pointsCost} pts
                     </p>
@@ -645,8 +645,8 @@ export function MemberProfile() {
                       className={[
                         'w-full mt-1 text-xs font-semibold py-1.5 rounded-[6px] border transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2',
                         canAfford
-                          ? 'border-[#00B050] text-[#00B050] hover:bg-[#00B050]/10 focus-visible:outline-[#00B050]'
-                          : 'border-[#E5E7EB] text-[#AAAAAA] bg-[#F8FAFB] cursor-not-allowed',
+                          ? 'border-[#6B8F71] text-[#6B8F71] hover:bg-[#2C3E2D]/10 focus-visible:outline-[#6B8F71]'
+                          : 'border-[rgba(44,62,45,0.1)] text-[#8B9B8D] bg-[#FBF7F0] cursor-not-allowed',
                       ].join(' ')}
                     >
                       Redeem
@@ -662,12 +662,12 @@ export function MemberProfile() {
       {/* ── Personal Info ── */}
       <section
         aria-labelledby="personal-info-heading"
-        className="bg-white rounded-[12px] border border-[#E5E7EB] p-4"
+        className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] p-4"
       >
         <div className="flex items-center justify-between mb-4">
           <SectionHeader id="personal-info-heading">Personal Info</SectionHeader>
           {isEditing && (
-            <span className="text-xs text-[#00B050] font-medium">Editing</span>
+            <span className="text-xs text-[#6B8F71] font-medium">Editing</span>
           )}
         </div>
 
@@ -778,12 +778,12 @@ export function MemberProfile() {
       {/* ── Health Preferences ── */}
       <section
         aria-labelledby="health-prefs-heading"
-        className="bg-white rounded-[12px] border border-[#E5E7EB] p-4"
+        className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] p-4"
       >
         <div className="flex items-center justify-between mb-3">
           <SectionHeader id="health-prefs-heading">Health Preferences</SectionHeader>
           {isEditing && (
-            <span className="text-xs text-[#00B050] font-medium">Editing</span>
+            <span className="text-xs text-[#6B8F71] font-medium">Editing</span>
           )}
         </div>
 
@@ -810,7 +810,7 @@ export function MemberProfile() {
 
             {/* Urgency radio */}
             <div>
-              <p className="text-xs text-[#AAAAAA] uppercase tracking-wide font-medium mb-2">
+              <p className="text-xs text-[#8B9B8D] uppercase tracking-wide font-medium mb-2">
                 Urgency Preference
               </p>
               <div
@@ -824,10 +824,10 @@ export function MemberProfile() {
                     <label
                       key={key}
                       className={[
-                        'flex items-start gap-3 p-3 rounded-[8px] border cursor-pointer transition-all',
+                        'flex items-start gap-3 p-3 rounded-[12px] border cursor-pointer transition-all',
                         isSelected
-                          ? 'border-[#00B050] bg-[#D0F0D0]/30'
-                          : 'border-[#E5E7EB] hover:border-[#00B050]/40',
+                          ? 'border-[#6B8F71] bg-[rgba(107,143,113,0.15)]/30'
+                          : 'border-[rgba(44,62,45,0.1)] hover:border-[#6B8F71]/40',
                       ].join(' ')}
                     >
                       <input
@@ -836,18 +836,18 @@ export function MemberProfile() {
                         value={key}
                         checked={isSelected}
                         onChange={() => handleDraftChange('urgency', key)}
-                        className="mt-0.5 accent-[#00B050]"
+                        className="mt-0.5 accent-[#6B8F71]"
                         aria-label={label}
                       />
                       <div>
                         <p
                           className={`text-sm font-semibold ${
-                            isSelected ? 'text-[#00B050]' : 'text-[#1A1A1A]'
+                            isSelected ? 'text-[#6B8F71]' : 'text-[#2C3E2D]'
                           }`}
                         >
                           {label}
                         </p>
-                        <p className="text-xs text-[#AAAAAA]">{description}</p>
+                        <p className="text-xs text-[#8B9B8D]">{description}</p>
                       </div>
                     </label>
                   );
@@ -860,16 +860,16 @@ export function MemberProfile() {
             {/* Primary need */}
             <div className="flex items-center gap-3">
               <div
-                className="w-9 h-9 rounded-[8px] bg-[#F8FAFB] border border-[#E5E7EB] flex items-center justify-center shrink-0"
+                className="w-9 h-9 rounded-[12px] bg-[#FBF7F0] border border-[rgba(44,62,45,0.1)] flex items-center justify-center shrink-0"
                 aria-hidden="true"
               >
                 <VerticalIcon vertical={display.primaryNeed} size={16} />
               </div>
               <div>
-                <p className="text-xs text-[#AAAAAA] uppercase tracking-wide font-medium">
+                <p className="text-xs text-[#8B9B8D] uppercase tracking-wide font-medium">
                   Primary Need
                 </p>
-                <p className="text-sm font-medium text-[#1A1A1A]">
+                <p className="text-sm font-medium text-[#2C3E2D]">
                   {verticalLabels[display.primaryNeed]}
                 </p>
               </div>
@@ -878,20 +878,20 @@ export function MemberProfile() {
             {/* SDOH flags */}
             <div className="flex items-start gap-3">
               <div
-                className="w-9 h-9 rounded-[8px] bg-[#F8FAFB] border border-[#E5E7EB] flex items-center justify-center shrink-0"
+                className="w-9 h-9 rounded-[12px] bg-[#FBF7F0] border border-[rgba(44,62,45,0.1)] flex items-center justify-center shrink-0"
                 aria-hidden="true"
               >
                 <Heart size={15} className="text-pink-500" />
               </div>
               <div>
-                <p className="text-xs text-[#AAAAAA] uppercase tracking-wide font-medium mb-1">
+                <p className="text-xs text-[#8B9B8D] uppercase tracking-wide font-medium mb-1">
                   SDOH Factors
                 </p>
                 <div className="flex flex-wrap gap-1">
                   {(['housing', 'food', 'mental_health'] as Vertical[]).map((v) => (
                     <span
                       key={v}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-[#F8FAFB] border border-[#E5E7EB] text-[#555555]"
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-[#FBF7F0] border border-[rgba(44,62,45,0.1)] text-[#555555]"
                     >
                       <VerticalIcon vertical={v} size={11} />
                       {verticalLabels[v]}
@@ -917,12 +917,12 @@ export function MemberProfile() {
       {/* ── Insurance ── */}
       <section
         aria-labelledby="insurance-heading"
-        className="bg-white rounded-[12px] border border-[#E5E7EB] p-4"
+        className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] p-4"
       >
         <div className="flex items-center justify-between mb-3">
           <SectionHeader id="insurance-heading">Insurance</SectionHeader>
           {isEditing && (
-            <span className="text-xs text-[#00B050] font-medium">Editing</span>
+            <span className="text-xs text-[#6B8F71] font-medium">Editing</span>
           )}
         </div>
 
@@ -945,16 +945,16 @@ export function MemberProfile() {
         ) : (
           <div className="flex items-center gap-3">
             <div
-              className="w-9 h-9 rounded-[8px] bg-blue-50 border border-blue-100 flex items-center justify-center shrink-0"
+              className="w-9 h-9 rounded-[12px] bg-blue-50 border border-blue-100 flex items-center justify-center shrink-0"
               aria-hidden="true"
             >
               <Shield size={15} className="text-[#0077B6]" />
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-xs text-[#AAAAAA] uppercase tracking-wide font-medium">
+              <p className="text-xs text-[#8B9B8D] uppercase tracking-wide font-medium">
                 Provider
               </p>
-              <p className="text-sm font-medium text-[#1A1A1A]">{display.insuranceProvider}</p>
+              <p className="text-sm font-medium text-[#2C3E2D]">{display.insuranceProvider}</p>
             </div>
           </div>
         )}
@@ -963,14 +963,14 @@ export function MemberProfile() {
       {/* ── CHW Preferences ── */}
       <section
         aria-labelledby="chw-prefs-heading"
-        className="bg-white rounded-[12px] border border-[#E5E7EB] p-4"
+        className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] p-4"
       >
         <SectionHeader id="chw-prefs-heading">CHW Preferences</SectionHeader>
 
         <div className="space-y-4">
           {/* Gender preference */}
           <div>
-            <p className="text-xs text-[#AAAAAA] uppercase tracking-wide font-medium mb-2">
+            <p className="text-xs text-[#8B9B8D] uppercase tracking-wide font-medium mb-2">
               Gender Preference
             </p>
             <div role="group" aria-label="CHW gender preference" className="flex gap-2">
@@ -983,10 +983,10 @@ export function MemberProfile() {
                     onClick={() => handleDraftChange('genderPref', option.key)}
                     aria-pressed={isSelected}
                     className={[
-                      'flex-1 py-2 text-xs font-semibold rounded-[8px] border transition-all focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00B050]',
+                      'flex-1 py-2 text-xs font-semibold rounded-[12px] border transition-all focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6B8F71]',
                       isSelected
-                        ? 'bg-[#D0F0D0]/40 border-[#00B050] text-[#00B050]'
-                        : 'bg-white border-[#E5E7EB] text-[#555555] hover:border-[#00B050]/50',
+                        ? 'bg-[rgba(107,143,113,0.15)]/40 border-[#6B8F71] text-[#6B8F71]'
+                        : 'bg-white border-[rgba(44,62,45,0.1)] text-[#555555] hover:border-[#6B8F71]/50',
                     ].join(' ')}
                   >
                     {option.label}
@@ -998,13 +998,13 @@ export function MemberProfile() {
 
           {/* Language preference */}
           <div>
-            <p className="text-xs text-[#AAAAAA] uppercase tracking-wide font-medium mb-2">
+            <p className="text-xs text-[#8B9B8D] uppercase tracking-wide font-medium mb-2">
               Language Preference
             </p>
             <select
               value={(isEditing ? draft : saved).languagePref}
               onChange={(e) => handleDraftChange('languagePref', e.target.value)}
-              className="w-full px-3 py-2.5 rounded-[8px] border border-[#E5E7EB] text-sm text-[#1A1A1A] bg-white focus:outline-none focus:ring-2 focus:ring-[#00B050]/30 focus:border-[#00B050] transition-colors"
+              className="w-full px-3 py-2.5 rounded-[12px] border border-[rgba(44,62,45,0.1)] text-sm text-[#2C3E2D] bg-white focus:outline-none focus:ring-2 focus:ring-[#6B8F71]/30 focus:border-[#6B8F71] transition-colors"
               aria-label="Preferred CHW language"
             >
               <option value="Any">Any language</option>
@@ -1018,7 +1018,7 @@ export function MemberProfile() {
 
           {/* Mode preference */}
           <div>
-            <p className="text-xs text-[#AAAAAA] uppercase tracking-wide font-medium mb-2">
+            <p className="text-xs text-[#8B9B8D] uppercase tracking-wide font-medium mb-2">
               Session Mode
             </p>
             <div
@@ -1036,10 +1036,10 @@ export function MemberProfile() {
                     onClick={() => handleDraftChange('modePref', option.key)}
                     aria-pressed={isSelected}
                     className={[
-                      'flex items-center justify-center gap-1.5 py-2 text-xs font-semibold rounded-[8px] border transition-all focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0077B6]',
+                      'flex items-center justify-center gap-1.5 py-2 text-xs font-semibold rounded-[12px] border transition-all focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0077B6]',
                       isSelected
                         ? 'bg-blue-50 border-[#0077B6] text-[#0077B6]'
-                        : 'bg-white border-[#E5E7EB] text-[#555555] hover:border-[#0077B6]/50',
+                        : 'bg-white border-[rgba(44,62,45,0.1)] text-[#555555] hover:border-[#0077B6]/50',
                     ].join(' ')}
                   >
                     {option.icon}
@@ -1055,7 +1055,7 @@ export function MemberProfile() {
       {/* ── Notification Settings ── */}
       <section
         aria-labelledby="notifications-heading"
-        className="bg-white rounded-[12px] border border-[#E5E7EB] p-4"
+        className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] p-4"
       >
         <div className="flex items-center gap-2 mb-3">
           <Bell size={15} className="text-[#555555]" aria-hidden="true" />
@@ -1070,7 +1070,7 @@ export function MemberProfile() {
             label="Session Reminders"
             description="Get notified 24 hrs before a session"
           />
-          <div className="border-t border-[#E5E7EB]" />
+          <div className="border-t border-[rgba(44,62,45,0.1)]" />
           <ToggleSwitch
             id="toggle-goal-updates"
             checked={notifications.goalUpdates}
@@ -1078,7 +1078,7 @@ export function MemberProfile() {
             label="Goal Updates"
             description="Progress milestones and new goals"
           />
-          <div className="border-t border-[#E5E7EB]" />
+          <div className="border-t border-[rgba(44,62,45,0.1)]" />
           <ToggleSwitch
             id="toggle-health-tips"
             checked={notifications.healthTips}
@@ -1092,18 +1092,18 @@ export function MemberProfile() {
       {/* ── Danger zone ── */}
       <section
         aria-labelledby="member-danger-zone-heading"
-        className="bg-white rounded-[12px] border border-red-100 p-4"
+        className="bg-white rounded-[20px] border border-red-100 p-4"
       >
         <h3
           id="member-danger-zone-heading"
-          className="text-sm font-semibold text-[#1A1A1A] uppercase tracking-wide mb-3"
+          className="text-sm font-semibold text-[#2C3E2D] uppercase tracking-wide mb-3"
         >
           Account
         </h3>
         <button
           type="button"
           onClick={handleLogout}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-[8px] border border-red-300 text-red-600 text-sm font-semibold hover:bg-red-50 active:bg-red-100 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-400"
+          className="flex items-center gap-2 px-4 py-2.5 rounded-[12px] border border-red-300 text-red-600 text-sm font-semibold hover:bg-red-50 active:bg-red-100 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-400"
           aria-label="Log out of your account"
         >
           <LogOut size={15} aria-hidden="true" />
@@ -1114,14 +1114,14 @@ export function MemberProfile() {
       {/* ── Sticky Save Bar (visible when editing) ── */}
       {isEditing && (
         <div
-          className="fixed bottom-0 left-0 right-0 bg-white border-t border-[#E5E7EB] p-4 flex justify-end gap-3 z-30 shadow-[0_-4px_16px_rgba(0,0,0,0.06)]"
+          className="fixed bottom-0 left-0 right-0 bg-white border-t border-[rgba(44,62,45,0.1)] p-4 flex justify-end gap-3 z-30 shadow-[0_-4px_16px_rgba(0,0,0,0.06)]"
           role="toolbar"
           aria-label="Profile edit actions"
         >
           <button
             type="button"
             onClick={handleDiscard}
-            className="flex items-center gap-1.5 px-4 py-2.5 text-sm font-semibold text-[#555555] border border-[#E5E7EB] rounded-[8px] hover:bg-[#F8FAFB] active:bg-[#E5E7EB] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#555555]"
+            className="flex items-center gap-1.5 px-4 py-2.5 text-sm font-semibold text-[#555555] border border-[rgba(44,62,45,0.1)] rounded-[12px] hover:bg-[#FBF7F0] active:bg-[rgba(44,62,45,0.1)] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#555555]"
             aria-label="Discard profile changes"
           >
             <X size={14} aria-hidden="true" />
@@ -1130,7 +1130,7 @@ export function MemberProfile() {
           <button
             type="button"
             onClick={handleSave}
-            className="flex items-center gap-1.5 px-4 py-2.5 text-sm font-semibold text-white bg-[#00B050] hover:bg-[#008F40] active:bg-[#007035] rounded-[8px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00B050]"
+            className="flex items-center gap-1.5 px-4 py-2.5 text-sm font-semibold text-white bg-[#2C3E2D] hover:bg-[#3A5240] active:bg-[#243D25] rounded-[12px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6B8F71]"
             aria-label="Save profile changes"
           >
             <Save size={14} aria-hidden="true" />

@@ -35,7 +35,7 @@ const verticalColors: Record<Vertical | 'goal_milestone', string> = {
   food: '#F59E0B',
   mental_health: '#8B5CF6',
   healthcare: '#06B6D4',
-  goal_milestone: '#00B050',
+  goal_milestone: '#6B8F71',
 };
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -226,12 +226,12 @@ function DayCell({ day, events, isToday, isSelected, monthName, onClick }: DayCe
   const baseCellClass = [
     'relative w-full flex flex-col',
     'min-h-[80px] sm:min-h-[100px]',
-    'border-b border-r border-[#E5E7EB]',
+    'border-b border-r border-[rgba(44,62,45,0.1)]',
     'p-1 cursor-pointer transition-colors',
-    'focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#00B050]',
+    'focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#6B8F71]',
   ].join(' ');
 
-  let stateClass = 'hover:bg-[#F8FAFB]';
+  let stateClass = 'hover:bg-[#FBF7F0]';
   if (isSelected) {
     stateClass = 'bg-[#F0FBF0] hover:bg-[#E4F7E4]';
   }
@@ -252,10 +252,10 @@ function DayCell({ day, events, isToday, isSelected, monthName, onClick }: DayCe
             'text-[11px] font-medium leading-none',
             'w-5 h-5 rounded-full shrink-0',
             isToday
-              ? 'bg-[#00B050] text-white'
+              ? 'bg-[#2C3E2D] text-white'
               : isSelected
-              ? 'text-[#00B050] font-semibold'
-              : 'text-[#1A1A1A]',
+              ? 'text-[#6B8F71] font-semibold'
+              : 'text-[#2C3E2D]',
           ].join(' ')}
         >
           {day}
@@ -305,7 +305,7 @@ function EventCard({ event }: EventCardProps) {
   const barColor = eventBarColor(event);
 
   return (
-    <div className="bg-white rounded-[12px] border border-[#E5E7EB] p-4 flex items-start gap-3">
+    <div className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] p-4 flex items-start gap-3">
       {/* Color indicator strip */}
       <div
         className="w-1 self-stretch rounded-full shrink-0"
@@ -316,7 +316,7 @@ function EventCard({ event }: EventCardProps) {
       <div className="flex-1 min-w-0">
         {/* Title row + vertical badge */}
         <div className="flex items-start justify-between gap-2 flex-wrap">
-          <p className="text-sm font-semibold text-[#1A1A1A] leading-snug">{event.title}</p>
+          <p className="text-sm font-semibold text-[#2C3E2D] leading-snug">{event.title}</p>
           {event.vertical && (
             <span
               className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium shrink-0"
@@ -329,7 +329,7 @@ function EventCard({ event }: EventCardProps) {
             </span>
           )}
           {!event.vertical && event.type === 'goal_milestone' && (
-            <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-[#D0F0D0] text-[#00B050] shrink-0">
+            <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-[rgba(107,143,113,0.15)] text-[#6B8F71] shrink-0">
               Milestone
             </span>
           )}
@@ -337,7 +337,7 @@ function EventCard({ event }: EventCardProps) {
 
         {/* Time */}
         <div className="flex items-center gap-1.5 mt-1.5">
-          <Clock size={12} className="text-[#AAAAAA] shrink-0" aria-hidden="true" />
+          <Clock size={12} className="text-[#8B9B8D] shrink-0" aria-hidden="true" />
           <span className="text-xs text-[#555555]">
             {formatTimeFull(event.startTime)}
             {event.endTime !== event.startTime && ` – ${formatTimeFull(event.endTime)}`}
@@ -348,9 +348,9 @@ function EventCard({ event }: EventCardProps) {
         {event.memberName && (
           <div className="flex items-center gap-1.5 mt-1">
             {isSession ? (
-              <MapPin size={12} className="text-[#AAAAAA] shrink-0" aria-hidden="true" />
+              <MapPin size={12} className="text-[#8B9B8D] shrink-0" aria-hidden="true" />
             ) : (
-              <CalendarDays size={12} className="text-[#AAAAAA] shrink-0" aria-hidden="true" />
+              <CalendarDays size={12} className="text-[#8B9B8D] shrink-0" aria-hidden="true" />
             )}
             <span className="text-xs text-[#555555]">
               {event.memberName}
@@ -375,7 +375,7 @@ function Toast({ message }: ToastProps) {
     <div
       role="status"
       aria-live="polite"
-      className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-[#1A1A1A] text-white text-sm px-4 py-2.5 rounded-[8px] shadow-lg pointer-events-none"
+      className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-[#2C3E2D] text-white text-sm px-4 py-2.5 rounded-[12px] shadow-lg pointer-events-none"
     >
       {message}
     </div>
@@ -410,12 +410,12 @@ function SyncModal({ onClose, onConnectGoogle, onExportIcs, syncingProvider }: S
       {/* Panel */}
       <div className="relative bg-white rounded-[16px] max-w-sm w-full mx-auto p-5 shadow-xl z-10">
         <div className="flex items-center justify-between mb-4">
-          <h2 id="sync-modal-title" className="text-base font-semibold text-[#1A1A1A]">
+          <h2 id="sync-modal-title" className="text-base font-semibold text-[#2C3E2D]">
             Sync Calendar
           </h2>
           <button
             onClick={onClose}
-            className="text-[#AAAAAA] hover:text-[#555555] transition-colors p-1 rounded"
+            className="text-[#8B9B8D] hover:text-[#555555] transition-colors p-1 rounded"
             aria-label="Close sync modal"
           >
             <span className="text-lg leading-none" aria-hidden="true">x</span>
@@ -428,9 +428,9 @@ function SyncModal({ onClose, onConnectGoogle, onExportIcs, syncingProvider }: S
 
         <div className="space-y-3">
           {/* Google Calendar */}
-          <div className="border border-[#E5E7EB] rounded-[12px] p-4 flex items-center justify-between gap-3">
+          <div className="border border-[rgba(44,62,45,0.1)] rounded-[12px] p-4 flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-lg bg-white border border-[#E5E7EB] flex items-center justify-center shrink-0 shadow-sm">
+              <div className="w-9 h-9 rounded-lg bg-white border border-[rgba(44,62,45,0.1)] flex items-center justify-center shrink-0 shadow-sm">
                 <span
                   className="font-bold text-base"
                   style={{
@@ -445,14 +445,14 @@ function SyncModal({ onClose, onConnectGoogle, onExportIcs, syncingProvider }: S
                 </span>
               </div>
               <div>
-                <p className="text-sm font-medium text-[#1A1A1A]">Google Calendar</p>
-                <p className="text-xs text-[#AAAAAA]">Two-way sync</p>
+                <p className="text-sm font-medium text-[#2C3E2D]">Google Calendar</p>
+                <p className="text-xs text-[#8B9B8D]">Two-way sync</p>
               </div>
             </div>
             <button
               onClick={onConnectGoogle}
               disabled={syncingProvider === 'google'}
-              className="shrink-0 flex items-center gap-1.5 bg-[#00B050] text-white text-xs font-medium px-3 py-1.5 rounded-[8px] hover:bg-[#009040] transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              className="shrink-0 flex items-center gap-1.5 bg-[#2C3E2D] text-white text-xs font-medium px-3 py-1.5 rounded-[12px] hover:bg-[#009040] transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
             >
               {syncingProvider === 'google' ? (
                 <>
@@ -466,28 +466,28 @@ function SyncModal({ onClose, onConnectGoogle, onExportIcs, syncingProvider }: S
           </div>
 
           {/* Apple Calendar */}
-          <div className="border border-[#E5E7EB] rounded-[12px] p-4 flex items-center justify-between gap-3">
+          <div className="border border-[rgba(44,62,45,0.1)] rounded-[12px] p-4 flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-lg bg-[#F8FAFB] border border-[#E5E7EB] flex items-center justify-center shrink-0">
+              <div className="w-9 h-9 rounded-lg bg-[#FBF7F0] border border-[rgba(44,62,45,0.1)] flex items-center justify-center shrink-0">
                 <CalendarDays size={18} className="text-[#555555]" aria-hidden="true" />
               </div>
               <div>
-                <p className="text-sm font-medium text-[#1A1A1A]">Apple Calendar</p>
-                <p className="text-xs text-[#AAAAAA]">Export .ics file</p>
+                <p className="text-sm font-medium text-[#2C3E2D]">Apple Calendar</p>
+                <p className="text-xs text-[#8B9B8D]">Export .ics file</p>
               </div>
             </div>
             <button
               onClick={() => onExportIcs('apple')}
-              className="shrink-0 text-xs font-medium text-[#0077B6] border border-[#0077B6] px-3 py-1.5 rounded-[8px] hover:bg-blue-50 transition-colors"
+              className="shrink-0 text-xs font-medium text-[#0077B6] border border-[#0077B6] px-3 py-1.5 rounded-[12px] hover:bg-blue-50 transition-colors"
             >
               Export .ics
             </button>
           </div>
 
           {/* Outlook */}
-          <div className="border border-[#E5E7EB] rounded-[12px] p-4 flex items-center justify-between gap-3">
+          <div className="border border-[rgba(44,62,45,0.1)] rounded-[12px] p-4 flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-lg bg-[#F0F4FF] border border-[#E5E7EB] flex items-center justify-center shrink-0">
+              <div className="w-9 h-9 rounded-lg bg-[#F0F4FF] border border-[rgba(44,62,45,0.1)] flex items-center justify-center shrink-0">
                 <svg
                   width="18"
                   height="18"
@@ -501,13 +501,13 @@ function SyncModal({ onClose, onConnectGoogle, onExportIcs, syncingProvider }: S
                 </svg>
               </div>
               <div>
-                <p className="text-sm font-medium text-[#1A1A1A]">Outlook</p>
-                <p className="text-xs text-[#AAAAAA]">Export for Outlook</p>
+                <p className="text-sm font-medium text-[#2C3E2D]">Outlook</p>
+                <p className="text-xs text-[#8B9B8D]">Export for Outlook</p>
               </div>
             </div>
             <button
               onClick={() => onExportIcs('outlook')}
-              className="shrink-0 text-xs font-medium text-[#0077B6] border border-[#0077B6] px-3 py-1.5 rounded-[8px] hover:bg-blue-50 transition-colors"
+              className="shrink-0 text-xs font-medium text-[#0077B6] border border-[#0077B6] px-3 py-1.5 rounded-[12px] hover:bg-blue-50 transition-colors"
             >
               Export .ics
             </button>
@@ -623,8 +623,8 @@ export function CHWCalendar() {
           <h2 className="text-2xl font-semibold text-[#0077B6]">Calendar</h2>
           {calendarConnected && (
             <div className="flex items-center gap-1.5 mt-1">
-              <Check size={12} className="text-[#00B050]" aria-hidden="true" />
-              <span className="text-xs font-medium text-[#00B050]">
+              <Check size={12} className="text-[#6B8F71]" aria-hidden="true" />
+              <span className="text-xs font-medium text-[#6B8F71]">
                 Connected to Google Calendar
               </span>
             </div>
@@ -632,14 +632,14 @@ export function CHWCalendar() {
         </div>
 
         {calendarConnected ? (
-          <div className="flex items-center gap-1.5 bg-[#D0F0D0] text-[#00B050] text-xs font-medium px-3 py-1.5 rounded-[8px]">
+          <div className="flex items-center gap-1.5 bg-[rgba(107,143,113,0.15)] text-[#6B8F71] text-xs font-medium px-3 py-1.5 rounded-[12px]">
             <Check size={13} aria-hidden="true" />
             Connected
           </div>
         ) : (
           <button
             onClick={() => setShowSyncModal(true)}
-            className="flex items-center gap-1.5 border border-[#00B050] text-[#00B050] text-xs font-medium px-3 py-1.5 rounded-[8px] hover:bg-[#D0F0D0] transition-colors"
+            className="flex items-center gap-1.5 border border-[#6B8F71] text-[#6B8F71] text-xs font-medium px-3 py-1.5 rounded-[12px] hover:bg-[rgba(107,143,113,0.15)] transition-colors"
           >
             <RefreshCw size={13} aria-hidden="true" />
             Sync Calendar
@@ -648,24 +648,24 @@ export function CHWCalendar() {
       </div>
 
       {/* Calendar card */}
-      <div className="bg-white rounded-[12px] border border-[#E5E7EB] p-4">
+      <div className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] p-4">
         {/* Month navigation */}
         <div className="flex items-center justify-between mb-4">
           <button
             onClick={handlePrevMonth}
-            className="p-1.5 rounded-[8px] text-[#555555] hover:bg-[#F8FAFB] transition-colors"
+            className="p-1.5 rounded-[12px] text-[#555555] hover:bg-[#FBF7F0] transition-colors"
             aria-label="Previous month"
           >
             <ChevronLeft size={18} aria-hidden="true" />
           </button>
 
-          <h3 className="text-sm font-semibold text-[#1A1A1A]">
+          <h3 className="text-sm font-semibold text-[#2C3E2D]">
             {MONTH_NAMES[month]} {year}
           </h3>
 
           <button
             onClick={handleNextMonth}
-            className="p-1.5 rounded-[8px] text-[#555555] hover:bg-[#F8FAFB] transition-colors"
+            className="p-1.5 rounded-[12px] text-[#555555] hover:bg-[#FBF7F0] transition-colors"
             aria-label="Next month"
           >
             <ChevronRight size={18} aria-hidden="true" />
@@ -673,12 +673,12 @@ export function CHWCalendar() {
         </div>
 
         {/* Day-of-week header */}
-        <div className="grid grid-cols-7 border-t border-l border-[#E5E7EB]" role="row">
+        <div className="grid grid-cols-7 border-t border-l border-[rgba(44,62,45,0.1)]" role="row">
           {DAY_LABELS.map((label) => (
             <div
               key={label}
               role="columnheader"
-              className="text-xs font-medium text-[#AAAAAA] uppercase text-center py-2 border-b border-r border-[#E5E7EB]"
+              className="text-xs font-medium text-[#8B9B8D] uppercase text-center py-2 border-b border-r border-[rgba(44,62,45,0.1)]"
             >
               {label}
             </div>
@@ -687,7 +687,7 @@ export function CHWCalendar() {
 
         {/* Calendar grid */}
         <div
-          className="grid grid-cols-7 border-l border-[#E5E7EB]"
+          className="grid grid-cols-7 border-l border-[rgba(44,62,45,0.1)]"
           role="grid"
           aria-label={`${MONTH_NAMES[month]} ${year} calendar`}
         >
@@ -698,7 +698,7 @@ export function CHWCalendar() {
                   key={`empty-${index}`}
                   role="gridcell"
                   aria-hidden="true"
-                  className="min-h-[80px] sm:min-h-[100px] border-b border-r border-[#E5E7EB] bg-[#FAFAFA]"
+                  className="min-h-[80px] sm:min-h-[100px] border-b border-r border-[rgba(44,62,45,0.1)] bg-[#FAFAFA]"
                 />
               );
             }
@@ -726,15 +726,15 @@ export function CHWCalendar() {
         <section aria-labelledby="chw-day-detail-heading">
           <h3
             id="chw-day-detail-heading"
-            className="text-sm font-semibold text-[#1A1A1A] uppercase tracking-wide mb-3"
+            className="text-sm font-semibold text-[#2C3E2D] uppercase tracking-wide mb-3"
           >
             {MONTH_NAMES[month]} {selectedDay}
           </h3>
 
           {selectedEvents.length === 0 ? (
-            <div className="bg-white rounded-[12px] border border-[#E5E7EB] p-6 text-center">
-              <CalendarDays size={32} className="text-[#E5E7EB] mx-auto mb-2" aria-hidden="true" />
-              <p className="text-sm text-[#AAAAAA]">No events on this day</p>
+            <div className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] p-6 text-center">
+              <CalendarDays size={32} className="text-[rgba(44,62,45,0.1)] mx-auto mb-2" aria-hidden="true" />
+              <p className="text-sm text-[#8B9B8D]">No events on this day</p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -747,8 +747,8 @@ export function CHWCalendar() {
       )}
 
       {/* Legend */}
-      <div className="bg-white rounded-[12px] border border-[#E5E7EB] p-4">
-        <p className="text-xs font-semibold text-[#1A1A1A] uppercase tracking-wide mb-3">
+      <div className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] p-4">
+        <p className="text-xs font-semibold text-[#2C3E2D] uppercase tracking-wide mb-3">
           Legend
         </p>
         <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">

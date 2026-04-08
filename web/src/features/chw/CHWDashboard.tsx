@@ -62,11 +62,11 @@ export function CHWDashboard() {
       {/* Stat cards */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard
-          icon={<DollarSign size={18} className="text-[#00B050]" />}
+          icon={<DollarSign size={18} className="text-[#6B8F71]" />}
           label="This Week"
           value={formatCurrency(earningsSummary.thisWeek)}
           subtext="Pending payout"
-          iconBg="bg-[#D0F0D0]"
+          iconBg="bg-[rgba(107,143,113,0.15)]"
         />
         <StatCard
           icon={<Star size={18} className="text-yellow-500" />}
@@ -96,17 +96,17 @@ export function CHWDashboard() {
         <section aria-labelledby="upcoming-heading">
           <h3
             id="upcoming-heading"
-            className="text-sm font-semibold text-[#1A1A1A] uppercase tracking-wide mb-3"
+            className="text-sm font-semibold text-[#2C3E2D] uppercase tracking-wide mb-3"
           >
             Upcoming Session
           </h3>
-          <div className="bg-white rounded-[12px] border border-[#E5E7EB] p-4 flex items-start gap-3">
-            <div className="w-10 h-10 rounded-[8px] bg-[#D0F0D0] flex items-center justify-center shrink-0">
+          <div className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] p-4 flex items-start gap-3">
+            <div className="w-10 h-10 rounded-[12px] bg-[rgba(107,143,113,0.15)] flex items-center justify-center shrink-0">
               <VerticalIcon vertical={upcomingSession.vertical} size={20} />
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <p className="text-sm font-semibold text-[#1A1A1A]">
+                <p className="text-sm font-semibold text-[#2C3E2D]">
                   {upcomingSession.memberName}
                 </p>
                 <Badge variant="vertical" value={upcomingSession.vertical} />
@@ -118,7 +118,7 @@ export function CHWDashboard() {
                 {sessionModeLabels[upcomingSession.mode]}
               </p>
               {upcomingSession.notes && (
-                <p className="text-xs text-[#AAAAAA] mt-1 italic truncate">
+                <p className="text-xs text-[#8B9B8D] mt-1 italic truncate">
                   {upcomingSession.notes}
                 </p>
               )}
@@ -132,7 +132,7 @@ export function CHWDashboard() {
         <div className="flex items-center justify-between mb-3">
           <h3
             id="requests-heading"
-            className="text-sm font-semibold text-[#1A1A1A] uppercase tracking-wide"
+            className="text-sm font-semibold text-[#2C3E2D] uppercase tracking-wide"
           >
             Open Requests Near You
           </h3>
@@ -145,15 +145,15 @@ export function CHWDashboard() {
           {openRequests.slice(0, 3).map((request) => (
             <div
               key={request.id}
-              className="bg-white rounded-[12px] border border-[#E5E7EB] p-4"
+              className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] p-4"
             >
               <div className="flex items-start gap-3">
-                <div className="w-10 h-10 rounded-[8px] bg-[#F8FAFB] border border-[#E5E7EB] flex items-center justify-center shrink-0">
+                <div className="w-10 h-10 rounded-[12px] bg-[#FBF7F0] border border-[rgba(44,62,45,0.1)] flex items-center justify-center shrink-0">
                   <VerticalIcon vertical={request.vertical} size={18} />
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap mb-1">
-                    <span className="text-sm font-semibold text-[#1A1A1A]">
+                    <span className="text-sm font-semibold text-[#2C3E2D]">
                       {request.memberName}
                     </span>
                     <Badge variant="vertical" value={request.vertical} />
@@ -163,11 +163,11 @@ export function CHWDashboard() {
                     {request.description}
                   </p>
                   <div className="flex items-center gap-3 mt-2">
-                    <span className="text-xs text-[#AAAAAA]">
+                    <span className="text-xs text-[#8B9B8D]">
                       {sessionModeLabels[request.preferredMode]}
                     </span>
-                    <span className="text-xs text-[#AAAAAA]">·</span>
-                    <span className="text-xs text-[#AAAAAA]">
+                    <span className="text-xs text-[#8B9B8D]">·</span>
+                    <span className="text-xs text-[#8B9B8D]">
                       ~{request.estimatedUnits} units (
                       {formatCurrency(request.estimatedUnits * 26.66 * 0.85)} net)
                     </span>
@@ -180,7 +180,7 @@ export function CHWDashboard() {
       </section>
 
       {/* Urgency legend note */}
-      <p className="text-xs text-[#AAAAAA] text-center">
+      <p className="text-xs text-[#8B9B8D] text-center">
         Urgency: {urgencyLabels.routine} — {urgencyLabels.soon} — {urgencyLabels.urgent} · Rates reflect $26.66/unit Medi-Cal reimbursement, 85% CHW payout.
       </p>
     </div>

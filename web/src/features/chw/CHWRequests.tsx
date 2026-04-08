@@ -70,9 +70,9 @@ function Toast({ message }: ToastProps) {
     <div
       role="status"
       aria-live="polite"
-      className="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-[#1A1A1A] text-white text-sm font-medium px-4 py-3 rounded-[12px] shadow-lg"
+      className="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-[#2C3E2D] text-white text-sm font-medium px-4 py-3 rounded-[20px] shadow-lg"
     >
-      <CheckCircle size={16} className="text-[#00B050] shrink-0" aria-hidden="true" />
+      <CheckCircle size={16} className="text-[#6B8F71] shrink-0" aria-hidden="true" />
       {message}
     </div>
   );
@@ -90,13 +90,13 @@ function RequestCard({ request, onAccept, onPass }: RequestCardProps) {
 
   return (
     <article
-      className="bg-white rounded-[12px] border border-[#E5E7EB] p-4"
+      className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] p-4"
       aria-label={`Request from ${request.memberName}`}
     >
       <div className="flex items-start gap-3">
         {/* Vertical icon */}
         <div
-          className="w-10 h-10 rounded-[8px] bg-[#F8FAFB] border border-[#E5E7EB] flex items-center justify-center shrink-0"
+          className="w-10 h-10 rounded-[12px] bg-[#FBF7F0] border border-[rgba(44,62,45,0.1)] flex items-center justify-center shrink-0"
           aria-hidden="true"
         >
           <VerticalIcon vertical={request.vertical} size={18} />
@@ -106,12 +106,12 @@ function RequestCard({ request, onAccept, onPass }: RequestCardProps) {
         <div className="flex-1 min-w-0">
           {/* Header row */}
           <div className="flex items-center gap-2 flex-wrap mb-1">
-            <span className="text-sm font-semibold text-[#1A1A1A]">
+            <span className="text-sm font-semibold text-[#2C3E2D]">
               {request.memberName}
             </span>
             <Badge variant="vertical" value={request.vertical} />
             <Badge variant="urgency" value={request.urgency} />
-            <span className="ml-auto text-xs text-[#AAAAAA]">
+            <span className="ml-auto text-xs text-[#8B9B8D]">
               {sessionModeLabels[request.preferredMode]}
             </span>
           </div>
@@ -123,15 +123,15 @@ function RequestCard({ request, onAccept, onPass }: RequestCardProps) {
 
           {/* Estimated earnings */}
           <div className="mt-2 flex items-center gap-1.5">
-            <span className="text-xs font-medium text-[#00B050]">
+            <span className="text-xs font-medium text-[#6B8F71]">
               ~{request.estimatedUnits} {request.estimatedUnits === 1 ? 'unit' : 'units'}
             </span>
-            <span className="text-xs text-[#AAAAAA]">·</span>
+            <span className="text-xs text-[#8B9B8D]">·</span>
             <span className="text-xs text-[#555555]">
               {formatCurrency(grossEarnings)} gross
             </span>
-            <span className="text-xs text-[#AAAAAA]">·</span>
-            <span className="text-xs font-semibold text-[#1A1A1A]">
+            <span className="text-xs text-[#8B9B8D]">·</span>
+            <span className="text-xs font-semibold text-[#2C3E2D]">
               {formatCurrency(netEarnings)} net
             </span>
           </div>
@@ -143,7 +143,7 @@ function RequestCard({ request, onAccept, onPass }: RequestCardProps) {
         <button
           type="button"
           onClick={() => onAccept(request.id)}
-          className="flex-1 flex items-center justify-center gap-1.5 bg-[#00B050] hover:bg-[#008F40] active:bg-[#007A38] text-white text-sm font-semibold py-2.5 rounded-[8px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00B050]"
+          className="flex-1 flex items-center justify-center gap-1.5 bg-[#2C3E2D] hover:bg-[#3A5240] active:bg-[#243D25] text-white text-sm font-semibold py-2.5 rounded-[12px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6B8F71]"
           aria-label={`Accept request from ${request.memberName}`}
         >
           <CheckCircle size={15} aria-hidden="true" />
@@ -152,7 +152,7 @@ function RequestCard({ request, onAccept, onPass }: RequestCardProps) {
         <button
           type="button"
           onClick={() => onPass(request.id)}
-          className="flex-1 flex items-center justify-center gap-1.5 bg-white border border-[#E5E7EB] hover:bg-[#F8FAFB] active:bg-[#F0F0F0] text-[#555555] text-sm font-semibold py-2.5 rounded-[8px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#AAAAAA]"
+          className="flex-1 flex items-center justify-center gap-1.5 bg-white border border-[rgba(44,62,45,0.1)] hover:bg-[#FBF7F0] active:bg-[#F0F0F0] text-[#555555] text-sm font-semibold py-2.5 rounded-[12px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#AAAAAA]"
           aria-label={`Pass on request from ${request.memberName}`}
         >
           <XCircle size={15} aria-hidden="true" />
@@ -206,7 +206,7 @@ export function CHWRequests() {
             type: 'resource' as const,
             color: VERTICAL_MARKER_COLOR[r.vertical] ?? '#555555',
             popupContent: `
-              <strong style="color:#1A1A1A;font-size:13px">${r.memberName}</strong><br/>
+              <strong style="color:#2C3E2D;font-size:13px">${r.memberName}</strong><br/>
               <span style="color:#555555;font-size:12px">${r.vertical.replace('_', ' ')} · ${r.urgency}</span><br/>
               <span style="color:#555555;font-size:12px">${r.estimatedUnits * 15} min est.</span>
             `,
@@ -244,7 +244,7 @@ export function CHWRequests() {
         <h2 className="text-2xl font-semibold text-[#0077B6]">Open Requests</h2>
         {openCount > 0 && (
           <span
-            className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-[#00B050] text-white text-xs font-bold"
+            className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-[#2C3E2D] text-white text-xs font-bold"
             aria-label={`${openCount} open requests`}
           >
             {openCount}
@@ -273,10 +273,10 @@ export function CHWRequests() {
               aria-selected={isActive}
               onClick={() => setActiveFilter(tab.key)}
               className={[
-                'shrink-0 px-3.5 py-1.5 text-sm font-medium rounded-full border transition-all whitespace-nowrap focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00B050]',
+                'shrink-0 px-3.5 py-1.5 text-sm font-medium rounded-full border transition-all whitespace-nowrap focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6B8F71]',
                 isActive
-                  ? 'bg-[#00B050] border-[#00B050] text-white'
-                  : 'bg-white border-[#E5E7EB] text-[#555555] hover:border-[#00B050] hover:text-[#00B050]',
+                  ? 'bg-[#2C3E2D] border-[#6B8F71] text-white'
+                  : 'bg-white border-[rgba(44,62,45,0.1)] text-[#555555] hover:border-[#6B8F71] hover:text-[#6B8F71]',
               ].join(' ')}
             >
               {tab.label}
@@ -284,7 +284,7 @@ export function CHWRequests() {
                 <span
                   className={[
                     'ml-1.5 text-xs font-semibold',
-                    isActive ? 'text-white/80' : 'text-[#AAAAAA]',
+                    isActive ? 'text-white/80' : 'text-[#8B9B8D]',
                   ].join(' ')}
                 >
                   {tabCount}
@@ -300,7 +300,7 @@ export function CHWRequests() {
         <section aria-labelledby="requests-map-heading">
           <h3
             id="requests-map-heading"
-            className="text-sm font-semibold text-[#1A1A1A] uppercase tracking-wide mb-2"
+            className="text-sm font-semibold text-[#2C3E2D] uppercase tracking-wide mb-2"
           >
             Request Locations
           </h3>
@@ -333,15 +333,15 @@ export function CHWRequests() {
       ) : (
         /* Empty state */
         <div
-          className="bg-white rounded-[12px] border border-[#E5E7EB] p-10 flex flex-col items-center gap-3 text-center"
+          className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] p-10 flex flex-col items-center gap-3 text-center"
           role="status"
           aria-label="No matching requests"
         >
-          <div className="w-12 h-12 rounded-full bg-[#F8FAFB] border border-[#E5E7EB] flex items-center justify-center">
-            <Inbox size={22} className="text-[#AAAAAA]" aria-hidden="true" />
+          <div className="w-12 h-12 rounded-full bg-[#FBF7F0] border border-[rgba(44,62,45,0.1)] flex items-center justify-center">
+            <Inbox size={22} className="text-[#8B9B8D]" aria-hidden="true" />
           </div>
-          <p className="text-sm font-semibold text-[#1A1A1A]">No open requests</p>
-          <p className="text-xs text-[#AAAAAA] max-w-xs">
+          <p className="text-sm font-semibold text-[#2C3E2D]">No open requests</p>
+          <p className="text-xs text-[#8B9B8D] max-w-xs">
             {activeFilter === 'all'
               ? 'No open requests right now. Check back soon!'
               : 'No open requests in this category. Check back soon!'}
@@ -350,7 +350,7 @@ export function CHWRequests() {
       )}
 
       {/* Rate footnote */}
-      <p className="text-xs text-[#AAAAAA] text-center pb-2">
+      <p className="text-xs text-[#8B9B8D] text-center pb-2">
         Earnings based on $26.66/unit Medi-Cal rate · 85% CHW net payout after platform fees.
       </p>
     </div>

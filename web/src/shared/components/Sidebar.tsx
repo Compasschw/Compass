@@ -55,20 +55,20 @@ export function Sidebar() {
 
   return (
     <aside
-      className="hidden lg:flex flex-col w-60 shrink-0 bg-white border-r border-[#E5E7EB] min-h-screen"
+      className="hidden lg:flex flex-col w-60 shrink-0 bg-white border-r border-[rgba(44,62,45,0.1)] min-h-screen"
       aria-label="Main navigation"
     >
       {/* Brand */}
-      <div className="px-5 py-5 border-b border-[#E5E7EB]">
+      <div className="px-5 py-5 border-b border-[rgba(44,62,45,0.1)]">
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-[#00B050] flex items-center justify-center shrink-0">
+          <div className="w-8 h-8 rounded-lg bg-[#2C3E2D] flex items-center justify-center shrink-0">
             <span className="text-white font-bold text-sm">C</span>
           </div>
           <div>
-            <p className="text-[#1A1A1A] font-semibold text-sm leading-none">
+            <p className="text-[#2C3E2D] font-semibold text-sm leading-none">
               CompassCHW
             </p>
-            <p className="text-[#AAAAAA] text-xs mt-0.5">{roleLabel}</p>
+            <p className="text-[#8B9B8D] text-xs mt-0.5">{roleLabel}</p>
           </div>
         </div>
       </div>
@@ -80,10 +80,10 @@ export function Sidebar() {
             key={to}
             to={to}
             className={({ isActive }) =>
-              `flex items-center gap-3 px-3 py-2.5 rounded-[8px] text-sm font-medium transition-colors ${
+              `flex items-center gap-3 px-3 py-2.5 rounded-[12px] text-sm font-medium transition-colors ${
                 isActive
-                  ? 'bg-[#D0F0D0] text-[#00B050]'
-                  : 'text-[#555555] hover:bg-[#F8FAFB] hover:text-[#1A1A1A]'
+                  ? 'bg-[rgba(107,143,113,0.15)] text-[#6B8F71]'
+                  : 'text-[#555555] hover:bg-[#FBF7F0] hover:text-[#2C3E2D]'
               }`
             }
           >
@@ -94,7 +94,7 @@ export function Sidebar() {
       </nav>
 
       {/* User footer */}
-      <div className="px-3 py-4 border-t border-[#E5E7EB]">
+      <div className="px-3 py-4 border-t border-[rgba(44,62,45,0.1)]">
         {userName && (
           <div className="flex items-center gap-2 px-3 py-2 mb-1">
             <div className="w-7 h-7 rounded-full bg-[#0077B6] flex items-center justify-center shrink-0">
@@ -102,12 +102,12 @@ export function Sidebar() {
                 {userName.charAt(0).toUpperCase()}
               </span>
             </div>
-            <p className="text-sm text-[#1A1A1A] font-medium truncate">{userName}</p>
+            <p className="text-sm text-[#2C3E2D] font-medium truncate">{userName}</p>
           </div>
         )}
         <button
           onClick={logout}
-          className="flex items-center gap-3 w-full px-3 py-2.5 rounded-[8px] text-sm font-medium text-[#555555] hover:bg-[#F8FAFB] hover:text-[#1A1A1A] transition-colors"
+          className="flex items-center gap-3 w-full px-3 py-2.5 rounded-[12px] text-sm font-medium text-[#555555] hover:bg-[#FBF7F0] hover:text-[#2C3E2D] transition-colors"
         >
           <LogOut size={18} aria-hidden="true" />
           Log out

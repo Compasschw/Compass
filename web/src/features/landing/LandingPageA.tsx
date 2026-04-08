@@ -63,21 +63,21 @@ const HOW_IT_WORKS_STEPS: HowItWorksStep[] = [
     title: 'Tell Us What You Need',
     description:
       'Submit your request for housing, food, mental health, healthcare, or recovery support — in minutes, from any device.',
-    icon: <Smartphone size={28} className="text-[#00B050]" aria-hidden="true" />,
+    icon: <Smartphone size={28} className="text-[#6B8F71]" aria-hidden="true" />,
   },
   {
     number: '02',
     title: 'Get Matched with a CHW',
     description:
       'Our algorithm connects you with a certified, local Community Health Worker who speaks your language and knows your community.',
-    icon: <Users size={28} className="text-[#00B050]" aria-hidden="true" />,
+    icon: <Users size={28} className="text-[#6B8F71]" aria-hidden="true" />,
   },
   {
     number: '03',
     title: 'Navigate Together',
     description:
       'Your CHW guides you through resources, applications, and appointments — in-person, virtual, or by phone.',
-    icon: <MapPin size={28} className="text-[#00B050]" aria-hidden="true" />,
+    icon: <MapPin size={28} className="text-[#6B8F71]" aria-hidden="true" />,
   },
 ];
 
@@ -162,7 +162,7 @@ function NavBar() {
     <header
       className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
         scrolled
-          ? 'bg-white/95 backdrop-blur-md shadow-[0_1px_20px_rgba(0,0,0,0.08)] border-b border-[#E5E7EB]'
+          ? 'bg-white/95 backdrop-blur-md shadow-[0_1px_20px_rgba(0,0,0,0.08)] border-b border-[rgba(44,62,45,0.1)]'
           : 'bg-transparent'
       }`}
       role="banner"
@@ -177,12 +177,12 @@ function NavBar() {
           className="flex items-center gap-2.5 shrink-0"
           aria-label="CompassCHW home"
         >
-          <div className="w-9 h-9 rounded-xl bg-[#00B050] flex items-center justify-center shadow-sm">
+          <div className="w-9 h-9 rounded-xl bg-[#2C3E2D] flex items-center justify-center shadow-sm">
             <Compass size={20} className="text-white" aria-hidden="true" />
           </div>
           <span
             className={`text-lg font-bold tracking-tight transition-colors duration-300 ${
-              scrolled ? 'text-[#1A1A1A]' : 'text-white'
+              scrolled ? 'text-[#2C3E2D]' : 'text-white'
             }`}
           >
             CompassCHW
@@ -196,7 +196,7 @@ function NavBar() {
               <a
                 href={item.href}
                 onClick={(e) => handleNavClick(e, item.href)}
-                className={`text-sm font-medium transition-colors duration-200 hover:text-[#00B050] ${
+                className={`text-sm font-medium transition-colors duration-200 hover:text-[#6B8F71] ${
                   scrolled ? 'text-[#555555]' : 'text-white/80'
                 }`}
               >
@@ -210,7 +210,7 @@ function NavBar() {
         <div className="hidden md:flex items-center gap-4">
           <Link
             to="/login"
-            className={`text-sm font-medium transition-colors duration-200 hover:text-[#00B050] ${
+            className={`text-sm font-medium transition-colors duration-200 hover:text-[#6B8F71] ${
               scrolled ? 'text-[#555555]' : 'text-white/80'
             }`}
           >
@@ -218,7 +218,7 @@ function NavBar() {
           </Link>
           <Link
             to="/register"
-            className="text-sm font-semibold bg-[#00B050] hover:bg-[#008F40] text-white px-5 py-2 rounded-full transition-colors duration-200 shadow-sm"
+            className="text-sm font-semibold bg-[#2C3E2D] hover:bg-[#3A5240] text-white px-5 py-2 rounded-full transition-colors duration-200 shadow-sm"
           >
             Get Started
           </Link>
@@ -228,7 +228,7 @@ function NavBar() {
         <button
           className={`md:hidden p-2 rounded-lg transition-colors ${
             scrolled
-              ? 'text-[#1A1A1A] hover:bg-[#F8FAFB]'
+              ? 'text-[#2C3E2D] hover:bg-[#FBF7F0]'
               : 'text-white hover:bg-white/10'
           }`}
           onClick={() => setMobileOpen((prev) => !prev)}
@@ -244,7 +244,7 @@ function NavBar() {
       {mobileOpen && (
         <div
           id="mobile-nav"
-          className="md:hidden bg-white border-t border-[#E5E7EB] shadow-lg"
+          className="md:hidden bg-white border-t border-[rgba(44,62,45,0.1)] shadow-lg"
           role="dialog"
           aria-label="Mobile navigation"
         >
@@ -254,24 +254,24 @@ function NavBar() {
                 <a
                   href={item.href}
                   onClick={(e) => handleNavClick(e, item.href)}
-                  className="block px-3 py-2.5 text-sm font-medium text-[#555555] hover:text-[#00B050] hover:bg-[#F8FAFB] rounded-lg transition-colors"
+                  className="block px-3 py-2.5 text-sm font-medium text-[#555555] hover:text-[#6B8F71] hover:bg-[#FBF7F0] rounded-lg transition-colors"
                 >
                   {item.label}
                 </a>
               </li>
             ))}
           </ul>
-          <div className="flex flex-col gap-2 px-4 pb-4 border-t border-[#E5E7EB] pt-3">
+          <div className="flex flex-col gap-2 px-4 pb-4 border-t border-[rgba(44,62,45,0.1)] pt-3">
             <Link
               to="/login"
-              className="text-center text-sm font-medium text-[#555555] hover:text-[#00B050] py-2.5 rounded-lg hover:bg-[#F8FAFB] transition-colors"
+              className="text-center text-sm font-medium text-[#555555] hover:text-[#6B8F71] py-2.5 rounded-lg hover:bg-[#FBF7F0] transition-colors"
               onClick={() => setMobileOpen(false)}
             >
               Log In
             </Link>
             <Link
               to="/register"
-              className="text-center text-sm font-semibold bg-[#00B050] hover:bg-[#008F40] text-white py-2.5 rounded-full transition-colors"
+              className="text-center text-sm font-semibold bg-[#2C3E2D] hover:bg-[#3A5240] text-white py-2.5 rounded-full transition-colors"
               onClick={() => setMobileOpen(false)}
             >
               Get Started
@@ -294,7 +294,7 @@ function HeroMockupCard() {
       aria-hidden="true"
     >
       {/* Glow effect */}
-      <div className="absolute -inset-4 bg-gradient-to-br from-[#00B050]/20 to-[#0077B6]/20 rounded-3xl blur-2xl" />
+      <div className="absolute -inset-4 bg-gradient-to-br from-[#6B8F71]/20 to-[#0077B6]/20 rounded-3xl blur-2xl" />
 
       {/* Main card */}
       <div className="relative bg-white/10 backdrop-blur-lg border border-white/20 rounded-2xl p-5 shadow-2xl">
@@ -304,18 +304,18 @@ function HeroMockupCard() {
             <p className="text-white/60 text-xs font-medium">Good morning,</p>
             <p className="text-white font-semibold text-sm">Rosa Delgado</p>
           </div>
-          <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#00B050] to-[#0077B6] flex items-center justify-center text-white text-xs font-bold">
+          <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#6B8F71] to-[#0077B6] flex items-center justify-center text-white text-xs font-bold">
             RD
           </div>
         </div>
 
         {/* Rewards strip */}
-        <div className="bg-gradient-to-r from-[#00B050]/30 to-[#00B050]/10 border border-[#00B050]/30 rounded-xl p-3 mb-3 flex items-center justify-between">
+        <div className="bg-gradient-to-r from-[#6B8F71]/30 to-[#6B8F71]/10 border border-[#6B8F71]/30 rounded-xl p-3 mb-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Star size={14} className="text-[#00B050]" />
+            <Star size={14} className="text-[#6B8F71]" />
             <span className="text-white text-xs font-medium">My Rewards</span>
           </div>
-          <span className="text-[#00B050] font-bold text-sm">120 pts</span>
+          <span className="text-[#6B8F71] font-bold text-sm">120 pts</span>
         </div>
 
         {/* Goal cards */}
@@ -325,13 +325,13 @@ function HeroMockupCard() {
           <div className="bg-white/8 border border-white/15 rounded-xl p-3">
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2">
-                <Home size={13} className="text-[#00B050]" />
+                <Home size={13} className="text-[#6B8F71]" />
                 <span className="text-white text-xs font-medium">Secure Stable Housing</span>
               </div>
               <span className="text-white/60 text-xs">35%</span>
             </div>
             <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
-              <div className="h-full w-[35%] bg-gradient-to-r from-[#00B050] to-[#008F40] rounded-full" />
+              <div className="h-full w-[35%] bg-gradient-to-r from-[#6B8F71] to-[#4A7A50] rounded-full" />
             </div>
           </div>
 
@@ -351,8 +351,8 @@ function HeroMockupCard() {
 
         {/* Next session */}
         <div className="bg-white/8 border border-white/15 rounded-xl p-3 flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-[#00B050]/20 flex items-center justify-center shrink-0">
-            <Clock size={14} className="text-[#00B050]" />
+          <div className="w-8 h-8 rounded-lg bg-[#2C3E2D]/20 flex items-center justify-center shrink-0">
+            <Clock size={14} className="text-[#6B8F71]" />
           </div>
           <div className="min-w-0">
             <p className="text-white/50 text-xs">Next session</p>
@@ -362,7 +362,7 @@ function HeroMockupCard() {
       </div>
 
       {/* Floating badge — top right */}
-      <div className="absolute -top-3 -right-3 bg-[#00B050] text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-lg flex items-center gap-1.5">
+      <div className="absolute -top-3 -right-3 bg-[#2C3E2D] text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-lg flex items-center gap-1.5">
         <Shield size={11} />
         HIPAA Secure
       </div>
@@ -395,12 +395,12 @@ function FloatingOrb({
 function MemberMockupCard() {
   return (
     <div
-      className="bg-white border border-[#E5E7EB] rounded-2xl shadow-xl overflow-hidden max-w-sm mx-auto lg:mx-0"
+      className="bg-white border border-[rgba(44,62,45,0.1)] rounded-2xl shadow-xl overflow-hidden max-w-sm mx-auto lg:mx-0"
       aria-hidden="true"
     >
       {/* Header bar */}
       <div className="bg-gradient-to-r from-[#1a1a4e] to-[#3d2066] px-5 py-4 flex items-center gap-3">
-        <div className="w-9 h-9 rounded-full bg-[#00B050] flex items-center justify-center text-white text-sm font-bold shrink-0">
+        <div className="w-9 h-9 rounded-full bg-[#2C3E2D] flex items-center justify-center text-white text-sm font-bold shrink-0">
           RD
         </div>
         <div>
@@ -409,7 +409,7 @@ function MemberMockupCard() {
         </div>
         <div className="ml-auto text-right">
           <p className="text-white/60 text-xs">Rewards</p>
-          <p className="text-[#00B050] font-bold text-sm">120 pts</p>
+          <p className="text-[#6B8F71] font-bold text-sm">120 pts</p>
         </div>
       </div>
 
@@ -418,17 +418,17 @@ function MemberMockupCard() {
         <p className="text-xs font-semibold text-[#555555] uppercase tracking-wide">My Goals</p>
 
         {[
-          { label: 'Secure Stable Housing', progress: 35, color: '#00B050', icon: <Home size={12} /> },
+          { label: 'Secure Stable Housing', progress: 35, color: '#6B8F71', icon: <Home size={12} /> },
           { label: 'Recovery Milestones', progress: 60, color: '#0077B6', icon: <Repeat2 size={12} /> },
           { label: 'Mental Health Support', progress: 80, color: '#3d2066', icon: <Brain size={12} /> },
         ].map((goal) => (
           <div key={goal.label} className="space-y-1.5">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5 text-[#1A1A1A]">
+              <div className="flex items-center gap-1.5 text-[#2C3E2D]">
                 <span style={{ color: goal.color }}>{goal.icon}</span>
                 <span className="text-xs font-medium">{goal.label}</span>
               </div>
-              <span className="text-xs text-[#AAAAAA]">{goal.progress}%</span>
+              <span className="text-xs text-[#8B9B8D]">{goal.progress}%</span>
             </div>
             <div className="h-1.5 bg-[#F0F0F0] rounded-full overflow-hidden">
               <div
@@ -439,16 +439,16 @@ function MemberMockupCard() {
           </div>
         ))}
 
-        <div className="pt-1 border-t border-[#E5E7EB]">
-          <div className="flex items-center gap-2.5 bg-[#F8FAFB] rounded-xl p-3">
-            <div className="w-8 h-8 rounded-lg bg-[#D0F0D0] flex items-center justify-center shrink-0">
-              <Clock size={14} className="text-[#00B050]" />
+        <div className="pt-1 border-t border-[rgba(44,62,45,0.1)]">
+          <div className="flex items-center gap-2.5 bg-[#FBF7F0] rounded-xl p-3">
+            <div className="w-8 h-8 rounded-lg bg-[rgba(107,143,113,0.15)] flex items-center justify-center shrink-0">
+              <Clock size={14} className="text-[#6B8F71]" />
             </div>
             <div>
-              <p className="text-[#AAAAAA] text-xs">Next session</p>
-              <p className="text-[#1A1A1A] text-xs font-semibold">Maria G. Reyes · Apr 3</p>
+              <p className="text-[#8B9B8D] text-xs">Next session</p>
+              <p className="text-[#2C3E2D] text-xs font-semibold">Maria G. Reyes · Apr 3</p>
             </div>
-            <ChevronRight size={14} className="text-[#AAAAAA] ml-auto" />
+            <ChevronRight size={14} className="text-[#8B9B8D] ml-auto" />
           </div>
         </div>
       </div>
@@ -462,7 +462,7 @@ function MemberMockupCard() {
 function CHWMockupCard() {
   return (
     <div
-      className="bg-white border border-[#E5E7EB] rounded-2xl shadow-xl overflow-hidden max-w-sm mx-auto lg:ml-0 lg:mr-auto"
+      className="bg-white border border-[rgba(44,62,45,0.1)] rounded-2xl shadow-xl overflow-hidden max-w-sm mx-auto lg:ml-0 lg:mr-auto"
       aria-hidden="true"
     >
       {/* Header */}
@@ -475,7 +475,7 @@ function CHWMockupCard() {
           <p className="text-white font-semibold text-sm">Maria G. Reyes</p>
         </div>
         <div className="ml-auto flex items-center gap-1">
-          <span className="w-2 h-2 rounded-full bg-[#00B050] inline-block" />
+          <span className="w-2 h-2 rounded-full bg-[#2C3E2D] inline-block" />
           <span className="text-white/70 text-xs">Available</span>
         </div>
       </div>
@@ -488,10 +488,10 @@ function CHWMockupCard() {
             { label: 'This Month', value: '$724', sublabel: 'On track' },
             { label: 'All Time', value: '$8.3K', sublabel: 'Total earned' },
           ].map((stat) => (
-            <div key={stat.label} className="bg-[#F8FAFB] rounded-xl p-3 text-center">
-              <p className="text-xs text-[#AAAAAA] mb-0.5">{stat.label}</p>
+            <div key={stat.label} className="bg-[#FBF7F0] rounded-xl p-3 text-center">
+              <p className="text-xs text-[#8B9B8D] mb-0.5">{stat.label}</p>
               <p className="text-sm font-bold text-[#0077B6]">{stat.value}</p>
-              <p className="text-xs text-[#AAAAAA]">{stat.sublabel}</p>
+              <p className="text-xs text-[#8B9B8D]">{stat.sublabel}</p>
             </div>
           ))}
         </div>
@@ -505,14 +505,14 @@ function CHWMockupCard() {
           ].map((req) => (
             <div
               key={req.name}
-              className="flex items-center gap-3 bg-[#F8FAFB] rounded-xl p-3"
+              className="flex items-center gap-3 bg-[#FBF7F0] rounded-xl p-3"
             >
               <div className="w-7 h-7 rounded-full bg-[#E0F0FF] flex items-center justify-center text-[#0077B6] text-xs font-bold shrink-0">
                 {req.name.split(' ').map((n) => n[0]).join('')}
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-semibold text-[#1A1A1A] truncate">{req.name}</p>
-                <p className="text-xs text-[#AAAAAA]">{req.type}</p>
+                <p className="text-xs font-semibold text-[#2C3E2D] truncate">{req.name}</p>
+                <p className="text-xs text-[#8B9B8D]">{req.type}</p>
               </div>
               <span
                 className="text-xs font-semibold px-2 py-0.5 rounded-full"
@@ -527,11 +527,11 @@ function CHWMockupCard() {
           ))}
         </div>
 
-        <div className="mt-3 flex items-center justify-between text-xs text-[#AAAAAA] border-t border-[#E5E7EB] pt-3">
+        <div className="mt-3 flex items-center justify-between text-xs text-[#8B9B8D] border-t border-[rgba(44,62,45,0.1)] pt-3">
           <span>Avg Rating</span>
           <div className="flex items-center gap-1">
             <Star size={11} className="text-[#F59E0B] fill-[#F59E0B]" />
-            <span className="font-semibold text-[#1A1A1A]">4.9</span>
+            <span className="font-semibold text-[#2C3E2D]">4.9</span>
             <span>(312 sessions)</span>
           </div>
         </div>
@@ -571,7 +571,7 @@ export function LandingPageA() {
         }}
       >
         {/* Animated gradient orbs */}
-        <FloatingOrb className="w-96 h-96 bg-[#00B050] top-1/4 -left-24 animate-pulse" />
+        <FloatingOrb className="w-96 h-96 bg-[#2C3E2D] top-1/4 -left-24 animate-pulse" />
         <FloatingOrb className="w-80 h-80 bg-[#0077B6] bottom-1/4 -right-16 animate-pulse" style={{ animationDelay: '1s' } as React.CSSProperties} />
         <FloatingOrb className="w-64 h-64 bg-[#3d2066] top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 animate-pulse" style={{ animationDelay: '2s' } as React.CSSProperties} />
 
@@ -592,7 +592,7 @@ export function LandingPageA() {
             <div>
               {/* Eyebrow pill */}
               <div className="inline-flex items-center gap-2 bg-white/10 border border-white/20 rounded-full px-4 py-1.5 mb-6">
-                <span className="w-2 h-2 rounded-full bg-[#00B050] animate-pulse" />
+                <span className="w-2 h-2 rounded-full bg-[#2C3E2D] animate-pulse" />
                 <span className="text-white/80 text-xs font-medium tracking-wide uppercase">
                   Now live in Los Angeles
                 </span>
@@ -604,7 +604,7 @@ export function LandingPageA() {
               >
                 Care Navigation.
                 <br />
-                <span className="bg-gradient-to-r from-[#00B050] to-[#40e080] bg-clip-text text-transparent">
+                <span className="bg-gradient-to-r from-[#6B8F71] to-[#40e080] bg-clip-text text-transparent">
                   On Demand.
                 </span>
               </h1>
@@ -619,7 +619,7 @@ export function LandingPageA() {
               <div className="flex flex-col sm:flex-row gap-3 mb-8">
                 <Link
                   to="/register"
-                  className="inline-flex items-center justify-center gap-2 bg-[#00B050] hover:bg-[#008F40] text-white font-semibold px-8 py-4 rounded-full text-base transition-all duration-200 shadow-lg shadow-[#00B050]/30 hover:shadow-xl hover:shadow-[#00B050]/40 hover:-translate-y-0.5"
+                  className="inline-flex items-center justify-center gap-2 bg-[#2C3E2D] hover:bg-[#3A5240] text-white font-semibold px-8 py-4 rounded-full text-base transition-all duration-200 shadow-lg shadow-[#6B8F71]/30 hover:shadow-xl hover:shadow-[#6B8F71]/40 hover:-translate-y-0.5"
                 >
                   I Need Help
                   <ArrowRight size={18} />
@@ -636,17 +636,17 @@ export function LandingPageA() {
               {/* Trust line */}
               <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-white/50 text-sm">
                 <div className="flex items-center gap-1.5">
-                  <Shield size={13} className="text-[#00B050]" />
+                  <Shield size={13} className="text-[#6B8F71]" />
                   <span>Powered by Medi-Cal</span>
                 </div>
                 <span className="w-px h-4 bg-white/20" aria-hidden="true" />
                 <div className="flex items-center gap-1.5">
-                  <Shield size={13} className="text-[#00B050]" />
+                  <Shield size={13} className="text-[#6B8F71]" />
                   <span>HIPAA Compliant</span>
                 </div>
                 <span className="w-px h-4 bg-white/20" aria-hidden="true" />
                 <div className="flex items-center gap-1.5">
-                  <Star size={13} className="text-[#00B050]" />
+                  <Star size={13} className="text-[#6B8F71]" />
                   <span>Free for Members</span>
                 </div>
               </div>
@@ -672,19 +672,19 @@ export function LandingPageA() {
       {/* ── Trust Bar ───────────────────────────────────────────────────── */}
       <section
         aria-label="Trusted partners"
-        className="bg-[#F4F6F8] border-y border-[#E5E7EB] py-10"
+        className="bg-[#F4F6F8] border-y border-[rgba(44,62,45,0.1)] py-10"
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <p className="text-center text-xs font-semibold text-[#AAAAAA] uppercase tracking-widest mb-6">
+          <p className="text-center text-xs font-semibold text-[#8B9B8D] uppercase tracking-widest mb-6">
             Trusted by community health organizations across LA
           </p>
           <div className="flex flex-wrap justify-center items-center gap-6 lg:gap-10">
             {TRUST_ORGS.map((org) => (
               <div
                 key={org}
-                className="flex items-center gap-2 text-[#555555] text-sm font-semibold bg-white border border-[#E5E7EB] rounded-xl px-4 py-2.5 shadow-sm"
+                className="flex items-center gap-2 text-[#555555] text-sm font-semibold bg-white border border-[rgba(44,62,45,0.1)] rounded-xl px-4 py-2.5 shadow-sm"
               >
-                <Building2 size={14} className="text-[#AAAAAA]" aria-hidden="true" />
+                <Building2 size={14} className="text-[#8B9B8D]" aria-hidden="true" />
                 {org}
               </div>
             ))}
@@ -701,12 +701,12 @@ export function LandingPageA() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           {/* Section header */}
           <div className="text-center mb-16 lg:mb-20">
-            <p className="text-[#00B050] text-sm font-semibold uppercase tracking-widest mb-3">
+            <p className="text-[#6B8F71] text-sm font-semibold uppercase tracking-widest mb-3">
               The Process
             </p>
             <h2
               id="how-it-works-heading"
-              className="text-4xl lg:text-5xl font-extrabold text-[#1A1A1A] tracking-tight mb-4"
+              className="text-4xl lg:text-5xl font-extrabold text-[#2C3E2D] tracking-tight mb-4"
             >
               How CompassCHW Works
             </h2>
@@ -720,7 +720,7 @@ export function LandingPageA() {
           <div className="relative grid md:grid-cols-3 gap-8 lg:gap-12">
             {/* Connecting line — desktop only */}
             <div
-              className="hidden md:block absolute top-[52px] left-[calc(16.67%+16px)] right-[calc(16.67%+16px)] h-0.5 bg-gradient-to-r from-[#E5E7EB] via-[#00B050]/40 to-[#E5E7EB]"
+              className="hidden md:block absolute top-[52px] left-[calc(16.67%+16px)] right-[calc(16.67%+16px)] h-0.5 bg-gradient-to-r from-[rgba(44,62,45,0.1)] via-[#6B8F71]/40 to-[rgba(44,62,45,0.1)]"
               aria-hidden="true"
             />
 
@@ -734,13 +734,13 @@ export function LandingPageA() {
                   <div
                     className={`w-[104px] h-[104px] rounded-full flex flex-col items-center justify-center shadow-lg ${
                       index === 1
-                        ? 'bg-gradient-to-br from-[#00B050] to-[#008F40] shadow-[#00B050]/30'
-                        : 'bg-white border-2 border-[#E5E7EB]'
+                        ? 'bg-gradient-to-br from-[#6B8F71] to-[#4A7A50] shadow-[#6B8F71]/30'
+                        : 'bg-white border-2 border-[rgba(44,62,45,0.1)]'
                     }`}
                   >
                     <span
                       className={`text-2xl font-black leading-none ${
-                        index === 1 ? 'text-white' : 'text-[#00B050]'
+                        index === 1 ? 'text-white' : 'text-[#6B8F71]'
                       }`}
                     >
                       {step.number}
@@ -753,7 +753,7 @@ export function LandingPageA() {
                   {step.icon}
                 </div>
 
-                <h3 className="text-xl font-bold text-[#1A1A1A] mb-3">
+                <h3 className="text-xl font-bold text-[#2C3E2D] mb-3">
                   {step.title}
                 </h3>
                 <p className="text-[#555555] leading-relaxed text-sm">
@@ -769,22 +769,22 @@ export function LandingPageA() {
       <section
         id="for-members"
         aria-labelledby="for-members-heading"
-        className="py-24 lg:py-32 bg-[#F8FAFB]"
+        className="py-24 lg:py-32 bg-[#FBF7F0]"
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid lg:grid-cols-2 gap-12 lg:gap-20 items-center">
             {/* Left — features */}
             <div>
-              <p className="text-[#00B050] text-sm font-semibold uppercase tracking-widest mb-3">
+              <p className="text-[#6B8F71] text-sm font-semibold uppercase tracking-widest mb-3">
                 For Community Members
               </p>
               <h2
                 id="for-members-heading"
-                className="text-4xl lg:text-5xl font-extrabold text-[#1A1A1A] tracking-tight mb-5"
+                className="text-4xl lg:text-5xl font-extrabold text-[#2C3E2D] tracking-tight mb-5"
               >
                 Help that comes
                 <br />
-                <span className="text-[#00B050]">to you.</span>
+                <span className="text-[#6B8F71]">to you.</span>
               </h2>
               <p className="text-lg text-[#555555] mb-8 leading-relaxed">
                 Whether you need help with housing, food, mental health, or
@@ -797,10 +797,10 @@ export function LandingPageA() {
                   <li key={feature.text} className="flex items-start gap-3">
                     <CheckCircle2
                       size={20}
-                      className="text-[#00B050] shrink-0 mt-0.5"
+                      className="text-[#6B8F71] shrink-0 mt-0.5"
                       aria-hidden="true"
                     />
-                    <span className="text-[#1A1A1A] font-medium">{feature.text}</span>
+                    <span className="text-[#2C3E2D] font-medium">{feature.text}</span>
                   </li>
                 ))}
               </ul>
@@ -808,7 +808,7 @@ export function LandingPageA() {
               <div className="mt-10 flex flex-col sm:flex-row gap-3">
                 <Link
                   to="/register"
-                  className="inline-flex items-center justify-center gap-2 bg-[#00B050] hover:bg-[#008F40] text-white font-semibold px-7 py-3.5 rounded-full text-sm transition-all duration-200 shadow-md hover:shadow-lg hover:-translate-y-0.5"
+                  className="inline-flex items-center justify-center gap-2 bg-[#2C3E2D] hover:bg-[#3A5240] text-white font-semibold px-7 py-3.5 rounded-full text-sm transition-all duration-200 shadow-md hover:shadow-lg hover:-translate-y-0.5"
                 >
                   Get Started as a Member
                   <ArrowRight size={16} />
@@ -844,7 +844,7 @@ export function LandingPageA() {
               </p>
               <h2
                 id="for-chws-heading"
-                className="text-4xl lg:text-5xl font-extrabold text-[#1A1A1A] tracking-tight mb-5"
+                className="text-4xl lg:text-5xl font-extrabold text-[#2C3E2D] tracking-tight mb-5"
               >
                 Build a career
                 <br />
@@ -864,7 +864,7 @@ export function LandingPageA() {
                       className="text-[#0077B6] shrink-0 mt-0.5"
                       aria-hidden="true"
                     />
-                    <span className="text-[#1A1A1A] font-medium">{feature.text}</span>
+                    <span className="text-[#2C3E2D] font-medium">{feature.text}</span>
                   </li>
                 ))}
               </ul>
@@ -886,15 +886,15 @@ export function LandingPageA() {
       {/* ── Vertical icons strip ─────────────────────────────────────── */}
       <section
         aria-label="Service verticals"
-        className="bg-[#F8FAFB] border-y border-[#E5E7EB] py-12"
+        className="bg-[#FBF7F0] border-y border-[rgba(44,62,45,0.1)] py-12"
       >
         <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
-          <p className="text-center text-xs font-semibold text-[#AAAAAA] uppercase tracking-widest mb-8">
+          <p className="text-center text-xs font-semibold text-[#8B9B8D] uppercase tracking-widest mb-8">
             5 service verticals — one unified platform
           </p>
           <div className="grid grid-cols-5 gap-4">
             {[
-              { label: 'Housing', icon: <Home size={22} />, color: '#00B050' },
+              { label: 'Housing', icon: <Home size={22} />, color: '#6B8F71' },
               { label: 'Food Security', icon: <Utensils size={22} />, color: '#F59E0B' },
               { label: 'Mental Health', icon: <Brain size={22} />, color: '#8B5CF6' },
               { label: 'Rehab & Recovery', icon: <Repeat2 size={22} />, color: '#EF4444' },
@@ -926,7 +926,7 @@ export function LandingPageA() {
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16">
-            <p className="text-[#00B050] text-sm font-semibold uppercase tracking-widest mb-3">
+            <p className="text-[#6B8F71] text-sm font-semibold uppercase tracking-widest mb-3">
               By the Numbers
             </p>
             <h2
@@ -946,7 +946,7 @@ export function LandingPageA() {
                 <p className="text-5xl font-black text-white mb-2 leading-none">
                   {stat.value}
                 </p>
-                <p className="text-[#00B050] font-semibold text-sm mb-1.5">
+                <p className="text-[#6B8F71] font-semibold text-sm mb-1.5">
                   {stat.label}
                 </p>
                 <p className="text-white/50 text-xs leading-relaxed">
@@ -963,7 +963,7 @@ export function LandingPageA() {
         aria-labelledby="cta-heading"
         className="py-24 lg:py-32 relative overflow-hidden"
         style={{
-          background: 'linear-gradient(135deg, #006630 0%, #00B050 50%, #008F40 100%)',
+          background: 'linear-gradient(135deg, #006630 0%, #6B8F71 50%, #4A7A50 100%)',
         }}
       >
         {/* Orbs */}
@@ -985,7 +985,7 @@ export function LandingPageA() {
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <Link
               to="/register"
-              className="inline-flex items-center justify-center gap-2 bg-white hover:bg-[#F8FAFB] text-[#00B050] font-bold px-8 py-4 rounded-full text-base transition-all duration-200 shadow-lg hover:shadow-xl hover:-translate-y-0.5"
+              className="inline-flex items-center justify-center gap-2 bg-white hover:bg-[#FBF7F0] text-[#6B8F71] font-bold px-8 py-4 rounded-full text-base transition-all duration-200 shadow-lg hover:shadow-xl hover:-translate-y-0.5"
             >
               Get Started as a Member
               <ArrowRight size={18} />
@@ -1017,7 +1017,7 @@ export function LandingPageA() {
                 className="flex items-center gap-2.5 mb-4"
                 aria-label="CompassCHW home"
               >
-                <div className="w-9 h-9 rounded-xl bg-[#00B050] flex items-center justify-center shadow-sm">
+                <div className="w-9 h-9 rounded-xl bg-[#2C3E2D] flex items-center justify-center shadow-sm">
                   <Compass size={20} className="text-white" aria-hidden="true" />
                 </div>
                 <span className="text-lg font-bold text-white tracking-tight">CompassCHW</span>

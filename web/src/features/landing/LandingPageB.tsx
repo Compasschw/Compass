@@ -72,25 +72,25 @@ const HOW_IT_WORKS_STEPS: HowItWorksStep[] = [
     emoji: '📋',
     title: 'Share Your Needs',
     description: 'Tell us about your situation — housing, food, health, or recovery. No referral needed.',
-    icon: <ClipboardList size={22} className="text-[#00B050]" aria-hidden="true" />,
+    icon: <ClipboardList size={22} className="text-[#6B8F71]" aria-hidden="true" />,
   },
   {
     emoji: '🤝',
     title: 'Get Matched',
     description: 'We pair you with a local CHW who speaks your language and knows your community.',
-    icon: <Handshake size={22} className="text-[#00B050]" aria-hidden="true" />,
+    icon: <Handshake size={22} className="text-[#6B8F71]" aria-hidden="true" />,
   },
   {
     emoji: '📞',
     title: 'Connect',
     description: 'Meet in person, by phone, or video — wherever you feel comfortable.',
-    icon: <Phone size={22} className="text-[#00B050]" aria-hidden="true" />,
+    icon: <Phone size={22} className="text-[#6B8F71]" aria-hidden="true" />,
   },
   {
     emoji: '🎯',
     title: 'Reach Your Goals',
     description: 'Track your progress on a personalized roadmap. Small steps, lasting change.',
-    icon: <Target size={22} className="text-[#00B050]" aria-hidden="true" />,
+    icon: <Target size={22} className="text-[#6B8F71]" aria-hidden="true" />,
   },
 ];
 
@@ -146,7 +146,7 @@ const SERVICE_AREAS: ServiceAreaItem[] = [
     emoji: '🏠',
     title: 'Housing Assistance',
     description: 'Emergency housing, rental aid, and shelter navigation',
-    borderColor: '#00B050',
+    borderColor: '#6B8F71',
   },
   {
     emoji: '💊',
@@ -158,7 +158,7 @@ const SERVICE_AREAS: ServiceAreaItem[] = [
     emoji: '🥗',
     title: 'Food & Pantry',
     description: 'CalFresh enrollment, food banks, and meal programs',
-    borderColor: '#00B050',
+    borderColor: '#6B8F71',
   },
   {
     emoji: '🧠',
@@ -170,7 +170,7 @@ const SERVICE_AREAS: ServiceAreaItem[] = [
     emoji: '🏥',
     title: 'Healthcare Navigation',
     description: 'Medi-Cal enrollment, appointment scheduling, and care coordination',
-    borderColor: '#00B050',
+    borderColor: '#6B8F71',
   },
 ];
 
@@ -233,7 +233,7 @@ function AnimatedStat({ value, label, color }: StatItem) {
     return () => observer.disconnect();
   }, [value, hasAnimated]);
 
-  const colorClass = color === 'green' ? 'text-[#00B050]' : 'text-[#0077B6]';
+  const colorClass = color === 'green' ? 'text-[#6B8F71]' : 'text-[#0077B6]';
 
   return (
     <div ref={ref} className="flex flex-col items-center text-center px-6 py-8">
@@ -254,16 +254,16 @@ function AnimatedStat({ value, label, color }: StatItem) {
  * Single testimonial card with left-border accent and large quote mark.
  */
 function TestimonialCard({ quote, name, role, initials, accentColor }: TestimonialItem) {
-  const borderColor = accentColor === 'green' ? '#00B050' : '#0077B6';
-  const avatarBg = accentColor === 'green' ? 'bg-[#D0F0D0] text-[#00B050]' : 'bg-[#DBEAFE] text-[#0077B6]';
+  const borderColor = accentColor === 'green' ? '#6B8F71' : '#0077B6';
+  const avatarBg = accentColor === 'green' ? 'bg-[rgba(107,143,113,0.15)] text-[#6B8F71]' : 'bg-[#DBEAFE] text-[#0077B6]';
 
   return (
     <article
-      className="bg-white rounded-2xl p-7 shadow-sm border border-[#E5E7EB] flex flex-col gap-5"
+      className="bg-white rounded-2xl p-7 shadow-sm border border-[rgba(44,62,45,0.1)] flex flex-col gap-5"
       style={{ borderLeft: `4px solid ${borderColor}` }}
     >
-      <Quote size={28} className="text-[#E5E7EB]" aria-hidden="true" />
-      <p className="text-[#1A1A1A] text-base leading-relaxed flex-1">
+      <Quote size={28} className="text-[rgba(44,62,45,0.1)]" aria-hidden="true" />
+      <p className="text-[#2C3E2D] text-base leading-relaxed flex-1">
         "{quote}"
       </p>
       <div className="flex items-center gap-3">
@@ -274,8 +274,8 @@ function TestimonialCard({ quote, name, role, initials, accentColor }: Testimoni
           {initials}
         </div>
         <div>
-          <p className="text-sm font-semibold text-[#1A1A1A]">{name}</p>
-          <p className="text-xs text-[#AAAAAA]">{role}</p>
+          <p className="text-sm font-semibold text-[#2C3E2D]">{name}</p>
+          <p className="text-xs text-[#8B9B8D]">{role}</p>
         </div>
       </div>
     </article>
@@ -303,8 +303,8 @@ function RotatingStatPill() {
           key={pill}
           className={`px-4 py-1.5 rounded-full text-sm font-medium border transition-all duration-300 ${
             i === activeIndex
-              ? 'bg-[#00B050] text-white border-[#00B050] opacity-100 scale-105'
-              : 'bg-white text-[#555555] border-[#E5E7EB] opacity-60'
+              ? 'bg-[#2C3E2D] text-white border-[#6B8F71] opacity-100 scale-105'
+              : 'bg-white text-[#555555] border-[rgba(44,62,45,0.1)] opacity-60'
           }`}
           aria-current={i === activeIndex ? 'true' : undefined}
         >
@@ -352,12 +352,12 @@ export function LandingPageB() {
   }
 
   return (
-    <div className="min-h-screen bg-white text-[#1A1A1A] font-sans antialiased">
+    <div className="min-h-screen bg-white text-[#2C3E2D] font-sans antialiased">
 
       {/* ─── Navigation ────────────────────────────────────────────────────────── */}
       <header
         className={`fixed top-0 left-0 right-0 z-50 bg-white transition-all duration-200 ${
-          scrolled ? 'border-b border-[#E5E7EB]' : 'border-b border-transparent'
+          scrolled ? 'border-b border-[rgba(44,62,45,0.1)]' : 'border-b border-transparent'
         }`}
         role="banner"
       >
@@ -371,12 +371,12 @@ export function LandingPageB() {
             className="flex items-center gap-2 shrink-0"
             aria-label="CompassCHW home"
           >
-            <div className="w-8 h-8 rounded-lg bg-[#00B050] flex items-center justify-center">
+            <div className="w-8 h-8 rounded-lg bg-[#2C3E2D] flex items-center justify-center">
               <Compass size={18} className="text-white" aria-hidden="true" />
             </div>
             <span className="text-[17px] font-bold">
-              <span className="text-[#00B050]">Compass</span>
-              <span className="text-[#1A1A1A]">CHW</span>
+              <span className="text-[#6B8F71]">Compass</span>
+              <span className="text-[#2C3E2D]">CHW</span>
             </span>
           </Link>
 
@@ -387,7 +387,7 @@ export function LandingPageB() {
                 <a
                   href={item.href}
                   onClick={(e) => handleAnchorClick(e, item.href)}
-                  className="text-sm text-[#555555] hover:text-[#1A1A1A] font-medium transition-colors"
+                  className="text-sm text-[#555555] hover:text-[#2C3E2D] font-medium transition-colors"
                 >
                   {item.label}
                 </a>
@@ -399,13 +399,13 @@ export function LandingPageB() {
           <div className="hidden md:flex items-center gap-4">
             <Link
               to="/login"
-              className="text-sm font-medium text-[#555555] hover:text-[#1A1A1A] transition-colors"
+              className="text-sm font-medium text-[#555555] hover:text-[#2C3E2D] transition-colors"
             >
               Sign In
             </Link>
             <Link
               to="/register"
-              className="text-sm font-semibold bg-[#00B050] hover:bg-[#008F40] text-white px-5 py-2 rounded-full transition-colors"
+              className="text-sm font-semibold bg-[#2C3E2D] hover:bg-[#3A5240] text-white px-5 py-2 rounded-full transition-colors"
             >
               Join CompassCHW
             </Link>
@@ -414,7 +414,7 @@ export function LandingPageB() {
           {/* Mobile hamburger */}
           <button
             type="button"
-            className="md:hidden p-2 text-[#555555] hover:text-[#1A1A1A] transition-colors"
+            className="md:hidden p-2 text-[#555555] hover:text-[#2C3E2D] transition-colors"
             aria-label={mobileMenuOpen ? 'Close menu' : 'Open menu'}
             aria-expanded={mobileMenuOpen}
             aria-controls="mobile-menu"
@@ -428,7 +428,7 @@ export function LandingPageB() {
         {mobileMenuOpen && (
           <div
             id="mobile-menu"
-            className="md:hidden bg-white border-t border-[#E5E7EB] px-5 py-5 flex flex-col gap-4"
+            className="md:hidden bg-white border-t border-[rgba(44,62,45,0.1)] px-5 py-5 flex flex-col gap-4"
             role="dialog"
             aria-label="Mobile navigation menu"
           >
@@ -437,12 +437,12 @@ export function LandingPageB() {
                 key={item.label}
                 href={item.href}
                 onClick={(e) => handleAnchorClick(e, item.href)}
-                className="text-base font-medium text-[#1A1A1A] py-1"
+                className="text-base font-medium text-[#2C3E2D] py-1"
               >
                 {item.label}
               </a>
             ))}
-            <div className="pt-2 border-t border-[#E5E7EB] flex flex-col gap-3">
+            <div className="pt-2 border-t border-[rgba(44,62,45,0.1)] flex flex-col gap-3">
               <Link
                 to="/login"
                 className="text-sm font-medium text-[#555555] py-1"
@@ -452,7 +452,7 @@ export function LandingPageB() {
               </Link>
               <Link
                 to="/register"
-                className="text-sm font-semibold bg-[#00B050] text-white px-5 py-2.5 rounded-full text-center"
+                className="text-sm font-semibold bg-[#2C3E2D] text-white px-5 py-2.5 rounded-full text-center"
                 onClick={() => setMobileMenuOpen(false)}
               >
                 Join CompassCHW
@@ -471,8 +471,8 @@ export function LandingPageB() {
         >
           <div className="max-w-3xl mx-auto">
             {/* Eyebrow badge */}
-            <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#00B050] bg-[#F0FBF4] px-3 py-1 rounded-full mb-8">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#00B050]" aria-hidden="true" />
+            <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#6B8F71] bg-[rgba(107,143,113,0.08)] px-3 py-1 rounded-full mb-8">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#2C3E2D]" aria-hidden="true" />
               Free for Medi-Cal Members — Los Angeles, CA
             </span>
 
@@ -481,11 +481,11 @@ export function LandingPageB() {
               id="hero-headline"
               className="text-5xl sm:text-6xl lg:text-7xl font-bold leading-[1.07] tracking-tight"
             >
-              <span className="block text-[#AAAAAA] font-semibold">Daily motivation.</span>
-              <span className="block text-[#AAAAAA] font-semibold mt-1">Lasting impact.</span>
-              <span className="block text-[#1A1A1A] mt-2">
+              <span className="block text-[#8B9B8D] font-semibold">Daily motivation.</span>
+              <span className="block text-[#8B9B8D] font-semibold mt-1">Lasting impact.</span>
+              <span className="block text-[#2C3E2D] mt-2">
                 It pays to be{' '}
-                <em className="not-italic text-[#00B050] italic">healthy.</em>
+                <em className="not-italic text-[#6B8F71] italic">healthy.</em>
               </span>
             </h1>
 
@@ -493,7 +493,7 @@ export function LandingPageB() {
             <p className="mt-7 text-lg text-[#555555] leading-relaxed max-w-2xl mx-auto">
               CompassCHW connects you with a Community Health Worker who navigates
               housing, food, healthcare, and mental health resources —
-              <strong className="text-[#1A1A1A] font-semibold"> at no cost to you.</strong>
+              <strong className="text-[#2C3E2D] font-semibold"> at no cost to you.</strong>
             </p>
 
             {/* CTA */}
@@ -501,7 +501,7 @@ export function LandingPageB() {
               <a
                 href="#how-it-works"
                 onClick={(e) => handleAnchorClick(e, '#how-it-works')}
-                className="inline-flex items-center gap-2 bg-[#00B050] hover:bg-[#008F40] text-white font-semibold px-7 py-3.5 rounded-full text-base transition-colors shadow-sm"
+                className="inline-flex items-center gap-2 bg-[#2C3E2D] hover:bg-[#3A5240] text-white font-semibold px-7 py-3.5 rounded-full text-base transition-colors shadow-sm"
                 aria-label="See how CompassCHW works"
               >
                 See How It Works
@@ -522,12 +522,12 @@ export function LandingPageB() {
         >
           <div className="max-w-5xl mx-auto">
             <div className="text-center mb-14">
-              <p className="text-xs font-semibold uppercase tracking-widest text-[#00B050] mb-3">
+              <p className="text-xs font-semibold uppercase tracking-widest text-[#6B8F71] mb-3">
                 The Process
               </p>
               <h2
                 id="how-it-works-heading"
-                className="text-4xl font-bold text-[#1A1A1A]"
+                className="text-4xl font-bold text-[#2C3E2D]"
               >
                 How It Works
               </h2>
@@ -537,18 +537,18 @@ export function LandingPageB() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 relative">
               {/* Connecting line — visible on large screens only */}
               <div
-                className="hidden lg:block absolute top-[52px] left-[calc(12.5%+32px)] right-[calc(12.5%+32px)] h-px bg-[#D0F0D0]"
+                className="hidden lg:block absolute top-[52px] left-[calc(12.5%+32px)] right-[calc(12.5%+32px)] h-px bg-[rgba(107,143,113,0.15)]"
                 aria-hidden="true"
               />
 
               {HOW_IT_WORKS_STEPS.map((step, index) => (
                 <div
                   key={step.title}
-                  className="relative flex flex-col items-center text-center bg-white rounded-2xl border border-[#E5E7EB] p-7 shadow-sm hover:shadow-md transition-shadow"
+                  className="relative flex flex-col items-center text-center bg-white rounded-2xl border border-[rgba(44,62,45,0.1)] p-7 shadow-sm hover:shadow-md transition-shadow"
                 >
                   {/* Step number badge */}
-                  <div className="w-10 h-10 rounded-full bg-[#F0FBF4] border-2 border-[#D0F0D0] flex items-center justify-center mb-4 z-10 relative">
-                    <span className="text-sm font-bold text-[#00B050]">
+                  <div className="w-10 h-10 rounded-full bg-[rgba(107,143,113,0.08)] border-2 border-[#D0F0D0] flex items-center justify-center mb-4 z-10 relative">
+                    <span className="text-sm font-bold text-[#6B8F71]">
                       {String(index + 1).padStart(2, '0')}
                     </span>
                   </div>
@@ -558,7 +558,7 @@ export function LandingPageB() {
                     {step.emoji}
                   </span>
 
-                  <h3 className="text-base font-semibold text-[#1A1A1A] mb-2">
+                  <h3 className="text-base font-semibold text-[#2C3E2D] mb-2">
                     {step.title}
                   </h3>
                   <p className="text-sm text-[#555555] leading-relaxed">
@@ -573,17 +573,17 @@ export function LandingPageB() {
         {/* ─── Impact Numbers ────────────────────────────────────────────────────── */}
         <section
           id="impact"
-          className="py-24 px-5 bg-[#F0FBF4] scroll-mt-16"
+          className="py-24 px-5 bg-[rgba(107,143,113,0.08)] scroll-mt-16"
           aria-labelledby="impact-heading"
         >
           <div className="max-w-5xl mx-auto">
             <div className="text-center mb-14">
-              <p className="text-xs font-semibold uppercase tracking-widest text-[#00B050] mb-3">
+              <p className="text-xs font-semibold uppercase tracking-widest text-[#6B8F71] mb-3">
                 By the Numbers
               </p>
               <h2
                 id="impact-heading"
-                className="text-4xl font-bold text-[#1A1A1A]"
+                className="text-4xl font-bold text-[#2C3E2D]"
               >
                 Real Impact. Real Numbers.
               </h2>
@@ -597,7 +597,7 @@ export function LandingPageB() {
             </div>
 
             {/* Attribution */}
-            <p className="text-center text-xs text-[#AAAAAA] mt-6 max-w-xl mx-auto leading-relaxed">
+            <p className="text-center text-xs text-[#8B9B8D] mt-6 max-w-xl mx-auto leading-relaxed">
               Modeled on CityBlock Health's 81% engagement benchmark for Medicaid populations.
               Reimbursement rates based on current Medi-Cal CHW billing codes.
             </p>
@@ -616,7 +616,7 @@ export function LandingPageB() {
               </p>
               <h2
                 id="testimonials-heading"
-                className="text-4xl font-bold text-[#1A1A1A]"
+                className="text-4xl font-bold text-[#2C3E2D]"
               >
                 Stories From Our Community
               </h2>
@@ -645,12 +645,12 @@ export function LandingPageB() {
             {/* Left — Members */}
             <div
               id="for-members"
-              className="bg-[#F0FBF4] px-10 py-16 lg:px-14 lg:py-20"
+              className="bg-[rgba(107,143,113,0.08)] px-10 py-16 lg:px-14 lg:py-20"
             >
-              <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#00B050] bg-white px-3 py-1 rounded-full mb-6">
+              <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#6B8F71] bg-white px-3 py-1 rounded-full mb-6">
                 For Community Members
               </span>
-              <h3 className="text-3xl font-bold text-[#1A1A1A] leading-snug mb-5">
+              <h3 className="text-3xl font-bold text-[#2C3E2D] leading-snug mb-5">
                 Get the support you deserve — at no cost.
               </h3>
               <p className="text-base text-[#555555] leading-relaxed mb-8">
@@ -663,17 +663,17 @@ export function LandingPageB() {
                   <li key={f.text} className="flex items-start gap-3">
                     <CheckCircle2
                       size={18}
-                      className="text-[#00B050] mt-0.5 shrink-0"
+                      className="text-[#6B8F71] mt-0.5 shrink-0"
                       aria-hidden="true"
                     />
-                    <span className="text-sm text-[#1A1A1A]">{f.text}</span>
+                    <span className="text-sm text-[#2C3E2D]">{f.text}</span>
                   </li>
                 ))}
               </ul>
 
               <Link
                 to="/register"
-                className="inline-flex items-center gap-2 bg-[#00B050] hover:bg-[#008F40] text-white font-semibold px-6 py-3 rounded-full text-sm transition-colors"
+                className="inline-flex items-center gap-2 bg-[#2C3E2D] hover:bg-[#3A5240] text-white font-semibold px-6 py-3 rounded-full text-sm transition-colors"
               >
                 Find Help Now
                 <ArrowRight size={15} aria-hidden="true" />
@@ -688,7 +688,7 @@ export function LandingPageB() {
               <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#0077B6] bg-white px-3 py-1 rounded-full mb-6">
                 For Community Health Workers
               </span>
-              <h3 className="text-3xl font-bold text-[#1A1A1A] leading-snug mb-5">
+              <h3 className="text-3xl font-bold text-[#2C3E2D] leading-snug mb-5">
                 Earn Medi-Cal reimbursements. Make real impact.
               </h3>
               <p className="text-base text-[#555555] leading-relaxed mb-8">
@@ -704,7 +704,7 @@ export function LandingPageB() {
                       className="text-[#0077B6] mt-0.5 shrink-0"
                       aria-hidden="true"
                     />
-                    <span className="text-sm text-[#1A1A1A]">{f.text}</span>
+                    <span className="text-sm text-[#2C3E2D]">{f.text}</span>
                   </li>
                 ))}
               </ul>
@@ -727,12 +727,12 @@ export function LandingPageB() {
         >
           <div className="max-w-5xl mx-auto">
             <div className="text-center mb-14">
-              <p className="text-xs font-semibold uppercase tracking-widest text-[#00B050] mb-3">
+              <p className="text-xs font-semibold uppercase tracking-widest text-[#6B8F71] mb-3">
                 Our Services
               </p>
               <h2
                 id="services-heading"
-                className="text-4xl font-bold text-[#1A1A1A]"
+                className="text-4xl font-bold text-[#2C3E2D]"
               >
                 What We Help With
               </h2>
@@ -742,7 +742,7 @@ export function LandingPageB() {
               {SERVICE_AREAS.map((area) => (
                 <article
                   key={area.title}
-                  className="flex flex-col bg-white rounded-2xl border border-[#E5E7EB] p-6 shadow-sm hover:shadow-md transition-shadow overflow-hidden"
+                  className="flex flex-col bg-white rounded-2xl border border-[rgba(44,62,45,0.1)] p-6 shadow-sm hover:shadow-md transition-shadow overflow-hidden"
                   style={{ borderTop: `3px solid ${area.borderColor}` }}
                 >
                   <span
@@ -752,7 +752,7 @@ export function LandingPageB() {
                   >
                     {area.emoji}
                   </span>
-                  <h3 className="text-sm font-semibold text-[#1A1A1A] mb-2">
+                  <h3 className="text-sm font-semibold text-[#2C3E2D] mb-2">
                     {area.title}
                   </h3>
                   <p className="text-xs text-[#555555] leading-relaxed">
@@ -772,7 +772,7 @@ export function LandingPageB() {
           <div className="max-w-2xl mx-auto text-center">
             <h2
               id="final-cta-heading"
-              className="text-4xl font-bold text-[#1A1A1A] mb-4"
+              className="text-4xl font-bold text-[#2C3E2D] mb-4"
             >
               Ready to get started?
             </h2>
@@ -783,7 +783,7 @@ export function LandingPageB() {
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
               <Link
                 to="/register"
-                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-[#00B050] hover:bg-[#008F40] text-white font-semibold px-8 py-3.5 rounded-full text-base transition-colors shadow-sm"
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-[#2C3E2D] hover:bg-[#3A5240] text-white font-semibold px-8 py-3.5 rounded-full text-base transition-colors shadow-sm"
               >
                 I Need Help
               </Link>
@@ -801,7 +801,7 @@ export function LandingPageB() {
 
       {/* ─── Footer ────────────────────────────────────────────────────────────── */}
       <footer
-        className="bg-[#FAFAFA] border-t border-[#E5E7EB] px-5 pt-14 pb-8"
+        className="bg-[#FAFAFA] border-t border-[rgba(44,62,45,0.1)] px-5 pt-14 pb-8"
         role="contentinfo"
       >
         <div className="max-w-6xl mx-auto">
@@ -814,23 +814,23 @@ export function LandingPageB() {
                 className="flex items-center gap-2 mb-4"
                 aria-label="CompassCHW home"
               >
-                <div className="w-8 h-8 rounded-lg bg-[#00B050] flex items-center justify-center">
+                <div className="w-8 h-8 rounded-lg bg-[#2C3E2D] flex items-center justify-center">
                   <Compass size={17} className="text-white" aria-hidden="true" />
                 </div>
                 <span className="text-[16px] font-bold">
-                  <span className="text-[#00B050]">Compass</span>
-                  <span className="text-[#1A1A1A]">CHW</span>
+                  <span className="text-[#6B8F71]">Compass</span>
+                  <span className="text-[#2C3E2D]">CHW</span>
                 </span>
               </Link>
               <p className="text-sm text-[#555555] leading-relaxed mb-2">
                 Care Navigation. On Demand.
               </p>
-              <p className="text-xs text-[#AAAAAA]">Built in Los Angeles, CA</p>
+              <p className="text-xs text-[#8B9B8D]">Built in Los Angeles, CA</p>
             </div>
 
             {/* Product links */}
             <nav aria-label="Product links">
-              <p className="text-xs font-semibold uppercase tracking-widest text-[#AAAAAA] mb-4">
+              <p className="text-xs font-semibold uppercase tracking-widest text-[#8B9B8D] mb-4">
                 Product
               </p>
               <ul className="space-y-3 list-none p-0 m-0" role="list">
@@ -844,7 +844,7 @@ export function LandingPageB() {
                     <a
                       href={link.href}
                       onClick={(e) => handleAnchorClick(e, link.href)}
-                      className="text-sm text-[#555555] hover:text-[#1A1A1A] transition-colors"
+                      className="text-sm text-[#555555] hover:text-[#2C3E2D] transition-colors"
                     >
                       {link.label}
                     </a>
@@ -855,7 +855,7 @@ export function LandingPageB() {
 
             {/* Company links */}
             <nav aria-label="Company links">
-              <p className="text-xs font-semibold uppercase tracking-widest text-[#AAAAAA] mb-4">
+              <p className="text-xs font-semibold uppercase tracking-widest text-[#8B9B8D] mb-4">
                 Company
               </p>
               <ul className="space-y-3 list-none p-0 m-0" role="list">
@@ -868,7 +868,7 @@ export function LandingPageB() {
                   <li key={link.label}>
                     <a
                       href={link.href}
-                      className="text-sm text-[#555555] hover:text-[#1A1A1A] transition-colors"
+                      className="text-sm text-[#555555] hover:text-[#2C3E2D] transition-colors"
                     >
                       {link.label}
                     </a>
@@ -879,20 +879,20 @@ export function LandingPageB() {
 
             {/* Tagline column */}
             <div className="flex flex-col justify-between">
-              <p className="text-lg text-[#AAAAAA] italic leading-snug font-medium">
+              <p className="text-lg text-[#8B9B8D] italic leading-snug font-medium">
                 "It pays to be healthy."
               </p>
               <div className="flex gap-3 mt-6">
                 <Link
                   to="/login"
-                  className="text-sm font-medium text-[#555555] hover:text-[#1A1A1A] transition-colors"
+                  className="text-sm font-medium text-[#555555] hover:text-[#2C3E2D] transition-colors"
                 >
                   Sign In
                 </Link>
-                <span className="text-[#E5E7EB]">·</span>
+                <span className="text-[rgba(44,62,45,0.1)]">·</span>
                 <Link
                   to="/register"
-                  className="text-sm font-semibold text-[#00B050] hover:text-[#008F40] transition-colors"
+                  className="text-sm font-semibold text-[#6B8F71] hover:text-[#008F40] transition-colors"
                 >
                   Get Started
                 </Link>
@@ -901,8 +901,8 @@ export function LandingPageB() {
           </div>
 
           {/* Bottom bar */}
-          <div className="border-t border-[#E5E7EB] pt-6 flex flex-col sm:flex-row items-center justify-between gap-3">
-            <p className="text-xs text-[#AAAAAA]">
+          <div className="border-t border-[rgba(44,62,45,0.1)] pt-6 flex flex-col sm:flex-row items-center justify-between gap-3">
+            <p className="text-xs text-[#8B9B8D]">
               © 2026 CompassCHW, Inc. All rights reserved.
             </p>
             <div className="flex items-center gap-5">
@@ -914,7 +914,7 @@ export function LandingPageB() {
                 <a
                   key={link.label}
                   href={link.href}
-                  className="text-xs text-[#AAAAAA] hover:text-[#555555] transition-colors"
+                  className="text-xs text-[#8B9B8D] hover:text-[#555555] transition-colors"
                 >
                   {link.label}
                 </a>

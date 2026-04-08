@@ -48,7 +48,7 @@ function getInitials(name: string): string {
 
 function getInitialsStyle(initials: string): string {
   const styles = [
-    'bg-[#D0F0D0] text-[#00B050]',
+    'bg-[rgba(107,143,113,0.15)] text-[#6B8F71]',
     'bg-blue-100 text-[#0077B6]',
     'bg-purple-100 text-purple-700',
     'bg-amber-100 text-amber-700',
@@ -67,9 +67,9 @@ function Toast({ message }: ToastProps) {
     <div
       role="status"
       aria-live="polite"
-      className="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-[#1A1A1A] text-white text-sm font-medium px-4 py-3 rounded-[12px] shadow-lg max-w-[calc(100vw-2rem)]"
+      className="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-[#2C3E2D] text-white text-sm font-medium px-4 py-3 rounded-[20px] shadow-lg max-w-[calc(100vw-2rem)]"
     >
-      <CheckCircle size={16} className="text-[#00B050] shrink-0" aria-hidden="true" />
+      <CheckCircle size={16} className="text-[#6B8F71] shrink-0" aria-hidden="true" />
       {message}
     </div>
   );
@@ -101,7 +101,7 @@ function ConfirmCancelDialog({
       <div className="bg-white rounded-[16px] w-full max-w-sm p-6 shadow-xl">
         <h2
           id="cancel-dialog-heading"
-          className="text-base font-bold text-[#1A1A1A] mb-2"
+          className="text-base font-bold text-[#2C3E2D] mb-2"
         >
           Cancel Session?
         </h2>
@@ -113,14 +113,14 @@ function ConfirmCancelDialog({
           <button
             type="button"
             onClick={() => onConfirm(sessionId)}
-            className="flex-1 bg-red-600 hover:bg-red-700 text-white text-sm font-semibold py-2.5 rounded-[8px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-400"
+            className="flex-1 bg-red-600 hover:bg-red-700 text-white text-sm font-semibold py-2.5 rounded-[12px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-400"
           >
             Yes, Cancel
           </button>
           <button
             type="button"
             onClick={onDismiss}
-            className="flex-1 bg-white border border-[#E5E7EB] hover:bg-[#F8FAFB] text-[#555555] text-sm font-semibold py-2.5 rounded-[8px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#AAAAAA]"
+            className="flex-1 bg-white border border-[rgba(44,62,45,0.1)] hover:bg-[#FBF7F0] text-[#555555] text-sm font-semibold py-2.5 rounded-[12px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#AAAAAA]"
           >
             Keep Session
           </button>
@@ -158,7 +158,7 @@ function StarRatingInput({ sessionId, currentRating, onRate }: StarRatingInputPr
             disabled={isRated}
             aria-label={`${starValue} star${starValue !== 1 ? 's' : ''}`}
             className={[
-              'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#00B050] rounded',
+              'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#6B8F71] rounded',
               isRated ? 'cursor-default' : 'cursor-pointer',
             ].join(' ')}
           >
@@ -167,7 +167,7 @@ function StarRatingInput({ sessionId, currentRating, onRate }: StarRatingInputPr
               className={
                 isFilled
                   ? 'text-yellow-400 fill-yellow-400'
-                  : 'text-[#E5E7EB] fill-[#E5E7EB]'
+                  : 'text-[rgba(44,62,45,0.1)] fill-[rgba(44,62,45,0.1)]'
               }
               aria-hidden="true"
             />
@@ -201,7 +201,7 @@ function ActiveSessionCard({
 
   return (
     <article
-      className="bg-white rounded-[12px] border border-[#E5E7EB] p-4"
+      className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] p-4"
       aria-label={`Active session with ${session.chwName}`}
     >
       {/* Top row: avatar + CHW info + badges */}
@@ -215,19 +215,19 @@ function ActiveSessionCard({
 
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap mb-0.5">
-            <p className="text-sm font-bold text-[#1A1A1A]">{session.chwName}</p>
+            <p className="text-sm font-bold text-[#2C3E2D]">{session.chwName}</p>
             <Badge variant="session-status" value={session.status as SessionStatus} />
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
             <div
-              className="w-5 h-5 rounded-[4px] bg-[#F8FAFB] border border-[#E5E7EB] flex items-center justify-center shrink-0"
+              className="w-5 h-5 rounded-[4px] bg-[#FBF7F0] border border-[rgba(44,62,45,0.1)] flex items-center justify-center shrink-0"
               aria-hidden="true"
             >
               <VerticalIcon vertical={session.vertical} size={12} />
             </div>
             <Badge variant="vertical" value={session.vertical} />
-            <span className="text-xs text-[#AAAAAA]">
+            <span className="text-xs text-[#8B9B8D]">
               {sessionModeLabels[session.mode]}
             </span>
           </div>
@@ -242,7 +242,7 @@ function ActiveSessionCard({
 
       {/* Notes preview */}
       {session.notes && (
-        <p className="text-xs text-[#AAAAAA] italic px-1 mb-3 line-clamp-1">
+        <p className="text-xs text-[#8B9B8D] italic px-1 mb-3 line-clamp-1">
           {session.notes}
         </p>
       )}
@@ -252,7 +252,7 @@ function ActiveSessionCard({
         <button
           type="button"
           onClick={() => onMessage(session.chwName.split(' ')[0])}
-          className="flex-1 flex items-center justify-center gap-1.5 bg-[#0077B6] hover:bg-[#005A8C] active:bg-[#00466E] text-white text-xs font-semibold py-2.5 rounded-[8px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0077B6]"
+          className="flex-1 flex items-center justify-center gap-1.5 bg-[#0077B6] hover:bg-[#005A8C] active:bg-[#00466E] text-white text-xs font-semibold py-2.5 rounded-[12px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0077B6]"
           aria-label={`Message ${session.chwName}`}
         >
           <MessageCircle size={13} aria-hidden="true" />
@@ -261,7 +261,7 @@ function ActiveSessionCard({
         <button
           type="button"
           onClick={() => onRequestCancel(session.id)}
-          className="flex items-center justify-center gap-1.5 bg-white border border-[#E5E7EB] hover:bg-[#F8FAFB] text-[#555555] text-xs font-semibold px-4 py-2.5 rounded-[8px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#AAAAAA]"
+          className="flex items-center justify-center gap-1.5 bg-white border border-[rgba(44,62,45,0.1)] hover:bg-[#FBF7F0] text-[#555555] text-xs font-semibold px-4 py-2.5 rounded-[12px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#AAAAAA]"
           aria-label={`Cancel session with ${session.chwName}`}
         >
           <XCircle size={13} aria-hidden="true" />
@@ -296,7 +296,7 @@ function CompletedSessionCard({
 
   return (
     <article
-      className="bg-white rounded-[12px] border border-[#E5E7EB] p-4"
+      className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] p-4"
       aria-label={`Completed session with ${session.chwName}`}
     >
       {/* Top row */}
@@ -310,12 +310,12 @@ function CompletedSessionCard({
 
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap mb-0.5">
-            <p className="text-sm font-bold text-[#1A1A1A]">{session.chwName}</p>
+            <p className="text-sm font-bold text-[#2C3E2D]">{session.chwName}</p>
             <Badge variant="session-status" value={session.status as SessionStatus} />
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <Badge variant="vertical" value={session.vertical} />
-            <span className="text-xs text-[#AAAAAA]">
+            <span className="text-xs text-[#8B9B8D]">
               {sessionModeLabels[session.mode]}
             </span>
           </div>
@@ -329,7 +329,7 @@ function CompletedSessionCard({
         </span>
         {session.durationMinutes && (
           <>
-            <span className="text-xs text-[#AAAAAA]">·</span>
+            <span className="text-xs text-[#8B9B8D]">·</span>
             <span className="text-xs text-[#555555]">
               {session.durationMinutes} min
             </span>
@@ -339,7 +339,7 @@ function CompletedSessionCard({
 
       {/* Rating */}
       <div className="flex items-center justify-between mb-3 px-1">
-        <span className="text-xs font-semibold text-[#1A1A1A]">
+        <span className="text-xs font-semibold text-[#2C3E2D]">
           {rating > 0 ? 'Your rating' : 'Rate this session'}
         </span>
         <StarRatingInput
@@ -351,7 +351,7 @@ function CompletedSessionCard({
 
       {/* Expandable notes */}
       {session.notes && (
-        <div className="border-t border-[#E5E7EB] pt-3 mb-3">
+        <div className="border-t border-[rgba(44,62,45,0.1)] pt-3 mb-3">
           <button
             type="button"
             onClick={() => onToggleExpand(session.id)}
@@ -373,7 +373,7 @@ function CompletedSessionCard({
           {isExpanded && (
             <p
               id={`notes-${session.id}`}
-              className="text-xs text-[#555555] leading-relaxed mt-2 bg-[#F8FAFB] rounded-[8px] p-3"
+              className="text-xs text-[#555555] leading-relaxed mt-2 bg-[#FBF7F0] rounded-[12px] p-3"
             >
               {session.notes}
             </p>
@@ -385,7 +385,7 @@ function CompletedSessionCard({
       <button
         type="button"
         onClick={onBookAgain}
-        className="w-full flex items-center justify-center gap-1.5 bg-white border border-[#00B050] text-[#00B050] hover:bg-[#D0F0D0]/30 active:bg-[#D0F0D0]/60 text-xs font-semibold py-2.5 rounded-[8px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00B050]"
+        className="w-full flex items-center justify-center gap-1.5 bg-white border border-[#6B8F71] text-[#6B8F71] hover:bg-[rgba(107,143,113,0.15)]/30 active:bg-[rgba(107,143,113,0.15)]/60 text-xs font-semibold py-2.5 rounded-[12px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6B8F71]"
         aria-label={`Book another session with ${session.chwName}`}
       >
         Book Again
@@ -506,7 +506,7 @@ export function MemberSessions() {
       <div
         role="tablist"
         aria-label="Session tabs"
-        className="flex gap-1 bg-[#F8FAFB] border border-[#E5E7EB] rounded-[10px] p-1"
+        className="flex gap-1 bg-[#FBF7F0] border border-[rgba(44,62,45,0.1)] rounded-[10px] p-1"
       >
         {(
           [
@@ -527,10 +527,10 @@ export function MemberSessions() {
               aria-selected={isActive}
               onClick={() => setActiveTab(key)}
               className={[
-                'flex-1 flex items-center justify-center gap-2 py-2 text-sm font-semibold rounded-[8px] transition-all focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00B050]',
+                'flex-1 flex items-center justify-center gap-2 py-2 text-sm font-semibold rounded-[12px] transition-all focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6B8F71]',
                 isActive
-                  ? 'bg-white text-[#1A1A1A] shadow-sm'
-                  : 'text-[#AAAAAA] hover:text-[#555555]',
+                  ? 'bg-white text-[#2C3E2D] shadow-sm'
+                  : 'text-[#8B9B8D] hover:text-[#555555]',
               ].join(' ')}
             >
               {label}
@@ -539,8 +539,8 @@ export function MemberSessions() {
                   className={[
                     'inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full text-xs font-bold',
                     isActive
-                      ? 'bg-[#00B050] text-white'
-                      : 'bg-[#E5E7EB] text-[#555555]',
+                      ? 'bg-[#2C3E2D] text-white'
+                      : 'bg-[rgba(44,62,45,0.1)] text-[#555555]',
                   ].join(' ')}
                   aria-label={`${count} ${label.toLowerCase()} sessions`}
                 >
@@ -568,22 +568,22 @@ export function MemberSessions() {
             </div>
           ) : (
             <div
-              className="bg-white rounded-[12px] border border-[#E5E7EB] p-10 flex flex-col items-center gap-3 text-center"
+              className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] p-10 flex flex-col items-center gap-3 text-center"
               role="status"
             >
-              <div className="w-12 h-12 rounded-full bg-[#F8FAFB] border border-[#E5E7EB] flex items-center justify-center">
-                <Inbox size={22} className="text-[#AAAAAA]" aria-hidden="true" />
+              <div className="w-12 h-12 rounded-full bg-[#FBF7F0] border border-[rgba(44,62,45,0.1)] flex items-center justify-center">
+                <Inbox size={22} className="text-[#8B9B8D]" aria-hidden="true" />
               </div>
-              <p className="text-sm font-semibold text-[#1A1A1A]">
+              <p className="text-sm font-semibold text-[#2C3E2D]">
                 No active sessions
               </p>
-              <p className="text-xs text-[#AAAAAA] max-w-xs">
+              <p className="text-xs text-[#8B9B8D] max-w-xs">
                 No sessions yet. Find a CHW to get started!
               </p>
               <button
                 type="button"
                 onClick={() => navigate('/member/find')}
-                className="mt-1 bg-[#00B050] hover:bg-[#008F40] text-white text-sm font-semibold px-5 py-2.5 rounded-[8px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00B050]"
+                className="mt-1 bg-[#2C3E2D] hover:bg-[#3A5240] text-white text-sm font-semibold px-5 py-2.5 rounded-[12px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6B8F71]"
               >
                 Find a CHW
               </button>
@@ -608,16 +608,16 @@ export function MemberSessions() {
             </div>
           ) : (
             <div
-              className="bg-white rounded-[12px] border border-[#E5E7EB] p-10 flex flex-col items-center gap-3 text-center"
+              className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] p-10 flex flex-col items-center gap-3 text-center"
               role="status"
             >
-              <div className="w-12 h-12 rounded-full bg-[#F8FAFB] border border-[#E5E7EB] flex items-center justify-center">
-                <Inbox size={22} className="text-[#AAAAAA]" aria-hidden="true" />
+              <div className="w-12 h-12 rounded-full bg-[#FBF7F0] border border-[rgba(44,62,45,0.1)] flex items-center justify-center">
+                <Inbox size={22} className="text-[#8B9B8D]" aria-hidden="true" />
               </div>
-              <p className="text-sm font-semibold text-[#1A1A1A]">
+              <p className="text-sm font-semibold text-[#2C3E2D]">
                 No completed sessions
               </p>
-              <p className="text-xs text-[#AAAAAA] max-w-xs">
+              <p className="text-xs text-[#8B9B8D] max-w-xs">
                 Your completed sessions will appear here after your first meeting.
               </p>
             </div>

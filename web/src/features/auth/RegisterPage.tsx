@@ -48,14 +48,14 @@ export function RegisterPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#F8FAFB] flex flex-col items-center justify-center px-4 py-12">
+    <div className="min-h-screen bg-[#FBF7F0] flex flex-col items-center justify-center px-4 py-12">
       <div className="w-full max-w-sm">
         {/* Logo */}
         <div className="flex flex-col items-center mb-8">
-          <div className="w-12 h-12 rounded-xl bg-[#00B050] flex items-center justify-center mb-3">
+          <div className="w-12 h-12 rounded-xl bg-[#2C3E2D] flex items-center justify-center mb-3">
             <Compass size={24} className="text-white" aria-hidden="true" />
           </div>
-          <h1 className="text-2xl font-semibold text-[#1A1A1A]">Join CompassCHW</h1>
+          <h1 className="text-2xl font-semibold text-[#2C3E2D]">Join CompassCHW</h1>
           <p className="text-sm text-[#555555] mt-1">
             {step === 'role' ? 'Choose your account type' : 'Create your account'}
           </p>
@@ -66,18 +66,18 @@ export function RegisterPage() {
           <div
             className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold ${
               step === 'role'
-                ? 'bg-[#00B050] text-white'
-                : 'bg-[#D0F0D0] text-[#00B050]'
+                ? 'bg-[#2C3E2D] text-white'
+                : 'bg-[rgba(107,143,113,0.15)] text-[#6B8F71]'
             }`}
           >
             {step === 'details' ? <CheckCircle2 size={14} /> : '1'}
           </div>
-          <div className="w-8 h-0.5 bg-[#E5E7EB]" />
+          <div className="w-8 h-0.5 bg-[rgba(44,62,45,0.1)]" />
           <div
             className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold ${
               step === 'details'
-                ? 'bg-[#00B050] text-white'
-                : 'bg-[#E5E7EB] text-[#AAAAAA]'
+                ? 'bg-[#2C3E2D] text-white'
+                : 'bg-[rgba(44,62,45,0.1)] text-[#8B9B8D]'
             }`}
           >
             2
@@ -116,10 +116,10 @@ export function RegisterPage() {
 
         {/* Step 2 — Details form */}
         {step === 'details' && selectedRole && (
-          <div className="bg-white rounded-[12px] shadow-sm border border-[#E5E7EB] px-8 py-8">
+          <div className="bg-white rounded-[20px] shadow-sm border border-[rgba(44,62,45,0.1)] px-8 py-8">
             <div className="flex items-center gap-2 mb-6">
               <span className="text-sm text-[#555555]">Registering as</span>
-              <span className="text-sm font-semibold text-[#00B050]">
+              <span className="text-sm font-semibold text-[#6B8F71]">
                 {selectedRole === 'chw' ? 'Community Health Worker' : 'Community Member'}
               </span>
               <button
@@ -135,7 +135,7 @@ export function RegisterPage() {
               <div>
                 <label
                   htmlFor="reg-name"
-                  className="block text-sm font-medium text-[#1A1A1A] mb-1.5"
+                  className="block text-sm font-medium text-[#2C3E2D] mb-1.5"
                 >
                   Full name
                 </label>
@@ -147,14 +147,14 @@ export function RegisterPage() {
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="Your full name"
-                  className="w-full rounded-[8px] border border-[#E5E7EB] px-3.5 py-2.5 text-sm text-[#1A1A1A] placeholder:text-[#AAAAAA] focus:outline-none focus:ring-2 focus:ring-[#00B050] focus:border-transparent transition"
+                  className="w-full rounded-[12px] border border-[rgba(44,62,45,0.1)] px-3.5 py-2.5 text-sm text-[#2C3E2D] placeholder:text-[#8B9B8D] focus:outline-none focus:ring-2 focus:ring-[#6B8F71] focus:border-transparent transition"
                 />
               </div>
 
               <div>
                 <label
                   htmlFor="reg-email"
-                  className="block text-sm font-medium text-[#1A1A1A] mb-1.5"
+                  className="block text-sm font-medium text-[#2C3E2D] mb-1.5"
                 >
                   Email address
                 </label>
@@ -166,14 +166,14 @@ export function RegisterPage() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="you@example.com"
-                  className="w-full rounded-[8px] border border-[#E5E7EB] px-3.5 py-2.5 text-sm text-[#1A1A1A] placeholder:text-[#AAAAAA] focus:outline-none focus:ring-2 focus:ring-[#00B050] focus:border-transparent transition"
+                  className="w-full rounded-[12px] border border-[rgba(44,62,45,0.1)] px-3.5 py-2.5 text-sm text-[#2C3E2D] placeholder:text-[#8B9B8D] focus:outline-none focus:ring-2 focus:ring-[#6B8F71] focus:border-transparent transition"
                 />
               </div>
 
               <div>
                 <label
                   htmlFor="reg-password"
-                  className="block text-sm font-medium text-[#1A1A1A] mb-1.5"
+                  className="block text-sm font-medium text-[#2C3E2D] mb-1.5"
                 >
                   Password
                 </label>
@@ -185,14 +185,14 @@ export function RegisterPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="At least 8 characters"
-                  className="w-full rounded-[8px] border border-[#E5E7EB] px-3.5 py-2.5 text-sm text-[#1A1A1A] placeholder:text-[#AAAAAA] focus:outline-none focus:ring-2 focus:ring-[#00B050] focus:border-transparent transition"
+                  className="w-full rounded-[12px] border border-[rgba(44,62,45,0.1)] px-3.5 py-2.5 text-sm text-[#2C3E2D] placeholder:text-[#8B9B8D] focus:outline-none focus:ring-2 focus:ring-[#6B8F71] focus:border-transparent transition"
                 />
               </div>
 
               <button
                 type="submit"
                 disabled={isLoading}
-                className="w-full bg-[#00B050] hover:bg-[#008F40] disabled:bg-[#D0F0D0] text-white font-semibold py-2.5 rounded-[8px] text-sm transition-colors mt-2 flex items-center justify-center gap-2"
+                className="w-full bg-[#2C3E2D] hover:bg-[#3A5240] disabled:bg-[rgba(107,143,113,0.15)] text-white font-semibold py-2.5 rounded-[12px] text-sm transition-colors mt-2 flex items-center justify-center gap-2"
               >
                 {isLoading ? (
                   <>
@@ -226,14 +226,14 @@ function RoleCard({ role, title, description, emoji, onSelect }: RoleCardProps) 
     <button
       type="button"
       onClick={() => onSelect(role)}
-      className="w-full bg-white border border-[#E5E7EB] hover:border-[#00B050] hover:bg-[#F8FAFB] rounded-[12px] p-5 text-left transition-colors group"
+      className="w-full bg-white border border-[rgba(44,62,45,0.1)] hover:border-[#6B8F71] hover:bg-[#FBF7F0] rounded-[12px] p-5 text-left transition-colors group"
     >
       <div className="flex items-start gap-4">
         <span className="text-3xl leading-none" role="img" aria-hidden="true">
           {emoji}
         </span>
         <div>
-          <p className="text-sm font-semibold text-[#1A1A1A] group-hover:text-[#00B050] transition-colors">
+          <p className="text-sm font-semibold text-[#2C3E2D] group-hover:text-[#6B8F71] transition-colors">
             {title}
           </p>
           <p className="text-xs text-[#555555] mt-1 leading-relaxed">{description}</p>

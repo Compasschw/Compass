@@ -50,10 +50,10 @@ export function MemberHome() {
       {/* Stat cards */}
       <div className="grid grid-cols-3 gap-3">
         <StatCard
-          icon={<Gift size={18} className="text-[#00B050]" />}
+          icon={<Gift size={18} className="text-[#6B8F71]" />}
           label="Rewards"
           value={`${member.rewardsBalance} pts`}
-          iconBg="bg-[#D0F0D0]"
+          iconBg="bg-[rgba(107,143,113,0.15)]"
         />
         <StatCard
           icon={<CalendarCheck size={18} className="text-[#0077B6]" />}
@@ -76,7 +76,7 @@ export function MemberHome() {
         <div className="flex items-center justify-between mb-3">
           <h3
             id="goals-heading"
-            className="text-sm font-semibold text-[#1A1A1A] uppercase tracking-wide"
+            className="text-sm font-semibold text-[#2C3E2D] uppercase tracking-wide"
           >
             My Goals
           </h3>
@@ -92,7 +92,7 @@ export function MemberHome() {
           {activeGoals.map((goal) => (
             <div
               key={goal.id}
-              className="bg-white rounded-[12px] border border-[#E5E7EB] p-4"
+              className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] p-4"
             >
               <div className="flex items-start gap-3">
                 <span className="text-2xl leading-none mt-0.5" role="img" aria-hidden="true">
@@ -100,14 +100,14 @@ export function MemberHome() {
                 </span>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between gap-2 mb-1">
-                    <p className="text-sm font-semibold text-[#1A1A1A] truncate">
+                    <p className="text-sm font-semibold text-[#2C3E2D] truncate">
                       {goal.title}
                     </p>
                     <Badge variant="vertical" value={goal.category} />
                   </div>
                   {/* Progress bar */}
                   <div
-                    className="w-full bg-[#E5E7EB] rounded-full h-1.5 mb-2"
+                    className="w-full bg-[rgba(44,62,45,0.1)] rounded-full h-1.5 mb-2"
                     role="progressbar"
                     aria-valuenow={goal.progress}
                     aria-valuemin={0}
@@ -115,11 +115,11 @@ export function MemberHome() {
                     aria-label={`${goal.title} progress`}
                   >
                     <div
-                      className="bg-[#00B050] h-1.5 rounded-full transition-all"
+                      className="bg-[#2C3E2D] h-1.5 rounded-full transition-all"
                       style={{ width: `${goal.progress}%` }}
                     />
                   </div>
-                  <div className="flex items-center justify-between text-xs text-[#AAAAAA]">
+                  <div className="flex items-center justify-between text-xs text-[#8B9B8D]">
                     <span>{goal.progress}% complete</span>
                     <span>Next: {formatDate(goal.nextSession)}</span>
                   </div>
@@ -142,7 +142,7 @@ export function MemberHome() {
         </div>
         <Link
           to="/member/find"
-          className="shrink-0 bg-white text-[#0077B6] hover:bg-blue-50 font-semibold text-sm px-4 py-2 rounded-[8px] transition-colors flex items-center gap-1.5"
+          className="shrink-0 bg-white text-[#0077B6] hover:bg-blue-50 font-semibold text-sm px-4 py-2 rounded-[12px] transition-colors flex items-center gap-1.5"
         >
           Find CHW <ArrowRight size={14} />
         </Link>
@@ -153,20 +153,20 @@ export function MemberHome() {
         <section aria-labelledby="upcoming-member-heading">
           <h3
             id="upcoming-member-heading"
-            className="text-sm font-semibold text-[#1A1A1A] uppercase tracking-wide mb-3"
+            className="text-sm font-semibold text-[#2C3E2D] uppercase tracking-wide mb-3"
           >
             Upcoming Sessions
           </h3>
           {upcomingSessions.map((session) => (
             <div
               key={session.id}
-              className="bg-white rounded-[12px] border border-[#E5E7EB] p-4 flex items-center gap-3"
+              className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] p-4 flex items-center gap-3"
             >
-              <div className="w-10 h-10 rounded-[8px] bg-[#D0F0D0] flex items-center justify-center shrink-0">
+              <div className="w-10 h-10 rounded-[12px] bg-[rgba(107,143,113,0.15)] flex items-center justify-center shrink-0">
                 <VerticalIcon vertical={session.vertical} size={18} />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-[#1A1A1A]">
+                <p className="text-sm font-semibold text-[#2C3E2D]">
                   {session.chwName}
                 </p>
                 <p className="text-xs text-[#555555]">

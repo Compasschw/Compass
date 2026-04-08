@@ -53,7 +53,7 @@ export function BottomNav() {
 
   return (
     <nav
-      className="lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-white border-t border-[#E5E7EB] safe-area-inset-bottom"
+      className="lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-white border-t border-[rgba(44,62,45,0.1)] safe-area-inset-bottom"
       aria-label="Mobile navigation"
     >
       <div className="flex items-stretch">
@@ -64,8 +64,8 @@ export function BottomNav() {
             className={({ isActive }) =>
               `flex flex-1 flex-col items-center justify-center py-1.5 gap-0.5 text-[10px] font-medium transition-colors ${
                 isActive
-                  ? 'text-[#00B050]'
-                  : 'text-[#AAAAAA] hover:text-[#555555]'
+                  ? 'text-[#6B8F71]'
+                  : 'text-[#8B9B8D] hover:text-[#555555]'
               }`
             }
           >
