@@ -13,10 +13,11 @@ import type { CalendarEvent, Vertical } from '../../data/mock';
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
-/** Today's date hardcoded for demo consistency (April 4, 2026). */
-const TODAY_YEAR = 2026;
-const TODAY_MONTH = 3; // 0-indexed: April
-const TODAY_DAY = 4;
+/** Today's date, derived at module load time. */
+const now = new Date();
+const TODAY_YEAR = now.getFullYear();
+const TODAY_MONTH = now.getMonth();
+const TODAY_DAY = now.getDate();
 
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
