@@ -1,6 +1,6 @@
 const API_BASE = import.meta.env.VITE_API_URL || (
   import.meta.env.PROD
-    ? "https://api.joincompasschw.com/api/v1"
+    ? "/api/v1"
     : "http://localhost:8000/api/v1"
 );
 
