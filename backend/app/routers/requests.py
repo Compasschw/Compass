@@ -39,4 +39,12 @@ async def accept_request(request_id: UUID, current_user=Depends(require_role("ch
 
 @router.patch("/{request_id}/pass")
 async def pass_request(request_id: UUID, current_user=Depends(require_role("chw")), db: AsyncSession = Depends(get_db)):
-    return {"status": "passed", "request_id": str(request_id)}
+    from app.models.request import ServiceRequest
+    req = await db.get(ServiceRequest, request_id)
+    if not req or req.status != "open":
+        raise HTTPException(status_code=404, detail="Request not found or not open")
+    if req.matched_chw_id == current_user.id:
+        req.matched_chw_id = None
+        req.status = "open"
+        await db.commit()
+    return {"status": "passed", "request_id": str(req.id)}

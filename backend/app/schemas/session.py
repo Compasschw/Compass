@@ -1,11 +1,14 @@
 from uuid import UUID
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
+from app.models.enums import SessionMode
+
 
 class SessionCreate(BaseModel):
     request_id: UUID
     scheduled_at: datetime
-    mode: str = "in_person"
+    mode: SessionMode = SessionMode.in_person
+
 
 class SessionResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -25,6 +28,7 @@ class SessionResponse(BaseModel):
     net_amount: float | None
     created_at: datetime
 
+
 class SessionDocumentationSubmit(BaseModel):
     summary: str
     resources_referred: list[str] = []
@@ -34,6 +38,7 @@ class SessionDocumentationSubmit(BaseModel):
     diagnosis_codes: list[str]
     procedure_code: str
     units_to_bill: int = Field(ge=1, le=4)
+
 
 class ConsentSubmit(BaseModel):
     consent_type: str = "medical_billing"

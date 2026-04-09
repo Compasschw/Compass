@@ -1,13 +1,16 @@
 from uuid import UUID
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
+from app.models.enums import Vertical, Urgency, SessionMode
+
 
 class ServiceRequestCreate(BaseModel):
-    vertical: str
-    urgency: str = "routine"
+    vertical: Vertical
+    urgency: Urgency = Urgency.routine
     description: str
-    preferred_mode: str = "in_person"
+    preferred_mode: SessionMode = SessionMode.in_person
     estimated_units: int = Field(default=1, ge=1, le=4)
+
 
 class ServiceRequestResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -21,6 +24,7 @@ class ServiceRequestResponse(BaseModel):
     status: str
     estimated_units: int
     created_at: datetime
+
 
 class ServiceRequestUpdate(BaseModel):
     status: str | None = None
