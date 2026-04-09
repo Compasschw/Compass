@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { fetchSessions, startSession, completeSession, submitDocumentation } from "./sessions";
-import { fetchRequests, acceptRequest, passRequest } from "./requests";
+import { fetchSessions, startSession, completeSession } from "./sessions";
+import { fetchRequests, acceptRequest } from "./requests";
 import { fetchConversations, fetchMessages, sendMessage } from "./conversations";
 import { fetchValidations } from "./credentials";
 
