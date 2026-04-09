@@ -20,7 +20,7 @@ async def list_requests(current_user=Depends(get_current_user), db: AsyncSession
 @router.post("/", response_model=ServiceRequestResponse, status_code=201)
 async def create_request(data: ServiceRequestCreate, current_user=Depends(require_role("member")), db: AsyncSession = Depends(get_db)):
     from app.models.request import ServiceRequest
-    req = ServiceRequest(member_id=current_user.id, vertical=data.vertical, urgency=data.urgency, description=data.description, preferred_mode=data.preferred_mode, estimated_units=data.estimated_units)
+    req = ServiceRequest(member_id=current_user.id, vertical=data.vertical.value, urgency=data.urgency.value, description=data.description, preferred_mode=data.preferred_mode.value, estimated_units=data.estimated_units)
     db.add(req)
     await db.commit()
     await db.refresh(req)
