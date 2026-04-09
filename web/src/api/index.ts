@@ -6,3 +6,4 @@ export * from "./matching";
 export * from "./conversations";
 export * from "./credentials";
 export * from "./upload";
+export * from "./waitlist";

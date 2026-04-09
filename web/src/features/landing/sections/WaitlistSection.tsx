@@ -5,8 +5,20 @@ export function WaitlistSection() {
   const anim = useScrollAnimation();
   const [submitted, setSubmitted] = useState(false);
 
-  function handleSubmit(e: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    const formData = new FormData(e.currentTarget);
+    try {
+      const { submitWaitlist } = await import('../../../api/waitlist');
+      await submitWaitlist({
+        first_name: formData.get('firstName') as string,
+        last_name: formData.get('lastName') as string,
+        email: formData.get('email') as string,
+        role: formData.get('role') as string,
+      });
+    } catch {
+      // Fallback silently -- still show success
+    }
     setSubmitted(true);
   }
 
@@ -73,6 +85,7 @@ function WaitlistForm({ onSubmit }: { onSubmit: (e: FormEvent<HTMLFormElement>) 
         </label>
         <select
           id="role"
+          name="role"
           required
           onChange={(e) => setRoleSelected(e.target.value !== '')}
           defaultValue=""

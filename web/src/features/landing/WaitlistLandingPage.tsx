@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { submitWaitlist } from '../../api/waitlist';
 import { useScrollAnimation } from './hooks/useScrollAnimation';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -91,13 +92,22 @@ function WaitlistForm() {
     setForm((prev) => ({ ...prev, [field]: value }));
   }
 
-  function handleSubmit(e: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    const entry = { ...form, submittedAt: new Date().toISOString() };
-    const existing = JSON.parse(localStorage.getItem('compass_waitlist') || '[]') as Record<string, unknown>[];
-    existing.push(entry);
-    localStorage.setItem('compass_waitlist', JSON.stringify(existing));
-    console.log('[Compass Waitlist] New signup:', entry);
+    try {
+      await submitWaitlist({
+        first_name: form.firstName,
+        last_name: form.lastName,
+        email: form.email,
+        role: form.role,
+      });
+    } catch {
+      // Still show success even if backend is down -- localStorage fallback
+      const entry = { ...form, submittedAt: new Date().toISOString() };
+      const existing = JSON.parse(localStorage.getItem('compass_waitlist') || '[]') as Record<string, unknown>[];
+      existing.push(entry);
+      localStorage.setItem('compass_waitlist', JSON.stringify(existing));
+    }
     setSubmitted(true);
   }
 
@@ -552,13 +562,22 @@ function BottomCTA() {
   const [email, setEmail] = useState('');
   const [submitted, setSubmitted] = useState(false);
 
-  function handleSubmit(e: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    const entry = { email, submittedAt: new Date().toISOString() };
-    const existing = JSON.parse(localStorage.getItem('compass_waitlist') || '[]') as Record<string, unknown>[];
-    existing.push(entry);
-    localStorage.setItem('compass_waitlist', JSON.stringify(existing));
-    console.log('[Compass Waitlist] New signup:', entry);
+    try {
+      await submitWaitlist({
+        first_name: 'N/A',
+        last_name: 'N/A',
+        email,
+        role: 'other',
+      });
+    } catch {
+      // Still show success even if backend is down -- localStorage fallback
+      const entry = { email, submittedAt: new Date().toISOString() };
+      const existing = JSON.parse(localStorage.getItem('compass_waitlist') || '[]') as Record<string, unknown>[];
+      existing.push(entry);
+      localStorage.setItem('compass_waitlist', JSON.stringify(existing));
+    }
     setSubmitted(true);
   }
 

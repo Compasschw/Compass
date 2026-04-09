@@ -12,14 +12,28 @@ interface WaitlistEntry {
 export function WaitlistAdmin() {
   const [entries, setEntries] = useState<WaitlistEntry[]>([]);
 
-  function load() {
+  async function load() {
     try {
-      const data = JSON.parse(localStorage.getItem('compass_waitlist') || '[]') as WaitlistEntry[];
-      setEntries(data.sort((a, b) => b.submittedAt.localeCompare(a.submittedAt)));
-    } catch { setEntries([]); }
+      const { fetchWaitlistEntries } = await import('../../api/waitlist');
+      const apiEntries = await fetchWaitlistEntries();
+      const mapped = apiEntries.map(e => ({
+        firstName: e.first_name,
+        lastName: e.last_name,
+        email: e.email,
+        role: e.role,
+        submittedAt: e.created_at,
+      }));
+      setEntries(mapped.sort((a, b) => b.submittedAt.localeCompare(a.submittedAt)));
+    } catch {
+      // Fallback to localStorage
+      try {
+        const data = JSON.parse(localStorage.getItem('compass_waitlist') || '[]') as WaitlistEntry[];
+        setEntries(data.sort((a, b) => b.submittedAt.localeCompare(a.submittedAt)));
+      } catch { setEntries([]); }
+    }
   }
 
-  useEffect(load, []);
+  useEffect(() => { load(); }, []);
 
   function exportCSV() {
     const header = 'First Name,Last Name,Email,Role,Submitted At';

@@ -1,0 +1,53 @@
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.database import get_db
+from app.models.waitlist import WaitlistEntry
+from app.schemas.waitlist import WaitlistCreate, WaitlistResponse
+
+router = APIRouter(prefix="/api/v1/waitlist", tags=["waitlist"])
+
+
+@router.post("/", response_model=WaitlistResponse, status_code=201)
+async def create_waitlist_entry(
+    data: WaitlistCreate, db: AsyncSession = Depends(get_db)
+) -> WaitlistEntry:
+    """Public endpoint -- no auth required."""
+    existing = await db.execute(
+        select(WaitlistEntry).where(WaitlistEntry.email == data.email)
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(
+            status_code=409, detail="This email is already on the waitlist"
+        )
+
+    entry = WaitlistEntry(
+        first_name=data.first_name,
+        last_name=data.last_name,
+        email=data.email,
+        role=data.role,
+    )
+    db.add(entry)
+    await db.commit()
+    await db.refresh(entry)
+    return entry
+
+
+@router.get("/", response_model=list[WaitlistResponse])
+async def list_waitlist_entries(
+    db: AsyncSession = Depends(get_db),
+) -> list[WaitlistEntry]:
+    """Public for now -- will add admin auth later."""
+    result = await db.execute(
+        select(WaitlistEntry).order_by(WaitlistEntry.created_at.desc())
+    )
+    return list(result.scalars().all())
+
+
+@router.get("/count")
+async def waitlist_count(db: AsyncSession = Depends(get_db)) -> dict[str, int]:
+    """Public count for display on landing page."""
+    result = await db.execute(select(func.count()).select_from(WaitlistEntry))
+    count = result.scalar() or 0
+    return {"count": count}

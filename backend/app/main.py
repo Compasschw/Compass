@@ -45,6 +45,7 @@ from app.routers.conversations import router as conversations_router
 from app.routers.credentials import router as credentials_router
 from app.routers.upload import router as upload_router
 from app.routers.health import router as health_router
+from app.routers.waitlist import router as waitlist_router
 
 app.include_router(auth_router)
 app.include_router(chw_router)
@@ -56,3 +57,4 @@ app.include_router(conversations_router)
 app.include_router(credentials_router)
 app.include_router(upload_router)
 app.include_router(health_router)
+app.include_router(waitlist_router)
