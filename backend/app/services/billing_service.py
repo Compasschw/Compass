@@ -1,11 +1,11 @@
-import math
-from datetime import datetime, timezone, date
+from decimal import Decimal, ROUND_HALF_UP
+from datetime import date
 from sqlalchemy import select, func, extract
 from sqlalchemy.ext.asyncio import AsyncSession
 
-MEDI_CAL_RATE = 26.66
-PLATFORM_FEE_RATE = 0.15
-PEAR_SUITE_FEE_RATE = 0.10
+MEDI_CAL_RATE = Decimal("26.66")
+PLATFORM_FEE_RATE = Decimal("0.15")
+PEAR_SUITE_FEE_RATE = Decimal("0.10")
 MAX_UNITS_PER_DAY = 4
 MAX_UNITS_PER_YEAR = 10
 
@@ -29,23 +29,26 @@ def validate_claim(diagnosis_codes: list[str], procedure_code: str, units: int) 
 
 
 def calculate_earnings(units: int) -> dict:
-    gross = round(MEDI_CAL_RATE * units, 2)
-    platform_fee = round(gross * PLATFORM_FEE_RATE, 2)
-    pear_suite_fee = round(gross * PEAR_SUITE_FEE_RATE, 2)
-    net = round(gross - platform_fee - pear_suite_fee, 2)
-    return {"gross": gross, "platform_fee": platform_fee, "pear_suite_fee": pear_suite_fee, "net": net}
+    gross = (MEDI_CAL_RATE * units).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    platform_fee = (gross * PLATFORM_FEE_RATE).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    pear_suite_fee = (gross * PEAR_SUITE_FEE_RATE).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    net = gross - platform_fee - pear_suite_fee
+    return {
+        "gross": float(gross),
+        "platform_fee": float(platform_fee),
+        "pear_suite_fee": float(pear_suite_fee),
+        "net": float(net),
+    }
 
 
 async def check_unit_caps(db: AsyncSession, chw_id, member_id, session_date: date) -> dict:
     from app.models.billing import BillingClaim
-    # Daily cap
     daily = await db.execute(
         select(func.coalesce(func.sum(BillingClaim.units), 0))
         .where(BillingClaim.chw_id == chw_id, BillingClaim.member_id == member_id)
         .where(func.date(BillingClaim.created_at) == session_date)
     )
     daily_used = daily.scalar() or 0
-    # Yearly cap
     yearly = await db.execute(
         select(func.coalesce(func.sum(BillingClaim.units), 0))
         .where(BillingClaim.chw_id == chw_id, BillingClaim.member_id == member_id)

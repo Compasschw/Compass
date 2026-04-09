@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from sqlalchemy import String, Integer, Boolean, Text, DateTime, Float, ForeignKey, Numeric, func, ARRAY
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -20,8 +21,8 @@ class Session(Base):
     duration_minutes: Mapped[int | None] = mapped_column(Integer)
     units_billed: Mapped[int | None] = mapped_column(Integer)
     notes: Mapped[str | None] = mapped_column(Text)
-    gross_amount: Mapped[float | None] = mapped_column(Numeric(10, 2))
-    net_amount: Mapped[float | None] = mapped_column(Numeric(10, 2))
+    gross_amount: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    net_amount: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

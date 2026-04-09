@@ -1,12 +1,23 @@
+import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 from app.config import settings
+from app.database import engine
 from app.middleware.audit import AuditMiddleware
+
+logger = logging.getLogger("compass")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    async with engine.connect() as conn:
+        await conn.execute(text("SELECT 1"))
+    logger.info("Database connection verified")
     yield
+    await engine.dispose()
+
 
 app = FastAPI(
     title="CompassCHW API",
@@ -19,12 +30,11 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 app.add_middleware(AuditMiddleware)
 
-# Register all routers
 from app.routers.auth import router as auth_router
 from app.routers.chw import router as chw_router
 from app.routers.member import router as member_router
