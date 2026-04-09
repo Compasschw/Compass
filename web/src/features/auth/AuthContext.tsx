@@ -5,6 +5,8 @@ import {
   useCallback,
   type ReactNode,
 } from 'react';
+import { clearTokens, getRefreshToken } from '../../api/client';
+import { logoutUser } from '../../api/auth';
 import type { UserRole } from '../../data/mock';
 
 // --- Types ---
@@ -20,24 +22,24 @@ interface AuthContextValue extends AuthState {
   logout: () => void;
 }
 
-// --- Session persistence ---
+// --- Persistent storage (survives tab close) ---
 
-const SESSION_KEY = 'compass_auth';
+const STORAGE_KEY = 'compass_auth';
 
 function loadSession(): AuthState {
   try {
-    const stored = sessionStorage.getItem(SESSION_KEY);
+    const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) return JSON.parse(stored) as AuthState;
   } catch { /* ignore */ }
   return { isAuthenticated: false, userRole: null, userName: null };
 }
 
 function saveSession(state: AuthState) {
-  try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(state)); } catch { /* ignore */ }
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch { /* ignore */ }
 }
 
 function clearSession() {
-  try { sessionStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
+  try { localStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
 }
 
 // --- Context ---
@@ -59,7 +61,16 @@ export function AuthProvider({ children }: AuthProviderProps) {
     saveSession(state);
   }, []);
 
-  const logout = useCallback(() => {
+  const logout = useCallback(async () => {
+    try {
+      const refreshToken = getRefreshToken();
+      if (refreshToken) {
+        await logoutUser(refreshToken);
+      }
+    } catch {
+      // Best-effort server logout — clear local state regardless
+    }
+    clearTokens();
     const state: AuthState = { isAuthenticated: false, userRole: null, userName: null };
     setAuthState(state);
     clearSession();

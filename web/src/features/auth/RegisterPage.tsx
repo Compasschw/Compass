@@ -28,23 +28,31 @@ export function RegisterPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   function handleRoleSelect(role: UserRole) {
     setSelectedRole(role);
     setStep('details');
   }
 
-  function handleSubmit(e: FormEvent) {
+  async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!selectedRole || !name || !email || !password) return;
 
     setIsLoading(true);
-    setTimeout(() => {
-      login(selectedRole, name);
+    setError(null);
+    try {
+      const { registerUser } = await import('../../api/auth');
+      const res = await registerUser(email, password, name, selectedRole);
+      login(res.role as UserRole, res.name);
       navigate(
         selectedRole === 'chw' ? '/onboarding/chw' : '/onboarding/member',
       );
-    }, 600);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Registration failed. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
   }
 
   return (
@@ -130,6 +138,12 @@ export function RegisterPage() {
                 Change
               </button>
             </div>
+
+            {error && (
+              <div className="mb-4 p-3 rounded-[12px] bg-red-50 border border-red-200 text-sm text-red-700">
+                {error}
+              </div>
+            )}
 
             <form onSubmit={handleSubmit} noValidate className="space-y-4">
               <div>

@@ -1,18 +1,25 @@
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000/api/v1";
 
+const TOKEN_KEY = "compass_auth_tokens";
+
 interface RequestOptions extends RequestInit {
   skipAuth?: boolean;
 }
 
 export class ApiError extends Error {
-  constructor(public status: number, message: string, public detail?: unknown) {
+  status: number;
+  detail: unknown;
+
+  constructor(status: number, message: string, detail?: unknown) {
     super(message);
+    this.status = status;
+    this.detail = detail;
   }
 }
 
 function getAccessToken(): string | null {
   try {
-    const auth = sessionStorage.getItem("compass_auth_tokens");
+    const auth = localStorage.getItem(TOKEN_KEY);
     if (auth) {
       const parsed = JSON.parse(auth);
       return parsed.access_token || null;
@@ -21,20 +28,43 @@ function getAccessToken(): string | null {
   return null;
 }
 
-export function setTokens(access_token: string, refresh_token: string) {
-  sessionStorage.setItem("compass_auth_tokens", JSON.stringify({ access_token, refresh_token }));
-}
-
-export function clearTokens() {
-  sessionStorage.removeItem("compass_auth_tokens");
-}
-
 export function getRefreshToken(): string | null {
   try {
-    const auth = sessionStorage.getItem("compass_auth_tokens");
+    const auth = localStorage.getItem(TOKEN_KEY);
     if (auth) return JSON.parse(auth).refresh_token || null;
   } catch {}
   return null;
+}
+
+export function setTokens(access_token: string, refresh_token: string) {
+  localStorage.setItem(TOKEN_KEY, JSON.stringify({ access_token, refresh_token }));
+}
+
+export function clearTokens() {
+  localStorage.removeItem(TOKEN_KEY);
+}
+
+async function refreshAccessToken(): Promise<string | null> {
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) return null;
+
+  try {
+    const res = await fetch(API_BASE + "/auth/refresh", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+    if (!res.ok) {
+      clearTokens();
+      return null;
+    }
+    const data = await res.json();
+    setTokens(data.access_token, data.refresh_token);
+    return data.access_token;
+  } catch {
+    clearTokens();
+    return null;
+  }
 }
 
 export async function api<T>(path: string, options: RequestOptions = {}): Promise<T> {
@@ -49,7 +79,16 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
     if (token) headers["Authorization"] = "Bearer " + token;
   }
 
-  const res = await fetch(API_BASE + path, { ...fetchOptions, headers });
+  let res = await fetch(API_BASE + path, { ...fetchOptions, headers });
+
+  // Token expired — try refresh once
+  if (res.status === 401 && !skipAuth) {
+    const newToken = await refreshAccessToken();
+    if (newToken) {
+      headers["Authorization"] = "Bearer " + newToken;
+      res = await fetch(API_BASE + path, { ...fetchOptions, headers });
+    }
+  }
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));

@@ -2,23 +2,15 @@ import { useState, type FormEvent } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { Eye, EyeOff, Compass } from 'lucide-react';
 import { useAuth } from './AuthContext';
+import { loginUser } from '../../api/auth';
 import type { UserRole } from '../../data/mock';
 
-// ─── Demo quick-login helpers ─────────────────────────────────────────────────
-
-const DEMO_ACCOUNTS: { role: UserRole; name: string; label: string }[] = [
-  { role: 'chw', name: 'Maria Guadalupe Reyes', label: 'Demo as CHW' },
-  { role: 'member', name: 'Rosa Delgado', label: 'Demo as Member' },
+// Demo quick-login helpers (keep for investor demos)
+const DEMO_ACCOUNTS: { role: UserRole; name: string; label: string; email: string; password: string }[] = [
+  { role: 'chw', name: 'Maria Guadalupe Reyes', label: 'Demo as CHW', email: 'maria@demo.compasschw.com', password: 'demo1234' },
+  { role: 'member', name: 'Rosa Delgado', label: 'Demo as Member', email: 'rosa@demo.compasschw.com', password: 'demo1234' },
 ];
 
-// ─── Component ────────────────────────────────────────────────────────────────
-
-/**
- * Login page — matches the "Welcome Back" aesthetic from the design slides.
- * In mockup mode there is no real auth; pressing Log In with any credentials
- * will route to the CHW dashboard. The demo buttons let reviewers jump
- * directly into either role without typing.
- */
 export function LoginPage() {
   const navigate = useNavigate();
   const { login } = useAuth();
@@ -27,28 +19,43 @@ export function LoginPage() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  function handleSubmit(e: FormEvent) {
+  async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!email || !password) return;
 
     setIsLoading(true);
-    // Simulate a brief network delay for realism
-    setTimeout(() => {
-      // Default to CHW when form is submitted without a demo selection
-      login('chw', 'Maria Guadalupe Reyes');
-      navigate('/chw/dashboard');
-    }, 600);
+    setError(null);
+    try {
+      const res = await loginUser(email, password);
+      login(res.role as UserRole, res.name);
+      navigate(res.role === 'chw' ? '/chw/dashboard' : '/member/home');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Login failed. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
   }
 
-  function handleDemoLogin(role: UserRole, name: string, destination: string) {
-    login(role, name);
-    navigate(destination);
+  async function handleDemoLogin(account: typeof DEMO_ACCOUNTS[number]) {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const res = await loginUser(account.email, account.password);
+      login(res.role as UserRole, res.name);
+      navigate(account.role === 'chw' ? '/chw/dashboard' : '/member/home');
+    } catch {
+      // Fallback to mock login if backend is not running (demo mode)
+      login(account.role, account.name);
+      navigate(account.role === 'chw' ? '/chw/dashboard' : '/member/home');
+    } finally {
+      setIsLoading(false);
+    }
   }
 
   return (
     <div className="min-h-screen bg-[#FBF7F0] flex flex-col items-center justify-center px-4 py-12">
-      {/* Card */}
       <div className="w-full max-w-sm bg-white rounded-[20px] shadow-sm border border-[rgba(44,62,45,0.1)] px-8 py-10">
         {/* Logo */}
         <div className="flex flex-col items-center mb-8">
@@ -59,13 +66,17 @@ export function LoginPage() {
           <p className="text-sm text-[#6B7B6D] mt-1">Sign in to CompassCHW</p>
         </div>
 
+        {/* Error message */}
+        {error && (
+          <div className="mb-4 p-3 rounded-[12px] bg-red-50 border border-red-200 text-sm text-red-700">
+            {error}
+          </div>
+        )}
+
         {/* Form */}
         <form onSubmit={handleSubmit} noValidate className="space-y-4">
           <div>
-            <label
-              htmlFor="email"
-              className="block text-sm font-medium text-[#2C3E2D] mb-1.5"
-            >
+            <label htmlFor="email" className="block text-sm font-medium text-[#2C3E2D] mb-1.5">
               Email address
             </label>
             <input
@@ -81,10 +92,7 @@ export function LoginPage() {
           </div>
 
           <div>
-            <label
-              htmlFor="password"
-              className="block text-sm font-medium text-[#2C3E2D] mb-1.5"
-            >
+            <label htmlFor="password" className="block text-sm font-medium text-[#2C3E2D] mb-1.5">
               Password
             </label>
             <div className="relative">
@@ -134,20 +142,14 @@ export function LoginPage() {
 
         {/* Demo quick-login buttons */}
         <div className="space-y-2">
-          {DEMO_ACCOUNTS.map(({ role, name, label }) => (
+          {DEMO_ACCOUNTS.map((account) => (
             <button
-              key={role}
+              key={account.role}
               type="button"
-              onClick={() =>
-                handleDemoLogin(
-                  role,
-                  name,
-                  role === 'chw' ? '/chw/dashboard' : '/member/home',
-                )
-              }
+              onClick={() => handleDemoLogin(account)}
               className="w-full border border-[rgba(44,62,45,0.1)] hover:border-[#6B8F71] hover:bg-[#FBF7F0] text-[#6B7B6D] hover:text-[#6B8F71] font-medium py-2.5 rounded-[12px] text-sm transition-colors"
             >
-              {label}
+              {account.label}
             </button>
           ))}
         </div>
@@ -155,10 +157,7 @@ export function LoginPage() {
         {/* Register link */}
         <p className="text-center text-xs text-[#6B7B6D] mt-6">
           New to CompassCHW?{' '}
-          <Link
-            to="/register"
-            className="text-[#0077B6] font-medium hover:underline"
-          >
+          <Link to="/register" className="text-[#0077B6] font-medium hover:underline">
             Create an account
           </Link>
         </p>
