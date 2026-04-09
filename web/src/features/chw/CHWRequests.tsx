@@ -3,6 +3,7 @@ import { CheckCircle, XCircle, Inbox } from 'lucide-react';
 import { Badge } from '../../shared/components/Badge';
 import { VerticalIcon } from '../../shared/components/VerticalIcon';
 import { MapView, type MapMarker } from '../../shared/components/MapView';
+import { formatCurrency, MEDI_CAL_RATE, calculateNetEarnings } from '../../shared/utils/format';
 import {
   serviceRequests,
   sessionModeLabels,
@@ -11,9 +12,6 @@ import {
 } from '../../data/mock';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-
-const MEDI_CAL_RATE = 26.66;
-const NET_PAYOUT_RATE = 0.85;
 
 /**
  * Mock coordinates for open service request members.
@@ -45,20 +43,6 @@ const filterTabs: { key: FilterTab; label: string }[] = [
   { key: 'healthcare', label: 'Healthcare' },
 ];
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 2,
-  }).format(amount);
-}
-
-function calcNetEarnings(units: number): number {
-  return units * MEDI_CAL_RATE * NET_PAYOUT_RATE;
-}
-
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 interface ToastProps {
@@ -86,7 +70,7 @@ interface RequestCardProps {
 
 function RequestCard({ request, onAccept, onPass }: RequestCardProps) {
   const grossEarnings = request.estimatedUnits * MEDI_CAL_RATE;
-  const netEarnings = calcNetEarnings(request.estimatedUnits);
+  const netEarnings = calculateNetEarnings(request.estimatedUnits);
 
   return (
     <article

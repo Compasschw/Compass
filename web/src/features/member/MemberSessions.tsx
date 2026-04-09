@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Star, MessageCircle, XCircle, CalendarCheck, CheckCircle, ChevronDown, ChevronUp, Inbox } from 'lucide-react';
 import { Badge } from '../../shared/components/Badge';
 import { VerticalIcon } from '../../shared/components/VerticalIcon';
+import { formatDate, formatShortDate } from '../../shared/utils/format';
 import {
   sessions,
   sessionModeLabels,
@@ -18,24 +19,6 @@ type TabKey = 'active' | 'completed';
 const MOCK_MEMBER_NAME = 'Rosa Delgado';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-}
-
-function formatShortDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
-}
 
 function getInitials(name: string): string {
   return name

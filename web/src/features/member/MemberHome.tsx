@@ -2,6 +2,7 @@ import { useAuth } from '../auth/AuthContext';
 import { StatCard } from '../../shared/components/StatCard';
 import { Badge } from '../../shared/components/Badge';
 import { VerticalIcon } from '../../shared/components/VerticalIcon';
+import { formatDate } from '../../shared/utils/format';
 import { Gift, CalendarCheck, Map, ArrowRight } from 'lucide-react';
 import { goals, sessions, memberProfiles } from '../../data/mock';
 import { Link } from 'react-router-dom';
@@ -26,14 +27,6 @@ export function MemberHome() {
 
   const upcomingSessions = sessions.filter((s) => s.status === 'scheduled');
   const activeGoals = goals.filter((g) => g.status !== 'completed');
-
-  function formatDate(iso: string): string {
-    return new Date(iso).toLocaleDateString('en-US', {
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric',
-    });
-  }
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">

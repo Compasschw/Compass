@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { Badge } from '../../shared/components/Badge';
 import { VerticalIcon } from '../../shared/components/VerticalIcon';
+import { formatCurrency, formatDate, formatShortDate, MEDI_CAL_RATE, NET_PAYOUT_RATE } from '../../shared/utils/format';
 import {
   sessions,
   sessionModeLabels,
@@ -31,32 +32,6 @@ import {
 } from '../../data/mock';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 2,
-  }).format(amount);
-}
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-}
-
-function formatShortDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
-}
 
 function formatElapsed(seconds: number): string {
   const m = Math.floor(seconds / 60);
@@ -345,8 +320,8 @@ function SessionDocumentationModal({
     };
   }, []);
 
-  const grossAmount = unitsToBill * 26.66;
-  const netAmount = grossAmount * 0.85;
+  const grossAmount = unitsToBill * MEDI_CAL_RATE;
+  const netAmount = grossAmount * NET_PAYOUT_RATE;
 
   return (
     <div

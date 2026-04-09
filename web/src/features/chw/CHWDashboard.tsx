@@ -3,6 +3,7 @@ import { useAuth } from '../auth/AuthContext';
 import { StatCard } from '../../shared/components/StatCard';
 import { Badge } from '../../shared/components/Badge';
 import { VerticalIcon } from '../../shared/components/VerticalIcon';
+import { formatCurrency, formatDate, MEDI_CAL_RATE, NET_PAYOUT_RATE } from '../../shared/utils/format';
 import {
   earningsSummary,
   serviceRequests,
@@ -28,24 +29,6 @@ export function CHWDashboard() {
 
   const openRequests = serviceRequests.filter((r) => r.status === 'open');
   const upcomingSession = sessions.find((s) => s.status === 'scheduled');
-
-  function formatCurrency(amount: number): string {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 2,
-    }).format(amount);
-  }
-
-  function formatDate(iso: string): string {
-    return new Date(iso).toLocaleDateString('en-US', {
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-    });
-  }
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
@@ -169,7 +152,7 @@ export function CHWDashboard() {
                     <span className="text-xs text-[#8B9B8D]">·</span>
                     <span className="text-xs text-[#8B9B8D]">
                       ~{request.estimatedUnits} units (
-                      {formatCurrency(request.estimatedUnits * 26.66 * 0.85)} net)
+                      {formatCurrency(request.estimatedUnits * MEDI_CAL_RATE * NET_PAYOUT_RATE)} net)
                     </span>
                   </div>
                 </div>

@@ -1,11 +1,8 @@
 import { DollarSign, Star, CalendarCheck, TrendingUp, Banknote } from 'lucide-react';
 import { StatCard } from '../../shared/components/StatCard';
 import { VerticalIcon } from '../../shared/components/VerticalIcon';
+import { formatCurrency, formatShortDate, MEDI_CAL_RATE } from '../../shared/utils/format';
 import { earningsSummary, sessions, sessionModeLabels } from '../../data/mock';
-
-// ─── Constants ────────────────────────────────────────────────────────────────
-
-const MEDI_CAL_RATE = 26.66;
 
 // ─── Scenario table data ──────────────────────────────────────────────────────
 
@@ -85,24 +82,6 @@ function derivePayoutStatus(sessionId: string): PayoutStatus {
     'sess-004': 'approved',
   };
   return map[sessionId] ?? 'pending';
-}
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 2,
-  }).format(amount);
-}
-
-function formatShortDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
