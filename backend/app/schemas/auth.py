@@ -1,17 +1,20 @@
 from uuid import UUID
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, EmailStr
+
 
 class RegisterRequest(BaseModel):
-    email: str = Field(..., min_length=3)
+    email: EmailStr
     password: str = Field(..., min_length=8)
     name: str = Field(..., min_length=1)
     role: str = Field(..., pattern="^(chw|member)$")
     phone: str | None = None
 
+
 class LoginRequest(BaseModel):
-    email: str
+    email: EmailStr
     password: str
+
 
 class TokenResponse(BaseModel):
     access_token: str
@@ -20,8 +23,10 @@ class TokenResponse(BaseModel):
     role: str
     name: str
 
+
 class RefreshRequest(BaseModel):
     refresh_token: str
+
 
 class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)

@@ -1,12 +1,17 @@
+from uuid import UUID
 from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
+from app.dependencies import get_current_user
+from app.models.user import User
 from app.schemas.auth import RegisterRequest, LoginRequest, TokenResponse, RefreshRequest
 from app.services.auth_service import register_user, authenticate_user, create_tokens, store_refresh_token, revoke_refresh_token
 from app.utils.security import decode_token
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
+
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 async def register(data: RegisterRequest, db: Annotated[AsyncSession, Depends(get_db)]):
@@ -17,6 +22,7 @@ async def register(data: RegisterRequest, db: Annotated[AsyncSession, Depends(ge
     await store_refresh_token(db, user.id, refresh)
     return TokenResponse(access_token=access, refresh_token=refresh, role=user.role, name=user.name)
 
+
 @router.post("/login", response_model=TokenResponse)
 async def login(data: LoginRequest, db: Annotated[AsyncSession, Depends(get_db)]):
     user = await authenticate_user(db, data.email, data.password)
@@ -26,6 +32,7 @@ async def login(data: LoginRequest, db: Annotated[AsyncSession, Depends(get_db)]
     await store_refresh_token(db, user.id, refresh)
     return TokenResponse(access_token=access, refresh_token=refresh, role=user.role, name=user.name)
 
+
 @router.post("/refresh", response_model=TokenResponse)
 async def refresh(data: RefreshRequest, db: Annotated[AsyncSession, Depends(get_db)]):
     payload = decode_token(data.refresh_token)
@@ -33,18 +40,15 @@ async def refresh(data: RefreshRequest, db: Annotated[AsyncSession, Depends(get_
         raise HTTPException(status_code=401, detail="Invalid refresh token")
     old = await revoke_refresh_token(db, data.refresh_token)
     if old is None:
-        raise HTTPException(status_code=401, detail="Token not found or revoked")
-    from app.models.user import User
-    from sqlalchemy import select
-    from uuid import UUID
-    result = await db.execute(select(User).where(User.id == UUID(payload["sub"])))
-    user = result.scalar_one_or_none()
-    if user is None:
-        raise HTTPException(status_code=401, detail="User not found")
+        raise HTTPException(status_code=401, detail="Token not found, revoked, or expired")
+    user = await db.get(User, UUID(payload["sub"]))
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=401, detail="User not found or deactivated")
     access, new_refresh = create_tokens(user)
     await store_refresh_token(db, user.id, new_refresh)
     return TokenResponse(access_token=access, refresh_token=new_refresh, role=user.role, name=user.name)
 
+
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(data: RefreshRequest, db: Annotated[AsyncSession, Depends(get_db)]):
+async def logout(data: RefreshRequest, current_user=Depends(get_current_user), db: Annotated[AsyncSession, Depends(get_db)]):
     await revoke_refresh_token(db, data.refresh_token)

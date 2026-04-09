@@ -5,9 +5,11 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
+from app.models.enums import UserRole
 from app.utils.security import decode_token
 
 security = HTTPBearer()
+
 
 async def get_current_user(
     credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
@@ -27,9 +29,16 @@ async def get_current_user(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or inactive")
     return user
 
-def require_role(*roles: str):
+
+def require_role(*roles: str | UserRole):
+    """Dependency that checks the current user has one of the specified roles.
+
+    Accepts both string literals and UserRole enum values.
+    """
+    role_values = {r.value if isinstance(r, UserRole) else r for r in roles}
+
     async def role_checker(current_user=Depends(get_current_user)):
-        if current_user.role not in roles:
+        if current_user.role not in role_values:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
         return current_user
     return role_checker
