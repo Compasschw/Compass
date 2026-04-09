@@ -19,13 +19,8 @@ services:
     build: .
     ports:
       - "8000:8000"
-    environment:
-      DATABASE_URL: postgresql+asyncpg://compass:compass_dev_password@db:5432/compass
-      SECRET_KEY: dev-secret-key-change-in-production
-      AWS_REGION: us-west-2
-      S3_BUCKET_PHI: compass-phi-dev
-      S3_BUCKET_PUBLIC: compass-public-dev
-      CORS_ORIGINS: '["http://localhost:5173","https://joincompasschw.com"]'
+    env_file:
+      - .env
     depends_on:
       db:
         condition: service_healthy

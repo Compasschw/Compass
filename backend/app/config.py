@@ -1,12 +1,12 @@
+import sys
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    database_url: str = "postgresql+asyncpg://compass:compass_dev_password@localhost:5432/compass"
-    secret_key: str = "dev-secret-key-change-in-production"
+    database_url: str
+    secret_key: str
     access_token_expire_minutes: int = 15
     refresh_token_expire_days: int = 7
-    algorithm: str = "HS256"
 
     aws_region: str = "us-west-2"
     s3_bucket_phi: str = "compass-phi-dev"
@@ -23,3 +23,8 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+_DANGEROUS_KEYS = {"", "dev-secret-key-change-in-production", "changeme", "secret"}
+if settings.secret_key in _DANGEROUS_KEYS:
+    print("FATAL: SECRET_KEY is not set or is a known placeholder. Set it in .env or environment.", file=sys.stderr)
+    sys.exit(1)

@@ -5,6 +5,12 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
 
 config = context.config
+
+import os
+db_url = os.environ.get("DATABASE_URL")
+if db_url:
+    config.set_main_option("sqlalchemy.url", db_url)
+
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
