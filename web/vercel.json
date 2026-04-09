@@ -28,8 +28,8 @@
   ],
   "rewrites": [
     {
-      "source": "/api/:path*",
-      "destination": "https://api.joincompasschw.com/api/:path*"
+      "source": "/_proxy/:path*",
+      "destination": "https://api.joincompasschw.com/:path*"
     },
     {
       "source": "/(.*)",
