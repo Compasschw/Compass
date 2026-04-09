@@ -50,5 +50,5 @@ async def refresh(data: RefreshRequest, db: Annotated[AsyncSession, Depends(get_
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(data: RefreshRequest, current_user=Depends(get_current_user), db: Annotated[AsyncSession, Depends(get_db)]):
+async def logout(data: RefreshRequest, db: Annotated[AsyncSession, Depends(get_db)], current_user=Depends(get_current_user)):
     await revoke_refresh_token(db, data.refresh_token)
