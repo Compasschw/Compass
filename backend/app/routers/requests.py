@@ -11,11 +11,14 @@ router = APIRouter(prefix="/api/v1/requests", tags=["requests"])
 @router.get("/", response_model=list[ServiceRequestResponse])
 async def list_requests(current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     from app.models.request import ServiceRequest
+    from app.models.user import User
     if current_user.role == "chw":
-        result = await db.execute(select(ServiceRequest).where(ServiceRequest.status == "open").order_by(ServiceRequest.created_at.desc()))
+        stmt = select(ServiceRequest, User.name).join(User, ServiceRequest.member_id == User.id).where(ServiceRequest.status == "open").order_by(ServiceRequest.created_at.desc())
     else:
-        result = await db.execute(select(ServiceRequest).where(ServiceRequest.member_id == current_user.id).order_by(ServiceRequest.created_at.desc()))
-    return result.scalars().all()
+        stmt = select(ServiceRequest, User.name).join(User, ServiceRequest.member_id == User.id).where(ServiceRequest.member_id == current_user.id).order_by(ServiceRequest.created_at.desc())
+    result = await db.execute(stmt)
+    rows = result.all()
+    return [ServiceRequestResponse.model_validate({**req.__dict__, "member_name": name}) for req, name in rows]
 
 @router.post("/", response_model=ServiceRequestResponse, status_code=201)
 async def create_request(data: ServiceRequestCreate, current_user=Depends(require_role("member")), db: AsyncSession = Depends(get_db)):

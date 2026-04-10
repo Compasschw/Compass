@@ -1,7 +1,8 @@
 from uuid import UUID
 from typing import Annotated
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
+from app.limiter import limiter
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.dependencies import get_current_user
@@ -14,7 +15,8 @@ router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-async def register(data: RegisterRequest, db: Annotated[AsyncSession, Depends(get_db)]):
+@limiter.limit("3/minute")
+async def register(request: Request, data: RegisterRequest, db: Annotated[AsyncSession, Depends(get_db)]):
     user = await register_user(db, data.email, data.password, data.name, data.role, data.phone)
     if user is None:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -24,7 +26,8 @@ async def register(data: RegisterRequest, db: Annotated[AsyncSession, Depends(ge
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(data: LoginRequest, db: Annotated[AsyncSession, Depends(get_db)]):
+@limiter.limit("5/minute")
+async def login(request: Request, data: LoginRequest, db: Annotated[AsyncSession, Depends(get_db)]):
     user = await authenticate_user(db, data.email, data.password)
     if user is None:
         raise HTTPException(status_code=401, detail="Invalid email or password")

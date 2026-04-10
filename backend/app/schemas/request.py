@@ -24,6 +24,7 @@ class ServiceRequestResponse(BaseModel):
     status: str
     estimated_units: int
     created_at: datetime
+    member_name: str | None = None
 
 
 class ServiceRequestUpdate(BaseModel):

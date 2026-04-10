@@ -2,9 +2,12 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi.errors import RateLimitExceeded
+from slowapi import _rate_limit_exceeded_handler
 from sqlalchemy import text
 from app.config import settings
 from app.database import engine
+from app.limiter import limiter
 from app.middleware.audit import AuditMiddleware
 
 logger = logging.getLogger("compass")
@@ -25,6 +28,9 @@ app = FastAPI(
     description="Backend API for CompassCHW",
     lifespan=lifespan,
 )
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,

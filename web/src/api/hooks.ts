@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchSessions, startSession, completeSession } from "./sessions";
-import { fetchRequests, acceptRequest } from "./requests";
+import { fetchRequests, acceptRequest, passRequest } from "./requests";
 import { fetchConversations, fetchMessages, sendMessage } from "./conversations";
 import { fetchValidations } from "./credentials";
 
@@ -27,6 +27,11 @@ export function useRequests() {
 export function useAcceptRequest() {
   const qc = useQueryClient();
   return useMutation({ mutationFn: acceptRequest, onSuccess: () => qc.invalidateQueries({ queryKey: ["requests"] }) });
+}
+
+export function usePassRequest() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: passRequest, onSuccess: () => qc.invalidateQueries({ queryKey: ["requests"] }) });
 }
 
 // Conversations

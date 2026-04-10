@@ -66,7 +66,7 @@ The path from 6.2 to 8.0 is achievable in 6-8 weeks with focused execution. The 
 | Audit Logging (HIPAA) | 3/10 | AuditLog model exists but is NEVER WRITTEN TO. Middleware logs to stdout, not DB |
 | Access Controls (HIPAA) | 6/10 | Role-based routing works. CHWs can see all open request descriptions (minimum necessary violation) |
 | Data Retention & Deletion | 1/10 | No deletion endpoint, no retention policy, no right-of-access mechanism |
-| BAA Status | ?/10 | No documentation confirms AWS BAA has been signed |
+| BAA Status | Done | AWS BAA signed 2026-04-09 via AWS Artifact |
 | PHI Exposure Risk | 4/10 | Waitlist exposes all PII. Open requests leak member descriptions to all CHWs |
 
 ### Architecture & Infrastructure (Avg: 7.6/10)
@@ -256,7 +256,7 @@ The API is well-positioned for iOS (9/10 readiness). Before starting the iOS bui
 
 | Requirement | Status | Priority |
 |-------------|--------|----------|
-| AWS BAA signed | Unknown | BLOCKER — verify or sign immediately |
+| AWS BAA signed | **Done** (2026-04-09) | Signed via AWS Artifact |
 | RDS encryption at rest | Done (default) | - |
 | TLS everywhere | Done | Verify sslmode=require on DATABASE_URL |
 | Audit logging (who accessed what) | NOT DONE | Week 3 — wire AuditLog model to middleware |

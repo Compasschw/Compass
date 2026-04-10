@@ -1,35 +1,18 @@
-import { useState, useCallback, useMemo } from 'react';
-import { CheckCircle, XCircle, Inbox } from 'lucide-react';
+import { useState, useCallback } from 'react';
+import { CheckCircle, XCircle, Inbox, Loader2 } from 'lucide-react';
 import { Badge } from '../../shared/components/Badge';
 import { VerticalIcon } from '../../shared/components/VerticalIcon';
-import { MapView, type MapMarker } from '../../shared/components/MapView';
 import { formatCurrency, MEDI_CAL_RATE, calculateNetEarnings } from '../../shared/utils/format';
-import {
-  serviceRequests,
-  sessionModeLabels,
-  type Vertical,
-  type ServiceRequest,
-} from '../../data/mock';
+import { useRequests, useAcceptRequest, usePassRequest } from '../../api/hooks';
+import type { ServiceRequestData } from '../../api/requests';
+import type { Vertical } from '../../data/mock';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-/**
- * Mock coordinates for open service request members.
- * In production these would come from the member's zip-code geocode.
- */
-const REQUEST_COORDINATES: Record<string, { lat: number; lng: number }> = {
-  'req-001': { lat: 34.0600, lng: -118.2250 }, // Rosa Delgado — Boyle Heights area
-  'req-002': { lat: 33.9650, lng: -118.2900 }, // Marcus Johnson — South LA
-  'req-004': { lat: 34.0300, lng: -118.3500 }, // James Okonkwo — Mid-city
-};
-
-/** Color per vertical category for request markers. */
-const VERTICAL_MARKER_COLOR: Record<string, string> = {
-  housing: '#3B82F6',
-  rehab:   '#EF4444',
-  food:    '#F59E0B',
-  mental_health: '#7C3AED',
-  healthcare: '#0D9488',
+const SESSION_MODE_LABELS: Record<string, string> = {
+  in_person: 'In Person',
+  virtual: 'Virtual',
+  phone: 'Phone',
 };
 
 type FilterTab = 'all' | Vertical;
@@ -63,19 +46,20 @@ function Toast({ message }: ToastProps) {
 }
 
 interface RequestCardProps {
-  request: ServiceRequest;
+  request: ServiceRequestData;
   onAccept: (id: string) => void;
   onPass: (id: string) => void;
 }
 
 function RequestCard({ request, onAccept, onPass }: RequestCardProps) {
-  const grossEarnings = request.estimatedUnits * MEDI_CAL_RATE;
-  const netEarnings = calculateNetEarnings(request.estimatedUnits);
+  const grossEarnings = request.estimated_units * MEDI_CAL_RATE;
+  const netEarnings = calculateNetEarnings(request.estimated_units);
+  const displayName = request.member_name ?? 'Community Member';
 
   return (
     <article
       className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] p-4"
-      aria-label={`Request from ${request.memberName}`}
+      aria-label={`Request from ${displayName}`}
     >
       <div className="flex items-start gap-3">
         {/* Vertical icon */}
@@ -83,7 +67,7 @@ function RequestCard({ request, onAccept, onPass }: RequestCardProps) {
           className="w-10 h-10 rounded-[12px] bg-[#FBF7F0] border border-[rgba(44,62,45,0.1)] flex items-center justify-center shrink-0"
           aria-hidden="true"
         >
-          <VerticalIcon vertical={request.vertical} size={18} />
+          <VerticalIcon vertical={request.vertical as Vertical} size={18} />
         </div>
 
         {/* Content */}
@@ -91,12 +75,12 @@ function RequestCard({ request, onAccept, onPass }: RequestCardProps) {
           {/* Header row */}
           <div className="flex items-center gap-2 flex-wrap mb-1">
             <span className="text-sm font-semibold text-[#2C3E2D]">
-              {request.memberName}
+              {displayName}
             </span>
-            <Badge variant="vertical" value={request.vertical} />
-            <Badge variant="urgency" value={request.urgency} />
+            <Badge variant="vertical" value={request.vertical as Vertical} />
+            <Badge variant="urgency" value={request.urgency as 'routine' | 'soon' | 'urgent'} />
             <span className="ml-auto text-xs text-[#8B9B8D]">
-              {sessionModeLabels[request.preferredMode]}
+              {SESSION_MODE_LABELS[request.preferred_mode] ?? request.preferred_mode}
             </span>
           </div>
 
@@ -108,7 +92,7 @@ function RequestCard({ request, onAccept, onPass }: RequestCardProps) {
           {/* Estimated earnings */}
           <div className="mt-2 flex items-center gap-1.5">
             <span className="text-xs font-medium text-[#6B8F71]">
-              ~{request.estimatedUnits} {request.estimatedUnits === 1 ? 'unit' : 'units'}
+              ~{request.estimated_units} {request.estimated_units === 1 ? 'unit' : 'units'}
             </span>
             <span className="text-xs text-[#8B9B8D]">·</span>
             <span className="text-xs text-[#555555]">
@@ -128,7 +112,7 @@ function RequestCard({ request, onAccept, onPass }: RequestCardProps) {
           type="button"
           onClick={() => onAccept(request.id)}
           className="flex-1 flex items-center justify-center gap-1.5 bg-[#2C3E2D] hover:bg-[#3A5240] active:bg-[#243D25] text-white text-sm font-semibold py-2.5 rounded-[12px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6B8F71]"
-          aria-label={`Accept request from ${request.memberName}`}
+          aria-label={`Accept request from ${displayName}`}
         >
           <CheckCircle size={15} aria-hidden="true" />
           Accept
@@ -137,7 +121,7 @@ function RequestCard({ request, onAccept, onPass }: RequestCardProps) {
           type="button"
           onClick={() => onPass(request.id)}
           className="flex-1 flex items-center justify-center gap-1.5 bg-white border border-[rgba(44,62,45,0.1)] hover:bg-[#FBF7F0] active:bg-[#F0F0F0] text-[#555555] text-sm font-semibold py-2.5 rounded-[12px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#AAAAAA]"
-          aria-label={`Pass on request from ${request.memberName}`}
+          aria-label={`Pass on request from ${displayName}`}
         >
           <XCircle size={15} aria-hidden="true" />
           Pass
@@ -160,44 +144,20 @@ function RequestCard({ request, onAccept, onPass }: RequestCardProps) {
  */
 export function CHWRequests() {
   const [activeFilter, setActiveFilter] = useState<FilterTab>('all');
-  const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set());
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Only show open requests that haven't been acted on
-  const openRequests = serviceRequests.filter(
-    (r) => r.status === 'open' && !dismissedIds.has(r.id),
-  );
+  const { data: requests = [], isLoading } = useRequests();
+  const acceptMutation = useAcceptRequest();
+  const passMutation = usePassRequest();
+
+  // Only show open requests
+  const openRequests = requests.filter((r) => r.status === 'open');
 
   const filteredRequests = openRequests.filter(
     (r) => activeFilter === 'all' || r.vertical === activeFilter,
   );
 
   const openCount = openRequests.length;
-
-  /** Build map markers for visible open requests that have known coordinates. */
-  const requestMapMarkers = useMemo<MapMarker[]>(
-    () =>
-      openRequests
-        .filter((r) => r.id in REQUEST_COORDINATES)
-        .map((r) => {
-          const coords = REQUEST_COORDINATES[r.id];
-          const urgencyLabel = r.urgency === 'urgent' ? '🔴' : r.urgency === 'soon' ? '🟡' : '🟢';
-          return {
-            id: r.id,
-            lat: coords.lat,
-            lng: coords.lng,
-            label: urgencyLabel,
-            type: 'resource' as const,
-            color: VERTICAL_MARKER_COLOR[r.vertical] ?? '#555555',
-            popupContent: `
-              <strong style="color:#2C3E2D;font-size:13px">${r.memberName}</strong><br/>
-              <span style="color:#555555;font-size:12px">${r.vertical.replace('_', ' ')} · ${r.urgency}</span><br/>
-              <span style="color:#555555;font-size:12px">${r.estimatedUnits * 15} min est.</span>
-            `,
-          };
-        }),
-    [openRequests],
-  );
 
   const showToast = useCallback((message: string) => {
     setToastMessage(message);
@@ -207,16 +167,16 @@ export function CHWRequests() {
 
   const handleAccept = useCallback(
     (id: string) => {
-      const request = serviceRequests.find((r) => r.id === id);
-      setDismissedIds((prev) => new Set(prev).add(id));
-      showToast(`Request accepted! Session created for ${request?.memberName ?? 'member'}.`);
+      const request = requests.find((r) => r.id === id);
+      acceptMutation.mutate(id);
+      showToast(`Request accepted! Session created for ${request?.member_name ?? 'member'}.`);
     },
-    [showToast],
+    [requests, acceptMutation, showToast],
   );
 
   const handlePass = useCallback((id: string) => {
-    setDismissedIds((prev) => new Set(prev).add(id));
-  }, []);
+    passMutation.mutate(id);
+  }, [passMutation]);
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
@@ -279,28 +239,16 @@ export function CHWRequests() {
         })}
       </div>
 
-      {/* Request location map */}
-      {requestMapMarkers.length > 0 && (
-        <section aria-labelledby="requests-map-heading">
-          <h3
-            id="requests-map-heading"
-            className="text-sm font-semibold text-[#2C3E2D] uppercase tracking-wide mb-2"
-          >
-            Request Locations
-          </h3>
-          <MapView
-            centerLat={34.0200}
-            centerLng={-118.2800}
-            zoom={11}
-            height={180}
-            markers={requestMapMarkers}
-            borderRadius={12}
-          />
-        </section>
+      {/* Loading state */}
+      {isLoading && (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 size={24} className="animate-spin text-[#6B8F71]" />
+          <span className="ml-2 text-sm text-[#8B9B8D]">Loading requests...</span>
+        </div>
       )}
 
       {/* Request list */}
-      {filteredRequests.length > 0 ? (
+      {!isLoading && filteredRequests.length > 0 ? (
         <section
           aria-label="Filtered requests"
           className="space-y-3"
@@ -314,7 +262,7 @@ export function CHWRequests() {
             />
           ))}
         </section>
-      ) : (
+      ) : !isLoading ? (
         /* Empty state */
         <div
           className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] p-10 flex flex-col items-center gap-3 text-center"
@@ -331,7 +279,7 @@ export function CHWRequests() {
               : 'No open requests in this category. Check back soon!'}
           </p>
         </div>
-      )}
+      ) : null}
 
       {/* Rate footnote */}
       <p className="text-xs text-[#8B9B8D] text-center pb-2">
