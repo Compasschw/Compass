@@ -1,7 +1,7 @@
 from uuid import UUID
 from datetime import datetime, timezone, date
 from typing import Annotated
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
@@ -34,6 +34,8 @@ async def create_session(data: SessionCreate, current_user=Depends(get_current_u
         chw_id = current_user.id
         member_id = req.member_id
     elif req.matched_chw_id:
+        if req.member_id != current_user.id:
+            raise HTTPException(status_code=403, detail="You can only create sessions for your own requests")
         chw_id = req.matched_chw_id
         member_id = current_user.id
     else:
@@ -140,7 +142,7 @@ async def submit_documentation(session_id: UUID, data: SessionDocumentationSubmi
 
 
 @router.post("/{session_id}/consent")
-async def submit_consent(session_id: UUID, data: ConsentSubmit, current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def submit_consent(session_id: UUID, data: ConsentSubmit, request: Request, current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     session = await db.get(Session, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -150,6 +152,8 @@ async def submit_consent(session_id: UUID, data: ConsentSubmit, current_user=Dep
     consent = MemberConsent(
         session_id=session_id, member_id=current_user.id,
         consent_type=data.consent_type, typed_signature=data.typed_signature,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
     )
     db.add(consent)
     await db.commit()

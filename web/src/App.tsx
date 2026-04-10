@@ -1,42 +1,42 @@
+import { lazy, Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
-
-// Landing pages
-import { WaitlistLandingPage } from './features/landing/WaitlistLandingPage';
-import { LandingPageA } from './features/landing/LandingPageA';
-import { LandingPageB } from './features/landing/LandingPageB';
-import { LandingPageC } from './features/landing/LandingPageC';
-
-// Auth
-import { LoginPage } from './features/auth/LoginPage';
-import { RegisterPage } from './features/auth/RegisterPage';
 import { useAuth } from './features/auth/AuthContext';
-
-// Onboarding
-import { CHWOnboarding } from './features/onboarding/CHWOnboarding';
-import { MemberOnboarding } from './features/onboarding/MemberOnboarding';
-
-// Layout
 import { Layout } from './shared/components/Layout';
-import { WaitlistAdmin } from './features/admin/WaitlistAdmin';
-import { LegalPage } from './features/legal/LegalPage';
 
-// CHW pages
-import { CHWDashboard } from './features/chw/CHWDashboard';
-import { CHWRequests } from './features/chw/CHWRequests';
-import { CHWSessions } from './features/chw/CHWSessions';
-import { CHWEarnings } from './features/chw/CHWEarnings';
-import { CHWProfile } from './features/chw/CHWProfile';
+// Lazy-loaded page components
+const WaitlistLandingPage = lazy(() => import('./features/landing/WaitlistLandingPage').then(m => ({ default: m.WaitlistLandingPage })));
+const LandingPageA = lazy(() => import('./features/landing/LandingPageA').then(m => ({ default: m.LandingPageA })));
+const LandingPageB = lazy(() => import('./features/landing/LandingPageB').then(m => ({ default: m.LandingPageB })));
+const LandingPageC = lazy(() => import('./features/landing/LandingPageC').then(m => ({ default: m.LandingPageC })));
+const LoginPage = lazy(() => import('./features/auth/LoginPage').then(m => ({ default: m.LoginPage })));
+const RegisterPage = lazy(() => import('./features/auth/RegisterPage').then(m => ({ default: m.RegisterPage })));
+const CHWOnboarding = lazy(() => import('./features/onboarding/CHWOnboarding').then(m => ({ default: m.CHWOnboarding })));
+const MemberOnboarding = lazy(() => import('./features/onboarding/MemberOnboarding').then(m => ({ default: m.MemberOnboarding })));
+const WaitlistAdmin = lazy(() => import('./features/admin/WaitlistAdmin').then(m => ({ default: m.WaitlistAdmin })));
+const LegalPage = lazy(() => import('./features/legal/LegalPage').then(m => ({ default: m.LegalPage })));
+const CHWDashboard = lazy(() => import('./features/chw/CHWDashboard').then(m => ({ default: m.CHWDashboard })));
+const CHWRequests = lazy(() => import('./features/chw/CHWRequests').then(m => ({ default: m.CHWRequests })));
+const CHWSessions = lazy(() => import('./features/chw/CHWSessions').then(m => ({ default: m.CHWSessions })));
+const CHWEarnings = lazy(() => import('./features/chw/CHWEarnings').then(m => ({ default: m.CHWEarnings })));
+const CHWProfile = lazy(() => import('./features/chw/CHWProfile').then(m => ({ default: m.CHWProfile })));
+const CHWCalendar = lazy(() => import('./features/chw/CHWCalendar').then(m => ({ default: m.CHWCalendar })));
+const MemberHome = lazy(() => import('./features/member/MemberHome').then(m => ({ default: m.MemberHome })));
+const MemberFind = lazy(() => import('./features/member/MemberFind').then(m => ({ default: m.MemberFind })));
+const MemberSessions = lazy(() => import('./features/member/MemberSessions').then(m => ({ default: m.MemberSessions })));
+const MemberRoadmap = lazy(() => import('./features/member/MemberRoadmap').then(m => ({ default: m.MemberRoadmap })));
+const MemberProfile = lazy(() => import('./features/member/MemberProfile').then(m => ({ default: m.MemberProfile })));
+const MemberCalendar = lazy(() => import('./features/member/MemberCalendar').then(m => ({ default: m.MemberCalendar })));
 
-// Member pages
-import { MemberHome } from './features/member/MemberHome';
-import { MemberFind } from './features/member/MemberFind';
-import { MemberSessions } from './features/member/MemberSessions';
-import { MemberRoadmap } from './features/member/MemberRoadmap';
-import { MemberProfile } from './features/member/MemberProfile';
-
-// Calendar pages
-import { CHWCalendar } from './features/chw/CHWCalendar';
-import { MemberCalendar } from './features/member/MemberCalendar';
+function LoadingSpinner() {
+  return (
+    <div className="flex min-h-[100dvh] items-center justify-center bg-[#FBF7F0]">
+      <div className="flex flex-col items-center gap-3">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-[#6B8F71] border-t-transparent" />
+        <span className="text-sm text-[#6B7280]">Loading...</span>
+      </div>
+    </div>
+  );
+}
 
 // ─── Guard components ──────────────────────────────────────────────────────────
 
@@ -81,6 +81,7 @@ function RootRedirect() {
  */
 export default function App() {
   return (
+    <Suspense fallback={<LoadingSpinner />}>
     <Routes>
       {/* Root redirect */}
       <Route path="/" element={<RootRedirect />} />
@@ -208,10 +209,11 @@ export default function App() {
       <Route path="/contact" element={<LegalPage page="contact" />} />
 
       {/* Admin */}
-      <Route path="/admin/waitlist" element={<WaitlistAdmin />} />
+      <Route path="/admin/waitlist" element={<ProtectedRoute><WaitlistAdmin /></ProtectedRoute>} />
 
       {/* Catch-all — redirect to root */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    </Suspense>
   );
 }

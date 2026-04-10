@@ -148,7 +148,7 @@ function WaitlistForm() {
         </div>
         <div className="flex items-center gap-2 text-xs text-text-muted">
           <PulseDot />
-          <span>247 people have already joined</span>
+          <span>Join hundreds of CHWs and community members</span>
         </div>
       </div>
     );
@@ -249,7 +249,7 @@ function WaitlistForm() {
       </p>
       <div className="flex items-center justify-center gap-2 text-xs text-text-secondary">
         <PulseDot />
-        <span>247 people have already joined</span>
+        <span>Join hundreds of CHWs and community members</span>
       </div>
     </form>
   );
@@ -566,8 +566,8 @@ function BottomCTA() {
     e.preventDefault();
     try {
       await submitWaitlist({
-        first_name: 'N/A',
-        last_name: 'N/A',
+        first_name: '',
+        last_name: '',
         email,
         role: 'other',
       });

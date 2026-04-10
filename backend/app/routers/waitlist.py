@@ -3,6 +3,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.dependencies import get_current_user
 from app.models.waitlist import WaitlistEntry
 from app.schemas.waitlist import WaitlistCreate, WaitlistResponse
 
@@ -36,9 +37,10 @@ async def create_waitlist_entry(
 
 @router.get("/", response_model=list[WaitlistResponse])
 async def list_waitlist_entries(
+    current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[WaitlistEntry]:
-    """Public for now -- will add admin auth later."""
+    """Requires authentication. TODO: restrict to admin role only."""
     result = await db.execute(
         select(WaitlistEntry).order_by(WaitlistEntry.created_at.desc())
     )
@@ -46,8 +48,11 @@ async def list_waitlist_entries(
 
 
 @router.get("/count")
-async def waitlist_count(db: AsyncSession = Depends(get_db)) -> dict[str, int]:
-    """Public count for display on landing page."""
+async def waitlist_count(
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, int]:
+    """Requires authentication. Returns total waitlist count."""
     result = await db.execute(select(func.count()).select_from(WaitlistEntry))
     count = result.scalar() or 0
     return {"count": count}

@@ -28,3 +28,6 @@ _DANGEROUS_KEYS = {"", "dev-secret-key-change-in-production", "changeme", "secre
 if settings.secret_key in _DANGEROUS_KEYS:
     print("FATAL: SECRET_KEY is not set or is a known placeholder. Set it in .env or environment.", file=sys.stderr)
     sys.exit(1)
+if len(settings.secret_key) < 32:
+    print("FATAL: SECRET_KEY must be at least 32 characters.", file=sys.stderr)
+    sys.exit(1)
