@@ -13,12 +13,12 @@ import {
   Search,
   FileText,
   Circle,
+  Loader2,
 } from 'lucide-react';
 import { Badge } from '../../shared/components/Badge';
 import { VerticalIcon } from '../../shared/components/VerticalIcon';
 import { formatCurrency, formatDate, formatShortDate, MEDI_CAL_RATE, NET_PAYOUT_RATE } from '../../shared/utils/format';
 import {
-  sessions,
   sessionModeLabels,
   diagnosisCodes,
   zCodeCategoryLabels,
@@ -30,6 +30,28 @@ import {
   type SessionDocumentation,
   type ZCodeCategory,
 } from '../../data/mock';
+import { useSessions, useStartSession, useCompleteSession } from '../../api/hooks';
+import type { SessionData } from '../../api/sessions';
+
+// ─── API adapter ─────────────────────────────────────────────────────────────
+
+function toSession(d: SessionData): Session {
+  return {
+    id: d.id,
+    chwName: d.chw_name ?? 'CHW',
+    memberName: d.member_name ?? 'Member',
+    vertical: d.vertical as Session['vertical'],
+    status: d.status as Session['status'],
+    mode: d.mode as Session['mode'],
+    scheduledAt: d.scheduled_at ?? d.created_at,
+    startedAt: d.started_at ?? undefined,
+    endedAt: d.ended_at ?? undefined,
+    durationMinutes: d.duration_minutes ?? undefined,
+    unitsBilled: d.units_billed ?? undefined,
+    grossAmount: d.gross_amount ?? undefined,
+    netAmount: d.net_amount ?? undefined,
+  };
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1096,6 +1118,12 @@ export function CHWSessions() {
   const [documentingSessionId, setDocumentingSessionId] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  // Real API data
+  const { data: apiSessions = [], isLoading } = useSessions();
+  const startMutation = useStartSession();
+  const completeMutation = useCompleteSession();
+  const sessions: Session[] = apiSessions.map(toSession);
+
   // Per-session recording state
   const [recordingStates, setRecordingStates] = useState<Record<string, RecordingState>>({});
 
@@ -1142,10 +1170,11 @@ export function CHWSessions() {
   });
 
   const handleStart = useCallback((id: string) => {
+    startMutation.mutate(id);
     sessionStartTimes.current[id] = Date.now();
     setSessionStatuses((prev) => ({ ...prev, [id]: 'in_progress' }));
     setExpandedIds((prev) => new Set(prev).add(id));
-  }, []);
+  }, [startMutation]);
 
   /**
    * End session: compute elapsed duration and open documentation modal
@@ -1161,8 +1190,12 @@ export function CHWSessions() {
   }, []);
 
   const handleDocumentationSubmit = useCallback(
-    (doc: SessionDocumentation) => {
+    async (doc: SessionDocumentation) => {
       if (!documentingSessionId) return;
+
+      // Complete the session on the backend first
+      completeMutation.mutate(documentingSessionId);
+
       setSessionDocumentation((prev) => ({
         ...prev,
         [documentingSessionId]: doc,
@@ -1177,9 +1210,9 @@ export function CHWSessions() {
         return next;
       });
       setDocumentingSessionId(null);
-      setToastMessage('Documentation submitted. Billing claim created.');
+      setToastMessage('Session completed. Documentation submitted.');
     },
-    [documentingSessionId],
+    [documentingSessionId, completeMutation],
   );
 
   const handleDocumentationCancel = useCallback(() => {
@@ -1288,6 +1321,14 @@ export function CHWSessions() {
           Manage your active sessions and review completed session history.
         </p>
       </div>
+
+      {/* Loading state */}
+      {isLoading ? (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 size={24} className="animate-spin text-[#6B8F71]" />
+          <span className="ml-2 text-sm text-[#8B9B8D]">Loading sessions...</span>
+        </div>
+      ) : null}
 
       {/* Tab bar */}
       <div

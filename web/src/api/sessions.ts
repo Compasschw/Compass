@@ -6,6 +6,7 @@ export interface SessionData {
   scheduled_at: string | null; started_at: string | null; ended_at: string | null;
   duration_minutes: number | null; units_billed: number | null;
   gross_amount: number | null; net_amount: number | null; created_at: string;
+  chw_name: string | null; member_name: string | null;
 }
 
 export const fetchSessions = (): Promise<SessionData[]> => api("/sessions/");

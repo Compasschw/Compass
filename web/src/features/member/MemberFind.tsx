@@ -1,15 +1,35 @@
 import { useState, useCallback, useMemo } from 'react';
-import { Star, X, CheckCircle, Inbox, ShieldCheck, ArrowLeft } from 'lucide-react';
+import { Star, X, CheckCircle, Inbox, ShieldCheck, ArrowLeft, Loader2 } from 'lucide-react';
 import { Badge } from '../../shared/components/Badge';
 import { VerticalIcon } from '../../shared/components/VerticalIcon';
 import { MapView, type MapMarker } from '../../shared/components/MapView';
 import {
-  chwProfiles,
   type Vertical,
   type CHWProfile,
   type Urgency,
   type SessionMode,
 } from '../../data/mock';
+import { useChwBrowse } from '../../api/hooks';
+import { createRequest } from '../../api/requests';
+import type { CHWBrowseData } from '../../api/chw';
+
+/** Adapt API snake_case data to the camelCase CHWProfile the component expects */
+function toProfile(d: CHWBrowseData): CHWProfile {
+  const initials = d.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
+  return {
+    id: d.id,
+    name: d.name,
+    avatar: initials,
+    specializations: d.specializations as Vertical[],
+    languages: d.languages,
+    rating: d.rating,
+    yearsExperience: d.years_experience,
+    totalSessions: d.total_sessions,
+    isAvailable: d.is_available,
+    bio: d.bio ?? '',
+    zipCode: d.zip_code ?? '',
+  };
+}
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -193,10 +213,17 @@ function StarDisplay({ rating, size = 12 }: StarDisplayProps) {
 
 // ─── Schedule Modal ────────────────────────────────────────────────────────────
 
+interface ScheduleFormData {
+  vertical: Vertical;
+  urgency: Urgency;
+  mode: SessionMode;
+  description: string;
+}
+
 interface ScheduleModalProps {
   chw: CHWProfile;
   onClose: () => void;
-  onSubmit: (chwName: string) => void;
+  onSubmit: (chwName: string, formData: ScheduleFormData) => void;
 }
 
 function ScheduleModal({ chw, onClose, onSubmit }: ScheduleModalProps) {
@@ -221,9 +248,14 @@ function ScheduleModal({ chw, onClose, onSubmit }: ScheduleModalProps) {
   const handleConsentSubmit = useCallback(
     (e: React.FormEvent) => {
       e.preventDefault();
-      onSubmit(chw.name.split(' ')[0]);
+      onSubmit(chw.name.split(' ')[0], {
+        vertical: selectedVertical!,
+        urgency,
+        mode,
+        description,
+      });
     },
-    [chw.name, onSubmit],
+    [chw.name, onSubmit, selectedVertical, urgency, mode, description],
   );
 
   const consentSubmitDisabled =
@@ -600,9 +632,10 @@ export function MemberFind() {
   const [schedulingChw, setSchedulingChw] = useState<CHWProfile | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  const { data: browseData = [], isLoading } = useChwBrowse();
   const availableChws = useMemo(
-    () => chwProfiles.filter((c) => c.isAvailable),
-    [],
+    () => browseData.map(toProfile),
+    [browseData],
   );
 
   const filteredChws = useMemo(
@@ -665,9 +698,20 @@ export function MemberFind() {
   }, []);
 
   const handleModalSubmit = useCallback(
-    (firstName: string) => {
-      setSchedulingChw(null);
-      showToast(`Request submitted! ${firstName} will be in touch soon.`);
+    async (firstName: string, formData: ScheduleFormData) => {
+      try {
+        await createRequest({
+          vertical: formData.vertical,
+          urgency: formData.urgency,
+          preferred_mode: formData.mode,
+          description: formData.description,
+          estimated_units: 1,
+        });
+        setSchedulingChw(null);
+        showToast(`Request submitted! ${firstName} will be in touch soon.`);
+      } catch {
+        showToast('Failed to submit request. Please try again.');
+      }
     },
     [showToast],
   );
@@ -786,7 +830,12 @@ export function MemberFind() {
           Available CHWs
         </h3>
 
-        {filteredChws.length > 0 ? (
+        {isLoading ? (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 size={24} className="animate-spin text-[#6B8F71]" />
+            <span className="ml-2 text-sm text-[#8B9B8D]">Finding CHWs near you...</span>
+          </div>
+        ) : filteredChws.length > 0 ? (
           <div className="space-y-3">
             {filteredChws.map((chw) => (
               <CHWCard key={chw.id} chw={chw} onSchedule={handleSchedule} />

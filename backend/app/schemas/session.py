@@ -27,6 +27,8 @@ class SessionResponse(BaseModel):
     gross_amount: float | None
     net_amount: float | None
     created_at: datetime
+    chw_name: str | None = None
+    member_name: str | None = None
 
 
 class SessionDocumentationSubmit(BaseModel):

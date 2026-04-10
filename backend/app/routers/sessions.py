@@ -17,11 +17,26 @@ router = APIRouter(prefix="/api/v1/sessions", tags=["sessions"])
 
 @router.get("/", response_model=list[SessionResponse])
 async def list_sessions(current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    from app.models.user import User
+    from sqlalchemy.orm import aliased
+    CHWUser = aliased(User)
+    MemberUser = aliased(User)
+    stmt = (
+        select(Session, CHWUser.name, MemberUser.name)
+        .join(CHWUser, Session.chw_id == CHWUser.id)
+        .join(MemberUser, Session.member_id == MemberUser.id)
+        .order_by(Session.created_at.desc())
+    )
     if current_user.role == "chw":
-        result = await db.execute(select(Session).where(Session.chw_id == current_user.id).order_by(Session.created_at.desc()))
+        stmt = stmt.where(Session.chw_id == current_user.id)
     else:
-        result = await db.execute(select(Session).where(Session.member_id == current_user.id).order_by(Session.created_at.desc()))
-    return result.scalars().all()
+        stmt = stmt.where(Session.member_id == current_user.id)
+    result = await db.execute(stmt)
+    rows = result.all()
+    return [
+        SessionResponse.model_validate({**s.__dict__, "chw_name": chw_name, "member_name": member_name})
+        for s, chw_name, member_name in rows
+    ]
 
 
 @router.post("/", response_model=SessionResponse, status_code=201)

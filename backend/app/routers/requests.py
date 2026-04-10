@@ -32,13 +32,25 @@ async def create_request(data: ServiceRequestCreate, current_user=Depends(requir
 @router.patch("/{request_id}/accept")
 async def accept_request(request_id: UUID, current_user=Depends(require_role("chw")), db: AsyncSession = Depends(get_db)):
     from app.models.request import ServiceRequest
+    from app.models.session import Session
     req = await db.get(ServiceRequest, request_id)
     if not req or req.status != "open":
         raise HTTPException(status_code=404, detail="Request not found or not open")
     req.status = "matched"
     req.matched_chw_id = current_user.id
+
+    # Auto-create a session for the matched request
+    session = Session(
+        request_id=req.id,
+        chw_id=current_user.id,
+        member_id=req.member_id,
+        vertical=req.vertical,
+        mode=req.preferred_mode,
+    )
+    db.add(session)
     await db.commit()
-    return {"status": "matched", "request_id": str(req.id)}
+    await db.refresh(session)
+    return {"status": "matched", "request_id": str(req.id), "session_id": str(session.id)}
 
 @router.patch("/{request_id}/pass")
 async def pass_request(request_id: UUID, current_user=Depends(require_role("chw")), db: AsyncSession = Depends(get_db)):
