@@ -3,8 +3,9 @@ import { StatCard } from '../../shared/components/StatCard';
 import { Badge } from '../../shared/components/Badge';
 import { VerticalIcon } from '../../shared/components/VerticalIcon';
 import { formatDate } from '../../shared/utils/format';
-import { Gift, CalendarCheck, Map, ArrowRight } from 'lucide-react';
-import { goals, sessions, memberProfiles } from '../../data/mock';
+import { Gift, CalendarCheck, Map, ArrowRight, Loader2 } from 'lucide-react';
+import { useSessions } from '../../api/hooks';
+import type { Vertical } from '../../data/mock';
 import { Link } from 'react-router-dom';
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -22,11 +23,8 @@ export function MemberHome() {
   const { userName } = useAuth();
   const firstName = userName?.split(' ')[0] ?? 'there';
 
-  // Use the first member profile for mock data
-  const member = memberProfiles[0];
-
-  const upcomingSessions = sessions.filter((s) => s.status === 'scheduled');
-  const activeGoals = goals.filter((g) => g.status !== 'completed');
+  const { data: sessionsList = [], isLoading } = useSessions();
+  const upcomingSessions = sessionsList.filter((s) => s.status === 'scheduled');
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
@@ -41,30 +39,37 @@ export function MemberHome() {
       </div>
 
       {/* Stat cards */}
-      <div className="grid grid-cols-3 gap-3">
-        <StatCard
-          icon={<Gift size={18} className="text-[#6B8F71]" />}
-          label="Rewards"
-          value={`${member.rewardsBalance} pts`}
-          iconBg="bg-[rgba(107,143,113,0.15)]"
-        />
-        <StatCard
-          icon={<CalendarCheck size={18} className="text-[#0077B6]" />}
-          label="Upcoming"
-          value={upcomingSessions.length}
-          subtext="Sessions"
-          iconBg="bg-blue-100"
-        />
-        <StatCard
-          icon={<Map size={18} className="text-purple-600" />}
-          label="Goals"
-          value={activeGoals.length}
-          subtext="Active"
-          iconBg="bg-purple-100"
-        />
-      </div>
+      {isLoading ? (
+        <div className="flex items-center justify-center py-8">
+          <Loader2 size={24} className="animate-spin text-[#6B8F71]" />
+          <span className="ml-2 text-sm text-[#8B9B8D]">Loading...</span>
+        </div>
+      ) : (
+        <div className="grid grid-cols-3 gap-3">
+          <StatCard
+            icon={<Gift size={18} className="text-[#6B8F71]" />}
+            label="Rewards"
+            value="0 pts"
+            iconBg="bg-[rgba(107,143,113,0.15)]"
+          />
+          <StatCard
+            icon={<CalendarCheck size={18} className="text-[#0077B6]" />}
+            label="Upcoming"
+            value={upcomingSessions.length}
+            subtext="Sessions"
+            iconBg="bg-blue-100"
+          />
+          <StatCard
+            icon={<Map size={18} className="text-purple-600" />}
+            label="Goals"
+            value={0}
+            subtext="Active"
+            iconBg="bg-purple-100"
+          />
+        </div>
+      )}
 
-      {/* Active goals */}
+      {/* Goals — placeholder until goals endpoint is built */}
       <section aria-labelledby="goals-heading">
         <div className="flex items-center justify-between mb-3">
           <h3
@@ -81,45 +86,12 @@ export function MemberHome() {
           </Link>
         </div>
 
-        <div className="space-y-3">
-          {activeGoals.map((goal) => (
-            <div
-              key={goal.id}
-              className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] p-4"
-            >
-              <div className="flex items-start gap-3">
-                <span className="text-2xl leading-none mt-0.5" role="img" aria-hidden="true">
-                  {goal.emoji}
-                </span>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between gap-2 mb-1">
-                    <p className="text-sm font-semibold text-[#2C3E2D] truncate">
-                      {goal.title}
-                    </p>
-                    <Badge variant="vertical" value={goal.category} />
-                  </div>
-                  {/* Progress bar */}
-                  <div
-                    className="w-full bg-[rgba(44,62,45,0.1)] rounded-full h-1.5 mb-2"
-                    role="progressbar"
-                    aria-valuenow={goal.progress}
-                    aria-valuemin={0}
-                    aria-valuemax={100}
-                    aria-label={`${goal.title} progress`}
-                  >
-                    <div
-                      className="bg-[#2C3E2D] h-1.5 rounded-full transition-all"
-                      style={{ width: `${goal.progress}%` }}
-                    />
-                  </div>
-                  <div className="flex items-center justify-between text-xs text-[#8B9B8D]">
-                    <span>{goal.progress}% complete</span>
-                    <span>Next: {formatDate(goal.nextSession)}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ))}
+        <div className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] p-6 text-center">
+          <Map size={24} className="mx-auto text-[#8B9B8D] mb-2" />
+          <p className="text-sm font-semibold text-[#2C3E2D]">No goals yet</p>
+          <p className="text-xs text-[#8B9B8D] mt-1">
+            Work with a CHW to set personalized health goals.
+          </p>
         </div>
       </section>
 
@@ -156,17 +128,17 @@ export function MemberHome() {
               className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] p-4 flex items-center gap-3"
             >
               <div className="w-10 h-10 rounded-[12px] bg-[rgba(107,143,113,0.15)] flex items-center justify-center shrink-0">
-                <VerticalIcon vertical={session.vertical} size={18} />
+                <VerticalIcon vertical={session.vertical as Vertical} size={18} />
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-[#2C3E2D]">
-                  {session.chwName}
+                  Session
                 </p>
                 <p className="text-xs text-[#555555]">
-                  {formatDate(session.scheduledAt)}
+                  {session.scheduled_at ? formatDate(session.scheduled_at) : 'TBD'}
                 </p>
               </div>
-              <Badge variant="session-status" value={session.status} />
+              <Badge variant="session-status" value={session.status as 'scheduled'} />
             </div>
           ))}
         </section>

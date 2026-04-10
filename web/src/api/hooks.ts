@@ -3,6 +3,7 @@ import { fetchSessions, startSession, completeSession } from "./sessions";
 import { fetchRequests, acceptRequest, passRequest } from "./requests";
 import { fetchConversations, fetchMessages, sendMessage } from "./conversations";
 import { fetchValidations } from "./credentials";
+import { fetchChwEarnings, fetchChwBrowse } from "./chw";
 
 // Sessions
 export function useSessions() {
@@ -32,6 +33,15 @@ export function useAcceptRequest() {
 export function usePassRequest() {
   const qc = useQueryClient();
   return useMutation({ mutationFn: passRequest, onSuccess: () => qc.invalidateQueries({ queryKey: ["requests"] }) });
+}
+
+// CHW
+export function useChwEarnings() {
+  return useQuery({ queryKey: ["chw-earnings"], queryFn: fetchChwEarnings });
+}
+
+export function useChwBrowse(vertical?: string) {
+  return useQuery({ queryKey: ["chw-browse", vertical], queryFn: () => fetchChwBrowse(vertical) });
 }
 
 // Conversations

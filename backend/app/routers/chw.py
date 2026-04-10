@@ -1,6 +1,7 @@
 from typing import Annotated
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, func, extract
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.dependencies import get_current_user, require_role
@@ -42,7 +43,95 @@ async def toggle_availability(current_user=Depends(require_role("chw")), db: Asy
     await db.commit()
     return {"is_available": profile.is_available}
 
+@router.get("/browse", response_model=list[dict])
+async def browse_chws(
+    vertical: str | None = None,
+    current_user=Depends(require_role("member")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Browse available CHWs. Returns profiles with display names for MemberFind."""
+    from app.models.user import CHWProfile, User
+    stmt = (
+        select(CHWProfile, User.name)
+        .join(User, CHWProfile.user_id == User.id)
+        .where(CHWProfile.is_available == True)  # noqa: E712
+    )
+    if vertical:
+        stmt = stmt.where(CHWProfile.specializations.any(vertical))
+    stmt = stmt.order_by(CHWProfile.rating.desc())
+    result = await db.execute(stmt)
+    rows = result.all()
+    return [
+        {
+            "id": str(profile.id),
+            "user_id": str(profile.user_id),
+            "name": name,
+            "specializations": profile.specializations,
+            "languages": profile.languages,
+            "rating": profile.rating,
+            "years_experience": profile.years_experience,
+            "total_sessions": profile.total_sessions,
+            "is_available": profile.is_available,
+            "bio": profile.bio,
+            "zip_code": profile.zip_code,
+        }
+        for profile, name in rows
+    ]
+
 @router.get("/earnings", response_model=EarningsSummary)
 async def get_earnings(current_user=Depends(require_role("chw")), db: AsyncSession = Depends(get_db)):
-    # Stub — will be populated with real queries
-    return EarningsSummary(this_month=0, all_time=0, avg_rating=0, sessions_this_week=0, pending_payout=0)
+    from app.models.billing import BillingClaim
+    from app.models.session import Session
+    from app.models.user import CHWProfile
+
+    now = datetime.now(timezone.utc)
+
+    # This month's earnings
+    month_result = await db.execute(
+        select(func.coalesce(func.sum(BillingClaim.net_payout), 0))
+        .where(BillingClaim.chw_id == current_user.id)
+        .where(extract("month", BillingClaim.created_at) == now.month)
+        .where(extract("year", BillingClaim.created_at) == now.year)
+    )
+    this_month = float(month_result.scalar())
+
+    # All-time earnings
+    all_time_result = await db.execute(
+        select(func.coalesce(func.sum(BillingClaim.net_payout), 0))
+        .where(BillingClaim.chw_id == current_user.id)
+    )
+    all_time = float(all_time_result.scalar())
+
+    # Pending payout (claims with status 'pending')
+    pending_result = await db.execute(
+        select(func.coalesce(func.sum(BillingClaim.net_payout), 0))
+        .where(BillingClaim.chw_id == current_user.id)
+        .where(BillingClaim.status == "pending")
+    )
+    pending_payout = float(pending_result.scalar())
+
+    # Sessions this week (completed sessions in the last 7 days)
+    from datetime import timedelta
+    week_ago = now - timedelta(days=7)
+    sessions_result = await db.execute(
+        select(func.count())
+        .select_from(Session)
+        .where(Session.chw_id == current_user.id)
+        .where(Session.status == "completed")
+        .where(Session.ended_at >= week_ago)
+    )
+    sessions_this_week = sessions_result.scalar() or 0
+
+    # CHW rating
+    profile_result = await db.execute(
+        select(CHWProfile.rating).where(CHWProfile.user_id == current_user.id)
+    )
+    avg_rating = float(profile_result.scalar() or 0)
+
+    return EarningsSummary(
+        this_month=this_month,
+        all_time=all_time,
+        avg_rating=avg_rating,
+        sessions_this_week=sessions_this_week,
+        pending_payout=pending_payout,
+    )
