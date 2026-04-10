@@ -23,6 +23,7 @@ class SessionResponse(BaseModel):
     started_at: datetime | None
     ended_at: datetime | None
     duration_minutes: int | None
+    suggested_units: int | None
     units_billed: int | None
     gross_amount: float | None
     net_amount: float | None

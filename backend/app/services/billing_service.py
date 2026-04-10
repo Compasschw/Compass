@@ -16,6 +16,27 @@ VALID_ICD10_CODES = [
 VALID_CPT_CODES = ["98960", "98961", "98962"]
 
 
+def calculate_units(duration_minutes: int) -> int:
+    """Return the number of billable Medi-Cal units for a given session duration.
+
+    Medi-Cal bills CHW services in 15-minute increments with a daily cap of 4 units:
+      - < 15 min  → 0  (not billable)
+      - 15–29 min → 1
+      - 30–44 min → 2
+      - 45–59 min → 3
+      - 60+ min   → 4  (daily maximum)
+    """
+    if duration_minutes < 15:
+        return 0
+    if duration_minutes < 30:
+        return 1
+    if duration_minutes < 45:
+        return 2
+    if duration_minutes < 60:
+        return 3
+    return 4
+
+
 def validate_claim(diagnosis_codes: list[str], procedure_code: str, units: int) -> list[str]:
     errors = []
     for code in diagnosis_codes:

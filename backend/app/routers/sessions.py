@@ -10,7 +10,7 @@ from app.models.session import Session, SessionDocumentation, MemberConsent
 from app.models.request import ServiceRequest
 from app.models.billing import BillingClaim
 from app.schemas.session import SessionCreate, SessionResponse, SessionDocumentationSubmit, ConsentSubmit
-from app.services.billing_service import validate_claim, calculate_earnings, check_unit_caps
+from app.services.billing_service import validate_claim, calculate_earnings, check_unit_caps, calculate_units
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["sessions"])
 
@@ -105,6 +105,7 @@ async def complete_session(session_id: UUID, current_user=Depends(get_current_us
     session.ended_at = datetime.now(timezone.utc)
     if session.started_at:
         session.duration_minutes = int((session.ended_at - session.started_at).total_seconds() / 60)
+        session.suggested_units = calculate_units(session.duration_minutes)
     await db.commit()
     await db.refresh(session)
     return session

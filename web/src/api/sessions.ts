@@ -4,7 +4,7 @@ export interface SessionData {
   id: string; request_id: string; chw_id: string; member_id: string;
   vertical: string; status: string; mode: string;
   scheduled_at: string | null; started_at: string | null; ended_at: string | null;
-  duration_minutes: number | null; units_billed: number | null;
+  duration_minutes: number | null; suggested_units: number | null; units_billed: number | null;
   gross_amount: number | null; net_amount: number | null; created_at: string;
   chw_name: string | null; member_name: string | null;
 }

@@ -19,6 +19,7 @@ class Session(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     duration_minutes: Mapped[int | None] = mapped_column(Integer)
+    suggested_units: Mapped[int | None] = mapped_column(Integer)
     units_billed: Mapped[int | None] = mapped_column(Integer)
     notes: Mapped[str | None] = mapped_column(Text)
     gross_amount: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))

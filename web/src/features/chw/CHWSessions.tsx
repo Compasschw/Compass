@@ -32,6 +32,7 @@ import {
 } from '../../data/mock';
 import { useSessions, useStartSession, useCompleteSession } from '../../api/hooks';
 import type { SessionData } from '../../api/sessions';
+import { SessionChat } from './SessionChat';
 
 // ─── API adapter ─────────────────────────────────────────────────────────────
 
@@ -685,6 +686,7 @@ interface ActiveSessionCardProps {
   onToggleExpand: (id: string) => void;
   recordingState: RecordingState;
   onRecordingAction: (id: string, action: 'request-consent' | 'confirm-consent' | 'cancel-consent' | 'stop') => void;
+  chwId: string;
 }
 
 function ActiveSessionCard({
@@ -697,6 +699,7 @@ function ActiveSessionCard({
   onToggleExpand,
   recordingState,
   onRecordingAction,
+  chwId,
 }: ActiveSessionCardProps) {
   const isInProgress = session.status === 'in_progress';
   const showRecording = isInProgress && session.mode === 'phone';
@@ -871,23 +874,30 @@ function ActiveSessionCard({
         </div>
       )}
 
-      {/* Expanded notes section */}
+      {/* Expanded notes + chat section */}
       {isExpanded && (
-        <div className="border-t border-[rgba(44,62,45,0.1)] p-4 bg-[#FBF7F0]">
-          <label
-            htmlFor={`notes-${session.id}`}
-            className="block text-xs font-semibold text-[#2C3E2D] uppercase tracking-wide mb-2"
-          >
-            Session Notes
-          </label>
-          <textarea
-            id={`notes-${session.id}`}
-            rows={3}
-            value={localNotes}
-            onChange={(e) => onNotesChange(session.id, e.target.value)}
-            placeholder="Document your session notes here…"
-            className="w-full text-sm text-[#2C3E2D] bg-white border border-[rgba(44,62,45,0.1)] rounded-[12px] p-3 resize-none focus:outline-none focus:ring-2 focus:ring-[#6B8F71] focus:border-[#6B8F71] placeholder:text-[#8B9B8D]"
-          />
+        <div className="border-t border-[rgba(44,62,45,0.1)] p-4 bg-[#FBF7F0] space-y-3">
+          <div>
+            <label
+              htmlFor={`notes-${session.id}`}
+              className="block text-xs font-semibold text-[#2C3E2D] uppercase tracking-wide mb-2"
+            >
+              Session Notes
+            </label>
+            <textarea
+              id={`notes-${session.id}`}
+              rows={3}
+              value={localNotes}
+              onChange={(e) => onNotesChange(session.id, e.target.value)}
+              placeholder="Document your session notes here…"
+              className="w-full text-sm text-[#2C3E2D] bg-white border border-[rgba(44,62,45,0.1)] rounded-[12px] p-3 resize-none focus:outline-none focus:ring-2 focus:ring-[#6B8F71] focus:border-[#6B8F71] placeholder:text-[#8B9B8D]"
+            />
+          </div>
+
+          {/* In-session chat */}
+          {session.status === 'in_progress' && (
+            <SessionChat sessionId={session.id} chwId={chwId} />
+          )}
         </div>
       )}
     </article>
@@ -1123,6 +1133,7 @@ export function CHWSessions() {
   const startMutation = useStartSession();
   const completeMutation = useCompleteSession();
   const sessions: Session[] = apiSessions.map(toSession);
+  const chwId = apiSessions[0]?.chw_id ?? '';
 
   // Per-session recording state
   const [recordingStates, setRecordingStates] = useState<Record<string, RecordingState>>({});
@@ -1386,6 +1397,7 @@ export function CHWSessions() {
                   onToggleExpand={handleToggleExpand}
                   recordingState={getRecordingState(session.id)}
                   onRecordingAction={handleRecordingAction}
+                  chwId={chwId}
                 />
               ))}
             </div>
