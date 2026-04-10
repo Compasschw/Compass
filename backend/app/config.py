@@ -14,6 +14,16 @@ class Settings(BaseSettings):
 
     cors_origins: list[str] = ["http://localhost:5173", "https://joincompasschw.com"]
 
+    # Communication provider (vonage, twilio, plivo)
+    communication_provider: str = "vonage"
+
+    # Vonage (recommended for MVP)
+    vonage_api_key: str = ""
+    vonage_api_secret: str = ""
+    vonage_application_id: str = ""
+    vonage_private_key_path: str = ""
+
+    # Twilio (future option)
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
     twilio_proxy_service_sid: str = ""

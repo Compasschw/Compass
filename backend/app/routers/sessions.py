@@ -89,6 +89,28 @@ async def start_session(session_id: UUID, current_user=Depends(get_current_user)
         raise HTTPException(status_code=409, detail=f"Cannot start session with status '{session.status}'. Must be 'scheduled'.")
     session.status = "in_progress"
     session.started_at = datetime.now(timezone.utc)
+
+    # Create masked communication session (provider-agnostic)
+    from app.services.communication import get_provider
+    from app.models.communication import CommunicationSession
+    try:
+        provider = get_provider()
+        proxy = await provider.create_proxy_session(
+            session_id=str(session_id),
+            chw_phone="",  # TODO: pull from User/CHWProfile phone field
+            member_phone="",  # TODO: pull from User/MemberProfile phone field
+        )
+        comm_session = CommunicationSession(
+            session_id=session_id,
+            provider=proxy.provider,
+            provider_session_id=proxy.provider_session_id,
+            proxy_number=proxy.proxy_number,
+        )
+        db.add(comm_session)
+    except Exception as e:
+        import logging
+        logging.getLogger("compass").warning("Failed to create communication session: %s", e)
+
     await db.commit()
     await db.refresh(session)
     return session
@@ -106,6 +128,38 @@ async def complete_session(session_id: UUID, current_user=Depends(get_current_us
     if session.started_at:
         session.duration_minutes = int((session.ended_at - session.started_at).total_seconds() / 60)
         session.suggested_units = calculate_units(session.duration_minutes)
+
+    # Close communication session + retrieve recording/transcript
+    from app.services.communication import get_provider
+    from app.models.communication import CommunicationSession
+    try:
+        comm_result = await db.execute(
+            select(CommunicationSession)
+            .where(CommunicationSession.session_id == session_id)
+            .where(CommunicationSession.status == "active")
+        )
+        comm_session = comm_result.scalar_one_or_none()
+        if comm_session:
+            provider = get_provider()
+            await provider.end_proxy_session(comm_session.provider_session_id)
+
+            recording = await provider.get_recording(comm_session.provider_session_id)
+            if recording:
+                comm_session.recording_url = recording.recording_url
+                comm_session.recording_duration_seconds = recording.duration_seconds
+                comm_session.provider_recording_id = recording.provider_recording_id
+
+                transcript = await provider.get_transcript(recording.recording_url)
+                if transcript:
+                    comm_session.transcript_text = transcript.text
+                    comm_session.transcript_confidence = transcript.confidence
+
+            comm_session.status = "closed"
+            comm_session.closed_at = datetime.now(timezone.utc)
+    except Exception as e:
+        import logging
+        logging.getLogger("compass").warning("Failed to close communication session: %s", e)
+
     await db.commit()
     await db.refresh(session)
     return session

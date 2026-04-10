@@ -9,6 +9,7 @@ from app.models.reward import RewardTransaction, RedemptionItem
 from app.models.audit import AuditLog
 from app.models.auth import RefreshToken
 from app.models.twilio import TwilioProxySession
+from app.models.communication import CommunicationSession
 from app.models.waitlist import WaitlistEntry
 from app.models.enums import *
 
@@ -24,5 +25,6 @@ __all__ = [
     "AuditLog",
     "RefreshToken",
     "TwilioProxySession",
+    "CommunicationSession",
     "WaitlistEntry",
 ]
