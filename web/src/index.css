@@ -1,7 +1,8 @@
 @import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=Plus+Jakarta+Sans:ital,wght@0,200..800;1,200..800&display=swap');
 
 @theme {
-  /* ─── Warm palette ─── */
+  /* ─── Warm palette (existing app) ─── */
   --color-primary: #2C3E2D;
   --color-primary-dark: #1E2E1F;
   --color-primary-hover: #3A5240;
@@ -21,15 +22,104 @@
   --color-warning: #F59E0B;
   --color-success: #6B8F71;
 
+  /* ─── New landing design system (shadcn/compass brand) ─── */
+  --color-background: hsl(35 30% 95%);
+  --color-foreground: hsl(150 20% 12%);
+  --color-card-foreground: hsl(150 20% 12%);
+  --color-primary-foreground: #FFFFFF;
+  --color-secondary: hsl(100 18% 52%);
+  --color-secondary-foreground: #FFFFFF;
+  --color-muted: hsl(33 22% 90%);
+  --color-muted-foreground: hsl(150 10% 45%);
+  --color-accent-foreground: #FFFFFF;
+  --color-destructive: hsl(0 84% 60%);
+  --color-destructive-foreground: #FFFFFF;
+  --color-input: hsl(33 18% 86%);
+  --color-ring: hsl(147 20% 30%);
+  --color-popover: #FFFFFF;
+  --color-popover-foreground: hsl(150 20% 12%);
+
+  /* Compass brand colors */
+  --color-compass-green: hsl(147 20% 30%);
+  --color-compass-green-light: hsl(100 18% 52%);
+  --color-compass-cream: hsl(35 30% 95%);
+  --color-compass-nude: hsl(30 25% 88%);
+  --color-compass-dark: hsl(150 22% 10%);
+  --color-compass-sage: hsl(100 14% 58%);
+  --color-compass-gold: hsl(42 80% 55%);
+
   /* ─── Typography ─── */
   --font-sans: 'Outfit', 'Inter', system-ui, -apple-system, sans-serif;
+
+  /* Custom font sizes — display scale */
+  --font-size-display-xl: 4.5rem;
+  --font-size-display-xl--line-height: 1.05;
+  --font-size-display-xl--letter-spacing: -0.03em;
+  --font-size-display-lg: 3.5rem;
+  --font-size-display-lg--line-height: 1.1;
+  --font-size-display-lg--letter-spacing: -0.025em;
+  --font-size-display-md: 2.5rem;
+  --font-size-display-md--line-height: 1.15;
+  --font-size-display-md--letter-spacing: -0.02em;
+  --font-size-display-sm: 2rem;
+  --font-size-display-sm--line-height: 1.2;
+  --font-size-display-sm--letter-spacing: -0.015em;
+
+  /* Body scale */
+  --font-size-body-lg: 1.125rem;
+  --font-size-body-lg--line-height: 1.6;
+  --font-size-body-md: 1rem;
+  --font-size-body-md--line-height: 1.6;
+  --font-size-body-sm: 0.875rem;
+  --font-size-body-sm--line-height: 1.5;
+  --font-size-label: 0.75rem;
+  --font-size-label--line-height: 1.4;
+  --font-size-label--letter-spacing: 0.06em;
 
   /* ─── Radii ─── */
   --radius-card: 20px;
   --radius-button: 12px;
   --radius-input: 12px;
+
+  /* ─── Animations ─── */
+  --animate-fade-up: fade-up 0.6s ease-out forwards;
+  --animate-fade-in: fade-in 0.4s ease-out forwards;
+  --animate-count-up: count-up 0.5s ease-out forwards;
 }
 
+/* ─── Custom CSS variables for design tokens ─── */
+:root {
+  --gradient-hero: linear-gradient(135deg, #2C3E2D, hsl(100 18% 52%));
+  --gradient-warm: linear-gradient(180deg, hsl(35 30% 95%), hsl(30 25% 88%));
+  --gradient-dark: linear-gradient(180deg, hsl(150 22% 10%), hsl(147 20% 22%));
+
+  --shadow-card: 0 4px 24px -4px hsl(147 20% 30% / 0.08);
+  --shadow-elevated: 0 16px 48px -12px hsl(147 20% 30% / 0.15);
+  --shadow-glow: 0 0 40px hsl(147 20% 30% / 0.12);
+
+  --font-display: 'DM Sans', sans-serif;
+  --font-body: 'Plus Jakarta Sans', sans-serif;
+}
+
+/* ─── Keyframes ─── */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes count-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* ─── Base resets ─── */
 *,
 *::before,
 *::after {
@@ -49,11 +139,15 @@ body,
 }
 
 body {
-  font-family: 'Outfit', 'Inter', system-ui, -apple-system, sans-serif;
+  font-family: var(--font-body), 'Outfit', 'Inter', system-ui, -apple-system, sans-serif;
   background-color: #FBF7F0;
   color: #2C3E2D;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display);
 }
 
 #root {
@@ -62,8 +156,42 @@ body {
   min-height: 100vh;
 }
 
-/* ─── Landing page animations ─── */
-@keyframes pulse-dot {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+/* ─── Landing component utilities ─── */
+@utility font-display {
+  font-family: var(--font-display);
+}
+
+@utility font-body {
+  font-family: var(--font-body);
+}
+
+@utility shadow-card {
+  box-shadow: var(--shadow-card);
+}
+
+@utility shadow-elevated {
+  box-shadow: var(--shadow-elevated);
+}
+
+@utility shadow-glow {
+  box-shadow: var(--shadow-glow);
+}
+
+@utility bg-gradient-hero {
+  background-image: var(--gradient-hero);
+}
+
+@utility bg-gradient-warm {
+  background-image: var(--gradient-warm);
+}
+
+@utility bg-gradient-dark {
+  background-image: var(--gradient-dark);
+}
+
+@utility text-gradient-brand {
+  background-image: var(--gradient-hero);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
