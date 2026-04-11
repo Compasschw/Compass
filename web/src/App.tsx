@@ -4,6 +4,9 @@ import { useAuth } from './features/auth/AuthContext';
 import { Layout } from './shared/components/Layout';
 
 // Lazy-loaded page components
+const NewLandingPage = lazy(() => import('./features/landing-v2/NewLandingPage').then(m => ({ default: m.NewLandingPage })));
+const NewWaitlistPage = lazy(() => import('./features/landing-v2/NewWaitlistPage').then(m => ({ default: m.NewWaitlistPage })));
+// Legacy landing variants (kept for reference)
 const WaitlistLandingPage = lazy(() => import('./features/landing/WaitlistLandingPage').then(m => ({ default: m.WaitlistLandingPage })));
 const LandingPageA = lazy(() => import('./features/landing/LandingPageA').then(m => ({ default: m.LandingPageA })));
 const LandingPageB = lazy(() => import('./features/landing/LandingPageB').then(m => ({ default: m.LandingPageB })));
@@ -64,7 +67,7 @@ function ProtectedRoute({ children, requiredRole }: { children: React.ReactNode;
  */
 function RootRedirect() {
   const { isAuthenticated, userRole } = useAuth();
-  if (!isAuthenticated) return <WaitlistLandingPage />;
+  if (!isAuthenticated) return <NewLandingPage />;
   if (userRole === 'chw') return <Navigate to="/chw/dashboard" replace />;
   return <Navigate to="/member/home" replace />;
 }
@@ -86,8 +89,11 @@ export default function App() {
       {/* Root redirect */}
       <Route path="/" element={<RootRedirect />} />
 
-      {/* Public marketing page */}
-      <Route path="/landing" element={<WaitlistLandingPage />} />
+      {/* Public marketing pages */}
+      <Route path="/landing" element={<NewLandingPage />} />
+      <Route path="/waitlist" element={<NewWaitlistPage />} />
+      {/* Legacy landing variants */}
+      <Route path="/landing/old" element={<WaitlistLandingPage />} />
       <Route path="/landing/a" element={<LandingPageA />} />
       <Route path="/landing/b" element={<LandingPageB />} />
       <Route path="/landing/c" element={<LandingPageC />} />
