@@ -587,11 +587,11 @@ export function LandingScreen(): React.JSX.Element {
                 style={[staticStyles.toggleTab, activeTab === 'member' && staticStyles.toggleTabActive]}
                 onPress={() => setActiveTab('member')}
                 accessibilityRole="button"
-                accessibilityLabel="I'm a Community Member"
+                accessibilityLabel="I'm a Medi-Cal Member"
                 accessibilityState={{ selected: activeTab === 'member' }}
               >
                 <Text style={[staticStyles.toggleTabText, activeTab === 'member' && staticStyles.toggleTabTextActive]}>
-                  I'm a Community Member
+                  I'm a Medi-Cal Member
                 </Text>
               </Pressable>
             </View>
@@ -1158,11 +1158,11 @@ export function LandingScreen(): React.JSX.Element {
                   style={staticStyles.ctaOutlineButtonSecondary}
                   onPress={handleWaitlistPress}
                   activeOpacity={0.75}
-                  accessibilityLabel="I'm a Community Member"
+                  accessibilityLabel="I'm a Medi-Cal Member"
                   accessibilityRole="button"
                 >
                   <Text style={staticStyles.ctaOutlineButtonSecondaryText}>
-                    I'm a Community Member
+                    I'm a Medi-Cal Member
                   </Text>
                 </TouchableOpacity>
               </View>
