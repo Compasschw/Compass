@@ -58,7 +58,7 @@ const compassIcon = require('../../../assets/compass-icon.png') as number;
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'Waitlist'>;
 
-type WaitlistRole = 'chw' | 'member' | 'organization' | 'other' | '';
+type WaitlistRole = 'chw' | 'member' | 'organization' | '';
 
 // ─── Storage key for offline fallback ────────────────────────────────────────
 
@@ -94,7 +94,6 @@ const ROLE_OPTIONS: RoleOption[] = [
   { value: 'chw', label: 'CHW — I want to provide care' },
   { value: 'member', label: 'Member — I need support' },
   { value: 'organization', label: 'Organization — We employ CHWs' },
-  { value: 'other', label: 'Other' },
 ];
 
 /** Desktop nav links shown only when viewport >= DESKTOP_BREAKPOINT. */
