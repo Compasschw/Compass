@@ -615,7 +615,7 @@ export function WaitlistScreen({ navigation }: Props): React.JSX.Element {
 
                 {/* Description */}
                 <Text style={[s.heroSubtitle, { fontSize: 18, lineHeight: 28 }]}>
-                  Compass CHW is a marketplace connecting Los Angeles residents with trusted{' '}
+                  Compass CHW is a marketplace connecting Los Angeles County residents with trusted{' '}
                   <Text style={s.heroSubtitleBold}>Community Health Workers</Text>
                   {' '}— neighbors trained to help with housing, recovery, food, mental health, and healthcare navigation.
                 </Text>
@@ -675,7 +675,7 @@ export function WaitlistScreen({ navigation }: Props): React.JSX.Element {
             </Text>
 
             <Text style={[s.heroSubtitle, { fontSize: 16, lineHeight: 24 }]}>
-              Compass CHW is a marketplace connecting Los Angeles residents with trusted{' '}
+              Compass CHW is a marketplace connecting Los Angeles County residents with trusted{' '}
               <Text style={s.heroSubtitleBold}>Community Health Workers</Text>
               {' '}— neighbors trained to help with housing, recovery, food, mental health, and healthcare navigation.
             </Text>

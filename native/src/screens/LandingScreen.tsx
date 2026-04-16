@@ -313,7 +313,7 @@ const FOOTER_COLUMNS: FooterColumn[] = [
 // ─── Pulsing dot ──────────────────────────────────────────────────────────────
 
 /**
- * Animated pulsing green dot for the "Launching in Los Angeles" badge.
+ * Animated pulsing green dot for the "Launching in Los Angeles County" badge.
  */
 function PulsingDot(): React.JSX.Element {
   const opacity = useRef(new Animated.Value(1)).current;
@@ -593,7 +593,7 @@ export function LandingScreen(): React.JSX.Element {
                 {/* Launch badge */}
                 <View style={staticStyles.heroBadge}>
                   <PulsingDot />
-                  <Text style={staticStyles.heroBadgeText}>Launching in Los Angeles</Text>
+                  <Text style={staticStyles.heroBadgeText}>Launching in Los Angeles County</Text>
                 </View>
 
                 {/* Headline */}
@@ -796,67 +796,7 @@ export function LandingScreen(): React.JSX.Element {
         </View>
 
         {/* ════════════════════════════════════════════════════════════════
-            SECTION 4 — HOW IT WORKS
-        ════════════════════════════════════════════════════════════════ */}
-        <View ref={howItWorksRef} style={[staticStyles.howItWorksSection, { paddingVertical: sectionPy }]}>
-          <ContentWrapper isDesktop={isDesktop} style={{ paddingHorizontal: isDesktop ? 48 : px }}>
-            <Text style={staticStyles.howEyebrow}>How It Works</Text>
-            <Text
-              style={[
-                staticStyles.howHeading,
-                { fontSize: isDesktop ? 56 : 32, lineHeight: isDesktop ? 60 : 36 },
-              ]}
-            >
-              Three steps to{' '}
-              <Text style={staticStyles.howHeadingHighlight}>start earning</Text>
-            </Text>
-
-            {/* Steps container — row with connecting line on desktop */}
-            <View style={{ position: 'relative', marginTop: isDesktop ? 56 : 8 }}>
-              {/* Horizontal connecting line — desktop only */}
-              {isDesktop && (
-                <View style={staticStyles.stepsConnectingLine} />
-              )}
-
-              <View
-                style={[
-                  staticStyles.stepsRow,
-                  {
-                    flexDirection: isDesktop ? 'row' : 'column',
-                    gap: isDesktop ? 40 : spacing.xxl,
-                    alignItems: isDesktop ? 'flex-start' : 'center',
-                  },
-                ]}
-              >
-                {HOW_IT_WORKS.map((step) => (
-                  <View
-                    key={step.number}
-                    style={[
-                      staticStyles.stepItem,
-                      { flex: isDesktop ? 1 : undefined },
-                    ]}
-                  >
-                    <View style={staticStyles.stepIconCircle}>
-                      <step.icon size={24} color={colors.primary} />
-                    </View>
-                    <Text
-                      style={[
-                        staticStyles.stepTitle,
-                        { fontSize: isDesktop ? 24 : 18 },
-                      ]}
-                    >
-                      {step.title}
-                    </Text>
-                    <Text style={staticStyles.stepDescription}>{step.description}</Text>
-                  </View>
-                ))}
-              </View>
-            </View>
-          </ContentWrapper>
-        </View>
-
-        {/* ════════════════════════════════════════════════════════════════
-            SECTION 5 — FOR CHWs
+            SECTION 4 — FOR CHWs
         ════════════════════════════════════════════════════════════════ */}
         <View ref={forCHWsRef} style={[staticStyles.forChwsSection, { paddingVertical: sectionPy }]}>
           <ContentWrapper isDesktop={isDesktop} style={{ paddingHorizontal: isDesktop ? 48 : px }}>
@@ -942,6 +882,64 @@ export function LandingScreen(): React.JSX.Element {
         </View>
 
         {/* ════════════════════════════════════════════════════════════════
+            SECTION 5 — HOW IT WORKS
+        ════════════════════════════════════════════════════════════════ */}
+        <View ref={howItWorksRef} style={[staticStyles.howItWorksSection, { paddingVertical: sectionPy }]}>
+          <ContentWrapper isDesktop={isDesktop} style={{ paddingHorizontal: isDesktop ? 48 : px }}>
+            <Text style={staticStyles.howEyebrow}>How It Works</Text>
+            <Text
+              style={[
+                staticStyles.howHeading,
+                { fontSize: isDesktop ? 56 : 32, lineHeight: isDesktop ? 60 : 36 },
+              ]}
+            >
+              Three steps to{' '}
+              <Text style={staticStyles.howHeadingHighlight}>start earning</Text>
+            </Text>
+
+            <View style={{ position: 'relative', marginTop: isDesktop ? 56 : 8 }}>
+              {isDesktop && (
+                <View style={staticStyles.stepsConnectingLine} />
+              )}
+
+              <View
+                style={[
+                  staticStyles.stepsRow,
+                  {
+                    flexDirection: isDesktop ? 'row' : 'column',
+                    gap: isDesktop ? 40 : spacing.xxl,
+                    alignItems: isDesktop ? 'flex-start' : 'center',
+                  },
+                ]}
+              >
+                {HOW_IT_WORKS.map((step) => (
+                  <View
+                    key={step.number}
+                    style={[
+                      staticStyles.stepItem,
+                      { flex: isDesktop ? 1 : undefined },
+                    ]}
+                  >
+                    <View style={staticStyles.stepIconCircle}>
+                      <step.icon size={24} color={colors.primary} />
+                    </View>
+                    <Text
+                      style={[
+                        staticStyles.stepTitle,
+                        { fontSize: isDesktop ? 24 : 18 },
+                      ]}
+                    >
+                      {step.title}
+                    </Text>
+                    <Text style={staticStyles.stepDescription}>{step.description}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          </ContentWrapper>
+        </View>
+
+        {/* ════════════════════════════════════════════════════════════════
             SECTION 6 — MOBILE FIRST
         ════════════════════════════════════════════════════════════════ */}
         <View style={[staticStyles.mobileFirstSection, { paddingVertical: sectionPy }]}>
@@ -1016,7 +1014,7 @@ export function LandingScreen(): React.JSX.Element {
             source={neighborhoodImage}
             style={[StyleSheet.absoluteFill, { width: '100%', height: '100%' }]}
             accessibilityIgnoresInvertColors
-            accessibilityLabel="Los Angeles neighborhood aerial view"
+            accessibilityLabel="Los Angeles County neighborhood aerial view"
             resizeMode="cover"
           />
           <View style={[StyleSheet.absoluteFill, staticStyles.ctaOverlay]} />
@@ -1039,7 +1037,7 @@ export function LandingScreen(): React.JSX.Element {
                 Ready to start earning as a CHW?
               </Text>
               <Text style={staticStyles.ctaBody}>
-                We're opening Compass to CHWs in Los Angeles first. Secure your spot, set your
+                We're opening Compass to CHWs in Los Angeles County first. Secure your spot, set your
                 availability, and start getting matched with members who need your help.
               </Text>
 
