@@ -1,0 +1,1227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Compass x Pear Suite — Integration Discussion</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --compass-green: #0D9B6A;
+    --compass-dark: #064E3B;
+    --pear-gold: #F59E0B;
+    --slate-900: #0F172A;
+    --slate-700: #334155;
+    --slate-500: #64748B;
+    --slate-300: #CBD5E1;
+    --slate-100: #F1F5F9;
+    --white: #FFFFFF;
+    --red-500: #EF4444;
+    --blue-500: #3B82F6;
+    --purple-500: #8B5CF6;
+  }
+
+  html, body { height: 100%; overflow: hidden; font-family: 'Inter', system-ui, sans-serif; background: var(--slate-900); }
+
+  .deck { position: relative; width: 100vw; height: 100vh; }
+
+  .slide {
+    position: absolute; inset: 0;
+    display: none; flex-direction: column;
+    padding: 60px 80px;
+    background: var(--white);
+    overflow: hidden;
+  }
+  .slide.active { display: flex; }
+
+  /* Title slide */
+  .slide.title-slide {
+    background: linear-gradient(135deg, var(--slate-900) 0%, #1E293B 100%);
+    color: var(--white);
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+  }
+  .slide.title-slide .logos {
+    display: flex; align-items: center; gap: 32px;
+    margin-bottom: 48px;
+  }
+  .slide.title-slide .logo-badge {
+    width: 80px; height: 80px; border-radius: 20px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 32px; font-weight: 700;
+  }
+  .slide.title-slide .logo-compass { background: var(--compass-green); }
+  .slide.title-slide .logo-pear { background: var(--pear-gold); color: var(--slate-900); }
+  .slide.title-slide .logo-x { font-size: 28px; color: var(--slate-500); font-weight: 300; }
+  .slide.title-slide h1 { font-size: 48px; font-weight: 700; margin-bottom: 16px; letter-spacing: -1px; }
+  .slide.title-slide .subtitle { font-size: 22px; color: var(--slate-300); font-weight: 300; }
+  .slide.title-slide .date { margin-top: 48px; font-size: 16px; color: var(--slate-500); }
+
+  /* End slide */
+  .slide.end-slide {
+    background: linear-gradient(135deg, var(--slate-900) 0%, #1E293B 100%);
+    color: var(--white);
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+  }
+  .slide.end-slide h1 { font-size: 44px; font-weight: 700; margin-bottom: 24px; }
+  .slide.end-slide p { font-size: 20px; color: var(--slate-300); font-weight: 300; line-height: 1.6; }
+
+  /* Question slides */
+  .slide-header {
+    display: flex; align-items: center; gap: 16px;
+    margin-bottom: 12px;
+  }
+  .q-number {
+    width: 44px; height: 44px; border-radius: 12px;
+    background: var(--compass-green); color: var(--white);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; font-weight: 700; flex-shrink: 0;
+  }
+  .slide-category {
+    font-size: 13px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 1.5px; color: var(--compass-green);
+  }
+
+  .slide h2 {
+    font-size: 30px; font-weight: 700; color: var(--slate-900);
+    line-height: 1.25; margin-bottom: 24px; max-width: 85%;
+  }
+
+  .slide-body {
+    display: flex; gap: 48px; flex: 1; min-height: 0;
+  }
+  .slide-body .context {
+    flex: 0 0 320px; display: flex; flex-direction: column; gap: 16px;
+  }
+  .slide-body .diagram-area {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+  }
+
+  .context-card {
+    background: var(--slate-100); border-radius: 12px;
+    padding: 20px; font-size: 14px; color: var(--slate-700);
+    line-height: 1.6;
+  }
+  .context-card .label {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 1.2px; color: var(--slate-500); margin-bottom: 8px;
+  }
+  .context-card ul { padding-left: 18px; }
+  .context-card li { margin-bottom: 6px; }
+
+  .highlight-card {
+    background: #ECFDF5; border-left: 4px solid var(--compass-green);
+    border-radius: 0 12px 12px 0; padding: 16px 20px;
+    font-size: 14px; color: var(--compass-dark); line-height: 1.5;
+  }
+  .highlight-card .label {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 1.2px; color: var(--compass-green); margin-bottom: 6px;
+  }
+
+  .warning-card {
+    background: #FFF7ED; border-left: 4px solid var(--pear-gold);
+    border-radius: 0 12px 12px 0; padding: 16px 20px;
+    font-size: 14px; color: #92400E; line-height: 1.5;
+  }
+  .warning-card .label {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 1.2px; color: #B45309; margin-bottom: 6px;
+  }
+
+  /* Diagrams */
+  svg text { font-family: 'Inter', system-ui, sans-serif; }
+
+  /* Progress bar */
+  .progress {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    height: 4px; background: var(--slate-100); z-index: 100;
+  }
+  .progress-bar {
+    height: 100%; background: var(--compass-green);
+    transition: width 0.3s ease;
+  }
+
+  /* Slide counter */
+  .slide-counter {
+    position: fixed; bottom: 16px; right: 24px;
+    font-size: 13px; color: var(--slate-500); font-weight: 500;
+    z-index: 100;
+  }
+  .title-slide ~ .slide-counter,
+  .end-slide ~ .slide-counter { color: var(--slate-500); }
+
+  /* Keyboard hints */
+  .nav-hint {
+    position: fixed; bottom: 16px; left: 24px;
+    font-size: 12px; color: var(--slate-300); z-index: 100;
+  }
+</style>
+</head>
+<body>
+<div class="deck" id="deck">
+
+  <!-- SLIDE 0: Title -->
+  <div class="slide title-slide active">
+    <div class="logos">
+      <div class="logo-badge logo-compass">C</div>
+      <span class="logo-x">&times;</span>
+      <div class="logo-badge logo-pear">P</div>
+    </div>
+    <h1>Compass &times; Pear Suite</h1>
+    <div class="subtitle">Integration Discovery &mdash; Technical Discussion</div>
+    <div class="date">April 2026</div>
+  </div>
+
+  <!-- SLIDE 1: Vision -->
+  <div class="slide">
+    <div class="slide-header">
+      <div class="q-number">1</div>
+      <div class="slide-category">Strategy &amp; Alignment</div>
+    </div>
+    <h2>What's Pear Suite's vision for the CHW ecosystem, and where do you see the biggest gaps today?</h2>
+    <div class="slide-body">
+      <div class="context">
+        <div class="context-card">
+          <div class="label">Why This Matters</div>
+          Compass fills the <strong>session documentation &amp; field workflow</strong> gap for CHWs. We need to understand where Pear Suite sees unmet needs to position the integration as mutually valuable.
+        </div>
+        <div class="highlight-card">
+          <div class="label">Our Thesis</div>
+          Pear Suite owns billing infrastructure. Compass owns the CHW experience. Together we close the loop from field visit to paid claim.
+        </div>
+      </div>
+      <div class="diagram-area">
+        <svg width="520" height="340" viewBox="0 0 520 340">
+          <!-- Venn diagram -->
+          <ellipse cx="200" cy="170" rx="160" ry="130" fill="#0D9B6A" opacity="0.12" stroke="#0D9B6A" stroke-width="2"/>
+          <ellipse cx="320" cy="170" rx="160" ry="130" fill="#F59E0B" opacity="0.12" stroke="#F59E0B" stroke-width="2"/>
+          <!-- Labels -->
+          <text x="120" y="120" font-size="14" font-weight="600" fill="#064E3B">Compass</text>
+          <text x="75" y="150" font-size="12" fill="#334155">Session docs</text>
+          <text x="75" y="172" font-size="12" fill="#334155">CHW workflows</text>
+          <text x="75" y="194" font-size="12" fill="#334155">Mobile-first UX</text>
+          <text x="75" y="216" font-size="12" fill="#334155">Field data capture</text>
+
+          <text x="370" y="120" font-size="14" font-weight="600" fill="#92400E">Pear Suite</text>
+          <text x="365" y="150" font-size="12" fill="#334155">Claims submission</text>
+          <text x="365" y="172" font-size="12" fill="#334155">Clearinghouse</text>
+          <text x="365" y="194" font-size="12" fill="#334155">EHR integration</text>
+          <text x="365" y="216" font-size="12" fill="#334155">Medi-Cal billing</text>
+
+          <!-- Overlap -->
+          <text x="222" y="155" font-size="13" font-weight="700" fill="#0F172A" text-anchor="middle">Overlap</text>
+          <text x="222" y="178" font-size="11" fill="#334155" text-anchor="middle">CHW encounter</text>
+          <text x="222" y="196" font-size="11" fill="#334155" text-anchor="middle">data exchange</text>
+
+          <!-- Arrow -->
+          <text x="260" y="300" font-size="13" font-weight="600" fill="#0D9B6A" text-anchor="middle">Field visit &rarr; Paid claim</text>
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLIDE: Compass Session Flow — One-Pager -->
+  <div class="slide">
+    <div class="slide-header">
+      <div class="q-number" style="background: var(--slate-900);">&#9881;</div>
+      <div class="slide-category">How Compass Works Today</div>
+    </div>
+    <h2>Compass Session Documentation Flow &mdash; and Where Pear Suite Fits</h2>
+    <div class="slide-body" style="gap: 0;">
+      <div class="diagram-area" style="align-items: flex-start; padding-top: 8px;">
+        <svg width="900" height="440" viewBox="0 0 900 440">
+
+          <!-- ============ COMPASS ZONE ============ -->
+          <rect x="10" y="10" width="545" height="420" rx="16" fill="#ECFDF5" stroke="#0D9B6A" stroke-width="2" stroke-dasharray="0"/>
+          <text x="30" y="38" font-size="15" font-weight="700" fill="#064E3B">Compass Platform</text>
+          <text x="30" y="56" font-size="11" fill="#64748B">What the CHW interacts with</text>
+
+          <!-- Step 1 -->
+          <rect x="30" y="75" width="155" height="72" rx="10" fill="white" stroke="#0D9B6A" stroke-width="1.5"/>
+          <circle cx="50" cy="93" r="12" fill="#0D9B6A"/>
+          <text x="50" y="97" font-size="11" font-weight="700" fill="white" text-anchor="middle">1</text>
+          <text x="68" y="97" font-size="12" font-weight="600" fill="#064E3B">Start Session</text>
+          <text x="40" y="116" font-size="10" fill="#334155">CHW opens Compass app</text>
+          <text x="40" y="130" font-size="10" fill="#334155">Selects or enrolls member</text>
+
+          <!-- Arrow 1→2 -->
+          <path d="M185 111 L210 111" stroke="#0D9B6A" stroke-width="2" fill="none" marker-end="url(#aG)"/>
+
+          <!-- Step 2 -->
+          <rect x="210" y="75" width="155" height="72" rx="10" fill="white" stroke="#0D9B6A" stroke-width="1.5"/>
+          <circle cx="230" cy="93" r="12" fill="#0D9B6A"/>
+          <text x="230" y="97" font-size="11" font-weight="700" fill="white" text-anchor="middle">2</text>
+          <text x="248" y="97" font-size="12" font-weight="600" fill="#064E3B">Member Lookup</text>
+          <text x="220" y="116" font-size="10" fill="#334155">Verify Medi-Cal ID</text>
+          <text x="220" y="130" font-size="10" fill="#334155">Confirm eligibility &amp; plan</text>
+
+          <!-- Arrow 2→3 -->
+          <path d="M365 111 L390 111" stroke="#0D9B6A" stroke-width="2" fill="none" marker-end="url(#aG)"/>
+
+          <!-- Step 3 -->
+          <rect x="390" y="75" width="155" height="72" rx="10" fill="white" stroke="#0D9B6A" stroke-width="1.5"/>
+          <circle cx="410" cy="93" r="12" fill="#0D9B6A"/>
+          <text x="410" y="97" font-size="11" font-weight="700" fill="white" text-anchor="middle">3</text>
+          <text x="428" y="97" font-size="12" font-weight="600" fill="#064E3B">Service Details</text>
+          <text x="400" y="116" font-size="10" fill="#334155">Session type &amp; location</text>
+          <text x="400" y="130" font-size="10" fill="#334155">Date, start time, duration</text>
+
+          <!-- Arrow 3→4 (down) -->
+          <path d="M467 147 L467 170" stroke="#0D9B6A" stroke-width="2" fill="none" marker-end="url(#aG)"/>
+
+          <!-- Step 4 -->
+          <rect x="390" y="170" width="155" height="88" rx="10" fill="white" stroke="#0D9B6A" stroke-width="1.5"/>
+          <circle cx="410" cy="188" r="12" fill="#0D9B6A"/>
+          <text x="410" y="192" font-size="11" font-weight="700" fill="white" text-anchor="middle">4</text>
+          <text x="428" y="192" font-size="12" font-weight="600" fill="#064E3B">Document Visit</text>
+          <text x="400" y="212" font-size="10" fill="#334155">Session notes / narrative</text>
+          <text x="400" y="226" font-size="10" fill="#334155">Goals addressed</text>
+          <text x="400" y="240" font-size="10" fill="#334155">Referrals &amp; follow-ups</text>
+
+          <!-- Arrow 4→5 (left) -->
+          <path d="M390 214 L365 214" stroke="#0D9B6A" stroke-width="2" fill="none" marker-end="url(#aGL)"/>
+
+          <!-- Step 5 -->
+          <rect x="210" y="170" width="155" height="88" rx="10" fill="white" stroke="#0D9B6A" stroke-width="1.5"/>
+          <circle cx="230" cy="188" r="12" fill="#0D9B6A"/>
+          <text x="230" y="192" font-size="11" font-weight="700" fill="white" text-anchor="middle">5</text>
+          <text x="248" y="192" font-size="12" font-weight="600" fill="#064E3B">Complete Session</text>
+          <text x="220" y="212" font-size="10" fill="#334155">CHW reviews &amp; signs off</text>
+          <text x="220" y="226" font-size="10" fill="#334155">Auto-generates structured</text>
+          <text x="220" y="240" font-size="10" fill="#334155">session documentation</text>
+
+          <!-- Arrow 5→6 (left) -->
+          <path d="M210 214 L185 214" stroke="#0D9B6A" stroke-width="2" fill="none" marker-end="url(#aGL)"/>
+
+          <!-- Step 6 -->
+          <rect x="30" y="170" width="155" height="88" rx="10" fill="white" stroke="#0D9B6A" stroke-width="2"/>
+          <circle cx="50" cy="188" r="12" fill="#0D9B6A"/>
+          <text x="50" y="192" font-size="11" font-weight="700" fill="white" text-anchor="middle">6</text>
+          <text x="68" y="192" font-size="12" font-weight="600" fill="#064E3B">Data Package</text>
+          <text x="40" y="212" font-size="10" fill="#334155">Member ID + demographics</text>
+          <text x="40" y="226" font-size="10" fill="#334155">Service type + duration</text>
+          <text x="40" y="240" font-size="10" fill="#334155">Session notes + referrals</text>
+
+          <!-- Data fields captured box -->
+          <rect x="30" y="280" width="520" height="140" rx="12" fill="white" stroke="#0D9B6A" stroke-width="1.5"/>
+          <text x="50" y="304" font-size="12" font-weight="700" fill="#064E3B">Data Captured Per Session</text>
+
+          <!-- Column 1 -->
+          <text x="50" y="326" font-size="10" font-weight="600" fill="#64748B">MEMBER</text>
+          <text x="50" y="344" font-size="10" fill="#334155">&#8226; Medi-Cal ID</text>
+          <text x="50" y="358" font-size="10" fill="#334155">&#8226; Full name &amp; DOB</text>
+          <text x="50" y="372" font-size="10" fill="#334155">&#8226; Address / county</text>
+          <text x="50" y="386" font-size="10" fill="#334155">&#8226; Managed care plan</text>
+          <text x="50" y="400" font-size="10" fill="#334155">&#8226; Contact info</text>
+
+          <!-- Column 2 -->
+          <text x="210" y="326" font-size="10" font-weight="600" fill="#64748B">SERVICE</text>
+          <text x="210" y="344" font-size="10" fill="#334155">&#8226; Session type</text>
+          <text x="210" y="358" font-size="10" fill="#334155">&#8226; Date &amp; duration</text>
+          <text x="210" y="372" font-size="10" fill="#334155">&#8226; Place of service</text>
+          <text x="210" y="386" font-size="10" fill="#334155">&#8226; CHW provider info</text>
+          <text x="210" y="400" font-size="10" fill="#334155">&#8226; Org / NPI (config)</text>
+
+          <!-- Column 3 -->
+          <text x="380" y="326" font-size="10" font-weight="600" fill="#64748B">DOCUMENTATION</text>
+          <text x="380" y="344" font-size="10" fill="#334155">&#8226; Visit narrative</text>
+          <text x="380" y="358" font-size="10" fill="#334155">&#8226; Goals addressed</text>
+          <text x="380" y="372" font-size="10" fill="#334155">&#8226; Referrals made</text>
+          <text x="380" y="386" font-size="10" fill="#334155">&#8226; Follow-up actions</text>
+          <text x="380" y="400" font-size="10" fill="#334155">&#8226; Supervisor sign-off</text>
+
+          <!-- ============ SEAM / INTEGRATION POINT ============ -->
+          <rect x="570" y="80" width="16" height="340" rx="4" fill="#0F172A"/>
+          <text x="578" y="260" font-size="12" font-weight="700" fill="white" text-anchor="middle" transform="rotate(-90, 578, 260)">INTEGRATION SEAM</text>
+
+          <!-- Big arrow from Compass to seam -->
+          <path d="M555 250 L570 250" stroke="#0D9B6A" stroke-width="3" fill="none" marker-end="url(#aGBig)"/>
+
+          <!-- ============ PEAR SUITE ZONE ============ -->
+          <rect x="600" y="10" width="290" height="420" rx="16" fill="#FFF7ED" stroke="#F59E0B" stroke-width="2"/>
+          <text x="620" y="38" font-size="15" font-weight="700" fill="#92400E">Pear Suite</text>
+          <text x="620" y="56" font-size="11" fill="#64748B">Billing &amp; claims infrastructure</text>
+
+          <!-- Arrow from seam to Pear Suite -->
+          <path d="M586 250 L620 250" stroke="#F59E0B" stroke-width="3" fill="none" marker-end="url(#aYBig)"/>
+
+          <!-- PS Step A -->
+          <rect x="620" y="75" width="250" height="56" rx="10" fill="white" stroke="#F59E0B" stroke-width="1.5"/>
+          <circle cx="640" cy="103" r="12" fill="#F59E0B"/>
+          <text x="640" y="107" font-size="11" font-weight="700" fill="white" text-anchor="middle">A</text>
+          <text x="658" y="97" font-size="12" font-weight="600" fill="#92400E">Receive Session Data</text>
+          <text x="658" y="113" font-size="10" fill="#334155">API ingests Compass data package</text>
+
+          <!-- Arrow A→B -->
+          <path d="M745 131 L745 148" stroke="#F59E0B" stroke-width="2" fill="none" marker-end="url(#aY)"/>
+
+          <!-- PS Step B -->
+          <rect x="620" y="148" width="250" height="56" rx="10" fill="white" stroke="#F59E0B" stroke-width="1.5"/>
+          <circle cx="640" cy="176" r="12" fill="#F59E0B"/>
+          <text x="640" y="180" font-size="11" font-weight="700" fill="white" text-anchor="middle">B</text>
+          <text x="658" y="170" font-size="12" font-weight="600" fill="#92400E">Map &amp; Validate</text>
+          <text x="658" y="186" font-size="10" fill="#334155">Add CPT/HCPCS, ICD-10, apply rules</text>
+
+          <!-- Arrow B→C -->
+          <path d="M745 204 L745 221" stroke="#F59E0B" stroke-width="2" fill="none" marker-end="url(#aY)"/>
+
+          <!-- PS Step C -->
+          <rect x="620" y="221" width="250" height="56" rx="10" fill="white" stroke="#F59E0B" stroke-width="1.5"/>
+          <circle cx="640" cy="249" r="12" fill="#F59E0B"/>
+          <text x="640" y="253" font-size="11" font-weight="700" fill="white" text-anchor="middle">C</text>
+          <text x="658" y="243" font-size="12" font-weight="600" fill="#92400E">Submit to Clearinghouse</text>
+          <text x="658" y="259" font-size="10" fill="#334155">Route claim to Medi-Cal / plan</text>
+
+          <!-- Arrow C→D -->
+          <path d="M745 277 L745 294" stroke="#F59E0B" stroke-width="2" fill="none" marker-end="url(#aY)"/>
+
+          <!-- PS Step D -->
+          <rect x="620" y="294" width="250" height="56" rx="10" fill="white" stroke="#F59E0B" stroke-width="1.5"/>
+          <circle cx="640" cy="322" r="12" fill="#F59E0B"/>
+          <text x="640" y="326" font-size="11" font-weight="700" fill="white" text-anchor="middle">D</text>
+          <text x="658" y="316" font-size="12" font-weight="600" fill="#92400E">Adjudicate &amp; Report</text>
+          <text x="658" y="332" font-size="10" fill="#334155">Paid / denied / resubmit status</text>
+
+          <!-- Status callback arrow back -->
+          <path d="M620 370 Q 578 390 555 370" stroke="#8B5CF6" stroke-width="2" fill="none" stroke-dasharray="6,3" marker-end="url(#aPurp)"/>
+          <text x="590" y="405" font-size="10" font-weight="600" fill="#8B5CF6" text-anchor="middle">Status callback to Compass</text>
+
+          <!-- Marker definitions -->
+          <defs>
+            <marker id="aG" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+              <path d="M0,0 L8,3 L0,6" fill="#0D9B6A"/>
+            </marker>
+            <marker id="aGL" markerWidth="8" markerHeight="6" refX="0" refY="3" orient="auto">
+              <path d="M8,0 L0,3 L8,6" fill="#0D9B6A"/>
+            </marker>
+            <marker id="aGBig" markerWidth="10" markerHeight="8" refX="10" refY="4" orient="auto">
+              <path d="M0,0 L10,4 L0,8" fill="#0D9B6A"/>
+            </marker>
+            <marker id="aY" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+              <path d="M0,0 L8,3 L0,6" fill="#F59E0B"/>
+            </marker>
+            <marker id="aYBig" markerWidth="10" markerHeight="8" refX="10" refY="4" orient="auto">
+              <path d="M0,0 L10,4 L0,8" fill="#F59E0B"/>
+            </marker>
+            <marker id="aPurp" markerWidth="8" markerHeight="6" refX="0" refY="3" orient="auto">
+              <path d="M8,0 L0,3 L8,6" fill="#8B5CF6"/>
+            </marker>
+          </defs>
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLIDE 2: Current Workflow -->
+  <div class="slide">
+    <div class="slide-header">
+      <div class="q-number">2</div>
+      <div class="slide-category">Current State</div>
+    </div>
+    <h2>How are CHW organizations currently getting session data into Pear Suite for claims submission?</h2>
+    <div class="slide-body">
+      <div class="context">
+        <div class="context-card">
+          <div class="label">Why We're Asking</div>
+          We need to understand the existing data flow before proposing a new one. Are orgs doing manual entry, CSV uploads, or is there an integration path we can plug into?
+        </div>
+        <div class="warning-card">
+          <div class="label">Assumption to Validate</div>
+          We suspect most CHW orgs rely on manual data entry or paper forms, creating a significant time gap between service delivery and claims submission.
+        </div>
+      </div>
+      <div class="diagram-area">
+        <svg width="560" height="360" viewBox="0 0 560 360">
+          <!-- Current flow (manual) -->
+          <text x="280" y="28" font-size="15" font-weight="700" fill="#0F172A" text-anchor="middle">Current Suspected Workflow</text>
+
+          <!-- Step boxes -->
+          <rect x="20" y="60" width="140" height="64" rx="10" fill="#ECFDF5" stroke="#0D9B6A" stroke-width="1.5"/>
+          <text x="90" y="86" font-size="12" font-weight="600" fill="#064E3B" text-anchor="middle">CHW</text>
+          <text x="90" y="104" font-size="11" fill="#334155" text-anchor="middle">Field visit</text>
+
+          <rect x="200" y="60" width="140" height="64" rx="10" fill="#FFF7ED" stroke="#F59E0B" stroke-width="1.5"/>
+          <text x="270" y="86" font-size="12" font-weight="600" fill="#92400E" text-anchor="middle">Paper / Notes</text>
+          <text x="270" y="104" font-size="11" fill="#334155" text-anchor="middle">Manual capture</text>
+
+          <rect x="380" y="60" width="150" height="64" rx="10" fill="#FEF2F2" stroke="#EF4444" stroke-width="1.5"/>
+          <text x="455" y="86" font-size="12" font-weight="600" fill="#991B1B" text-anchor="middle">Manual Entry</text>
+          <text x="455" y="104" font-size="11" fill="#334155" text-anchor="middle">Into Pear Suite</text>
+
+          <!-- Arrows -->
+          <path d="M160 92 L200 92" stroke="#64748B" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+          <path d="M340 92 L380 92" stroke="#64748B" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+
+          <!-- Time labels -->
+          <text x="180" y="140" font-size="10" fill="#EF4444" text-anchor="middle">hours/days</text>
+          <text x="360" y="140" font-size="10" fill="#EF4444" text-anchor="middle">hours/days</text>
+
+          <!-- Divider -->
+          <line x1="20" y1="175" x2="540" y2="175" stroke="#CBD5E1" stroke-width="1" stroke-dasharray="6,4"/>
+          <text x="280" y="200" font-size="15" font-weight="700" fill="#0D9B6A" text-anchor="middle">Proposed: Compass Integration</text>
+
+          <!-- Proposed flow -->
+          <rect x="20" y="225" width="140" height="64" rx="10" fill="#ECFDF5" stroke="#0D9B6A" stroke-width="2"/>
+          <text x="90" y="251" font-size="12" font-weight="600" fill="#064E3B" text-anchor="middle">CHW</text>
+          <text x="90" y="269" font-size="11" fill="#334155" text-anchor="middle">Field visit</text>
+
+          <rect x="200" y="225" width="140" height="64" rx="10" fill="#ECFDF5" stroke="#0D9B6A" stroke-width="2"/>
+          <text x="270" y="248" font-size="12" font-weight="600" fill="#064E3B" text-anchor="middle">Compass App</text>
+          <text x="270" y="266" font-size="11" fill="#334155" text-anchor="middle">Digital capture</text>
+          <text x="270" y="280" font-size="11" fill="#334155" text-anchor="middle">in real-time</text>
+
+          <rect x="380" y="225" width="150" height="64" rx="10" fill="#FFF7ED" stroke="#F59E0B" stroke-width="2"/>
+          <text x="455" y="248" font-size="12" font-weight="600" fill="#92400E" text-anchor="middle">Pear Suite API</text>
+          <text x="455" y="266" font-size="11" fill="#334155" text-anchor="middle">Auto-submit</text>
+          <text x="455" y="280" font-size="11" fill="#334155" text-anchor="middle">claims</text>
+
+          <!-- Arrows -->
+          <path d="M160 257 L200 257" stroke="#0D9B6A" stroke-width="2" fill="none" marker-end="url(#arrowGreen)"/>
+          <path d="M340 257 L380 257" stroke="#0D9B6A" stroke-width="2" fill="none" marker-end="url(#arrowGreen)"/>
+
+          <!-- Time labels -->
+          <text x="180" y="305" font-size="10" fill="#0D9B6A" font-weight="600" text-anchor="middle">real-time</text>
+          <text x="360" y="305" font-size="10" fill="#0D9B6A" font-weight="600" text-anchor="middle">minutes</text>
+
+          <!-- Improvement callout -->
+          <rect x="160" y="325" width="240" height="28" rx="14" fill="#0D9B6A"/>
+          <text x="280" y="344" font-size="12" font-weight="600" fill="white" text-anchor="middle">Days &rarr; Minutes</text>
+
+          <!-- Arrow markers -->
+          <defs>
+            <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+              <path d="M0,0 L8,3 L0,6" fill="#64748B"/>
+            </marker>
+            <marker id="arrowGreen" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+              <path d="M0,0 L8,3 L0,6" fill="#0D9B6A"/>
+            </marker>
+          </defs>
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLIDE 3: API Surface -->
+  <div class="slide">
+    <div class="slide-header">
+      <div class="q-number">3</div>
+      <div class="slide-category">Technical Architecture</div>
+    </div>
+    <h2>What does your API surface look like &mdash; REST, GraphQL, webhooks, or file-based exchange?</h2>
+    <div class="slide-body">
+      <div class="context">
+        <div class="context-card">
+          <div class="label">Why This Matters</div>
+          This determines our entire integration architecture and development timeline. Each approach has very different implications for real-time vs. batch processing.
+        </div>
+        <div class="context-card">
+          <div class="label">We Can Support</div>
+          <ul>
+            <li>REST API (preferred)</li>
+            <li>Webhook callbacks</li>
+            <li>GraphQL</li>
+            <li>Batch file exchange (SFTP/S3)</li>
+          </ul>
+        </div>
+      </div>
+      <div class="diagram-area">
+        <svg width="500" height="360" viewBox="0 0 500 360">
+          <!-- Compass box -->
+          <rect x="20" y="100" width="140" height="160" rx="12" fill="#ECFDF5" stroke="#0D9B6A" stroke-width="2"/>
+          <text x="90" y="130" font-size="14" font-weight="700" fill="#064E3B" text-anchor="middle">Compass</text>
+          <text x="90" y="155" font-size="11" fill="#334155" text-anchor="middle">Session data</text>
+          <text x="90" y="173" font-size="11" fill="#334155" text-anchor="middle">CHW encounters</text>
+          <text x="90" y="191" font-size="11" fill="#334155" text-anchor="middle">Member info</text>
+          <text x="90" y="209" font-size="11" fill="#334155" text-anchor="middle">Service codes</text>
+          <text x="90" y="240" font-size="10" fill="#64748B" text-anchor="middle">Python / FastAPI</text>
+
+          <!-- Pear Suite box -->
+          <rect x="340" y="100" width="140" height="160" rx="12" fill="#FFF7ED" stroke="#F59E0B" stroke-width="2"/>
+          <text x="410" y="130" font-size="14" font-weight="700" fill="#92400E" text-anchor="middle">Pear Suite</text>
+          <text x="410" y="155" font-size="11" fill="#334155" text-anchor="middle">Claims engine</text>
+          <text x="410" y="173" font-size="11" fill="#334155" text-anchor="middle">Clearinghouse</text>
+          <text x="410" y="191" font-size="11" fill="#334155" text-anchor="middle">EHR connectors</text>
+          <text x="410" y="209" font-size="11" fill="#334155" text-anchor="middle">Medi-Cal rules</text>
+          <text x="410" y="240" font-size="10" fill="#64748B" text-anchor="middle">? / ?</text>
+
+          <!-- Integration options -->
+          <text x="250" y="36" font-size="13" font-weight="700" fill="#0F172A" text-anchor="middle">Integration Options</text>
+
+          <!-- Option A: REST -->
+          <rect x="185" y="110" width="130" height="30" rx="6" fill="#EFF6FF" stroke="#3B82F6" stroke-width="1.5"/>
+          <text x="250" y="130" font-size="11" font-weight="600" fill="#1D4ED8" text-anchor="middle">A: REST API</text>
+          <path d="M160 125 L185 125" stroke="#3B82F6" stroke-width="1.5" fill="none" marker-end="url(#arrowBlue)"/>
+          <path d="M315 125 L340 125" stroke="#3B82F6" stroke-width="1.5" fill="none" marker-end="url(#arrowBlue)"/>
+
+          <!-- Option B: Webhooks -->
+          <rect x="185" y="155" width="130" height="30" rx="6" fill="#F5F3FF" stroke="#8B5CF6" stroke-width="1.5"/>
+          <text x="250" y="175" font-size="11" font-weight="600" fill="#6D28D9" text-anchor="middle">B: Webhooks</text>
+          <path d="M160 170 L185 170" stroke="#8B5CF6" stroke-width="1.5" fill="none" marker-end="url(#arrowPurple)"/>
+          <path d="M315 170 L340 170" stroke="#8B5CF6" stroke-width="1.5" fill="none" marker-end="url(#arrowPurple)"/>
+
+          <!-- Option C: GraphQL -->
+          <rect x="185" y="200" width="130" height="30" rx="6" fill="#ECFDF5" stroke="#0D9B6A" stroke-width="1.5"/>
+          <text x="250" y="220" font-size="11" font-weight="600" fill="#064E3B" text-anchor="middle">C: GraphQL</text>
+          <path d="M160 215 L185 215" stroke="#0D9B6A" stroke-width="1.5" fill="none" marker-end="url(#arrowGreen2)"/>
+          <path d="M315 215 L340 215" stroke="#0D9B6A" stroke-width="1.5" fill="none" marker-end="url(#arrowGreen2)"/>
+
+          <!-- Option D: Batch -->
+          <rect x="185" y="245" width="130" height="30" rx="6" fill="#FFF7ED" stroke="#F59E0B" stroke-width="1.5"/>
+          <text x="250" y="265" font-size="11" font-weight="600" fill="#92400E" text-anchor="middle">D: Batch / SFTP</text>
+          <path d="M160 260 L185 260" stroke="#F59E0B" stroke-width="1.5" fill="none" marker-end="url(#arrowGold)"/>
+          <path d="M315 260 L340 260" stroke="#F59E0B" stroke-width="1.5" fill="none" marker-end="url(#arrowGold)"/>
+
+          <!-- Preference indicator -->
+          <text x="250" y="310" font-size="12" fill="#64748B" text-anchor="middle">Preferred: real-time API (A or C)</text>
+          <text x="250" y="330" font-size="12" fill="#64748B" text-anchor="middle">Fallback: webhook + batch</text>
+
+          <defs>
+            <marker id="arrowBlue" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+              <path d="M0,0 L8,3 L0,6" fill="#3B82F6"/>
+            </marker>
+            <marker id="arrowPurple" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+              <path d="M0,0 L8,3 L0,6" fill="#8B5CF6"/>
+            </marker>
+            <marker id="arrowGreen2" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+              <path d="M0,0 L8,3 L0,6" fill="#0D9B6A"/>
+            </marker>
+            <marker id="arrowGold" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+              <path d="M0,0 L8,3 L0,6" fill="#F59E0B"/>
+            </marker>
+          </defs>
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLIDE 4: Claims Data Requirements -->
+  <div class="slide">
+    <div class="slide-header">
+      <div class="q-number">4</div>
+      <div class="slide-category">Data Schema</div>
+    </div>
+    <h2>What data fields does Pear Suite require to submit a Medi-Cal claim for a CHW encounter?</h2>
+    <div class="slide-body">
+      <div class="context">
+        <div class="context-card">
+          <div class="label">Why This Matters</div>
+          Compass needs to capture every required field during the CHW session. Missing fields = rejected claims = lost revenue for the org.
+        </div>
+        <div class="highlight-card">
+          <div class="label">Our Goal</div>
+          Map Pear Suite's required schema to Compass form fields so data flows cleanly without manual re-entry.
+        </div>
+      </div>
+      <div class="diagram-area">
+        <svg width="520" height="380" viewBox="0 0 520 380">
+          <text x="260" y="28" font-size="14" font-weight="700" fill="#0F172A" text-anchor="middle">Expected Claims Data Model</text>
+
+          <!-- Member Info -->
+          <rect x="20" y="50" width="230" height="140" rx="10" fill="#ECFDF5" stroke="#0D9B6A" stroke-width="1.5"/>
+          <text x="135" y="75" font-size="13" font-weight="700" fill="#064E3B" text-anchor="middle">Member Information</text>
+          <text x="36" y="98" font-size="11" fill="#334155">Medi-Cal ID</text>
+          <text x="36" y="116" font-size="11" fill="#334155">Member name &amp; DOB</text>
+          <text x="36" y="134" font-size="11" fill="#334155">Address / County</text>
+          <text x="36" y="152" font-size="11" fill="#334155">Managed care plan</text>
+          <text x="36" y="170" font-size="11" fill="#334155">Eligibility status</text>
+          <circle cx="220" cy="98" r="6" fill="#0D9B6A"/><text x="220" y="102" font-size="8" fill="white" text-anchor="middle" font-weight="700">C</text>
+          <circle cx="220" cy="116" r="6" fill="#0D9B6A"/><text x="220" y="120" font-size="8" fill="white" text-anchor="middle" font-weight="700">C</text>
+          <circle cx="220" cy="134" r="6" fill="#0D9B6A"/><text x="220" y="138" font-size="8" fill="white" text-anchor="middle" font-weight="700">C</text>
+          <circle cx="220" cy="152" r="6" fill="#F59E0B"/><text x="220" y="156" font-size="8" fill="white" text-anchor="middle" font-weight="700">?</text>
+          <circle cx="220" cy="170" r="6" fill="#F59E0B"/><text x="220" y="174" font-size="8" fill="white" text-anchor="middle" font-weight="700">?</text>
+
+          <!-- Service Info -->
+          <rect x="270" y="50" width="230" height="140" rx="10" fill="#FFF7ED" stroke="#F59E0B" stroke-width="1.5"/>
+          <text x="385" y="75" font-size="13" font-weight="700" fill="#92400E" text-anchor="middle">Service Details</text>
+          <text x="286" y="98" font-size="11" fill="#334155">CPT / HCPCS codes</text>
+          <text x="286" y="116" font-size="11" fill="#334155">ICD-10 diagnosis codes</text>
+          <text x="286" y="134" font-size="11" fill="#334155">Service date &amp; duration</text>
+          <text x="286" y="152" font-size="11" fill="#334155">Place of service</text>
+          <text x="286" y="170" font-size="11" fill="#334155">Rendering provider NPI</text>
+          <circle cx="470" cy="98" r="6" fill="#F59E0B"/><text x="470" y="102" font-size="8" fill="white" text-anchor="middle" font-weight="700">?</text>
+          <circle cx="470" cy="116" r="6" fill="#F59E0B"/><text x="470" y="120" font-size="8" fill="white" text-anchor="middle" font-weight="700">?</text>
+          <circle cx="470" cy="134" r="6" fill="#0D9B6A"/><text x="470" y="138" font-size="8" fill="white" text-anchor="middle" font-weight="700">C</text>
+          <circle cx="470" cy="152" r="6" fill="#0D9B6A"/><text x="470" y="156" font-size="8" fill="white" text-anchor="middle" font-weight="700">C</text>
+          <circle cx="470" cy="170" r="6" fill="#F59E0B"/><text x="470" y="174" font-size="8" fill="white" text-anchor="middle" font-weight="700">?</text>
+
+          <!-- Provider Info -->
+          <rect x="20" y="210" width="230" height="100" rx="10" fill="#EFF6FF" stroke="#3B82F6" stroke-width="1.5"/>
+          <text x="135" y="235" font-size="13" font-weight="700" fill="#1D4ED8" text-anchor="middle">Provider / Org</text>
+          <text x="36" y="258" font-size="11" fill="#334155">Billing provider NPI</text>
+          <text x="36" y="276" font-size="11" fill="#334155">Tax ID / EIN</text>
+          <text x="36" y="294" font-size="11" fill="#334155">Org name &amp; address</text>
+          <circle cx="220" cy="258" r="6" fill="#F59E0B"/><text x="220" y="262" font-size="8" fill="white" text-anchor="middle" font-weight="700">?</text>
+          <circle cx="220" cy="276" r="6" fill="#F59E0B"/><text x="220" y="280" font-size="8" fill="white" text-anchor="middle" font-weight="700">?</text>
+          <circle cx="220" cy="294" r="6" fill="#0D9B6A"/><text x="220" y="298" font-size="8" fill="white" text-anchor="middle" font-weight="700">C</text>
+
+          <!-- Session Notes -->
+          <rect x="270" y="210" width="230" height="100" rx="10" fill="#F5F3FF" stroke="#8B5CF6" stroke-width="1.5"/>
+          <text x="385" y="235" font-size="13" font-weight="700" fill="#6D28D9" text-anchor="middle">Session Documentation</text>
+          <text x="286" y="258" font-size="11" fill="#334155">Session notes / summary</text>
+          <text x="286" y="276" font-size="11" fill="#334155">Goals addressed</text>
+          <text x="286" y="294" font-size="11" fill="#334155">Referrals made</text>
+          <circle cx="470" cy="258" r="6" fill="#0D9B6A"/><text x="470" y="262" font-size="8" fill="white" text-anchor="middle" font-weight="700">C</text>
+          <circle cx="470" cy="276" r="6" fill="#0D9B6A"/><text x="470" y="280" font-size="8" fill="white" text-anchor="middle" font-weight="700">C</text>
+          <circle cx="470" cy="294" r="6" fill="#0D9B6A"/><text x="470" y="298" font-size="8" fill="white" text-anchor="middle" font-weight="700">C</text>
+
+          <!-- Legend -->
+          <circle cx="140" cy="345" r="6" fill="#0D9B6A"/>
+          <text x="152" y="349" font-size="11" fill="#334155">C = Compass captures today</text>
+          <circle cx="340" cy="345" r="6" fill="#F59E0B"/>
+          <text x="352" y="349" font-size="11" fill="#334155">? = Need to confirm with Pear Suite</text>
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLIDE 5: Authentication -->
+  <div class="slide">
+    <div class="slide-header">
+      <div class="q-number">5</div>
+      <div class="slide-category">Security</div>
+    </div>
+    <h2>How do you handle authentication for third-party integrations &mdash; API keys, OAuth, or org-scoped tokens?</h2>
+    <div class="slide-body">
+      <div class="context">
+        <div class="context-card">
+          <div class="label">Why This Matters</div>
+          Auth model determines how we architect the integration layer. Per-org tokens vs. per-user OAuth have very different implementation patterns.
+        </div>
+        <div class="context-card">
+          <div class="label">Compass Auth Stack</div>
+          <ul>
+            <li>AWS Cognito (user auth)</li>
+            <li>JWT tokens</li>
+            <li>Role-based access control</li>
+            <li>Per-org data isolation</li>
+          </ul>
+        </div>
+      </div>
+      <div class="diagram-area">
+        <svg width="480" height="340" viewBox="0 0 480 340">
+          <text x="240" y="28" font-size="14" font-weight="700" fill="#0F172A" text-anchor="middle">Auth Flow Options</text>
+
+          <!-- Option A: API Key -->
+          <rect x="20" y="55" width="440" height="70" rx="10" fill="#EFF6FF" stroke="#3B82F6" stroke-width="1.5"/>
+          <text x="40" y="80" font-size="13" font-weight="700" fill="#1D4ED8">A: API Key (per-org)</text>
+          <rect x="40" y="95" width="90" height="20" rx="4" fill="white" stroke="#3B82F6" stroke-width="1"/>
+          <text x="85" y="109" font-size="10" fill="#334155" text-anchor="middle">Compass</text>
+          <path d="M130 105 L180 105" stroke="#3B82F6" stroke-width="1.5" fill="none" marker-end="url(#arrowBlue2)"/>
+          <text x="155" y="98" font-size="9" fill="#3B82F6" text-anchor="middle">API Key</text>
+          <rect x="180" y="95" width="90" height="20" rx="4" fill="white" stroke="#F59E0B" stroke-width="1"/>
+          <text x="225" y="109" font-size="10" fill="#334155" text-anchor="middle">Pear Suite</text>
+          <text x="340" y="92" font-size="11" fill="#334155">Simplest. Key stored in</text>
+          <text x="340" y="108" font-size="11" fill="#334155">AWS Secrets Manager.</text>
+
+          <!-- Option B: OAuth -->
+          <rect x="20" y="140" width="440" height="70" rx="10" fill="#F5F3FF" stroke="#8B5CF6" stroke-width="1.5"/>
+          <text x="40" y="165" font-size="13" font-weight="700" fill="#6D28D9">B: OAuth 2.0</text>
+          <rect x="40" y="180" width="60" height="20" rx="4" fill="white" stroke="#8B5CF6" stroke-width="1"/>
+          <text x="70" y="194" font-size="10" fill="#334155" text-anchor="middle">User</text>
+          <path d="M100 190 L125 190" stroke="#8B5CF6" stroke-width="1.5" fill="none" marker-end="url(#arrowPurple2)"/>
+          <rect x="125" y="180" width="70" height="20" rx="4" fill="white" stroke="#0D9B6A" stroke-width="1"/>
+          <text x="160" y="194" font-size="10" fill="#334155" text-anchor="middle">Compass</text>
+          <path d="M195 190 L220 190" stroke="#8B5CF6" stroke-width="1.5" fill="none" marker-end="url(#arrowPurple2)"/>
+          <rect x="220" y="180" width="50" height="20" rx="4" fill="white" stroke="#8B5CF6" stroke-width="1"/>
+          <text x="245" y="194" font-size="10" fill="#334155" text-anchor="middle">Auth</text>
+          <path d="M270 190 L295 190" stroke="#8B5CF6" stroke-width="1.5" fill="none" marker-end="url(#arrowPurple2)"/>
+          <rect x="295" y="180" width="70" height="20" rx="4" fill="white" stroke="#F59E0B" stroke-width="1"/>
+          <text x="330" y="194" font-size="10" fill="#334155" text-anchor="middle">Pear Suite</text>
+          <text x="395" y="192" font-size="11" fill="#334155">Per-user. More</text>
+          <text x="395" y="206" font-size="11" fill="#334155">complex.</text>
+
+          <!-- Option C: Service-to-service -->
+          <rect x="20" y="225" width="440" height="70" rx="10" fill="#ECFDF5" stroke="#0D9B6A" stroke-width="1.5"/>
+          <text x="40" y="250" font-size="13" font-weight="700" fill="#064E3B">C: Service-to-Service (mTLS / JWT)</text>
+          <rect x="40" y="265" width="90" height="20" rx="4" fill="white" stroke="#0D9B6A" stroke-width="1"/>
+          <text x="85" y="279" font-size="10" fill="#334155" text-anchor="middle">Compass BE</text>
+          <path d="M130 275 L180 275" stroke="#0D9B6A" stroke-width="1.5" fill="none" marker-end="url(#arrowGreen3)"/>
+          <text x="155" y="268" font-size="9" fill="#0D9B6A" text-anchor="middle">mTLS</text>
+          <rect x="180" y="265" width="90" height="20" rx="4" fill="white" stroke="#F59E0B" stroke-width="1"/>
+          <text x="225" y="279" font-size="10" fill="#334155" text-anchor="middle">Pear Suite</text>
+          <text x="340" y="272" font-size="11" fill="#334155">Most secure. Needs</text>
+          <text x="340" y="288" font-size="11" fill="#334155">cert management.</text>
+
+          <!-- Question -->
+          <rect x="120" y="310" width="240" height="28" rx="14" fill="#0F172A"/>
+          <text x="240" y="329" font-size="12" font-weight="600" fill="white" text-anchor="middle">Which model does Pear Suite use?</text>
+
+          <defs>
+            <marker id="arrowBlue2" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+              <path d="M0,0 L8,3 L0,6" fill="#3B82F6"/>
+            </marker>
+            <marker id="arrowPurple2" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+              <path d="M0,0 L8,3 L0,6" fill="#8B5CF6"/>
+            </marker>
+            <marker id="arrowGreen3" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+              <path d="M0,0 L8,3 L0,6" fill="#0D9B6A"/>
+            </marker>
+          </defs>
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLIDE 6: HIPAA -->
+  <div class="slide">
+    <div class="slide-header">
+      <div class="q-number">6</div>
+      <div class="slide-category">Compliance</div>
+    </div>
+    <h2>What are your HIPAA requirements for integration partners &mdash; do you require a BAA and security review?</h2>
+    <div class="slide-body">
+      <div class="context">
+        <div class="context-card">
+          <div class="label">Why This Matters</div>
+          PHI will flow between both systems. We need to know Pear Suite's compliance requirements so we can meet them and use the BAA to strengthen our investor story.
+        </div>
+        <div class="warning-card">
+          <div class="label">Our Current State</div>
+          Compass audit flagged HIPAA at 1/10. Knowing Pear Suite's bar gives us a concrete compliance checklist to work toward.
+        </div>
+      </div>
+      <div class="diagram-area">
+        <svg width="480" height="360" viewBox="0 0 480 360">
+          <text x="240" y="28" font-size="14" font-weight="700" fill="#0F172A" text-anchor="middle">PHI Data Flow &amp; Compliance Requirements</text>
+
+          <!-- Compass -->
+          <rect x="20" y="80" width="160" height="200" rx="12" fill="#ECFDF5" stroke="#0D9B6A" stroke-width="2"/>
+          <text x="100" y="108" font-size="14" font-weight="700" fill="#064E3B" text-anchor="middle">Compass</text>
+          <line x1="36" y1="118" x2="164" y2="118" stroke="#0D9B6A" stroke-width="0.5"/>
+          <text x="36" y="140" font-size="11" fill="#334155">AWS (BAA needed)</text>
+          <text x="36" y="160" font-size="11" fill="#334155">Encryption at rest</text>
+          <text x="36" y="180" font-size="11" fill="#334155">Encryption in transit</text>
+          <text x="36" y="200" font-size="11" fill="#334155">Audit logging</text>
+          <text x="36" y="220" font-size="11" fill="#334155">Access controls</text>
+          <text x="36" y="240" font-size="11" fill="#334155">Data retention</text>
+          <!-- Status dots -->
+          <circle cx="155" cy="136" r="5" fill="#F59E0B"/>
+          <circle cx="155" cy="156" r="5" fill="#0D9B6A"/>
+          <circle cx="155" cy="176" r="5" fill="#0D9B6A"/>
+          <circle cx="155" cy="196" r="5" fill="#EF4444"/>
+          <circle cx="155" cy="216" r="5" fill="#0D9B6A"/>
+          <circle cx="155" cy="236" r="5" fill="#EF4444"/>
+
+          <!-- Data flow arrow -->
+          <rect x="200" y="145" width="80" height="70" rx="8" fill="#0F172A"/>
+          <text x="240" y="170" font-size="10" font-weight="600" fill="white" text-anchor="middle">PHI</text>
+          <text x="240" y="185" font-size="10" font-weight="600" fill="white" text-anchor="middle">Exchange</text>
+          <text x="240" y="202" font-size="9" fill="#CBD5E1" text-anchor="middle">TLS 1.3</text>
+          <path d="M180 165 L200 165" stroke="#0D9B6A" stroke-width="2" fill="none" marker-end="url(#arrowGreen4)"/>
+          <path d="M280 165 L300 165" stroke="#F59E0B" stroke-width="2" fill="none" marker-end="url(#arrowGold2)"/>
+          <path d="M300 195 L280 195" stroke="#0D9B6A" stroke-width="2" fill="none" marker-end="url(#arrowGreenRev)"/>
+          <path d="M200 195 L180 195" stroke="#F59E0B" stroke-width="2" fill="none" marker-end="url(#arrowGoldRev)"/>
+
+          <!-- Pear Suite -->
+          <rect x="300" y="80" width="160" height="200" rx="12" fill="#FFF7ED" stroke="#F59E0B" stroke-width="2"/>
+          <text x="380" y="108" font-size="14" font-weight="700" fill="#92400E" text-anchor="middle">Pear Suite</text>
+          <line x1="316" y1="118" x2="444" y2="118" stroke="#F59E0B" stroke-width="0.5"/>
+          <text x="316" y="140" font-size="11" fill="#334155">BAA required?</text>
+          <text x="316" y="160" font-size="11" fill="#334155">Security review?</text>
+          <text x="316" y="180" font-size="11" fill="#334155">SOC 2?</text>
+          <text x="316" y="200" font-size="11" fill="#334155">Pen test needed?</text>
+          <text x="316" y="220" font-size="11" fill="#334155">Data handling SLA?</text>
+          <text x="316" y="240" font-size="11" fill="#334155">Breach protocol?</text>
+          <circle cx="444" cy="136" r="5" fill="#64748B"/>
+          <circle cx="444" cy="156" r="5" fill="#64748B"/>
+          <circle cx="444" cy="176" r="5" fill="#64748B"/>
+          <circle cx="444" cy="196" r="5" fill="#64748B"/>
+          <circle cx="444" cy="216" r="5" fill="#64748B"/>
+          <circle cx="444" cy="236" r="5" fill="#64748B"/>
+
+          <!-- Legend -->
+          <circle cx="100" cy="315" r="5" fill="#0D9B6A"/>
+          <text x="112" y="319" font-size="10" fill="#334155">Done</text>
+          <circle cx="170" cy="315" r="5" fill="#F59E0B"/>
+          <text x="182" y="319" font-size="10" fill="#334155">In progress</text>
+          <circle cx="260" cy="315" r="5" fill="#EF4444"/>
+          <text x="272" y="319" font-size="10" fill="#334155">To do</text>
+          <circle cx="330" cy="315" r="5" fill="#64748B"/>
+          <text x="342" y="319" font-size="10" fill="#334155">Ask Nick</text>
+
+          <defs>
+            <marker id="arrowGreen4" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+              <path d="M0,0 L8,3 L0,6" fill="#0D9B6A"/>
+            </marker>
+            <marker id="arrowGold2" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+              <path d="M0,0 L8,3 L0,6" fill="#F59E0B"/>
+            </marker>
+            <marker id="arrowGreenRev" markerWidth="8" markerHeight="6" refX="0" refY="3" orient="auto">
+              <path d="M8,0 L0,3 L8,6" fill="#0D9B6A"/>
+            </marker>
+            <marker id="arrowGoldRev" markerWidth="8" markerHeight="6" refX="0" refY="3" orient="auto">
+              <path d="M8,0 L0,3 L8,6" fill="#F59E0B"/>
+            </marker>
+          </defs>
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLIDE 7: Claims Lifecycle -->
+  <div class="slide">
+    <div class="slide-header">
+      <div class="q-number">7</div>
+      <div class="slide-category">Workflow</div>
+    </div>
+    <h2>What does the claims lifecycle look like after submission &mdash; how would Compass get status updates?</h2>
+    <div class="slide-body">
+      <div class="context">
+        <div class="context-card">
+          <div class="label">Why This Matters</div>
+          If Compass submits data but never knows if the claim paid out, CHW orgs lose visibility. Closing the loop is the entire value proposition.
+        </div>
+        <div class="highlight-card">
+          <div class="label">Ideal State</div>
+          CHW sees claim status in-app: submitted, accepted, denied, paid. Zero context-switching to another portal.
+        </div>
+      </div>
+      <div class="diagram-area">
+        <svg width="520" height="360" viewBox="0 0 520 360">
+          <text x="260" y="28" font-size="14" font-weight="700" fill="#0F172A" text-anchor="middle">Claim Lifecycle &amp; Status Updates</text>
+
+          <!-- Timeline -->
+          <line x1="60" y1="80" x2="60" y2="320" stroke="#CBD5E1" stroke-width="2"/>
+
+          <!-- Step 1: Submitted -->
+          <circle cx="60" cy="100" r="10" fill="#0D9B6A"/>
+          <text x="60" y="104" font-size="10" fill="white" text-anchor="middle" font-weight="700">1</text>
+          <rect x="90" y="82" width="400" height="44" rx="8" fill="#ECFDF5" stroke="#0D9B6A" stroke-width="1.5"/>
+          <text x="110" y="102" font-size="13" font-weight="600" fill="#064E3B">Submitted</text>
+          <text x="110" y="118" font-size="11" fill="#334155">Compass sends session data to Pear Suite via API</text>
+
+          <!-- Step 2: Validated -->
+          <circle cx="60" cy="160" r="10" fill="#3B82F6"/>
+          <text x="60" y="164" font-size="10" fill="white" text-anchor="middle" font-weight="700">2</text>
+          <rect x="90" y="142" width="400" height="44" rx="8" fill="#EFF6FF" stroke="#3B82F6" stroke-width="1.5"/>
+          <text x="110" y="162" font-size="13" font-weight="600" fill="#1D4ED8">Validated / Scrubbed</text>
+          <text x="110" y="178" font-size="11" fill="#334155">Pear Suite validates claim against Medi-Cal rules</text>
+
+          <!-- Step 3: Sent to clearinghouse -->
+          <circle cx="60" cy="220" r="10" fill="#8B5CF6"/>
+          <text x="60" y="224" font-size="10" fill="white" text-anchor="middle" font-weight="700">3</text>
+          <rect x="90" y="202" width="400" height="44" rx="8" fill="#F5F3FF" stroke="#8B5CF6" stroke-width="1.5"/>
+          <text x="110" y="222" font-size="13" font-weight="600" fill="#6D28D9">Clearinghouse Processing</text>
+          <text x="110" y="238" font-size="11" fill="#334155">Claim routed to Medi-Cal / managed care plan</text>
+
+          <!-- Step 4: Adjudicated -->
+          <circle cx="60" cy="280" r="10" fill="#F59E0B"/>
+          <text x="60" y="284" font-size="10" fill="white" text-anchor="middle" font-weight="700">4</text>
+          <rect x="90" y="262" width="400" height="44" rx="8" fill="#FFF7ED" stroke="#F59E0B" stroke-width="1.5"/>
+          <text x="110" y="282" font-size="13" font-weight="600" fill="#92400E">Adjudicated &mdash; Paid / Denied / Resubmit</text>
+          <text x="110" y="298" font-size="11" fill="#334155">How does Compass learn the outcome? Webhook? Polling? Portal?</text>
+
+          <!-- Feedback arrows -->
+          <path d="M490 286 Q 510 190 490 106" stroke="#EF4444" stroke-width="2" fill="none" stroke-dasharray="6,3" marker-end="url(#arrowRed)"/>
+          <text x="498" y="195" font-size="10" font-weight="600" fill="#EF4444" transform="rotate(90, 498, 195)">Status callback?</text>
+
+          <defs>
+            <marker id="arrowRed" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+              <path d="M0,0 L8,3 L0,6" fill="#EF4444"/>
+            </marker>
+          </defs>
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLIDE 8: Sandbox -->
+  <div class="slide">
+    <div class="slide-header">
+      <div class="q-number">8</div>
+      <div class="slide-category">Development</div>
+    </div>
+    <h2>Is there a sandbox or staging environment we could develop and test against?</h2>
+    <div class="slide-body">
+      <div class="context">
+        <div class="context-card">
+          <div class="label">Why This Matters</div>
+          We need a non-production environment to build, test, and iterate on the integration. No sandbox = significantly longer development timeline.
+        </div>
+        <div class="context-card">
+          <div class="label">What We Need</div>
+          <ul>
+            <li>API endpoint(s) with test data</li>
+            <li>Test Medi-Cal member IDs</li>
+            <li>Mock claim responses</li>
+            <li>Rate limits / quotas</li>
+            <li>API documentation</li>
+          </ul>
+        </div>
+      </div>
+      <div class="diagram-area">
+        <svg width="480" height="340" viewBox="0 0 480 340">
+          <text x="240" y="28" font-size="14" font-weight="700" fill="#0F172A" text-anchor="middle">Development Environment Architecture</text>
+
+          <!-- Dev environment -->
+          <rect x="20" y="50" width="200" height="130" rx="12" fill="#F5F3FF" stroke="#8B5CF6" stroke-width="1.5" stroke-dasharray="6,3"/>
+          <text x="120" y="75" font-size="13" font-weight="700" fill="#6D28D9" text-anchor="middle">Development</text>
+          <rect x="40" y="90" width="72" height="36" rx="6" fill="white" stroke="#0D9B6A" stroke-width="1"/>
+          <text x="76" y="113" font-size="10" fill="#334155" text-anchor="middle">Compass</text>
+          <text x="76" y="100" font-size="9" fill="#64748B" text-anchor="middle">local</text>
+          <path d="M112 108 L138 108" stroke="#8B5CF6" stroke-width="1.5" fill="none" marker-end="url(#arrowP3)"/>
+          <rect x="138" y="90" width="72" height="36" rx="6" fill="white" stroke="#F59E0B" stroke-width="1"/>
+          <text x="174" y="100" font-size="9" fill="#64748B" text-anchor="middle">sandbox</text>
+          <text x="174" y="113" font-size="10" fill="#334155" text-anchor="middle">Pear Suite</text>
+          <text x="120" y="160" font-size="10" fill="#6D28D9" text-anchor="middle">Test data / mock claims</text>
+
+          <!-- Staging -->
+          <rect x="260" y="50" width="200" height="130" rx="12" fill="#EFF6FF" stroke="#3B82F6" stroke-width="1.5" stroke-dasharray="6,3"/>
+          <text x="360" y="75" font-size="13" font-weight="700" fill="#1D4ED8" text-anchor="middle">Staging</text>
+          <rect x="280" y="90" width="72" height="36" rx="6" fill="white" stroke="#0D9B6A" stroke-width="1"/>
+          <text x="316" y="100" font-size="9" fill="#64748B" text-anchor="middle">staging</text>
+          <text x="316" y="113" font-size="10" fill="#334155" text-anchor="middle">Compass</text>
+          <path d="M352 108 L378 108" stroke="#3B82F6" stroke-width="1.5" fill="none" marker-end="url(#arrowB3)"/>
+          <rect x="378" y="90" width="72" height="36" rx="6" fill="white" stroke="#F59E0B" stroke-width="1"/>
+          <text x="414" y="100" font-size="9" fill="#64748B" text-anchor="middle">staging</text>
+          <text x="414" y="113" font-size="10" fill="#334155" text-anchor="middle">Pear Suite</text>
+          <text x="360" y="160" font-size="10" fill="#1D4ED8" text-anchor="middle">End-to-end validation</text>
+
+          <!-- Production -->
+          <rect x="140" y="210" width="200" height="110" rx="12" fill="#ECFDF5" stroke="#0D9B6A" stroke-width="2"/>
+          <text x="240" y="235" font-size="13" font-weight="700" fill="#064E3B" text-anchor="middle">Production</text>
+          <rect x="160" y="250" width="72" height="36" rx="6" fill="white" stroke="#0D9B6A" stroke-width="1.5"/>
+          <text x="196" y="262" font-size="9" fill="#64748B" text-anchor="middle">prod</text>
+          <text x="196" y="275" font-size="10" fill="#334155" text-anchor="middle">Compass</text>
+          <path d="M232 268 L258 268" stroke="#0D9B6A" stroke-width="2" fill="none" marker-end="url(#arrowG5)"/>
+          <rect x="258" y="250" width="72" height="36" rx="6" fill="white" stroke="#F59E0B" stroke-width="1.5"/>
+          <text x="294" y="262" font-size="9" fill="#64748B" text-anchor="middle">prod</text>
+          <text x="294" y="275" font-size="10" fill="#334155" text-anchor="middle">Pear Suite</text>
+          <text x="240" y="308" font-size="10" fill="#064E3B" text-anchor="middle">Real PHI / real claims</text>
+
+          <!-- Flow arrows -->
+          <path d="M120 180 L200 210" stroke="#CBD5E1" stroke-width="1.5" fill="none" marker-end="url(#arrowGray)" stroke-dasharray="4,3"/>
+          <path d="M360 180 L280 210" stroke="#CBD5E1" stroke-width="1.5" fill="none" marker-end="url(#arrowGray)" stroke-dasharray="4,3"/>
+
+          <defs>
+            <marker id="arrowP3" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+              <path d="M0,0 L8,3 L0,6" fill="#8B5CF6"/>
+            </marker>
+            <marker id="arrowB3" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+              <path d="M0,0 L8,3 L0,6" fill="#3B82F6"/>
+            </marker>
+            <marker id="arrowG5" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+              <path d="M0,0 L8,3 L0,6" fill="#0D9B6A"/>
+            </marker>
+            <marker id="arrowGray" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+              <path d="M0,0 L8,3 L0,6" fill="#CBD5E1"/>
+            </marker>
+          </defs>
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLIDE 9: Reference Integrations -->
+  <div class="slide">
+    <div class="slide-header">
+      <div class="q-number">9</div>
+      <div class="slide-category">Precedent</div>
+    </div>
+    <h2>Are there other platforms integrating with Pear Suite today that we could reference as a model?</h2>
+    <div class="slide-body">
+      <div class="context">
+        <div class="context-card">
+          <div class="label">Why This Matters</div>
+          If someone has already done this, we can learn from their patterns. This saves months of guesswork and shows Nick we're not trying to reinvent the wheel.
+        </div>
+        <div class="highlight-card">
+          <div class="label">What We're Looking For</div>
+          Integration patterns, API usage examples, common pitfalls, time-to-integration benchmarks from existing partners.
+        </div>
+      </div>
+      <div class="diagram-area">
+        <svg width="480" height="340" viewBox="0 0 480 340">
+          <text x="240" y="28" font-size="14" font-weight="700" fill="#0F172A" text-anchor="middle">Partner Ecosystem Map</text>
+
+          <!-- Pear Suite center -->
+          <circle cx="240" cy="180" r="56" fill="#FFF7ED" stroke="#F59E0B" stroke-width="2.5"/>
+          <text x="240" y="174" font-size="14" font-weight="700" fill="#92400E" text-anchor="middle">Pear</text>
+          <text x="240" y="192" font-size="14" font-weight="700" fill="#92400E" text-anchor="middle">Suite</text>
+
+          <!-- Compass -->
+          <circle cx="240" cy="60" r="36" fill="#ECFDF5" stroke="#0D9B6A" stroke-width="2.5"/>
+          <text x="240" y="56" font-size="12" font-weight="700" fill="#064E3B" text-anchor="middle">Compass</text>
+          <text x="240" y="70" font-size="10" fill="#334155" text-anchor="middle">CHW</text>
+          <line x1="240" y1="96" x2="240" y2="124" stroke="#0D9B6A" stroke-width="2" stroke-dasharray="4,3"/>
+
+          <!-- Partner A -->
+          <circle cx="90" cy="130" r="36" fill="#EFF6FF" stroke="#3B82F6" stroke-width="1.5" stroke-dasharray="4,3"/>
+          <text x="90" y="126" font-size="11" font-weight="600" fill="#1D4ED8" text-anchor="middle">EHR</text>
+          <text x="90" y="140" font-size="11" font-weight="600" fill="#1D4ED8" text-anchor="middle">Partner?</text>
+          <line x1="120" y1="148" x2="195" y2="168" stroke="#CBD5E1" stroke-width="1.5" stroke-dasharray="4,3"/>
+
+          <!-- Partner B -->
+          <circle cx="390" cy="130" r="36" fill="#F5F3FF" stroke="#8B5CF6" stroke-width="1.5" stroke-dasharray="4,3"/>
+          <text x="390" y="126" font-size="11" font-weight="600" fill="#6D28D9" text-anchor="middle">Health</text>
+          <text x="390" y="140" font-size="11" font-weight="600" fill="#6D28D9" text-anchor="middle">Plan?</text>
+          <line x1="360" y1="148" x2="285" y2="168" stroke="#CBD5E1" stroke-width="1.5" stroke-dasharray="4,3"/>
+
+          <!-- Partner C -->
+          <circle cx="100" cy="260" r="36" fill="#FEF2F2" stroke="#EF4444" stroke-width="1.5" stroke-dasharray="4,3"/>
+          <text x="100" y="256" font-size="11" font-weight="600" fill="#991B1B" text-anchor="middle">Care</text>
+          <text x="100" y="270" font-size="11" font-weight="600" fill="#991B1B" text-anchor="middle">Mgmt?</text>
+          <line x1="128" y1="242" x2="200" y2="205" stroke="#CBD5E1" stroke-width="1.5" stroke-dasharray="4,3"/>
+
+          <!-- Partner D -->
+          <circle cx="380" cy="260" r="36" fill="#ECFDF5" stroke="#0D9B6A" stroke-width="1.5" stroke-dasharray="4,3"/>
+          <text x="380" y="256" font-size="11" font-weight="600" fill="#064E3B" text-anchor="middle">Other</text>
+          <text x="380" y="270" font-size="11" font-weight="600" fill="#064E3B" text-anchor="middle">CHW?</text>
+          <line x1="352" y1="242" x2="280" y2="205" stroke="#CBD5E1" stroke-width="1.5" stroke-dasharray="4,3"/>
+
+          <!-- Question -->
+          <text x="240" y="330" font-size="12" font-weight="600" fill="#64748B" text-anchor="middle">Dashed = unknown &mdash; ask Nick to fill in the ecosystem</text>
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLIDE 10: Phase 1 -->
+  <div class="slide">
+    <div class="slide-header">
+      <div class="q-number">10</div>
+      <div class="slide-category">Next Steps</div>
+    </div>
+    <h2>What would a Phase 1 integration look like, and what's the fastest path to a working demo?</h2>
+    <div class="slide-body">
+      <div class="context">
+        <div class="context-card">
+          <div class="label">Why This Matters</div>
+          Closes the meeting with a concrete next step. We want to ship something small and real, not plan forever.
+        </div>
+        <div class="highlight-card">
+          <div class="label">Our Proposal</div>
+          One CHW org, one session type, one claim flow &mdash; end to end. Prove it works, then scale.
+        </div>
+      </div>
+      <div class="diagram-area">
+        <svg width="520" height="360" viewBox="0 0 520 360">
+          <text x="260" y="28" font-size="14" font-weight="700" fill="#0F172A" text-anchor="middle">Proposed Integration Roadmap</text>
+
+          <!-- Timeline line -->
+          <line x1="60" y1="65" x2="480" y2="65" stroke="#CBD5E1" stroke-width="2"/>
+
+          <!-- Phase 1 -->
+          <circle cx="120" cy="65" r="14" fill="#0D9B6A"/>
+          <text x="120" y="70" font-size="11" font-weight="700" fill="white" text-anchor="middle">1</text>
+          <text x="120" y="52" font-size="11" font-weight="700" fill="#064E3B" text-anchor="middle">Phase 1</text>
+
+          <!-- Phase 2 -->
+          <circle cx="270" cy="65" r="14" fill="#3B82F6"/>
+          <text x="270" y="70" font-size="11" font-weight="700" fill="white" text-anchor="middle">2</text>
+          <text x="270" y="52" font-size="11" font-weight="700" fill="#1D4ED8" text-anchor="middle">Phase 2</text>
+
+          <!-- Phase 3 -->
+          <circle cx="420" cy="65" r="14" fill="#8B5CF6"/>
+          <text x="420" y="70" font-size="11" font-weight="700" fill="white" text-anchor="middle">3</text>
+          <text x="420" y="52" font-size="11" font-weight="700" fill="#6D28D9" text-anchor="middle">Phase 3</text>
+
+          <!-- Phase 1 detail -->
+          <rect x="30" y="95" width="180" height="240" rx="12" fill="#ECFDF5" stroke="#0D9B6A" stroke-width="2"/>
+          <text x="120" y="120" font-size="13" font-weight="700" fill="#064E3B" text-anchor="middle">MVP Integration</text>
+          <text x="120" y="138" font-size="11" fill="#64748B" text-anchor="middle">4-6 weeks</text>
+          <line x1="46" y1="150" x2="194" y2="150" stroke="#0D9B6A" stroke-width="0.5"/>
+          <text x="50" y="170" font-size="11" fill="#334155">1 CHW organization</text>
+          <text x="50" y="190" font-size="11" fill="#334155">1 session type</text>
+          <text x="50" y="210" font-size="11" fill="#334155">Submit claims via API</text>
+          <text x="50" y="230" font-size="11" fill="#334155">Basic status callback</text>
+          <text x="50" y="250" font-size="11" fill="#334155">BAA signed</text>
+          <text x="50" y="280" font-size="11" font-weight="600" fill="#064E3B">Deliverable:</text>
+          <text x="50" y="298" font-size="11" fill="#334155">Working demo with</text>
+          <text x="50" y="314" font-size="11" fill="#334155">real claim submission</text>
+
+          <!-- Phase 2 detail -->
+          <rect x="230" y="95" width="160" height="200" rx="12" fill="#EFF6FF" stroke="#3B82F6" stroke-width="1.5"/>
+          <text x="310" y="120" font-size="13" font-weight="700" fill="#1D4ED8" text-anchor="middle">Expand</text>
+          <text x="310" y="138" font-size="11" fill="#64748B" text-anchor="middle">8-12 weeks</text>
+          <line x1="246" y1="150" x2="374" y2="150" stroke="#3B82F6" stroke-width="0.5"/>
+          <text x="246" y="170" font-size="11" fill="#334155">Multi-org support</text>
+          <text x="246" y="190" font-size="11" fill="#334155">All session types</text>
+          <text x="246" y="210" font-size="11" fill="#334155">Full status tracking</text>
+          <text x="246" y="230" font-size="11" fill="#334155">Denial management</text>
+          <text x="246" y="250" font-size="11" fill="#334155">Dashboard analytics</text>
+          <text x="246" y="275" font-size="11" font-weight="600" fill="#1D4ED8">Deliverable:</text>
+          <text x="246" y="290" font-size="11" fill="#334155">Production-ready</text>
+
+          <!-- Phase 3 detail -->
+          <rect x="400" y="95" width="110" height="200" rx="12" fill="#F5F3FF" stroke="#8B5CF6" stroke-width="1.5"/>
+          <text x="455" y="120" font-size="13" font-weight="700" fill="#6D28D9" text-anchor="middle">Scale</text>
+          <text x="455" y="138" font-size="11" fill="#64748B" text-anchor="middle">Ongoing</text>
+          <line x1="416" y1="150" x2="494" y2="150" stroke="#8B5CF6" stroke-width="0.5"/>
+          <text x="416" y="170" font-size="11" fill="#334155">EHR sync</text>
+          <text x="416" y="190" font-size="11" fill="#334155">Auto-coding</text>
+          <text x="416" y="210" font-size="11" fill="#334155">Reporting</text>
+          <text x="416" y="230" font-size="11" fill="#334155">Multi-state</text>
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLIDE 11: End -->
+  <div class="slide end-slide">
+    <h1>Let's Build This Together</h1>
+    <p>Compass handles the CHW experience.<br/>Pear Suite handles billing infrastructure.<br/>Together: field visit to paid claim, seamlessly.</p>
+    <div style="margin-top: 48px;">
+      <p style="font-size: 16px; color: #64748B;">Next steps: sandbox access, BAA discussion, schema alignment</p>
+    </div>
+  </div>
+
+</div>
+
+<!-- Progress bar -->
+<div class="progress"><div class="progress-bar" id="progressBar"></div></div>
+<div class="slide-counter" id="slideCounter"></div>
+<div class="nav-hint">Arrow keys or click to navigate</div>
+
+<script>
+  const slides = document.querySelectorAll('.slide');
+  let current = 0;
+
+  function showSlide(n) {
+    slides[current].classList.remove('active');
+    current = Math.max(0, Math.min(n, slides.length - 1));
+    slides[current].classList.add('active');
+    document.getElementById('progressBar').style.width =
+      ((current / (slides.length - 1)) * 100) + '%';
+    document.getElementById('slideCounter').textContent =
+      (current + 1) + ' / ' + slides.length;
+  }
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ') {
+      e.preventDefault(); showSlide(current + 1);
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      e.preventDefault(); showSlide(current - 1);
+    } else if (e.key === 'Home') {
+      showSlide(0);
+    } else if (e.key === 'End') {
+      showSlide(slides.length - 1);
+    } else if (e.key === 'f' || e.key === 'F') {
+      document.documentElement.requestFullscreen?.();
+    }
+  });
+
+  document.addEventListener('click', e => {
+    if (e.clientX > window.innerWidth / 2) showSlide(current + 1);
+    else showSlide(current - 1);
+  });
+
+  // Touch support
+  let touchStartX = 0;
+  document.addEventListener('touchstart', e => { touchStartX = e.touches[0].clientX; });
+  document.addEventListener('touchend', e => {
+    const dx = e.changedTouches[0].clientX - touchStartX;
+    if (Math.abs(dx) > 50) showSlide(current + (dx < 0 ? 1 : -1));
+  });
+
+  showSlide(0);
+</script>
+</body>
+</html>
