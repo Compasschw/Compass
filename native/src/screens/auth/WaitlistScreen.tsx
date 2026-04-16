@@ -11,7 +11,7 @@
  *   - "Back to Home" button on the right navigates to Landing
  *
  * Left column (desktop):
- *   - Pulsing green dot + "LAUNCHING SOON IN LOS ANGELES" eyebrow
+ *   - Pulsing green dot + "LAUNCHING SOON IN LOS ANGELES COUNTY" eyebrow
  *   - Headline "Community health, connected." (connected. in secondary green)
  *   - Description with bold "Community Health Workers"
  *   - 3 trust badge pills: HIPAA Compliant, Medi-Cal Accepted, No Cost to Members
@@ -598,7 +598,7 @@ export function WaitlistScreen({ navigation }: Props): React.JSX.Element {
                 {/* Eyebrow */}
                 <View style={s.eyebrowRow}>
                   <PulsingDot size={10} />
-                  <Text style={s.eyebrowText}>LAUNCHING SOON IN LOS ANGELES</Text>
+                  <Text style={s.eyebrowText}>LAUNCHING SOON IN LOS ANGELES COUNTY</Text>
                 </View>
 
                 {/* Headline */}
@@ -660,7 +660,7 @@ export function WaitlistScreen({ navigation }: Props): React.JSX.Element {
           <View style={s.heroSection}>
             <View style={s.eyebrowRow}>
               <PulsingDot size={8} />
-              <Text style={s.eyebrowText}>LAUNCHING SOON IN LOS ANGELES</Text>
+              <Text style={s.eyebrowText}>LAUNCHING SOON IN LOS ANGELES COUNTY</Text>
             </View>
 
             <Text
