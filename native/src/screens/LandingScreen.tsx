@@ -52,6 +52,7 @@ import {
   MapPin,
   Smartphone,
   Bus,
+  UserPlus,
 } from 'lucide-react-native';
 
 import { colors } from '../theme/colors';
@@ -251,6 +252,30 @@ const HOW_IT_WORKS: Step[] = [
     title: 'Complete sessions & get paid',
     description:
       'Meet with members, log your sessions, and get reimbursed through Medi-Cal. Track your earnings in real time.',
+  },
+];
+
+const HOW_IT_WORKS_MEMBER: Step[] = [
+  {
+    icon: UserPlus,
+    number: '01',
+    title: 'Tell us what you need',
+    description:
+      'Share your health goals and the areas where you need support — housing, food, healthcare, or recovery. It takes under 2 minutes.',
+  },
+  {
+    icon: Heart,
+    number: '02',
+    title: 'Get matched with a local CHW',
+    description:
+      "We'll pair you with a trained Community Health Worker who speaks your language and knows your neighborhood.",
+  },
+  {
+    icon: CheckCircle,
+    number: '03',
+    title: 'Start your first session — free',
+    description:
+      "Meet your CHW in person or virtually. Get guidance on housing, food, healthcare, and more. It's 100% covered by Medi-Cal.",
   },
 ];
 
@@ -938,6 +963,66 @@ export function LandingScreen(): React.JSX.Element {
                       {step.title}
                     </Text>
                     <Text style={staticStyles.stepDescription}>{step.description}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          </ContentWrapper>
+        </View>
+
+        {/* ════════════════════════════════════════════════════════════════
+            SECTION 5B — HOW IT WORKS (MEMBERS)
+        ════════════════════════════════════════════════════════════════ */}
+        <View style={[staticStyles.howItWorksMemberSection, { paddingVertical: sectionPy }]}>
+          <ContentWrapper isDesktop={isDesktop} style={{ paddingHorizontal: isDesktop ? 48 : px }}>
+            <Text style={staticStyles.howMemberEyebrow}>For Community Members</Text>
+            <Text
+              style={[
+                staticStyles.howHeading,
+                { fontSize: isDesktop ? 56 : 32, lineHeight: isDesktop ? 60 : 36, color: colors.foreground },
+              ]}
+            >
+              Three steps to{' '}
+              <Text style={{ color: colors.secondary }}>get help</Text>
+            </Text>
+
+            <View style={{ position: 'relative', marginTop: isDesktop ? 56 : 8 }}>
+              {isDesktop && (
+                <View style={[staticStyles.stepsConnectingLine, { backgroundColor: 'rgba(61,90,62,0.15)' }]} />
+              )}
+
+              <View
+                style={[
+                  staticStyles.stepsRow,
+                  {
+                    flexDirection: isDesktop ? 'row' : 'column',
+                    gap: isDesktop ? 40 : spacing.xxl,
+                    alignItems: isDesktop ? 'flex-start' : 'center',
+                  },
+                ]}
+              >
+                {HOW_IT_WORKS_MEMBER.map((step) => (
+                  <View
+                    key={step.number}
+                    style={[
+                      staticStyles.stepItem,
+                      { flex: isDesktop ? 1 : undefined },
+                    ]}
+                  >
+                    <View style={staticStyles.stepIconCircleMember}>
+                      <step.icon size={24} color="#FFFFFF" />
+                    </View>
+                    <Text
+                      style={[
+                        staticStyles.stepTitle,
+                        { fontSize: isDesktop ? 24 : 18, color: colors.foreground },
+                      ]}
+                    >
+                      {step.title}
+                    </Text>
+                    <Text style={[staticStyles.stepDescription, { color: colors.mutedForeground }]}>
+                      {step.description}
+                    </Text>
                   </View>
                 ))}
               </View>
@@ -1877,6 +1962,38 @@ const staticStyles = StyleSheet.create({
     color: 'rgba(255,255,255,0.65)',
     textAlign: 'center',
     maxWidth: 280,
+  },
+  // ── How It Works — Member variant ──────────────────────────────────────────
+  howItWorksMemberSection: {
+    backgroundColor: colors.background,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  howMemberEyebrow: {
+    fontFamily: fonts.bodySemibold,
+    fontSize: 11,
+    letterSpacing: 1.6,
+    color: colors.mutedForeground,
+    textTransform: 'uppercase',
+    textAlign: 'center',
+    marginBottom: spacing.sm,
+  },
+  stepIconCircleMember: {
+    width: 56,
+    height: 56,
+    borderRadius: radii.full,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...Platform.select({
+      ios: {
+        shadowColor: colors.primary,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.25,
+        shadowRadius: 12,
+      },
+      android: { elevation: 4 },
+    }),
   },
 
   // ── For CHWs ──────────────────────────────────────────────────────────────────
