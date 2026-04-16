@@ -273,7 +273,7 @@ const HOW_IT_WORKS_MEMBER: Step[] = [
   {
     icon: CheckCircle,
     number: '03',
-    title: 'Start your first session — free',
+    title: 'Complete your first session — and get a $10 reward',
     description:
       "Meet your CHW in person or virtually. Get guidance on housing, food, healthcare, and more. It's 100% covered by Medi-Cal.",
   },
@@ -975,7 +975,7 @@ export function LandingScreen(): React.JSX.Element {
         ════════════════════════════════════════════════════════════════ */}
         <View style={[staticStyles.howItWorksMemberSection, { paddingVertical: sectionPy }]}>
           <ContentWrapper isDesktop={isDesktop} style={{ paddingHorizontal: isDesktop ? 48 : px }}>
-            <Text style={staticStyles.howMemberEyebrow}>For Community Members</Text>
+            <Text style={staticStyles.howMemberEyebrow}>For Medi-Cal Members</Text>
             <Text
               style={[
                 staticStyles.howHeading,
