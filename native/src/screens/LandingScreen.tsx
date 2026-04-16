@@ -1930,7 +1930,7 @@ const staticStyles = StyleSheet.create({
   },
   // ── How It Works — Member variant ──────────────────────────────────────────
   howItWorksMemberSection: {
-    backgroundColor: '#2B6E4F',
+    backgroundColor: colors.compassDark,
   },
   howMemberEyebrow: {
     fontFamily: fonts.bodySemibold,
