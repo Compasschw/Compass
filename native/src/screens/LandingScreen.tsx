@@ -217,7 +217,7 @@ const CHW_HERO_STATS = [
 
 const MEMBER_HERO_STATS = [
   { label: 'SIGN-UP BONUS', value: '$10', sublabel: 'FIRST SESSION' },
-  { label: 'SERVICE AREAS', value: '5' },
+  { label: 'SERVICES', value: '6+' },
   { label: 'MEMBER COST', value: '$0' },
 ];
 
