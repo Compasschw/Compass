@@ -2040,6 +2040,7 @@ const staticStyles = StyleSheet.create({
     borderRadius: radii.lg,
     padding: spacing.md,
     gap: spacing.xs,
+    alignItems: 'center',
   },
   earningsCardLabel: {
     fontFamily: fonts.bodySemibold,
@@ -2047,6 +2048,7 @@ const staticStyles = StyleSheet.create({
     letterSpacing: 1.2,
     color: 'rgba(255,255,255,0.65)',
     textTransform: 'uppercase',
+    textAlign: 'center',
   },
   earningsCardValue: {
     fontFamily: fonts.display,
@@ -2054,6 +2056,7 @@ const staticStyles = StyleSheet.create({
     lineHeight: 32,
     color: '#FFFFFF',
     letterSpacing: -0.5,
+    textAlign: 'center',
   },
   earningsCardSuffix: {
     fontFamily: fonts.body,
@@ -2064,6 +2067,7 @@ const staticStyles = StyleSheet.create({
     fontFamily: fonts.bodySemibold,
     fontSize: 12,
     color: colors.secondary,
+    textAlign: 'center',
   },
 
   // ── Mobile First ─────────────────────────────────────────────────────────────
