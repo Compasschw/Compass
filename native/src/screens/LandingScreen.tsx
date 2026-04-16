@@ -533,9 +533,9 @@ export function LandingScreen(): React.JSX.Element {
                 onPress={() => scrollToSection(forCHWsRef)}
                 activeOpacity={0.7}
                 accessibilityRole="button"
-                accessibilityLabel="For CHWs"
+                accessibilityLabel="How to Earn"
               >
-                <Text style={staticStyles.navLinkText}>For CHWs</Text>
+                <Text style={staticStyles.navLinkText}>How to Earn</Text>
               </TouchableOpacity>
             </View>
           )}
