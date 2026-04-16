@@ -961,15 +961,15 @@ export function LandingScreen(): React.JSX.Element {
               <Text
                 style={[
                   staticStyles.howHeading,
-                  { fontSize: isDesktop ? 56 : 32, lineHeight: isDesktop ? 60 : 36, color: colors.foreground },
+                  { fontSize: isDesktop ? 56 : 32, lineHeight: isDesktop ? 60 : 36 },
                 ]}
               >
                 Three steps to{' '}
-                <Text style={{ color: colors.secondary }}>get help</Text>
+                <Text style={staticStyles.howHeadingHighlight}>get help</Text>
               </Text>
 
               <View style={{ position: 'relative', marginTop: isDesktop ? 56 : 8 }}>
-                {isDesktop && <View style={[staticStyles.stepsConnectingLine, { backgroundColor: 'rgba(61,90,62,0.15)' }]} />}
+                {isDesktop && <View style={[staticStyles.stepsConnectingLine, { backgroundColor: 'rgba(255,255,255,0.15)' }]} />}
                 <View
                   style={[
                     staticStyles.stepsRow,
@@ -982,11 +982,11 @@ export function LandingScreen(): React.JSX.Element {
                 >
                   {HOW_IT_WORKS_MEMBER.map((step) => (
                     <View key={step.number} style={[staticStyles.stepItem, { flex: isDesktop ? 1 : undefined }]}>
-                      <View style={staticStyles.stepIconCircleMember}>
-                        <step.icon size={24} color="#FFFFFF" />
+                      <View style={staticStyles.stepIconCircle}>
+                        <step.icon size={24} color={colors.primary} />
                       </View>
-                      <Text style={[staticStyles.stepTitle, { fontSize: isDesktop ? 24 : 18, color: colors.foreground }]}>{step.title}</Text>
-                      <Text style={[staticStyles.stepDescription, { color: colors.mutedForeground }]}>{step.description}</Text>
+                      <Text style={[staticStyles.stepTitle, { fontSize: isDesktop ? 24 : 18 }]}>{step.title}</Text>
+                      <Text style={staticStyles.stepDescription}>{step.description}</Text>
                     </View>
                   ))}
                 </View>
@@ -1930,15 +1930,13 @@ const staticStyles = StyleSheet.create({
   },
   // ── How It Works — Member variant ──────────────────────────────────────────
   howItWorksMemberSection: {
-    backgroundColor: colors.background,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
+    backgroundColor: '#2B6E4F',
   },
   howMemberEyebrow: {
     fontFamily: fonts.bodySemibold,
     fontSize: 11,
     letterSpacing: 1.6,
-    color: colors.mutedForeground,
+    color: 'rgba(255,255,255,0.55)',
     textTransform: 'uppercase',
     textAlign: 'center',
     marginBottom: spacing.sm,
