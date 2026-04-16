@@ -219,7 +219,7 @@ const CHW_HERO_STATS = [
 const MEMBER_HERO_STATS = [
   { label: 'SIGN-UP BONUS', value: '$10', sublabel: 'FIRST SESSION' },
   { label: 'SERVICES', value: '6+' },
-  { label: 'MEMBER COST', value: '$0' },
+  { label: 'MEDI-CAL MEMBER COST', value: '$0' },
 ];
 
 // ─── How-It-Works steps ───────────────────────────────────────────────────────
