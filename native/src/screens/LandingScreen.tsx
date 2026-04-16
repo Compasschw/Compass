@@ -209,9 +209,15 @@ const SERVICE_CARDS: ServiceCard[] = [
 
 // ─── Hero stats (floating card on hero image) ─────────────────────────────────
 
-const HERO_STATS = [
+const CHW_HERO_STATS = [
   { label: 'MEDI-CAL MEMBERS', value: '3M+', sublabel: 'IN NEED' },
   { label: 'AVG. EARNINGS', value: '$32/hour' },
+  { label: 'NO QUOTA', value: 'Flexible', sublabel: 'TO MEET' },
+];
+
+const MEMBER_HERO_STATS = [
+  { label: 'SIGN-UP BONUS', value: '$10', sublabel: 'FIRST SESSION' },
+  { label: 'SERVICE AREAS', value: '5' },
   { label: 'MEMBER COST', value: '$0' },
 ];
 
@@ -685,7 +691,7 @@ export function LandingScreen(): React.JSX.Element {
 
                   {/* Floating stats card at bottom of image */}
                   <View style={staticStyles.heroStatsCard}>
-                    {HERO_STATS.map((stat, index) => (
+                    {(activeTab === 'chw' ? CHW_HERO_STATS : MEMBER_HERO_STATS).map((stat, index, arr) => (
                       <React.Fragment key={stat.label}>
                         <View style={staticStyles.heroStatItem}>
                           <Text style={staticStyles.heroStatLabel}>{stat.label}</Text>
@@ -694,7 +700,7 @@ export function LandingScreen(): React.JSX.Element {
                             <Text style={staticStyles.heroStatSublabel}>{stat.sublabel}</Text>
                           )}
                         </View>
-                        {index < HERO_STATS.length - 1 && (
+                        {index < arr.length - 1 && (
                           <View style={staticStyles.heroStatDivider} />
                         )}
                       </React.Fragment>
