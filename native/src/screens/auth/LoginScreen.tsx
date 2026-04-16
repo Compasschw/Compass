@@ -541,28 +541,6 @@ export function LoginScreen(): React.JSX.Element {
                   </View>
                 </View>
 
-                {/* ── Demo buttons (below card, border-only) ─────────────── */}
-                <View style={s.demoDividerRow}>
-                  <View style={s.dividerLine} />
-                  <Text style={s.demoDividerLabel}>DEMO</Text>
-                  <View style={s.dividerLine} />
-                </View>
-
-                <View style={s.demoButtonsRow}>
-                  {DEMO_ACCOUNTS.map((account) => (
-                    <TouchableOpacity
-                      key={account.role}
-                      style={s.demoButton}
-                      onPress={() => handleDemoLogin(account)}
-                      disabled={isLoading}
-                      activeOpacity={0.7}
-                      accessibilityLabel={account.label}
-                      accessibilityRole="button"
-                    >
-                      <Text style={s.demoButtonText}>{account.label}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
               </View>
             </View>
           </ContentWrapper>
