@@ -1947,7 +1947,7 @@ const staticStyles = StyleSheet.create({
 
   // ── Mobile First ─────────────────────────────────────────────────────────────
   mobileFirstSection: {
-    backgroundColor: '#F0E2DA',
+    backgroundColor: '#efe8df',
   },
   mobileFirstTextCol: {
     gap: spacing.md,
