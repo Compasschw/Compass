@@ -913,122 +913,87 @@ export function LandingScreen(): React.JSX.Element {
         </View>
 
         {/* ════════════════════════════════════════════════════════════════
-            SECTION 5 — HOW IT WORKS
+            SECTION 5 — HOW IT WORKS (toggles with activeTab)
         ════════════════════════════════════════════════════════════════ */}
-        <View ref={howItWorksRef} style={[staticStyles.howItWorksSection, { paddingVertical: sectionPy }]}>
-          <ContentWrapper isDesktop={isDesktop} style={{ paddingHorizontal: isDesktop ? 48 : px }}>
-            <Text style={staticStyles.howEyebrow}>How It Works</Text>
-            <Text
-              style={[
-                staticStyles.howHeading,
-                { fontSize: isDesktop ? 56 : 32, lineHeight: isDesktop ? 60 : 36 },
-              ]}
-            >
-              Three steps to{' '}
-              <Text style={staticStyles.howHeadingHighlight}>start earning</Text>
-            </Text>
-
-            <View style={{ position: 'relative', marginTop: isDesktop ? 56 : 8 }}>
-              {isDesktop && (
-                <View style={staticStyles.stepsConnectingLine} />
-              )}
-
-              <View
+        {activeTab === 'chw' ? (
+          <View ref={howItWorksRef} style={[staticStyles.howItWorksSection, { paddingVertical: sectionPy }]}>
+            <ContentWrapper isDesktop={isDesktop} style={{ paddingHorizontal: isDesktop ? 48 : px }}>
+              <Text style={staticStyles.howEyebrow}>How It Works</Text>
+              <Text
                 style={[
-                  staticStyles.stepsRow,
-                  {
-                    flexDirection: isDesktop ? 'row' : 'column',
-                    gap: isDesktop ? 40 : spacing.xxl,
-                    alignItems: isDesktop ? 'flex-start' : 'center',
-                  },
+                  staticStyles.howHeading,
+                  { fontSize: isDesktop ? 56 : 32, lineHeight: isDesktop ? 60 : 36 },
                 ]}
               >
-                {HOW_IT_WORKS.map((step) => (
-                  <View
-                    key={step.number}
-                    style={[
-                      staticStyles.stepItem,
-                      { flex: isDesktop ? 1 : undefined },
-                    ]}
-                  >
-                    <View style={staticStyles.stepIconCircle}>
-                      <step.icon size={24} color={colors.primary} />
+                Three steps to{' '}
+                <Text style={staticStyles.howHeadingHighlight}>start earning</Text>
+              </Text>
+
+              <View style={{ position: 'relative', marginTop: isDesktop ? 56 : 8 }}>
+                {isDesktop && <View style={staticStyles.stepsConnectingLine} />}
+                <View
+                  style={[
+                    staticStyles.stepsRow,
+                    {
+                      flexDirection: isDesktop ? 'row' : 'column',
+                      gap: isDesktop ? 40 : spacing.xxl,
+                      alignItems: isDesktop ? 'flex-start' : 'center',
+                    },
+                  ]}
+                >
+                  {HOW_IT_WORKS.map((step) => (
+                    <View key={step.number} style={[staticStyles.stepItem, { flex: isDesktop ? 1 : undefined }]}>
+                      <View style={staticStyles.stepIconCircle}>
+                        <step.icon size={24} color={colors.primary} />
+                      </View>
+                      <Text style={[staticStyles.stepTitle, { fontSize: isDesktop ? 24 : 18 }]}>{step.title}</Text>
+                      <Text style={staticStyles.stepDescription}>{step.description}</Text>
                     </View>
-                    <Text
-                      style={[
-                        staticStyles.stepTitle,
-                        { fontSize: isDesktop ? 24 : 18 },
-                      ]}
-                    >
-                      {step.title}
-                    </Text>
-                    <Text style={staticStyles.stepDescription}>{step.description}</Text>
-                  </View>
-                ))}
+                  ))}
+                </View>
               </View>
-            </View>
-          </ContentWrapper>
-        </View>
-
-        {/* ════════════════════════════════════════════════════════════════
-            SECTION 5B — HOW IT WORKS (MEMBERS)
-        ════════════════════════════════════════════════════════════════ */}
-        <View style={[staticStyles.howItWorksMemberSection, { paddingVertical: sectionPy }]}>
-          <ContentWrapper isDesktop={isDesktop} style={{ paddingHorizontal: isDesktop ? 48 : px }}>
-            <Text style={staticStyles.howMemberEyebrow}>For Medi-Cal Members</Text>
-            <Text
-              style={[
-                staticStyles.howHeading,
-                { fontSize: isDesktop ? 56 : 32, lineHeight: isDesktop ? 60 : 36, color: colors.foreground },
-              ]}
-            >
-              Three steps to{' '}
-              <Text style={{ color: colors.secondary }}>get help</Text>
-            </Text>
-
-            <View style={{ position: 'relative', marginTop: isDesktop ? 56 : 8 }}>
-              {isDesktop && (
-                <View style={[staticStyles.stepsConnectingLine, { backgroundColor: 'rgba(61,90,62,0.15)' }]} />
-              )}
-
-              <View
+            </ContentWrapper>
+          </View>
+        ) : (
+          <View ref={howItWorksRef} style={[staticStyles.howItWorksMemberSection, { paddingVertical: sectionPy }]}>
+            <ContentWrapper isDesktop={isDesktop} style={{ paddingHorizontal: isDesktop ? 48 : px }}>
+              <Text style={staticStyles.howMemberEyebrow}>For Medi-Cal Members</Text>
+              <Text
                 style={[
-                  staticStyles.stepsRow,
-                  {
-                    flexDirection: isDesktop ? 'row' : 'column',
-                    gap: isDesktop ? 40 : spacing.xxl,
-                    alignItems: isDesktop ? 'flex-start' : 'center',
-                  },
+                  staticStyles.howHeading,
+                  { fontSize: isDesktop ? 56 : 32, lineHeight: isDesktop ? 60 : 36, color: colors.foreground },
                 ]}
               >
-                {HOW_IT_WORKS_MEMBER.map((step) => (
-                  <View
-                    key={step.number}
-                    style={[
-                      staticStyles.stepItem,
-                      { flex: isDesktop ? 1 : undefined },
-                    ]}
-                  >
-                    <View style={staticStyles.stepIconCircleMember}>
-                      <step.icon size={24} color="#FFFFFF" />
+                Three steps to{' '}
+                <Text style={{ color: colors.secondary }}>get help</Text>
+              </Text>
+
+              <View style={{ position: 'relative', marginTop: isDesktop ? 56 : 8 }}>
+                {isDesktop && <View style={[staticStyles.stepsConnectingLine, { backgroundColor: 'rgba(61,90,62,0.15)' }]} />}
+                <View
+                  style={[
+                    staticStyles.stepsRow,
+                    {
+                      flexDirection: isDesktop ? 'row' : 'column',
+                      gap: isDesktop ? 40 : spacing.xxl,
+                      alignItems: isDesktop ? 'flex-start' : 'center',
+                    },
+                  ]}
+                >
+                  {HOW_IT_WORKS_MEMBER.map((step) => (
+                    <View key={step.number} style={[staticStyles.stepItem, { flex: isDesktop ? 1 : undefined }]}>
+                      <View style={staticStyles.stepIconCircleMember}>
+                        <step.icon size={24} color="#FFFFFF" />
+                      </View>
+                      <Text style={[staticStyles.stepTitle, { fontSize: isDesktop ? 24 : 18, color: colors.foreground }]}>{step.title}</Text>
+                      <Text style={[staticStyles.stepDescription, { color: colors.mutedForeground }]}>{step.description}</Text>
                     </View>
-                    <Text
-                      style={[
-                        staticStyles.stepTitle,
-                        { fontSize: isDesktop ? 24 : 18, color: colors.foreground },
-                      ]}
-                    >
-                      {step.title}
-                    </Text>
-                    <Text style={[staticStyles.stepDescription, { color: colors.mutedForeground }]}>
-                      {step.description}
-                    </Text>
-                  </View>
-                ))}
+                  ))}
+                </View>
               </View>
-            </View>
-          </ContentWrapper>
-        </View>
+            </ContentWrapper>
+          </View>
+        )}
 
         {/* ════════════════════════════════════════════════════════════════
             SECTION 6 — MOBILE FIRST
