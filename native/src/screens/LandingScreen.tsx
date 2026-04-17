@@ -153,21 +153,23 @@ const MEMBER_HERO: HeroContent = {
 
 interface PartnerLogo {
   name: string;
-  initials: string;
+  image: number;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const logoAnthem = require('../../assets/logo-anthem.png') as number;
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const logoKaiser = require('../../assets/logo-kaiser.jpeg') as number;
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const logoMolina = require('../../assets/logo-molina.jpeg') as number;
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const logoHealthnet = require('../../assets/logo-healthnet.png') as number;
+
 const PARTNER_LOGOS: PartnerLogo[] = [
-  { name: 'Kaiser Permanente', initials: 'KP' },
-  { name: 'Health Net', initials: 'HN' },
-  { name: 'Molina Healthcare', initials: 'MH' },
-  { name: 'Anthem Blue Cross', initials: 'ABC' },
-  { name: 'Kern Family Health Care', initials: 'KF' },
-  { name: 'Mountain Valley Health Plan', initials: 'MV' },
-  { name: 'Partnership HealthPlan', initials: 'PH' },
-  { name: 'Santa Clara Family Health Plan', initials: 'SC' },
-  { name: 'LA Care', initials: 'LAC' },
-  { name: 'CalOptima', initials: 'CO' },
-  { name: 'Medi-Cal', initials: 'MC' },
+  { name: 'Anthem Blue Cross', image: logoAnthem },
+  { name: 'Kaiser Permanente', image: logoKaiser },
+  { name: 'Molina Healthcare', image: logoMolina },
+  { name: 'Health Net', image: logoHealthnet },
 ];
 
 // ─── Service cards data ───────────────────────────────────────────────────────
@@ -761,10 +763,12 @@ export function LandingScreen(): React.JSX.Element {
           >
             {PARTNER_LOGOS.map((logo) => (
               <View key={logo.name} style={staticStyles.clientCard}>
-                <View style={staticStyles.clientCardInitialsWrap}>
-                  <Text style={staticStyles.clientCardInitials}>{logo.initials}</Text>
-                </View>
-                <Text style={staticStyles.clientCardName}>{logo.name}</Text>
+                <Image
+                  source={logo.image}
+                  style={staticStyles.clientCardLogo}
+                  resizeMode="contain"
+                  accessibilityLabel={logo.name}
+                />
               </View>
             ))}
           </InfiniteSlider>
@@ -1747,24 +1751,17 @@ const staticStyles = StyleSheet.create({
     paddingVertical: spacing.xs,
   },
   clientCard: {
-    flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.sm + 2,
-    backgroundColor: colors.card,
-    borderRadius: radii.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm + 4,
-    ...Platform.select({
-      ios: {
-        shadowColor: colors.foreground,
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.06,
-        shadowRadius: 2,
-      },
-      android: { elevation: 1 },
-    }),
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: radii.lg,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    minWidth: 180,
+  },
+  clientCardLogo: {
+    width: 150,
+    height: 50,
   },
   clientCardInitialsWrap: {
     width: 40,
