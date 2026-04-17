@@ -154,6 +154,8 @@ const MEMBER_HERO: HeroContent = {
 interface PartnerLogo {
   name: string;
   image: number;
+  width?: number;
+  height?: number;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -167,8 +169,8 @@ const logoHealthnet = require('../../assets/logo-healthnet.jpeg') as number;
 
 const PARTNER_LOGOS: PartnerLogo[] = [
   { name: 'Anthem Blue Cross', image: logoAnthem },
-  { name: 'Kaiser Permanente', image: logoKaiser },
-  { name: 'Molina Healthcare', image: logoMolina },
+  { name: 'Kaiser Permanente', image: logoKaiser, width: 270, height: 150 },
+  { name: 'Molina Healthcare', image: logoMolina, width: 270, height: 150 },
   { name: 'Health Net', image: logoHealthnet },
 ];
 
@@ -765,7 +767,7 @@ export function LandingScreen(): React.JSX.Element {
               <View key={logo.name} style={staticStyles.clientCard}>
                 <Image
                   source={logo.image}
-                  style={staticStyles.clientCardLogo}
+                  style={[staticStyles.clientCardLogo, logo.width ? { width: logo.width, height: logo.height } : undefined]}
                   resizeMode="contain"
                   accessibilityLabel={logo.name}
                 />
