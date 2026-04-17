@@ -220,7 +220,6 @@ const SERVICE_CARDS: ServiceCard[] = [
 const CHW_HERO_STATS = [
   { label: 'MEDI-CAL MEMBERS', value: '3M+', sublabel: 'IN NEED' },
   { label: 'AVG. EARNINGS', value: '$32/hour' },
-  { label: 'NO QUOTA', value: 'Flexible', sublabel: 'TO MEET' },
 ];
 
 const MEMBER_HERO_STATS = [
