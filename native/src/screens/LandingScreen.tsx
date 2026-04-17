@@ -1755,13 +1755,13 @@ const staticStyles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: '#FFFFFF',
     borderRadius: radii.lg,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    minWidth: 180,
+    paddingHorizontal: 32,
+    paddingVertical: 24,
+    minWidth: 240,
   },
   clientCardLogo: {
-    width: 150,
-    height: 50,
+    width: 200,
+    height: 70,
   },
   clientCardInitialsWrap: {
     width: 40,
