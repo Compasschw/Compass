@@ -1375,10 +1375,10 @@ function ServiceCardItem({
  *   at 280 px and height will be proportionally derived at a 2:1 ratio (h = w * 2).
  */
 function PhoneMockup({ availableWidth }: { availableWidth: number }): React.JSX.Element {
-  const phoneWidth = Math.min(280, availableWidth);
-  const phoneHeight = phoneWidth * 2; // 2:1 ratio — 280 × 560
-  const bezel = Math.round(phoneWidth * 0.04); // ~11px at 280
-  const cornerRadius = 36;
+  const phoneWidth = Math.min(320, availableWidth);
+  const phoneHeight = phoneWidth * 2.1;
+  const bezel = Math.round(phoneWidth * 0.045);
+  const cornerRadius = 40;
   const innerRadius = cornerRadius - bezel;
 
   return (
@@ -2181,11 +2181,10 @@ const staticStyles = StyleSheet.create({
   },
   phoneMockupInner: {
     backgroundColor: colors.card,
-    // paddingTop: large enough to clear the notch
-    paddingTop: 36,
-    paddingHorizontal: spacing.md,
-    paddingBottom: spacing.sm,
-    gap: spacing.sm,
+    paddingTop: 44,
+    paddingHorizontal: 20,
+    paddingBottom: spacing.md,
+    gap: spacing.md,
     // flex: 1 is applied inline so the inner screen fills remaining height
     // (bottom nav is rendered outside this view, inside the outer bezel)
   },
@@ -2197,7 +2196,7 @@ const staticStyles = StyleSheet.create({
   },
   phoneStatusTime: {
     fontFamily: fonts.bodySemibold,
-    fontSize: 11,
+    fontSize: 14,
     color: colors.foreground,
   },
   phoneStatusIcons: {
@@ -2205,13 +2204,13 @@ const staticStyles = StyleSheet.create({
     gap: 3,
   },
   phoneStatusIcon: {
-    width: 12,
-    height: 7,
+    width: 16,
+    height: 9,
     backgroundColor: `${colors.foreground}40`,
-    borderRadius: 2,
+    borderRadius: 3,
   },
   phoneStatusIconGreen: {
-    width: 16,
+    width: 22,
     backgroundColor: colors.primary,
   },
   phoneAppHeader: {
@@ -2222,26 +2221,28 @@ const staticStyles = StyleSheet.create({
   },
   phoneAppTitle: {
     fontFamily: fonts.display,
-    fontSize: 13,
-    color: colors.foreground,
-    letterSpacing: -0.2,
-  },
-  phoneWelcome: {
-    fontFamily: fonts.display,
-    fontSize: 14,
+    fontSize: 18,
     color: colors.foreground,
     letterSpacing: -0.3,
   },
+  phoneWelcome: {
+    fontFamily: fonts.display,
+    fontSize: 22,
+    color: colors.foreground,
+    letterSpacing: -0.5,
+  },
   phoneSubtitle: {
     fontFamily: fonts.body,
-    fontSize: 11,
+    fontSize: 14,
     color: colors.mutedForeground,
+    marginTop: -4,
   },
   phoneSessionCard: {
     backgroundColor: colors.primary,
-    borderRadius: radii.md,
-    padding: spacing.md,
-    gap: spacing.xs,
+    borderRadius: radii.lg,
+    padding: 20,
+    gap: spacing.sm,
+    marginTop: 4,
   },
   phoneSessionCardTop: {
     flexDirection: 'row',
@@ -2249,61 +2250,66 @@ const staticStyles = StyleSheet.create({
     alignItems: 'flex-start',
   },
   phoneSessionTitle: {
-    fontFamily: fonts.displaySemibold,
-    fontSize: 12,
+    fontFamily: fonts.display,
+    fontSize: 18,
     color: '#FFFFFF',
+    lineHeight: 22,
   },
   phoneSessionSub: {
     fontFamily: fonts.body,
-    fontSize: 10,
+    fontSize: 14,
     color: 'rgba(255,255,255,0.65)',
+    marginTop: 2,
   },
   phoneSessionTimeBadge: {
     backgroundColor: '#FFFFFF',
     borderRadius: radii.full,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 3,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
   },
   phoneSessionTime: {
     fontFamily: fonts.bodySemibold,
-    fontSize: 10,
+    fontSize: 14,
     color: colors.primary,
   },
   phoneSessionDesc: {
     fontFamily: fonts.body,
-    fontSize: 10,
+    fontSize: 13,
     color: 'rgba(255,255,255,0.65)',
+    marginTop: 4,
   },
   phoneStatsRow: {
     flexDirection: 'row',
-    gap: spacing.sm,
+    gap: spacing.md,
+    marginTop: 4,
   },
   phoneStatCard: {
     flex: 1,
     backgroundColor: colors.muted,
-    borderRadius: radii.sm,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.sm,
+    borderRadius: radii.md,
+    paddingVertical: 18,
+    paddingHorizontal: spacing.md,
     alignItems: 'center',
   },
   phoneStatValue: {
     fontFamily: fonts.display,
-    fontSize: 16,
+    fontSize: 28,
     color: colors.foreground,
-    letterSpacing: -0.4,
+    letterSpacing: -0.6,
   },
   phoneStatLabel: {
-    fontFamily: fonts.body,
-    fontSize: 9,
+    fontFamily: fonts.bodySemibold,
+    fontSize: 12,
     color: colors.mutedForeground,
-    letterSpacing: 0.2,
+    letterSpacing: 0.3,
     textAlign: 'center',
+    marginTop: 2,
   },
   phoneBottomNav: {
     flexDirection: 'row',
     justifyContent: 'space-around',
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.sm,
+    paddingVertical: 14,
+    paddingHorizontal: spacing.md,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.border,
     backgroundColor: colors.card,
@@ -2315,17 +2321,17 @@ const staticStyles = StyleSheet.create({
     flex: 1,
   },
   phoneNavDot: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
     backgroundColor: colors.muted,
   },
   phoneNavDotActive: {
     backgroundColor: colors.primary,
   },
   phoneNavLabel: {
-    fontFamily: fonts.body,
-    fontSize: 8,
+    fontFamily: fonts.bodySemibold,
+    fontSize: 11,
     color: colors.mutedForeground,
     textAlign: 'center',
   },
