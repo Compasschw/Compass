@@ -813,7 +813,7 @@ export function LandingScreen(): React.JSX.Element {
         <View ref={servicesRef} style={[staticStyles.servicesSection, { paddingTop: sectionPy / 2, paddingBottom: sectionPy }]}>
           <ContentWrapper isDesktop={isDesktop} style={{ paddingHorizontal: isDesktop ? 48 : px }}>
             <Text style={[staticStyles.eyebrowLabel, staticStyles.eyebrowCentered]}>
-              Service Areas
+              {activeTab === 'chw' ? 'Service Areas' : 'Support Areas'}
             </Text>
             <Text
               style={[
@@ -822,7 +822,9 @@ export function LandingScreen(): React.JSX.Element {
                 { fontSize: isDesktop ? 56 : 32, lineHeight: isDesktop ? 60 : 36 },
               ]}
             >
-              Where CHWs make an impact
+              {activeTab === 'chw'
+                ? 'Where CHWs make an impact'
+                : 'Ways CompassCHW can support you'}
             </Text>
             <Text
               style={[
@@ -831,8 +833,9 @@ export function LandingScreen(): React.JSX.Element {
                 { marginBottom: isDesktop ? 48 : 24 },
               ]}
             >
-              As a Compass CHW, you'll guide members through these critical service areas — and get
-              reimbursed for each session.
+              {activeTab === 'chw'
+                ? "As a Compass CHW, you'll guide members through these critical service areas — and get reimbursed for each session."
+                : 'Your CHW can help you navigate these areas — connecting you with the right resources, programs, and support at no cost.'}
             </Text>
 
             {/* Service cards — 3-col grid (2 rows) on desktop, 2-col grid on mobile */}
