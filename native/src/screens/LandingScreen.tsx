@@ -1450,7 +1450,7 @@ function PhoneMockup({ availableWidth, mode = 'chw' }: { availableWidth: number;
               {/* Upcoming session card */}
               <View style={staticStyles.phoneSessionCard}>
                 <View style={staticStyles.phoneSessionCardTop}>
-                  <View>
+                  <View style={{ flex: 1 }}>
                     <Text style={staticStyles.phoneSessionTitle}>Healthcare Nav</Text>
                     <Text style={staticStyles.phoneSessionSub}>w/ Carlos H.</Text>
                   </View>
@@ -1481,7 +1481,7 @@ function PhoneMockup({ availableWidth, mode = 'chw' }: { availableWidth: number;
               {/* Session card — primary green */}
               <View style={staticStyles.phoneSessionCard}>
                 <View style={staticStyles.phoneSessionCardTop}>
-                  <View>
+                  <View style={{ flex: 1 }}>
                     <Text style={staticStyles.phoneSessionTitle}>Housing Support</Text>
                     <Text style={staticStyles.phoneSessionSub}>w/ Maria G.</Text>
                   </View>
@@ -2287,12 +2287,14 @@ const staticStyles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
+    gap: spacing.sm,
   },
   phoneSessionTitle: {
     fontFamily: fonts.display,
-    fontSize: 18,
+    fontSize: 16,
     color: '#FFFFFF',
-    lineHeight: 22,
+    lineHeight: 20,
+    flex: 1,
   },
   phoneSessionSub: {
     fontFamily: fonts.body,
@@ -2303,8 +2305,9 @@ const staticStyles = StyleSheet.create({
   phoneSessionTimeBadge: {
     backgroundColor: '#FFFFFF',
     borderRadius: radii.full,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    flexShrink: 0,
   },
   phoneSessionTime: {
     fontFamily: fonts.bodySemibold,
