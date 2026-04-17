@@ -116,7 +116,7 @@ const CHW_HERO: HeroContent = {
   descriptionPre: 'Compass connects ',
   descriptionBold1: 'Community Health Workers',
   descriptionMid:
-    ' with residents who need help navigating housing, food, recovery, and healthcare — and ',
+    ' with Medi-Cal members who need services such as navigating housing, food, recovery, and healthcare — and ',
   descriptionBold2: 'pays you for your service',
   descriptionPost: ' through Medi-Cal.',
   primaryButtonLabel: 'Start Earning as a CHW',
