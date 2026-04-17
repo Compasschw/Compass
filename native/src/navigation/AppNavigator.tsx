@@ -53,14 +53,14 @@ function AuthNavigator(): React.JSX.Element {
       {/* Landing is the initial route — unauthenticated users see the
           marketing page first before proceeding to Login/Register. */}
       <AuthStack.Screen name="Landing" component={LandingScreen} />
-      <AuthStack.Screen name="Login" component={LoginScreen} />
-      {/* Register is intentionally aliased to LoginScreen — sign-up is a
-          toggle on the same screen, keeping the auth flow compact. */}
-      <AuthStack.Screen name="Register" component={LoginScreen} />
       <AuthStack.Screen name="Waitlist" component={WaitlistScreen} />
-      {/* Onboarding screens — reached after successful registration */}
+      {/* Login/Register/Onboarding screens disabled until platform launch.
+          Uncomment when ready to enable sign-in:
+      <AuthStack.Screen name="Login" component={LoginScreen} />
+      <AuthStack.Screen name="Register" component={LoginScreen} />
       <AuthStack.Screen name="CHWOnboarding" component={CHWOnboardingScreen} />
       <AuthStack.Screen name="MemberOnboarding" component={MemberOnboardingScreen} />
+      */}
     </AuthStack.Navigator>
   );
 }

@@ -421,12 +421,12 @@ export function WaitlistScreen({ navigation }: Props): React.JSX.Element {
 
               <TouchableOpacity
                 style={s.backButton}
-                onPress={() => navigation.navigate('Login')}
+                onPress={() => navigation.navigate('Landing')}
                 activeOpacity={0.85}
-                accessibilityLabel="Go to sign in"
+                accessibilityLabel="Back to home"
                 accessibilityRole="button"
               >
-                <Text style={s.backButtonText}>Back to Sign In</Text>
+                <Text style={s.backButtonText}>Back to Home</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -548,15 +548,14 @@ export function WaitlistScreen({ navigation }: Props): React.JSX.Element {
           <Text style={s.socialProofText}>Join hundreds of CHWs and community members</Text>
         </View>
 
-        {/* Already have account */}
+        {/* Back to home */}
         <View style={s.signInRow}>
-          <Text style={s.signInText}>Already have an account?  </Text>
           <TouchableOpacity
-            onPress={() => navigation.navigate('Login')}
+            onPress={() => navigation.navigate('Landing')}
             accessibilityRole="button"
-            accessibilityLabel="Go to sign in"
+            accessibilityLabel="Back to home"
           >
-            <Text style={s.signInLink}>Sign in</Text>
+            <Text style={s.signInLink}>Back to Home</Text>
           </TouchableOpacity>
         </View>
       </View>

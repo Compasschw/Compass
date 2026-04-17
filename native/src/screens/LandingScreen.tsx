@@ -120,7 +120,7 @@ const CHW_HERO: HeroContent = {
   descriptionBold2: 'pays you for your service',
   descriptionPost: ' through Medi-Cal.',
   primaryButtonLabel: 'Start Earning as a CHW',
-  primaryButtonRoute: 'Login',
+  primaryButtonRoute: 'Waitlist',
   secondaryButtonLabel: 'I Need Help',
   heroImage: heroChwImage,
   badges: [
@@ -535,7 +535,7 @@ export function LandingScreen(): React.JSX.Element {
   }, [navigation, activeTab]);
 
   const handleLoginPress = useCallback((): void => {
-    navigation.navigate('Login');
+    navigation.navigate('Waitlist');
   }, [navigation]);
 
   const px = isDesktop ? 48 : spacing.lg;
