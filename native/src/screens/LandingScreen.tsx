@@ -824,7 +824,7 @@ export function LandingScreen(): React.JSX.Element {
             >
               {activeTab === 'chw'
                 ? 'Where CHWs make an impact'
-                : 'Ways CompassCHW can support you'}
+                : <>Ways Compass<Text style={{ color: '#7A9F5A' }}>CHW</Text> can support you</>}
             </Text>
             <Text
               style={[
