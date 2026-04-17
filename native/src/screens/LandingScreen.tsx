@@ -316,6 +316,31 @@ const CHW_BENEFITS: Benefit[] = [
   },
 ];
 
+// ─── Member benefits (For Medi-Cal Members section) ─────────────────────────
+
+const MEMBER_BENEFITS: Benefit[] = [
+  {
+    icon: Heart,
+    title: '100% free for you',
+    description: 'All services are covered by Medi-Cal. No copays, no surprise bills.',
+  },
+  {
+    icon: Users,
+    title: 'Bilingual CHWs',
+    description: 'Get matched with a CHW who speaks your language and knows your area.',
+  },
+  {
+    icon: Shield,
+    title: 'Private & secure',
+    description: 'Your information is protected by HIPAA. Only your CHW sees your details.',
+  },
+  {
+    icon: Clock,
+    title: 'Same-week matching',
+    description: 'Get paired with a CHW within days, not weeks. Help when you need it.',
+  },
+];
+
 // ─── Mobile First checklist items ─────────────────────────────────────────────
 
 const MOBILE_FEATURES: string[] = [
@@ -323,6 +348,13 @@ const MOBILE_FEATURES: string[] = [
   'Log sessions & track your earnings in real time',
   'Secure messaging with members',
   'Access the full resource directory on the go',
+];
+
+const MEMBER_MOBILE_FEATURES: string[] = [
+  'Find a CHW near you in seconds',
+  'Schedule sessions on your terms',
+  'Message your CHW securely anytime',
+  'Track your health goals and progress',
 ];
 
 // ─── Footer link columns ──────────────────────────────────────────────────────
@@ -835,7 +867,7 @@ export function LandingScreen(): React.JSX.Element {
         </View>
 
         {/* ════════════════════════════════════════════════════════════════
-            SECTION 4 — FOR CHWs
+            SECTION 4 — FOR CHWs / FOR MEMBERS (toggles with activeTab)
         ════════════════════════════════════════════════════════════════ */}
         <View ref={forCHWsRef} style={[staticStyles.forChwsSection, { paddingVertical: sectionPy }]}>
           <ContentWrapper isDesktop={isDesktop} style={{ paddingHorizontal: isDesktop ? 48 : px }}>
@@ -853,46 +885,62 @@ export function LandingScreen(): React.JSX.Element {
               <View style={[staticStyles.forChwsImageCol, { flex: isDesktop ? 1 : undefined }]}>
                 <View style={staticStyles.forChwsImageWrap}>
                   <Image
-                    source={chwMobileImage}
+                    source={activeTab === 'chw' ? chwMobileImage : heroMemberImage}
                     style={[
                       staticStyles.forChwsImage,
                       { height: isDesktop ? 560 : 320 },
                     ]}
                     accessibilityIgnoresInvertColors
-                    accessibilityLabel="Community Health Worker using the Compass app"
+                    accessibilityLabel={activeTab === 'chw' ? 'Community Health Worker using the Compass app' : 'Community member receiving support'}
                     resizeMode="cover"
                   />
                   <View style={staticStyles.forChwsImageOverlay} />
-                  <View style={staticStyles.earningsCard}>
-                    <Text style={staticStyles.earningsCardLabel}>Avg. Earnings</Text>
-                    <Text style={staticStyles.earningsCardValue}>
-                      $32<Text style={staticStyles.earningsCardSuffix}> / hour</Text>
-                    </Text>
-                    <Text style={staticStyles.earningsCardNote}>Reimbursed via Medi-Cal</Text>
-                  </View>
+                  {activeTab === 'chw' ? (
+                    <View style={staticStyles.earningsCard}>
+                      <Text style={staticStyles.earningsCardLabel}>Avg. Earnings</Text>
+                      <Text style={staticStyles.earningsCardValue}>
+                        $32<Text style={staticStyles.earningsCardSuffix}> / hour</Text>
+                      </Text>
+                      <Text style={staticStyles.earningsCardNote}>Reimbursed via Medi-Cal</Text>
+                    </View>
+                  ) : (
+                    <View style={staticStyles.earningsCard}>
+                      <Text style={staticStyles.earningsCardLabel}>Your Cost</Text>
+                      <Text style={staticStyles.earningsCardValue}>
+                        $0
+                      </Text>
+                      <Text style={staticStyles.earningsCardNote}>Covered by Medi-Cal</Text>
+                    </View>
+                  )}
                 </View>
               </View>
 
               {/* Right — content */}
               <View style={[staticStyles.forChwsTextCol, { flex: isDesktop ? 1 : undefined }]}>
-                <Text style={staticStyles.eyebrowLabel}>Why CHWs Choose Compass</Text>
+                <Text style={staticStyles.eyebrowLabel}>
+                  {activeTab === 'chw' ? 'Why CHWs Choose Compass' : 'Why Members Choose Compass'}
+                </Text>
                 <Text
                   style={[
                     staticStyles.sectionHeading,
                     { fontSize: isDesktop ? 48 : 28, lineHeight: isDesktop ? 52 : 34 },
                   ]}
                 >
-                  Earn money helping{' '}
-                  <Text style={staticStyles.accentText}>your neighbors</Text>
+                  {activeTab === 'chw' ? (
+                    <>Earn money helping{' '}<Text style={staticStyles.accentText}>your neighbors</Text></>
+                  ) : (
+                    <>Get the support{' '}<Text style={staticStyles.accentText}>you deserve</Text></>
+                  )}
                 </Text>
                 <Text style={staticStyles.bodyText}>
-                  Join Compass as a CHW and get reimbursed for every session. Work flexible hours,
-                  stay local, and build a career making a real difference in your community.
+                  {activeTab === 'chw'
+                    ? 'Join Compass as a CHW and get reimbursed for every session. Work flexible hours, stay local, and build a career making a real difference in your community.'
+                    : 'Compass connects you with a trained Community Health Worker in your neighborhood who can help with housing, food, healthcare, recovery, and more — at no cost to you.'}
                 </Text>
 
                 {/* Benefits grid — 2×2 */}
                 <View style={staticStyles.benefitsGrid}>
-                  {CHW_BENEFITS.map((benefit) => (
+                  {(activeTab === 'chw' ? CHW_BENEFITS : MEMBER_BENEFITS).map((benefit) => (
                     <View key={benefit.title} style={staticStyles.benefitItem}>
                       <View style={staticStyles.benefitIconWrap}>
                         <benefit.icon size={20} color={colors.primary} />
@@ -907,12 +955,14 @@ export function LandingScreen(): React.JSX.Element {
 
                 <TouchableOpacity
                   style={staticStyles.sectionCta}
-                  onPress={handleLoginPress}
+                  onPress={activeTab === 'chw' ? handleLoginPress : handleWaitlistPress}
                   activeOpacity={0.85}
-                  accessibilityLabel="Start Earning Today"
+                  accessibilityLabel={activeTab === 'chw' ? 'Start Earning Today' : 'Get Matched Now'}
                   accessibilityRole="button"
                 >
-                  <Text style={staticStyles.sectionCtaText}>Start Earning Today</Text>
+                  <Text style={staticStyles.sectionCtaText}>
+                    {activeTab === 'chw' ? 'Start Earning Today' : 'Get Matched Now'}
+                  </Text>
                   <ArrowRight size={16} color="#FFFFFF" />
                 </TouchableOpacity>
               </View>
@@ -1020,24 +1070,29 @@ export function LandingScreen(): React.JSX.Element {
             >
               {/* Left — text content */}
               <View style={[staticStyles.mobileFirstTextCol, { flex: isDesktop ? 1 : undefined }]}>
-                <Text style={staticStyles.eyebrowLabel}>Mobile-First Platform</Text>
+                <Text style={staticStyles.eyebrowLabel}>
+                  {activeTab === 'chw' ? 'Mobile-First Platform' : 'Help At Your Fingertips'}
+                </Text>
                 <Text
                   style={[
                     staticStyles.sectionHeading,
                     { fontSize: isDesktop ? 48 : 28, lineHeight: isDesktop ? 52 : 34 },
                   ]}
                 >
-                  Manage your CHW work{' '}
-                  <Text style={staticStyles.accentText}>from your pocket</Text>
+                  {activeTab === 'chw' ? (
+                    <>Manage your CHW work{' '}<Text style={staticStyles.accentText}>from your pocket</Text></>
+                  ) : (
+                    <>Get help navigating{' '}<Text style={staticStyles.accentText}>what matters most</Text></>
+                  )}
                 </Text>
                 <Text style={staticStyles.bodyText}>
-                  Accept requests, log sessions, track earnings, and communicate with members — all
-                  from your phone. Compass is built mobile-first because your work happens in the
-                  field, not behind a desk.
+                  {activeTab === 'chw'
+                    ? 'Accept requests, log sessions, track earnings, and communicate with members — all from your phone. Compass is built mobile-first because your work happens in the field, not behind a desk.'
+                    : 'Find a CHW, schedule sessions, message your health worker, and track your goals — all from your phone. Compass makes getting help as easy as sending a text.'}
                 </Text>
 
                 <View style={staticStyles.mobileFeaturesList}>
-                  {MOBILE_FEATURES.map((feature) => (
+                  {(activeTab === 'chw' ? MOBILE_FEATURES : MEMBER_MOBILE_FEATURES).map((feature) => (
                     <View key={feature} style={staticStyles.mobileFeatureRow}>
                       <CheckmarkCircle />
                       <Text style={staticStyles.mobileFeatureText}>{feature}</Text>
