@@ -168,10 +168,10 @@ const logoMolina = require('../../assets/logo-molina.png') as number;
 const logoHealthnet = require('../../assets/logo-healthnet.jpeg') as number;
 
 const PARTNER_LOGOS: PartnerLogo[] = [
-  { name: 'Anthem Blue Cross', image: logoAnthem },
+  { name: 'Anthem Blue Cross', image: logoAnthem, width: 270, height: 150 },
   { name: 'Kaiser Permanente', image: logoKaiser, width: 270, height: 150 },
   { name: 'Molina Healthcare', image: logoMolina, width: 270, height: 150 },
-  { name: 'Health Net', image: logoHealthnet },
+  { name: 'Health Net', image: logoHealthnet, width: 270, height: 150 },
 ];
 
 // ─── Service cards data ───────────────────────────────────────────────────────
