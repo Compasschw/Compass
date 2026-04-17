@@ -336,8 +336,8 @@ const MEMBER_BENEFITS: Benefit[] = [
   },
   {
     icon: Clock,
-    title: 'Same-week matching',
-    description: 'Get paired with a CHW within days, not weeks. Help when you need it.',
+    title: 'Earn Rewards!',
+    description: 'Receive rewards for completing health actions.',
   },
 ];
 
