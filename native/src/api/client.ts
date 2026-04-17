@@ -8,7 +8,7 @@
 import * as SecureStore from 'expo-secure-store';
 
 const API_BASE =
-  process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8000/api/v1';
+  process.env.EXPO_PUBLIC_API_URL || 'https://api.joincompasschw.com/api/v1';
 
 const TOKENS_KEY = 'compass_tokens';
 
