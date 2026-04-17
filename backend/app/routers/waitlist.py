@@ -49,10 +49,9 @@ async def list_waitlist_entries(
 
 @router.get("/count")
 async def waitlist_count(
-    current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, int]:
-    """Requires authentication. Returns total waitlist count."""
+    """Public endpoint -- returns total waitlist count."""
     result = await db.execute(select(func.count()).select_from(WaitlistEntry))
     count = result.scalar() or 0
     return {"count": count}
