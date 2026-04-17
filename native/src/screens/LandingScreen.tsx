@@ -1154,7 +1154,7 @@ export function LandingScreen(): React.JSX.Element {
                   { flex: isDesktop ? 1 : undefined, alignItems: 'center' },
                 ]}
               >
-                <PhoneMockup availableWidth={isDesktop ? 320 : width - spacing.lg * 2} />
+                <PhoneMockup availableWidth={isDesktop ? 320 : width - spacing.lg * 2} mode={activeTab} />
               </View>
             </View>
           </ContentWrapper>
@@ -1374,7 +1374,8 @@ function ServiceCardItem({
  * @param availableWidth - The width of the container. The phone will be capped
  *   at 280 px and height will be proportionally derived at a 2:1 ratio (h = w * 2).
  */
-function PhoneMockup({ availableWidth }: { availableWidth: number }): React.JSX.Element {
+function PhoneMockup({ availableWidth, mode = 'chw' }: { availableWidth: number; mode?: 'chw' | 'member' }): React.JSX.Element {
+  const isMember = mode === 'member';
   const phoneWidth = Math.min(320, availableWidth);
   const phoneHeight = phoneWidth * 2.1;
   const bezel = Math.round(phoneWidth * 0.045);
@@ -1441,34 +1442,69 @@ function PhoneMockup({ availableWidth }: { availableWidth: number }): React.JSX.
             <Text style={staticStyles.phoneAppTitle}>Compass</Text>
           </View>
 
-          <Text style={staticStyles.phoneWelcome}>Welcome back, Carlos</Text>
-          <Text style={staticStyles.phoneSubtitle}>You have 2 sessions today</Text>
+          {isMember ? (
+            <>
+              <Text style={staticStyles.phoneWelcome}>Welcome back, Rosa</Text>
+              <Text style={staticStyles.phoneSubtitle}>Your next session is tomorrow</Text>
 
-          {/* Session card — primary green */}
-          <View style={staticStyles.phoneSessionCard}>
-            <View style={staticStyles.phoneSessionCardTop}>
-              <View>
-                <Text style={staticStyles.phoneSessionTitle}>Housing Support</Text>
-                <Text style={staticStyles.phoneSessionSub}>w/ Maria G.</Text>
+              {/* Upcoming session card */}
+              <View style={staticStyles.phoneSessionCard}>
+                <View style={staticStyles.phoneSessionCardTop}>
+                  <View>
+                    <Text style={staticStyles.phoneSessionTitle}>Healthcare Nav</Text>
+                    <Text style={staticStyles.phoneSessionSub}>w/ Carlos H.</Text>
+                  </View>
+                  <View style={staticStyles.phoneSessionTimeBadge}>
+                    <Text style={staticStyles.phoneSessionTime}>10:00 AM</Text>
+                  </View>
+                </View>
+                <Text style={staticStyles.phoneSessionDesc}>Medi-Cal enrollment assistance</Text>
               </View>
-              <View style={staticStyles.phoneSessionTimeBadge}>
-                <Text style={staticStyles.phoneSessionTime}>2:00 PM</Text>
-              </View>
-            </View>
-            <Text style={staticStyles.phoneSessionDesc}>Rental assistance application review</Text>
-          </View>
 
-          {/* Two stat cards side by side */}
-          <View style={staticStyles.phoneStatsRow}>
-            <View style={staticStyles.phoneStatCard}>
-              <Text style={staticStyles.phoneStatValue}>$176</Text>
-              <Text style={staticStyles.phoneStatLabel}>This Week</Text>
-            </View>
-            <View style={staticStyles.phoneStatCard}>
-              <Text style={staticStyles.phoneStatValue}>24</Text>
-              <Text style={staticStyles.phoneStatLabel}>Sessions Done</Text>
-            </View>
-          </View>
+              {/* Two stat cards — member focused */}
+              <View style={staticStyles.phoneStatsRow}>
+                <View style={staticStyles.phoneStatCard}>
+                  <Text style={staticStyles.phoneStatValue}>$30</Text>
+                  <Text style={staticStyles.phoneStatLabel}>Rewards</Text>
+                </View>
+                <View style={staticStyles.phoneStatCard}>
+                  <Text style={staticStyles.phoneStatValue}>3</Text>
+                  <Text style={staticStyles.phoneStatLabel}>Goals Active</Text>
+                </View>
+              </View>
+            </>
+          ) : (
+            <>
+              <Text style={staticStyles.phoneWelcome}>Welcome back, Carlos</Text>
+              <Text style={staticStyles.phoneSubtitle}>You have 2 sessions today</Text>
+
+              {/* Session card — primary green */}
+              <View style={staticStyles.phoneSessionCard}>
+                <View style={staticStyles.phoneSessionCardTop}>
+                  <View>
+                    <Text style={staticStyles.phoneSessionTitle}>Housing Support</Text>
+                    <Text style={staticStyles.phoneSessionSub}>w/ Maria G.</Text>
+                  </View>
+                  <View style={staticStyles.phoneSessionTimeBadge}>
+                    <Text style={staticStyles.phoneSessionTime}>2:00 PM</Text>
+                  </View>
+                </View>
+                <Text style={staticStyles.phoneSessionDesc}>Rental assistance application review</Text>
+              </View>
+
+              {/* Two stat cards side by side */}
+              <View style={staticStyles.phoneStatsRow}>
+                <View style={staticStyles.phoneStatCard}>
+                  <Text style={staticStyles.phoneStatValue}>$176</Text>
+                  <Text style={staticStyles.phoneStatLabel}>This Week</Text>
+                </View>
+                <View style={staticStyles.phoneStatCard}>
+                  <Text style={staticStyles.phoneStatValue}>24</Text>
+                  <Text style={staticStyles.phoneStatLabel}>Sessions Done</Text>
+                </View>
+              </View>
+            </>
+          )}
         </View>
 
         {/* Bottom nav — inside the bezel, rounded bottom corners */}
@@ -1478,7 +1514,10 @@ function PhoneMockup({ availableWidth }: { availableWidth: number }): React.JSX.
             { borderBottomLeftRadius: innerRadius, borderBottomRightRadius: innerRadius },
           ]}
         >
-          {['Home', 'Requests', 'Sessions', 'Earnings'].map((item) => (
+          {(isMember
+            ? ['Home', 'Find CHW', 'Sessions', 'Goals']
+            : ['Home', 'Requests', 'Sessions', 'Earnings']
+          ).map((item) => (
             <View key={item} style={staticStyles.phoneNavItem}>
               <View style={[staticStyles.phoneNavDot, item === 'Home' && staticStyles.phoneNavDotActive]} />
               <Text style={staticStyles.phoneNavLabel}>{item}</Text>
