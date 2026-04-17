@@ -159,11 +159,11 @@ interface PartnerLogo {
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const logoAnthem = require('../../assets/logo-anthem.png') as number;
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const logoKaiser = require('../../assets/logo-kaiser.jpeg') as number;
+const logoKaiser = require('../../assets/logo-kaiser.png') as number;
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const logoMolina = require('../../assets/logo-molina.jpeg') as number;
+const logoMolina = require('../../assets/logo-molina.png') as number;
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const logoHealthnet = require('../../assets/logo-healthnet.png') as number;
+const logoHealthnet = require('../../assets/logo-healthnet.jpeg') as number;
 
 const PARTNER_LOGOS: PartnerLogo[] = [
   { name: 'Anthem Blue Cross', image: logoAnthem },
