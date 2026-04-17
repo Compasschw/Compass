@@ -4,6 +4,8 @@ Admin dashboard — password-protected HTML page to view waitlist submissions.
 Access: GET /admin/waitlist?key=YOUR_ADMIN_KEY
 """
 
+from datetime import timezone, timedelta
+
 from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import HTMLResponse
 from sqlalchemy import func, select
@@ -11,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.waitlist import WaitlistEntry
+
+PT = timezone(timedelta(hours=-7))  # Pacific Daylight Time (UTC-7)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -84,7 +88,7 @@ async def admin_waitlist_page(
             <td><strong>{entry.first_name} {entry.last_name}</strong></td>
             <td><a href="mailto:{entry.email}" style="color: #3D5A3E;">{entry.email}</a></td>
             <td><span style="background: {role_color}15; color: {role_color}; padding: 4px 10px; border-radius: 100px; font-size: 12px; font-weight: 600;">{entry.role.upper()}</span></td>
-            <td>{entry.created_at.strftime('%b %d, %Y %I:%M %p')}</td>
+            <td>{entry.created_at.replace(tzinfo=timezone.utc).astimezone(PT).strftime('%b %d, %Y %I:%M %p PT')}</td>
         </tr>
         """
 
