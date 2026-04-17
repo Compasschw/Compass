@@ -182,7 +182,7 @@ interface ServiceCard {
   description: string;
 }
 
-const SERVICE_CARDS: ServiceCard[] = [
+const CHW_SERVICE_CARDS: ServiceCard[] = [
   {
     icon: Home,
     title: 'Housing',
@@ -212,6 +212,39 @@ const SERVICE_CARDS: ServiceCard[] = [
     icon: Bus,
     title: 'Transportation Assistance',
     description: 'Coordinate rides to medical appointments, social services, and community resources.',
+  },
+];
+
+const MEMBER_SERVICE_CARDS: ServiceCard[] = [
+  {
+    icon: Home,
+    title: 'Housing',
+    description: 'Get help finding rental assistance, emergency shelter, or stable housing in your area.',
+  },
+  {
+    icon: Pill,
+    title: 'Rehab & Recovery',
+    description: 'Find recovery programs, sober living options, and peer support near you.',
+  },
+  {
+    icon: Apple,
+    title: 'Food & Pantry',
+    description: 'Get help signing up for CalFresh, finding food pantries, and accessing nutrition programs.',
+  },
+  {
+    icon: Brain,
+    title: 'Mental Health',
+    description: 'Connect with counseling, crisis support, and wellness resources when you need them.',
+  },
+  {
+    icon: HeartPulse,
+    title: 'Healthcare',
+    description: 'Get help enrolling in Medi-Cal, scheduling appointments, and understanding your benefits.',
+  },
+  {
+    icon: Bus,
+    title: 'Transportation Assistance',
+    description: 'Get rides to medical appointments, social services, and community resources.',
   },
 ];
 
@@ -849,7 +882,7 @@ export function LandingScreen(): React.JSX.Element {
                 },
               ]}
             >
-              {SERVICE_CARDS.map((card) => (
+              {(activeTab === 'chw' ? CHW_SERVICE_CARDS : MEMBER_SERVICE_CARDS).map((card) => (
                 <ServiceCardItem
                   key={card.title}
                   card={card}
