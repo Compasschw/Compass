@@ -868,7 +868,7 @@ export function LandingScreen(): React.JSX.Element {
             >
               {activeTab === 'chw'
                 ? "As a Compass CHW, you'll guide members through these critical service areas — and get reimbursed for each session."
-                : 'Your CHW can help you navigate these areas — connecting you with the right resources, programs, and support at no cost.'}
+                : 'Your CHW can help you navigate these areas and more — connecting you with the right resources, programs, and support at no cost.'}
             </Text>
 
             {/* Service cards — 3-col grid (2 rows) on desktop, 2-col grid on mobile */}
@@ -1190,7 +1190,7 @@ export function LandingScreen(): React.JSX.Element {
               >
                 {activeTab === 'chw'
                   ? 'Ready to start earning as a CHW?'
-                  : 'Being healthy is rewarding!'}
+                  : 'Getting healthy is rewarding!'}
               </Text>
               <Text style={staticStyles.ctaBody}>
                 {activeTab === 'chw'
