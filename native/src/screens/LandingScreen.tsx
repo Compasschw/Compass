@@ -158,13 +158,16 @@ interface PartnerLogo {
 
 const PARTNER_LOGOS: PartnerLogo[] = [
   { name: 'Kaiser Permanente', initials: 'KP' },
-  { name: 'LA County DPSS', initials: 'DPSS' },
-  { name: 'Medi-Cal', initials: 'MC' },
-  { name: 'Blue Shield CA', initials: 'BS' },
   { name: 'Health Net', initials: 'HN' },
-  { name: 'CalOptima', initials: 'CO' },
-  { name: 'LA Care', initials: 'LAC' },
   { name: 'Molina Healthcare', initials: 'MH' },
+  { name: 'Anthem Blue Cross', initials: 'ABC' },
+  { name: 'Kern Family Health Care', initials: 'KF' },
+  { name: 'Mountain Valley Health Plan', initials: 'MV' },
+  { name: 'Partnership HealthPlan', initials: 'PH' },
+  { name: 'Santa Clara Family Health Plan', initials: 'SC' },
+  { name: 'LA Care', initials: 'LAC' },
+  { name: 'CalOptima', initials: 'CO' },
+  { name: 'Medi-Cal', initials: 'MC' },
 ];
 
 // ─── Service cards data ───────────────────────────────────────────────────────
