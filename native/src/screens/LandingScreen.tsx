@@ -1153,11 +1153,14 @@ export function LandingScreen(): React.JSX.Element {
                   { fontSize: isDesktop ? 56 : 32, lineHeight: isDesktop ? 60 : 38 },
                 ]}
               >
-                Ready to start earning as a CHW?
+                {activeTab === 'chw'
+                  ? 'Ready to start earning as a CHW?'
+                  : 'Being healthy is rewarding!'}
               </Text>
               <Text style={staticStyles.ctaBody}>
-                We're opening Compass to CHWs in Los Angeles County first. Secure your spot, set your
-                availability, and start getting matched with members who need your help.
+                {activeTab === 'chw'
+                  ? "We're opening Compass to CHWs in Los Angeles County first. Secure your spot, set your availability, and start getting matched with members who need your help."
+                  : "We're opening Compass to Medi-Cal members in Los Angeles County first. Sign up, get matched with a local CHW, and earn rewards for taking steps toward better health."}
               </Text>
 
               <View
@@ -2358,7 +2361,7 @@ const staticStyles = StyleSheet.create({
   ctaOutlineButtonSecondaryText: {
     fontFamily: fonts.bodySemibold,
     fontSize: 15,
-    color: 'rgba(255,255,255,0.7)',
+    color: '#FFFFFF',
   },
 
   // ── Footer ────────────────────────────────────────────────────────────────────
