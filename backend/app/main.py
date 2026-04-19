@@ -20,7 +20,23 @@ async def lifespan(app: FastAPI):
     async with engine.connect() as conn:
         await conn.execute(text("SELECT 1"))
     logger.info("Database connection verified")
+
+    # Start background scheduler for session reminders + claim retries.
+    # Failure to start is non-fatal — log and proceed so API traffic still serves.
+    try:
+        from app.services.scheduler import start_scheduler
+        start_scheduler()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Scheduler startup failed: %s", e)
+
     yield
+
+    try:
+        from app.services.scheduler import stop_scheduler
+        stop_scheduler()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Scheduler shutdown error: %s", e)
+
     await engine.dispose()
 
 

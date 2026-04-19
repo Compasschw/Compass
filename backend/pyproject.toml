@@ -20,6 +20,7 @@ dependencies = [
     "httpx>=0.28.0",
     "slowapi>=0.1.9",
     "cryptography>=45.0.0",
+    "apscheduler>=3.10.0",
 ]
 
 [project.optional-dependencies]
