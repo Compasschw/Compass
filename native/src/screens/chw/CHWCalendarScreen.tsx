@@ -28,7 +28,6 @@ import {
 import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
 import {
-  mockCalendarEvents,
   verticalLabels,
   type CalendarEvent,
   type Vertical,
@@ -92,23 +91,13 @@ function groupByDate(events: CalendarEvent[]): Map<string, CalendarEvent[]> {
 
 /**
  * Derives CalendarEvent records from the sessions array.
- * Sessions already represented in mockCalendarEvents are skipped.
+ *
+ * Note: Previously merged with `mockCalendarEvents` fixture data. Now only
+ * real sessions from the API are displayed. Goal milestones will reappear
+ * when a backend goals endpoint exists.
  */
 function deriveSessionEvents(sessions: SessionData[]): CalendarEvent[] {
-  const existingKeys = new Set<string>(
-    mockCalendarEvents
-      .filter((e) => e.type === 'session' && e.memberName)
-      .map((e) => `${e.date}|${e.memberName}`),
-  );
-
   return sessions
-    .filter((session) => {
-      const dt = new Date(session.scheduledAt);
-      const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
-      const dd = String(dt.getUTCDate()).padStart(2, '0');
-      const date = `${dt.getUTCFullYear()}-${mm}-${dd}`;
-      return !existingKeys.has(`${date}|${session.memberName}`);
-    })
     .map((session) => {
       const dt = new Date(session.scheduledAt);
       const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
@@ -297,7 +286,7 @@ export function CHWCalendarScreen(): React.JSX.Element {
   const allSessions = rawSessions ?? [];
 
   const allEvents = useMemo<CalendarEvent[]>(() => {
-    return [...mockCalendarEvents, ...deriveSessionEvents(allSessions)];
+    return deriveSessionEvents(allSessions);
   }, [allSessions]);
 
   if (isLoading) {
