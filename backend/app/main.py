@@ -14,6 +14,37 @@ from app.middleware.audit import AuditMiddleware
 
 logger = logging.getLogger("compass")
 
+# ─── Sentry initialization ─────────────────────────────────────────────────────
+# Must happen before the FastAPI app is instantiated so the integration can
+# patch it cleanly. No-ops silently if SENTRY_DSN isn't set.
+if settings.sentry_dsn:
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.asyncio import AsyncioIntegration
+        from sentry_sdk.integrations.fastapi import FastApiIntegration
+        from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
+
+        sentry_sdk.init(
+            dsn=settings.sentry_dsn,
+            environment=settings.environment,
+            # 10% traces in prod for cost; 100% in dev/staging
+            traces_sample_rate=0.1 if settings.environment == "production" else 1.0,
+            profiles_sample_rate=0.1 if settings.environment == "production" else 1.0,
+            # HIPAA: never send request bodies or user data to Sentry
+            send_default_pii=False,
+            # Suppress common noisy errors (rate limits, 404s) to keep the
+            # signal-to-noise ratio useful for real engineering incidents
+            ignore_errors=["RateLimitExceeded"],
+            integrations=[
+                FastApiIntegration(transaction_style="endpoint"),
+                SqlalchemyIntegration(),
+                AsyncioIntegration(),
+            ],
+        )
+        logger.info("Sentry initialized (environment=%s)", settings.environment)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Sentry init failed: %s", e)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

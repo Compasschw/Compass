@@ -60,6 +60,10 @@ class Settings(BaseSettings):
     transcription_provider: str = "assemblyai"
     assemblyai_api_key: str = ""
 
+    # Observability
+    sentry_dsn: str = ""
+    environment: str = "development"  # development | staging | production
+
     class Config:
         env_file = ".env"
 
