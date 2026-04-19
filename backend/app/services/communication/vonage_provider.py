@@ -147,19 +147,31 @@ class VonageProvider(CommunicationProvider):
         return None
 
     async def get_transcript(self, recording_url: str) -> TranscriptResult | None:
-        """Transcribe a recording using Vonage's built-in transcription.
+        """Transcribe a recording.
 
-        For medical-grade accuracy, consider routing through AssemblyAI instead:
-        - AssemblyAI offers HIPAA BAA + medical terminology model
-        - $0.005/min (base + medical add-on)
-        - Can be added as a second transcription step post-recording
+        Routes through the transcription provider (AssemblyAI by default) for
+        medical-grade accuracy + HIPAA BAA coverage. The Vonage-built-in
+        transcription is available but lacks medical terminology and we'd
+        need a separate BAA with Vonage for it.
+
+        Separating this into the TranscriptionProvider abstraction means
+        we can switch to Deepgram, Google Medical, or on-prem Whisper
+        without touching the Vonage integration.
         """
-        client = self._get_client()
-
-        if client is None:
+        if not recording_url:
             return None
 
-        # TODO: Implement Vonage transcription or AssemblyAI integration
-        # Option A: Vonage built-in transcription (included in Professional plan)
-        # Option B: Download recording → send to AssemblyAI for medical-grade accuracy
-        return None
+        try:
+            from app.services.transcription import get_transcription_provider
+            provider = get_transcription_provider()
+            transcript = await provider.transcribe(recording_url, medical=True)
+            if transcript is None:
+                return None
+            return TranscriptResult(
+                text=transcript.text,
+                confidence=transcript.confidence,
+                provider_transcript_id=transcript.provider_id,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.error("Transcription failed: %s", e)
+            return None

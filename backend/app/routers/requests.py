@@ -106,6 +106,27 @@ async def accept_request(request_id: UUID, current_user=Depends(require_role("ch
     db.add(session)
     await db.commit()
     await db.refresh(session)
+
+    # Notify the member that their request was accepted.
+    # Push delivery is best-effort — failures don't fail the request.
+    try:
+        from app.services.notifications import NotificationPayload, notify_user
+        await notify_user(
+            db,
+            req.member_id,
+            NotificationPayload(
+                user_id=req.member_id,
+                title="A CHW accepted your request",
+                body=f"{current_user.name.split(' ')[0]} will reach out soon to schedule your session.",
+                deeplink=f"compasschw://sessions/{session.id}",
+                category="request.accepted",
+                data={"session_id": str(session.id), "request_id": str(req.id)},
+            ),
+        )
+    except Exception as e:  # noqa: BLE001
+        import logging
+        logging.getLogger("compass").warning("Notification fanout failed on accept: %s", e)
+
     return {"status": "matched", "request_id": str(req.id), "session_id": str(session.id)}
 
 @router.patch("/{request_id}/pass")

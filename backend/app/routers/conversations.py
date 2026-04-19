@@ -43,4 +43,28 @@ async def send_message(conversation_id: UUID, data: MessageCreate, current_user=
     db.add(msg)
     await db.commit()
     await db.refresh(msg)
+
+    # Notify the other party. Deliberately uses a short preview only — never
+    # the full body, in case the message contains PHI (HIPAA minimum necessary
+    # on the lock screen). The app fetches full content after tap.
+    try:
+        recipient_id = conv.member_id if current_user.id == conv.chw_id else conv.chw_id
+        preview = (data.body[:40] + "…") if len(data.body) > 40 else data.body
+        from app.services.notifications import NotificationPayload, notify_user
+        await notify_user(
+            db,
+            recipient_id,
+            NotificationPayload(
+                user_id=recipient_id,
+                title=f"New message from {current_user.name.split(' ')[0]}",
+                body=preview,
+                deeplink=f"compasschw://conversations/{conversation_id}",
+                category="message.new",
+                data={"conversation_id": str(conversation_id), "message_id": str(msg.id)},
+            ),
+        )
+    except Exception as e:  # noqa: BLE001
+        import logging
+        logging.getLogger("compass").warning("Notification fanout failed on message send: %s", e)
+
     return msg

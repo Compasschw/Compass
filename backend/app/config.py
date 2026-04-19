@@ -43,6 +43,18 @@ class Settings(BaseSettings):
     # Generate: python -c "import secrets, base64; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"
     phi_encryption_key: str = ""
 
+    # Notification provider (expo for MVP; future: direct apns/fcm)
+    notification_provider: str = "expo"
+    expo_access_token: str = ""  # Optional; higher rate limits when set
+
+    # Magic-link auth (passwordless login via email)
+    magic_link_ttl_minutes: int = 15
+    magic_link_base_url: str = "https://joincompasschw.com/auth/magic"
+
+    # Transcription provider (assemblyai for medical-grade; vonage_builtin as fallback)
+    transcription_provider: str = "assemblyai"
+    assemblyai_api_key: str = ""
+
     class Config:
         env_file = ".env"
 

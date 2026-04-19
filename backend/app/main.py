@@ -48,6 +48,7 @@ from app.routers.auth import router as auth_router
 from app.routers.chw import router as chw_router
 from app.routers.conversations import router as conversations_router
 from app.routers.credentials import router as credentials_router
+from app.routers.devices import router as devices_router
 from app.routers.health import router as health_router
 from app.routers.matching import router as matching_router
 from app.routers.member import router as member_router
@@ -68,3 +69,4 @@ app.include_router(upload_router)
 app.include_router(health_router)
 app.include_router(waitlist_router)
 app.include_router(admin_router)
+app.include_router(devices_router)

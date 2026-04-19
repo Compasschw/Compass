@@ -5,7 +5,9 @@ from app.models.calendar import CalendarEvent
 from app.models.communication import CommunicationSession
 from app.models.conversation import CallLog, Conversation, FileAttachment, Message
 from app.models.credential import CHWCredentialValidation, Credential, InstitutionRegistry
+from app.models.device import DeviceToken
 from app.models.enums import *
+from app.models.magic_link import MagicLinkToken
 from app.models.request import ServiceRequest
 from app.models.reward import RedemptionItem, RewardTransaction
 from app.models.session import MemberConsent, Session, SessionDocumentation
@@ -26,5 +28,7 @@ __all__ = [
     "RefreshToken",
     "TwilioProxySession",
     "CommunicationSession",
+    "DeviceToken",
+    "MagicLinkToken",
     "WaitlistEntry",
 ]
