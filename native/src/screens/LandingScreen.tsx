@@ -969,7 +969,7 @@ export function LandingScreen(): React.JSX.Element {
                 </Text>
                 <Text style={staticStyles.bodyText}>
                   {activeTab === 'chw'
-                    ? 'Join Compass as a CHW and get reimbursed for every session. Work flexible hours, stay local, and build a career making a real difference in your community.'
+                    ? 'Join Compass as a CHW and get reimbursed for every complete session. Work flexible hours, stay local, and build a career making a real difference in your community.'
                     : 'Compass connects you with a trained Community Health Worker in your neighborhood who can help with housing, food, healthcare, recovery, and more — at no cost to you.'}
                 </Text>
 
