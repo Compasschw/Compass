@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     notification_provider: str = "expo"
     expo_access_token: str = ""  # Optional; higher rate limits when set
 
+    # Transactional email (AWS SES default; covered by AWS BAA)
+    email_provider: str = "ses"
+    email_from: str = "noreply@joincompasschw.com"
+    email_reply_to: str = ""
+
     # Magic-link auth (passwordless login via email)
     magic_link_ttl_minutes: int = 15
     magic_link_base_url: str = "https://joincompasschw.com/auth/magic"

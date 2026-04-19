@@ -14,7 +14,7 @@ import React, {
   useState,
 } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { clearTokens, getTokens } from '../api/client';
+import { clearTokens, getTokens, setTokens } from '../api/client';
 import { loginUser, logoutUser, registerUser } from '../api/auth';
 import type { UserRole } from '../data/mock';
 
@@ -24,6 +24,13 @@ interface AuthState {
   isAuthenticated: boolean;
   userRole: UserRole | null;
   userName: string | null;
+}
+
+interface SignInPayload {
+  accessToken: string;
+  refreshToken: string;
+  role: UserRole;
+  name: string;
 }
 
 interface AuthContextValue extends AuthState {
@@ -36,6 +43,8 @@ interface AuthContextValue extends AuthState {
     role: string,
     phone?: string,
   ) => Promise<void>;
+  /** Sign in directly from a JWT pair — used by magic-link verify. */
+  signInWithTokens: (payload: SignInPayload) => Promise<void>;
   /** Bypass API — set auth state directly from mock data (for demos). */
   loginMock: (role: UserRole, name: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -133,6 +142,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
     [persistAuthState],
   );
 
+  // ── signInWithTokens (magic-link / SSO-style handoff) ──────────────────────
+  const signInWithTokens = useCallback(
+    async (payload: SignInPayload): Promise<void> => {
+      await setTokens(payload.accessToken, payload.refreshToken);
+      const newState: AuthState = {
+        isAuthenticated: true,
+        userRole: payload.role,
+        userName: payload.name,
+      };
+      await persistAuthState(newState);
+      setAuthState(newState);
+    },
+    [persistAuthState],
+  );
+
   // ── loginMock (demo/offline fallback) ───────────────────────────────────────
   const loginMock = useCallback(async (role: UserRole, name: string): Promise<void> => {
     const newState: AuthState = {
@@ -164,8 +188,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
 
   // ── Context value ──────────────────────────────────────────────────────────
   const value = useMemo<AuthContextValue>(
-    () => ({ ...authState, isLoading, login, register, loginMock, logout }),
-    [authState, isLoading, login, register, loginMock, logout],
+    () => ({ ...authState, isLoading, login, register, signInWithTokens, loginMock, logout }),
+    [authState, isLoading, login, register, signInWithTokens, loginMock, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

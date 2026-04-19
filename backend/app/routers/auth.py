@@ -132,14 +132,22 @@ async def request_magic_link(
     # parses this and calls /auth/magic/verify with the token.
     magic_url = f"{settings.magic_link_base_url}?token={raw_token}"
 
-    # TODO: wire up email delivery (SES, Resend, or Postmark).
-    # For now, log it so dev can copy-paste from logs. In production this
-    # should hand off to an email service with HIPAA BAA.
+    # Deliver via email. Failures are logged (for dev debugging) but don't
+    # change the API response — we still return 202 to preserve the no-enumeration
+    # property. In staging, the dev picks the URL from the log if SES isn't set up.
     import logging
-    logging.getLogger("compass.auth").info(
-        "Magic link generated for user %s (expires %s): %s",
-        user.id, expires_at.isoformat(), magic_url,
+
+    from app.services.email import send_magic_link_email
+    result = await send_magic_link_email(
+        to=data.email,
+        magic_url=magic_url,
+        ttl_minutes=settings.magic_link_ttl_minutes,
     )
+    if not result.success:
+        logging.getLogger("compass.auth").warning(
+            "Magic link email for user %s failed: %s. URL (dev only): %s",
+            user.id, result.error, magic_url,
+        )
 
     return {"status": "accepted"}
 

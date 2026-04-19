@@ -8,15 +8,21 @@
  *   - Member role              → MemberTabNavigator
  */
 
-import React from 'react';
+import React, { useCallback, useRef } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
-import { NavigationContainer } from '@react-navigation/native';
+import {
+  NavigationContainer,
+  type NavigationContainerRef,
+} from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
 import { useAuth } from '../context/AuthContext';
+import { useRegisterPushNotifications } from '../hooks/usePushNotifications';
+import { useDeepLinks } from '../hooks/useDeepLinks';
 import { colors } from '../theme/colors';
 import { LandingScreen } from '../screens/LandingScreen';
 import { LoginScreen } from '../screens/auth/LoginScreen';
+import { MagicLinkScreen } from '../screens/auth/MagicLinkScreen';
 import { WaitlistScreen } from '../screens/auth/WaitlistScreen';
 import { CHWOnboardingScreen } from '../screens/onboarding/CHWOnboardingScreen';
 import { MemberOnboardingScreen } from '../screens/onboarding/MemberOnboardingScreen';
@@ -30,6 +36,7 @@ export type AuthStackParamList = {
   Login: undefined;
   Register: undefined;
   Waitlist: undefined;
+  MagicLink: { token?: string } | undefined;
   CHWOnboarding: undefined;
   MemberOnboarding: undefined;
 };
@@ -54,6 +61,10 @@ function AuthNavigator(): React.JSX.Element {
           marketing page first before proceeding to Login/Register. */}
       <AuthStack.Screen name="Landing" component={LandingScreen} />
       <AuthStack.Screen name="Waitlist" component={WaitlistScreen} />
+      {/* MagicLink is always registered so deep links from email can route to it
+          even pre-launch. The screen itself shows "Coming soon" if verification
+          fails because the user isn't provisioned. */}
+      <AuthStack.Screen name="MagicLink" component={MagicLinkScreen} />
       {/* Login/Register/Onboarding screens disabled until platform launch.
           Uncomment when ready to enable sign-in:
       <AuthStack.Screen name="Login" component={LoginScreen} />
@@ -91,13 +102,34 @@ function LoadingScreen(): React.JSX.Element {
 
 export function AppNavigator(): React.JSX.Element {
   const { isLoading, isAuthenticated, userRole } = useAuth();
+  const navigationRef = useRef<NavigationContainerRef<RootStackParamList>>(null);
+
+  // Register this device for push notifications once authenticated.
+  // Re-runs if isAuthenticated flips back and forth (e.g., logout → login).
+  useRegisterPushNotifications(isAuthenticated);
+
+  // Handle magic-link tokens from deep links (email → compasschw://auth/magic?token=...)
+  // by navigating to MagicLinkScreen with the token, which runs the verify mutation.
+  const handleMagicLink = useCallback(
+    (token: string) => {
+      const nav = navigationRef.current;
+      if (!nav) return;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (nav as any).navigate('Auth', { screen: 'MagicLink', params: { token } });
+    },
+    [],
+  );
+
+  // Install deep-link + push-tap handlers. The hook guards against duplicate URL
+  // handling and no-ops on the web / in simulators.
+  useDeepLinks(navigationRef, handleMagicLink);
 
   if (isLoading) {
     return <LoadingScreen />;
   }
 
   return (
-    <NavigationContainer>
+    <NavigationContainer ref={navigationRef}>
       <RootStack.Navigator screenOptions={{ headerShown: false }}>
         {!isAuthenticated ? (
           <RootStack.Screen name="Auth" component={AuthNavigator} />
