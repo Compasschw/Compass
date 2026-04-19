@@ -181,6 +181,65 @@ The platform is ~85% built. The final 15% is:
 2. **EC2 redeploy** — 30 minutes when ready. New env vars required: `ADMIN_KEY`, `PHI_ENCRYPTION_KEY`, and optionally `ASSEMBLYAI_API_KEY`, `EXPO_ACCESS_TOKEN`, `EMAIL_FROM`.
 3. **Real-data end-to-end test** — needs at least Lisett or Karla onboarded for the first real session cycle.
 4. **Vonage webhook endpoint** — needs a purchased number + application credentials before any code can be tested.
-5. **Session reminder scheduler** — a "nice to have" pre-launch; can be deferred to post-MVP.
+5. ~~**Session reminder scheduler**~~ → **Built this afternoon.**
 
 **Everything that can be built without external credentials has been built or scaffolded.**
+
+---
+
+## Extended Session — Afternoon of 2026-04-19
+
+After Tier 1 completion, continued with Tier 2 autonomous tasks.
+
+### Document upload/download in session chat (commit `be45f0b`)
+- Backend: `MessageCreate` accepts attachment metadata; `send_message` creates `FileAttachment`; list endpoint LEFT JOINs attachments; new `GET /conversations/messages/:id/attachment-url` presigned download endpoint
+- Frontend: `SessionChat` rewritten — no more mock fixtures; wired to real API; paperclip button uses `expo-document-picker`; presign → S3 PUT → attach metadata flow; file bubbles with tap-to-download
+- Notification previews show "📎 Attachment" for file-only messages
+- 50 → **51 endpoints**
+
+### Background scheduler (commit `5ef5feb`)
+- APScheduler AsyncIO scheduler in FastAPI lifespan
+- `session_reminders` — every 2 min, pushes to both parties 14–16 min before scheduled sessions
+- `claim_retry` — every 10 min, retries pending Pear Suite claims (7-day window, batch cap 25)
+- Graceful shutdown, deduplication within the scan window
+- Known: in-memory dedupe resets on process restart (fine at MVP scale)
+
+### Pagination on list endpoints (commit `7d08b81`)
+- `GET /sessions/?limit=N&offset=M` (default 50, max 200)
+- `GET /conversations/:id/messages?limit=N&before=ISO` (default 100, max 500)
+- `before` enables "load earlier" UX for long chat histories
+- Backward-compatible — clients without params keep working
+- New `PaginatedResponse[T]` helper in `schemas/pagination.py` for future endpoints
+
+### Sentry crash reporting (commit `727f0f3`)
+- `sentry-sdk[fastapi]` added
+- 10% sampling in prod, 100% in dev/staging
+- `send_default_pii=False` (HIPAA)
+- RateLimitExceeded noise suppressed
+- FastAPI + SQLAlchemy + AsyncIO auto-capture
+- No-op when `SENTRY_DSN` is empty — safe to ship dark
+
+### Extended Metrics
+
+| Metric | Morning | End of Day |
+|--------|--------:|-----------:|
+| Backend endpoints | 50 | **51** |
+| Backend service abstractions | 5 | **7** (+ scheduler + email) |
+| Session chat | Mock | **Real API + file upload/download** |
+| Background jobs | 0 | **2** |
+| Observability | None | **Sentry scaffolded** |
+| Pagination | None | **Sessions + messages** |
+| Commits today | 4 | **9** |
+
+### Platform Completion Estimate: ~90%
+
+The remaining 10% is all external — no more autonomous engineering work available:
+1. EIN → DUNS → Apple Developer org
+2. Vonage BAA + credentials + purchased number
+3. AssemblyAI BAA + API key
+4. Pear Suite API key
+5. SES domain verification
+6. Sentry project DSN (5 min when ready)
+7. EC2 redeploy with all new env vars + migrations
+
+**All engineering that can be done without external dependencies is done.**
