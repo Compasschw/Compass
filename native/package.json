@@ -6,7 +6,14 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "build:ios:preview": "eas build --platform ios --profile preview",
+    "build:ios:prod": "eas build --platform ios --profile production",
+    "build:android:preview": "eas build --platform android --profile preview",
+    "build:android:prod": "eas build --platform android --profile production",
+    "build:all:preview": "eas build --platform all --profile preview",
+    "submit:ios": "eas submit --platform ios --latest",
+    "submit:android": "eas submit --platform android --latest"
   },
   "dependencies": {
     "@expo-google-fonts/dm-sans": "^0.4.2",
@@ -36,6 +43,7 @@
   },
   "devDependencies": {
     "@types/react": "~19.1.0",
+    "eas-cli": "^13.0.0",
     "typescript": "~5.9.2"
   },
   "private": true

@@ -18,6 +18,13 @@ expo-env.d.ts
 *.key
 *.mobileprovision
 
+# EAS / App Store credentials — never commit these
+google-service-account.json
+google-services.json
+GoogleService-Info.plist
+apple-credentials.json
+credentials.json
+
 # Metro
 .metro-health-check*
 
