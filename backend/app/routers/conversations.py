@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -42,7 +42,22 @@ async def list_conversations(current_user=Depends(get_current_user), db: AsyncSe
     return result.scalars().all()
 
 @router.get("/{conversation_id}/messages", response_model=list[MessageResponse])
-async def get_messages(conversation_id: UUID, current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def get_messages(
+    conversation_id: UUID,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    limit: int = Query(default=100, ge=1, le=500, description="Max messages to return"),
+    before: str | None = Query(default=None, description="ISO timestamp — return only messages older than this (for 'load earlier' pagination)"),
+):
+    """List messages in a conversation.
+
+    Default returns the most recent 100 messages. For loading older messages
+    as the user scrolls up, pass `before` with the timestamp of the oldest
+    message currently shown — the server returns the next 100 older messages.
+    Client then prepends them to its local list.
+    """
+    from datetime import datetime
+
     from app.models.conversation import Conversation, FileAttachment, Message
     conv = await db.get(Conversation, conversation_id)
     if not conv:
@@ -50,15 +65,25 @@ async def get_messages(conversation_id: UUID, current_user=Depends(get_current_u
     if conv.chw_id != current_user.id and conv.member_id != current_user.id and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Not authorized")
 
-    # Left-join messages with their optional file attachments in a single query
     stmt = (
         select(Message, FileAttachment)
         .outerjoin(FileAttachment, FileAttachment.message_id == Message.id)
         .where(Message.conversation_id == conversation_id)
-        .order_by(Message.created_at)
     )
+
+    if before:
+        try:
+            before_dt = datetime.fromisoformat(before.replace("Z", "+00:00"))
+            stmt = stmt.where(Message.created_at < before_dt)
+        except ValueError as err:
+            raise HTTPException(status_code=422, detail="Invalid 'before' timestamp") from err
+
+    # Order newest-first for DB efficiency + limit, then reverse for client
+    stmt = stmt.order_by(Message.created_at.desc()).limit(limit)
     result = await db.execute(stmt)
-    return [_serialize_message(msg, att) for msg, att in result.all()]
+    rows = list(result.all())
+    rows.reverse()  # Client expects oldest-first chronological order
+    return [_serialize_message(msg, att) for msg, att in rows]
 
 @router.post("/{conversation_id}/messages", response_model=MessageResponse, status_code=201)
 async def send_message(conversation_id: UUID, data: MessageCreate, current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):

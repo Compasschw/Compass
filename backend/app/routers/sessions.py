@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,7 +17,17 @@ router = APIRouter(prefix="/api/v1/sessions", tags=["sessions"])
 
 
 @router.get("/", response_model=list[SessionResponse])
-async def list_sessions(current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def list_sessions(
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    limit: int = Query(default=50, ge=1, le=200, description="Max sessions to return"),
+    offset: int = Query(default=0, ge=0, description="Skip this many sessions"),
+):
+    """List sessions for the current user.
+
+    Offset-based pagination keeps response shape identical to the unpaginated
+    variant (still a flat array). For total counts, clients call /sessions/count.
+    """
     from sqlalchemy.orm import aliased
 
     from app.models.user import User
@@ -33,6 +43,7 @@ async def list_sessions(current_user=Depends(get_current_user), db: AsyncSession
         stmt = stmt.where(Session.chw_id == current_user.id)
     else:
         stmt = stmt.where(Session.member_id == current_user.id)
+    stmt = stmt.limit(limit).offset(offset)
     result = await db.execute(stmt)
     rows = result.all()
     return [
