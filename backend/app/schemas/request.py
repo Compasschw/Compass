@@ -15,6 +15,9 @@ class ServiceRequestCreate(BaseModel):
 
 
 class ServiceRequestResponse(BaseModel):
+    """Full request detail — visible to the member who created it and to the
+    CHW who has been matched/accepted. Contains PHI (description, member name).
+    """
     model_config = ConfigDict(from_attributes=True)
     id: UUID
     member_id: UUID
@@ -27,6 +30,24 @@ class ServiceRequestResponse(BaseModel):
     estimated_units: int
     created_at: datetime
     member_name: str | None = None
+
+
+class ServiceRequestSummaryResponse(BaseModel):
+    """Minimum-necessary view of an open request for CHWs browsing before accept.
+
+    Per HIPAA 45 CFR §164.514(d) (minimum necessary standard), CHWs should not
+    see the member's free-text description or display name before they've been
+    matched. Only fields needed to decide whether to accept are exposed:
+    vertical, urgency, mode, estimated units, and approximate location (zip prefix).
+    """
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    vertical: str
+    urgency: str
+    preferred_mode: str
+    status: str
+    estimated_units: int
+    created_at: datetime
 
 
 class ServiceRequestUpdate(BaseModel):

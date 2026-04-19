@@ -203,6 +203,7 @@ async def submit_documentation(session_id: UUID, data: SessionDocumentationSubmi
         units=data.units_to_bill, gross_amount=earnings["gross"],
         platform_fee=earnings["platform_fee"], pear_suite_fee=earnings["pear_suite_fee"],
         net_payout=earnings["net"],
+        service_date=session_date,
     )
     db.add(claim)
 

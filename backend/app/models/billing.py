@@ -1,8 +1,8 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import ARRAY, DateTime, ForeignKey, Integer, Numeric, String, func
+from sqlalchemy import ARRAY, Date, DateTime, ForeignKey, Integer, Numeric, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -25,6 +25,10 @@ class BillingClaim(Base):
     net_payout: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
     pear_suite_claim_id: Mapped[str | None] = mapped_column(String(100))
+    # service_date = the calendar date the service was delivered. This is what Medi-Cal
+    # uses for daily/yearly unit caps — NOT the timestamp the claim was created.
+    # A session that ran from 11:45 PM to 12:15 AM should count toward the day it started.
+    service_date: Mapped[date | None] = mapped_column(Date, index=True)
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     adjudicated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

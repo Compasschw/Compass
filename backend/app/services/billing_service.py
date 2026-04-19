@@ -64,17 +64,30 @@ def calculate_earnings(units: int) -> dict:
 
 
 async def check_unit_caps(db: AsyncSession, chw_id, member_id, session_date: date) -> dict:
+    """Check daily/yearly Medi-Cal unit caps for this CHW↔member pair.
+
+    Uses `service_date` (the date the service was delivered), not `created_at`
+    (the claim submission timestamp). A session that starts at 11:55 PM and
+    documents at 12:05 AM still counts toward the start day per Medi-Cal rules.
+
+    Falls back to `created_at` date for legacy rows where service_date is NULL.
+    """
     from app.models.billing import BillingClaim
+
+    # Effective service date: prefer the service_date column, fall back to created_at's date
+    effective_date = func.coalesce(BillingClaim.service_date, func.date(BillingClaim.created_at))
+
     daily = await db.execute(
         select(func.coalesce(func.sum(BillingClaim.units), 0))
         .where(BillingClaim.chw_id == chw_id, BillingClaim.member_id == member_id)
-        .where(func.date(BillingClaim.created_at) == session_date)
+        .where(effective_date == session_date)
     )
     daily_used = daily.scalar() or 0
+
     yearly = await db.execute(
         select(func.coalesce(func.sum(BillingClaim.units), 0))
         .where(BillingClaim.chw_id == chw_id, BillingClaim.member_id == member_id)
-        .where(extract("year", BillingClaim.created_at) == session_date.year)
+        .where(extract("year", effective_date) == session_date.year)
     )
     yearly_used = yearly.scalar() or 0
     return {

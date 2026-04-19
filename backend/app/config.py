@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     twilio_auth_token: str = ""
     twilio_proxy_service_sid: str = ""
 
+    # Billing provider (pear_suite, direct_837)
+    billing_provider: str = "pear_suite"
+
     # Pear Suite billing integration
     pear_suite_api_key: str = ""
     pear_suite_base_url: str = "https://api.pearsuite.com"
