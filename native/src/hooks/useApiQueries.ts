@@ -359,6 +359,41 @@ export function useUpdateMemberProfile() {
   });
 }
 
+// ─── Magic Link (passwordless auth) ──────────────────────────────────────────
+
+export function useRequestMagicLink() {
+  return useMutation({
+    mutationFn: async (email: string) => {
+      await api('/auth/magic/request', {
+        method: 'POST',
+        body: JSON.stringify({ email }),
+      });
+    },
+  });
+}
+
+export interface MagicLinkVerifyResult {
+  accessToken: string;
+  refreshToken: string;
+  role: string;
+  name: string;
+  tokenType: string;
+}
+
+export function useVerifyMagicLink() {
+  return useMutation({
+    mutationFn: async (token: string): Promise<MagicLinkVerifyResult> => {
+      const raw = await api<unknown>('/auth/magic/verify', {
+        method: 'POST',
+        body: JSON.stringify({ token }),
+      });
+      return transformKeys<MagicLinkVerifyResult>(raw);
+    },
+  });
+}
+
+// ─── Messages ────────────────────────────────────────────────────────────────
+
 export function useSendMessage() {
   const qc = useQueryClient();
   return useMutation({
