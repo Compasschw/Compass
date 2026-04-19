@@ -94,13 +94,28 @@ async def start_session(session_id: UUID, current_user=Depends(get_current_user)
 
     # Create masked communication session (provider-agnostic)
     from app.models.communication import CommunicationSession
+    from app.models.user import User
     from app.services.communication import get_provider
     try:
+        # Pull both parties' phone numbers for masked-call routing
+        chw_user = await db.get(User, session.chw_id)
+        member_user = await db.get(User, session.member_id)
+        chw_phone = (chw_user.phone if chw_user else "") or ""
+        member_phone = (member_user.phone if member_user else "") or ""
+
+        if not chw_phone or not member_phone:
+            import logging
+            logging.getLogger("compass").warning(
+                "Session %s starting without both phone numbers (chw=%s, member=%s). "
+                "Masked calling disabled for this session.",
+                session_id, bool(chw_phone), bool(member_phone),
+            )
+
         provider = get_provider()
         proxy = await provider.create_proxy_session(
             session_id=str(session_id),
-            chw_phone="",  # TODO: pull from User/CHWProfile phone field
-            member_phone="",  # TODO: pull from User/MemberProfile phone field
+            chw_phone=chw_phone,
+            member_phone=member_phone,
         )
         comm_session = CommunicationSession(
             session_id=session_id,
@@ -211,6 +226,41 @@ async def submit_documentation(session_id: UUID, data: SessionDocumentationSubmi
     session.gross_amount = earnings["gross"]
     session.net_amount = earnings["net"]
     await db.commit()
+    await db.refresh(claim)
+
+    # Submit claim to Pear Suite for Medi-Cal processing (async, non-blocking).
+    # Failures here do NOT fail the request — the claim is persisted locally and
+    # can be resubmitted from an admin job. This is the correct boundary because:
+    #   - We always want local source of truth even if Pear Suite is down
+    #   - CHW already completed the work; don't make them retry documentation
+    #   - Retries should happen in a separate worker that reads `status='pending'`
+    from decimal import Decimal as _Dec
+
+    from app.services.billing import ClaimSubmission, get_billing_provider
+    try:
+        provider = get_billing_provider()
+        result = await provider.submit_claim(ClaimSubmission(
+            session_id=session_id,
+            chw_id=session.chw_id,
+            member_id=session.member_id,
+            service_date=session_date,
+            procedure_code=data.procedure_code,
+            modifier=claim.modifier or "U2",
+            diagnosis_codes=data.diagnosis_codes,
+            units=data.units_to_bill,
+            gross_amount=_Dec(str(earnings["gross"])),
+        ))
+        if result.success and result.provider_claim_id:
+            claim.pear_suite_claim_id = result.provider_claim_id
+            claim.status = result.status
+            from datetime import UTC as _UTC
+            from datetime import datetime as _dt
+            claim.submitted_at = _dt.now(_UTC)
+            await db.commit()
+    except Exception as e:  # noqa: BLE001
+        import logging
+        logging.getLogger("compass").warning("Pear Suite claim submission deferred: %s", e)
+
     return {"documentation_id": str(doc.id), "claim_id": str(claim.id), "earnings": earnings}
 
 
