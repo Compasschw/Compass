@@ -1,9 +1,12 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import String, Integer, Boolean, DateTime, Float, ForeignKey, Text, func, ARRAY
+
+from sqlalchemy import ARRAY, Boolean, DateTime, Float, ForeignKey, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
+
 from app.database import Base
+
 
 class Credential(Base):
     __tablename__ = "credentials"

@@ -1,7 +1,9 @@
-from uuid import UUID
 from datetime import datetime
+from uuid import UUID
+
 from pydantic import BaseModel, ConfigDict, Field
-from app.models.enums import Vertical, Urgency, SessionMode
+
+from app.models.enums import SessionMode, Urgency, Vertical
 
 
 class ServiceRequestCreate(BaseModel):

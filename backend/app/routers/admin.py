@@ -1,65 +1,116 @@
+"""Admin dashboard — cookie-protected HTML page to view waitlist submissions.
+
+Flow:
+- GET /admin/waitlist  → shows login form OR data page based on httpOnly cookie
+- POST /admin/waitlist/login (form data: key) → validates, sets httpOnly cookie, redirects
+- POST /admin/waitlist/logout → clears cookie
+
+The admin key lives in config (env var ADMIN_KEY) with a 16-char minimum enforced at startup.
+Once authenticated, the cookie is HttpOnly + Secure + SameSite=Strict — the key never
+appears in URLs, logs, or browser history.
 """
-Admin dashboard — password-protected HTML page to view waitlist submissions.
 
-Access: GET /admin/waitlist?key=YOUR_ADMIN_KEY
-"""
+from datetime import UTC, timedelta, timezone
 
-from datetime import timezone, timedelta
-
-from fastapi import APIRouter, Depends, Query, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Cookie, Depends, Form
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_db
 from app.models.waitlist import WaitlistEntry
 
 PT = timezone(timedelta(hours=-7))  # Pacific Daylight Time (UTC-7)
+COOKIE_NAME = "compass_admin"
+COOKIE_MAX_AGE = 60 * 60 * 4  # 4 hours
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
-ADMIN_KEY = "CompassProd2026"
+
+def _is_authenticated(cookie_value: str | None) -> bool:
+    """Constant-time compare of cookie value against configured admin key."""
+    if not cookie_value:
+        return False
+    import hmac
+    return hmac.compare_digest(cookie_value, settings.admin_key)
+
+
+def _login_page(error: str = "") -> HTMLResponse:
+    error_html = f'<p style="color:#C44;font-size:13px;margin-bottom:16px;">{error}</p>' if error else ""
+    return HTMLResponse(
+        content=f"""
+        <!DOCTYPE html>
+        <html>
+        <head><title>Compass Admin</title>
+        <style>
+            body {{ font-family: 'Inter', system-ui, sans-serif; background: #F4F1ED; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }}
+            .card {{ background: white; border-radius: 20px; padding: 40px; max-width: 400px; width: 100%; box-shadow: 0 4px 24px rgba(61,90,62,0.1); text-align: center; }}
+            h1 {{ color: #1E3320; font-size: 24px; margin-bottom: 8px; }}
+            p {{ color: #6B7A6B; font-size: 14px; margin-bottom: 24px; }}
+            form {{ display: flex; flex-direction: column; gap: 12px; }}
+            input {{ padding: 14px 16px; border: 1px solid #DDD6CC; border-radius: 12px; font-size: 14px; outline: none; }}
+            input:focus {{ border-color: #3D5A3E; }}
+            button {{ background: #3D5A3E; color: white; border: none; padding: 14px; border-radius: 12px; font-size: 16px; font-weight: 600; cursor: pointer; }}
+            button:hover {{ background: #2C4A2E; }}
+        </style>
+        </head>
+        <body>
+            <div class="card">
+                <h1>CompassCHW Admin</h1>
+                <p>Enter admin password to view waitlist submissions.</p>
+                {error_html}
+                <form method="POST" action="/admin/waitlist/login">
+                    <input type="password" name="key" placeholder="Admin password" required autofocus />
+                    <button type="submit">View Submissions</button>
+                </form>
+            </div>
+        </body>
+        </html>
+        """,
+        status_code=200,
+    )
+
+
+@router.post("/waitlist/login")
+async def admin_login(key: str = Form(...)) -> RedirectResponse:
+    """Validate admin key and set httpOnly cookie. Key never appears in URL."""
+    import hmac
+    if not hmac.compare_digest(key, settings.admin_key):
+        # Don't leak timing or specifics — just re-render the login page with a generic error
+        return HTMLResponse(
+            content=_login_page(error="Invalid password.").body,
+            status_code=401,
+        )
+
+    response = RedirectResponse(url="/admin/waitlist", status_code=303)
+    response.set_cookie(
+        key=COOKIE_NAME,
+        value=settings.admin_key,
+        max_age=COOKIE_MAX_AGE,
+        httponly=True,
+        secure=True,
+        samesite="strict",
+        path="/admin",
+    )
+    return response
+
+
+@router.post("/waitlist/logout")
+async def admin_logout() -> RedirectResponse:
+    response = RedirectResponse(url="/admin/waitlist", status_code=303)
+    response.delete_cookie(key=COOKIE_NAME, path="/admin")
+    return response
 
 
 @router.get("/waitlist", response_class=HTMLResponse)
 async def admin_waitlist_page(
-    key: str = Query(default=""),
     db: AsyncSession = Depends(get_db),
-) -> str:
-    """Password-protected admin page showing all waitlist submissions."""
-
-    if key != ADMIN_KEY:
-        return HTMLResponse(
-            content="""
-            <!DOCTYPE html>
-            <html>
-            <head><title>Compass Admin</title>
-            <style>
-                body { font-family: 'Inter', system-ui, sans-serif; background: #F4F1ED; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
-                .card { background: white; border-radius: 20px; padding: 40px; max-width: 400px; width: 100%; box-shadow: 0 4px 24px rgba(61,90,62,0.1); text-align: center; }
-                h1 { color: #1E3320; font-size: 24px; margin-bottom: 8px; }
-                p { color: #6B7A6B; font-size: 14px; margin-bottom: 24px; }
-                form { display: flex; flex-direction: column; gap: 12px; }
-                input { padding: 14px 16px; border: 1px solid #DDD6CC; border-radius: 12px; font-size: 14px; outline: none; }
-                input:focus { border-color: #3D5A3E; }
-                button { background: #3D5A3E; color: white; border: none; padding: 14px; border-radius: 12px; font-size: 16px; font-weight: 600; cursor: pointer; }
-                button:hover { background: #2C4A2E; }
-            </style>
-            </head>
-            <body>
-                <div class="card">
-                    <h1>CompassCHW Admin</h1>
-                    <p>Enter admin password to view waitlist submissions.</p>
-                    <form method="GET" action="/admin/waitlist">
-                        <input type="password" name="key" placeholder="Admin password" required />
-                        <button type="submit">View Submissions</button>
-                    </form>
-                </div>
-            </body>
-            </html>
-            """,
-            status_code=200,
-        )
+    compass_admin: str | None = Cookie(default=None),
+) -> HTMLResponse:
+    """Show waitlist submissions if authenticated, otherwise show login form."""
+    if not _is_authenticated(compass_admin):
+        return _login_page()
 
     # Fetch all waitlist entries
     result = await db.execute(
@@ -88,11 +139,11 @@ async def admin_waitlist_page(
             <td><strong>{entry.first_name} {entry.last_name}</strong></td>
             <td><a href="mailto:{entry.email}" style="color: #3D5A3E;">{entry.email}</a></td>
             <td><span style="background: {role_color}15; color: {role_color}; padding: 4px 10px; border-radius: 100px; font-size: 12px; font-weight: 600;">{entry.role.upper()}</span></td>
-            <td>{entry.created_at.replace(tzinfo=timezone.utc).astimezone(PT).strftime('%b %d, %Y %I:%M %p PT')}</td>
+            <td>{entry.created_at.replace(tzinfo=UTC).astimezone(PT).strftime('%b %d, %Y %I:%M %p PT')}</td>
         </tr>
         """
 
-    return f"""
+    return HTMLResponse(content=f"""
     <!DOCTYPE html>
     <html>
     <head>
@@ -113,15 +164,19 @@ async def admin_waitlist_page(
             a {{ text-decoration: none; }}
             a:hover {{ text-decoration: underline; }}
             .empty {{ text-align: center; padding: 60px 20px; color: #6B7A6B; }}
-            .refresh {{ color: #6B7A6B; font-size: 13px; text-decoration: none; }}
+            .refresh {{ color: #6B7A6B; font-size: 13px; text-decoration: none; background: none; border: none; cursor: pointer; font-family: inherit; }}
             .refresh:hover {{ color: #3D5A3E; }}
+            form.inline {{ display: inline; }}
         </style>
     </head>
     <body>
         <div class="header">
             <h1>Compass<span>CHW</span> Waitlist</h1>
             <div style="display: flex; align-items: center; gap: 16px;">
-                <a href="/admin/waitlist?key={ADMIN_KEY}" class="refresh">Refresh</a>
+                <a href="/admin/waitlist" class="refresh">Refresh</a>
+                <form class="inline" method="POST" action="/admin/waitlist/logout">
+                    <button type="submit" class="refresh">Logout</button>
+                </form>
                 <div class="badge">{total} submission{'s' if total != 1 else ''}</div>
             </div>
         </div>
@@ -130,4 +185,4 @@ async def admin_waitlist_page(
         </div>
     </body>
     </html>
-    """
+    """)

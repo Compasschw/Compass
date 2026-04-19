@@ -1,9 +1,12 @@
 import uuid
-from datetime import datetime, date, time
-from sqlalchemy import String, DateTime, Date, Time, ForeignKey, func
+from datetime import date, datetime, time
+
+from sqlalchemy import Date, DateTime, ForeignKey, String, Time, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
+
 from app.database import Base
+
 
 class CalendarEvent(Base):
     __tablename__ = "calendar_events"

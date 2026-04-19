@@ -1,10 +1,12 @@
 import logging
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 from sqlalchemy import text
+
 from app.config import settings
 from app.database import engine
 from app.limiter import limiter
@@ -41,18 +43,18 @@ app.add_middleware(
 )
 app.add_middleware(AuditMiddleware)
 
+from app.routers.admin import router as admin_router
 from app.routers.auth import router as auth_router
 from app.routers.chw import router as chw_router
-from app.routers.member import router as member_router
-from app.routers.sessions import router as sessions_router
-from app.routers.requests import router as requests_router
-from app.routers.matching import router as matching_router
 from app.routers.conversations import router as conversations_router
 from app.routers.credentials import router as credentials_router
-from app.routers.upload import router as upload_router
 from app.routers.health import router as health_router
+from app.routers.matching import router as matching_router
+from app.routers.member import router as member_router
+from app.routers.requests import router as requests_router
+from app.routers.sessions import router as sessions_router
+from app.routers.upload import router as upload_router
 from app.routers.waitlist import router as waitlist_router
-from app.routers.admin import router as admin_router
 
 app.include_router(auth_router)
 app.include_router(chw_router)

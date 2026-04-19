@@ -1,9 +1,12 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import String, Integer, Boolean, DateTime, ForeignKey, func
+
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
+
 from app.database import Base
+
 
 class RewardTransaction(Base):
     __tablename__ = "reward_transactions"

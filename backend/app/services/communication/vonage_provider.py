@@ -8,6 +8,7 @@ Swap this file for twilio_provider.py or plivo_provider.py to change providers.
 """
 
 import logging
+
 from app.services.communication.base import (
     CommunicationProvider,
     ProxySession,

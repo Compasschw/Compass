@@ -1,10 +1,13 @@
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from sqlalchemy import String, Integer, DateTime, ForeignKey, Numeric, Boolean, func, ARRAY
+
+from sqlalchemy import ARRAY, DateTime, ForeignKey, Integer, Numeric, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
+
 from app.database import Base
+
 
 class BillingClaim(Base):
     __tablename__ = "billing_claims"

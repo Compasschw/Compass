@@ -3,7 +3,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import require_admin_key
 from app.models.waitlist import WaitlistEntry
 from app.schemas.waitlist import WaitlistCreate, WaitlistResponse
 
@@ -37,10 +37,10 @@ async def create_waitlist_entry(
 
 @router.get("/", response_model=list[WaitlistResponse])
 async def list_waitlist_entries(
-    current_user=Depends(get_current_user),
+    _: bool = Depends(require_admin_key),
     db: AsyncSession = Depends(get_db),
 ) -> list[WaitlistEntry]:
-    """Requires authentication. TODO: restrict to admin role only."""
+    """Admin-only. Requires `Authorization: Bearer <ADMIN_KEY>` header."""
     result = await db.execute(
         select(WaitlistEntry).order_by(WaitlistEntry.created_at.desc())
     )

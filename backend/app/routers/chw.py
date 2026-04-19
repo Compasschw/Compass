@@ -1,12 +1,13 @@
-from typing import Annotated
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, func, extract
+from sqlalchemy import extract, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.database import get_db
-from app.dependencies import get_current_user, require_role
-from app.schemas.user import CHWProfileResponse, CHWProfileUpdate
+from app.dependencies import require_role
 from app.schemas.billing import EarningsSummary
+from app.schemas.user import CHWProfileResponse, CHWProfileUpdate
 
 router = APIRouter(prefix="/api/v1/chw", tags=["chw"])
 
@@ -84,7 +85,7 @@ async def get_earnings(current_user=Depends(require_role("chw")), db: AsyncSessi
     from app.models.session import Session
     from app.models.user import CHWProfile
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # This month's earnings
     month_result = await db.execute(

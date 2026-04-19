@@ -1,4 +1,5 @@
 import sys
+
 from pydantic_settings import BaseSettings
 
 
@@ -28,6 +29,13 @@ class Settings(BaseSettings):
     twilio_auth_token: str = ""
     twilio_proxy_service_sid: str = ""
 
+    # Pear Suite billing integration
+    pear_suite_api_key: str = ""
+    pear_suite_base_url: str = "https://api.pearsuite.com"
+
+    # Admin dashboard access
+    admin_key: str = ""
+
     class Config:
         env_file = ".env"
 
@@ -40,4 +48,7 @@ if settings.secret_key in _DANGEROUS_KEYS:
     sys.exit(1)
 if len(settings.secret_key) < 32:
     print("FATAL: SECRET_KEY must be at least 32 characters.", file=sys.stderr)
+    sys.exit(1)
+if not settings.admin_key or len(settings.admin_key) < 16:
+    print("FATAL: ADMIN_KEY must be set and at least 16 characters.", file=sys.stderr)
     sys.exit(1)

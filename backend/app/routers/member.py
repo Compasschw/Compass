@@ -1,9 +1,9 @@
-from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.database import get_db
-from app.dependencies import get_current_user, require_role
+from app.dependencies import require_role
 from app.schemas.user import MemberProfileResponse, MemberProfileUpdate
 
 router = APIRouter(prefix="/api/v1/member", tags=["member"])

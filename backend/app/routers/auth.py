@@ -1,14 +1,21 @@
-from uuid import UUID
 from typing import Annotated
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import select
-from app.limiter import limiter
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.database import get_db
 from app.dependencies import get_current_user
+from app.limiter import limiter
 from app.models.user import User
-from app.schemas.auth import RegisterRequest, LoginRequest, TokenResponse, RefreshRequest
-from app.services.auth_service import register_user, authenticate_user, create_tokens, store_refresh_token, revoke_refresh_token
+from app.schemas.auth import LoginRequest, RefreshRequest, RegisterRequest, TokenResponse
+from app.services.auth_service import (
+    authenticate_user,
+    create_tokens,
+    register_user,
+    revoke_refresh_token,
+    store_refresh_token,
+)
 from app.utils.security import decode_token
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])

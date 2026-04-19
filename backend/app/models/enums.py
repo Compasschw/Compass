@@ -1,5 +1,6 @@
 import enum
 
+
 class UserRole(str, enum.Enum):
     chw = "chw"
     member = "member"

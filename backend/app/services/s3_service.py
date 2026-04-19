@@ -1,5 +1,5 @@
 import boto3
-from botocore.exceptions import ClientError
+
 from app.config import settings
 
 _client = None

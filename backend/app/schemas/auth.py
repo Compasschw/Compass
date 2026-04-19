@@ -1,6 +1,7 @@
-from uuid import UUID
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict, Field, EmailStr
+from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
 class RegisterRequest(BaseModel):

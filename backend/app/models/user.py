@@ -1,10 +1,12 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import String, Boolean, Float, Integer, Enum, ARRAY, DateTime, ForeignKey, Text, func
-from sqlalchemy.dialects.postgresql import UUID, JSONB
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from sqlalchemy import ARRAY, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.orm import Mapped, mapped_column
+
 from app.database import Base
-from app.models.enums import UserRole, Vertical, SessionMode
+
 
 class User(Base):
     __tablename__ = "users"

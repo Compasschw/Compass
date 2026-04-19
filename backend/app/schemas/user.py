@@ -1,6 +1,7 @@
 from uuid import UUID
-from datetime import datetime
-from pydantic import BaseModel, ConfigDict, Field
+
+from pydantic import BaseModel, ConfigDict
+
 
 class CHWProfileCreate(BaseModel):
     specializations: list[str] = []

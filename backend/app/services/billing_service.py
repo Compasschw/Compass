@@ -1,6 +1,7 @@
-from decimal import Decimal, ROUND_HALF_UP
 from datetime import date
-from sqlalchemy import select, func, extract
+from decimal import ROUND_HALF_UP, Decimal
+
+from sqlalchemy import extract, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 MEDI_CAL_RATE = Decimal("26.66")

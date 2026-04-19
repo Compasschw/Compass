@@ -1,5 +1,6 @@
 from pydantic import BaseModel
 
+
 class PresignedUrlRequest(BaseModel):
     filename: str
     content_type: str

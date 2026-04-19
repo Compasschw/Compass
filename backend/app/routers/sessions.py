@@ -1,24 +1,26 @@
+from datetime import UTC, datetime
 from uuid import UUID
-from datetime import datetime, timezone, date
-from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.database import get_db
 from app.dependencies import get_current_user
-from app.models.session import Session, SessionDocumentation, MemberConsent
-from app.models.request import ServiceRequest
 from app.models.billing import BillingClaim
-from app.schemas.session import SessionCreate, SessionResponse, SessionDocumentationSubmit, ConsentSubmit
-from app.services.billing_service import validate_claim, calculate_earnings, check_unit_caps, calculate_units
+from app.models.request import ServiceRequest
+from app.models.session import MemberConsent, Session, SessionDocumentation
+from app.schemas.session import ConsentSubmit, SessionCreate, SessionDocumentationSubmit, SessionResponse
+from app.services.billing_service import calculate_earnings, calculate_units, check_unit_caps, validate_claim
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["sessions"])
 
 
 @router.get("/", response_model=list[SessionResponse])
 async def list_sessions(current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    from app.models.user import User
     from sqlalchemy.orm import aliased
+
+    from app.models.user import User
     CHWUser = aliased(User)
     MemberUser = aliased(User)
     stmt = (
@@ -88,11 +90,11 @@ async def start_session(session_id: UUID, current_user=Depends(get_current_user)
     if session.status != "scheduled":
         raise HTTPException(status_code=409, detail=f"Cannot start session with status '{session.status}'. Must be 'scheduled'.")
     session.status = "in_progress"
-    session.started_at = datetime.now(timezone.utc)
+    session.started_at = datetime.now(UTC)
 
     # Create masked communication session (provider-agnostic)
-    from app.services.communication import get_provider
     from app.models.communication import CommunicationSession
+    from app.services.communication import get_provider
     try:
         provider = get_provider()
         proxy = await provider.create_proxy_session(
@@ -124,14 +126,14 @@ async def complete_session(session_id: UUID, current_user=Depends(get_current_us
     if session.status != "in_progress":
         raise HTTPException(status_code=409, detail=f"Cannot complete session with status '{session.status}'. Must be 'in_progress'.")
     session.status = "completed"
-    session.ended_at = datetime.now(timezone.utc)
+    session.ended_at = datetime.now(UTC)
     if session.started_at:
         session.duration_minutes = int((session.ended_at - session.started_at).total_seconds() / 60)
         session.suggested_units = calculate_units(session.duration_minutes)
 
     # Close communication session + retrieve recording/transcript
-    from app.services.communication import get_provider
     from app.models.communication import CommunicationSession
+    from app.services.communication import get_provider
     try:
         comm_result = await db.execute(
             select(CommunicationSession)
@@ -155,7 +157,7 @@ async def complete_session(session_id: UUID, current_user=Depends(get_current_us
                     comm_session.transcript_confidence = transcript.confidence
 
             comm_session.status = "closed"
-            comm_session.closed_at = datetime.now(timezone.utc)
+            comm_session.closed_at = datetime.now(UTC)
     except Exception as e:
         import logging
         logging.getLogger("compass").warning("Failed to close communication session: %s", e)

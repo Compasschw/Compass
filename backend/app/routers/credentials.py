@@ -1,10 +1,13 @@
+from datetime import UTC
 from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.database import get_db
 from app.dependencies import get_current_user, require_role
-from app.schemas.credential import CredentialValidationSubmit, CredentialValidationResponse, InstitutionResponse
+from app.schemas.credential import CredentialValidationResponse, CredentialValidationSubmit, InstitutionResponse
 
 router = APIRouter(prefix="/api/v1/credentials", tags=["credentials"])
 
@@ -38,14 +41,15 @@ async def list_validations(current_user=Depends(get_current_user), db: AsyncSess
 
 @router.patch("/validations/{validation_id}/review")
 async def review_validation(validation_id: UUID, approved: bool, notes: str = "", current_user=Depends(require_role("admin")), db: AsyncSession = Depends(get_db)):
+    from datetime import datetime
+
     from app.models.credential import CHWCredentialValidation
-    from datetime import datetime, timezone
     v = await db.get(CHWCredentialValidation, validation_id)
     if not v:
         raise HTTPException(status_code=404, detail="Validation not found")
     v.validation_status = "verified" if approved else "rejected"
     v.validated_by = current_user.id
-    v.validated_at = datetime.now(timezone.utc)
+    v.validated_at = datetime.now(UTC)
     v.notes = notes
     await db.commit()
     return {"status": v.validation_status, "id": str(v.id)}

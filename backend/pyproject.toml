@@ -40,6 +40,20 @@ line-length = 120
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "S", "B"]
+ignore = [
+    "B008",   # FastAPI `Depends()` as default argument is the idiomatic pattern
+    "E402",   # Lazy imports inside functions are used to avoid circular imports
+    "UP042",  # StrEnum is 3.11+ but we use compatible `str, Enum` pattern
+    "E501",   # Long lines in HTML templates are acceptable
+    "S101",   # Assertions allowed in tests
+    "E712",   # SQLAlchemy requires `== True/False` for column comparisons
+    "N806",   # SQLAlchemy aliased() naming convention is PascalCase
+    "F403",   # Wildcard imports used intentionally in models/__init__ for enum re-export
+    "S105",   # "bearer" is not a password — false positive on OAuth2 token_type
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S105", "S106"]  # Hardcoded test credentials are fine in tests
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
