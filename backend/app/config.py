@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     # Admin dashboard access
     admin_key: str = ""
 
+    # PHI field-level encryption (AES-256-GCM). Base64 of 32 random bytes.
+    # Generate: python -c "import secrets, base64; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"
+    phi_encryption_key: str = ""
+
     class Config:
         env_file = ".env"
 

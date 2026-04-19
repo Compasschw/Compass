@@ -6,6 +6,7 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
+from app.utils.encryption import EncryptedString
 
 
 class User(Base):
@@ -52,7 +53,8 @@ class MemberProfile(Base):
     primary_need: Mapped[str | None] = mapped_column(String(50))
     additional_needs: Mapped[list | None] = mapped_column(ARRAY(String))
     insurance_provider: Mapped[str | None] = mapped_column(String(255))
-    medi_cal_id: Mapped[str | None] = mapped_column(String(50))
+    # Encrypted at rest (AES-256-GCM). PHI per HIPAA 45 CFR §164.312(a)(2)(iv).
+    medi_cal_id: Mapped[str | None] = mapped_column(EncryptedString)
     rewards_balance: Mapped[int] = mapped_column(Integer, default=0)
     preferred_mode: Mapped[str | None] = mapped_column(String(20))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
