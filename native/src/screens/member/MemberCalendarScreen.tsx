@@ -33,7 +33,6 @@ import {
 import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
 import {
-  goals,
   verticalLabels,
   type CalendarEvent,
   type Vertical,
@@ -50,8 +49,6 @@ const MONTH_NAMES = [
 ];
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-
-const DEMO_MEMBER_NAME = 'Rosa Delgado';
 
 const now = new Date();
 const TODAY_YEAR = now.getFullYear();
@@ -125,7 +122,10 @@ function firstNameFromFull(fullName: string): string {
 
 /**
  * Derives calendar events from live session data.
- * Also appends goal milestones from mock goals (no backend endpoint yet).
+ *
+ * Note: goal milestones are intentionally omitted here. A backend goals
+ * endpoint doesn't exist yet; once it does, fetch via a `useMemberGoals`
+ * query and append those events to `sessionEvents` in this function.
  */
 function buildMemberEvents(
   liveSessions: { id: string; scheduledAt: string; vertical: string; chwName?: string; memberName?: string }[],
@@ -152,27 +152,7 @@ function buildMemberEvents(
     };
   });
 
-  // Goals endpoint not available yet — derive goal milestones from mock data
-  const goalMilestoneEvents: CalendarEvent[] = goals.map((goal) => {
-    const dt = new Date(goal.nextSession);
-    const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
-    const dd = String(dt.getUTCDate()).padStart(2, '0');
-    const date = `${dt.getUTCFullYear()}-${mm}-${dd}`;
-    const hh = String(dt.getUTCHours()).padStart(2, '0');
-    const min = String(dt.getUTCMinutes()).padStart(2, '0');
-
-    return {
-      id: `goal-${goal.id}`,
-      title: goal.title,
-      date,
-      startTime: `${hh}:${min}`,
-      endTime: `${hh}:${min}`,
-      vertical: goal.category as Vertical,
-      type: 'goal_milestone' as const,
-    };
-  });
-
-  return [...sessionEvents, ...goalMilestoneEvents];
+  return sessionEvents;
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────

@@ -32,7 +32,6 @@ import {
 import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
 import {
-  goals,
   verticalLabels,
   type Goal,
   type Vertical,
@@ -584,9 +583,10 @@ const addGoalModalStyles = StyleSheet.create({
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export function MemberRoadmapScreen(): React.JSX.Element {
-  const [goalList, setGoalList] = useState<LocalGoal[]>(
-    goals.filter((g) => g.status !== 'completed') as LocalGoal[],
-  );
+  // Goals are locally stored in component state for now. A backend goals
+  // endpoint doesn't exist yet; when it does, replace this with a useMemberGoals
+  // query + useAddGoal / useUpdateGoal mutations from useApiQueries.
+  const [goalList, setGoalList] = useState<LocalGoal[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
 
   const overallProgress = calcOverallProgress(goalList);

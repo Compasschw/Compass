@@ -53,8 +53,6 @@ import { ErrorState } from '../../components/shared/ErrorState';
 
 type TabKey = 'active' | 'completed';
 
-const MOCK_MEMBER_NAME = 'Rosa Delgado';
-
 const statusBadgeColors: Record<SessionStatus, { bg: string; text: string }> = {
   scheduled: { bg: `${colors.secondary}20`, text: colors.secondary },
   in_progress: { bg: `${colors.compassGold}20`, text: colors.compassGold },
