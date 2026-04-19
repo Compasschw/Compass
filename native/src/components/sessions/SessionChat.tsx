@@ -1,116 +1,76 @@
 /**
- * SessionChat — in-session chat component using mock conversation data.
+ * SessionChat — real-time(-ish) in-session chat for CompassCHW.
+ *
+ * Wired to the backend via:
+ *   - useMessages(conversationId)       — GET /conversations/:id/messages
+ *   - useSendMessage()                  — POST /conversations/:id/messages
+ *   - POST /upload/presigned-url        — S3 presign for attachments
+ *   - GET /conversations/messages/:id/attachment-url — presigned download
  *
  * Features:
- *  - Inverted FlatList for chat-style message ordering (newest at bottom)
- *  - Sent messages: right-aligned, primary background
- *  - Received messages: left-aligned, card background with border
- *  - Timestamps on each bubble
- *  - TextInput at bottom with Send button
- *  - Empty state: "No messages yet"
+ *   - Text + file messages (one component handles both)
+ *   - File picker via expo-document-picker (PDF, images, audio)
+ *   - 20 MB client-side size cap (matches backend validation)
+ *   - Empty state, error state, loading state
+ *   - Polling every 5s while screen is mounted (cheap Phase-1 fanout;
+ *     replace with WebSocket/push-based refresh post-MVP)
  */
 
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
+  Alert,
   FlatList,
+  Linking,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
-import { Send, MessageSquare } from 'lucide-react-native';
+import * as DocumentPicker from 'expo-document-picker';
+import { FileText, MessageSquare, Paperclip, Send } from 'lucide-react-native';
 
+import { api } from '../../api/client';
+import { useAuth } from '../../context/AuthContext';
+import {
+  useConversations,
+  useMessages,
+  useSendMessage,
+  type MessageData,
+} from '../../hooks/useApiQueries';
 import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
 export interface SessionChatProps {
-  /** Session ID — used to identify which mock conversation to display */
+  /** The session ID — we look up the linked conversation by session_id */
   sessionId: string;
 }
 
-interface ChatMessage {
-  id: string;
-  body: string;
-  createdAt: string;
-  /** true = CHW sent (right-aligned), false = member sent (left-aligned) */
-  isOwn: boolean;
+/** Shape of the message with attachment field (extends backend MessageData). */
+interface MessageWithAttachment extends MessageData {
+  attachment?: {
+    id: string;
+    filename: string;
+    sizeBytes: number;
+    contentType: string;
+    s3Key: string;
+  } | null;
 }
 
-// ─── Mock conversation data ───────────────────────────────────────────────────
+const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024; // 20 MB — matches backend
 
-/**
- * Returns mock conversation messages for a given session ID.
- * In production this would be fetched from the API.
- */
-function getMockMessages(sessionId: string): ChatMessage[] {
-  const baseMessages: ChatMessage[] = [
-    {
-      id: 'msg-001',
-      body: "Hi Rosa! I'm Maria. Looking forward to our session today — I've reviewed your housing situation and have some resources ready.",
-      createdAt: '2026-04-03T09:55:00Z',
-      isOwn: true,
-    },
-    {
-      id: 'msg-002',
-      body: "Thank you so much, Maria. I'm a bit nervous but ready. The eviction notice came yesterday.",
-      createdAt: '2026-04-03T09:56:30Z',
-      isOwn: false,
-    },
-    {
-      id: 'msg-003',
-      body: "I understand — that's very stressful. We'll go through the ERAP application step by step. I also have the tenant rights hotline number for you.",
-      createdAt: '2026-04-03T09:57:15Z',
-      isOwn: true,
-    },
-    {
-      id: 'msg-004',
-      body: 'That sounds really helpful. Should I have my lease agreement with me?',
-      createdAt: '2026-04-03T09:58:00Z',
-      isOwn: false,
-    },
-    {
-      id: 'msg-005',
-      body: 'Yes, please! And also any correspondence from your landlord. See you at 10:00.',
-      createdAt: '2026-04-03T09:59:00Z',
-      isOwn: true,
-    },
-  ];
+const ALLOWED_MIME_TYPES = [
+  'application/pdf',
+  'image/jpeg',
+  'image/png',
+  'image/heic',
+  'image/webp',
+  'audio/mpeg',
+  'audio/mp4',
+  'audio/wav',
+];
 
-  // Vary the mock messages slightly per session ID for realistic demo variety
-  if (sessionId === 'sess-002') {
-    return [
-      {
-        id: 'msg-d001',
-        body: "Marcus, great work on the 60-day milestone. I've identified three Medi-Cal IOP programs near you.",
-        createdAt: '2026-03-31T13:55:00Z',
-        isOwn: true,
-      },
-      {
-        id: 'msg-d002',
-        body: "Thanks Darnell. Pacific Clinics was the one my sponsor mentioned too. Can we start there?",
-        createdAt: '2026-03-31T13:57:00Z',
-        isOwn: false,
-      },
-      {
-        id: 'msg-d003',
-        body: "Absolutely. I'll pull up their intake form now. They have Monday and Wednesday evening slots available.",
-        createdAt: '2026-03-31T13:58:30Z',
-        isOwn: true,
-      },
-    ];
-  }
-
-  return baseMessages;
-}
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-/**
- * Formats an ISO timestamp to a short human-readable time string (e.g. "9:55 AM").
- */
 function formatMessageTime(isoString: string): string {
   try {
     return new Date(isoString).toLocaleTimeString([], {
@@ -122,130 +82,259 @@ function formatMessageTime(isoString: string): string {
   }
 }
 
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// ─── Presigned upload helper ─────────────────────────────────────────────────
+
+interface PresignedUrlResponse {
+  upload_url: string;
+  s3_key: string;
+}
+
+async function presignUpload(
+  filename: string,
+  contentType: string,
+  sizeBytes: number,
+): Promise<PresignedUrlResponse> {
+  return api<PresignedUrlResponse>('/upload/presigned-url', {
+    method: 'POST',
+    body: JSON.stringify({
+      filename,
+      content_type: contentType,
+      size_bytes: sizeBytes,
+      purpose: 'document',
+    }),
+  });
+}
+
+async function uploadToS3(
+  uploadUrl: string,
+  fileUri: string,
+  contentType: string,
+): Promise<void> {
+  // RN fetch needs to stream from the file URI. `uri` scheme on iOS/Android
+  // resolves to the sandboxed doc we just picked.
+  const resp = await fetch(fileUri);
+  const blob = await resp.blob();
+
+  const put = await fetch(uploadUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': contentType },
+    body: blob,
+  });
+  if (!put.ok) {
+    throw new Error(`Upload failed: HTTP ${put.status}`);
+  }
+}
+
 // ─── MessageBubble ────────────────────────────────────────────────────────────
 
 interface MessageBubbleProps {
-  body: string;
-  createdAt: string;
+  message: MessageWithAttachment;
   isOwn: boolean;
 }
 
-function MessageBubble({ body, createdAt, isOwn }: MessageBubbleProps): React.JSX.Element {
+function MessageBubble({ message, isOwn }: MessageBubbleProps): React.JSX.Element {
+  const [downloading, setDownloading] = useState(false);
+
+  const handleDownload = useCallback(async () => {
+    if (!message.attachment) return;
+    setDownloading(true);
+    try {
+      const resp = await api<{ url: string }>(
+        `/conversations/messages/${message.id}/attachment-url`,
+      );
+      // Open in the system browser / default viewer. PDFs + images open inline;
+      // audio launches the system player. On iOS we could also present QuickLook
+      // for richer previews — deferred to post-MVP.
+      await Linking.openURL(resp.url);
+    } catch {
+      Alert.alert('Could not download', 'The file link may have expired. Try again.');
+    } finally {
+      setDownloading(false);
+    }
+  }, [message]);
+
   return (
     <View style={[b.wrapper, isOwn ? b.wrapperOwn : b.wrapperOther]}>
       <View style={[b.bubble, isOwn ? b.bubbleOwn : b.bubbleOther]}>
-        <Text style={[b.bodyText, isOwn ? b.bodyTextOwn : b.bodyTextOther]}>
-          {body}
-        </Text>
+        {message.attachment && (
+          <TouchableOpacity
+            style={[b.attachment, isOwn ? b.attachmentOwn : b.attachmentOther]}
+            onPress={handleDownload}
+            disabled={downloading}
+            accessibilityRole="button"
+            accessibilityLabel={`Download ${message.attachment.filename}`}
+          >
+            <View
+              style={[
+                b.attachmentIcon,
+                isOwn ? b.attachmentIconOwn : b.attachmentIconOther,
+              ]}
+            >
+              {downloading ? (
+                <ActivityIndicator size="small" color={isOwn ? '#FFFFFF' : colors.primary} />
+              ) : (
+                <FileText size={18} color={isOwn ? '#FFFFFF' : colors.primary} />
+              )}
+            </View>
+            <View style={b.attachmentMeta}>
+              <Text
+                style={[b.attachmentName, isOwn ? b.textOwn : b.textOther]}
+                numberOfLines={1}
+              >
+                {message.attachment.filename}
+              </Text>
+              <Text style={[b.attachmentSize, isOwn ? b.textOwnMuted : b.textOtherMuted]}>
+                {formatFileSize(message.attachment.sizeBytes)}
+              </Text>
+            </View>
+          </TouchableOpacity>
+        )}
+        {message.body ? (
+          <Text style={[b.bodyText, isOwn ? b.textOwn : b.textOther]}>
+            {message.body}
+          </Text>
+        ) : null}
       </View>
       <Text style={[b.timestamp, isOwn ? b.timestampOwn : b.timestampOther]}>
-        {formatMessageTime(createdAt)}
+        {formatMessageTime(message.createdAt)}
       </Text>
     </View>
   );
 }
 
-const b = StyleSheet.create({
-  wrapper: {
-    maxWidth: '80%',
-    marginBottom: 12,
-    gap: 3,
-  },
-  wrapperOwn: {
-    alignSelf: 'flex-end',
-    alignItems: 'flex-end',
-  },
-  wrapperOther: {
-    alignSelf: 'flex-start',
-    alignItems: 'flex-start',
-  },
-  bubble: {
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 16,
-  },
-  bubbleOwn: {
-    backgroundColor: colors.primary,
-    borderBottomRightRadius: 4,
-  },
-  bubbleOther: {
-    backgroundColor: colors.card,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderBottomLeftRadius: 4,
-  },
-  bodyText: {
-    ...typography.bodySm,
-    lineHeight: 20,
-  },
-  bodyTextOwn: {
-    color: '#FFFFFF',
-  },
-  bodyTextOther: {
-    color: colors.foreground,
-  },
-  timestamp: {
-    fontSize: 10,
-    color: colors.mutedForeground,
-    paddingHorizontal: 4,
-  },
-  timestampOwn: {
-    textAlign: 'right',
-  },
-  timestampOther: {
-    textAlign: 'left',
-  },
-});
+// ─── Main component ─────────────────────────────────────────────────────────
 
-// ─── Main Component ───────────────────────────────────────────────────────────
-
-/**
- * Session chat with mock data. In production, replace getMockMessages with
- * an API-connected hook (useMessages / useSendMessage).
- */
 export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element {
-  const [messages, setMessages] = useState<ChatMessage[]>(() => getMockMessages(sessionId));
+  const { userRole } = useAuth();
   const [inputValue, setInputValue] = useState('');
-  const listRef = useRef<FlatList<ChatMessage>>(null);
+  const [uploading, setUploading] = useState(false);
+  const listRef = useRef<FlatList<MessageWithAttachment>>(null);
 
-  const handleSend = useCallback((): void => {
+  // Resolve conversation by session_id. The conversations list is small enough
+  // to filter client-side — we only have at most one conversation per session.
+  const conversationsQuery = useConversations();
+  const conversation = conversationsQuery.data?.find((c) => c.sessionId === sessionId);
+  const conversationId = conversation?.id ?? '';
+
+  const messagesQuery = useMessages(conversationId);
+  const sendMutation = useSendMessage();
+
+  // Infer own-message side from the sender's role. We only have the sender_id
+  // from the API, not the role. For a simple v1, we compare against auth role
+  // by assumption: if the conversation shows chw_id === sender_id, it's own for CHWs.
+  const myRoleKey = userRole === 'chw' ? 'chwId' : 'memberId';
+  const myId = conversation ? conversation[myRoleKey] : '';
+
+  const messages = (messagesQuery.data ?? []) as MessageWithAttachment[];
+
+  const handleSend = useCallback(async () => {
     const trimmed = inputValue.trim();
-    if (!trimmed) return;
+    if (!trimmed || !conversationId) return;
+    try {
+      await sendMutation.mutateAsync({ conversationId, body: trimmed });
+      setInputValue('');
+      requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
+    } catch {
+      Alert.alert('Could not send', 'Check your connection and try again.');
+    }
+  }, [inputValue, conversationId, sendMutation]);
 
-    const newMessage: ChatMessage = {
-      id: `msg-local-${Date.now()}`,
-      body: trimmed,
-      createdAt: new Date().toISOString(),
-      isOwn: true,
-    };
+  const handlePickFile = useCallback(async () => {
+    if (!conversationId || uploading) return;
 
-    setMessages((prev) => [...prev, newMessage]);
-    setInputValue('');
-
-    // Scroll to end after state update
-    requestAnimationFrame(() => {
-      listRef.current?.scrollToEnd({ animated: true });
+    const result = await DocumentPicker.getDocumentAsync({
+      type: ALLOWED_MIME_TYPES,
+      copyToCacheDirectory: true,
+      multiple: false,
     });
-  }, [inputValue]);
+
+    if (result.canceled || !result.assets?.[0]) return;
+    const asset = result.assets[0];
+
+    const contentType = asset.mimeType ?? 'application/octet-stream';
+    const sizeBytes = asset.size ?? 0;
+
+    if (!ALLOWED_MIME_TYPES.includes(contentType)) {
+      Alert.alert('File type not allowed', `${contentType} is not supported.`);
+      return;
+    }
+    if (sizeBytes > MAX_ATTACHMENT_BYTES) {
+      Alert.alert('File too large', 'Maximum size is 20 MB.');
+      return;
+    }
+
+    setUploading(true);
+    try {
+      const presigned = await presignUpload(asset.name, contentType, sizeBytes);
+      await uploadToS3(presigned.upload_url, asset.uri, contentType);
+
+      // Post the message with the attachment metadata
+      await api('/conversations/' + conversationId + '/messages', {
+        method: 'POST',
+        body: JSON.stringify({
+          body: `📎 ${asset.name}`,
+          type: 'file',
+          attachment_s3_key: presigned.s3_key,
+          attachment_filename: asset.name,
+          attachment_size_bytes: sizeBytes,
+          attachment_content_type: contentType,
+        }),
+      });
+
+      // Trigger a refetch of messages
+      await messagesQuery.refetch();
+      requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
+    } catch {
+      Alert.alert('Upload failed', 'Could not send the file. Try again.');
+    } finally {
+      setUploading(false);
+    }
+  }, [conversationId, uploading, messagesQuery]);
 
   const renderItem = useCallback(
-    ({ item }: { item: ChatMessage }) => (
-      <MessageBubble body={item.body} createdAt={item.createdAt} isOwn={item.isOwn} />
+    ({ item }: { item: MessageWithAttachment }) => (
+      <MessageBubble message={item} isOwn={item.senderId === myId} />
     ),
-    [],
+    [myId],
   );
 
-  const keyExtractor = useCallback((item: ChatMessage) => item.id, []);
+  const keyExtractor = useCallback((item: MessageWithAttachment) => item.id, []);
+
+  // Conversations hasn't linked to this session yet (CHW hasn't accepted),
+  // or the user is offline. Treat as empty conversation.
+  if (!conversationId && !conversationsQuery.isLoading) {
+    return (
+      <View style={c.container}>
+        <View style={c.emptyState}>
+          <View style={c.emptyIconCircle}>
+            <MessageSquare size={20} color={colors.mutedForeground} />
+          </View>
+          <Text style={c.emptyTitle}>No chat for this session yet</Text>
+          <Text style={c.emptySubtext}>
+            Messaging opens once a CHW accepts the session.
+          </Text>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={c.container}>
-      {/* Header */}
       <View style={c.header}>
         <Text style={c.headerLabel}>Session Chat</Text>
       </View>
 
-      {/* Message list */}
-      {messages.length === 0 ? (
+      {messagesQuery.isLoading ? (
+        <View style={c.emptyState}>
+          <ActivityIndicator color={colors.primary} />
+        </View>
+      ) : messages.length === 0 ? (
         <View style={c.emptyState}>
           <View style={c.emptyIconCircle}>
             <MessageSquare size={20} color={colors.mutedForeground} />
@@ -268,8 +357,21 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
         />
       )}
 
-      {/* Input area */}
       <View style={c.inputArea}>
+        <TouchableOpacity
+          style={[c.attachButton, uploading && c.attachButtonDisabled]}
+          onPress={handlePickFile}
+          disabled={uploading || !conversationId}
+          accessibilityRole="button"
+          accessibilityLabel="Attach file"
+        >
+          {uploading ? (
+            <ActivityIndicator size="small" color={colors.mutedForeground} />
+          ) : (
+            <Paperclip size={20} color={colors.mutedForeground} />
+          )}
+        </TouchableOpacity>
+
         <TextInput
           style={c.input}
           value={inputValue}
@@ -283,16 +385,24 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
           onSubmitEditing={handleSend}
           accessibilityLabel="Message input"
         />
+
         <TouchableOpacity
-          style={[c.sendButton, !inputValue.trim() && c.sendButtonDisabled]}
+          style={[
+            c.sendButton,
+            (!inputValue.trim() || sendMutation.isPending || !conversationId) &&
+              c.sendButtonDisabled,
+          ]}
           onPress={handleSend}
-          disabled={!inputValue.trim()}
+          disabled={!inputValue.trim() || sendMutation.isPending || !conversationId}
           accessibilityRole="button"
           accessibilityLabel="Send message"
-          accessibilityState={{ disabled: !inputValue.trim() }}
           activeOpacity={0.75}
         >
-          <Send size={16} color="#FFFFFF" />
+          {sendMutation.isPending ? (
+            <ActivityIndicator size="small" color="#FFFFFF" />
+          ) : (
+            <Send size={16} color="#FFFFFF" />
+          )}
         </TouchableOpacity>
       </View>
     </View>
@@ -301,11 +411,61 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
-const c = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.background,
+const b = StyleSheet.create({
+  wrapper: {
+    maxWidth: '80%',
+    marginBottom: 12,
+    gap: 3,
   },
+  wrapperOwn: { alignSelf: 'flex-end', alignItems: 'flex-end' },
+  wrapperOther: { alignSelf: 'flex-start', alignItems: 'flex-start' },
+  bubble: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 16,
+    gap: 8,
+  },
+  bubbleOwn: { backgroundColor: colors.primary, borderBottomRightRadius: 4 },
+  bubbleOther: {
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderBottomLeftRadius: 4,
+  },
+  bodyText: { ...typography.bodySm, lineHeight: 20 },
+  textOwn: { color: '#FFFFFF' },
+  textOther: { color: colors.foreground },
+  textOwnMuted: { color: '#FFFFFFAA' },
+  textOtherMuted: { color: colors.mutedForeground },
+  timestamp: { fontSize: 10, color: colors.mutedForeground, paddingHorizontal: 4 },
+  timestampOwn: { textAlign: 'right' },
+  timestampOther: { textAlign: 'left' },
+
+  attachment: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 4,
+    minWidth: 200,
+  },
+  attachmentOwn: {},
+  attachmentOther: {},
+  attachmentIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  attachmentIconOwn: { backgroundColor: '#FFFFFF25' },
+  attachmentIconOther: { backgroundColor: `${colors.primary}15` },
+  attachmentMeta: { flex: 1, minWidth: 0 },
+  attachmentName: { ...typography.bodySm, fontWeight: '600' },
+  attachmentSize: { fontSize: 11, marginTop: 2 },
+});
+
+const c = StyleSheet.create({
+  container: { flex: 1, backgroundColor: colors.background },
   header: {
     paddingHorizontal: 16,
     paddingVertical: 12,
@@ -320,12 +480,7 @@ const c = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 1,
   },
-  listContent: {
-    padding: 16,
-    paddingBottom: 8,
-  },
-
-  // Empty state
+  listContent: { padding: 16, paddingBottom: 8 },
   emptyState: {
     flex: 1,
     alignItems: 'center',
@@ -341,28 +496,34 @@ const c = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  emptyTitle: {
-    ...typography.bodyMd,
-    fontWeight: '700',
-    color: colors.foreground,
-  },
+  emptyTitle: { ...typography.bodyMd, fontWeight: '700', color: colors.foreground },
   emptySubtext: {
     ...typography.bodySm,
     color: colors.mutedForeground,
     textAlign: 'center',
   },
 
-  // Input area
   inputArea: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    gap: 10,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     borderTopWidth: 1,
     borderTopColor: colors.border,
     backgroundColor: colors.card,
   },
+  attachButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.background,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  attachButtonDisabled: { opacity: 0.5 },
   input: {
     flex: 1,
     borderWidth: 1,
@@ -384,7 +545,5 @@ const c = StyleSheet.create({
     justifyContent: 'center',
     flexShrink: 0,
   },
-  sendButtonDisabled: {
-    opacity: 0.4,
-  },
+  sendButtonDisabled: { opacity: 0.4 },
 });

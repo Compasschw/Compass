@@ -110,6 +110,14 @@ export interface ConversationData {
   createdAt: string;
 }
 
+export interface FileAttachmentInline {
+  id: string;
+  filename: string;
+  sizeBytes: number;
+  contentType: string;
+  s3Key: string;
+}
+
 export interface MessageData {
   id: string;
   conversationId: string;
@@ -117,6 +125,7 @@ export interface MessageData {
   body: string;
   type: string;
   createdAt: string;
+  attachment?: FileAttachmentInline | null;
 }
 
 // ─── Query Keys ──────────────────────────────────────────────────────────────
