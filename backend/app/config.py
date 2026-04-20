@@ -64,6 +64,12 @@ class Settings(BaseSettings):
     sentry_dsn: str = ""
     environment: str = "development"  # development | staging | production
 
+    # Payments (Stripe Connect Express)
+    payments_provider: str = "stripe"
+    stripe_secret_key: str = ""  # sk_live_... or sk_test_...
+    stripe_webhook_secret: str = ""  # whsec_... from Stripe dashboard
+    stripe_platform_name: str = "CompassCHW"
+
     class Config:
         env_file = ".env"
 

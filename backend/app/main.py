@@ -99,6 +99,7 @@ from app.routers.devices import router as devices_router
 from app.routers.health import router as health_router
 from app.routers.matching import router as matching_router
 from app.routers.member import router as member_router
+from app.routers.payments import router as payments_router
 from app.routers.requests import router as requests_router
 from app.routers.sessions import router as sessions_router
 from app.routers.upload import router as upload_router
@@ -117,3 +118,4 @@ app.include_router(health_router)
 app.include_router(waitlist_router)
 app.include_router(admin_router)
 app.include_router(devices_router)
+app.include_router(payments_router)

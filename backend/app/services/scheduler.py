@@ -139,6 +139,48 @@ async def retry_pending_claims() -> None:
                 logger.warning("Claim retry failed for %s: %s", claim.id, e)
 
 
+async def trigger_pending_payouts() -> None:
+    """Transfer net payouts to CHWs for claims that have been adjudicated + paid.
+
+    Called every 10 minutes. Looks for BillingClaim rows where:
+      - status == 'paid' (Pear Suite has confirmed Medi-Cal payment)
+      - stripe_transfer_id IS NULL (we haven't paid the CHW yet)
+      - paid_at is within the last 30 days (older claims likely need manual review)
+
+    Idempotent — trigger_chw_payout uses Stripe's idempotency key based on
+    the billing_claim_id, so duplicate scheduler runs can't double-pay.
+    """
+    from app.database import async_session
+    from app.models.billing import BillingClaim
+    from app.routers.payments import trigger_chw_payout
+
+    cutoff = datetime.now(UTC) - timedelta(days=30)
+    async with async_session() as db:
+        result = await db.execute(
+            select(BillingClaim)
+            .where(BillingClaim.status == "paid")
+            .where(BillingClaim.stripe_transfer_id.is_(None))
+            .where(BillingClaim.paid_at >= cutoff)
+            .limit(25)
+        )
+        claims = list(result.scalars().all())
+        if not claims:
+            return
+
+        for claim in claims:
+            try:
+                ok = await trigger_chw_payout(db, claim.id)
+                if ok:
+                    logger.info("CHW payout triggered for claim %s", claim.id)
+                else:
+                    logger.info(
+                        "CHW payout deferred for claim %s (CHW not onboarded or zero amount)",
+                        claim.id,
+                    )
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Payout trigger failed for claim %s: %s", claim.id, e)
+
+
 # Module-level cache of reminded sessions — reset on process restart
 _reminded_sessions: set[str] = set()
 
@@ -169,6 +211,15 @@ def start_scheduler() -> None:
         "interval",
         minutes=10,
         id="claim_retry",
+        max_instances=1,
+        coalesce=True,
+    )
+
+    _scheduler.add_job(
+        trigger_pending_payouts,
+        "interval",
+        minutes=10,
+        id="payout_trigger",
         max_instances=1,
         coalesce=True,
     )

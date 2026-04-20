@@ -39,6 +39,14 @@ class CHWProfile(Base):
     rating_count: Mapped[int] = mapped_column(Integer, default=0)
     is_available: Mapped[bool] = mapped_column(Boolean, default=True)
     availability_windows: Mapped[dict | None] = mapped_column(JSONB)
+
+    # Stripe Connect Express account for receiving payouts. Null until the CHW
+    # completes the onboarding flow. The status fields are cached from the
+    # account.updated webhook to avoid round-tripping to Stripe on every request.
+    stripe_connected_account_id: Mapped[str | None] = mapped_column(String(100))
+    stripe_payouts_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    stripe_details_submitted: Mapped[bool] = mapped_column(Boolean, default=False)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

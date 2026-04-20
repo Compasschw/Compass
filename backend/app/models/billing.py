@@ -33,4 +33,9 @@ class BillingClaim(Base):
     adjudicated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     rejection_reason: Mapped[str | None] = mapped_column(String(500))
+    # Stripe transfer that moved the CHW's net share from platform balance to
+    # their connected account. Populated after successful payout; null while
+    # awaiting Medi-Cal adjudication via Pear Suite.
+    stripe_transfer_id: Mapped[str | None] = mapped_column(String(100))
+    paid_to_chw_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
