@@ -7,6 +7,7 @@
 import React from 'react';
 import { Platform } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import {
   LayoutDashboard,
   Inbox,
@@ -24,19 +25,41 @@ import { CHWSessionsScreen } from '../screens/chw/CHWSessionsScreen';
 import { CHWCalendarScreen } from '../screens/chw/CHWCalendarScreen';
 import { CHWEarningsScreen } from '../screens/chw/CHWEarningsScreen';
 import { CHWProfileScreen } from '../screens/chw/CHWProfileScreen';
+import { PaymentsScreen } from '../screens/chw/PaymentsScreen';
 
-// ─── Navigator param list ─────────────────────────────────────────────────────
+// ─── Navigator param lists ────────────────────────────────────────────────────
 
 export type CHWTabParamList = {
   Dashboard: undefined;
   Requests: undefined;
   Sessions: undefined;
   Calendar: undefined;
-  Earnings: undefined;
+  EarningsStack: undefined;
   Profile: undefined;
+  // Payments lives inside EarningsStack — exposed here so deep links can
+  // address it via the CHWTabParamList type without navigating through the
+  // stack manually.
+  Payments: undefined;
+};
+
+// Nested stack inside the Earnings tab so we can push PaymentsScreen on top
+// of the main earnings dashboard without leaving the tab bar.
+type EarningsStackParamList = {
+  Earnings: undefined;
+  Payments: undefined;
 };
 
 const Tab = createBottomTabNavigator<CHWTabParamList>();
+const EarningsStack = createNativeStackNavigator<EarningsStackParamList>();
+
+function EarningsStackNavigator(): React.JSX.Element {
+  return (
+    <EarningsStack.Navigator screenOptions={{ headerShown: false }}>
+      <EarningsStack.Screen name="Earnings" component={CHWEarningsScreen} />
+      <EarningsStack.Screen name="Payments" component={PaymentsScreen} />
+    </EarningsStack.Navigator>
+  );
+}
 
 // ─── Navigator ────────────────────────────────────────────────────────────────
 
@@ -106,9 +129,10 @@ export function CHWTabNavigator(): React.JSX.Element {
         }}
       />
       <Tab.Screen
-        name="Earnings"
-        component={CHWEarningsScreen}
+        name="EarningsStack"
+        component={EarningsStackNavigator}
         options={{
+          title: 'Earnings',
           tabBarIcon: ({ color, size }) => (
             <DollarSign color={color} size={size} />
           ),

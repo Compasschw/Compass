@@ -10,17 +10,21 @@
 
 import React, { useMemo } from 'react';
 import {
+  Pressable,
   View,
   Text,
   ScrollView,
   StyleSheet,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
 import {
+  ArrowRight,
   DollarSign,
   TrendingUp,
   CalendarCheck,
   Banknote,
+  CreditCard,
   Home,
   RefreshCw,
   Utensils,
@@ -39,6 +43,7 @@ import {
 } from '../../data/mock';
 import {
   useChwEarnings,
+  usePaymentsAccountStatus,
   useSessions,
   type SessionData,
 } from '../../hooks/useApiQueries';
@@ -151,8 +156,13 @@ function VerticalIconComponent({
  * CHW Earnings screen — tracks Medi-Cal reimbursements and payout history.
  */
 export function CHWEarningsScreen(): React.JSX.Element {
+  const navigation = useNavigation();
   const earningsQuery = useChwEarnings();
   const sessionsQuery = useSessions();
+  const payoutsQuery = usePaymentsAccountStatus();
+  const payoutsEnabled = payoutsQuery.data?.payoutsEnabled === true;
+  const payoutsInProgress =
+    !!payoutsQuery.data?.accountId && !payoutsQuery.data.payoutsEnabled;
 
   const isLoading = earningsQuery.isLoading || sessionsQuery.isLoading;
   const queryError = earningsQuery.error ?? sessionsQuery.error;
@@ -208,6 +218,43 @@ export function CHWEarningsScreen(): React.JSX.Element {
             Track your Medi-Cal reimbursements and payout history.
           </Text>
         </View>
+
+        {/* ── Payout setup banner (only shown until payouts are enabled) ── */}
+        {!payoutsEnabled && (
+          <Pressable
+            style={[
+              styles.payoutBanner,
+              payoutsInProgress && styles.payoutBannerPending,
+            ]}
+            onPress={() => {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              (navigation as any).navigate('Payments');
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={
+              payoutsInProgress
+                ? 'Continue payout setup'
+                : 'Set up direct deposit'
+            }
+          >
+            <View style={styles.payoutBannerIcon}>
+              <CreditCard size={20} color="#FFFFFF" />
+            </View>
+            <View style={styles.payoutBannerContent}>
+              <Text style={styles.payoutBannerTitle}>
+                {payoutsInProgress
+                  ? 'Finish setting up direct deposit'
+                  : 'Set up direct deposit'}
+              </Text>
+              <Text style={styles.payoutBannerSubtitle}>
+                {payoutsInProgress
+                  ? 'Stripe needs a few more details before you can get paid'
+                  : 'Connect your bank to start receiving Medi-Cal payouts'}
+              </Text>
+            </View>
+            <ArrowRight size={20} color="#FFFFFF" />
+          </Pressable>
+        )}
 
         {/* ── Stat cards ── */}
         <View style={styles.statRow}>
@@ -459,6 +506,42 @@ const styles = StyleSheet.create({
     lineHeight: 24,
     color: '#6B7A6B',
     marginTop: 4,
+  },
+  payoutBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: colors.primary,
+    borderRadius: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    marginBottom: 20,
+  },
+  payoutBannerPending: {
+    backgroundColor: colors.compassGold,
+  },
+  payoutBannerIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.22)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  payoutBannerContent: {
+    flex: 1,
+  },
+  payoutBannerTitle: {
+    fontFamily: 'DMSans_600SemiBold',
+    fontSize: 15,
+    color: '#FFFFFF',
+    marginBottom: 2,
+  },
+  payoutBannerSubtitle: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.9)',
+    lineHeight: 16,
   },
   statRow: {
     flexDirection: 'row',

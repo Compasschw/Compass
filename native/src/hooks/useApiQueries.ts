@@ -368,6 +368,51 @@ export function useUpdateMemberProfile() {
   });
 }
 
+// ─── Payments (Stripe Connect) ───────────────────────────────────────────────
+
+export interface PaymentsAccountStatus {
+  accountId: string | null;
+  payoutsEnabled: boolean;
+  detailsSubmitted: boolean;
+  requirementsCurrentlyDue: string[];
+}
+
+export interface ConnectOnboardingResponse {
+  onboardingUrl: string;
+  expiresAt: string;
+  accountId: string;
+}
+
+export function usePaymentsAccountStatus(enabled = true) {
+  return useQuery({
+    queryKey: ['payments', 'account-status'],
+    queryFn: async () => {
+      const raw = await api<unknown>('/payments/account-status');
+      return transformKeys<PaymentsAccountStatus>(raw);
+    },
+    enabled,
+    // Re-check on focus — users return from Stripe onboarding and expect fresh state
+    refetchOnWindowFocus: true,
+    staleTime: 5_000,
+  });
+}
+
+export function useConnectOnboardingLink() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (): Promise<ConnectOnboardingResponse> => {
+      const raw = await api<unknown>('/payments/connect-onboarding', {
+        method: 'POST',
+      });
+      return transformKeys<ConnectOnboardingResponse>(raw);
+    },
+    onSuccess: () => {
+      // Creating/reusing the account may affect account-status — refetch
+      void qc.invalidateQueries({ queryKey: ['payments', 'account-status'] });
+    },
+  });
+}
+
 // ─── Magic Link (passwordless auth) ──────────────────────────────────────────
 
 export function useRequestMagicLink() {
