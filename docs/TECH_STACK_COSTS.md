@@ -66,7 +66,55 @@
 
 ---
 
-## 4. Mobile App Distribution
+## 4. Payments & CHW Payouts (Stripe Connect)
+
+CompassCHW is the merchant of record. Money flows:
+
+```
+Medi-Cal MCO → Pear Suite → CompassCHW (Stripe business account)
+    → Compass retains 10-15% platform fee
+    → Transfers net amount to CHW's Stripe Connect account
+    → CHW withdraws to their personal bank via ACH
+```
+
+**Architecture:** Stripe Connect Express — CHWs onboard through a Stripe-hosted flow that collects SSN/EIN, bank info, and verifies identity (KYC). We never touch bank details. Stripe files 1099-NEC at year-end automatically for any CHW earning > $600.
+
+| Service | What It Does | Cost Model | At 500 sessions/mo |
+|---------|-------------|-----------|-------------------|
+| **Stripe Connect Express** | CHW onboarding + payout rails | **No platform monthly fee** | $0 |
+| — Connected account | Per-CHW (platform pays) | $0/mo per account | $0 |
+| — ACH payout (standard, 2-day) | Per payout | **$0.25 / payout** | ~$5/mo (20 CHWs × weekly) |
+| — Instant payout (optional, CHW-paid) | When CHW wants same-day | 1% of amount (CHW pays) | $0 (pass-through to CHW) |
+| — 1099-NEC filing | Year-end tax reporting | **$2 / filing** (once/year) | ~$40/year |
+| — Identity verification (KYC) | During onboarding | Included | $0 |
+| — Fraud monitoring (Radar) | Included baseline | Included | $0 |
+| **Receiving funds from Pear Suite** | Incoming ACH to Compass | 0.8% per transaction, capped at $5 | ~$5/mo (1-2 incoming/mo) |
+| **Subtotal Payments** |  |  | **~$10-15/mo** |
+
+**Notes:**
+- Stripe Connect Express has **no per-account monthly fee** as of 2024 pricing (was $2/mo historically — removed)
+- Biweekly payouts cut the transfer fee in half (~$2.50/mo at our scale)
+- Instant payouts are optional — we can offer them as a perk but the CHW pays the 1% fee, not Compass
+- Stripe requires our platform to provide Terms of Service and Privacy Policy URLs (we have both) and a support contact email
+- Stripe doesn't sign HIPAA BAAs, but **payment info isn't PHI under HIPAA** — 45 CFR §164.501 carves out payment routing. So Stripe is safe to use without BAA. We still need to keep session details out of payment metadata (we already do).
+
+### CHW Earnings Flow Example (one week)
+
+| Event | Amount |
+|-------|--------|
+| CHW completes 5 sessions × 2 units | 10 units × $26.66 = $266.60 |
+| Pear Suite fee (-15%) | -$40 |
+| Compass platform fee (-10%) | -$26.66 |
+| Stripe ACH payout fee (-$0.25 flat) | -$0.25 |
+| **CHW receives in bank** | **~$199.69** (2 business days) |
+
+### Year-End
+
+At $20k/mo CHW payouts × 12 = **$240k paid out annually across ~20 CHWs**. Total Stripe platform fees: **~$200-300/year**. Every CHW earning > $600 gets a 1099-NEC auto-filed by Stripe ($2 each).
+
+---
+
+## 5. Mobile App Distribution
 
 | Service | What It Does | Cost | Frequency |
 |---------|-------------|------|-----------|
@@ -81,7 +129,7 @@
 
 ---
 
-## 5. Observability & Ops
+## 6. Observability & Ops
 
 | Service | What It Does | Current Tier | Monthly |
 |---------|-------------|--------------|---------|
@@ -94,7 +142,7 @@
 
 ---
 
-## 6. Development & CI/CD
+## 7. Development & CI/CD
 
 | Service | What It Does | Tier | Monthly |
 |---------|-------------|------|---------|
@@ -105,7 +153,7 @@
 
 ---
 
-## 7. Compliance & Legal
+## 8. Compliance & Legal
 
 **Policy: self-managed compliance through scale.** DIY training + template policies + periodic self-audits. Revisit paid compliance services when we cross 50+ real CHWs or pursue enterprise contracts that require SOC 2.
 
@@ -122,7 +170,7 @@
 
 ---
 
-## 8. Business Services (One-Time)
+## 9. Business Services (One-Time)
 
 | Item | Cost | Status |
 |------|------|--------|
@@ -157,9 +205,10 @@
 | GoDaddy | ~$2 |
 | Vonage (500 sessions/mo) | ~$155 |
 | AssemblyAI (10K min/mo) | ~$50 |
+| Stripe Connect payout fees | ~$10-15 |
 | Sentry | $0 |
 | Expo EAS | $0 |
-| **Total** | **~$237/mo** |
+| **Total** | **~$250/mo** |
 
 ### Annual Costs (Year 1)
 
@@ -181,8 +230,8 @@
 |----------|---------------|----------|------------------|
 | **Pre-launch only** (no real traffic) | $24 | $2,294 | **~$2,318** |
 | **Modest launch** (100 sessions/mo) | ~$300 | $2,294 | **~$2,594** |
-| **Target launch** (500 sessions/mo) | $2,844 (avg with ramp) | $2,294 | **~$5,138** |
-| **Growth phase** (2,000 sessions/mo) | $7,500+ | $2,294 | **~$9,794+** |
+| **Target launch** (500 sessions/mo) | $3,000 (avg with ramp) | $2,294 | **~$5,294** |
+| **Growth phase** (2,000 sessions/mo) | $7,800+ | $2,294 | **~$10,094+** |
 
 ---
 
@@ -219,6 +268,7 @@ Business insurance ($1,500) is strongly recommended but can wait until first pay
 | Vonage | ❌ No account yet | Contact sales + BAA |
 | AssemblyAI | ❌ No account yet | Contact sales + BAA |
 | Pear Suite | ❌ No API key yet | Follow up with CTO |
+| **Stripe** | ❌ No account yet | Can do now — requires EIN for business verification |
 | Sentry | 🟡 Account signup pending | 5-min self-serve |
 | Apple Developer | ❌ No account | EIN → DUNS → apply |
 | Google Play | ❌ No account | Can do now ($25) |
@@ -229,9 +279,10 @@ Business insurance ($1,500) is strongly recommended but can wait until first pay
 ## What This Means
 
 - **Pre-launch burn rate:** ~$2/mo, basically nothing
-- **Launch burn rate:** ~$237/mo, very modest
-- **Growth burn rate:** ~$750/mo at 2,000 sessions/mo — still capital-efficient
-- **Unit economics:** Positive from the first real billable session — infra cost is <1% of gross revenue
+- **Launch burn rate:** ~$250/mo, very modest
+- **Growth burn rate:** ~$800/mo at 2,000 sessions/mo — still capital-efficient
+- **Unit economics:** Positive from the first real billable session — infra + payout cost is <1% of gross revenue
+- **CHW payouts:** Secured via Stripe Connect Express. CHWs onboard through a Stripe-hosted KYC flow; funds flow to their bank in 2 business days (or same-day for a 1% fee they pay). Stripe files 1099-NEC automatically at year-end.
 - **Compliance posture:** DIY HIPAA training + signed template policies. Revisit paid compliance services only if we pursue enterprise contracts requiring SOC 2 Type II.
 
 The tech stack is **intentionally lean**. Every vendor we use has a HIPAA BAA pathway, free tiers that cover MVP usage, and pay-per-use pricing that aligns with revenue. No long-term commitments, no enterprise contracts, no wasted spend.
