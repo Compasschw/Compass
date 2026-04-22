@@ -45,26 +45,32 @@ import {
 
 // ─── Data: questions + option sets ────────────────────────────────────────────
 
-type Option = { value: string; label: string };
-type Question = {
+export type IntakeOption = { value: string; label: string };
+export type IntakeQuestion = {
   id: keyof CHWIntakeState;
   number: number;
   label: string;
   hint?: string;
-  options: Option[];
+  options: IntakeOption[];
   /** When value = this, show the free-text "Other" input under field `otherField`. */
   otherValue?: string;
   otherField?: keyof CHWIntakeState;
 };
 
-type Section = {
+export type IntakeSection = {
   index: number;          // 1..6
   tag: string;            // ABOUT YOU
   title: string;          // Professional background
   accentColor: string;    // section badge + progress accent
   description: string;
-  questions: Question[];
+  questions: IntakeQuestion[];
 };
+
+// Re-exports for demo / preview screens that want to render the same flow
+// without hitting the backend.
+type Option = IntakeOption;
+type Question = IntakeQuestion;
+type Section = IntakeSection;
 
 // Palette for section badges — each derived from the PDF's colored rule.
 const SECTION_COLORS = {
@@ -76,7 +82,7 @@ const SECTION_COLORS = {
   availability: '#5B8C5A',   // green
 };
 
-const SECTIONS: Section[] = [
+export const INTAKE_SECTIONS: Section[] = [
   {
     index: 1,
     tag: 'ABOUT YOU',
@@ -465,10 +471,10 @@ const SECTIONS: Section[] = [
   },
 ];
 
-const TOTAL_SECTIONS = SECTIONS.length; // 6
+const TOTAL_SECTIONS = INTAKE_SECTIONS.length; // 6
 
 // Helper — total question count for the subtitle counter
-const TOTAL_QUESTIONS = SECTIONS.reduce((sum, s) => sum + s.questions.length, 0);
+const TOTAL_QUESTIONS = INTAKE_SECTIONS.reduce((sum, s) => sum + s.questions.length, 0);
 
 // ─── Sub-components ──────────────────────────────────────────────────────────
 
@@ -601,7 +607,7 @@ function ReviewPage({
         Tap any section to jump back and make changes. Submit when you're ready.
       </Text>
 
-      {SECTIONS.map((section) => (
+      {INTAKE_SECTIONS.map((section) => (
         <View key={section.index} style={styles.reviewSection}>
           <View style={styles.reviewSectionHeader}>
             <View style={styles.reviewSectionTitleWrap}>
@@ -644,12 +650,26 @@ function ReviewPage({
 
 // ─── Main screen ─────────────────────────────────────────────────────────────
 
-export function CHWIntakeScreen(): React.JSX.Element {
+interface CHWIntakeScreenProps {
+  /**
+   * When true, skip all API calls and run entirely off local state.
+   * Used by the marketing-site preview so anyone can see the UI without
+   * signing up. Do not set this in production flows.
+   */
+  previewMode?: boolean;
+}
+
+export function CHWIntakeScreen({
+  previewMode = false,
+}: CHWIntakeScreenProps = {}): React.JSX.Element {
   const navigation = useNavigation();
 
-  const { data: initial, isLoading } = useCHWIntake();
+  const { data: apiInitial, isLoading: apiLoading } = useCHWIntake(!previewMode);
   const patchMutation = useUpdateCHWIntake();
   const submitMutation = useSubmitCHWIntake();
+
+  const initial = previewMode ? undefined : apiInitial;
+  const isLoading = previewMode ? false : apiLoading;
 
   // Local draft — prefilled from server, edited in-screen, patched on Continue.
   const [draft, setDraft] = useState<CHWIntakeState>({});
@@ -670,7 +690,7 @@ export function CHWIntakeScreen(): React.JSX.Element {
   }, [initial]);
 
   const currentSection = useMemo(
-    () => (step <= TOTAL_SECTIONS ? SECTIONS[step - 1] : null),
+    () => (step <= TOTAL_SECTIONS ? INTAKE_SECTIONS[step - 1] : null),
     [step],
   );
 
@@ -691,7 +711,7 @@ export function CHWIntakeScreen(): React.JSX.Element {
 
   const allSectionsComplete = useMemo(
     () =>
-      SECTIONS.every((s) =>
+      INTAKE_SECTIONS.every((s) =>
         s.questions.every((q) => {
           const v = draft[q.id] as string | undefined;
           if (!v) return false;
@@ -732,6 +752,11 @@ export function CHWIntakeScreen(): React.JSX.Element {
       }
     }
 
+    if (previewMode) {
+      setDraft((prev) => ({ ...prev, ...patch }));
+      setStep((prev) => prev + 1);
+      return;
+    }
     try {
       await patchMutation.mutateAsync(patch);
       setStep((prev) => prev + 1);
@@ -741,9 +766,13 @@ export function CHWIntakeScreen(): React.JSX.Element {
         'We couldn\'t save your answers. Check your connection and try again.',
       );
     }
-  }, [currentSection, draft, step, patchMutation]);
+  }, [currentSection, draft, step, patchMutation, previewMode]);
 
   const handleSubmit = useCallback(async () => {
+    if (previewMode) {
+      setSubmitted(true);
+      return;
+    }
     // Save any outstanding edits one more time, then submit
     try {
       if (Object.keys(draft).length > 0) {
@@ -754,7 +783,7 @@ export function CHWIntakeScreen(): React.JSX.Element {
     } catch (e) {
       Alert.alert('Could not submit', 'Please review your answers and try again.');
     }
-  }, [draft, patchMutation, submitMutation]);
+  }, [draft, patchMutation, submitMutation, previewMode]);
 
   const handleSaveAndExit = useCallback(() => {
     Alert.alert(
@@ -813,7 +842,7 @@ export function CHWIntakeScreen(): React.JSX.Element {
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
       <KeyboardAvoidingView
-        style={{ flex: 1 }}
+        style={styles.pageWrap}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
         {/* Top bar */}
@@ -959,6 +988,14 @@ const styles = StyleSheet.create({
   safe: {
     flex: 1,
     backgroundColor: colors.background,
+  },
+  // Constrains the whole intake flow to a mobile-sized column even on
+  // wide desktop browsers so the option cards don't stretch edge-to-edge.
+  pageWrap: {
+    flex: 1,
+    width: '100%',
+    maxWidth: 560,
+    alignSelf: 'center',
   },
   loading: {
     flex: 1,

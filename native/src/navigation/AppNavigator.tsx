@@ -9,7 +9,7 @@
  */
 
 import React, { useCallback, useRef } from 'react';
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Platform, StyleSheet, View } from 'react-native';
 import {
   NavigationContainer,
   type NavigationContainerRef,
@@ -24,10 +24,22 @@ import { LandingScreen } from '../screens/LandingScreen';
 import { LoginScreen } from '../screens/auth/LoginScreen';
 import { MagicLinkScreen } from '../screens/auth/MagicLinkScreen';
 import { WaitlistScreen } from '../screens/auth/WaitlistScreen';
+import { CHWIntakeScreen } from '../screens/chw/CHWIntakeScreen';
 import { CHWOnboardingScreen } from '../screens/onboarding/CHWOnboardingScreen';
 import { MemberOnboardingScreen } from '../screens/onboarding/MemberOnboardingScreen';
 import { CHWTabNavigator } from './CHWTabNavigator';
 import { MemberTabNavigator } from './MemberTabNavigator';
+
+// ─── Web-only preview hatch (for team demos) ─────────────────────────────────
+//
+// Opening the web build with `?preview=intake` in the URL renders the CHW
+// intake screen standalone with local state — no auth, no backend. Lets us
+// share a single URL with TJ/Jemal to walk through the questionnaire UX
+// without provisioning a CHW account.
+function isPreviewRequested(slug: string): boolean {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return false;
+  return window.location.search.includes(`preview=${slug}`);
+}
 
 // ─── Auth stack param list ────────────────────────────────────────────────────
 
@@ -51,6 +63,11 @@ export type RootStackParamList = {
 
 const AuthStack = createNativeStackNavigator<AuthStackParamList>();
 const RootStack = createNativeStackNavigator<RootStackParamList>();
+const PreviewStack = createNativeStackNavigator<{ Preview: undefined }>();
+
+function PreviewIntakeRoute(): React.JSX.Element {
+  return <CHWIntakeScreen previewMode />;
+}
 
 // ─── Auth stack ───────────────────────────────────────────────────────────────
 
@@ -126,6 +143,17 @@ export function AppNavigator(): React.JSX.Element {
 
   if (isLoading) {
     return <LoadingScreen />;
+  }
+
+  // Web-only preview hatch — demos the intake UX without auth/backend.
+  if (isPreviewRequested('intake')) {
+    return (
+      <NavigationContainer>
+        <PreviewStack.Navigator screenOptions={{ headerShown: false }}>
+          <PreviewStack.Screen name="Preview" component={PreviewIntakeRoute} />
+        </PreviewStack.Navigator>
+      </NavigationContainer>
+    );
   }
 
   return (
