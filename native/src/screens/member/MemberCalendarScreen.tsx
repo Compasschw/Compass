@@ -38,6 +38,7 @@ import {
   type Vertical,
 } from '../../data/mock';
 import { useSessions } from '../../hooks/useApiQueries';
+import { useRefreshControl } from '../../hooks/useRefreshControl';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 
@@ -383,6 +384,7 @@ export function MemberCalendarScreen(): React.JSX.Element {
   const [selectedDay, setSelectedDay] = useState<number | null>(null);
 
   const sessionsQuery = useSessions();
+  const refresh = useRefreshControl([sessionsQuery.refetch]);
   const liveSessions = sessionsQuery.data ?? [];
 
   const year = currentMonth.getFullYear();
@@ -450,6 +452,7 @@ export function MemberCalendarScreen(): React.JSX.Element {
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
+        refreshControl={refresh.control}
       >
         {/* Page header */}
         <View style={styles.pageHeader}>

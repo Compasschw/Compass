@@ -46,6 +46,7 @@ import {
   useSessions,
   type SessionData,
 } from '../../hooks/useApiQueries';
+import { useRefreshControl } from '../../hooks/useRefreshControl';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 
@@ -799,6 +800,7 @@ export function MemberSessionsScreen(): React.JSX.Element {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const sessionsQuery = useSessions();
+  const refresh = useRefreshControl([sessionsQuery.refetch]);
   const allSessions = sessionsQuery.data ?? [];
 
   // API already scopes to the authenticated member — no client-side name filter needed
@@ -942,6 +944,7 @@ export function MemberSessionsScreen(): React.JSX.Element {
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
+        refreshControl={refresh.control}
       >
         {activeTab === 'active' ? (
           activeSessions.length > 0 ? (

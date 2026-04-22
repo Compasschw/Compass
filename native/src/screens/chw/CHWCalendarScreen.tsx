@@ -33,6 +33,7 @@ import {
   type Vertical,
 } from '../../data/mock';
 import { useSessions, type SessionData } from '../../hooks/useApiQueries';
+import { useRefreshControl } from '../../hooks/useRefreshControl';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 
@@ -274,6 +275,7 @@ const TODAY_DAY = now.getDate();
  */
 export function CHWCalendarScreen(): React.JSX.Element {
   const { data: rawSessions, isLoading, error, refetch } = useSessions();
+  const refresh = useRefreshControl([refetch]);
 
   // Default to April 2026 to show mock data
   const [currentDate, setCurrentDate] = useState(new Date(2026, 3, 1));
@@ -333,6 +335,7 @@ export function CHWCalendarScreen(): React.JSX.Element {
         style={styles.scroll}
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
+        refreshControl={refresh.control}
       >
         {/* Page header */}
         <Text style={styles.pageTitle}>Calendar</Text>

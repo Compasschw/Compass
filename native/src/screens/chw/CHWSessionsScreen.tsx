@@ -53,6 +53,7 @@ import {
   useSubmitDocumentation,
   type SessionData,
 } from '../../hooks/useApiQueries';
+import { useRefreshControl } from '../../hooks/useRefreshControl';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 import { DocumentationModal } from '../../components/sessions/DocumentationModal';
@@ -675,6 +676,7 @@ export function CHWSessionsScreen(): React.JSX.Element {
   const [activeTab, setActiveTab] = useState<SessionTab>('active');
 
   const { data: rawSessions, isLoading, error, refetch } = useSessions();
+  const refresh = useRefreshControl([refetch]);
   const startSession = useStartSession();
   const completeSession = useCompleteSession();
   const submitDocumentation = useSubmitDocumentation();
@@ -824,6 +826,7 @@ export function CHWSessionsScreen(): React.JSX.Element {
           renderItem={renderItem}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
+          refreshControl={refresh.control}
         />
       ) : (
         <View style={styles.emptyState}>

@@ -44,6 +44,7 @@ import {
   useMemberProfile,
   type SessionData,
 } from '../../hooks/useApiQueries';
+import { useRefreshControl } from '../../hooks/useRefreshControl';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 import type { MemberTabParamList } from '../../navigation/MemberTabNavigator';
@@ -189,6 +190,7 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
 
   const sessionsQuery = useSessions();
   const profileQuery = useMemberProfile();
+  const refresh = useRefreshControl([sessionsQuery.refetch, profileQuery.refetch]);
 
   const allSessions = sessionsQuery.data ?? [];
   const profile = profileQuery.data;
@@ -243,6 +245,7 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
+        refreshControl={refresh.control}
       >
         {/* Greeting */}
         <View style={styles.greetingSection}>

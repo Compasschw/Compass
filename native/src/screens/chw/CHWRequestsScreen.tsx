@@ -45,6 +45,7 @@ import {
   usePassRequest,
   type ServiceRequestData,
 } from '../../hooks/useApiQueries';
+import { useRefreshControl } from '../../hooks/useRefreshControl';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 
@@ -355,6 +356,7 @@ export function CHWRequestsScreen(): React.JSX.Element {
   const { data: rawRequests, isLoading, error, refetch } = useRequests();
   const acceptRequest = useAcceptRequest();
   const passRequest = usePassRequest();
+  const refresh = useRefreshControl([refetch]);
 
   // Track session-local accepted/passed counts for the summary stat row.
   // The API handles actual status transitions; these just reflect in-session actions.
@@ -494,6 +496,7 @@ export function CHWRequestsScreen(): React.JSX.Element {
           )}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
+          refreshControl={refresh.control}
           ListFooterComponent={
             <Text style={styles.footnote}>
               Earnings based on $26.66/unit Medi-Cal rate · 85% CHW net payout.

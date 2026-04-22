@@ -50,6 +50,7 @@ import {
   type SessionData,
   type ServiceRequestData,
 } from '../../hooks/useApiQueries';
+import { useRefreshControl } from '../../hooks/useRefreshControl';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 
@@ -173,6 +174,13 @@ export function CHWDashboardScreen(): React.JSX.Element {
     void requestsQuery.refetch();
   };
 
+  const refresh = useRefreshControl([
+    earningsQuery.refetch,
+    sessionsQuery.refetch,
+    requestsQuery.refetch,
+    intakeQuery.refetch,
+  ]);
+
   const earnings = earningsQuery.data;
   const allSessions = sessionsQuery.data ?? [];
   const allRequests = requestsQuery.data ?? [];
@@ -217,6 +225,7 @@ export function CHWDashboardScreen(): React.JSX.Element {
         style={styles.scroll}
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
+        refreshControl={refresh.control}
       >
         {/* ── Greeting ── */}
         <View style={styles.greetingBlock}>
