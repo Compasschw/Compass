@@ -157,8 +157,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
     [persistAuthState],
   );
 
-  // ── loginMock (demo/offline fallback) ───────────────────────────────────────
+  // ── loginMock (dev-only demo fallback) ──────────────────────────────────────
+  // Kept in the API surface so screens can optimistically call it, but throws
+  // in production builds so a misfire from a Demo button can't create a fake
+  // auth session for a real user.
   const loginMock = useCallback(async (role: UserRole, name: string): Promise<void> => {
+    if (!__DEV__) {
+      throw new Error('loginMock is not available in production builds');
+    }
     const newState: AuthState = {
       isAuthenticated: true,
       userRole: role,

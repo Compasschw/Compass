@@ -220,9 +220,19 @@ export function LoginScreen(): React.JSX.Element {
 
     try {
       await login(account.email, account.password);
-    } catch {
-      // Backend unavailable — fall back to mock login (demo mode).
-      await loginMock(account.role, account.name);
+    } catch (err) {
+      // Backend unavailable — fall back to mock login, but ONLY in dev builds.
+      // Production users who hit this code path should see the real error so
+      // we never silently fabricate a session against a missing backend.
+      if (__DEV__) {
+        await loginMock(account.role, account.name);
+      } else {
+        setError(
+          err instanceof Error
+            ? err.message
+            : 'Sign-in failed. Please check your connection and try again.',
+        );
+      }
     } finally {
       setIsLoading(false);
     }
