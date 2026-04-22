@@ -2,6 +2,7 @@ from app.models.audit import AuditLog
 from app.models.auth import RefreshToken
 from app.models.billing import BillingClaim
 from app.models.calendar import CalendarEvent
+from app.models.chw_intake import CHWIntakeResponse
 from app.models.communication import CommunicationSession
 from app.models.conversation import CallLog, Conversation, FileAttachment, Message
 from app.models.credential import CHWCredentialValidation, Credential, InstitutionRegistry
@@ -31,4 +32,5 @@ __all__ = [
     "DeviceToken",
     "MagicLinkToken",
     "WaitlistEntry",
+    "CHWIntakeResponse",
 ]

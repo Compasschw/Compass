@@ -93,6 +93,7 @@ app.add_middleware(AuditMiddleware)
 from app.routers.admin import router as admin_router
 from app.routers.auth import router as auth_router
 from app.routers.chw import router as chw_router
+from app.routers.chw_intake import router as chw_intake_router
 from app.routers.conversations import router as conversations_router
 from app.routers.credentials import router as credentials_router
 from app.routers.devices import router as devices_router
@@ -107,6 +108,7 @@ from app.routers.waitlist import router as waitlist_router
 
 app.include_router(auth_router)
 app.include_router(chw_router)
+app.include_router(chw_intake_router)
 app.include_router(member_router)
 app.include_router(sessions_router)
 app.include_router(requests_router)
