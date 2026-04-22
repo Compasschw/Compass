@@ -13,6 +13,12 @@ export interface MatchResult {
   chw_id: string;
   score: number;
   distance_miles: number;
+  /**
+   * Short labels explaining why this CHW ranked well, e.g.
+   * ["3.2 mi away", "speaks Spanish", "specializes in chronic disease"].
+   * The member-facing candidate card renders these as chips.
+   */
+  match_reasons: string[];
 }
 
 export interface CHWBrowseData {
@@ -34,6 +40,10 @@ export interface FindMatchingChwsParams {
   lat?: number;
   lng?: number;
   language?: string;
+  /** "in_person" | "remote" | "hybrid" — enables intake-based modality filtering. */
+  mode?: string;
+  /** "routine" | "soon" | "urgent" — enables urgent-outreach preference. */
+  urgency?: string;
 }
 
 // ─── API functions ────────────────────────────────────────────────────────────
@@ -53,6 +63,8 @@ export function findMatchingChws(
   if (params.lat !== undefined) qs.set('lat', String(params.lat));
   if (params.lng !== undefined) qs.set('lng', String(params.lng));
   if (params.language) qs.set('language', params.language);
+  if (params.mode) qs.set('mode', params.mode);
+  if (params.urgency) qs.set('urgency', params.urgency);
 
   return api<{ matches: MatchResult[] }>(`/matching/chws?${qs.toString()}`);
 }
