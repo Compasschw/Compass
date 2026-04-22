@@ -182,6 +182,82 @@ Billing claim
 
 ---
 
+### `ops intake-stats` — CHW intake completion funnel
+
+**What it does:** Shows how many CHW users exist, how many started the
+professional intake questionnaire, how many completed it, and where CHWs
+tend to drop off section-by-section.
+
+**When to use:**
+- Weekly check: is the intake working? Are CHWs completing it?
+- Spotting a drop-off at a specific section (e.g., section 4 = Expertise —
+  maybe the language is too clinical and needs simplifying)
+- Reporting to Jemal how far along CHW onboarding is before pilot launch
+
+**Syntax:**
+
+```bash
+ops intake-stats
+```
+
+**Sample output:**
+
+```
+CHW intake funnel
+────────────────
+  CHW users                  7
+  Intake started (row exists) 5
+  Intake completed           3
+  % CHWs who started         71.4%
+  % of starters who completed 60.0%
+
+Section reach (cumulative)
+──────────────────────────
+  Section 1 reached:        5
+  Section 2 reached:        5
+  Section 3 reached:        4
+  Section 4 reached:        4
+  Section 5 reached:        3
+  Section 6 reached:        3
+```
+
+---
+
+### `ops waitlist-stats` — pre-launch signup summary
+
+**What it does:** Summarizes landing-page waitlist signups — total count,
+grouped by role (member / chw / partner), and the last 5 entries.
+
+**When to use:**
+- Pre-launch tracking: are we growing the waitlist?
+- Weekly update to Jemal for investor conversations
+- Answering "how many CHWs are waiting?" before pilot outreach
+
+**Syntax:**
+
+```bash
+ops waitlist-stats
+```
+
+**Sample output:**
+
+```
+Waitlist summary
+  Total entries              47
+  New in last 7 days         12
+
+By role
+  chw                  28
+  member               15
+  partner               4
+
+Last 5 signups
+  · 2026-04-20 14:03  [chw]  Maria Rodriguez  <maria@example.com>
+  ...
+```
+
+---
+
 ### `ops chw-payout` — Stripe + earnings status
 
 **What it does:** Shows whether a CHW is fully onboarded to Stripe, their
@@ -451,6 +527,8 @@ for the specific CHW. Ping Akram before retrying.
 ops user <id-or-email>
 ops session <session-id>
 ops chw-payout <id-or-email>
+ops intake-stats
+ops waitlist-stats
 
 # Intervene (destructive — dry-run by default)
 ops requeue-claim <claim-id>           # preview

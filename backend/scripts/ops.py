@@ -10,10 +10,12 @@ Commands:
     user <id-or-email>            Show a user's profile + activity summary.
     session <session-id>          Show a session's lifecycle + billing state.
     chw-payout <id-or-email>      Show a CHW's Stripe Connect status + earnings.
+    intake-stats                  CHW intake completion funnel.
+    waitlist-stats                Waitlist signups by role + recent activity.
     requeue-claim <claim-id>      Re-submit a stuck claim to Pear Suite.
     retry-payout <claim-id>       Re-trigger Stripe transfer for a paid claim.
 
-Non-mutating commands (user, session, chw-payout) run immediately.
+Non-mutating commands (user, session, chw-payout, intake-stats, waitlist-stats) run immediately.
 Mutating commands (requeue-claim, retry-payout) require --yes to actually act;
 otherwise they print what they would do and exit.
 
@@ -505,6 +507,134 @@ async def cmd_retry_payout(
     return 0 if ok else 1
 
 
+# ─── Command: intake-stats ───────────────────────────────────────────────────
+
+
+async def cmd_intake_stats(db: AsyncSession, operator: str) -> int:
+    """Show the CHW intake completion funnel.
+
+    Counts CHW users, how many have an intake row (started), how many have
+    finished (completed_at set), and the per-section drop-off based on
+    last_completed_section.
+    """
+    from app.models.chw_intake import CHWIntakeResponse
+
+    chw_count_q = await db.execute(
+        select(func.count(User.id)).where(User.role == "chw")
+    )
+    chw_count = chw_count_q.scalar_one()
+
+    started_q = await db.execute(select(func.count(CHWIntakeResponse.id)))
+    started = started_q.scalar_one()
+
+    completed_q = await db.execute(
+        select(func.count(CHWIntakeResponse.id)).where(
+            CHWIntakeResponse.completed_at.isnot(None)
+        )
+    )
+    completed = completed_q.scalar_one()
+
+    # Funnel: how many reached at least section N (for N = 1..6)
+    funnel_q = await db.execute(
+        select(
+            CHWIntakeResponse.last_completed_section,
+            func.count(CHWIntakeResponse.id),
+        ).group_by(CHWIntakeResponse.last_completed_section)
+    )
+    funnel_by_stop = dict(funnel_q.all())  # {section_int: count}
+
+    _print_section("CHW intake funnel")
+    _kv("CHW users", chw_count)
+    _kv("Intake started (row exists)", started)
+    _kv("Intake completed", completed)
+
+    if chw_count:
+        pct_started = 100.0 * started / chw_count
+        _kv("% CHWs who started", f"{pct_started:.1f}%")
+    if started:
+        pct_completed = 100.0 * completed / started
+        _kv("% of starters who completed", f"{pct_completed:.1f}%")
+
+    _print_section("Section reach (cumulative)")
+    # Everyone whose last_completed_section >= N reached section N+1's start
+    for s in range(1, 7):
+        reached = sum(count for stop, count in funnel_by_stop.items() if stop >= s)
+        print(f"  Section {s} reached:        {reached}")
+
+    await _audit(
+        db,
+        operator=operator,
+        action="ops_cli.intake_stats",
+        resource="chw_intake",
+        resource_id=None,
+        details={"chws": chw_count, "started": started, "completed": completed},
+    )
+    return 0
+
+
+# ─── Command: waitlist-stats ─────────────────────────────────────────────────
+
+
+async def cmd_waitlist_stats(db: AsyncSession, operator: str) -> int:
+    """Summarize waitlist signups by role + show recent activity."""
+    from app.models.waitlist import WaitlistEntry
+
+    total_q = await db.execute(select(func.count(WaitlistEntry.id)))
+    total = total_q.scalar_one()
+
+    by_role_q = await db.execute(
+        select(WaitlistEntry.role, func.count(WaitlistEntry.id))
+        .group_by(WaitlistEntry.role)
+    )
+    by_role = sorted(by_role_q.all(), key=lambda r: -r[1])
+
+    # Last 7 days activity
+    from datetime import timedelta
+
+    cutoff = datetime.now(UTC) - timedelta(days=7)
+    recent_q = await db.execute(
+        select(func.count(WaitlistEntry.id)).where(WaitlistEntry.created_at >= cutoff)
+    )
+    recent = recent_q.scalar_one()
+
+    _print_section("Waitlist summary")
+    _kv("Total entries", total)
+    _kv("New in last 7 days", recent)
+
+    _print_section("By role")
+    if not by_role:
+        print(_dim("  (no entries yet)"))
+    else:
+        for role, count in by_role:
+            print(f"  {role:<20} {count}")
+
+    # Last 5 entries
+    last_q = await db.execute(
+        select(WaitlistEntry).order_by(WaitlistEntry.created_at.desc()).limit(5)
+    )
+    last_entries = last_q.scalars().all()
+    _print_section("Last 5 signups")
+    if not last_entries:
+        print(_dim("  (none)"))
+    else:
+        for e in last_entries:
+            print(
+                f"  · {e.created_at:%Y-%m-%d %H:%M}  "
+                f"[{e.role}]  "
+                f"{e.first_name} {e.last_name}  <{e.email}>"
+            )
+
+    await _audit(
+        db,
+        operator=operator,
+        action="ops_cli.waitlist_stats",
+        resource="waitlist",
+        resource_id=None,
+        details={"total": total, "last_7d": recent},
+    )
+    return 0
+
+
 # ─── CLI wiring ──────────────────────────────────────────────────────────────
 
 
@@ -541,6 +671,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "--yes", action="store_true", help="Actually initiate the transfer (default is dry-run)."
     )
 
+    sub.add_parser("intake-stats", help="CHW intake completion funnel (started, completed, per-section reach).")
+    sub.add_parser("waitlist-stats", help="Waitlist signups by role + recent activity.")
+
     return parser
 
 
@@ -557,6 +690,10 @@ async def _dispatch(args: argparse.Namespace) -> int:
                 return await cmd_requeue_claim(db, args.claim_id, args.operator, args.yes)
             if args.command == "retry-payout":
                 return await cmd_retry_payout(db, args.claim_id, args.operator, args.yes)
+            if args.command == "intake-stats":
+                return await cmd_intake_stats(db, args.operator)
+            if args.command == "waitlist-stats":
+                return await cmd_waitlist_stats(db, args.operator)
             _fatal(f"Unknown command: {args.command}", code=2)
             return 2  # pragma: no cover
         except SystemExit:
