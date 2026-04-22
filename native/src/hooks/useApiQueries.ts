@@ -462,3 +462,87 @@ export function useSendMessage() {
     },
   });
 }
+
+// ─── CHW Intake Questionnaire ───────────────────────────────────────────────
+
+export interface CHWIntakeState {
+  // Section 1
+  yearsExperience?: string;
+  employmentStatus?: string;
+  educationLevel?: string;
+  primarySetting?: string;
+  // Section 2
+  caChwCertificate?: string;
+  trainingPathway?: string;
+  additionalCertification?: string;
+  mediCalFamiliarity?: string;
+  ehrExperience?: string;
+  // Section 3
+  primaryLanguage?: string;
+  otherLanguageFluency?: string;
+  additionalLanguage?: string;
+  culturalCompetencyTraining?: string;
+  livedExperience?: string;
+  primaryLanguageOther?: string;
+  additionalLanguageOther?: string;
+  // Section 4
+  primarySpecialization?: string;
+  sdohExperience?: string;
+  populationExperience?: string;
+  motivationalInterviewing?: string;
+  hedisExperience?: string;
+  // Section 5
+  preferredModality?: string;
+  homeVisitComfort?: string;
+  telehealthComfort?: string;
+  transportation?: string;
+  preferredCaseload?: string;
+  // Section 6
+  preferredSchedule?: string;
+  preferredEmploymentType?: string;
+  urgentOutreach?: string;
+  // Metadata
+  lastCompletedSection?: number;
+  completedAt?: string | null;
+}
+
+export function useCHWIntake(enabled = true) {
+  return useQuery({
+    queryKey: ['chw', 'intake'],
+    queryFn: async () => {
+      const raw = await api<unknown>('/chw/intake');
+      return transformKeys<CHWIntakeState>(raw);
+    },
+    enabled,
+    staleTime: 30_000,
+  });
+}
+
+export function useUpdateCHWIntake() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (patch: Partial<CHWIntakeState>) => {
+      const raw = await api<unknown>('/chw/intake', {
+        method: 'PATCH',
+        body: JSON.stringify(toSnakeCase(patch)),
+      });
+      return transformKeys<CHWIntakeState>(raw);
+    },
+    onSuccess: (data) => {
+      qc.setQueryData(['chw', 'intake'], data);
+    },
+  });
+}
+
+export function useSubmitCHWIntake() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const raw = await api<unknown>('/chw/intake/submit', { method: 'POST' });
+      return transformKeys<CHWIntakeState>(raw);
+    },
+    onSuccess: (data) => {
+      qc.setQueryData(['chw', 'intake'], data);
+    },
+  });
+}

@@ -17,6 +17,7 @@ import {
   TouchableOpacity,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
 import {
   DollarSign,
   Star,
@@ -28,6 +29,8 @@ import {
   Brain,
   Stethoscope,
   RefreshCw,
+  ClipboardCheck,
+  ArrowRight,
 } from 'lucide-react-native';
 
 import { colors } from '../../theme/colors';
@@ -43,6 +46,7 @@ import {
   useChwEarnings,
   useSessions,
   useRequests,
+  useCHWIntake,
   type SessionData,
   type ServiceRequestData,
 } from '../../hooks/useApiQueries';
@@ -147,14 +151,21 @@ function formatScheduledAt(iso: string): string {
 
 export function CHWDashboardScreen(): React.JSX.Element {
   const { userName } = useAuth();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const navigation = useNavigation<any>();
   const firstName = userName?.split(' ')[0] ?? 'there';
 
   const earningsQuery = useChwEarnings();
   const sessionsQuery = useSessions();
   const requestsQuery = useRequests();
+  const intakeQuery = useCHWIntake();
 
   const isLoading = earningsQuery.isLoading || sessionsQuery.isLoading || requestsQuery.isLoading;
   const queryError = earningsQuery.error ?? sessionsQuery.error ?? requestsQuery.error;
+
+  const intake = intakeQuery.data;
+  const intakeIncomplete = intake != null && !intake.completedAt;
+  const intakeSectionsDone = intake?.lastCompletedSection ?? 0;
 
   const handleRetry = () => {
     void earningsQuery.refetch();
@@ -217,6 +228,30 @@ export function CHWDashboardScreen(): React.JSX.Element {
             Here's what's happening with your work today.
           </Text>
         </View>
+
+        {/* ── Professional intake prompt (only while incomplete) ── */}
+        {intakeIncomplete && (
+          <TouchableOpacity
+            style={styles.intakeBanner}
+            onPress={() => navigation.navigate('Intake')}
+            accessibilityRole="button"
+            accessibilityLabel="Complete your professional intake"
+            activeOpacity={0.85}
+          >
+            <View style={styles.intakeIconWrap}>
+              <ClipboardCheck size={20} color={colors.primary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.intakeTitle}>Complete your professional intake</Text>
+              <Text style={styles.intakeSubtitle}>
+                {intakeSectionsDone > 0
+                  ? `${intakeSectionsDone} of 6 sections complete — resume where you left off`
+                  : '27 quick questions help us match you with the right members'}
+              </Text>
+            </View>
+            <ArrowRight size={18} color={colors.primary} />
+          </TouchableOpacity>
+        )}
 
         {/* ── Stat cards 2×2 ── */}
         <View style={styles.statGrid}>
@@ -400,6 +435,38 @@ const styles = StyleSheet.create({
     lineHeight: 24,
     color: '#6B7A6B',
     marginTop: 4,
+  },
+  intakeBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 14,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: colors.primary + '40',
+    marginBottom: 20,
+  },
+  intakeIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    backgroundColor: colors.primary + '18',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  intakeTitle: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 14,
+    color: colors.foreground,
+  },
+  intakeSubtitle: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 12,
+    color: colors.mutedForeground,
+    marginTop: 2,
+    lineHeight: 16,
   },
   statGrid: {
     flexDirection: 'row',

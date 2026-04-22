@@ -24,22 +24,32 @@ import { CHWRequestsScreen } from '../screens/chw/CHWRequestsScreen';
 import { CHWSessionsScreen } from '../screens/chw/CHWSessionsScreen';
 import { CHWCalendarScreen } from '../screens/chw/CHWCalendarScreen';
 import { CHWEarningsScreen } from '../screens/chw/CHWEarningsScreen';
+import { CHWIntakeScreen } from '../screens/chw/CHWIntakeScreen';
 import { CHWProfileScreen } from '../screens/chw/CHWProfileScreen';
 import { PaymentsScreen } from '../screens/chw/PaymentsScreen';
 
 // ─── Navigator param lists ────────────────────────────────────────────────────
 
 export type CHWTabParamList = {
-  Dashboard: undefined;
+  DashboardStack: undefined;
   Requests: undefined;
   Sessions: undefined;
   Calendar: undefined;
   EarningsStack: undefined;
   Profile: undefined;
-  // Payments lives inside EarningsStack — exposed here so deep links can
-  // address it via the CHWTabParamList type without navigating through the
-  // stack manually.
+  // Screens inside nested stacks — exposed here so deep links can address
+  // them via the CHWTabParamList type without navigating through the stack
+  // manually.
+  Dashboard: undefined;
+  Intake: undefined;
   Payments: undefined;
+};
+
+// Nested stack inside the Dashboard tab so we can push CHWIntakeScreen on top
+// of the main dashboard (full-screen flow, hides tab bar).
+type DashboardStackParamList = {
+  Dashboard: undefined;
+  Intake: undefined;
 };
 
 // Nested stack inside the Earnings tab so we can push PaymentsScreen on top
@@ -50,7 +60,17 @@ type EarningsStackParamList = {
 };
 
 const Tab = createBottomTabNavigator<CHWTabParamList>();
+const DashboardStack = createNativeStackNavigator<DashboardStackParamList>();
 const EarningsStack = createNativeStackNavigator<EarningsStackParamList>();
+
+function DashboardStackNavigator(): React.JSX.Element {
+  return (
+    <DashboardStack.Navigator screenOptions={{ headerShown: false }}>
+      <DashboardStack.Screen name="Dashboard" component={CHWDashboardScreen} />
+      <DashboardStack.Screen name="Intake" component={CHWIntakeScreen} />
+    </DashboardStack.Navigator>
+  );
+}
 
 function EarningsStackNavigator(): React.JSX.Element {
   return (
@@ -93,9 +113,10 @@ export function CHWTabNavigator(): React.JSX.Element {
       }}
     >
       <Tab.Screen
-        name="Dashboard"
-        component={CHWDashboardScreen}
+        name="DashboardStack"
+        component={DashboardStackNavigator}
         options={{
+          title: 'Dashboard',
           tabBarIcon: ({ color, size }) => (
             <LayoutDashboard color={color} size={size} />
           ),
