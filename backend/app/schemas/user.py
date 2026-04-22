@@ -44,6 +44,12 @@ class MemberProfileResponse(BaseModel):
     primary_language: str
     primary_need: str | None
     rewards_balance: int
+    # Surfaced from the associated User row so the mobile Profile screen can
+    # render without a separate /users/me call.
+    name: str | None = None
+    phone: str | None = None
+    email: str | None = None
+    insurance_provider: str | None = None
 
 class MemberProfileUpdate(BaseModel):
     zip_code: str | None = None

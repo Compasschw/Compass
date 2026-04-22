@@ -52,7 +52,6 @@ import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
 import { useAuth } from '../../context/AuthContext';
 import {
-  mockCredentials,
   type Vertical,
   type Credential,
   type CredentialStatus,
@@ -61,7 +60,9 @@ import {
   useChwProfile,
   useUpdateChwProfile,
   useCHWIntake,
+  useCredentialValidations,
   type ChwProfile,
+  type CredentialValidation,
 } from '../../hooks/useApiQueries';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
@@ -313,6 +314,7 @@ export function CHWProfileScreen(): React.JSX.Element {
   const { data: apiProfile, isLoading, error, refetch } = useChwProfile();
   const updateProfile = useUpdateChwProfile();
   const { data: intake } = useCHWIntake();
+  const { data: credentials } = useCredentialValidations();
 
   // Derive display name from auth context (API profile has no name field)
   const displayName = userName ?? 'My Profile';
@@ -719,61 +721,63 @@ export function CHWProfileScreen(): React.JSX.Element {
         {/* ── Credentials ── */}
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Credentials</Text>
-          {mockCredentials.map((cred, index) => {
-            const statusColor = CREDENTIAL_STATUS_COLORS[cred.status];
-            return (
-              <View key={cred.id}>
-                {index > 0 ? <View style={styles.divider} /> : null}
-                <View style={styles.credRow}>
-                  <View
-                    style={[
-                      styles.credIconCircle,
-                      { backgroundColor: CREDENTIAL_ICON_BG[cred.type] },
-                    ]}
-                  >
-                    <CredentialIconComponent type={cred.type} />
-                  </View>
-                  <View style={styles.credInfo}>
-                    <View style={styles.credTitleRow}>
-                      <Text style={styles.credLabel}>{cred.label}</Text>
-                      <View style={[styles.badge, { backgroundColor: statusColor + '18' }]}>
-                        <Text style={[styles.badgeText, { color: statusColor }]}>
-                          {CREDENTIAL_STATUS_LABELS[cred.status]}
-                        </Text>
-                      </View>
+          {(credentials ?? []).length === 0 ? (
+            <View style={{ paddingVertical: 12 }}>
+              <Text style={{ ...typography.bodyMd, color: colors.mutedForeground }}>
+                No credentials on file yet.
+              </Text>
+              <Text
+                style={{
+                  ...typography.bodySm,
+                  color: colors.mutedForeground,
+                  marginTop: 4,
+                }}
+              >
+                Upload your CHW certificate, HIPAA training, and background
+                check via the in-app credentialing flow. Reviewed within 48
+                hours.
+              </Text>
+            </View>
+          ) : (
+            (credentials ?? []).map((cred: CredentialValidation, index: number) => {
+              const statusColor =
+                CREDENTIAL_STATUS_COLORS[
+                  (cred.validationStatus as 'pending' | 'verified' | 'expired') ??
+                    'pending'
+                ] ?? colors.mutedForeground;
+              return (
+                <View key={cred.id}>
+                  {index > 0 ? <View style={styles.divider} /> : null}
+                  <View style={styles.credRow}>
+                    <View
+                      style={[
+                        styles.credIconCircle,
+                        { backgroundColor: colors.primary + '18' },
+                      ]}
+                    >
+                      <Shield size={18} color={colors.primary} />
                     </View>
-                    {cred.expirationDate ? (
+                    <View style={styles.credInfo}>
+                      <View style={styles.credTitleRow}>
+                        <Text style={styles.credLabel}>{cred.programName}</Text>
+                        <View style={[styles.badge, { backgroundColor: statusColor + '18' }]}>
+                          <Text style={[styles.badgeText, { color: statusColor }]}>
+                            {cred.validationStatus}
+                          </Text>
+                        </View>
+                      </View>
                       <Text style={styles.credMeta}>
-                        Expires {formatCredentialDate(cred.expirationDate)}
+                        Submitted {formatCredentialDate(cred.createdAt)}
                       </Text>
-                    ) : cred.uploadDate ? (
-                      <Text style={styles.credMeta}>
-                        Uploaded {formatCredentialDate(cred.uploadDate)}
-                      </Text>
-                    ) : null}
-                    {cred.type === 'continuing_education' &&
-                    cred.creditHours != null &&
-                    cred.requiredHours != null ? (
-                      <Text style={styles.credMeta}>
-                        {cred.creditHours}/{cred.requiredHours} credit hours
-                      </Text>
-                    ) : null}
-                    {isEditing ? (
-                      <TouchableOpacity
-                        style={styles.uploadButton}
-                        onPress={() => handleCredentialUpload(cred.label)}
-                        accessibilityRole="button"
-                        accessibilityLabel={`Upload ${cred.label}`}
-                      >
-                        <Upload size={13} color={colors.primary} />
-                        <Text style={styles.uploadButtonText}>Upload</Text>
-                      </TouchableOpacity>
-                    ) : null}
+                      {cred.institutionConfirmed ? (
+                        <Text style={styles.credMeta}>Institution confirmed</Text>
+                      ) : null}
+                    </View>
                   </View>
                 </View>
-              </View>
-            );
-          })}
+              );
+            })
+          )}
         </View>
 
         {/* ── Professional intake ── */}

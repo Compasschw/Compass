@@ -92,9 +92,9 @@ interface ProfileDraft {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const MOCK_PHONE = '(310) 555-0192';
-const MOCK_EMAIL = 'rosa.delgado@email.com';
-const MOCK_INSURANCE = 'Medi-Cal (L.A. Care)';
+// Shown in place of a missing phone/email/insurance_provider on the profile.
+// The backend now returns these when present (see MemberProfileResponse).
+const NOT_PROVIDED = 'Not provided';
 
 const ALL_LANGUAGES: string[] = [
   'English',
@@ -156,6 +156,8 @@ interface ProfileSource {
   primaryLanguage: string;
   primaryNeed: string;
   insuranceProvider?: string;
+  phone?: string;
+  email?: string;
 }
 
 function buildDraft(name: string, profile: ProfileSource): ProfileDraft {
@@ -164,11 +166,11 @@ function buildDraft(name: string, profile: ProfileSource): ProfileDraft {
     firstName: parts[0] ?? '',
     lastName: parts.slice(1).join(' '),
     zipCode: profile.zipCode,
-    phone: MOCK_PHONE,
-    email: MOCK_EMAIL,
+    phone: profile.phone ?? '',
+    email: profile.email ?? '',
     primaryLanguage: profile.primaryLanguage,
     primaryNeed: profile.primaryNeed as Vertical,
-    insuranceProvider: profile.insuranceProvider ?? MOCK_INSURANCE,
+    insuranceProvider: profile.insuranceProvider ?? '',
   };
 }
 
@@ -592,7 +594,9 @@ export function MemberProfileScreen(): React.JSX.Element {
     zipCode: apiProfile?.zipCode ?? '',
     primaryLanguage: apiProfile?.primaryLanguage ?? 'English',
     primaryNeed: apiProfile?.primaryNeed ?? 'healthcare',
-    insuranceProvider: apiProfile?.insuranceProvider ?? MOCK_INSURANCE,
+    insuranceProvider: apiProfile?.insuranceProvider,
+    phone: apiProfile?.phone,
+    email: apiProfile?.email,
   };
 
   const [draft, setDraft] = useState<ProfileDraft>(() =>
@@ -949,13 +953,13 @@ export function MemberProfileScreen(): React.JSX.Element {
             <InfoRow
               icon={<Phone color={colors.primary} size={16} />}
               label="Phone"
-              value={MOCK_PHONE}
+              value={committedDraft.phone || NOT_PROVIDED}
             />
             <View style={styles.divider} />
             <InfoRow
               icon={<Mail color={colors.primary} size={16} />}
               label="Email"
-              value={MOCK_EMAIL}
+              value={committedDraft.email || NOT_PROVIDED}
             />
             <View style={styles.divider} />
             <InfoRow
@@ -967,7 +971,7 @@ export function MemberProfileScreen(): React.JSX.Element {
             <InfoRow
               icon={<User color={colors.primary} size={16} />}
               label="Insurance"
-              value={MOCK_INSURANCE}
+              value={committedDraft.insuranceProvider || NOT_PROVIDED}
             />
           </SectionCard>
         )}

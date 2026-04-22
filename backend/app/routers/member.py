@@ -17,7 +17,20 @@ async def get_profile(current_user=Depends(require_role("member")), db: AsyncSes
     profile = result.scalar_one_or_none()
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")
-    return profile
+    # Merge associated User fields into the response so the mobile screen
+    # can render phone/email/name without a second round trip.
+    return MemberProfileResponse(
+        id=profile.id,
+        user_id=profile.user_id,
+        zip_code=profile.zip_code,
+        primary_language=profile.primary_language,
+        primary_need=profile.primary_need,
+        rewards_balance=profile.rewards_balance,
+        insurance_provider=profile.insurance_provider,
+        name=current_user.name,
+        phone=current_user.phone,
+        email=current_user.email,
+    )
 
 @router.put("/profile", response_model=MemberProfileResponse)
 async def update_profile(data: MemberProfileUpdate, current_user=Depends(require_role("member")), db: AsyncSession = Depends(get_db)):

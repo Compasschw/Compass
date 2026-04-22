@@ -34,7 +34,6 @@ import { useAuth } from '../../context/AuthContext';
 import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
 import {
-  goals,
   verticalLabels,
   type Goal,
   type Vertical,
@@ -199,8 +198,9 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
   const rewardsBalance = profile?.rewardsBalance ?? 0;
 
   const upcomingSessions = allSessions.filter((s) => s.status === 'scheduled');
-  // Goals endpoint not available — keep mock data
-  const activeGoals = goals;
+  // Goals endpoint not in the backend yet — render the empty state until
+  // /member/goals lands. MemberRoadmapScreen is the canonical goals UI.
+  const activeGoals: Goal[] = [];
 
   const handleFindCHW = useCallback(() => {
     navigation.navigate('FindCHW');

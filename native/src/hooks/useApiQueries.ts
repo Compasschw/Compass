@@ -80,6 +80,10 @@ export interface MemberProfile {
   rewardsBalance: number;
   preferredMode?: string;
   insuranceProvider?: string;
+  // Surfaced from the associated User row.
+  name?: string;
+  phone?: string;
+  email?: string;
 }
 
 export interface ChwBrowseItem {
@@ -544,5 +548,28 @@ export function useSubmitCHWIntake() {
     onSuccess: (data) => {
       qc.setQueryData(['chw', 'intake'], data);
     },
+  });
+}
+
+// ─── Credentials ────────────────────────────────────────────────────────────
+
+export interface CredentialValidation {
+  id: string;
+  chwId: string;
+  programName: string;
+  validationStatus: string;
+  institutionConfirmed: boolean;
+  createdAt: string;
+}
+
+export function useCredentialValidations(enabled = true) {
+  return useQuery({
+    queryKey: ['credentials', 'validations'],
+    queryFn: async () => {
+      const raw = await api<unknown>('/credentials/validations');
+      return transformKeys<CredentialValidation[]>(raw);
+    },
+    enabled,
+    staleTime: 30_000,
   });
 }
