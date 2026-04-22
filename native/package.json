@@ -7,6 +7,8 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
+    "typecheck": "tsc --noEmit",
+    "doctor": "npx expo-doctor",
     "build:ios:preview": "eas build --platform ios --profile preview",
     "build:ios:prod": "eas build --platform ios --profile production",
     "build:android:preview": "eas build --platform android --profile preview",

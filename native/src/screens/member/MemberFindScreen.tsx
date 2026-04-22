@@ -901,10 +901,18 @@ export function MemberFindScreen(): React.JSX.Element {
         })}
       </ScrollView>
 
-      {/* Map view placeholder */}
+      {/*
+        Map view placeholder. The pin data is ready — each CHW has a zipCode
+        that resolves via ../../data/zipCodeCoords.ts to lat/lng. Dropping in
+        an `expo-maps` <MapView> here is a one-file change once we've validated
+        the native module on a physical device. Tracked in Phase 3 of the
+        mobile build-out plan.
+      */}
       <View style={styles.mapPlaceholder}>
         <Map color={colors.mutedForeground} size={16} />
-        <Text style={styles.mapPlaceholderText}>Map view coming soon</Text>
+        <Text style={styles.mapPlaceholderText}>
+          Map view — ships with the next mobile release
+        </Text>
       </View>
 
       {/* CHW List */}

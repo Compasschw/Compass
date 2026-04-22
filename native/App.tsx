@@ -17,7 +17,12 @@ import {
 import { AuthProvider } from './src/context/AuthContext';
 import { AppNavigator } from './src/navigation/AppNavigator';
 import { ErrorBoundary } from './src/components/shared/ErrorBoundary';
+import { crash } from './src/services/crash';
 import { colors } from './src/theme/colors';
+
+// Install crash reporting before anything renders. No-op when
+// EXPO_PUBLIC_SENTRY_DSN is unset, so this is safe to leave in place.
+crash.init();
 
 const queryClient = new QueryClient({
   defaultOptions: {

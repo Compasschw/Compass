@@ -51,6 +51,11 @@
       "android": {
         "serviceAccountKeyPath": "./google-service-account.json",
         "track": "internal"
+      },
+      "ios": {
+        "__TODO__": "Fill ascAppId and appleTeamId once Apple Developer org account is approved (blocked on EIN → DUNS). See docs/MOBILE_APP_SETUP.md § Ship-prep.",
+        "ascAppId": "",
+        "appleTeamId": ""
       }
     }
   }

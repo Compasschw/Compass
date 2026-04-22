@@ -205,3 +205,51 @@ If you exceed 30 builds/month during heavy iteration, EAS Production tier is $99
 **"Distribution certificate is invalid"** — Apple Developer membership expired, or certificate was manually revoked. Regenerate via `eas credentials --platform ios`.
 
 **Android APK won't install** — User must enable "Install from unknown sources" on their device. Not needed for Play Store distribution.
+
+---
+
+## Tool-integration scaffolds
+
+Every third-party integration the mobile app will eventually use is wired
+today as a **no-op by default**, activated by setting an `EXPO_PUBLIC_*`
+env var. Screens import from `src/services/<name>/` and call into a thin
+interface; provider swaps are a single-file change with no caller impact.
+
+| Capability | Env flag (to activate) | Default behavior | Real provider | Install command |
+|-----------|------------------------|------------------|----------------|-----------------|
+| **Crash reporting** | `EXPO_PUBLIC_SENTRY_DSN=https://...` | no-op | `sentry-expo` (lazy-loaded) | `npx expo install sentry-expo` |
+| **Product analytics** | `EXPO_PUBLIC_POSTHOG_KEY=phc_...` (+ optional `EXPO_PUBLIC_POSTHOG_HOST`) | no-op | `posthog-react-native` (lazy-loaded) | `npm i posthog-react-native` |
+| **Phone dialing (masked)** | `EXPO_PUBLIC_USE_VONAGE_DIAL=1` | native `tel:` dialer | Backend `/communication/call-bridge` proxy via Vonage | (no client dep — backend Vonage BAA gates it) |
+| **Add to calendar** | — (always real if module present) | no-op | `expo-calendar` | `npx expo install expo-calendar` + add `NSCalendarsUsageDescription` to `app.json` |
+| **Biometric unlock** | `EXPO_PUBLIC_REQUIRE_BIOMETRIC=1` | bypass (no prompt) | `expo-local-authentication` | `npx expo install expo-local-authentication` + add `NSFaceIDUsageDescription` to `app.json` |
+
+### Activation checklist when a credential arrives
+
+1. Install the SDK (see table above).
+2. Add the env var to `eas.json`'s relevant build profile (preview / production).
+3. For calendar / biometric: add the matching `NS*UsageDescription` string to `app.json` `ios.infoPlist`.
+4. Rebuild with `eas build` — no code changes required.
+
+### Backend integration points
+
+| Mobile service | Backend endpoint (ready) |
+|----------------|--------------------------|
+| phone (Vonage) | `POST /communication/call-bridge` — creates a per-session proxy number |
+| crash | Sentry — already live for backend, shares the same project |
+| (analytics) | PostHog — standalone SaaS, no backend glue |
+| (calendar) | None — purely client-side |
+| (biometric) | None — gates client session |
+
+---
+
+## Ship-prep TODOs
+
+Items that must be filled before first production build:
+
+- [ ] **`eas.json` → `submit.production.ios.ascAppId`** — App Store Connect app ID, obtained after creating the app listing in App Store Connect (post-Apple-Developer-org approval, which is blocked on DUNS, which is blocked on EIN).
+- [ ] **`eas.json` → `submit.production.ios.appleTeamId`** — 10-char alphanumeric Team ID, visible in the Apple Developer portal Membership page.
+- [ ] **`app.json` → `ios.bundleIdentifier`** — confirm `com.joincompasschw.app` is still the right bundle ID once Apple reservations go through.
+- [ ] **Google Play Console service account key** — `google-service-account.json` at repo root (not committed). Download from Play Console → Setup → API access.
+
+Each of these TODOs is repeated as a comment or `__TODO__` key in the
+relevant file so they're impossible to miss during a build.

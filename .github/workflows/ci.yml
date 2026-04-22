@@ -21,7 +21,10 @@ jobs:
           cache-dependency-path: native/package-lock.json
       - run: npm ci
       - name: TypeScript check
-        run: npx tsc --noEmit
+        run: npm run typecheck
+      - name: Expo doctor (informational — does not fail the build)
+        run: npm run doctor || true
+        continue-on-error: true
 
   backend:
     runs-on: ubuntu-latest
