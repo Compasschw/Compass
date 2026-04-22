@@ -43,7 +43,10 @@ import {
   Check,
   Camera,
   Upload,
+  ClipboardCheck,
+  ChevronRight,
 } from 'lucide-react-native';
+import { useNavigation } from '@react-navigation/native';
 
 import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
@@ -57,6 +60,7 @@ import {
 import {
   useChwProfile,
   useUpdateChwProfile,
+  useCHWIntake,
   type ChwProfile,
 } from '../../hooks/useApiQueries';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
@@ -303,9 +307,12 @@ const editFieldStyles = StyleSheet.create({
  */
 export function CHWProfileScreen(): React.JSX.Element {
   const { logout, userName } = useAuth();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const navigation = useNavigation<any>();
 
   const { data: apiProfile, isLoading, error, refetch } = useChwProfile();
   const updateProfile = useUpdateChwProfile();
+  const { data: intake } = useCHWIntake();
 
   // Derive display name from auth context (API profile has no name field)
   const displayName = userName ?? 'My Profile';
@@ -769,6 +776,34 @@ export function CHWProfileScreen(): React.JSX.Element {
           })}
         </View>
 
+        {/* ── Professional intake ── */}
+        <TouchableOpacity
+          style={styles.intakeRowCard}
+          onPress={() => navigation.navigate('Intake')}
+          accessibilityRole="button"
+          accessibilityLabel={
+            intake?.completedAt
+              ? 'Edit your professional intake'
+              : 'Continue your professional intake'
+          }
+          activeOpacity={0.8}
+        >
+          <View style={styles.intakeRowIcon}>
+            <ClipboardCheck size={18} color={colors.primary} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.intakeRowTitle}>Professional Intake</Text>
+            <Text style={styles.intakeRowSubtitle}>
+              {intake?.completedAt
+                ? 'Completed — tap to review or update answers'
+                : intake && (intake.lastCompletedSection ?? 0) > 0
+                ? `${intake.lastCompletedSection} of 6 sections — resume`
+                : '27 questions help us match you with the right members'}
+            </Text>
+          </View>
+          <ChevronRight size={18} color={colors.mutedForeground} />
+        </TouchableOpacity>
+
         {/* ── Availability toggle ── */}
         <View style={styles.toggleCard}>
           <View style={styles.toggleInfo}>
@@ -1099,6 +1134,43 @@ const styles = StyleSheet.create({
   uploadButtonText: {
     ...typography.label,
     color: colors.primary,
+  },
+  intakeRowCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#DDD6CC',
+    padding: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 16,
+    shadowColor: '#3D5A3E',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 24,
+    elevation: 3,
+  },
+  intakeRowIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    backgroundColor: colors.primary + '18',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  intakeRowTitle: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 14,
+    color: colors.foreground,
+  },
+  intakeRowSubtitle: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 12,
+    color: colors.mutedForeground,
+    marginTop: 2,
+    lineHeight: 16,
   },
   toggleCard: {
     backgroundColor: '#FFFFFF',
