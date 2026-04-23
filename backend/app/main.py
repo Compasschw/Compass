@@ -94,6 +94,7 @@ from app.routers.admin import router as admin_router
 from app.routers.auth import router as auth_router
 from app.routers.chw import router as chw_router
 from app.routers.chw_intake import router as chw_intake_router
+from app.routers.communication import router as communication_router
 from app.routers.conversations import router as conversations_router
 from app.routers.credentials import router as credentials_router
 from app.routers.devices import router as devices_router
@@ -121,3 +122,4 @@ app.include_router(waitlist_router)
 app.include_router(admin_router)
 app.include_router(devices_router)
 app.include_router(payments_router)
+app.include_router(communication_router)

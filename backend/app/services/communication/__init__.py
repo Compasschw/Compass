@@ -37,6 +37,7 @@ def get_provider() -> CommunicationProvider:
             api_secret=getattr(settings, "vonage_api_secret", ""),
             application_id=getattr(settings, "vonage_application_id", ""),
             private_key_path=getattr(settings, "vonage_private_key_path", ""),
+            from_number=getattr(settings, "vonage_from_number", ""),
         )
     # elif provider_name == "twilio":
     #     from app.services.communication.twilio_provider import TwilioProvider

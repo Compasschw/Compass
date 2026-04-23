@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     vonage_api_secret: str = ""
     vonage_application_id: str = ""
     vonage_private_key_path: str = ""
+    # The rented virtual number that both parties see on caller ID during
+    # masked calls. Format: E.164 without the + (e.g. "18127224291").
+    vonage_from_number: str = ""
 
     # Twilio (future option)
     twilio_account_sid: str = ""
