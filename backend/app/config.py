@@ -13,7 +13,13 @@ class Settings(BaseSettings):
     s3_bucket_phi: str = "compass-phi-dev"
     s3_bucket_public: str = "compass-public-dev"
 
-    cors_origins: list[str] = ["http://localhost:5173", "https://joincompasschw.com"]
+    cors_origins: list[str] = [
+        "http://localhost:5173",
+        "http://localhost:8081",
+        "http://localhost:8083",
+        "https://joincompasschw.com",
+        "https://www.joincompasschw.com",
+    ]
 
     # Communication provider (vonage, twilio, plivo)
     communication_provider: str = "vonage"
