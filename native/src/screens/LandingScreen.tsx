@@ -535,7 +535,7 @@ export function LandingScreen(): React.JSX.Element {
   }, [navigation, activeTab]);
 
   const handleLoginPress = useCallback((): void => {
-    navigation.navigate('Waitlist');
+    navigation.navigate('Login');
   }, [navigation]);
 
   const px = isDesktop ? 48 : spacing.lg;
@@ -609,6 +609,16 @@ export function LandingScreen(): React.JSX.Element {
               </TouchableOpacity>
             </View>
           )}
+
+          <TouchableOpacity
+            style={staticStyles.navLink}
+            onPress={handleLoginPress}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Sign in"
+          >
+            <Text style={staticStyles.navLinkText}>Sign in</Text>
+          </TouchableOpacity>
 
           <TouchableOpacity
             style={staticStyles.navJoinButton}

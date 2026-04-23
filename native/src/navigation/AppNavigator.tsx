@@ -82,13 +82,13 @@ function AuthNavigator(): React.JSX.Element {
           even pre-launch. The screen itself shows "Coming soon" if verification
           fails because the user isn't provisioned. */}
       <AuthStack.Screen name="MagicLink" component={MagicLinkScreen} />
-      {/* Login/Register/Onboarding screens disabled until platform launch.
-          Uncomment when ready to enable sign-in:
+      {/* Login + onboarding routes — enabled for founder demo + admin access.
+          Registration is gated behind the login flow; the seed_founders.py script
+          provisions the known admin accounts. */}
       <AuthStack.Screen name="Login" component={LoginScreen} />
       <AuthStack.Screen name="Register" component={LoginScreen} />
       <AuthStack.Screen name="CHWOnboarding" component={CHWOnboardingScreen} />
       <AuthStack.Screen name="MemberOnboarding" component={MemberOnboardingScreen} />
-      */}
     </AuthStack.Navigator>
   );
 }
