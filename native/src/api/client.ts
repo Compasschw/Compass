@@ -2,15 +2,50 @@
  * HTTP client for CompassCHW API.
  *
  * Handles JWT auth with automatic token refresh on 401.
- * Uses expo-secure-store for token persistence — no web APIs.
+ * Persists tokens via expo-secure-store on iOS / Android (Keychain / Keystore)
+ * and via window.localStorage on web (SecureStore's web shim doesn't expose
+ * the getter/setter we need in Expo SDK 54).
  */
 
+import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 
 const API_BASE =
   process.env.EXPO_PUBLIC_API_URL || 'https://api.joincompasschw.com/api/v1';
 
 const TOKENS_KEY = 'compass_tokens';
+
+// ─── Cross-platform storage shim ─────────────────────────────────────────────
+//
+// SecureStore is only implemented for iOS + Android; its web "shim" in SDK 54
+// throws `setValueWithKeyAsync is not a function`. We route web to
+// localStorage, and native to SecureStore, behind a uniform async interface.
+
+const storage = {
+  async get(key: string): Promise<string | null> {
+    if (Platform.OS === 'web') {
+      if (typeof window === 'undefined') return null;
+      return window.localStorage.getItem(key);
+    }
+    return SecureStore.getItemAsync(key);
+  },
+  async set(key: string, value: string): Promise<void> {
+    if (Platform.OS === 'web') {
+      if (typeof window === 'undefined') return;
+      window.localStorage.setItem(key, value);
+      return;
+    }
+    await SecureStore.setItemAsync(key, value);
+  },
+  async del(key: string): Promise<void> {
+    if (Platform.OS === 'web') {
+      if (typeof window === 'undefined') return;
+      window.localStorage.removeItem(key);
+      return;
+    }
+    await SecureStore.deleteItemAsync(key);
+  },
+};
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -45,7 +80,7 @@ export class ApiError extends Error {
  * Returns null when no tokens are persisted.
  */
 export async function getTokens(): Promise<StoredTokens | null> {
-  const raw = await SecureStore.getItemAsync(TOKENS_KEY);
+  const raw = await storage.get(TOKENS_KEY);
   if (!raw) return null;
 
   try {
@@ -60,14 +95,14 @@ export async function getTokens(): Promise<StoredTokens | null> {
  * Persist access and refresh tokens to secure storage.
  */
 export async function setTokens(access: string, refresh: string): Promise<void> {
-  await SecureStore.setItemAsync(TOKENS_KEY, JSON.stringify({ access, refresh }));
+  await storage.set(TOKENS_KEY, JSON.stringify({ access, refresh }));
 }
 
 /**
  * Remove tokens from secure storage (logout / session expiry).
  */
 export async function clearTokens(): Promise<void> {
-  await SecureStore.deleteItemAsync(TOKENS_KEY);
+  await storage.del(TOKENS_KEY);
 }
 
 // ─── Refresh logic ────────────────────────────────────────────────────────────
