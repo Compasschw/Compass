@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,6 +10,8 @@ from app.dependencies import get_current_user
 from app.models.billing import BillingClaim
 from app.models.request import ServiceRequest
 from app.models.session import MemberConsent, Session, SessionDocumentation
+from app.models.user import User
+from app.schemas.conversation import MarkReadRequest, SessionMessageResponse, SessionMessageSend
 from app.schemas.session import ConsentSubmit, SessionCreate, SessionDocumentationSubmit, SessionResponse
 from app.services.billing_service import calculate_earnings, calculate_units, check_unit_caps, validate_claim
 
@@ -53,7 +55,12 @@ async def list_sessions(
 
 
 @router.post("/", response_model=SessionResponse, status_code=201)
-async def create_session(data: SessionCreate, current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def create_session(
+    data: SessionCreate,
+    background_tasks: BackgroundTasks,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SessionResponse:
     req = await db.get(ServiceRequest, data.request_id)
     if not req:
         raise HTTPException(status_code=404, detail="Request not found")
@@ -80,6 +87,36 @@ async def create_session(data: SessionCreate, current_user=Depends(get_current_u
     db.add(session)
     await db.commit()
     await db.refresh(session)
+
+    # Resolve both parties' names for notification copy.
+    # We do this before returning so the names are captured in the closure;
+    # the actual push send happens after the HTTP response via BackgroundTasks.
+    chw_user = await db.get(User, chw_id)
+    member_user = await db.get(User, member_id)
+    chw_first_name = (chw_user.name.split()[0] if chw_user else "Your CHW")
+    member_first_name = (member_user.name.split()[0] if member_user else "Your member")
+
+    # Notify the member that a session has been scheduled.
+    from app.services import notification_service
+    background_tasks.add_task(
+        notification_service.notify_session_scheduled,
+        db,
+        member_id,
+        chw_first_name,
+        session.id,
+        data.scheduled_at,
+    )
+
+    # Notify the CHW that a session has been scheduled.
+    background_tasks.add_task(
+        notification_service.notify_session_scheduled,
+        db,
+        chw_id,
+        member_first_name,
+        session.id,
+        data.scheduled_at,
+    )
+
     return session
 
 
@@ -292,3 +329,315 @@ async def submit_consent(session_id: UUID, data: ConsentSubmit, request: Request
     db.add(consent)
     await db.commit()
     return {"consent_id": str(consent.id)}
+
+
+# ─── Session-scoped messaging ─────────────────────────────────────────────────
+#
+# Design rationale: ``Conversation`` already carries a nullable ``session_id``
+# FK.  Rather than adding a separate "session_message" model, we lazily create
+# one Conversation per Session (enforced by a unique constraint on
+# ``conversations.session_id``) and reuse the existing Message table.
+# The endpoints live under /sessions/{id}/ so mobile routing is intuitive,
+# but the storage layer is the shared Conversation/Message schema — keeping
+# general DMs (session_id=NULL) and session chat in the same table with no
+# structural duplication.
+
+
+async def _get_session_and_assert_participant(
+    session_id: UUID,
+    current_user,
+    db: AsyncSession,
+) -> Session:
+    """Fetch the session and verify the caller is the CHW, member, or admin.
+
+    Raises 404 if the session does not exist, 403 if the caller is not a
+    participant (admin role bypasses the participant check for ops access).
+    """
+    session = await db.get(Session, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    is_participant = (
+        current_user.id == session.chw_id
+        or current_user.id == session.member_id
+    )
+    if not is_participant and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Not a participant on this session")
+    return session
+
+
+async def _get_or_create_session_conversation(
+    session: Session,
+    db: AsyncSession,
+):
+    """Return the Conversation tied to this session, creating it if absent.
+
+    Uses INSERT ... ON CONFLICT DO NOTHING + a follow-up SELECT to be safe
+    under concurrent requests (e.g. CHW and member both open chat simultaneously
+    for the first time).
+    """
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from app.models.conversation import Conversation
+
+    # Fast path: conversation already exists.
+    result = await db.execute(
+        select(Conversation).where(Conversation.session_id == session.id)
+    )
+    conv = result.scalar_one_or_none()
+    if conv is not None:
+        return conv
+
+    # Slow path: insert, tolerating a concurrent insert via ON CONFLICT.
+    stmt = (
+        pg_insert(Conversation)
+        .values(
+            chw_id=session.chw_id,
+            member_id=session.member_id,
+            session_id=session.id,
+        )
+        .on_conflict_do_nothing(constraint="uq_conversations_session_id")
+        .returning(Conversation)
+    )
+    insert_result = await db.execute(stmt)
+    inserted = insert_result.scalar_one_or_none()
+    if inserted is not None:
+        await db.commit()
+        return inserted
+
+    # Another request won the race; fetch the row it created.
+    result = await db.execute(
+        select(Conversation).where(Conversation.session_id == session.id)
+    )
+    return result.scalar_one()
+
+
+def _to_session_message_response(
+    msg,
+    session: Session,
+) -> SessionMessageResponse:
+    """Convert a raw Message ORM row to the session-scoped response shape."""
+    sender_role = "chw" if msg.sender_id == session.chw_id else "member"
+    return SessionMessageResponse(
+        id=msg.id,
+        sender_user_id=msg.sender_id,
+        sender_role=sender_role,
+        body=msg.body,
+        created_at=msg.created_at,
+    )
+
+
+@router.get("/{session_id}/messages", response_model=list[SessionMessageResponse])
+async def list_session_messages(
+    session_id: UUID,
+    after: UUID | None = Query(default=None, description="Cursor: return only messages with id > this message's created_at. Used for polling new messages."),
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[SessionMessageResponse]:
+    """List messages in the session's conversation thread.
+
+    ``after`` is a message UUID cursor.  Only messages created *after* the
+    given message are returned, ordered oldest-first.  Omit ``after`` to get
+    the full thread (up to 200 messages — enough for Phase 1 polling).
+
+    HIPAA: message bodies are PHI.  They are returned only to verified
+    participants and are never written to structured logs.
+    """
+    from app.models.conversation import Message
+
+    session = await _get_session_and_assert_participant(session_id, current_user, db)
+    conv = await _get_or_create_session_conversation(session, db)
+
+    stmt = (
+        select(Message)
+        .where(Message.conversation_id == conv.id)
+    )
+
+    if after is not None:
+        # Resolve the cursor message's timestamp so we can do a range query
+        # on the indexed ``created_at`` column rather than a UUID comparison.
+        cursor_msg = await db.get(Message, after)
+        if cursor_msg is None:
+            raise HTTPException(status_code=404, detail="Cursor message not found")
+        stmt = stmt.where(Message.created_at > cursor_msg.created_at)
+
+    stmt = stmt.order_by(Message.created_at.asc()).limit(200)
+    result = await db.execute(stmt)
+    messages = result.scalars().all()
+    return [_to_session_message_response(m, session) for m in messages]
+
+
+@router.post("/{session_id}/messages", response_model=SessionMessageResponse, status_code=201)
+async def send_session_message(
+    session_id: UUID,
+    data: SessionMessageSend,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SessionMessageResponse:
+    """Send a message in the session's conversation thread.
+
+    HIPAA: the message body is PHI.  It is persisted to the encrypted
+    ``messages`` table but is never logged or included in error responses.
+    """
+    from app.models.conversation import Message
+
+    session = await _get_session_and_assert_participant(session_id, current_user, db)
+    conv = await _get_or_create_session_conversation(session, db)
+
+    msg = Message(
+        conversation_id=conv.id,
+        sender_id=current_user.id,
+        body=data.body,
+        type="text",
+    )
+    db.add(msg)
+    await db.commit()
+    await db.refresh(msg)
+
+    # Best-effort push notification to the other participant.
+    # Truncated to 40 chars for HIPAA minimum-necessary on lock screens.
+    try:
+        recipient_id = (
+            session.member_id if current_user.id == session.chw_id else session.chw_id
+        )
+        preview = (data.body[:40] + "…") if len(data.body) > 40 else data.body
+        from app.services.notifications import NotificationPayload, notify_user
+        await notify_user(
+            db,
+            recipient_id,
+            NotificationPayload(
+                user_id=recipient_id,
+                title=f"New message from {current_user.name.split(' ')[0]}",
+                body=preview,
+                deeplink=f"compasschw://sessions/{session_id}/messages",
+                category="message.new",
+                data={"session_id": str(session_id), "message_id": str(msg.id)},
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001
+        import logging
+        logging.getLogger("compass").warning(
+            "Session message notification failed session=%s: %s", session_id, exc
+        )
+
+    return _to_session_message_response(msg, session)
+
+
+@router.post("/{session_id}/messages/read", status_code=204)
+async def mark_session_messages_read(
+    session_id: UUID,
+    data: MarkReadRequest,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Advance the caller's read cursor to ``up_to_message_id``.
+
+    Stores the cursor on the Conversation row:
+    - CHW  → ``chw_read_up_to``
+    - member → ``member_read_up_to``
+
+    The cursor only ever moves forward; sending an older message id is a no-op
+    (we compare ``created_at`` timestamps to determine ordering).
+    """
+    from app.models.conversation import Conversation, Message
+
+    session = await _get_session_and_assert_participant(session_id, current_user, db)
+    conv = await _get_or_create_session_conversation(session, db)
+
+    # Validate the target message belongs to this conversation.
+    target_msg = await db.get(Message, data.up_to_message_id)
+    if target_msg is None or target_msg.conversation_id != conv.id:
+        raise HTTPException(status_code=404, detail="Message not found in this session")
+
+    is_chw = current_user.id == session.chw_id
+
+    if is_chw:
+        current_cursor_id = conv.chw_read_up_to
+    else:
+        current_cursor_id = conv.member_read_up_to
+
+    # Only advance the cursor — never retreat it.
+    if current_cursor_id is not None:
+        current_cursor = await db.get(Message, current_cursor_id)
+        if current_cursor is not None and target_msg.created_at <= current_cursor.created_at:
+            # Cursor is already at or ahead of the requested position — no-op.
+            return
+
+    if is_chw:
+        conv.chw_read_up_to = data.up_to_message_id
+    else:
+        conv.member_read_up_to = data.up_to_message_id
+
+    await db.commit()
+
+
+# ─── Session-scoped call wrapper ─────────────────────────────────────────────
+#
+# The existing /communication/call-bridge accepts ``recipient_id`` + optional
+# ``session_id``.  The mobile phone-icon taps from a session context and only
+# has a session_id, not the other party's user UUID.  This thin wrapper
+# resolves the session's two participants and forwards to the bridge endpoint
+# internally — keeping all Vonage logic in communication.py.
+
+
+@router.post("/{session_id}/call")
+async def initiate_session_call(
+    session_id: UUID,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Start a masked Vonage call for this session.
+
+    Resolves both parties from the session row and delegates to
+    ``/api/v1/communication/call-bridge``.  The caller (CHW or member)
+    is the initiator; the other party is the recipient.
+
+    Returns the same ``CallBridgeResponse`` shape as the bridge endpoint so
+    clients can share the response handler.
+    """
+    from app.models.communication import CommunicationSession
+    from app.models.user import User
+    from app.services.communication import get_provider
+
+    session = await _get_session_and_assert_participant(session_id, current_user, db)
+
+    recipient_id = (
+        session.member_id if current_user.id == session.chw_id else session.chw_id
+    )
+
+    caller = await db.get(User, current_user.id)
+    recipient = await db.get(User, recipient_id)
+    if caller is None or recipient is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    if not caller.phone or not recipient.phone:
+        raise HTTPException(
+            status_code=400,
+            detail="Both parties must have a verified phone number on file.",
+        )
+
+    provider = get_provider()
+    proxy = await provider.create_proxy_session(
+        session_id=str(session_id),
+        chw_phone=caller.phone if current_user.id == session.chw_id else recipient.phone,
+        member_phone=recipient.phone if current_user.id == session.chw_id else caller.phone,
+    )
+
+    db.add(
+        CommunicationSession(
+            session_id=session_id,
+            provider=proxy.provider,
+            provider_session_id=proxy.provider_session_id,
+            proxy_number=proxy.proxy_number,
+        )
+    )
+    await db.commit()
+
+    import logging
+    logging.getLogger("compass.communication").info(
+        "session-call initiated: caller=%s session=%s provider_session=%s",
+        current_user.id, session_id, proxy.provider_session_id,
+    )
+
+    return {
+        "proxy_number": proxy.proxy_number,
+        "provider_session_id": proxy.provider_session_id,
+    }

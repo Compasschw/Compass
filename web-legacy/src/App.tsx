@@ -2,6 +2,8 @@ import { lazy, Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './features/auth/AuthContext';
 import { Layout } from './shared/components/Layout';
+import { ADMIN_KEY_STORAGE } from './features/admin/adminApi';
+import { InstallPWA } from './shared/components/InstallPWA';
 
 // Lazy-loaded page components
 const WaitlistLandingPage = lazy(() => import('./features/landing/WaitlistLandingPage').then(m => ({ default: m.WaitlistLandingPage })));
@@ -13,6 +15,14 @@ const RegisterPage = lazy(() => import('./features/auth/RegisterPage').then(m =>
 const CHWOnboarding = lazy(() => import('./features/onboarding/CHWOnboarding').then(m => ({ default: m.CHWOnboarding })));
 const MemberOnboarding = lazy(() => import('./features/onboarding/MemberOnboarding').then(m => ({ default: m.MemberOnboarding })));
 const WaitlistAdmin = lazy(() => import('./features/admin/WaitlistAdmin').then(m => ({ default: m.WaitlistAdmin })));
+const AdminLogin = lazy(() => import('./features/admin/AdminLogin').then(m => ({ default: m.AdminLogin })));
+const AdminLayout = lazy(() => import('./features/admin/AdminLayout').then(m => ({ default: m.AdminLayout })));
+const AdminOverview = lazy(() => import('./features/admin/AdminOverview').then(m => ({ default: m.AdminOverview })));
+const AdminCHWs = lazy(() => import('./features/admin/AdminCHWs').then(m => ({ default: m.AdminCHWs })));
+const AdminMembers = lazy(() => import('./features/admin/AdminMembers').then(m => ({ default: m.AdminMembers })));
+const AdminRequests = lazy(() => import('./features/admin/AdminRequests').then(m => ({ default: m.AdminRequests })));
+const AdminSessions = lazy(() => import('./features/admin/AdminSessions').then(m => ({ default: m.AdminSessions })));
+const AdminClaims = lazy(() => import('./features/admin/AdminClaims').then(m => ({ default: m.AdminClaims })));
 const LegalPage = lazy(() => import('./features/legal/LegalPage').then(m => ({ default: m.LegalPage })));
 const CHWDashboard = lazy(() => import('./features/chw/CHWDashboard').then(m => ({ default: m.CHWDashboard })));
 const CHWRequests = lazy(() => import('./features/chw/CHWRequests').then(m => ({ default: m.CHWRequests })));
@@ -36,6 +46,22 @@ function LoadingSpinner() {
       </div>
     </div>
   );
+}
+
+// ─── Admin route guard ────────────────────────────────────────────────────────
+
+/**
+ * Protects admin dashboard routes by checking for a stored admin key.
+ * The admin key is stored in sessionStorage (cleared on browser close).
+ * If missing, redirects to /admin/login.
+ * Renders children inside AdminLayout when authenticated.
+ */
+function AdminRoute({ children }: { children: React.ReactNode }) {
+  const hasKey = Boolean(sessionStorage.getItem(ADMIN_KEY_STORAGE));
+  if (!hasKey) {
+    return <Navigate to="/admin/login" replace />;
+  }
+  return <AdminLayout>{children}</AdminLayout>;
 }
 
 // ─── Guard components ──────────────────────────────────────────────────────────
@@ -81,8 +107,11 @@ function RootRedirect() {
  */
 export default function App() {
   return (
-    <Suspense fallback={<LoadingSpinner />}>
-    <Routes>
+    <>
+      {/* PWA install affordance — renders on all routes, self-hides when not applicable */}
+      <InstallPWA />
+      <Suspense fallback={<LoadingSpinner />}>
+      <Routes>
       {/* Root redirect */}
       <Route path="/" element={<RootRedirect />} />
 
@@ -208,12 +237,63 @@ export default function App() {
       <Route path="/hipaa" element={<LegalPage page="hipaa" />} />
       <Route path="/contact" element={<LegalPage page="contact" />} />
 
-      {/* Admin */}
+      {/* Admin — key-based auth (sessionStorage) */}
+      <Route path="/admin/login" element={<AdminLogin />} />
+      <Route
+        path="/admin"
+        element={
+          <AdminRoute>
+            <AdminOverview />
+          </AdminRoute>
+        }
+      />
+      <Route
+        path="/admin/chws"
+        element={
+          <AdminRoute>
+            <AdminCHWs />
+          </AdminRoute>
+        }
+      />
+      <Route
+        path="/admin/members"
+        element={
+          <AdminRoute>
+            <AdminMembers />
+          </AdminRoute>
+        }
+      />
+      <Route
+        path="/admin/requests"
+        element={
+          <AdminRoute>
+            <AdminRequests />
+          </AdminRoute>
+        }
+      />
+      <Route
+        path="/admin/sessions"
+        element={
+          <AdminRoute>
+            <AdminSessions />
+          </AdminRoute>
+        }
+      />
+      <Route
+        path="/admin/claims"
+        element={
+          <AdminRoute>
+            <AdminClaims />
+          </AdminRoute>
+        }
+      />
+      {/* Existing waitlist admin (user-JWT protected) */}
       <Route path="/admin/waitlist" element={<ProtectedRoute><WaitlistAdmin /></ProtectedRoute>} />
 
       {/* Catch-all — redirect to root */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
     </Suspense>
+    </>
   );
 }

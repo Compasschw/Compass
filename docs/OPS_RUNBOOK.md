@@ -1,6 +1,6 @@
 # CompassCHW — Operations Runbook
 
-**Owner:** TJ (CDO) · **Maintained by:** Akram (CTO)
+**Owner:** JT (CDO) · **Maintained by:** Akram (CTO)
 **Last updated:** 2026-04-20
 
 This is your command reference for day-to-day operations. Every command here
@@ -63,7 +63,7 @@ You're now on the backend host. Every command in this runbook runs from here.
 **Set your operator email so audit logs can identify you:**
 
 ```bash
-export OPERATOR_EMAIL=tj@joincompasschw.com
+export OPERATOR_EMAIL=jt@joincompasschw.com
 ```
 
 Do this at the start of each session. It's what gets stamped on every audit log

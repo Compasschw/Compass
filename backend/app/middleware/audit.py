@@ -71,7 +71,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
         duration_ms = round((time.time() - start) * 1000)
 
         path = request.url.path
-        if path in EXCLUDED_PATHS or path.startswith("/admin/"):
+        if path in EXCLUDED_PATHS or path.startswith("/api/v1/admin/waitlist"):
             return response
 
         # Structured log line (stdout) for observability — no PHI values

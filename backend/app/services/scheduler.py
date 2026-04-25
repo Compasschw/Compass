@@ -14,7 +14,7 @@ For now, a single-instance deploy with advisory locks is sufficient.
 """
 
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import and_, select
@@ -181,6 +181,82 @@ async def trigger_pending_payouts() -> None:
                 logger.warning("Payout trigger failed for claim %s: %s", claim.id, e)
 
 
+async def check_expiring_credentials() -> None:
+    """Notify CHWs whose approved credentials expire within the next 30 days.
+
+    Runs once daily at 09:00 US/Pacific (17:00 UTC during PDT, 17:00 UTC
+    during PST — configured in start_scheduler via the cron trigger).
+
+    Algorithm:
+      1. Query ``CHWCredentialValidation`` rows where:
+           - ``validation_status == "verified"``   (only warn for active credentials)
+           - ``expiry_date`` is between today and today + 30 days (inclusive)
+           - ``last_warned_date`` is NULL or < today   (dedup: one notification per day)
+      2. For each match, call ``notify_credential_expiring`` and stamp
+         ``last_warned_date = today`` so the next run skips it.
+
+    The ``last_warned_date`` column is written back to the DB, making dedup
+    durable across process restarts and safe for multi-instance deploys.
+    Each row is committed individually so a failure on one credential does
+    not prevent others from being warned.
+
+    Raises:
+        Never — all exceptions are caught and logged.
+    """
+    from app.database import async_session
+    from app.models.credential import CHWCredentialValidation
+    from app.services import notification_service
+
+    today = date.today()
+    warn_horizon = today + timedelta(days=30)
+
+    async with async_session() as db:
+        result = await db.execute(
+            select(CHWCredentialValidation)
+            .where(
+                and_(
+                    CHWCredentialValidation.validation_status == "verified",
+                    CHWCredentialValidation.expiry_date >= today,
+                    CHWCredentialValidation.expiry_date <= warn_horizon,
+                    # Only send one notification per credential per calendar day
+                    (
+                        (CHWCredentialValidation.last_warned_date.is_(None))
+                        | (CHWCredentialValidation.last_warned_date < today)
+                    ),
+                )
+            )
+        )
+        expiring = list(result.scalars().all())
+
+    if not expiring:
+        logger.info("check_expiring_credentials: no credentials expiring within 30 days")
+        return
+
+    logger.info("check_expiring_credentials: found %d credential(s) to warn", len(expiring))
+
+    for credential in expiring:
+        async with async_session() as db:
+            try:
+                await notification_service.notify_credential_expiring(
+                    db,
+                    credential.chw_id,
+                    credential.program_name,  # generic program name — no PHI
+                    credential.expiry_date,   # type: date
+                )
+                # Stamp today so we don't re-warn on the next scheduler run
+                record = await db.get(CHWCredentialValidation, credential.id)
+                if record is not None:
+                    record.last_warned_date = today
+                    await db.commit()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "check_expiring_credentials: failed for credential %s (chw=%s): %s",
+                    credential.id,
+                    credential.chw_id,
+                    exc,
+                )
+
+
 # Module-level cache of reminded sessions — reset on process restart
 _reminded_sessions: set[str] = set()
 
@@ -220,6 +296,22 @@ def start_scheduler() -> None:
         "interval",
         minutes=10,
         id="payout_trigger",
+        max_instances=1,
+        coalesce=True,
+    )
+
+    # Daily credential-expiry check — 09:00 US/Pacific (17:00 UTC).
+    # Uses UTC wall-clock time; the offset is correct for PDT (UTC-7).
+    # Operators in PST (UTC-8) season should update hour=17 to hour=17 — no
+    # change needed because we fire 9 AM PT regardless of DST when the
+    # scheduler timezone is set to US/Pacific below.
+    _scheduler.add_job(
+        check_expiring_credentials,
+        "cron",
+        hour=9,
+        minute=0,
+        timezone="US/Pacific",
+        id="credential_expiry_check",
         max_instances=1,
         coalesce=True,
     )

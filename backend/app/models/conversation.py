@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -9,11 +9,35 @@ from app.database import Base
 
 
 class Conversation(Base):
+    """A messaging thread between a CHW and a member.
+
+    Design note: ``session_id`` ties a conversation to a specific scheduled
+    session (1-to-1, enforced by the unique constraint below).  General DMs
+    that are not session-scoped keep ``session_id = NULL`` — the unique
+    constraint only fires on non-NULL values in Postgres, so existing DM rows
+    are unaffected.
+
+    Read cursors (``chw_read_up_to``, ``member_read_up_to``) store the UUID of
+    the last message each party has read.  NULL means "no messages read yet".
+    This avoids a separate read-receipt table for Phase 1 polling; can be
+    replaced with a proper MessageRead fan-out table if we add push read-receipts
+    in a later phase.
+    """
+
     __tablename__ = "conversations"
+    __table_args__ = (
+        # One session → at most one conversation thread.
+        # NULL session_id (ad-hoc DMs) is excluded from uniqueness in Postgres.
+        UniqueConstraint("session_id", name="uq_conversations_session_id"),
+    )
+
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     chw_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     member_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    session_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("sessions.id"))
+    session_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("sessions.id"), index=True)
+    # Read cursors: UUID of the last Message each party has acknowledged.
+    chw_read_up_to: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("messages.id"), nullable=True)
+    member_read_up_to: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("messages.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 class Message(Base):

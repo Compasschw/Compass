@@ -56,6 +56,10 @@ async def browse_chws(
         select(CHWProfile, User.name)
         .join(User, CHWProfile.user_id == User.id)
         .where(CHWProfile.is_available == True)  # noqa: E712
+        # Defensive guard: a user whose role was flipped (e.g. CHW → admin)
+        # may still have a CHWProfile row. Browsing should never surface
+        # non-CHW users regardless of their profile state.
+        .where(User.role == "chw")
     )
     if vertical:
         stmt = stmt.where(CHWProfile.specializations.any(vertical))

@@ -68,12 +68,12 @@ class TestAdminPage:
     async def test_admin_page_without_cookie_shows_login(self, client: AsyncClient):
         """Unauthenticated access returns the login HTML page (not a 401).
         This is a deliberate UX choice — serves the form so a human can log in."""
-        res = await client.get("/admin/waitlist")
+        res = await client.get("/api/v1/admin/waitlist")
         assert res.status_code == 200
         assert "password" in res.text.lower()
 
     async def test_admin_login_rejects_wrong_key(self, client: AsyncClient):
-        """Wrong admin key on POST /admin/waitlist/login returns 401."""
+        """Wrong admin key on POST /api/v1/admin/waitlist/login returns 401."""
         res = await client.post(
             "/admin/waitlist/login",
             data={"key": "wrong-key-definitely-not-admin"},

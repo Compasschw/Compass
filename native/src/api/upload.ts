@@ -23,6 +23,8 @@ export interface RNFileAsset {
   uri: string;
   name: string;
   type: string;
+  /** File size in bytes — forwarded to the presigned-URL endpoint for server-side validation. */
+  sizeBytes?: number;
 }
 
 export type UploadPurpose = 'credential' | 'profile_photo' | 'documentation';
@@ -35,15 +37,24 @@ export type UploadPurpose = 'credential' | 'profile_photo' | 'documentation';
  * @param filename    - Original filename (used for S3 key construction).
  * @param contentType - MIME type of the file.
  * @param purpose     - Categorises the upload for server-side routing.
+ * @param sizeBytes   - File size in bytes; validated server-side (max 20 MB).
  */
 export async function getPresignedUploadUrl(
   filename: string,
   contentType: string,
   purpose: UploadPurpose = 'credential',
+  sizeBytes?: number,
 ): Promise<PresignedUrlResponse> {
   return api<PresignedUrlResponse>('/upload/presigned-url', {
     method: 'POST',
-    body: JSON.stringify({ filename, content_type: contentType, purpose }),
+    body: JSON.stringify({
+      filename,
+      content_type: contentType,
+      purpose,
+      // size_bytes is required by the backend schema; default to 1 if unknown
+      // to avoid a 422 on older call sites that don't yet pass the value.
+      size_bytes: sizeBytes ?? 1,
+    }),
   });
 }
 
@@ -65,6 +76,7 @@ export async function uploadFile(
     asset.name,
     asset.type,
     purpose,
+    asset.sizeBytes,
   );
 
   // React Native fetch supports PUT with a FormData body containing a blob

@@ -1,7 +1,7 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import ARRAY, Boolean, DateTime, Float, ForeignKey, String, Text, func
+from sqlalchemy import ARRAY, Boolean, Date, DateTime, Float, ForeignKey, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -33,6 +33,16 @@ class CHWCredentialValidation(Base):
     certificate_number: Mapped[str | None] = mapped_column(String(100))
     graduation_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     uploaded_certificate_s3_key: Mapped[str | None] = mapped_column(String(500))
+    # Document uploaded directly by the CHW after the native client completes
+    # the S3 presigned-PUT.  Stores path-only, e.g. credentials/<chw_id>/<uuid>.pdf
+    document_s3_key: Mapped[str | None] = mapped_column(String(500))
+    # Credential expiry date — used by the daily scheduler to fire renewal warnings
+    expiry_date: Mapped[date | None] = mapped_column(Date)
+    # Last date a "credential expiring" notification was sent; prevents duplicate
+    # daily warnings.  NULL means never warned.  In-memory dedup is used at
+    # runtime; this column ensures durability across process restarts and is
+    # required for multi-instance correctness.
+    last_warned_date: Mapped[date | None] = mapped_column(Date)
     validation_status: Mapped[str] = mapped_column(String(20), default="pending")
     validated_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
     validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

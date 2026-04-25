@@ -1,0 +1,26 @@
+{
+  "name": "CompassCHW",
+  "short_name": "Compass",
+  "description": "Connect with Community Health Workers in California.",
+  "theme_color": "#6B8F71",
+  "background_color": "#FBF7F0",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "scope": "/",
+  "start_url": "/",
+  "categories": ["health", "medical"],
+  "icons": [
+    {
+      "src": "/icons/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

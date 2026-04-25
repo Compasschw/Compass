@@ -4,9 +4,9 @@
  * Features:
  * - Search input (filters by name/bio)
  * - Horizontal filter tabs by vertical category
+ * - Map view with CHW pins (native only; web falls back to list-only)
  * - FlatList of CHW cards with avatar, specializations, rating, experience, bio
  * - Schedule request Modal with vertical, urgency, mode, and description
- * - "Map view coming soon" placeholder toggle
  * - Toast confirmation on submit
  */
 
@@ -15,7 +15,6 @@ import {
   FlatList,
   Modal,
   Platform,
-  Pressable,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -27,7 +26,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   CheckCircle,
-  Map,
+  Map as MapIcon,
   Search,
   Star,
   X,
@@ -48,6 +47,29 @@ import {
 } from '../../hooks/useApiQueries';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
+import { zipToLatLng } from '../../utils/geocoding';
+import type { AppleMapsViewProps } from 'expo-maps/build/apple/AppleMaps.types';
+import type { GoogleMapsViewProps } from 'expo-maps/build/google/GoogleMaps.types';
+
+// ─── Platform-gated expo-maps module references ───────────────────────────────
+// expo-maps native modules are unavailable on web. We use conditional requires
+// so the web bundle never attempts to resolve them.
+// Metro's Platform.OS inlining tree-shakes the dead branch at bundle time.
+
+type AppleMapsViewComponent = React.ComponentType<AppleMapsViewProps>;
+type GoogleMapsViewComponent = React.ComponentType<GoogleMapsViewProps>;
+
+// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+const AppleMapsView: AppleMapsViewComponent | null =
+  Platform.OS === 'ios'
+    ? (require('expo-maps').AppleMaps.View as AppleMapsViewComponent)
+    : null;
+
+// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+const GoogleMapsView: GoogleMapsViewComponent | null =
+  Platform.OS === 'android'
+    ? (require('expo-maps').GoogleMaps.View as GoogleMapsViewComponent)
+    : null;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -776,6 +798,97 @@ const cardStyles = StyleSheet.create({
   },
 });
 
+// ─── CHW Map View (native only) ───────────────────────────────────────────────
+
+/** The LA County geographic center, used as the default camera target. */
+const LA_CENTER = { latitude: 34.0522, longitude: -118.2437 } as const;
+
+/** Zoom level that comfortably frames all of LA County (~county-wide view). */
+const LA_COUNTY_ZOOM = 9;
+
+interface ChwMapViewProps {
+  chws: ChwBrowseItem[];
+  onMarkerPress: (chw: ChwBrowseItem) => void;
+}
+
+/**
+ * Renders a native map centered on LA County with one pin per CHW whose ZIP
+ * resolves to a coordinate. CHWs with unknown ZIPs are silently skipped.
+ *
+ * Uses AppleMaps on iOS, GoogleMaps on Android. Not rendered on web.
+ */
+function ChwMapView({ chws, onMarkerPress }: ChwMapViewProps): React.JSX.Element | null {
+  // Build a lookup from CHW id → CHW for fast retrieval inside the marker
+  // click handler, which only receives the marker object back from the SDK.
+  const chwById = useMemo(() => {
+    const lookup = new Map<string, ChwBrowseItem>();
+    for (const chw of chws) {
+      lookup.set(chw.id, chw);
+    }
+    return lookup;
+  }, [chws]);
+
+  /** Resolved markers — one per CHW with a resolvable ZIP code. */
+  const markers = useMemo(() => {
+    return chws.flatMap((chw) => {
+      const coords = zipToLatLng(chw.zipCode);
+      if (!coords) return [];
+      return [
+        {
+          id: chw.id,
+          coordinates: { latitude: coords.lat, longitude: coords.lng },
+          title: chw.name,
+        },
+      ];
+    });
+  }, [chws]);
+
+  if (Platform.OS === 'ios' && AppleMapsView) {
+    return (
+      <AppleMapsView
+        style={mapStyles.map}
+        cameraPosition={{ coordinates: LA_CENTER, zoom: LA_COUNTY_ZOOM }}
+        markers={markers}
+        onMarkerClick={(marker) => {
+          if (!marker.id) return;
+          const chw = chwById.get(marker.id);
+          if (chw) onMarkerPress(chw);
+        }}
+      />
+    );
+  }
+
+  if (Platform.OS === 'android' && GoogleMapsView) {
+    return (
+      <GoogleMapsView
+        style={mapStyles.map}
+        cameraPosition={{ coordinates: LA_CENTER, zoom: LA_COUNTY_ZOOM }}
+        markers={markers}
+        onMarkerClick={(marker) => {
+          if (!marker.id) return;
+          const chw = chwById.get(marker.id);
+          if (chw) onMarkerPress(chw);
+        }}
+      />
+    );
+  }
+
+  // Fallback: should not be reached on native, but satisfies the type system.
+  return null;
+}
+
+const mapStyles = StyleSheet.create({
+  map: {
+    height: 220,
+    marginHorizontal: 16,
+    marginBottom: 12,
+    borderRadius: 16,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+});
+
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export function MemberFindScreen(): React.JSX.Element {
@@ -783,6 +896,8 @@ export function MemberFindScreen(): React.JSX.Element {
   const [activeFilter, setActiveFilter] = useState<FilterTab>('all');
   const [schedulingChw, setSchedulingChw] = useState<ChwBrowseItem | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  /** Controls whether the map panel is expanded. Ignored on web. */
+  const [mapExpanded, setMapExpanded] = useState(Platform.OS !== 'web');
 
   // Re-fetch whenever the vertical filter changes (passes undefined for 'all')
   const browseVertical = activeFilter === 'all' ? undefined : activeFilter;
@@ -817,6 +932,14 @@ export function MemberFindScreen(): React.JSX.Element {
 
   const handleModalClose = useCallback(() => {
     setSchedulingChw(null);
+  }, []);
+
+  /**
+   * Tapping a map pin selects that CHW and opens the schedule modal,
+   * matching the same selection pattern used by the list card's Schedule button.
+   */
+  const handleMapMarkerPress = useCallback((chw: ChwBrowseItem) => {
+    setSchedulingChw(chw);
   }, []);
 
   const handleModalSubmit = useCallback(
@@ -901,19 +1024,24 @@ export function MemberFindScreen(): React.JSX.Element {
         })}
       </ScrollView>
 
-      {/*
-        Map view placeholder. The pin data is ready — each CHW has a zipCode
-        that resolves via ../../data/zipCodeCoords.ts to lat/lng. Dropping in
-        an `expo-maps` <MapView> here is a one-file change once we've validated
-        the native module on a physical device. Tracked in Phase 3 of the
-        mobile build-out plan.
-      */}
-      <View style={styles.mapPlaceholder}>
-        <Map color={colors.mutedForeground} size={16} />
-        <Text style={styles.mapPlaceholderText}>
-          Map view — ships with the next mobile release
-        </Text>
-      </View>
+      {/* Map toggle header — native only */}
+      {Platform.OS !== 'web' ? (
+        <TouchableOpacity
+          style={styles.mapToggleRow}
+          onPress={() => setMapExpanded((prev) => !prev)}
+          accessibilityRole="button"
+          accessibilityLabel={mapExpanded ? 'Collapse map view' : 'Expand map view'}
+        >
+          <MapIcon color={colors.primary} size={15} />
+          <Text style={styles.mapToggleText}>Map view</Text>
+          <Text style={styles.mapToggleChevron}>{mapExpanded ? '▲' : '▼'}</Text>
+        </TouchableOpacity>
+      ) : null}
+
+      {/* Real map — native only, collapsed/expanded by toggle */}
+      {Platform.OS !== 'web' && mapExpanded ? (
+        <ChwMapView chws={filteredChws} onMarkerPress={handleMapMarkerPress} />
+      ) : null}
 
       {/* CHW List */}
       {chwQuery.isLoading ? (
@@ -1023,24 +1151,29 @@ const styles = StyleSheet.create({
   filterTabTextActive: {
     color: '#FFFFFF',
   },
-  mapPlaceholder: {
+  mapToggleRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
     marginHorizontal: 16,
-    marginBottom: 12,
+    marginBottom: 8,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#DDD6CC',
+    borderColor: colors.border,
     borderRadius: 10,
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 10,
   },
-  mapPlaceholderText: {
+  mapToggleText: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 12,
-    letterSpacing: 1,
-    color: '#6B7A6B',
+    fontSize: 13,
+    color: colors.foreground,
+    flex: 1,
+  },
+  mapToggleChevron: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 10,
+    color: colors.mutedForeground,
   },
   listContent: {
     paddingTop: 4,

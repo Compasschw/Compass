@@ -56,6 +56,7 @@ import {
   type Credential,
   type CredentialStatus,
 } from '../../data/mock';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   useChwProfile,
   useUpdateChwProfile,
@@ -66,6 +67,7 @@ import {
 } from '../../hooks/useApiQueries';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
+import { CredentialUploadModal } from '../../components/chw/CredentialUploadModal';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -98,16 +100,18 @@ const ALL_LANGUAGES: string[] = [
   'Korean',
 ];
 
-const CREDENTIAL_STATUS_COLORS: Record<CredentialStatus, string> = {
+const CREDENTIAL_STATUS_COLORS: Record<CredentialStatus | 'rejected', string> = {
   verified: '#16A34A',
   pending: colors.compassGold,
   expired: colors.destructive,
+  rejected: colors.destructive,
 };
 
-const CREDENTIAL_STATUS_LABELS: Record<CredentialStatus, string> = {
+const CREDENTIAL_STATUS_LABELS: Record<CredentialStatus | 'rejected', string> = {
   verified: 'Verified',
   pending: 'Pending Review',
   expired: 'Expired',
+  rejected: 'Rejected',
 };
 
 const BIO_MAX_CHARS = 400;
@@ -314,7 +318,10 @@ export function CHWProfileScreen(): React.JSX.Element {
   const { data: apiProfile, isLoading, error, refetch } = useChwProfile();
   const updateProfile = useUpdateChwProfile();
   const { data: intake } = useCHWIntake();
-  const { data: credentials } = useCredentialValidations();
+  const { data: credentials, refetch: refetchCredentials } = useCredentialValidations();
+  const queryClient = useQueryClient();
+
+  const [isUploadModalVisible, setIsUploadModalVisible] = useState(false);
 
   // Derive display name from auth context (API profile has no name field)
   const displayName = userName ?? 'My Profile';
@@ -403,9 +410,22 @@ export function CHWProfileScreen(): React.JSX.Element {
     Alert.alert('Photo picker coming soon', 'Avatar upload will be available in a future release.');
   }, []);
 
-  const handleCredentialUpload = useCallback((credLabel: string) => {
-    Alert.alert('Upload coming soon', `Credential upload for "${credLabel}" will be available in a future release.`);
+  const handleOpenUploadModal = useCallback(() => {
+    setIsUploadModalVisible(true);
   }, []);
+
+  const handleCloseUploadModal = useCallback(() => {
+    setIsUploadModalVisible(false);
+  }, []);
+
+  /**
+   * Called by CredentialUploadModal after a successful upload.
+   * Invalidates the credentials cache so the list refreshes automatically.
+   */
+  const handleCredentialUploaded = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ['credentials', 'validations'] });
+    void refetchCredentials();
+  }, [queryClient, refetchCredentials]);
 
   const handleToggleAvailability = useCallback((value: boolean) => {
     setIsAvailable(value);
@@ -720,9 +740,21 @@ export function CHWProfileScreen(): React.JSX.Element {
 
         {/* ── Credentials ── */}
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Credentials</Text>
+          <View style={styles.credSectionHeader}>
+            <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Credentials</Text>
+            <TouchableOpacity
+              style={styles.uploadButton}
+              onPress={handleOpenUploadModal}
+              accessibilityRole="button"
+              accessibilityLabel="Upload a new credential document"
+            >
+              <Upload size={14} color={colors.primary} />
+              <Text style={styles.uploadButtonText}>Upload</Text>
+            </TouchableOpacity>
+          </View>
+
           {(credentials ?? []).length === 0 ? (
-            <View style={{ paddingVertical: 12 }}>
+            <View style={styles.credEmptyState}>
               <Text style={{ ...typography.bodyMd, color: colors.mutedForeground }}>
                 No credentials on file yet.
               </Text>
@@ -734,17 +766,21 @@ export function CHWProfileScreen(): React.JSX.Element {
                 }}
               >
                 Upload your CHW certificate, HIPAA training, and background
-                check via the in-app credentialing flow. Reviewed within 48
-                hours.
+                check using the Upload button above. Documents are reviewed
+                within 48 hours.
               </Text>
             </View>
           ) : (
             (credentials ?? []).map((cred: CredentialValidation, index: number) => {
+              const rawStatus = cred.validationStatus as
+                | 'pending'
+                | 'verified'
+                | 'expired'
+                | 'rejected';
               const statusColor =
-                CREDENTIAL_STATUS_COLORS[
-                  (cred.validationStatus as 'pending' | 'verified' | 'expired') ??
-                    'pending'
-                ] ?? colors.mutedForeground;
+                CREDENTIAL_STATUS_COLORS[rawStatus] ?? colors.mutedForeground;
+              const statusLabel =
+                CREDENTIAL_STATUS_LABELS[rawStatus] ?? cred.validationStatus;
               return (
                 <View key={cred.id}>
                   {index > 0 ? <View style={styles.divider} /> : null}
@@ -762,13 +798,18 @@ export function CHWProfileScreen(): React.JSX.Element {
                         <Text style={styles.credLabel}>{cred.programName}</Text>
                         <View style={[styles.badge, { backgroundColor: statusColor + '18' }]}>
                           <Text style={[styles.badgeText, { color: statusColor }]}>
-                            {cred.validationStatus}
+                            {statusLabel}
                           </Text>
                         </View>
                       </View>
                       <Text style={styles.credMeta}>
                         Submitted {formatCredentialDate(cred.createdAt)}
                       </Text>
+                      {cred.expiryDate != null ? (
+                        <Text style={styles.credMeta}>
+                          Expires {formatCredentialDate(cred.expiryDate)}
+                        </Text>
+                      ) : null}
                       {cred.institutionConfirmed ? (
                         <Text style={styles.credMeta}>Institution confirmed</Text>
                       ) : null}
@@ -779,6 +820,13 @@ export function CHWProfileScreen(): React.JSX.Element {
             })
           )}
         </View>
+
+        {/* ── Credential upload modal ── */}
+        <CredentialUploadModal
+          visible={isUploadModalVisible}
+          onClose={handleCloseUploadModal}
+          onUploaded={handleCredentialUploaded}
+        />
 
         {/* ── Professional intake ── */}
         <TouchableOpacity
@@ -1122,14 +1170,21 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     lineHeight: 16,
   },
+  credSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  credEmptyState: {
+    paddingVertical: 12,
+  },
   uploadButton: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    alignSelf: 'flex-start',
-    marginTop: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: colors.primary + '40',

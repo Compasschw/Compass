@@ -467,6 +467,130 @@ export function useSendMessage() {
   });
 }
 
+// ─── Session-scoped messaging (Phase 1 chat) ─────────────────────────────────
+
+/**
+ * Canonical shape of a single session message returned by
+ * GET /sessions/{session_id}/messages.
+ */
+export interface SessionMessageData {
+  id: string;
+  /** UUID of the user who authored the message. */
+  senderUserId: string;
+  /** "chw" | "member" — used for bubble alignment without needing the full user record. */
+  senderRole: 'chw' | 'member';
+  body: string;
+  createdAt: string;
+}
+
+/**
+ * An optimistic or confirmed message used in the local UI list.
+ * The `status` field is client-side only and must NEVER be sent to the API.
+ */
+export interface SessionMessageLocal extends SessionMessageData {
+  /** undefined = confirmed from server; "sending" = optimistic; "failed" = send error */
+  status?: 'sending' | 'failed';
+}
+
+export const sessionMessageQueryKeys = {
+  messages: (sessionId: string) => ['sessions', sessionId, 'messages'] as const,
+};
+
+/**
+ * Fetch messages for a session with cursor-based pagination.
+ * Polls every 4 seconds while the component is mounted.
+ *
+ * @param sessionId - The session UUID.
+ * @param afterId   - Optional last-seen message ID for cursor-based incremental fetch.
+ */
+export function useSessionMessages(sessionId: string, afterId?: string) {
+  return useQuery({
+    queryKey: sessionMessageQueryKeys.messages(sessionId),
+    queryFn: async (): Promise<SessionMessageData[]> => {
+      const qs = afterId ? `?after=${encodeURIComponent(afterId)}` : '';
+      const raw = await api<unknown[]>(`/sessions/${sessionId}/messages${qs}`);
+      return transformKeys<SessionMessageData[]>(raw);
+    },
+    enabled: !!sessionId,
+    refetchInterval: 4_000,
+    // Stale immediately so we never serve a cached snapshot to a fresh mount
+    staleTime: 0,
+  });
+}
+
+/**
+ * Post a new text message to a session.
+ * Does NOT perform optimistic updates internally — the caller manages local state
+ * for proper rollback handling (see SessionChat component).
+ *
+ * Returns the created SessionMessageData row from the server.
+ */
+export function useSessionSendMessage() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      sessionId,
+      body,
+    }: {
+      sessionId: string;
+      body: string;
+    }): Promise<SessionMessageData> => {
+      const raw = await api<unknown>(`/sessions/${sessionId}/messages`, {
+        method: 'POST',
+        // HIPAA: body content is intentionally not logged anywhere in this call.
+        body: JSON.stringify({ body }),
+      });
+      return transformKeys<SessionMessageData>(raw);
+    },
+    onSuccess: (_data, variables) => {
+      // Invalidate so the background poll picks up the authoritative row
+      void qc.invalidateQueries({
+        queryKey: sessionMessageQueryKeys.messages(variables.sessionId),
+      });
+    },
+  });
+}
+
+/**
+ * Mark messages as read up to (and including) the given message ID.
+ * Fire-and-forget — UI does not block on this.
+ */
+export function useSessionMarkRead() {
+  return useMutation({
+    mutationFn: async ({
+      sessionId,
+      upToMessageId,
+    }: {
+      sessionId: string;
+      upToMessageId: string;
+    }): Promise<void> => {
+      await api(`/sessions/${sessionId}/messages/read`, {
+        method: 'POST',
+        body: JSON.stringify({ up_to_message_id: upToMessageId }),
+      });
+    },
+    // Silent failure: read receipts are a best-effort side effect.
+    onError: () => undefined,
+  });
+}
+
+/**
+ * Initiate a Vonage masked call bridging both parties for this session.
+ *
+ * TODO(backend): Backend agent is shipping either
+ *   POST /sessions/{session_id}/call  (preferred)
+ *   or POST /communication/call-bridge { session_id }
+ * Wire is against /sessions/{session_id}/call. If the backend lands a different
+ * path, swap the URL here — tracked in Compass issue #[call-bridge-contract].
+ */
+export function useStartCall() {
+  return useMutation({
+    mutationFn: async (sessionId: string): Promise<void> => {
+      await api(`/sessions/${sessionId}/call`, { method: 'POST' });
+    },
+  });
+}
+
 // ─── CHW Intake Questionnaire ───────────────────────────────────────────────
 
 export interface CHWIntakeState {
@@ -560,6 +684,39 @@ export interface CredentialValidation {
   validationStatus: string;
   institutionConfirmed: boolean;
   createdAt: string;
+  /** Path-only S3 key for the uploaded document, once the CHW has uploaded one. */
+  documentS3Key?: string | null;
+  /** ISO date string for credential expiry, if provided at upload time. */
+  expiryDate?: string | null;
+}
+
+/**
+ * Payload sent when submitting a new credential validation record.
+ * Maps to the backend's CredentialValidationSubmit schema.
+ */
+export interface SubmitCredentialPayload {
+  /** Issuing institution name (required by the backend). */
+  institutionName: string;
+  /** Optional contact e-mail for the institution. */
+  institutionContactEmail?: string;
+  /** Full programme / certificate name. */
+  programName: string;
+  /** Certificate or licence number (optional). */
+  certificateNumber?: string;
+  /** ISO date string for when the credential was awarded (optional). */
+  graduationDate?: string;
+}
+
+/**
+ * Payload for attaching a document S3 key and optional expiry date to an
+ * existing credential validation record.
+ *
+ * TODO: Backend agent must add PATCH /credentials/validations/{id} that accepts
+ * { document_s3_key, expiry_date } — tracked in Compass issue #[backend-patch-cred].
+ */
+export interface PatchCredentialDocumentPayload {
+  documentS3Key: string;
+  expiryDate?: string;
 }
 
 export function useCredentialValidations(enabled = true) {
@@ -571,5 +728,57 @@ export function useCredentialValidations(enabled = true) {
     },
     enabled,
     staleTime: 30_000,
+  });
+}
+
+/**
+ * Submit a new credential validation record to the backend.
+ * On success, invalidates the validations list cache.
+ */
+export function useSubmitCredential() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: SubmitCredentialPayload): Promise<CredentialValidation> => {
+      const raw = await api<unknown>('/credentials/validate', {
+        method: 'POST',
+        body: JSON.stringify(toSnakeCase(data)),
+      });
+      return transformKeys<CredentialValidation>(raw);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['credentials', 'validations'] });
+    },
+  });
+}
+
+/**
+ * Attach an uploaded S3 document key (and optional expiry date) to an
+ * existing credential validation record via
+ * PATCH /credentials/validations/{id}.
+ */
+export function usePatchCredentialDocument() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      credentialId,
+      payload,
+    }: {
+      credentialId: string;
+      payload: PatchCredentialDocumentPayload;
+    }): Promise<void> => {
+      const body: Record<string, string> = {
+        document_s3_key: payload.documentS3Key,
+      };
+      if (payload.expiryDate) {
+        body.expiry_date = payload.expiryDate;
+      }
+      await api(`/credentials/validations/${credentialId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      });
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['credentials', 'validations'] });
+    },
   });
 }

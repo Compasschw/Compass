@@ -1,0 +1,62 @@
+# .easignore — files excluded from the EAS Build upload bundle
+#
+# EAS Build uploads your project source to Expo's build workers. Excluding
+# large or dev-only paths reduces upload time and prevents leaking local
+# credentials or test artifacts into the build environment.
+#
+# Syntax is identical to .gitignore.
+
+# Dependencies (worker installs from scratch)
+node_modules/
+
+# Expo + Metro caches
+.expo/
+dist/
+web-build/
+
+# Test files
+__tests__/
+**/*.test.ts
+**/*.test.tsx
+**/*.spec.ts
+**/*.spec.tsx
+
+# Scripts directory (CI helpers, local tooling — not needed on build worker)
+scripts/
+
+# Local env files (secrets must be set via eas.json env block or EAS Secrets)
+.env
+.env.local
+.env*.local
+.env.development
+.env.development.local
+.env.staging
+.env.staging.local
+
+# Credential files (operator provides these out-of-band; never upload)
+google-play-service-account.json
+google-service-account.json
+google-services.json
+GoogleService-Info.plist
+apple-credentials.json
+credentials.json
+*.p8
+*.p12
+*.mobileprovision
+
+# Logs
+*.log
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# macOS noise
+.DS_Store
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+
+# TypeScript incremental build info
+*.tsbuildinfo

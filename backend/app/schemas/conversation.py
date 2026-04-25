@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class MessageCreate(BaseModel):
@@ -36,6 +36,7 @@ class MessageResponse(BaseModel):
     created_at: datetime
     attachment: FileAttachmentInline | None = None
 
+
 class ConversationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
@@ -44,9 +45,38 @@ class ConversationResponse(BaseModel):
     session_id: UUID | None
     created_at: datetime
 
+
 class FileAttachmentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
     filename: str
     size_bytes: int
     content_type: str
+
+
+# ─── Session-scoped messaging schemas ────────────────────────────────────────
+
+
+class SessionMessageSend(BaseModel):
+    """Request body for POST /sessions/{session_id}/messages."""
+    body: str = Field(..., min_length=1, max_length=10_000)
+
+
+class SessionMessageResponse(BaseModel):
+    """Single message as returned from session-scoped endpoints.
+
+    ``sender_role`` is resolved at query time from the session's chw_id /
+    member_id — clients don't need to look it up separately.
+    """
+    model_config = ConfigDict(from_attributes=False)
+
+    id: UUID
+    sender_user_id: UUID
+    sender_role: str  # "chw" | "member"
+    body: str
+    created_at: datetime
+
+
+class MarkReadRequest(BaseModel):
+    """Request body for POST /sessions/{session_id}/messages/read."""
+    up_to_message_id: UUID
