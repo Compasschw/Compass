@@ -181,6 +181,95 @@ async def trigger_pending_payouts() -> None:
                 logger.warning("Payout trigger failed for claim %s: %s", claim.id, e)
 
 
+async def cleanup_expired_deletions() -> None:
+    """Hard-delete User rows whose HIPAA 6-year data-retention window has closed.
+
+    Eligibility criteria (both conditions must hold):
+      - ``deleted_at IS NOT NULL``      -- account was soft-deleted
+      - ``data_retention_until < today``-- retention window has closed
+
+    For each eligible row the function:
+      1. Attempts to hard-delete the User (relies on CASCADE FKs where
+         configured — see User model docstring).
+      2. On FK-constraint failure (FKs without CASCADE), logs the conflict and
+         skips the row. An operator must resolve manually before the row can be
+         purged.
+
+    This is a stub for launch — no real user will reach retention-end for
+    approximately 6 years from the first account deletion. The job is wired
+    now so it runs daily and the team cannot forget to implement it later.
+
+    Raises:
+        Never — all exceptions are caught and logged.
+    """
+    from datetime import date as _date
+
+    from sqlalchemy import and_
+
+    from app.database import async_session
+    from app.models.user import User
+
+    today = _date.today()
+
+    async with async_session() as db:
+        result = await db.execute(
+            select(User).where(
+                and_(
+                    User.deleted_at.isnot(None),
+                    User.data_retention_until < today,
+                )
+            )
+        )
+        expired_users = list(result.scalars().all())
+
+    if not expired_users:
+        logger.info(
+            "cleanup_expired_deletions: no users past retention window (expected for years)"
+        )
+        return
+
+    logger.info(
+        "cleanup_expired_deletions: %d user(s) past retention window — attempting hard-delete",
+        len(expired_users),
+    )
+
+    purged_count = 0
+    skipped_count = 0
+
+    for user in expired_users:
+        # Each user gets its own session so a FK failure on one row does not
+        # roll back the others.
+        async with async_session() as db:
+            try:
+                await db.delete(await db.get(User, user.id))
+                await db.commit()
+                purged_count += 1
+                logger.info(
+                    "cleanup_expired_deletions: hard-deleted user_id=%s (deleted_at=%s, retention_until=%s)",
+                    user.id,
+                    user.deleted_at,
+                    user.data_retention_until,
+                )
+            except Exception as exc:  # noqa: BLE001
+                await db.rollback()
+                skipped_count += 1
+                # Log user_id only — no PII (name/email already anonymised at
+                # soft-delete time, but log only the opaque ID to be safe).
+                logger.warning(
+                    "cleanup_expired_deletions: could not hard-delete user_id=%s "
+                    "(%s: %s) — operator action required",
+                    user.id,
+                    type(exc).__name__,
+                    exc,
+                )
+
+    logger.info(
+        "cleanup_expired_deletions: done — purged=%d skipped=%d",
+        purged_count,
+        skipped_count,
+    )
+
+
 async def check_expiring_credentials() -> None:
     """Notify CHWs whose approved credentials expire within the next 30 days.
 
@@ -312,6 +401,21 @@ def start_scheduler() -> None:
         minute=0,
         timezone="US/Pacific",
         id="credential_expiry_check",
+        max_instances=1,
+        coalesce=True,
+    )
+
+    # Daily HIPAA hard-delete job — 02:00 US/Pacific (low-traffic window).
+    # Purges User rows whose 6-year data_retention_until date has passed.
+    # This is a stub for launch — no real users will qualify for ~6 years —
+    # but the job must be wired now so it runs automatically when they do.
+    _scheduler.add_job(
+        cleanup_expired_deletions,
+        "cron",
+        hour=2,
+        minute=0,
+        timezone="US/Pacific",
+        id="hipaa_hard_delete",
         max_instances=1,
         coalesce=True,
     )

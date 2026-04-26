@@ -591,6 +591,42 @@ export function useStartCall() {
   });
 }
 
+// ─── Transcription Consent ───────────────────────────────────────────────────
+
+export interface TranscriptionConsentPayload {
+  /** Always "ai_transcription" for session transcription. */
+  consentType: 'ai_transcription';
+  /**
+   * The user's typed name as a digital signature confirming consent.
+   * Must be non-empty before the CHW initiates recording.
+   */
+  typedSignature: string;
+}
+
+/**
+ * POST /sessions/{id}/consent
+ *
+ * Records AI-transcription consent for both parties before the CHW may start
+ * the live transcript stream. Returns 200 on success with the created consent
+ * record; throws ApiError on failure (400 duplicate, 403 forbidden, etc.).
+ *
+ * HIPAA: only the session ID and consent metadata are transmitted — no audio
+ * or transcript content is included in this request.
+ */
+export function useGrantTranscriptionConsent(sessionId: string) {
+  return useMutation({
+    mutationFn: async (payload: TranscriptionConsentPayload): Promise<void> => {
+      await api(`/sessions/${sessionId}/consent`, {
+        method: 'POST',
+        body: JSON.stringify({
+          consent_type: payload.consentType,
+          typed_signature: payload.typedSignature,
+        }),
+      });
+    },
+  });
+}
+
 // ─── CHW Intake Questionnaire ───────────────────────────────────────────────
 
 export interface CHWIntakeState {
@@ -747,6 +783,29 @@ export function useSubmitCredential() {
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['credentials', 'validations'] });
+    },
+  });
+}
+
+// ─── Account deletion ─────────────────────────────────────────────────────────
+
+/**
+ * Mutation that calls DELETE /auth/users/me with the user's current password.
+ *
+ * The server responds 204 No Content on success. The caller is responsible
+ * for clearing auth state and routing to the landing screen.
+ *
+ * Usage:
+ *   const deleteAccount = useDeleteAccount();
+ *   await deleteAccount.mutateAsync({ password: 'hunter2' });
+ */
+export function useDeleteAccount() {
+  return useMutation({
+    mutationFn: async ({ password }: { password: string }): Promise<void> => {
+      await api<void>('/auth/users/me', {
+        method: 'DELETE',
+        body: JSON.stringify({ password }),
+      });
     },
   });
 }

@@ -2,6 +2,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -62,6 +63,79 @@ async def refresh(data: RefreshRequest, db: Annotated[AsyncSession, Depends(get_
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout(data: RefreshRequest, db: Annotated[AsyncSession, Depends(get_db)], current_user=Depends(get_current_user)):
     await revoke_refresh_token(db, data.refresh_token)
+
+
+# ─── Account deletion ─────────────────────────────────────────────────────────
+
+
+class _DeleteAccountBody(BaseModel):
+    password: str
+
+
+@router.delete(
+    "/users/me",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Permanently delete (anonymise) the authenticated user's account",
+    description=(
+        "Soft-deletes and anonymises the caller's account. "
+        "Requires the current password as an explicit confirmation step "
+        "(Apple App Store policy §5.1.1 / Google Play policy requirement). "
+        "All PII is overwritten with anonymised sentinel values. "
+        "Service records, sessions, and billing claims are retained for "
+        "the HIPAA-mandated 6-year audit window (45 CFR §164.530(j)). "
+        "After deletion the account cannot be recovered via magic-link or "
+        "password-reset flows because is_active is set to false and the "
+        "password hash is cleared."
+    ),
+)
+@limiter.limit("3/minute")
+async def delete_account(
+    request: Request,
+    data: _DeleteAccountBody,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> None:
+    """Delete the authenticated user's account (soft-delete + anonymisation).
+
+    Security:
+    - Password verification is mandatory. An empty hash (already-deleted user)
+      will never pass bcrypt.checkpw, so idempotent re-deletion via a stale
+      JWT is not possible without the original password.
+    - Rate-limited to 3 calls/minute per IP to prevent brute-force use of
+      this endpoint to confirm password guesses.
+
+    Returns 204 No Content on success (idempotent — also 204 if already deleted).
+    Returns 401 if the password is wrong.
+    """
+    from app.services.account_deletion import execute_account_deletion
+    from app.utils.security import verify_password
+
+    # Idempotency guard: if the account is already deleted, return 204
+    # immediately.  The current_user dependency will have already rejected the
+    # request if is_active is False, so this guard is belt-and-suspenders for
+    # future dependency changes.
+    if current_user.deleted_at is not None:
+        return
+
+    # Verify the supplied password against the stored hash.
+    # verify_password handles the bcrypt comparison; an empty password_hash
+    # (post-deletion) will always return False.
+    if not verify_password(data.password, current_user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect password",
+        )
+
+    ip_address: str | None = request.client.host if request.client else None
+    user_agent: str | None = request.headers.get("user-agent")
+
+    await execute_account_deletion(
+        db=db,
+        user=current_user,
+        ip_address=ip_address,
+        user_agent=user_agent,
+    )
+    await db.commit()
 
 
 # ─── Magic Link (passwordless) ────────────────────────────────────────────────

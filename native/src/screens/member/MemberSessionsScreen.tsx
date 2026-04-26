@@ -29,6 +29,7 @@ import {
   Inbox,
   MessageCircle,
   Star,
+  X,
   XCircle,
 } from 'lucide-react-native';
 
@@ -49,6 +50,7 @@ import {
 import { useRefreshControl } from '../../hooks/useRefreshControl';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
+import { SessionChat } from '../../components/sessions/SessionChat';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -268,6 +270,72 @@ const cancelModalStyles = StyleSheet.create({
   },
 });
 
+// ─── ChatModal wrapper ────────────────────────────────────────────────────────
+
+interface ChatModalProps {
+  visible: boolean;
+  sessionId: string;
+  onClose: () => void;
+}
+
+function ChatModal({ visible, sessionId, onClose }: ChatModalProps): React.JSX.Element {
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={onClose}
+      accessible
+      accessibilityViewIsModal
+    >
+      <SafeAreaView style={{ flex: 1, backgroundColor: '#F4F1ED' }} edges={['top']}>
+        {/* Modal header */}
+        <View style={chatModalStyles.header}>
+          <Text style={chatModalStyles.headerTitle}>Session Chat</Text>
+          <TouchableOpacity
+            style={chatModalStyles.closeButton}
+            onPress={onClose}
+            accessibilityRole="button"
+            accessibilityLabel="Close chat"
+          >
+            <X size={20} color={colors.foreground} />
+          </TouchableOpacity>
+        </View>
+        <SessionChat sessionId={sessionId} />
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+const chatModalStyles = StyleSheet.create({
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#DDD6CC',
+    backgroundColor: '#FFFFFF',
+  },
+  headerTitle: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 24,
+    lineHeight: 30,
+    color: '#1E3320',
+  },
+  closeButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#F4F1ED',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#DDD6CC',
+  },
+});
+
 // ─── Star Rating ──────────────────────────────────────────────────────────────
 
 interface StarRatingProps {
@@ -329,7 +397,7 @@ const starStyles = StyleSheet.create({
 
 interface ActiveSessionCardProps {
   session: SessionData;
-  onMessage: (firstName: string) => void;
+  onMessage: (session: SessionData) => void;
   onRequestCancel: (session: SessionData) => void;
 }
 
@@ -389,7 +457,7 @@ function ActiveSessionCard({
       {/* Actions */}
       <View style={activeCardStyles.actionRow}>
         <TouchableOpacity
-          onPress={() => onMessage((session.chwName ?? 'CHW').split(' ')[0] ?? 'CHW')}
+          onPress={() => onMessage(session)}
           style={activeCardStyles.messageBtn}
           accessibilityRole="button"
           accessibilityLabel={`Message ${session.chwName ?? 'CHW'}`}
@@ -798,6 +866,7 @@ export function MemberSessionsScreen(): React.JSX.Element {
   const [ratings, setRatings] = useState<Record<string, number>>({});
   const [expandedNotes, setExpandedNotes] = useState<Set<string>>(new Set());
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [chatSessionId, setChatSessionId] = useState<string | null>(null);
 
   const sessionsQuery = useSessions();
   const refresh = useRefreshControl([sessionsQuery.refetch]);
@@ -818,12 +887,9 @@ export function MemberSessionsScreen(): React.JSX.Element {
     return () => clearTimeout(timer);
   }, []);
 
-  const handleMessage = useCallback(
-    (firstName: string) => {
-      showToast(`Message sent to ${firstName}. They'll respond soon.`);
-    },
-    [showToast],
-  );
+  const handleMessage = useCallback((session: SessionData) => {
+    setChatSessionId(session.id);
+  }, []);
 
   const handleRequestCancel = useCallback((session: SessionData) => {
     setCancellingSession(session);
@@ -988,6 +1054,15 @@ export function MemberSessionsScreen(): React.JSX.Element {
         )}
         <View style={{ height: 24 }} />
       </ScrollView>
+
+      {/* Chat modal */}
+      {chatSessionId != null && (
+        <ChatModal
+          visible={chatSessionId != null}
+          sessionId={chatSessionId}
+          onClose={() => setChatSessionId(null)}
+        />
+      )}
     </SafeAreaView>
   );
 }

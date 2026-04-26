@@ -57,7 +57,7 @@ import { useRefreshControl } from '../../hooks/useRefreshControl';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 import { DocumentationModal } from '../../components/sessions/DocumentationModal';
-import { SessionChat } from '../../components/sessions/SessionChat';
+import { SessionChatWithFollowup } from '../../components/sessions/SessionChatWithFollowup';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -626,7 +626,7 @@ function ChatModal({ visible, sessionId, onClose }: ChatModalProps): React.JSX.E
             <X size={20} color={colors.foreground} />
           </TouchableOpacity>
         </View>
-        <SessionChat sessionId={sessionId} />
+        <SessionChatWithFollowup sessionId={sessionId} />
       </SafeAreaView>
     </Modal>
   );

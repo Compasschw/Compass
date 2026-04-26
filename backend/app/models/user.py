@@ -1,7 +1,7 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import ARRAY, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import ARRAY, Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -22,6 +22,27 @@ class User(Base):
     is_onboarded: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    # ── Account-deletion fields (soft-delete + HIPAA 6-year retention) ──────────
+    # Populated by AccountDeletionService. A non-null deleted_at means the account
+    # has been soft-deleted and all PII anonymised. The row is intentionally kept
+    # so that ServiceRequest / Session / BillingClaim / AuditLog foreign-key
+    # references remain valid for the HIPAA 6-year retention window.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    # Computed at deletion: deleted_at + 6 years. After this date a future scheduled
+    # job may hard-delete the row.
+    #
+    # TODO(hard-delete-scheduler): implement a nightly APScheduler job that queries
+    #   SELECT id FROM users
+    #   WHERE deleted_at IS NOT NULL
+    #     AND data_retention_until <= CURRENT_DATE;
+    # and for each row:
+    #   1. Assert no open BillingClaim rows remain (status != 'paid').
+    #   2. DELETE FROM <profile_table> WHERE user_id = id  (CHWProfile / MemberProfile)
+    #   3. DELETE FROM users WHERE id = id
+    #   4. Write a final AuditLog row: action='hard_delete', resource='account_purge'
+    # Link issue: compass#XXX
+    data_retention_until: Mapped[date | None] = mapped_column(Date, nullable=True)
 
 class CHWProfile(Base):
     __tablename__ = "chw_profiles"

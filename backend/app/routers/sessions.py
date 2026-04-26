@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,7 +13,8 @@ from app.models.request import ServiceRequest
 from app.models.session import MemberConsent, Session, SessionDocumentation
 from app.models.user import User
 from app.schemas.conversation import MarkReadRequest, SessionMessageResponse, SessionMessageSend
-from app.schemas.session import ConsentSubmit, SessionCreate, SessionDocumentationSubmit, SessionResponse
+from app.schemas.followup import ExtractFollowupsResponse, SessionFollowupResponse
+from app.schemas.session import ConsentSubmit, SessionCreate, SessionDocumentationSubmit, SessionResponse, TranscriptResponse
 from app.services.billing_service import calculate_earnings, calculate_units, check_unit_caps, validate_claim
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["sessions"])
@@ -331,6 +333,94 @@ async def submit_consent(session_id: UUID, data: ConsentSubmit, request: Request
     return {"consent_id": str(consent.id)}
 
 
+# ─── Transcript replay ───────────────────────────────────────────────────────
+#
+# GET /sessions/{id}/transcript returns all persisted final transcript chunks
+# for a session, ordered by created_at.  Used for post-session replay and as
+# input to the follow-up extraction pipeline.
+#
+# Auth: CHW or member on the session, or bearer of the admin API key.
+# HIPAA: transcript text is PHI.  The audit middleware logs access at the HTTP
+#   layer; this handler deliberately does NOT log any chunk content.
+
+
+@router.get(
+    "/{session_id}/transcript",
+    response_model=TranscriptResponse,
+    summary="Fetch persisted transcript chunks for a session",
+    description=(
+        "Returns all final transcript chunks stored during the session, ordered "
+        "oldest-first by created_at.  Auth: CHW or member on the session, or "
+        "admin API key.  Transcript text is PHI — access is audit-logged."
+    ),
+)
+async def get_session_transcript(
+    session_id: UUID,
+    credentials: "HTTPAuthorizationCredentials" = Depends(HTTPBearer()),
+    db: AsyncSession = Depends(get_db),
+) -> TranscriptResponse:
+    """GET /api/v1/sessions/{session_id}/transcript
+
+    Returns the full ordered list of final transcript chunks for the session.
+    Partial chunks (is_final=False) are never persisted and therefore never
+    returned here.
+
+    HIPAA: chunk text is PHI.  Never log chunk content inside this handler.
+    The audit middleware will record the access event including session_id and
+    caller identity.
+    """
+    import hmac
+
+    from app.config import settings
+    from app.models.session import SessionTranscript
+    from app.models.user import User
+    from app.schemas.session import TranscriptChunkResponse
+    from app.utils.security import decode_token
+
+    token = credentials.credentials
+
+    # Admin key path — checked first so ops tooling works without a user JWT.
+    if hmac.compare_digest(token, settings.admin_key):
+        session = await db.get(Session, session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+    else:
+        # User JWT path.
+        payload = decode_token(token)
+        if payload is None or payload.get("type") != "access":
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+        user_id_str = payload.get("sub")
+        if user_id_str is None:
+            raise HTTPException(status_code=401, detail="Invalid token payload")
+
+        result = await db.execute(select(User).where(User.id == UUID(user_id_str)))
+        user = result.scalar_one_or_none()
+        if user is None or not user.is_active:
+            raise HTTPException(status_code=401, detail="User not found or inactive")
+
+        session = await db.get(Session, session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        is_participant = user.id == session.chw_id or user.id == session.member_id
+        if not is_participant and user.role != "admin":
+            raise HTTPException(status_code=403, detail="Not a participant on this session")
+
+    chunk_result = await db.execute(
+        select(SessionTranscript)
+        .where(SessionTranscript.session_id == session_id)
+        .order_by(SessionTranscript.created_at.asc())
+    )
+    chunks = chunk_result.scalars().all()
+
+    return TranscriptResponse(
+        session_id=session_id,
+        chunks=[TranscriptChunkResponse.model_validate(c) for c in chunks],
+        total=len(chunks),
+    )
+
+
 # ─── Session-scoped messaging ─────────────────────────────────────────────────
 #
 # Design rationale: ``Conversation`` already carries a nullable ``session_id``
@@ -641,3 +731,199 @@ async def initiate_session_call(
         "proxy_number": proxy.proxy_number,
         "provider_session_id": proxy.provider_session_id,
     }
+
+
+# ─── Follow-up extraction ─────────────────────────────────────────────────────
+#
+# POST /sessions/{id}/extract-followups kicks off the LLM extraction pass that
+# converts the session transcript into structured action items, follow-up tasks,
+# resource referrals, and member goals.
+#
+# Auth: the CHW who owns the session, OR a bearer of the admin API key.
+# Idempotency: returns existing rows if extraction already ran; never duplicates.
+# Sync: Phase 2 runs synchronously (200 OK + rows in body). Phase 3 can convert
+#       to a background task returning 202 Accepted once load justifies it.
+
+
+async def _require_chw_on_session_or_admin(
+    session_id: UUID,
+    credentials,
+    db: AsyncSession,
+) -> Session:
+    """Return the session if the caller is the CHW on it or holds the admin key.
+
+    Checks the bearer token against the admin key first (constant-time compare),
+    then falls back to verifying it as a user JWT with role ``chw``.
+
+    Raises:
+        401 if the token is invalid for both auth paths.
+        403 if the caller is a valid user but is not the CHW on this session.
+        404 if the session does not exist.
+    """
+    import hmac
+
+    from app.config import settings
+    from app.utils.security import decode_token
+
+    token = credentials.credentials
+
+    # Admin key path — checked first so admin ops don't need a user account.
+    if hmac.compare_digest(token, settings.admin_key):
+        session = await db.get(Session, session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return session
+
+    # User JWT path.
+    payload = decode_token(token)
+    if payload is None or payload.get("type") != "access":
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    user_id_str = payload.get("sub")
+    if user_id_str is None:
+        raise HTTPException(status_code=401, detail="Invalid token payload")
+
+    from app.models.user import User
+    result = await db.execute(select(User).where(User.id == UUID(user_id_str)))
+    user = result.scalar_one_or_none()
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=401, detail="User not found or inactive")
+
+    session = await db.get(Session, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    if session.chw_id != user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the CHW on this session (or an admin) may trigger extraction",
+        )
+    return session
+
+
+@router.post(
+    "/{session_id}/extract-followups",
+    response_model=ExtractFollowupsResponse,
+    status_code=200,
+    summary="Run LLM extraction pass to produce structured follow-ups",
+    description=(
+        "Extracts action items, follow-up tasks, resource referrals, and member "
+        "goals from the session transcript using an LLM pass. Idempotent — returns "
+        "existing rows if extraction has already run for this session. "
+        "Auth: CHW on the session or admin key."
+    ),
+)
+async def extract_followups(
+    session_id: UUID,
+    credentials: "HTTPAuthorizationCredentials" = Depends(HTTPBearer()),
+    db: AsyncSession = Depends(get_db),
+) -> ExtractFollowupsResponse:
+    """POST /api/v1/sessions/{session_id}/extract-followups
+
+    Runs synchronously.  LLM failures are caught internally — if the provider
+    is unavailable the endpoint returns 200 with an empty followups list rather
+    than a 5xx, because extraction is non-blocking and must never interfere with
+    session completion or documentation workflows.
+    """
+    import logging
+
+    from app.models.followup import SessionFollowup as SessionFollowupModel
+    from app.services.followup_extraction import extract_session_followups
+
+    _logger = logging.getLogger("compass.sessions.extract_followups")
+
+    # Auth: CHW on session or admin key.
+    await _require_chw_on_session_or_admin(session_id, credentials, db)
+
+    followup_rows = await extract_session_followups(session_id, db)
+
+    # Counts for response envelope — no descriptions in logs.
+    action_count = sum(1 for f in followup_rows if f.kind == "action_item")
+    task_count = sum(1 for f in followup_rows if f.kind == "follow_up_task")
+    resource_count = sum(1 for f in followup_rows if f.kind == "resource_referral")
+    goal_count = sum(1 for f in followup_rows if f.kind == "member_goal")
+
+    # Determine whether rows are freshly created or cached (idempotent return).
+    # The service already handles idempotency; we signal it in the response by
+    # checking the auto_created flag and comparing counts vs zero.
+    was_cached = bool(followup_rows) and all(
+        not f.auto_created or f.created_at < f.updated_at
+        for f in followup_rows
+    )
+
+    _logger.info(
+        "session=%s extract-followups complete: total=%d action=%d task=%d resource=%d goal=%d cached=%s",
+        session_id, len(followup_rows), action_count, task_count, resource_count, goal_count, was_cached,
+    )
+
+    return ExtractFollowupsResponse(
+        session_id=session_id,
+        followups=[SessionFollowupResponse.model_validate(f) for f in followup_rows],
+        action_items_count=action_count,
+        follow_up_tasks_count=task_count,
+        resource_referrals_count=resource_count,
+        member_goals_count=goal_count,
+        was_cached=was_cached,
+    )
+
+
+@router.patch(
+    "/{session_id}/followups/{followup_id}",
+    response_model=SessionFollowupResponse,
+    summary="Confirm, dismiss, edit, or complete a single follow-up item",
+)
+async def patch_followup(
+    session_id: UUID,
+    followup_id: UUID,
+    patch: "SessionFollowupPatch",  # noqa: F821 — forward-ref to avoid top-level import churn
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """PATCH a single follow-up.
+
+    Auth: CHW or member who is a participant on the session. Members can ONLY
+    set `status` (typically `completed`) — they cannot rewrite description,
+    owner, vertical, priority, due_date, or roadmap visibility. CHWs can edit
+    every field.
+
+    Setting `status = 'confirmed'` (CHW action) automatically stamps
+    `confirmed_by_user_id` and `confirmed_at` for audit trail.
+    """
+    from datetime import UTC, datetime
+
+    from app.models.followup import SessionFollowup as SessionFollowupModel
+    from app.schemas.followup import SessionFollowupPatch  # noqa: F401
+
+    followup = await db.get(SessionFollowupModel, followup_id)
+    if followup is None or followup.session_id != session_id:
+        raise HTTPException(status_code=404, detail="Follow-up not found")
+
+    # Participant check — must be CHW or member on the underlying session.
+    is_chw = followup.chw_id == current_user.id
+    is_member = followup.member_id == current_user.id
+    is_admin = getattr(current_user, "role", None) == "admin"
+    if not (is_chw or is_member or is_admin):
+        raise HTTPException(status_code=403, detail="Not a participant on this session")
+
+    # Member-role callers may only update status (e.g. mark complete).
+    fields = patch.model_dump(exclude_unset=True)
+    if is_member and not is_chw and not is_admin:
+        allowed = {"status"}
+        rejected = set(fields.keys()) - allowed
+        if rejected:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Members may only update status; rejected fields: {sorted(rejected)}",
+            )
+
+    for field, value in fields.items():
+        setattr(followup, field, value.value if hasattr(value, "value") else value)
+
+    # Auto-stamp confirmation audit fields when status flips to confirmed.
+    if fields.get("status") == "confirmed" and (is_chw or is_admin):
+        followup.confirmed_by_user_id = current_user.id
+        followup.confirmed_at = datetime.now(UTC)
+
+    await db.commit()
+    await db.refresh(followup)
+    return followup

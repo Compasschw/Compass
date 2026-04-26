@@ -52,6 +52,36 @@ async def get_rewards(current_user=Depends(require_role("member")), db: AsyncSes
     return {"transactions": result.scalars().all()}
 
 
+@router.get("/roadmap", response_model=list["RoadmapItemResponse"])
+async def get_my_roadmap(
+    current_user=Depends(require_role("member")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return follow-up items flagged for the member's roadmap.
+
+    Filter: ``member_id == current_user`` AND ``show_on_roadmap == True``
+    AND ``status != 'dismissed'``. Sorted by status (pending/confirmed first,
+    then completed) and due_date ascending.
+    """
+    from app.models.followup import SessionFollowup
+    from app.schemas.followup import RoadmapItemResponse  # noqa: F401
+
+    result = await db.execute(
+        select(SessionFollowup)
+        .where(
+            SessionFollowup.member_id == current_user.id,
+            SessionFollowup.show_on_roadmap.is_(True),
+            SessionFollowup.status != "dismissed",
+        )
+        .order_by(
+            SessionFollowup.status.asc(),
+            SessionFollowup.due_date.asc().nullslast(),
+            SessionFollowup.created_at.desc(),
+        )
+    )
+    return result.scalars().all()
+
+
 @router.delete("/account", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_my_account(
     current_user=Depends(require_role("member")),

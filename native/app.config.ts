@@ -48,6 +48,12 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         "CompassCHW uses your photo library to upload profile pictures and share documents during sessions.",
       NSMicrophoneUsageDescription:
         "CompassCHW uses the microphone to record sessions with your consent, for billing and quality assurance.",
+      // ---- Background audio (session transcription) ----
+      // Required so iOS continues microphone capture when the user switches
+      // apps mid-session. expo-audio's allowsBackgroundRecording: true sets
+      // the AVAudioSession category, but Apple also requires this Info.plist
+      // key to be present at submission time.
+      UIBackgroundModes: ["audio"],
       // ---- Encryption export compliance ----
       // Standard HTTPS / TLS only — no proprietary crypto. Set to false to
       // skip the annual encryption export compliance question in App Store Connect.
@@ -83,6 +89,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   plugins: [
     "expo-font",
     "expo-secure-store",
+    "expo-audio",
     [
       "expo-image-picker",
       {

@@ -68,6 +68,8 @@ import {
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 import { CredentialUploadModal } from '../../components/chw/CredentialUploadModal';
+import { DeleteAccountModal } from '../../components/profile/DeleteAccountModal';
+import { useDeleteAccount } from '../../hooks/useApiQueries';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -322,6 +324,9 @@ export function CHWProfileScreen(): React.JSX.Element {
   const queryClient = useQueryClient();
 
   const [isUploadModalVisible, setIsUploadModalVisible] = useState(false);
+  const [isDeleteModalVisible, setIsDeleteModalVisible] = useState(false);
+  const [deleteErrorMessage, setDeleteErrorMessage] = useState<string | null>(null);
+  const deleteAccount = useDeleteAccount();
 
   // Derive display name from auth context (API profile has no name field)
   const displayName = userName ?? 'My Profile';
@@ -435,6 +440,25 @@ export function CHWProfileScreen(): React.JSX.Element {
   const handleSignOut = useCallback(async () => {
     await logout();
   }, [logout]);
+
+  const handleDeleteAccountConfirm = useCallback(async (password: string) => {
+    setDeleteErrorMessage(null);
+    try {
+      await deleteAccount.mutateAsync({ password });
+      setIsDeleteModalVisible(false);
+      await logout();
+    } catch (err: unknown) {
+      const message =
+        err != null &&
+        typeof err === 'object' &&
+        'detail' in err &&
+        typeof (err as { detail: unknown }).detail === 'string'
+          ? (err as { detail: string }).detail
+          : 'Something went wrong. Please try again.';
+      setDeleteErrorMessage(message);
+      throw err; // re-throw so the modal can reset its submitting state
+    }
+  }, [deleteAccount, logout]);
 
   const displayEmail = 'maria.reyes@compasschw.org';
   const displayPhone = '(213) 555-0192';
@@ -885,6 +909,26 @@ export function CHWProfileScreen(): React.JSX.Element {
           <LogOut size={18} color={colors.destructive} />
           <Text style={styles.signOutText}>Sign Out</Text>
         </TouchableOpacity>
+
+        {/* ── Delete account ── */}
+        <TouchableOpacity
+          style={styles.deleteAccountButton}
+          onPress={() => {
+            setDeleteErrorMessage(null);
+            setIsDeleteModalVisible(true);
+          }}
+          accessibilityRole="button"
+          accessibilityLabel="Delete account"
+        >
+          <Text style={styles.deleteAccountText}>Delete Account</Text>
+        </TouchableOpacity>
+
+        <DeleteAccountModal
+          visible={isDeleteModalVisible}
+          onClose={() => setIsDeleteModalVisible(false)}
+          onConfirm={handleDeleteAccountConfirm}
+          errorMessage={deleteErrorMessage}
+        />
       </ScrollView>
     </SafeAreaView>
   );
@@ -1277,5 +1321,16 @@ const styles = StyleSheet.create({
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 16,
     color: '#DC2626',
+  },
+  deleteAccountButton: {
+    alignItems: 'center',
+    paddingVertical: 14,
+    marginTop: 8,
+  },
+  deleteAccountText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 14,
+    color: colors.destructive,
+    textDecorationLine: 'underline',
   },
 });

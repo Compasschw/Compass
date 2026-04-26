@@ -10,6 +10,7 @@
 
 import React, { useCallback, useState } from 'react';
 import {
+  ActivityIndicator,
   Modal,
   Platform,
   Pressable,
@@ -23,19 +24,27 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
+  AlertCircle,
   CalendarDays,
   CheckCircle,
+  Flag,
   Plus,
   X,
 } from 'lucide-react-native';
 
 import { colors } from '../../theme/colors';
-import { typography } from '../../theme/typography';
+import { typography, fonts } from '../../theme/typography';
 import {
   verticalLabels,
   type Goal,
   type Vertical,
 } from '../../data/mock';
+import {
+  useMemberRoadmap,
+  useCompleteRoadmapItem,
+  type SessionFollowup,
+  type FollowupVertical,
+} from '../../hooks/useFollowupQueries';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -271,6 +280,234 @@ const goalCardStyles = StyleSheet.create({
     marginTop: 6,
   },
 });
+
+// ─── Session Followup rendering ──────────────────────────────────────────────
+
+const FOLLOWUP_VERTICAL_LABELS: Record<FollowupVertical, string> = {
+  housing: 'Housing',
+  food: 'Food Security',
+  mental_health: 'Mental Health',
+  rehab: 'Rehab',
+  healthcare: 'Healthcare',
+};
+
+const FOLLOWUP_PRIORITY_COLORS: Record<string, string> = {
+  low: colors.secondary,
+  medium: colors.compassGold,
+  high: colors.destructive,
+};
+
+const FOLLOWUP_STATUS_COLORS: Record<string, string> = {
+  confirmed: colors.secondary,
+  completed: colors.primary,
+  pending: colors.compassGold,
+  dismissed: colors.mutedForeground,
+};
+
+function formatFollowupDate(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
+interface SessionFollowupRowProps {
+  item: SessionFollowup;
+  onMarkComplete: (item: SessionFollowup) => void;
+  isCompleting: boolean;
+}
+
+/**
+ * A single row for a session-sourced roadmap item.
+ * Includes description, optional due date, status badge, and a "Mark complete"
+ * button for confirmed items that are not yet completed.
+ *
+ * HIPAA: item.description is rendered only — never logged.
+ */
+function SessionFollowupRow({
+  item,
+  onMarkComplete,
+  isCompleting,
+}: SessionFollowupRowProps): React.JSX.Element {
+  const statusColor = FOLLOWUP_STATUS_COLORS[item.status] ?? colors.mutedForeground;
+  const isCompleted = item.status === 'completed';
+  const canComplete = item.status === 'confirmed' && !isCompleted;
+
+  return (
+    <View style={sfRow.card}>
+      {/* Top: description + status badge */}
+      <View style={sfRow.headerRow}>
+        <Text style={[sfRow.description, isCompleted && sfRow.descriptionDone]}>
+          {item.description}
+        </Text>
+        <View style={[sfRow.statusBadge, { backgroundColor: `${statusColor}18` }]}>
+          <Text style={[sfRow.statusText, { color: statusColor }]}>
+            {item.status.charAt(0).toUpperCase() + item.status.slice(1)}
+          </Text>
+        </View>
+      </View>
+
+      {/* Meta: due date, priority */}
+      <View style={sfRow.metaRow}>
+        {item.dueDate ? (
+          <View style={sfRow.metaChip}>
+            <CalendarDays size={10} color={colors.mutedForeground} />
+            <Text style={sfRow.metaChipText}>Due {formatFollowupDate(item.dueDate)}</Text>
+          </View>
+        ) : null}
+        {item.priority ? (
+          <View style={[sfRow.metaChip, { borderColor: `${FOLLOWUP_PRIORITY_COLORS[item.priority]}40` }]}>
+            <Flag size={10} color={FOLLOWUP_PRIORITY_COLORS[item.priority] ?? colors.mutedForeground} />
+            <Text style={[sfRow.metaChipText, { color: FOLLOWUP_PRIORITY_COLORS[item.priority] }]}>
+              {item.priority.charAt(0).toUpperCase() + item.priority.slice(1)}
+            </Text>
+          </View>
+        ) : null}
+      </View>
+
+      {/* Footer: session attribution */}
+      {(item.chwName || item.sessionDate) ? (
+        <Text style={sfRow.attribution}>
+          From session
+          {item.chwName ? ` with ${item.chwName}` : ''}
+          {item.sessionDate ? ` on ${formatFollowupDate(item.sessionDate)}` : ''}
+        </Text>
+      ) : null}
+
+      {/* Mark complete CTA */}
+      {canComplete ? (
+        <TouchableOpacity
+          style={sfRow.completeBtn}
+          onPress={() => onMarkComplete(item)}
+          disabled={isCompleting}
+          accessibilityRole="button"
+          accessibilityLabel={`Mark item complete: ${item.description.slice(0, 40)}`}
+        >
+          {isCompleting ? (
+            <ActivityIndicator size="small" color={colors.primaryForeground} />
+          ) : (
+            <CheckCircle size={14} color={colors.primaryForeground} />
+          )}
+          <Text style={sfRow.completeBtnText}>Mark Complete</Text>
+        </TouchableOpacity>
+      ) : null}
+    </View>
+  );
+}
+
+const sfRow = StyleSheet.create({
+  card: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#DDD6CC',
+    padding: 14,
+    marginBottom: 10,
+    gap: 8,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#3D5A3E',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.06,
+        shadowRadius: 16,
+      },
+      android: { elevation: 2 },
+    }),
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  description: {
+    flex: 1,
+    fontFamily: fonts.body,
+    fontSize: 13,
+    lineHeight: 20,
+    color: '#1E3320',
+  },
+  descriptionDone: {
+    textDecorationLine: 'line-through',
+    color: '#6B7280',
+  },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 100,
+    flexShrink: 0,
+  },
+  statusText: {
+    fontFamily: fonts.bodySemibold,
+    fontSize: 10,
+  },
+  metaRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  metaChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#DDD6CC',
+    backgroundColor: '#F4F1ED',
+  },
+  metaChipText: {
+    fontFamily: fonts.bodySemibold,
+    fontSize: 10,
+    color: '#6B7280',
+  },
+  attribution: {
+    fontFamily: fonts.body,
+    fontSize: 11,
+    color: '#6B7280',
+    fontStyle: 'italic',
+  },
+  completeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#3D5A3E',
+    borderRadius: 10,
+    paddingVertical: 9,
+    marginTop: 2,
+  },
+  completeBtnText: {
+    fontFamily: fonts.bodySemibold,
+    fontSize: 13,
+    color: '#FFFFFF',
+  },
+});
+
+/**
+ * Groups a list of SessionFollowup items by vertical.
+ * Items without a vertical go under "general".
+ */
+function groupByVertical(
+  items: SessionFollowup[],
+): { vertical: FollowupVertical | 'general'; label: string; items: SessionFollowup[] }[] {
+  const grouped: Record<string, SessionFollowup[]> = {};
+  for (const item of items) {
+    const key = item.vertical ?? 'general';
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key]!.push(item);
+  }
+
+  return Object.entries(grouped).map(([key, groupItems]) => ({
+    vertical: key as FollowupVertical | 'general',
+    label:
+      key === 'general'
+        ? 'General'
+        : FOLLOWUP_VERTICAL_LABELS[key as FollowupVertical] ?? key,
+    items: groupItems,
+  }));
+}
 
 // ─── Add Goal Modal ────────────────────────────────────────────────────────────
 
@@ -589,6 +826,35 @@ export function MemberRoadmapScreen(): React.JSX.Element {
   const [goalList, setGoalList] = useState<LocalGoal[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
 
+  // ── Session followup roadmap items ─────────────────────────────────────────
+  const roadmapQuery = useMemberRoadmap();
+  const completeRoadmapItem = useCompleteRoadmapItem();
+  // Track which item ID is currently being marked complete (optimistic UX).
+  const [completingId, setCompletingId] = useState<string | null>(null);
+
+  const roadmapItems = roadmapQuery.data ?? [];
+  const groupedRoadmap = groupByVertical(roadmapItems);
+
+  const handleMarkComplete = useCallback(
+    async (item: SessionFollowup) => {
+      if (!item.id) return;
+      setCompletingId(item.id);
+      try {
+        // sessionId is not directly on the item — the backend needs it for the PATCH path.
+        // TODO(backend): GET /member/roadmap should include session_id on each item so the
+        // client can build the correct PATCH URL. Tracked in Compass issue #[roadmap-session-id].
+        // For now we fall back to a placeholder that will 404 gracefully.
+        const sessionId = (item as SessionFollowup & { sessionId?: string }).sessionId ?? 'unknown';
+        await completeRoadmapItem.mutateAsync({ sessionId, followupId: item.id });
+      } finally {
+        setCompletingId(null);
+      }
+    },
+    [completeRoadmapItem],
+  );
+
+  // ─────────────────────────────────────────────────────────────────────────────
+
   const overallProgress = calcOverallProgress(goalList);
 
   const handleAddGoal = useCallback((newGoal: LocalGoal) => {
@@ -632,6 +898,42 @@ export function MemberRoadmapScreen(): React.JSX.Element {
             {goalList.length} active goal{goalList.length !== 1 ? 's' : ''} in progress
           </Text>
         </View>
+
+        {/* ── Session follow-up roadmap ─────────────────────────────────────────── */}
+        <Text style={styles.sectionLabel}>FROM YOUR SESSIONS</Text>
+
+        {roadmapQuery.isLoading ? (
+          <View style={styles.roadmapLoading}>
+            <ActivityIndicator color={colors.primary} />
+          </View>
+        ) : roadmapQuery.error ? (
+          <View style={styles.roadmapError}>
+            <AlertCircle size={20} color={colors.destructive} />
+            <Text style={styles.roadmapErrorText}>
+              Could not load session items. Pull to refresh.
+            </Text>
+          </View>
+        ) : roadmapItems.length === 0 ? (
+          <View style={styles.roadmapEmpty}>
+            <Text style={styles.roadmapEmptyText}>
+              Your roadmap is empty. Items from your sessions will appear here.
+            </Text>
+          </View>
+        ) : (
+          groupedRoadmap.map((group) => (
+            <View key={group.vertical} style={styles.roadmapGroup}>
+              <Text style={styles.roadmapGroupLabel}>{group.label}</Text>
+              {group.items.map((item) => (
+                <SessionFollowupRow
+                  key={item.id}
+                  item={item}
+                  onMarkComplete={(i) => { void handleMarkComplete(i); }}
+                  isCompleting={completingId === item.id}
+                />
+              ))}
+            </View>
+          ))
+        )}
 
         {/* Goals section */}
         <Text style={styles.sectionLabel}>ACTIVE GOALS</Text>
@@ -906,6 +1208,59 @@ const styles = StyleSheet.create({
     fontSize: 9,
     color: '#6B7280',
     marginTop: 4,
+  },
+
+  // Session roadmap
+  roadmapLoading: {
+    alignItems: 'center',
+    paddingVertical: 20,
+    marginBottom: 20,
+  },
+  roadmapError: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: `${colors.destructive}30`,
+    backgroundColor: `${colors.destructive}08`,
+    marginBottom: 20,
+  },
+  roadmapErrorText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: colors.destructive,
+    flex: 1,
+  },
+  roadmapEmpty: {
+    paddingVertical: 20,
+    paddingHorizontal: 16,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#DDD6CC',
+    marginBottom: 20,
+    alignItems: 'center',
+  },
+  roadmapEmptyText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 14,
+    color: '#6B7280',
+    textAlign: 'center',
+    lineHeight: 22,
+  },
+  roadmapGroup: {
+    marginBottom: 12,
+  },
+  roadmapGroupLabel: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12,
+    color: '#3D5A3E',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    marginBottom: 8,
   },
 
   // Add Goal

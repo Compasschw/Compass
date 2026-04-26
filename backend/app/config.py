@@ -68,6 +68,13 @@ class Settings(BaseSettings):
     # Transcription provider (assemblyai for medical-grade; vonage_builtin as fallback)
     transcription_provider: str = "assemblyai"
     assemblyai_api_key: str = ""
+    # AssemblyAI workspace ID — used for org-scoped API calls and BAA audit trails.
+    # Found under Settings → Workspace in the AssemblyAI dashboard.
+    assemblyai_workspace_id: str = ""
+    # LeMUR model slug for follow-up extraction.
+    # "default" uses AssemblyAI's recommended model at request time.
+    # Alternatives: "anthropic/claude-3-haiku", "anthropic/claude-3-5-sonnet"
+    assemblyai_lemur_model: str = "default"
 
     # Observability
     sentry_dsn: str = ""

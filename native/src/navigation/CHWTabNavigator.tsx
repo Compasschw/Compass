@@ -22,6 +22,7 @@ import { fonts } from '../theme/typography';
 import { CHWDashboardScreen } from '../screens/chw/CHWDashboardScreen';
 import { CHWRequestsScreen } from '../screens/chw/CHWRequestsScreen';
 import { CHWSessionsScreen } from '../screens/chw/CHWSessionsScreen';
+import { CHWSessionReviewScreen } from '../screens/chw/CHWSessionReviewScreen';
 import { CHWCalendarScreen } from '../screens/chw/CHWCalendarScreen';
 import { CHWEarningsScreen } from '../screens/chw/CHWEarningsScreen';
 import { CHWIntakeScreen } from '../screens/chw/CHWIntakeScreen';
@@ -33,7 +34,7 @@ import { PaymentsScreen } from '../screens/chw/PaymentsScreen';
 export type CHWTabParamList = {
   DashboardStack: undefined;
   Requests: undefined;
-  Sessions: undefined;
+  SessionsStack: undefined;
   Calendar: undefined;
   EarningsStack: undefined;
   Profile: undefined;
@@ -59,9 +60,19 @@ type EarningsStackParamList = {
   Payments: undefined;
 };
 
+/**
+ * Sessions stack — Sessions list + full-screen post-session review.
+ * Exported so CHWSessionReviewScreen can type its navigation prop.
+ */
+export type CHWSessionsStackParamList = {
+  Sessions: undefined;
+  SessionReview: { sessionId: string; memberName: string };
+};
+
 const Tab = createBottomTabNavigator<CHWTabParamList>();
 const DashboardStack = createNativeStackNavigator<DashboardStackParamList>();
 const EarningsStack = createNativeStackNavigator<EarningsStackParamList>();
+const SessionsStack = createNativeStackNavigator<CHWSessionsStackParamList>();
 
 function DashboardStackNavigator(): React.JSX.Element {
   return (
@@ -78,6 +89,15 @@ function EarningsStackNavigator(): React.JSX.Element {
       <EarningsStack.Screen name="Earnings" component={CHWEarningsScreen} />
       <EarningsStack.Screen name="Payments" component={PaymentsScreen} />
     </EarningsStack.Navigator>
+  );
+}
+
+function SessionsStackNavigator(): React.JSX.Element {
+  return (
+    <SessionsStack.Navigator screenOptions={{ headerShown: false }}>
+      <SessionsStack.Screen name="Sessions" component={CHWSessionsScreen} />
+      <SessionsStack.Screen name="SessionReview" component={CHWSessionReviewScreen} />
+    </SessionsStack.Navigator>
   );
 }
 
@@ -132,9 +152,10 @@ export function CHWTabNavigator(): React.JSX.Element {
         }}
       />
       <Tab.Screen
-        name="Sessions"
-        component={CHWSessionsScreen}
+        name="SessionsStack"
+        component={SessionsStackNavigator}
         options={{
+          title: 'Sessions',
           tabBarIcon: ({ color, size }) => (
             <ClipboardList color={color} size={size} />
           ),

@@ -57,10 +57,12 @@ import {
   useMemberProfile,
   useMemberRewards,
   useUpdateMemberProfile,
+  useDeleteAccount,
   type RewardTransaction,
 } from '../../hooks/useApiQueries';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
+import { DeleteAccountModal } from '../../components/profile/DeleteAccountModal';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -716,6 +718,29 @@ export function MemberProfileScreen(): React.JSX.Element {
     );
   }, [logout]);
 
+  const [isDeleteModalVisible, setIsDeleteModalVisible] = useState(false);
+  const [deleteErrorMessage, setDeleteErrorMessage] = useState<string | null>(null);
+  const deleteAccount = useDeleteAccount();
+
+  const handleDeleteAccountConfirm = useCallback(async (password: string) => {
+    setDeleteErrorMessage(null);
+    try {
+      await deleteAccount.mutateAsync({ password });
+      setIsDeleteModalVisible(false);
+      await logout();
+    } catch (err: unknown) {
+      const message =
+        err != null &&
+        typeof err === 'object' &&
+        'detail' in err &&
+        typeof (err as { detail: unknown }).detail === 'string'
+          ? (err as { detail: string }).detail
+          : 'Something went wrong. Please try again.';
+      setDeleteErrorMessage(message);
+      throw err;
+    }
+  }, [deleteAccount, logout]);
+
   const initials = getInitials(name);
 
   const committedDraft = buildDraft(name, fallbackProfile);
@@ -1161,7 +1186,26 @@ export function MemberProfileScreen(): React.JSX.Element {
             <LogOut color={colors.destructive} size={18} />
             <Text style={styles.signOutText}>Sign Out</Text>
           </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => {
+              setDeleteErrorMessage(null);
+              setIsDeleteModalVisible(true);
+            }}
+            style={styles.deleteAccountBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Delete your account"
+          >
+            <Text style={styles.deleteAccountText}>Delete Account</Text>
+          </TouchableOpacity>
         </SectionCard>
+
+        <DeleteAccountModal
+          visible={isDeleteModalVisible}
+          onClose={() => setIsDeleteModalVisible(false)}
+          onConfirm={handleDeleteAccountConfirm}
+          errorMessage={deleteErrorMessage}
+        />
 
         <Text style={styles.versionText}>Compass CHW · v1.0.0</Text>
         <View style={{ height: 24 }} />
@@ -1538,6 +1582,19 @@ const styles = StyleSheet.create({
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 14,
     color: '#DC2626',
+  },
+
+  deleteAccountBtn: {
+    paddingVertical: 14,
+    alignItems: 'center',
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  deleteAccountText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 14,
+    color: colors.destructive,
+    textDecorationLine: 'underline',
   },
 
   versionText: {

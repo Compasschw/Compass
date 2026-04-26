@@ -1,9 +1,14 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.enums import SessionMode
+
+# Consent types accepted by POST /sessions/{id}/consent.
+# Extend this union when new consent flows are introduced.
+ConsentType = Literal["medical_billing", "ai_transcription"]
 
 
 class SessionCreate(BaseModel):
@@ -46,5 +51,36 @@ class SessionDocumentationSubmit(BaseModel):
 
 
 class ConsentSubmit(BaseModel):
-    consent_type: str = "medical_billing"
+    """Body for POST /sessions/{id}/consent.
+
+    ``consent_type`` must be one of the values in ``ConsentType``.
+    The default is ``medical_billing`` for backwards compatibility with
+    existing clients that pre-date the ai_transcription consent flow.
+    """
+
+    consent_type: ConsentType = "medical_billing"
     typed_signature: str
+
+
+class TranscriptChunkResponse(BaseModel):
+    """A single persisted transcript chunk returned by GET /sessions/{id}/transcript."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    speaker_label: str | None
+    speaker_role: str | None
+    text: str
+    is_final: bool
+    confidence: float | None
+    started_at_ms: int | None
+    ended_at_ms: int | None
+    created_at: datetime
+
+
+class TranscriptResponse(BaseModel):
+    """Response envelope for GET /sessions/{id}/transcript."""
+
+    session_id: UUID
+    chunks: list[TranscriptChunkResponse]
+    total: int
