@@ -47,6 +47,7 @@ import {
 } from '../../hooks/useApiQueries';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
+import { ChwMapWebView } from '../../components/find/ChwMapWebView';
 import { zipToLatLng } from '../../utils/geocoding';
 import type { AppleMapsViewProps } from 'expo-maps/build/apple/AppleMaps.types';
 import type { GoogleMapsViewProps } from 'expo-maps/build/google/GoogleMaps.types';
@@ -896,8 +897,9 @@ export function MemberFindScreen(): React.JSX.Element {
   const [activeFilter, setActiveFilter] = useState<FilterTab>('all');
   const [schedulingChw, setSchedulingChw] = useState<ChwBrowseItem | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-  /** Controls whether the map panel is expanded. Ignored on web. */
-  const [mapExpanded, setMapExpanded] = useState(Platform.OS !== 'web');
+  /** Controls whether the map panel is expanded. Defaults to expanded on
+   *  every platform so members see CHW locations immediately. */
+  const [mapExpanded, setMapExpanded] = useState(true);
 
   // Re-fetch whenever the vertical filter changes (passes undefined for 'all')
   const browseVertical = activeFilter === 'all' ? undefined : activeFilter;
@@ -1024,23 +1026,25 @@ export function MemberFindScreen(): React.JSX.Element {
         })}
       </ScrollView>
 
-      {/* Map toggle header — native only */}
-      {Platform.OS !== 'web' ? (
-        <TouchableOpacity
-          style={styles.mapToggleRow}
-          onPress={() => setMapExpanded((prev) => !prev)}
-          accessibilityRole="button"
-          accessibilityLabel={mapExpanded ? 'Collapse map view' : 'Expand map view'}
-        >
-          <MapIcon color={colors.primary} size={15} />
-          <Text style={styles.mapToggleText}>Map view</Text>
-          <Text style={styles.mapToggleChevron}>{mapExpanded ? '▲' : '▼'}</Text>
-        </TouchableOpacity>
-      ) : null}
+      {/* Map toggle header — all platforms */}
+      <TouchableOpacity
+        style={styles.mapToggleRow}
+        onPress={() => setMapExpanded((prev) => !prev)}
+        accessibilityRole="button"
+        accessibilityLabel={mapExpanded ? 'Collapse map view' : 'Expand map view'}
+      >
+        <MapIcon color={colors.primary} size={15} />
+        <Text style={styles.mapToggleText}>Map view</Text>
+        <Text style={styles.mapToggleChevron}>{mapExpanded ? '▲' : '▼'}</Text>
+      </TouchableOpacity>
 
-      {/* Real map — native only, collapsed/expanded by toggle */}
-      {Platform.OS !== 'web' && mapExpanded ? (
-        <ChwMapView chws={filteredChws} onMarkerPress={handleMapMarkerPress} />
+      {/* Map — AppleMaps/GoogleMaps on native, Mapbox on web. */}
+      {mapExpanded ? (
+        Platform.OS === 'web' ? (
+          <ChwMapWebView chws={filteredChws} onMarkerPress={handleMapMarkerPress} />
+        ) : (
+          <ChwMapView chws={filteredChws} onMarkerPress={handleMapMarkerPress} />
+        )
       ) : null}
 
       {/* CHW List */}
