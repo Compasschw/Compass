@@ -538,6 +538,35 @@ export function LandingScreen(): React.JSX.Element {
     navigation.navigate('Login');
   }, [navigation]);
 
+  /**
+   * Footer link click handler. Routes legal-column links (Privacy / Terms /
+   * HIPAA) and the Company-column "Contact" link to LegalScreen with the
+   * appropriate `page` param. Other footer links (Start Earning, FAQs, About,
+   * Blog, Careers, etc.) are intentional no-ops until those destinations are
+   * built — kept clickable so the visual styling stays consistent.
+   */
+  const handleFooterLinkPress = useCallback(
+    (link: string): void => {
+      switch (link) {
+        case 'Privacy Policy':
+          navigation.navigate('Legal', { page: 'privacy' });
+          return;
+        case 'Terms of Service':
+          navigation.navigate('Legal', { page: 'terms' });
+          return;
+        case 'HIPAA Notice':
+          navigation.navigate('Legal', { page: 'hipaa' });
+          return;
+        case 'Contact':
+          navigation.navigate('Legal', { page: 'contact' });
+          return;
+        default:
+          return;
+      }
+    },
+    [navigation],
+  );
+
   const px = isDesktop ? 48 : spacing.lg;
   const sectionPy = isDesktop ? 96 : spacing.xxl;
 
@@ -1290,6 +1319,7 @@ export function LandingScreen(): React.JSX.Element {
                       accessibilityRole="link"
                       accessibilityLabel={link}
                       hitSlop={{ top: 6, bottom: 6, left: 8, right: 8 }}
+                      onPress={() => handleFooterLinkPress(link)}
                     >
                       <Text style={staticStyles.footerLink}>{link}</Text>
                     </TouchableOpacity>

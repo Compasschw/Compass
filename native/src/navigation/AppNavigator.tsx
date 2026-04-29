@@ -27,6 +27,7 @@ import { WaitlistScreen } from '../screens/auth/WaitlistScreen';
 import { CHWIntakeScreen } from '../screens/chw/CHWIntakeScreen';
 import { CHWOnboardingScreen } from '../screens/onboarding/CHWOnboardingScreen';
 import { MemberOnboardingScreen } from '../screens/onboarding/MemberOnboardingScreen';
+import { LegalScreen, type LegalPage } from '../screens/LegalScreen';
 import { CHWTabNavigator } from './CHWTabNavigator';
 import { MemberTabNavigator } from './MemberTabNavigator';
 
@@ -51,6 +52,7 @@ export type AuthStackParamList = {
   MagicLink: { token?: string } | undefined;
   CHWOnboarding: undefined;
   MemberOnboarding: undefined;
+  Legal: { page: LegalPage } | undefined;
 };
 
 // ─── Root stack param list ────────────────────────────────────────────────────
@@ -89,6 +91,14 @@ function AuthNavigator(): React.JSX.Element {
       <AuthStack.Screen name="Register" component={LoginScreen} />
       <AuthStack.Screen name="CHWOnboarding" component={CHWOnboardingScreen} />
       <AuthStack.Screen name="MemberOnboarding" component={MemberOnboardingScreen} />
+      {/* LegalScreen reads `page` from route params so a single registration
+          serves Privacy / Terms / HIPAA / Contact via navigation.navigate(
+          'Legal', { page: 'privacy' | 'terms' | 'hipaa' | 'contact' }). */}
+      <AuthStack.Screen name="Legal">
+        {({ route }) => (
+          <LegalScreen page={route.params?.page ?? 'privacy'} />
+        )}
+      </AuthStack.Screen>
     </AuthStack.Navigator>
   );
 }
