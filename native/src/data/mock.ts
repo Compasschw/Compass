@@ -4,7 +4,7 @@
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type UserRole = 'chw' | 'member';
+export type UserRole = 'chw' | 'member' | 'admin';
 export type Vertical = 'housing' | 'rehab' | 'food' | 'mental_health' | 'healthcare';
 export type SessionStatus = 'scheduled' | 'in_progress' | 'completed' | 'cancelled';
 export type RequestStatus = 'open' | 'matched' | 'completed' | 'cancelled';

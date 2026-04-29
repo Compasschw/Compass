@@ -5,6 +5,7 @@
  *   - While auth state is loading → blank screen (prevents flash)
  *   - Unauthenticated          → AuthStack  (Login/Register toggle, Waitlist)
  *   - CHW role                 → CHWTabNavigator
+ *   - Admin role               → AdminHomeScreen (Member endpoints 403 for admins)
  *   - Member role              → MemberTabNavigator
  */
 
@@ -28,6 +29,7 @@ import { CHWIntakeScreen } from '../screens/chw/CHWIntakeScreen';
 import { CHWOnboardingScreen } from '../screens/onboarding/CHWOnboardingScreen';
 import { MemberOnboardingScreen } from '../screens/onboarding/MemberOnboardingScreen';
 import { LegalScreen, type LegalPage } from '../screens/LegalScreen';
+import { AdminHomeScreen } from '../screens/admin/AdminHomeScreen';
 import { CHWTabNavigator } from './CHWTabNavigator';
 import { MemberTabNavigator } from './MemberTabNavigator';
 
@@ -60,6 +62,7 @@ export type AuthStackParamList = {
 export type RootStackParamList = {
   Auth: undefined;
   CHW: undefined;
+  Admin: undefined;
   Member: undefined;
 };
 
@@ -113,6 +116,17 @@ function CHWNavigator(): React.JSX.Element {
 
 function MemberNavigator(): React.JSX.Element {
   return <MemberTabNavigator />;
+}
+
+// ─── Admin root ───────────────────────────────────────────────────────────────
+//
+// Admins land on a dedicated screen rather than falling through to the Member
+// tabs. Member endpoints are guarded by `require_role("member")` server-side
+// and 403 for any admin token, which previously rendered an empty/skeleton UI
+// and made the app look broken for admin accounts.
+
+function AdminNavigator(): React.JSX.Element {
+  return <AdminHomeScreen />;
 }
 
 // ─── Loading splash ───────────────────────────────────────────────────────────
@@ -173,6 +187,8 @@ export function AppNavigator(): React.JSX.Element {
           <RootStack.Screen name="Auth" component={AuthNavigator} />
         ) : userRole === 'chw' ? (
           <RootStack.Screen name="CHW" component={CHWNavigator} />
+        ) : userRole === 'admin' ? (
+          <RootStack.Screen name="Admin" component={AdminNavigator} />
         ) : (
           <RootStack.Screen name="Member" component={MemberNavigator} />
         )}
