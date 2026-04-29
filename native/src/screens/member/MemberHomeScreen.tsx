@@ -24,6 +24,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   ArrowRight,
   CalendarCheck,
+  CheckCircle2,
   Gift,
   Map,
 } from 'lucide-react-native';
@@ -197,7 +198,13 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
   const firstName = (userName ?? profile?.userId ?? 'there').split(' ')[0];
   const rewardsBalance = profile?.rewardsBalance ?? 0;
 
-  const upcomingSessions = allSessions.filter((s) => s.status === 'scheduled');
+  // Upcoming = scheduled AND not in the past. Stale seed sessions (e.g. a Dec 31
+  // session viewed in April) would otherwise render as "upcoming" and look broken.
+  const nowMs = Date.now();
+  const upcomingSessions = allSessions.filter(
+    (s) => s.status === 'scheduled' && new Date(s.scheduledAt).getTime() >= nowMs,
+  );
+  const completedSessionsCount = allSessions.filter((s) => s.status === 'completed').length;
   // Goals endpoint not in the backend yet — render the empty state until
   // /member/goals lands. MemberRoadmapScreen is the canonical goals UI.
   const activeGoals: Goal[] = [];
@@ -274,10 +281,10 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
             iconBg={`${colors.secondary}15`}
           />
           <StatCard
-            icon={<Map color={colors.primary} size={18} />}
-            label="Goals"
-            value={activeGoals.length}
-            subtext="Active"
+            icon={<CheckCircle2 color={colors.primary} size={18} />}
+            label="Completed"
+            value={completedSessionsCount}
+            subtext="Sessions"
             iconBg={`${colors.primary}15`}
           />
         </View>

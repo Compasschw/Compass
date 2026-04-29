@@ -2,12 +2,13 @@
  * MemberCalendarScreen — Monthly calendar for the member's sessions and goal milestones.
  *
  * Features:
- * - Monthly grid navigation (prev/next)
- * - Day cells with colored event dots
- * - Tap a day to see detailed event cards
- * - "Your Events This Month" fallback when no day is selected
- * - Color-coded by vertical
- * - Legend
+ * - Compact monthly grid (shadcn-inspired: dense day cells, single-letter weekday header)
+ * - Filled-pill "today" indicator + outlined "selected" indicator
+ * - Up to 3 event dots stacked under the date number
+ * - "Today" jump-back button when viewing a different month
+ * - Tap a day to surface that day's event cards below
+ * - Collapsible legend that only renders when the month has events
+ * - Centered max-width wrapper so the card stays readable on desktop web
  */
 
 import React, { useCallback, useMemo, useState } from 'react';
@@ -24,14 +25,15 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   CalendarDays,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   Clock,
   MapPin,
 } from 'lucide-react-native';
 
 import { colors } from '../../theme/colors';
-import { typography } from '../../theme/typography';
 import {
   verticalLabels,
   type CalendarEvent,
@@ -49,7 +51,8 @@ const MONTH_NAMES = [
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
 
-const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+// Single-letter labels to keep the weekday row compact (matches shadcn calendar).
+const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 const now = new Date();
 const TODAY_YEAR = now.getFullYear();
@@ -100,15 +103,6 @@ function eventColor(event: CalendarEvent): string {
   return verticalColors.goal_milestone;
 }
 
-function formatTimeShort(time: string): string {
-  const [hourStr, minuteStr] = time.split(':');
-  const hour = parseInt(hourStr ?? '0', 10);
-  const suffix = hour >= 12 ? 'pm' : 'am';
-  const display = hour % 12 === 0 ? 12 : hour % 12;
-  if (minuteStr === '00') return `${display}${suffix}`;
-  return `${display}:${minuteStr}${suffix}`;
-}
-
 function formatTimeFull(time: string): string {
   const [hourStr, minuteStr] = time.split(':');
   const hour = parseInt(hourStr ?? '0', 10);
@@ -156,7 +150,7 @@ function buildMemberEvents(
   return sessionEvents;
 }
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
+// ─── Day cell ─────────────────────────────────────────────────────────────────
 
 interface DayCellProps {
   day: number;
@@ -167,89 +161,94 @@ interface DayCellProps {
 }
 
 function DayCell({ day, events, isToday, isSelected, onClick }: DayCellProps): React.JSX.Element {
-  const uniqueColors = Array.from(new Set(events.map(eventColor)));
+  // Up to 3 unique vertical colors as event dots.
+  const uniqueColors = Array.from(new Set(events.map(eventColor))).slice(0, 3);
 
   return (
     <TouchableOpacity
       onPress={onClick}
-      style={[
-        dayCellStyles.cell,
-        isSelected && dayCellStyles.cellSelected,
-      ]}
+      style={dayCellStyles.cell}
       accessibilityRole="button"
       accessibilityLabel={`${day}${events.length > 0 ? `, ${events.length} event${events.length !== 1 ? 's' : ''}` : ''}`}
       accessibilityState={{ selected: isSelected }}
     >
-      {/* Date number */}
-      <View style={[
-        dayCellStyles.dateCircle,
-        isToday && dayCellStyles.dateCircleToday,
-      ]}>
-        <Text style={[
-          dayCellStyles.dateText,
-          isToday && dayCellStyles.dateTextToday,
-          isSelected && !isToday && dayCellStyles.dateTextSelected,
-        ]}>
+      <View
+        style={[
+          dayCellStyles.dateCircle,
+          isSelected && !isToday && dayCellStyles.dateCircleSelected,
+          isToday && dayCellStyles.dateCircleToday,
+        ]}
+      >
+        <Text
+          style={[
+            dayCellStyles.dateText,
+            isSelected && !isToday && dayCellStyles.dateTextSelected,
+            isToday && dayCellStyles.dateTextToday,
+          ]}
+        >
           {day}
         </Text>
       </View>
 
-      {/* Event dots */}
-      {uniqueColors.length > 0 && (
-        <View style={dayCellStyles.dotsRow}>
-          {uniqueColors.slice(0, 3).map((c, i) => (
-            <View
-              key={i}
-              style={[dayCellStyles.dot, { backgroundColor: c }]}
-            />
-          ))}
-        </View>
-      )}
+      {/* Event dots — sit just under the date circle */}
+      <View style={dayCellStyles.dotsRow}>
+        {uniqueColors.map((c, i) => (
+          <View
+            key={i}
+            style={[dayCellStyles.dot, { backgroundColor: c }]}
+          />
+        ))}
+      </View>
     </TouchableOpacity>
   );
 }
 
+const DAY_CELL_HEIGHT = 52;
+const DATE_CIRCLE_SIZE = 32;
+
 const dayCellStyles = StyleSheet.create({
   cell: {
-    flex: 1,
-    aspectRatio: 1,
+    flexBasis: `${100 / 7}%`,
+    height: DAY_CELL_HEIGHT,
     alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 10,
-    padding: 4,
-    margin: 1,
-    minHeight: 44,
-  },
-  cellSelected: {
-    backgroundColor: '#3D5A3E15',
+    justifyContent: 'flex-start',
+    paddingTop: 4,
   },
   dateCircle: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: DATE_CIRCLE_SIZE,
+    height: DATE_CIRCLE_SIZE,
+    borderRadius: DATE_CIRCLE_SIZE / 2,
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: 'transparent',
+  },
+  dateCircleSelected: {
+    borderColor: colors.primary,
+    backgroundColor: 'transparent',
   },
   dateCircleToday: {
-    backgroundColor: '#3D5A3E',
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
   },
   dateText: {
     fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 12,
-    color: '#1E3320',
+    fontSize: 13,
+    color: colors.foreground,
+  },
+  dateTextSelected: {
+    color: colors.primary,
+    fontFamily: 'DMSans_700Bold',
   },
   dateTextToday: {
     color: '#FFFFFF',
     fontFamily: 'DMSans_700Bold',
   },
-  dateTextSelected: {
-    color: '#3D5A3E',
-    fontFamily: 'DMSans_700Bold',
-  },
   dotsRow: {
     flexDirection: 'row',
     gap: 3,
-    marginTop: 2,
+    marginTop: 4,
+    minHeight: 5,
   },
   dot: {
     width: 5,
@@ -257,6 +256,8 @@ const dayCellStyles = StyleSheet.create({
     borderRadius: 3,
   },
 });
+
+// ─── Event detail card ────────────────────────────────────────────────────────
 
 interface EventDetailCardProps {
   event: CalendarEvent;
@@ -286,7 +287,6 @@ function EventDetailCard({ event }: EventDetailCardProps): React.JSX.Element {
           ) : null}
         </View>
 
-        {/* Time */}
         <View style={eventCardStyles.metaRow}>
           <Clock color={colors.mutedForeground} size={12} />
           <Text style={eventCardStyles.metaText}>
@@ -295,7 +295,6 @@ function EventDetailCard({ event }: EventDetailCardProps): React.JSX.Element {
           </Text>
         </View>
 
-        {/* CHW name for sessions */}
         {isSession && event.chwName ? (
           <View style={eventCardStyles.metaRow}>
             <MapPin color={colors.mutedForeground} size={12} />
@@ -303,7 +302,6 @@ function EventDetailCard({ event }: EventDetailCardProps): React.JSX.Element {
           </View>
         ) : null}
 
-        {/* Milestone indicator */}
         {!isSession ? (
           <View style={eventCardStyles.metaRow}>
             <CalendarDays color={colors.mutedForeground} size={12} />
@@ -380,8 +378,12 @@ const eventCardStyles = StyleSheet.create({
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export function MemberCalendarScreen(): React.JSX.Element {
-  const [currentMonth, setCurrentMonth] = useState(new Date(2026, 3, 1)); // April 2026
+  // Default to the actual current month, not a hardcoded one.
+  const [currentMonth, setCurrentMonth] = useState(
+    () => new Date(TODAY_YEAR, TODAY_MONTH, 1),
+  );
   const [selectedDay, setSelectedDay] = useState<number | null>(null);
+  const [legendOpen, setLegendOpen] = useState(false);
 
   const sessionsQuery = useSessions();
   const refresh = useRefreshControl([sessionsQuery.refetch]);
@@ -408,6 +410,11 @@ export function MemberCalendarScreen(): React.JSX.Element {
     setSelectedDay(null);
   }, []);
 
+  const handleJumpToToday = useCallback(() => {
+    setCurrentMonth(new Date(TODAY_YEAR, TODAY_MONTH, 1));
+    setSelectedDay(TODAY_DAY);
+  }, []);
+
   const handleDayClick = useCallback((day: number) => {
     setSelectedDay((prev) => (prev === day ? null : day));
   }, []);
@@ -417,17 +424,20 @@ export function MemberCalendarScreen(): React.JSX.Element {
 
   const currentMonthKey = `${year}-${String(month + 1).padStart(2, '0')}`;
   const eventsThisMonth = memberEvents.filter((e) => e.date.startsWith(currentMonthKey));
+  const monthHasEvents = eventsThisMonth.length > 0;
 
-  const isToday = (day: number) =>
-    year === TODAY_YEAR && month === TODAY_MONTH && day === TODAY_DAY;
+  const isViewingTodayMonth = year === TODAY_YEAR && month === TODAY_MONTH;
+  const isToday = (day: number) => isViewingTodayMonth && day === TODAY_DAY;
 
   if (sessionsQuery.isLoading) {
     return (
       <SafeAreaView style={styles.safeArea} edges={['top']}>
         <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
-        <View style={{ flex: 1, padding: 16, paddingTop: 20 }}>
-          <LoadingSkeleton variant="card" />
-          <LoadingSkeleton variant="rows" rows={3} />
+        <View style={styles.pageWrap}>
+          <View style={{ padding: 16, paddingTop: 20 }}>
+            <LoadingSkeleton variant="card" />
+            <LoadingSkeleton variant="rows" rows={3} />
+          </View>
         </View>
       </SafeAreaView>
     );
@@ -437,10 +447,12 @@ export function MemberCalendarScreen(): React.JSX.Element {
     return (
       <SafeAreaView style={styles.safeArea} edges={['top']}>
         <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
-        <ErrorState
-          message="Could not load calendar data. Please try again."
-          onRetry={() => void sessionsQuery.refetch()}
-        />
+        <View style={styles.pageWrap}>
+          <ErrorState
+            message="Could not load calendar data. Please try again."
+            onRetry={() => void sessionsQuery.refetch()}
+          />
+        </View>
       </SafeAreaView>
     );
   }
@@ -454,120 +466,162 @@ export function MemberCalendarScreen(): React.JSX.Element {
         showsVerticalScrollIndicator={false}
         refreshControl={refresh.control}
       >
-        {/* Page header */}
-        <View style={styles.pageHeader}>
-          <Text style={styles.pageTitle}>My Calendar</Text>
-          <Text style={styles.pageSub}>Your upcoming sessions and goal milestones.</Text>
-        </View>
-
-        {/* Calendar card */}
-        <View style={styles.calendarCard}>
-          {/* Month navigation */}
-          <View style={styles.monthNav}>
-            <TouchableOpacity
-              onPress={handlePrevMonth}
-              style={styles.navBtn}
-              accessibilityRole="button"
-              accessibilityLabel="Previous month"
-              hitSlop={8}
-            >
-              <ChevronLeft color={colors.mutedForeground} size={20} />
-            </TouchableOpacity>
-            <Text style={styles.monthTitle}>
-              {MONTH_NAMES[month]} {year}
-            </Text>
-            <TouchableOpacity
-              onPress={handleNextMonth}
-              style={styles.navBtn}
-              accessibilityRole="button"
-              accessibilityLabel="Next month"
-              hitSlop={8}
-            >
-              <ChevronRight color={colors.mutedForeground} size={20} />
-            </TouchableOpacity>
+        <View style={styles.pageWrap}>
+          {/* Page header */}
+          <View style={styles.pageHeader}>
+            <Text style={styles.pageTitle}>My Calendar</Text>
+            <Text style={styles.pageSub}>Your upcoming sessions and goal milestones.</Text>
           </View>
 
-          {/* Day of week header */}
-          <View style={styles.dayLabelRow}>
-            {DAY_LABELS.map((label) => (
-              <Text key={label} style={styles.dayLabel}>{label}</Text>
-            ))}
-          </View>
+          {/* Calendar card */}
+          <View style={styles.calendarCard}>
+            {/* Month navigation */}
+            <View style={styles.monthNav}>
+              <TouchableOpacity
+                onPress={handlePrevMonth}
+                style={styles.navBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Previous month"
+                hitSlop={8}
+              >
+                <ChevronLeft color={colors.mutedForeground} size={18} />
+              </TouchableOpacity>
 
-          {/* Calendar grid */}
-          <View
-            style={styles.grid}
-            accessibilityRole="list"
-            accessibilityLabel={`${MONTH_NAMES[month]} ${year} calendar`}
-          >
-            {cells.map((day, idx) => {
-              if (day === null) {
-                return <View key={`empty-${idx}`} style={styles.emptyCell} />;
-              }
-              const key = dateKey(year, month, day);
-              const events = eventsByDate.get(key) ?? [];
+              <Text style={styles.monthTitle}>
+                {MONTH_NAMES[month]} {year}
+              </Text>
 
-              return (
-                <DayCell
-                  key={key}
-                  day={day}
-                  events={events}
-                  isToday={isToday(day)}
-                  isSelected={selectedDay === day}
-                  onClick={() => handleDayClick(day)}
-                />
-              );
-            })}
-          </View>
-        </View>
-
-        {/* Day detail panel */}
-        {selectedDay !== null && (
-          <View style={styles.detailSection}>
-            <Text style={styles.sectionLabel}>
-              {MONTH_NAMES[month].toUpperCase()} {selectedDay}
-            </Text>
-            {selectedEvents.length === 0 ? (
-              <View style={styles.noEventsCard}>
-                <CalendarDays color={colors.border} size={28} />
-                <Text style={styles.noEventsText}>No events on this day</Text>
+              <View style={styles.navRightGroup}>
+                {!isViewingTodayMonth && (
+                  <TouchableOpacity
+                    onPress={handleJumpToToday}
+                    style={styles.todayBtn}
+                    accessibilityRole="button"
+                    accessibilityLabel="Jump to today"
+                    hitSlop={6}
+                  >
+                    <Text style={styles.todayBtnText}>Today</Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity
+                  onPress={handleNextMonth}
+                  style={styles.navBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel="Next month"
+                  hitSlop={8}
+                >
+                  <ChevronRight color={colors.mutedForeground} size={18} />
+                </TouchableOpacity>
               </View>
-            ) : (
-              selectedEvents.map((event) => (
-                <EventDetailCard key={event.id} event={event} />
-              ))
-            )}
-          </View>
-        )}
+            </View>
 
-        {/* This month's events fallback */}
-        {selectedDay === null && eventsThisMonth.length > 0 && (
-          <View style={styles.detailSection}>
-            <Text style={styles.sectionLabel}>YOUR EVENTS THIS MONTH</Text>
-            {eventsThisMonth.map((event) => (
-              <EventDetailCard key={event.id} event={event} />
-            ))}
-          </View>
-        )}
+            {/* Day-of-week header */}
+            <View style={styles.dayLabelRow}>
+              {DAY_LABELS.map((label, idx) => (
+                <Text key={`${label}-${idx}`} style={styles.dayLabel}>{label}</Text>
+              ))}
+            </View>
 
-        {/* Legend */}
-        <View style={styles.legendCard}>
-          <Text style={styles.legendTitle}>LEGEND</Text>
-          <View style={styles.legendGrid}>
-            {(Object.entries(verticalLabels) as [Vertical, string][]).map(([key, label]) => (
-              <View key={key} style={styles.legendRow}>
-                <View style={[styles.legendDot, { backgroundColor: verticalColors[key] }]} />
-                <Text style={styles.legendLabel}>{label}</Text>
-              </View>
-            ))}
-            <View style={styles.legendRow}>
-              <View style={[styles.legendDot, { backgroundColor: verticalColors.goal_milestone }]} />
-              <Text style={styles.legendLabel}>Milestone</Text>
+            {/* Calendar grid */}
+            <View
+              style={styles.grid}
+              accessibilityRole="list"
+              accessibilityLabel={`${MONTH_NAMES[month]} ${year} calendar`}
+            >
+              {cells.map((day, idx) => {
+                if (day === null) {
+                  return <View key={`empty-${idx}`} style={styles.emptyCell} />;
+                }
+                const key = dateKey(year, month, day);
+                const events = eventsByDate.get(key) ?? [];
+
+                return (
+                  <DayCell
+                    key={key}
+                    day={day}
+                    events={events}
+                    isToday={isToday(day)}
+                    isSelected={selectedDay === day}
+                    onClick={() => handleDayClick(day)}
+                  />
+                );
+              })}
             </View>
           </View>
-        </View>
 
-        <View style={{ height: 24 }} />
+          {/* Day detail panel */}
+          {selectedDay !== null && (
+            <View style={styles.detailSection}>
+              <Text style={styles.sectionLabel}>
+                {MONTH_NAMES[month].toUpperCase()} {selectedDay}
+              </Text>
+              {selectedEvents.length === 0 ? (
+                <View style={styles.noEventsCard}>
+                  <CalendarDays color={colors.border} size={28} />
+                  <Text style={styles.noEventsText}>No events on this day</Text>
+                </View>
+              ) : (
+                selectedEvents.map((event) => (
+                  <EventDetailCard key={event.id} event={event} />
+                ))
+              )}
+            </View>
+          )}
+
+          {/* This month's events fallback */}
+          {selectedDay === null && monthHasEvents && (
+            <View style={styles.detailSection}>
+              <Text style={styles.sectionLabel}>YOUR EVENTS THIS MONTH</Text>
+              {eventsThisMonth.map((event) => (
+                <EventDetailCard key={event.id} event={event} />
+              ))}
+            </View>
+          )}
+
+          {/* Empty-month hint — only when nothing is selected and the month is empty */}
+          {selectedDay === null && !monthHasEvents && (
+            <View style={styles.emptyMonthCard}>
+              <CalendarDays color={colors.mutedForeground} size={22} />
+              <Text style={styles.emptyMonthText}>
+                No events scheduled for {MONTH_NAMES[month]}.
+              </Text>
+            </View>
+          )}
+
+          {/* Collapsible legend — only render when the month has events to color-code */}
+          {monthHasEvents && (
+            <Pressable
+              onPress={() => setLegendOpen((prev) => !prev)}
+              style={styles.legendCard}
+              accessibilityRole="button"
+              accessibilityLabel={legendOpen ? 'Collapse legend' : 'Expand legend'}
+              accessibilityState={{ expanded: legendOpen }}
+            >
+              <View style={styles.legendHeader}>
+                <Text style={styles.legendTitle}>LEGEND</Text>
+                {legendOpen
+                  ? <ChevronUp color={colors.mutedForeground} size={16} />
+                  : <ChevronDown color={colors.mutedForeground} size={16} />}
+              </View>
+              {legendOpen && (
+                <View style={styles.legendGrid}>
+                  {(Object.entries(verticalLabels) as [Vertical, string][]).map(([key, label]) => (
+                    <View key={key} style={styles.legendRow}>
+                      <View style={[styles.legendDot, { backgroundColor: verticalColors[key] }]} />
+                      <Text style={styles.legendLabel}>{label}</Text>
+                    </View>
+                  ))}
+                  <View style={styles.legendRow}>
+                    <View style={[styles.legendDot, { backgroundColor: verticalColors.goal_milestone }]} />
+                    <Text style={styles.legendLabel}>Milestone</Text>
+                  </View>
+                </View>
+              )}
+            </Pressable>
+          )}
+
+          <View style={{ height: 24 }} />
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -586,6 +640,12 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: 16,
     paddingTop: 20,
+  },
+  // Web stretches edge-to-edge by default; cap at 560px and center.
+  pageWrap: {
+    width: '100%',
+    maxWidth: 560,
+    alignSelf: 'center',
   },
   pageHeader: {
     marginBottom: 16,
@@ -608,7 +668,9 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     borderColor: '#DDD6CC',
-    padding: 12,
+    paddingHorizontal: 12,
+    paddingTop: 12,
+    paddingBottom: 8,
     marginBottom: 16,
     ...Platform.select({
       ios: {
@@ -626,14 +688,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 12,
+    marginBottom: 8,
     paddingHorizontal: 4,
   },
   navBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: '#F4F1ED',
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: 'transparent',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -642,28 +704,44 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#1E3320',
   },
+  navRightGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  todayBtn: {
+    paddingHorizontal: 10,
+    height: 28,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#DDD6CC',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  todayBtnText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 11,
+    color: colors.primary,
+  },
   dayLabelRow: {
     flexDirection: 'row',
-    marginBottom: 4,
   },
   dayLabel: {
-    flex: 1,
+    flexBasis: `${100 / 7}%`,
     fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 10,
+    fontSize: 11,
     color: '#6B7280',
-    textTransform: 'uppercase',
     textAlign: 'center',
-    paddingVertical: 4,
+    paddingVertical: 6,
   },
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
   },
   emptyCell: {
-    flex: 1,
-    aspectRatio: 1,
-    margin: 1,
-    minHeight: 44,
+    flexBasis: `${100 / 7}%`,
+    height: DAY_CELL_HEIGHT,
   },
 
   // Detail section
@@ -692,35 +770,52 @@ const styles = StyleSheet.create({
     color: '#6B7280',
   },
 
+  // Empty-month hint (no events anywhere this month)
+  emptyMonthCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#DDD6CC',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 12,
+  },
+  emptyMonthText: {
+    flex: 1,
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: '#6B7280',
+  },
+
   // Legend
   legendCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: '#DDD6CC',
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     marginBottom: 8,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#3D5A3E',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.08,
-        shadowRadius: 24,
-      },
-      android: { elevation: 3 },
-    }),
+  },
+  legendHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   legendTitle: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 12,
     color: '#6B7280',
     letterSpacing: 1,
-    marginBottom: 12,
   },
   legendGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 12,
+    marginTop: 12,
   },
   legendRow: {
     flexDirection: 'row',

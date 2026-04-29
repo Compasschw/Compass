@@ -182,15 +182,23 @@ interface InfoRowProps {
   icon: React.ReactNode;
   label: string;
   value: string;
+  /**
+   * When true, the value renders in a dimmer muted style — used for
+   * "Not provided" placeholders so they read as intentionally empty
+   * rather than as data that failed to load.
+   */
+  placeholder?: boolean;
 }
 
-function InfoRow({ icon, label, value }: InfoRowProps): React.JSX.Element {
+function InfoRow({ icon, label, value, placeholder = false }: InfoRowProps): React.JSX.Element {
   return (
     <View style={infoRowStyles.container}>
       <View style={infoRowStyles.iconBox}>{icon}</View>
       <View style={infoRowStyles.textBox}>
         <Text style={infoRowStyles.label}>{label}</Text>
-        <Text style={infoRowStyles.value}>{value}</Text>
+        <Text style={[infoRowStyles.value, placeholder && infoRowStyles.valuePlaceholder]}>
+          {value}
+        </Text>
       </View>
     </View>
   );
@@ -228,6 +236,10 @@ const infoRowStyles = StyleSheet.create({
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 14,
     color: '#1E3320',
+  },
+  valuePlaceholder: {
+    color: '#A0A6AB',
+    fontStyle: 'italic',
   },
 });
 
@@ -979,12 +991,14 @@ export function MemberProfileScreen(): React.JSX.Element {
               icon={<Phone color={colors.primary} size={16} />}
               label="Phone"
               value={committedDraft.phone || NOT_PROVIDED}
+              placeholder={!committedDraft.phone}
             />
             <View style={styles.divider} />
             <InfoRow
               icon={<Mail color={colors.primary} size={16} />}
               label="Email"
               value={committedDraft.email || NOT_PROVIDED}
+              placeholder={!committedDraft.email}
             />
             <View style={styles.divider} />
             <InfoRow
@@ -997,6 +1011,7 @@ export function MemberProfileScreen(): React.JSX.Element {
               icon={<User color={colors.primary} size={16} />}
               label="Insurance"
               value={committedDraft.insuranceProvider || NOT_PROVIDED}
+              placeholder={!committedDraft.insuranceProvider}
             />
           </SectionCard>
         )}
