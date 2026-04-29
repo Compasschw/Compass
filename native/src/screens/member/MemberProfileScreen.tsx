@@ -63,6 +63,7 @@ import {
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 import { DeleteAccountModal } from '../../components/profile/DeleteAccountModal';
+import { confirmAsync } from '../../utils/confirm';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -719,15 +720,16 @@ export function MemberProfileScreen(): React.JSX.Element {
     [effectiveBalance],
   );
 
-  const handleSignOut = useCallback(() => {
-    Alert.alert(
-      'Sign Out',
-      'Are you sure you want to sign out?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Sign Out', style: 'destructive', onPress: () => void logout() },
-      ],
-    );
+  const handleSignOut = useCallback(async () => {
+    const confirmed = await confirmAsync({
+      title: 'Sign Out',
+      message: 'Are you sure you want to sign out?',
+      confirmText: 'Sign Out',
+      destructive: true,
+    });
+    if (confirmed) {
+      await logout();
+    }
   }, [logout]);
 
   const [isDeleteModalVisible, setIsDeleteModalVisible] = useState(false);

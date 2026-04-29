@@ -26,6 +26,7 @@ import { ExternalLink, LogOut, ShieldCheck } from 'lucide-react-native';
 
 import { useAuth } from '../../context/AuthContext';
 import { colors } from '../../theme/colors';
+import { confirmAsync } from '../../utils/confirm';
 
 /**
  * URL for the legacy web admin dashboard. Override at build time via
@@ -57,15 +58,16 @@ export function AdminHomeScreen(): React.JSX.Element {
     }
   }, []);
 
-  const handleSignOut = useCallback(() => {
-    Alert.alert(
-      'Sign out?',
-      'You will need to sign back in to return to the admin view.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Sign Out', style: 'destructive', onPress: () => void logout() },
-      ],
-    );
+  const handleSignOut = useCallback(async () => {
+    const confirmed = await confirmAsync({
+      title: 'Sign out?',
+      message: 'You will need to sign back in to return to the admin view.',
+      confirmText: 'Sign Out',
+      destructive: true,
+    });
+    if (confirmed) {
+      await logout();
+    }
   }, [logout]);
 
   return (
