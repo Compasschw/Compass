@@ -6,7 +6,6 @@
  *   - 2-column layout on desktop (marketing copy left / form card right)
  *   - Single column on mobile (form card below marketing copy)
  *   - No Full Name field — register call derives display name from email
- *   - Demo buttons below the card, separated by a "DEMO" divider
  */
 
 import React, { useState, useCallback } from 'react';
@@ -37,7 +36,6 @@ import { colors } from '../../theme/colors';
 import { fonts } from '../../theme/typography';
 import { shadows } from '../../theme/shadows';
 import { radii, spacing } from '../../theme/spacing';
-import type { UserRole } from '../../data/mock';
 import type { AuthStackParamList } from '../../navigation/AppNavigator';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -52,33 +50,6 @@ const DESKTOP_BREAKPOINT = 1024;
 const MAX_CONTENT_WIDTH = 1280;
 
 type LoginNavProp = NativeStackNavigationProp<AuthStackParamList>;
-
-// ─── Demo accounts ────────────────────────────────────────────────────────────
-
-interface DemoAccount {
-  role: UserRole;
-  name: string;
-  label: string;
-  email: string;
-  password: string;
-}
-
-const DEMO_ACCOUNTS: DemoAccount[] = [
-  {
-    role: 'chw',
-    name: 'Maria Guadalupe Reyes',
-    label: 'Demo as CHW',
-    email: 'maria@demo.compasschw.com',
-    password: 'demo1234',
-  },
-  {
-    role: 'member',
-    name: 'Rosa Delgado',
-    label: 'Demo as Member',
-    email: 'rosa@demo.compasschw.com',
-    password: 'demo1234',
-  },
-];
 
 // ─── Value proposition bullets ────────────────────────────────────────────────
 
@@ -171,7 +142,7 @@ function ContentWrapper({
  *   - Right: auth form card (max-width 450)
  */
 export function LoginScreen(): React.JSX.Element {
-  const { login, register, loginMock } = useAuth();
+  const { login, register } = useAuth();
   const navigation = useNavigation<LoginNavProp>();
   const { width } = useWindowDimensions();
   const isDesktop = width >= DESKTOP_BREAKPOINT;
@@ -212,38 +183,12 @@ export function LoginScreen(): React.JSX.Element {
     }
   }, [email, password, isSignUp, login, register]);
 
-  // ── Demo login ───────────────────────────────────────────────────────────
-
-  const handleDemoLogin = useCallback(async (account: DemoAccount): Promise<void> => {
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      await login(account.email, account.password);
-    } catch (err) {
-      // Backend unavailable — fall back to mock login, but ONLY in dev builds.
-      // Production users who hit this code path should see the real error so
-      // we never silently fabricate a session against a missing backend.
-      if (__DEV__) {
-        await loginMock(account.role, account.name);
-      } else {
-        setError(
-          err instanceof Error
-            ? err.message
-            : 'Sign-in failed. Please check your connection and try again.',
-        );
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  }, [login, loginMock]);
-
   // ── Social login (coming soon) ───────────────────────────────────────────
 
   const handleSocialLogin = useCallback((provider: 'Google' | 'Apple'): void => {
     Alert.alert(
       `${provider} Sign-In`,
-      `${provider} sign-in is coming soon. Use email/password or a demo account for now.`,
+      `${provider} sign-in is coming soon. Use email/password for now.`,
       [{ text: 'OK' }],
     );
   }, []);
@@ -551,28 +496,6 @@ export function LoginScreen(): React.JSX.Element {
                   </View>
                 </View>
 
-                {/* ── Demo buttons (below card, border-only) ─────────────── */}
-                <View style={s.demoDividerRow}>
-                  <View style={s.dividerLine} />
-                  <Text style={s.demoDividerLabel}>DEMO</Text>
-                  <View style={s.dividerLine} />
-                </View>
-
-                <View style={s.demoButtonsRow}>
-                  {DEMO_ACCOUNTS.map((account) => (
-                    <TouchableOpacity
-                      key={account.role}
-                      style={s.demoButton}
-                      onPress={() => handleDemoLogin(account)}
-                      disabled={isLoading}
-                      activeOpacity={0.7}
-                      accessibilityLabel={account.label}
-                      accessibilityRole="button"
-                    >
-                      <Text style={s.demoButtonText}>{account.label}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
               </View>
             </View>
           </ContentWrapper>
@@ -922,38 +845,4 @@ const s = StyleSheet.create({
     color: colors.primary,
   },
 
-  // ── Demo section ──────────────────────────────────────────────────────────
-  demoDividerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-    marginTop: spacing.xs,
-  },
-  demoDividerLabel: {
-    fontFamily: fonts.bodySemibold,
-    fontSize: 11,
-    letterSpacing: 1.2,
-    color: colors.mutedForeground,
-    opacity: 0.6,
-  },
-  demoButtonsRow: {
-    flexDirection: 'row',
-    gap: spacing.sm + 2,
-  },
-  demoButton: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radii.md,
-    backgroundColor: colors.background,
-    paddingVertical: spacing.sm + 2,
-    paddingHorizontal: spacing.md,
-    alignItems: 'center',
-  },
-  demoButtonText: {
-    fontFamily: fonts.bodySemibold,
-    fontSize: 12,
-    letterSpacing: 0.3,
-    color: colors.mutedForeground,
-  },
 });

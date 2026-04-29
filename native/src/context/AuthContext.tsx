@@ -45,8 +45,6 @@ interface AuthContextValue extends AuthState {
   ) => Promise<void>;
   /** Sign in directly from a JWT pair — used by magic-link verify. */
   signInWithTokens: (payload: SignInPayload) => Promise<void>;
-  /** Bypass API — set auth state directly from mock data (for demos). */
-  loginMock: (role: UserRole, name: string) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -157,23 +155,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
     [persistAuthState],
   );
 
-  // ── loginMock (dev-only demo fallback) ──────────────────────────────────────
-  // Kept in the API surface so screens can optimistically call it, but throws
-  // in production builds so a misfire from a Demo button can't create a fake
-  // auth session for a real user.
-  const loginMock = useCallback(async (role: UserRole, name: string): Promise<void> => {
-    if (!__DEV__) {
-      throw new Error('loginMock is not available in production builds');
-    }
-    const newState: AuthState = {
-      isAuthenticated: true,
-      userRole: role,
-      userName: name,
-    };
-    await persistAuthState(newState);
-    setAuthState(newState);
-  }, [persistAuthState]);
-
   // ── logout ─────────────────────────────────────────────────────────────────
   const logout = useCallback(async (): Promise<void> => {
     try {
@@ -194,8 +175,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
 
   // ── Context value ──────────────────────────────────────────────────────────
   const value = useMemo<AuthContextValue>(
-    () => ({ ...authState, isLoading, login, register, signInWithTokens, loginMock, logout }),
-    [authState, isLoading, login, register, signInWithTokens, loginMock, logout],
+    () => ({ ...authState, isLoading, login, register, signInWithTokens, logout }),
+    [authState, isLoading, login, register, signInWithTokens, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
