@@ -35,6 +35,13 @@ interface SignInPayload {
 
 interface AuthContextValue extends AuthState {
   isLoading: boolean;
+  /**
+   * True after `logout()` runs in this app session — lets the AuthNavigator
+   * pick `Login` as its initial route instead of `Landing`, so signed-out
+   * users skip the marketing page on the way back. Reset when a new session
+   * starts (login / register / signInWithTokens).
+   */
+  hasJustSignedOut: boolean;
   login: (email: string, password: string) => Promise<void>;
   register: (
     email: string,
@@ -65,6 +72,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
     userName: null,
   });
   const [isLoading, setIsLoading] = useState(true);
+  const [hasJustSignedOut, setHasJustSignedOut] = useState(false);
 
   // ── Hydrate from storage on mount ──────────────────────────────────────────
   useEffect(() => {
@@ -115,6 +123,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
 
     await persistAuthState(newState);
     setAuthState(newState);
+    setHasJustSignedOut(false);
   }, [persistAuthState]);
 
   // ── register ───────────────────────────────────────────────────────────────
@@ -136,6 +145,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
 
       await persistAuthState(newState);
       setAuthState(newState);
+      setHasJustSignedOut(false);
     },
     [persistAuthState],
   );
@@ -151,6 +161,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       };
       await persistAuthState(newState);
       setAuthState(newState);
+      setHasJustSignedOut(false);
     },
     [persistAuthState],
   );
@@ -170,13 +181,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       ]);
 
       setAuthState({ isAuthenticated: false, userRole: null, userName: null });
+      // Set BEFORE the auth state flip so AuthNavigator sees it on first mount.
+      // (React batches these updates inside the same callback.)
+      setHasJustSignedOut(true);
     }
   }, []);
 
   // ── Context value ──────────────────────────────────────────────────────────
   const value = useMemo<AuthContextValue>(
-    () => ({ ...authState, isLoading, login, register, signInWithTokens, logout }),
-    [authState, isLoading, login, register, signInWithTokens, logout],
+    () => ({ ...authState, isLoading, hasJustSignedOut, login, register, signInWithTokens, logout }),
+    [authState, isLoading, hasJustSignedOut, login, register, signInWithTokens, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

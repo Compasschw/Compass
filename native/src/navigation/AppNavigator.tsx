@@ -76,11 +76,22 @@ function PreviewIntakeRoute(): React.JSX.Element {
 
 // ─── Auth stack ───────────────────────────────────────────────────────────────
 
-function AuthNavigator(): React.JSX.Element {
+interface AuthNavigatorProps {
+  /** Initial route. Defaults to Landing (marketing page) for first-time visitors;
+   *  AppNavigator passes `Login` after a sign-out so users skip the marketing
+   *  pitch on the way back in. */
+  initialRoute?: keyof AuthStackParamList;
+}
+
+function AuthNavigator({ initialRoute = 'Landing' }: AuthNavigatorProps): React.JSX.Element {
   return (
-    <AuthStack.Navigator screenOptions={{ headerShown: false }}>
-      {/* Landing is the initial route — unauthenticated users see the
-          marketing page first before proceeding to Login/Register. */}
+    <AuthStack.Navigator
+      initialRouteName={initialRoute}
+      screenOptions={{ headerShown: false }}
+    >
+      {/* Landing is the default initial route — unauthenticated users see the
+          marketing page first before proceeding to Login/Register. After
+          sign-out the initial route is overridden to Login. */}
       <AuthStack.Screen name="Landing" component={LandingScreen} />
       <AuthStack.Screen name="Waitlist" component={WaitlistScreen} />
       {/* MagicLink is always registered so deep links from email can route to it
@@ -142,7 +153,7 @@ function LoadingScreen(): React.JSX.Element {
 // ─── Root navigator ───────────────────────────────────────────────────────────
 
 export function AppNavigator(): React.JSX.Element {
-  const { isLoading, isAuthenticated, userRole } = useAuth();
+  const { isLoading, isAuthenticated, userRole, hasJustSignedOut } = useAuth();
   const navigationRef = useRef<NavigationContainerRef<RootStackParamList>>(null);
 
   // Register this device for push notifications once authenticated.
@@ -184,7 +195,9 @@ export function AppNavigator(): React.JSX.Element {
     <NavigationContainer ref={navigationRef}>
       <RootStack.Navigator screenOptions={{ headerShown: false }}>
         {!isAuthenticated ? (
-          <RootStack.Screen name="Auth" component={AuthNavigator} />
+          <RootStack.Screen name="Auth">
+            {() => <AuthNavigator initialRoute={hasJustSignedOut ? 'Login' : 'Landing'} />}
+          </RootStack.Screen>
         ) : userRole === 'chw' ? (
           <RootStack.Screen name="CHW" component={CHWNavigator} />
         ) : userRole === 'admin' ? (
