@@ -8,7 +8,7 @@
  *   - No Full Name field — register call derives display name from email
  */
 
-import React, { useState, useCallback } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -153,6 +153,11 @@ export function LoginScreen(): React.JSX.Element {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Set when the user taps a social-login button. Renders an inline notice
+   *  directing them to the email/password form below. Cleared on next field
+   *  edit so it doesn't linger. */
+  const [socialNotice, setSocialNotice] = useState<'Google' | 'Apple' | null>(null);
+  const emailInputRef = useRef<TextInput>(null);
 
   // ── Submit handler ───────────────────────────────────────────────────────
 
@@ -183,14 +188,26 @@ export function LoginScreen(): React.JSX.Element {
     }
   }, [email, password, isSignUp, login, register]);
 
-  // ── Social login (coming soon) ───────────────────────────────────────────
-
+  // ── Social login ─────────────────────────────────────────────────────────
+  //
+  // TODO(oauth): wire up real Google + Apple OAuth.
+  //   - Google: expo-auth-session + Google Cloud OAuth client ID. Redirect
+  //     URL must include https://joincompasschw.com/auth/callback (web)
+  //     and the iOS/Android URL schemes.
+  //   - Apple: expo-apple-authentication on iOS. Web requires Sign in with
+  //     Apple JS + a configured Service ID.
+  //   - Backend: /auth/oauth/{provider} endpoint that verifies the ID token
+  //     and exchanges it for our JWT pair via signInWithTokens.
+  //
+  // Until the credentials are provisioned, route the user to the email/
+  // password form: switch to sign-in mode, focus the email input, and show
+  // an inline notice — no broken Alert dialogs.
   const handleSocialLogin = useCallback((provider: 'Google' | 'Apple'): void => {
-    Alert.alert(
-      `${provider} Sign-In`,
-      `${provider} sign-in is coming soon. Use email/password for now.`,
-      [{ text: 'OK' }],
-    );
+    setSocialNotice(provider);
+    setIsSignUp(false);
+    setError(null);
+    // Defer focus until after the form re-renders in sign-in mode.
+    setTimeout(() => emailInputRef.current?.focus(), 50);
   }, []);
 
   // ── Toggle between sign in / sign up ────────────────────────────────────
@@ -399,6 +416,15 @@ export function LoginScreen(): React.JSX.Element {
                       </TouchableOpacity>
                     </View>
 
+                    {/* Inline OAuth-coming-soon notice */}
+                    {socialNotice !== null && (
+                      <View style={s.socialNotice} accessibilityRole="alert" accessibilityLiveRegion="polite">
+                        <Text style={s.socialNoticeText}>
+                          {socialNotice} sign-in is coming soon. Sign in with your email below.
+                        </Text>
+                      </View>
+                    )}
+
                     {/* OR divider */}
                     <View style={s.dividerRow}>
                       <View style={s.dividerLine} />
@@ -412,11 +438,15 @@ export function LoginScreen(): React.JSX.Element {
                       <View style={s.inputWrapper}>
                         <Mail size={16} color={colors.mutedForeground} style={s.inputIcon} />
                         <TextInput
+                          ref={emailInputRef}
                           style={s.textInput}
                           placeholder="maria@example.com"
                           placeholderTextColor={`${colors.mutedForeground}88`}
                           value={email}
-                          onChangeText={setEmail}
+                          onChangeText={(v) => {
+                            setEmail(v);
+                            if (socialNotice) setSocialNotice(null);
+                          }}
                           autoCapitalize="none"
                           autoComplete="email"
                           keyboardType="email-address"
@@ -746,6 +776,24 @@ const s = StyleSheet.create({
     fontFamily: fonts.bodySemibold,
     fontSize: 14,
     color: colors.foreground,
+  },
+
+  // ── OAuth-coming-soon notice ──────────────────────────────────────────────
+  socialNotice: {
+    backgroundColor: `${colors.primary}10`,
+    borderWidth: 1,
+    borderColor: `${colors.primary}30`,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginTop: 4,
+  },
+  socialNoticeText: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: colors.primary,
+    lineHeight: 16,
+    textAlign: 'center',
   },
 
   // ── OR divider ────────────────────────────────────────────────────────────
