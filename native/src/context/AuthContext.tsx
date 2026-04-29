@@ -167,23 +167,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
   );
 
   // ── logout ─────────────────────────────────────────────────────────────────
+  // Sign-out is intentionally bullet-proof: the user-visible auth flip happens
+  // FIRST, synchronously. Token clearing + server-side invalidation run in the
+  // background as fire-and-forget — a hung backend or slow storage cannot
+  // block the UI from returning to the Login screen.
   const logout = useCallback(async (): Promise<void> => {
+    // 1. Flip the user-visible state immediately. AppNavigator re-renders to
+    //    the AuthStack; AuthNavigator picks Login as initial route because of
+    //    the hasJustSignedOut flag.
+    setAuthState({ isAuthenticated: false, userRole: null, userName: null });
+    setHasJustSignedOut(true);
+
+    // 2. Best-effort cleanup — wrapped so a failure here cannot leave the user
+    //    stranded mid-sign-out.
     try {
       const tokens = await getTokens();
       if (tokens?.refresh) {
-        // Best-effort server-side invalidation — don't block on failure.
-        await logoutUser(tokens.refresh).catch(() => undefined);
+        // Don't await — if the server is slow/unreachable we don't care.
+        void logoutUser(tokens.refresh).catch(() => undefined);
       }
-    } finally {
+    } catch {
+      // getTokens can throw on web if storage is corrupted. Ignore.
+    }
+
+    try {
       await Promise.all([
         clearTokens(),
         AsyncStorage.removeItem(AUTH_STATE_KEY),
       ]);
-
-      setAuthState({ isAuthenticated: false, userRole: null, userName: null });
-      // Set BEFORE the auth state flip so AuthNavigator sees it on first mount.
-      // (React batches these updates inside the same callback.)
-      setHasJustSignedOut(true);
+    } catch {
+      // If storage clear fails, the in-memory state is already cleared which
+      // is what the user sees. Stale storage will be overwritten on next login.
     }
   }, []);
 

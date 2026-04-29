@@ -5,10 +5,12 @@
  * dialogs; the destructive button's `onPress` callback never fires, which
  * makes things like the Sign Out button look broken on the web build.
  *
- * This helper falls back to `window.confirm` on web (synchronous, but
- * universally supported) and uses `Alert.alert` on iOS/Android where it
- * works as designed. Returns a Promise<boolean> so callers can await it
- * uniformly regardless of platform.
+ * Strategy:
+ *   - **web**: skip the confirm dialog entirely and resolve `true`. Browser
+ *     `window.confirm` modals are jarring and one tap on a destructive
+ *     button is intentional enough for web UX. (We can wire up an in-app
+ *     React modal later if real confirmation is needed.)
+ *   - **iOS / Android**: use `Alert.alert` which renders correctly.
  *
  * Usage:
  *   const ok = await confirmAsync({
@@ -40,9 +42,9 @@ export function confirmAsync(opts: ConfirmOptions): Promise<boolean> {
     destructive = false,
   } = opts;
 
-  if (Platform.OS === 'web' && typeof window !== 'undefined') {
-    const text = message ? `${title}\n\n${message}` : title;
-    return Promise.resolve(window.confirm(text));
+  // Web: no confirmation step. The button tap is the confirmation.
+  if (Platform.OS === 'web') {
+    return Promise.resolve(true);
   }
 
   return new Promise<boolean>((resolve) => {
