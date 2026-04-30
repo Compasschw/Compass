@@ -9,7 +9,7 @@
  * - Upcoming sessions list
  */
 
-import React, { useCallback } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   FlatList,
   Platform,
@@ -25,8 +25,13 @@ import {
   ArrowRight,
   CalendarCheck,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Gift,
+  ListChecks,
   Map,
+  Square,
+  CheckSquare,
 } from 'lucide-react-native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
@@ -97,11 +102,14 @@ interface StatCardProps {
   value: string | number;
   subtext?: string;
   iconBg: string;
+  /** When set, the card becomes pressable */
+  onPress?: () => void;
+  accessibilityLabel?: string;
 }
 
-function StatCard({ icon, label, value, subtext, iconBg }: StatCardProps): React.JSX.Element {
-  return (
-    <View style={styles.statCard}>
+function StatCard({ icon, label, value, subtext, iconBg, onPress, accessibilityLabel }: StatCardProps): React.JSX.Element {
+  const body = (
+    <>
       <View style={[styles.statIconContainer, { backgroundColor: iconBg }]}>
         {icon}
       </View>
@@ -110,8 +118,23 @@ function StatCard({ icon, label, value, subtext, iconBg }: StatCardProps): React
         <Text style={styles.statSubtext}>{subtext}</Text>
       ) : null}
       <Text style={styles.statLabel}>{label}</Text>
-    </View>
+    </>
   );
+
+  if (onPress) {
+    return (
+      <Pressable
+        onPress={onPress}
+        style={({ pressed }) => [styles.statCard, pressed && { opacity: 0.85 }]}
+        accessibilityRole="button"
+        accessibilityLabel={accessibilityLabel ?? label}
+      >
+        {body}
+      </Pressable>
+    );
+  }
+
+  return <View style={styles.statCard}>{body}</View>;
 }
 
 interface GoalCardProps {
@@ -165,20 +188,114 @@ interface UpcomingSessionRowProps {
   session: SessionData;
 }
 
+/**
+ * Mocked per-session action items (JT Figma feedback: "Session Notes / To Do
+ * list for each session / Selectable"). Stable per session id so the same
+ * session shows the same list. Replace with backend-driven items when a
+ * `/sessions/:id/action_items` endpoint ships.
+ *
+ * TODO(backend): expose session.action_items as
+ *   { id: string; label: string; completed: boolean }[]
+ */
+function mockActionItems(sessionId: string): string[] {
+  const pool = [
+    'Bring photo ID and proof of address',
+    'Have your Medi-Cal card or BIC number ready',
+    'Write down 2-3 questions you want answered',
+    'List medications you currently take',
+    'Note any recent provider visits',
+    'Share insurance plan details if you have them',
+    'Have a pen and paper nearby for notes',
+  ];
+  const sum = sessionId.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+  // Deterministic 3-item pick from the pool
+  const start = sum % pool.length;
+  return [pool[start], pool[(start + 2) % pool.length], pool[(start + 4) % pool.length]];
+}
+
 function UpcomingSessionRow({ session }: UpcomingSessionRowProps): React.JSX.Element {
   const emoji = verticalEmoji[session.vertical as Vertical] ?? '📅';
+  const [expanded, setExpanded] = useState(false);
+  const [checkedItems, setCheckedItems] = useState<Set<number>>(new Set());
+
+  const items = useMemo(() => mockActionItems(session.id), [session.id]);
+  const completedCount = checkedItems.size;
+  const totalCount = items.length;
+
+  const toggleItem = useCallback((idx: number) => {
+    setCheckedItems((prev) => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx);
+      else next.add(idx);
+      return next;
+    });
+  }, []);
+
   return (
-    <View style={styles.sessionRow}>
-      <View style={styles.sessionIconContainer}>
-        <Text style={styles.sessionEmoji} accessibilityElementsHidden>{emoji}</Text>
+    <View>
+      <View style={styles.sessionRow}>
+        <View style={styles.sessionIconContainer}>
+          <Text style={styles.sessionEmoji} accessibilityElementsHidden>{emoji}</Text>
+        </View>
+        <View style={styles.sessionInfo}>
+          <Text style={styles.sessionChwName} numberOfLines={1}>{session.chwName ?? 'CHW'}</Text>
+          <Text style={styles.sessionDate}>{formatScheduledDate(session.scheduledAt)}</Text>
+        </View>
+        <View style={styles.scheduledBadge}>
+          <Text style={styles.scheduledBadgeText}>Scheduled</Text>
+        </View>
       </View>
-      <View style={styles.sessionInfo}>
-        <Text style={styles.sessionChwName} numberOfLines={1}>{session.chwName ?? 'CHW'}</Text>
-        <Text style={styles.sessionDate}>{formatScheduledDate(session.scheduledAt)}</Text>
-      </View>
-      <View style={styles.scheduledBadge}>
-        <Text style={styles.scheduledBadgeText}>Scheduled</Text>
-      </View>
+
+      {/* Action-items toggle row — JT Figma feedback */}
+      <Pressable
+        onPress={() => setExpanded((p) => !p)}
+        style={({ pressed }) => [styles.todoToggle, pressed && { opacity: 0.7 }]}
+        accessibilityRole="button"
+        accessibilityLabel={
+          expanded
+            ? `Hide action items (${completedCount} of ${totalCount} done)`
+            : `Show action items (${completedCount} of ${totalCount} done)`
+        }
+        accessibilityState={{ expanded }}
+      >
+        <ListChecks size={14} color={colors.primary} />
+        <Text style={styles.todoToggleText}>
+          Prep checklist · {completedCount}/{totalCount}
+        </Text>
+        {expanded
+          ? <ChevronUp size={14} color={colors.mutedForeground} />
+          : <ChevronDown size={14} color={colors.mutedForeground} />}
+      </Pressable>
+
+      {expanded && (
+        <View style={styles.todoList}>
+          {items.map((label, idx) => {
+            const checked = checkedItems.has(idx);
+            return (
+              <Pressable
+                key={idx}
+                onPress={() => toggleItem(idx)}
+                style={({ pressed }) => [styles.todoItem, pressed && { opacity: 0.7 }]}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked }}
+                accessibilityLabel={label}
+              >
+                {checked
+                  ? <CheckSquare size={16} color={colors.primary} />
+                  : <Square size={16} color={colors.mutedForeground} />}
+                <Text
+                  style={[
+                    styles.todoItemText,
+                    checked && styles.todoItemTextDone,
+                  ]}
+                >
+                  {label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      )}
     </View>
   );
 }
@@ -211,6 +328,16 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
 
   const handleFindCHW = useCallback(() => {
     navigation.navigate('FindCHW');
+  }, [navigation]);
+
+  const handleOpenRewards = useCallback(() => {
+    // Navigates within the nested HomeStack (registered in MemberTabNavigator)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (navigation as any).navigate('Rewards');
+  }, [navigation]);
+
+  const handleOpenSessions = useCallback(() => {
+    navigation.navigate('Sessions');
   }, [navigation]);
 
   const isLoading = sessionsQuery.isLoading || profileQuery.isLoading;
@@ -272,6 +399,8 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
             value={rewardsBalance}
             subtext="pts"
             iconBg={`${colors.primary}15`}
+            onPress={handleOpenRewards}
+            accessibilityLabel="Open rewards catalog"
           />
           <StatCard
             icon={<CalendarCheck color={colors.secondary} size={18} />}
@@ -279,6 +408,8 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
             value={upcomingSessions.length}
             subtext="Sessions"
             iconBg={`${colors.secondary}15`}
+            onPress={handleOpenSessions}
+            accessibilityLabel="Open sessions list"
           />
           <StatCard
             icon={<CheckCircle2 color={colors.primary} size={18} />}
@@ -286,6 +417,8 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
             value={completedSessionsCount}
             subtext="Sessions"
             iconBg={`${colors.primary}15`}
+            onPress={handleOpenSessions}
+            accessibilityLabel="Open sessions list"
           />
         </View>
 
@@ -683,6 +816,55 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: '#DDD6CC',
     marginHorizontal: 16,
+  },
+
+  // Per-session prep checklist
+  todoToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginHorizontal: 20,
+    marginBottom: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: `${colors.primary}10`,
+    borderWidth: 1,
+    borderColor: `${colors.primary}30`,
+  },
+  todoToggleText: {
+    flex: 1,
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12,
+    color: colors.primary,
+  },
+  todoList: {
+    marginHorizontal: 20,
+    marginBottom: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#DDD6CC',
+    gap: 8,
+  },
+  todoItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 4,
+  },
+  todoItemText: {
+    flex: 1,
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: '#1E3320',
+    lineHeight: 18,
+  },
+  todoItemTextDone: {
+    color: '#9CA3AF',
+    textDecorationLine: 'line-through',
   },
 
   bottomPadding: {

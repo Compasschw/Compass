@@ -7,6 +7,7 @@
 import React from 'react';
 import { Platform } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import {
   Home,
   Search,
@@ -24,8 +25,14 @@ import { MemberSessionsScreen } from '../screens/member/MemberSessionsScreen';
 import { MemberCalendarScreen } from '../screens/member/MemberCalendarScreen';
 import { MemberRoadmapScreen } from '../screens/member/MemberRoadmapScreen';
 import { MemberProfileScreen } from '../screens/member/MemberProfileScreen';
+import { MemberRewardsScreen } from '../screens/member/MemberRewardsScreen';
 
 // ─── Navigator param list ─────────────────────────────────────────────────────
+
+export type MemberHomeStackParamList = {
+  HomeMain: undefined;
+  Rewards: undefined;
+};
 
 export type MemberTabParamList = {
   Home: undefined;
@@ -37,6 +44,20 @@ export type MemberTabParamList = {
 };
 
 const Tab = createBottomTabNavigator<MemberTabParamList>();
+const HomeStack = createNativeStackNavigator<MemberHomeStackParamList>();
+
+/**
+ * Nested stack inside the Home tab so we can push MemberRewardsScreen on top
+ * (per JT Figma feedback: Redeem Rewards opens its own screen).
+ */
+function HomeStackNavigator(): React.JSX.Element {
+  return (
+    <HomeStack.Navigator screenOptions={{ headerShown: false }}>
+      <HomeStack.Screen name="HomeMain" component={MemberHomeScreen} />
+      <HomeStack.Screen name="Rewards" component={MemberRewardsScreen} />
+    </HomeStack.Navigator>
+  );
+}
 
 // ─── Navigator ────────────────────────────────────────────────────────────────
 
@@ -71,7 +92,7 @@ export function MemberTabNavigator(): React.JSX.Element {
     >
       <Tab.Screen
         name="Home"
-        component={MemberHomeScreen}
+        component={HomeStackNavigator}
         options={{
           tabBarIcon: ({ color, size }) => (
             <Home color={color} size={size} />

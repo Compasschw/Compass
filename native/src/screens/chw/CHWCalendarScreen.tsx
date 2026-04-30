@@ -432,7 +432,7 @@ export function CHWCalendarScreen(): React.JSX.Element {
               onPress={handlePrevMonth}
               accessibilityLabel="Previous month"
             >
-              <ChevronLeft size={20} color={colors.mutedForeground} />
+              <ChevronLeft size={20} color="#FFFFFF" />
             </TouchableOpacity>
             <Text style={styles.monthLabel}>
               {MONTH_NAMES[month]} {year}
@@ -442,7 +442,7 @@ export function CHWCalendarScreen(): React.JSX.Element {
               onPress={handleNextMonth}
               accessibilityLabel="Next month"
             >
-              <ChevronRight size={20} color={colors.mutedForeground} />
+              <ChevronRight size={20} color="#FFFFFF" />
             </TouchableOpacity>
           </View>
 
@@ -601,19 +601,20 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 12,
     paddingVertical: 14,
+    backgroundColor: colors.primary,
     borderBottomWidth: 1,
-    borderBottomColor: '#DDD6CC',
+    borderBottomColor: colors.primary,
   },
   navButton: {
     padding: 6,
     borderRadius: 8,
-    backgroundColor: '#F4F1ED',
+    backgroundColor: 'rgba(255,255,255,0.15)',
   },
   monthLabel: {
     fontFamily: 'DMSans_700Bold',
     fontSize: 16,
     lineHeight: 22,
-    color: '#1E3320',
+    color: '#FFFFFF',
   },
   dayHeaderRow: {
     flexDirection: 'row',

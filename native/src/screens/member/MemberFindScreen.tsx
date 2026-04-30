@@ -43,6 +43,7 @@ import {
 import {
   useChwBrowse,
   useCreateRequest,
+  useSessions,
   type ChwBrowseItem,
 } from '../../hooks/useApiQueries';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
@@ -74,19 +75,19 @@ const GoogleMapsView: GoogleMapsViewComponent | null =
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type FilterTab = 'all' | Vertical;
-
 interface ScheduleFormData {
-  vertical: Vertical;
+  /** One or more verticals — submitted as separate requests when multiple */
+  verticals: Vertical[];
   urgency: Urgency;
   mode: SessionMode;
   description: string;
+  /** Optional preferred time slot for follow-up sessions (HH:MM 24h) */
+  preferredTime?: string;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const FILTER_TABS: { key: FilterTab; label: string }[] = [
-  { key: 'all', label: 'All' },
+const FILTER_VERTICALS: { key: Vertical; label: string }[] = [
   { key: 'housing', label: 'Housing' },
   { key: 'food', label: 'Food' },
   { key: 'mental_health', label: 'Mental Health' },
@@ -230,24 +231,61 @@ const starStyles = StyleSheet.create({
 
 // ─── Schedule Modal ────────────────────────────────────────────────────────────
 
+/** Time slots offered for follow-up sessions (per JT Figma feedback) */
+const TIME_SLOTS = [
+  '09:00', '10:00', '11:00',
+  '13:00', '14:00', '15:00',
+  '16:00', '17:00', '18:00',
+];
+
+function formatTimeSlot(hhmm: string): string {
+  const [h, m] = hhmm.split(':').map(Number);
+  const suffix = h >= 12 ? 'PM' : 'AM';
+  const display = h % 12 === 0 ? 12 : h % 12;
+  return m === 0 ? `${display} ${suffix}` : `${display}:${String(m).padStart(2, '0')} ${suffix}`;
+}
+
 interface ScheduleModalProps {
   chw: ChwBrowseItem;
   visible: boolean;
+  /** True if this CHW already has prior sessions with this member — controls
+   *  whether the time-slot picker is rendered (skip for first/initial meeting). */
+  isFollowUp: boolean;
   onClose: () => void;
   onSubmit: (chwFirstName: string, formData: ScheduleFormData) => Promise<void>;
 }
 
-function ScheduleModal({ chw, visible, onClose, onSubmit }: ScheduleModalProps): React.JSX.Element {
-  const [selectedVertical, setSelectedVertical] = useState<Vertical | null>(null);
+function ScheduleModal({
+  chw,
+  visible,
+  isFollowUp,
+  onClose,
+  onSubmit,
+}: ScheduleModalProps): React.JSX.Element {
+  // Multi-select per Akram's instruction: one schedule submission can cover
+  // multiple needs. The form submits one create-request call per selected
+  // vertical so the CHW sees one ticket per need on their inbox.
+  const [selectedVerticals, setSelectedVerticals] = useState<Set<Vertical>>(new Set());
   const [urgency, setUrgency] = useState<Urgency>('routine');
   const [mode, setMode] = useState<SessionMode>('in_person');
   const [description, setDescription] = useState('');
+  const [preferredTime, setPreferredTime] = useState<string | null>(null);
+
+  const toggleVertical = useCallback((v: Vertical) => {
+    setSelectedVerticals((prev) => {
+      const next = new Set(prev);
+      if (next.has(v)) next.delete(v);
+      else next.add(v);
+      return next;
+    });
+  }, []);
 
   const resetForm = useCallback(() => {
-    setSelectedVertical(null);
+    setSelectedVerticals(new Set());
     setUrgency('routine');
     setMode('in_person');
     setDescription('');
+    setPreferredTime(null);
   }, []);
 
   const handleClose = useCallback(() => {
@@ -256,11 +294,17 @@ function ScheduleModal({ chw, visible, onClose, onSubmit }: ScheduleModalProps):
   }, [resetForm, onClose]);
 
   const handleSubmit = useCallback(() => {
-    if (!selectedVertical) return;
+    if (selectedVerticals.size === 0) return;
     const firstName = chw.name.split(' ')[0] ?? chw.name;
-    void onSubmit(firstName, { vertical: selectedVertical, urgency, mode, description });
+    void onSubmit(firstName, {
+      verticals: Array.from(selectedVerticals),
+      urgency,
+      mode,
+      description,
+      preferredTime: preferredTime ?? undefined,
+    });
     resetForm();
-  }, [chw.name, description, mode, onSubmit, resetForm, selectedVertical, urgency]);
+  }, [chw.name, description, mode, onSubmit, preferredTime, resetForm, selectedVerticals, urgency]);
 
   // Derive initials from name since ChwBrowseItem has no pre-computed avatar field
   const initials = chw.name
@@ -307,21 +351,26 @@ function ScheduleModal({ chw, visible, onClose, onSubmit }: ScheduleModalProps):
           </View>
 
           <ScrollView style={modalStyles.body} showsVerticalScrollIndicator={false}>
-            {/* Vertical selection */}
-            <Text style={modalStyles.fieldLabel}>What do you need help with?</Text>
+            {/* Vertical selection — multi-select per Akram instruction */}
+            <Text style={modalStyles.fieldLabel}>
+              What do you need help with?{' '}
+              <Text style={{ fontWeight: '400', color: colors.mutedForeground }}>
+                (select all that apply)
+              </Text>
+            </Text>
             <View style={modalStyles.verticalList}>
               {VERTICAL_OPTIONS.map((opt) => {
-                const isSelected = selectedVertical === opt.key;
+                const isSelected = selectedVerticals.has(opt.key);
                 return (
                   <TouchableOpacity
                     key={opt.key}
-                    onPress={() => setSelectedVertical(opt.key)}
+                    onPress={() => toggleVertical(opt.key)}
                     style={[
                       modalStyles.verticalOption,
                       isSelected && modalStyles.verticalOptionSelected,
                     ]}
-                    accessibilityRole="radio"
-                    accessibilityState={{ selected: isSelected }}
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked: isSelected }}
                     accessibilityLabel={opt.label}
                   >
                     <Text style={modalStyles.verticalEmoji}>{opt.emoji}</Text>
@@ -387,6 +436,44 @@ function ScheduleModal({ chw, visible, onClose, onSubmit }: ScheduleModalProps):
               })}
             </View>
 
+            {/* Time-slot picker — only for follow-up sessions per JT feedback.
+                First/initial meetings get scheduled by the CHW after contact. */}
+            {isFollowUp && (
+              <>
+                <Text style={modalStyles.fieldLabel}>
+                  Preferred time{' '}
+                  <Text style={{ fontWeight: '400', color: colors.mutedForeground }}>(optional)</Text>
+                </Text>
+                <View style={modalStyles.timeSlotGrid}>
+                  {TIME_SLOTS.map((slot) => {
+                    const isSelected = preferredTime === slot;
+                    return (
+                      <TouchableOpacity
+                        key={slot}
+                        onPress={() => setPreferredTime(isSelected ? null : slot)}
+                        style={[
+                          modalStyles.timeSlot,
+                          isSelected && modalStyles.timeSlotSelected,
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: isSelected }}
+                        accessibilityLabel={`Preferred time ${formatTimeSlot(slot)}`}
+                      >
+                        <Text
+                          style={[
+                            modalStyles.timeSlotText,
+                            isSelected && modalStyles.timeSlotTextSelected,
+                          ]}
+                        >
+                          {formatTimeSlot(slot)}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </>
+            )}
+
             {/* Description */}
             <Text style={modalStyles.fieldLabel}>
               Description <Text style={{ fontWeight: '400', color: colors.mutedForeground }}>(optional)</Text>
@@ -406,19 +493,25 @@ function ScheduleModal({ chw, visible, onClose, onSubmit }: ScheduleModalProps):
             {/* Submit */}
             <TouchableOpacity
               onPress={handleSubmit}
-              disabled={selectedVertical === null}
+              disabled={selectedVerticals.size === 0}
               style={[
                 modalStyles.submitBtn,
-                selectedVertical === null && modalStyles.submitBtnDisabled,
+                selectedVerticals.size === 0 && modalStyles.submitBtnDisabled,
               ]}
               accessibilityRole="button"
-              accessibilityLabel="Submit request"
+              accessibilityLabel={
+                selectedVerticals.size > 1
+                  ? `Submit ${selectedVerticals.size} requests`
+                  : 'Submit request'
+              }
             >
               <Text style={[
                 modalStyles.submitBtnText,
-                selectedVertical === null && { color: colors.mutedForeground },
+                selectedVerticals.size === 0 && { color: colors.mutedForeground },
               ]}>
-                Submit Request
+                {selectedVerticals.size > 1
+                  ? `Submit ${selectedVerticals.size} Requests`
+                  : 'Submit Request'}
               </Text>
             </TouchableOpacity>
 
@@ -551,6 +644,34 @@ const modalStyles = StyleSheet.create({
   chipSelected: {
     borderColor: '#3D5A3E',
     backgroundColor: '#3D5A3E0D',
+  },
+  timeSlotGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 20,
+  },
+  timeSlot: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#DDD6CC',
+    backgroundColor: '#FFFFFF',
+    minWidth: 76,
+    alignItems: 'center',
+  },
+  timeSlotSelected: {
+    borderColor: '#3D5A3E',
+    backgroundColor: '#3D5A3E',
+  },
+  timeSlotText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 13,
+    color: '#1E3320',
+  },
+  timeSlotTextSelected: {
+    color: '#FFFFFF',
   },
   chipText: {
     fontFamily: 'PlusJakartaSans_400Regular',
@@ -894,24 +1015,66 @@ const mapStyles = StyleSheet.create({
 
 export function MemberFindScreen(): React.JSX.Element {
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeFilter, setActiveFilter] = useState<FilterTab>('all');
+  // Multi-select category filter (per JT Figma feedback: "select CHW with
+  // multiple categories. Not just one or all but multi-select"). Empty set
+  // = "All" (no filter applied).
+  const [selectedVerticals, setSelectedVerticals] = useState<Set<Vertical>>(new Set());
   const [schedulingChw, setSchedulingChw] = useState<ChwBrowseItem | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   /** Controls whether the map panel is expanded. Defaults to expanded on
    *  every platform so members see CHW locations immediately. */
   const [mapExpanded, setMapExpanded] = useState(true);
 
-  // Re-fetch whenever the vertical filter changes (passes undefined for 'all')
-  const browseVertical = activeFilter === 'all' ? undefined : activeFilter;
-  const chwQuery = useChwBrowse(browseVertical);
+  // Always fetch the full CHW list (no server-side filter). Multi-select
+  // filtering happens client-side below — keeps the backend contract
+  // unchanged while supporting union filtering.
+  const chwQuery = useChwBrowse(undefined);
+  const sessionsQuery = useSessions();
   const createRequest = useCreateRequest();
+
+  // Set of CHW ids the member has had any session with — drives the "this
+  // is a follow-up" branch in ScheduleModal so first/initial meetings skip
+  // the time-slot picker per JT Figma feedback.
+  const priorChwIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of sessionsQuery.data ?? []) {
+      // ChwBrowseItem.id corresponds to the CHW user id; SessionData carries
+      // chwName but not chwId on the wire today. TODO(backend): expose
+      // session.chw_id so this reads cleanly. For now match on chwName.
+      if (s.chwName) set.add(s.chwName);
+    }
+    return set;
+  }, [sessionsQuery.data]);
 
   const allChws = chwQuery.data ?? [];
 
+  const toggleVertical = useCallback((v: Vertical) => {
+    setSelectedVerticals((prev) => {
+      const next = new Set(prev);
+      if (next.has(v)) next.delete(v);
+      else next.add(v);
+      return next;
+    });
+  }, []);
+
+  const clearFilters = useCallback(() => {
+    setSelectedVerticals(new Set());
+  }, []);
+
   const filteredChws = useMemo(() => {
     const query = searchQuery.toLowerCase().trim();
-    if (!query) return allChws;
-    return allChws.filter((chw) => {
+    let result = allChws;
+
+    // Vertical filter — CHW must have at least one of the selected
+    // specializations (union, not intersection).
+    if (selectedVerticals.size > 0) {
+      result = result.filter((chw) =>
+        chw.specializations.some((s) => selectedVerticals.has(s as Vertical)),
+      );
+    }
+
+    if (!query) return result;
+    return result.filter((chw) => {
       return (
         chw.name.toLowerCase().includes(query) ||
         chw.bio.toLowerCase().includes(query) ||
@@ -920,7 +1083,13 @@ export function MemberFindScreen(): React.JSX.Element {
         )
       );
     });
-  }, [searchQuery, allChws]);
+  }, [searchQuery, selectedVerticals, allChws]);
+
+  const verticalCount = useCallback(
+    (key: Vertical): number =>
+      allChws.filter((chw) => chw.specializations.includes(key as string)).length,
+    [allChws],
+  );
 
   const showToast = useCallback((message: string) => {
     setToastMessage(message);
@@ -947,17 +1116,33 @@ export function MemberFindScreen(): React.JSX.Element {
   const handleModalSubmit = useCallback(
     async (chwFirstName: string, formData: ScheduleFormData) => {
       setSchedulingChw(null);
+      const count = formData.verticals.length;
       try {
-        await createRequest.mutateAsync({
-          vertical: formData.vertical,
-          urgency: formData.urgency,
-          description: formData.description,
-          preferredMode: formData.mode,
-          estimatedUnits: 1,
-        });
-        showToast(`Request submitted! ${chwFirstName} will be in touch soon.`);
+        // Fan out one create-request per selected vertical so the CHW sees
+        // a separate ticket per need. Same description/urgency/mode applies
+        // to all — the vertical is what differentiates the rows.
+        await Promise.all(
+          formData.verticals.map((vertical) =>
+            createRequest.mutateAsync({
+              vertical,
+              urgency: formData.urgency,
+              description: formData.description,
+              preferredMode: formData.mode,
+              estimatedUnits: 1,
+            }),
+          ),
+        );
+        showToast(
+          count > 1
+            ? `${count} requests submitted! ${chwFirstName} will be in touch soon.`
+            : `Request submitted! ${chwFirstName} will be in touch soon.`,
+        );
       } catch {
-        showToast('Failed to submit request. Please try again.');
+        showToast(
+          count > 1
+            ? 'Some requests failed. Please review and try again.'
+            : 'Failed to submit request. Please try again.',
+        );
       }
     },
     [createRequest, showToast],
@@ -975,6 +1160,7 @@ export function MemberFindScreen(): React.JSX.Element {
         <ScheduleModal
           chw={schedulingChw}
           visible={schedulingChw !== null}
+          isFollowUp={priorChwIds.has(schedulingChw.name)}
           onClose={handleModalClose}
           onSubmit={handleModalSubmit}
         />
@@ -1001,25 +1187,39 @@ export function MemberFindScreen(): React.JSX.Element {
         />
       </View>
 
-      {/* Filter tabs */}
+      {/* Multi-select category chips (JT Figma feedback) */}
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.filterTabsContent}
         style={styles.filterTabs}
       >
-        {FILTER_TABS.map((tab) => {
-          const isActive = activeFilter === tab.key;
+        {/* "All" — active when nothing is selected. Tapping clears selection. */}
+        <TouchableOpacity
+          onPress={clearFilters}
+          style={[styles.filterTab, selectedVerticals.size === 0 && styles.filterTabActive]}
+          accessibilityRole="checkbox"
+          accessibilityState={{ checked: selectedVerticals.size === 0 }}
+          accessibilityLabel="Show all categories"
+        >
+          <Text style={[styles.filterTabText, selectedVerticals.size === 0 && styles.filterTabTextActive]}>
+            All
+          </Text>
+        </TouchableOpacity>
+        {FILTER_VERTICALS.map((tab) => {
+          const isSelected = selectedVerticals.has(tab.key);
+          const count = verticalCount(tab.key);
           return (
             <TouchableOpacity
               key={tab.key}
-              onPress={() => setActiveFilter(tab.key)}
-              style={[styles.filterTab, isActive && styles.filterTabActive]}
-              accessibilityRole="tab"
-              accessibilityState={{ selected: isActive }}
+              onPress={() => toggleVertical(tab.key)}
+              style={[styles.filterTab, isSelected && styles.filterTabActive]}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: isSelected }}
+              accessibilityLabel={`Toggle ${tab.label} filter`}
             >
-              <Text style={[styles.filterTabText, isActive && styles.filterTabTextActive]}>
-                {tab.label}
+              <Text style={[styles.filterTabText, isSelected && styles.filterTabTextActive]}>
+                {tab.label}{count > 0 ? ` ${count}` : ''}
               </Text>
             </TouchableOpacity>
           );
