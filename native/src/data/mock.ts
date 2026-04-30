@@ -183,7 +183,11 @@ export interface EarningsSummary {
 export const MEDI_CAL_RATE = 26.66;
 
 /** Fraction of gross billing the CHW receives after platform fee. */
-export const NET_PAYOUT_RATE = 0.85;
+// CHW net rate — what the CHW takes home after platform fee (15%) and the
+// member-rewards pool (25%) are deducted from gross billing. Source of
+// truth per Jemal's Earnings Figma feedback (was 0.85 / "85% CHW net payout"
+// which was misleading; true split is 60% CHW / 25% rewards / 15% platform).
+export const NET_PAYOUT_RATE = 0.60;
 
 // ─── Helper functions ─────────────────────────────────────────────────────────
 

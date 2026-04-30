@@ -29,14 +29,13 @@ import {
   Stethoscope,
   Bell,
   ThumbsDown,
+  MapPin,
+  Target,
 } from 'lucide-react-native';
 
 import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
 import {
-  formatCurrency,
-  MEDI_CAL_RATE,
-  NET_PAYOUT_RATE,
   type Vertical,
 } from '../../data/mock';
 import {
@@ -78,23 +77,30 @@ const VERTICAL_LABELS: Record<Vertical, string> = {
   healthcare: 'Healthcare',
 };
 
-const URGENCY_COLORS: Record<string, string> = {
-  routine: colors.secondary,
-  soon: colors.compassGold,
-  urgent: colors.destructive,
-};
-
-const URGENCY_LABELS: Record<string, string> = {
-  routine: 'Routine',
-  soon: 'Soon',
-  urgent: 'Urgent',
-};
-
 const SESSION_MODE_LABELS: Record<string, string> = {
   in_person: 'In Person',
   virtual: 'Video Call',
   phone: 'Phone',
 };
+
+// ─── Member need-journey status (mocked — see CHWDashboardScreen) ────────────
+// TODO(backend): expose journey_status on ServiceRequestData.
+type JourneyStatus = 'starting' | 'awaiting_confirmation' | 'resolved';
+const JOURNEY_COLORS: Record<JourneyStatus, string> = {
+  starting: '#EF4444',
+  awaiting_confirmation: '#F59E0B',
+  resolved: '#22C55E',
+};
+const JOURNEY_LABELS: Record<JourneyStatus, string> = {
+  starting: 'Starting',
+  awaiting_confirmation: 'Awaiting confirmation',
+  resolved: 'Resolved',
+};
+function mockJourneyStatus(id: string): JourneyStatus {
+  const sum = id.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+  const idx = sum % 3;
+  return idx === 0 ? 'starting' : idx === 1 ? 'awaiting_confirmation' : 'resolved';
+}
 
 // ─── VerticalIcon helper ──────────────────────────────────────────────────────
 
@@ -129,9 +135,8 @@ interface RequestCardProps {
 }
 
 function RequestCard({ request, onAccept, onPass }: RequestCardProps): React.JSX.Element {
-  const grossEarnings = request.estimatedUnits * MEDI_CAL_RATE;
-  const netEarnings = parseFloat((grossEarnings * NET_PAYOUT_RATE).toFixed(2));
   const verticalColor = VERTICAL_COLORS[request.vertical as Vertical] ?? '#6B7A6B';
+  const journey = mockJourneyStatus(request.id);
 
   return (
     <View style={cardStyles.card}>
@@ -148,17 +153,10 @@ function RequestCard({ request, onAccept, onPass }: RequestCardProps): React.JSX
                 {VERTICAL_LABELS[request.vertical as Vertical] ?? request.vertical}
               </Text>
             </View>
-            <View
-              style={[
-                cardStyles.badge,
-                { backgroundColor: (URGENCY_COLORS[request.urgency] ?? '#6B7A6B') + '18' },
-              ]}
-            >
-              <Text
-                style={[cardStyles.badgeText, { color: URGENCY_COLORS[request.urgency] ?? '#6B7A6B' }]}
-              >
-                {URGENCY_LABELS[request.urgency] ?? request.urgency}
-              </Text>
+            {/* Member need-journey pill — same dashboard treatment */}
+            <View style={cardStyles.journeyPill}>
+              <View style={[cardStyles.journeyDot, { backgroundColor: JOURNEY_COLORS[journey] }]} />
+              <Text style={cardStyles.journeyText}>{JOURNEY_LABELS[journey]}</Text>
             </View>
           </View>
           <Text style={cardStyles.modeLabel}>
@@ -172,15 +170,18 @@ function RequestCard({ request, onAccept, onPass }: RequestCardProps): React.JSX
         {request.description}
       </Text>
 
-      {/* Earnings row */}
-      <View style={cardStyles.earningsRow}>
-        <Text style={cardStyles.earningsUnits}>
-          ~{request.estimatedUnits} {request.estimatedUnits === 1 ? 'unit' : 'units'}
+      {/* Member address — TODO(backend): expose member.address on ServiceRequestData */}
+      <View style={cardStyles.metaIconRow}>
+        <MapPin size={12} color={colors.mutedForeground} />
+        <Text style={cardStyles.metaText}>1834 W 6th St, Los Angeles, CA 90057</Text>
+      </View>
+
+      {/* Quick action note — TODO(backend): expose request.goal_note */}
+      <View style={cardStyles.actionNote}>
+        <Target size={12} color={colors.primary} />
+        <Text style={cardStyles.actionNoteText}>
+          Goal: walk through Medi-Cal renewal paperwork together.
         </Text>
-        <Text style={cardStyles.dot}> · </Text>
-        <Text style={cardStyles.earningsGross}>{formatCurrency(grossEarnings)} gross</Text>
-        <Text style={cardStyles.dot}> · </Text>
-        <Text style={cardStyles.earningsNet}>{formatCurrency(netEarnings)} net</Text>
       </View>
 
       {/* Action buttons */}
@@ -275,36 +276,60 @@ const cardStyles = StyleSheet.create({
     fontSize: 14,
     color: '#6B7A6B',
     lineHeight: 20,
-    marginBottom: 10,
+    marginBottom: 8,
   },
-  earningsRow: {
+  metaIconRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 14,
-    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 4,
   },
-  earningsUnits: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 12,
-    letterSpacing: 1,
-    color: '#3D5A3E',
-  },
-  dot: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
+  metaText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 12,
     color: '#6B7A6B',
+    letterSpacing: 0.5,
   },
-  earningsGross: {
+  journeyPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 100,
+    backgroundColor: '#F4F1ED',
+    borderWidth: 1,
+    borderColor: '#DDD6CC',
+  },
+  journeyDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  journeyText: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 12,
-    letterSpacing: 1,
+    fontSize: 11,
     color: '#6B7A6B',
   },
-  earningsNet: {
+  actionNote: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    marginTop: 6,
+    marginBottom: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: colors.primary + '0D',
+    borderLeftWidth: 3,
+    borderLeftColor: colors.primary,
+  },
+  actionNoteText: {
+    flex: 1,
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 12,
-    letterSpacing: 1,
-    color: '#1E3320',
+    color: colors.foreground,
+    lineHeight: 16,
   },
   actionRow: {
     flexDirection: 'row',
@@ -497,11 +522,6 @@ export function CHWRequestsScreen(): React.JSX.Element {
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
           refreshControl={refresh.control}
-          ListFooterComponent={
-            <Text style={styles.footnote}>
-              Earnings based on $26.66/unit Medi-Cal rate · 85% CHW net payout.
-            </Text>
-          }
         />
       ) : (
         <View style={styles.emptyState}>

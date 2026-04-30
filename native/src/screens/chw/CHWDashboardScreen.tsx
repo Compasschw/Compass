@@ -41,8 +41,6 @@ import { typography } from '../../theme/typography';
 import { useAuth } from '../../context/AuthContext';
 import {
   formatCurrency,
-  MEDI_CAL_RATE,
-  NET_PAYOUT_RATE,
   type Vertical,
 } from '../../data/mock';
 import {

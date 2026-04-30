@@ -6,7 +6,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 MEDI_CAL_RATE = Decimal("26.66")
 PLATFORM_FEE_RATE = Decimal("0.15")
-PEAR_SUITE_FEE_RATE = Decimal("0.10")
+# Member rewards pool — funds the redemption catalog members can spend their
+# engagement points against. Was previously labelled `PEAR_SUITE_FEE_RATE` at
+# 0.10 (a billing-partner fee); per Jemal's Earnings Figma feedback the split
+# is now 15% platform / 25% member rewards / 60% CHW net. The DB column on
+# BillingClaim is still named `pear_suite_fee` to avoid a migration — treat
+# it as the rewards-pool field semantically. Rename the column when we next
+# touch the billing schema.
+PEAR_SUITE_FEE_RATE = Decimal("0.25")
 MAX_UNITS_PER_DAY = 4
 MAX_UNITS_PER_YEAR = 10
 

@@ -8,13 +8,14 @@
  *  4. Medi-Cal rate / payout schedule note
  */
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Pressable,
   View,
   Text,
   ScrollView,
   StyleSheet,
+  TouchableOpacity,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -38,6 +39,7 @@ import { typography } from '../../theme/typography';
 import {
   formatCurrency,
   MEDI_CAL_RATE,
+  NET_PAYOUT_RATE,
   sessionModeLabels,
   type Vertical,
 } from '../../data/mock';
@@ -51,12 +53,17 @@ import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 
 // ─── Earnings scenario constants ─────────────────────────────────────────────
+//
+// Per Jemal's Figma feedback the gross billing splits three ways:
+//   - Platform fee (Compass operating costs)            → 15%
+//   - Member rewards pool (engagement / redemption)     → 25%
+//   - CHW net payout                                    → 60%
+// (Was previously framed as Phase 1 72% / Phase 2 82.6%, which Jemal
+// flagged as misleading since the math summed to >100% of gross.)
 
-/** Phase 1 net payout rate (72% of gross billing). */
-const PHASE_1_RATE = 0.72;
-
-/** Phase 2 net payout rate (82.6% of gross billing). */
-const PHASE_2_RATE = 0.826;
+const PLATFORM_FEE_RATE = 0.15;
+const REWARDS_POOL_RATE = 0.25;
+const CHW_NET_RATE = 0.60;
 
 interface EarningsScenario {
   label: string;
@@ -89,23 +96,45 @@ const PAYOUT_STATUS_COLORS: Record<PayoutStatus, string> = {
 };
 
 const PAYOUT_STATUS_LABELS: Record<PayoutStatus, string> = {
-  pending: 'Pending',
+  pending: 'Pending Payout', // per Jemal's Earnings Figma feedback
   submitted: 'Submitted',
   approved: 'Approved',
 };
 
+/** Day-of-week labels for the Weekly Breakdown chart, Mon–Sun. */
+const WEEK_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const;
+type WeekDay = typeof WEEK_DAYS[number];
+
+interface DayBucket {
+  day: WeekDay;
+  amount: number;
+  sessions: SessionData[];
+}
+
 /**
- * Mock weekly bar chart data derived from completed sessions.
+ * Maps `Date.getDay()` (0=Sun … 6=Sat) into our Mon–Sun bucket index
+ * (0=Mon … 6=Sun) so weekly chart buckets line up with WEEK_DAYS.
  */
-const WEEKLY_DATA = [
-  { day: 'Mon', amount: 90.64 },
-  { day: 'Tue', amount: 0 },
-  { day: 'Wed', amount: 45.32 },
-  { day: 'Thu', amount: 67.98 },
-  { day: 'Fri', amount: 0 },
-  { day: 'Sat', amount: 0 },
-  { day: 'Sun', amount: 0 },
-];
+function dayOfWeekIndex(date: Date): number {
+  const js = date.getDay();
+  return js === 0 ? 6 : js - 1;
+}
+
+/**
+ * CHW net for a session, computed at the current 60% rate from the stored
+ * gross amount. Older rows have `net_amount` stored at the legacy 75% rate
+ * (back when the split was 15% / 10% / 75%); deriving from gross at render
+ * time keeps the displayed numbers consistent with the new math without
+ * needing a destructive backfill on historical billing rows.
+ *
+ * Falls back to `unitsBilled × MEDI_CAL_RATE × 0.60` when grossAmount is
+ * absent, then to the stored netAmount as a last resort.
+ */
+function chwNetFromSession(s: SessionData): number {
+  if (s.grossAmount != null) return s.grossAmount * NET_PAYOUT_RATE;
+  if (s.unitsBilled != null) return s.unitsBilled * MEDI_CAL_RATE * NET_PAYOUT_RATE;
+  return s.netAmount ?? 0;
+}
 
 /**
  * Derives a mock payout status from session ID for demo purposes.
@@ -180,10 +209,46 @@ export function CHWEarningsScreen(): React.JSX.Element {
     [allSessions],
   );
 
+  // Bucket completed sessions by day-of-week so the Weekly Breakdown chart
+  // reflects real data (was previously a hard-coded mock).
+  // TODO(scope): currently aggregates ALL completed sessions across all
+  // weeks into Mon–Sun buckets. When a /chw/earnings/weekly endpoint
+  // ships with per-ISO-week buckets, swap this in.
+  const weeklyData = useMemo<DayBucket[]>(() => {
+    const buckets: DayBucket[] = WEEK_DAYS.map((day) => ({
+      day,
+      amount: 0,
+      sessions: [],
+    }));
+    for (const session of completedSessions) {
+      const idx = dayOfWeekIndex(new Date(session.scheduledAt));
+      buckets[idx].sessions.push(session);
+      buckets[idx].amount += chwNetFromSession(session);
+    }
+    // Sort sessions inside each bucket by date desc so newest is first.
+    for (const b of buckets) {
+      b.sessions.sort(
+        (a, c) => new Date(c.scheduledAt).getTime() - new Date(a.scheduledAt).getTime(),
+      );
+    }
+    return buckets;
+  }, [completedSessions]);
+
   const maxBarAmount = useMemo(
-    () => Math.max(...WEEKLY_DATA.map((d) => d.amount), 1),
-    [],
+    () => Math.max(...weeklyData.map((d) => d.amount), 1),
+    [weeklyData],
   );
+
+  // Avg earning per member-payout for the All-Time stat tile (Jemal feedback).
+  const avgEarningPerMember = useMemo(() => {
+    if (completedSessions.length === 0) return 0;
+    const total = completedSessions.reduce((acc, s) => acc + chwNetFromSession(s), 0);
+    return total / completedSessions.length;
+  }, [completedSessions]);
+
+  // Tap a bar in the Weekly Breakdown to surface that day's detail card.
+  const [selectedBarIdx, setSelectedBarIdx] = useState<number | null>(null);
+  const selectedBar = selectedBarIdx !== null ? weeklyData[selectedBarIdx] : null;
 
   if (isLoading) {
     return (
@@ -263,7 +328,7 @@ export function CHWEarningsScreen(): React.JSX.Element {
               <DollarSign size={18} color={colors.primary} />
             </View>
             <Text style={styles.statValue}>{formatCurrency(earnings?.pendingPayout ?? 0)}</Text>
-            <Text style={styles.statLabel}>Pending</Text>
+            <Text style={styles.statLabel}>Payout Pending</Text>
             <Text style={styles.statSubtext}>
               {earnings?.sessionsThisWeek ?? 0} sessions this week
             </Text>
@@ -285,20 +350,29 @@ export function CHWEarningsScreen(): React.JSX.Element {
             <Text style={styles.statValue}>{formatCurrency(earnings?.allTime ?? 0)}</Text>
             <Text style={styles.statLabel}>All Time</Text>
             <Text style={styles.statSubtext}>
-              {earnings?.avgRating.toFixed(1) ?? '—'} avg rating
+              {formatCurrency(avgEarningPerMember)} avg / member
             </Text>
           </View>
         </View>
 
-        {/* ── Weekly bar chart ── */}
+        {/* ── Weekly bar chart — bars are tappable per Jemal's feedback ── */}
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Weekly Breakdown</Text>
           <View style={styles.barChartContainer}>
-            {WEEKLY_DATA.map((d) => {
+            {weeklyData.map((d, idx) => {
               const heightPct = d.amount > 0 ? Math.max((d.amount / maxBarAmount) * 100, 6) : 6;
               const hasAmount = d.amount > 0;
+              const isSelected = selectedBarIdx === idx;
               return (
-                <View key={d.day} style={styles.barColumn}>
+                <TouchableOpacity
+                  key={d.day}
+                  style={styles.barColumn}
+                  onPress={() => setSelectedBarIdx(isSelected ? null : idx)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${d.day}: ${hasAmount ? formatCurrency(d.amount) : 'no earnings'}`}
+                  accessibilityState={{ selected: isSelected }}
+                  activeOpacity={0.7}
+                >
                   <Text style={styles.barAmountLabel}>
                     {hasAmount ? formatCurrency(d.amount) : ''}
                   </Text>
@@ -308,16 +382,73 @@ export function CHWEarningsScreen(): React.JSX.Element {
                         styles.barFill,
                         {
                           height: `${heightPct}%` as `${number}%`,
-                          backgroundColor: hasAmount ? colors.primary : colors.primary + '28',
+                          backgroundColor: hasAmount
+                            ? (isSelected ? colors.secondary : colors.primary)
+                            : colors.primary + '28',
                         },
                       ]}
                     />
                   </View>
-                  <Text style={styles.barDayLabel}>{d.day}</Text>
-                </View>
+                  <Text style={[styles.barDayLabel, isSelected && styles.barDayLabelSelected]}>
+                    {d.day}
+                  </Text>
+                </TouchableOpacity>
               );
             })}
           </View>
+
+          {/* Detail card for the selected day — lists each session that
+              contributed to that day's bar (member, date, units, amount). */}
+          {selectedBar && (
+            <View style={styles.barDetailCard}>
+              <View style={styles.barDetailHeader}>
+                <Text style={styles.barDetailDay}>{selectedBar.day}</Text>
+                <Text style={styles.barDetailAmount}>
+                  {selectedBar.amount > 0 ? formatCurrency(selectedBar.amount) : 'No earnings'}
+                </Text>
+              </View>
+              {selectedBar.sessions.length === 0 ? (
+                <Text style={styles.barDetailMeta}>
+                  No completed sessions on {selectedBar.day}.
+                </Text>
+              ) : (
+                <View style={styles.barDetailSessionList}>
+                  {selectedBar.sessions.map((s, i) => {
+                    const verticalColor = VERTICAL_COLORS[s.vertical as Vertical] ?? '#6B7A6B';
+                    return (
+                      <View key={s.id}>
+                        {i > 0 ? <View style={styles.barDetailSessionDivider} /> : null}
+                        <View style={styles.barDetailSessionRow}>
+                          <View
+                            style={[
+                              styles.barDetailVerticalIcon,
+                              { backgroundColor: verticalColor + '18' },
+                            ]}
+                          >
+                            <VerticalIconComponent vertical={s.vertical as Vertical} size={14} />
+                          </View>
+                          <View style={styles.barDetailSessionInfo}>
+                            <Text style={styles.barDetailSessionMember} numberOfLines={1}>
+                              {s.memberName ?? 'Member'}
+                            </Text>
+                            <Text style={styles.barDetailSessionMeta}>
+                              {formatShortDate(s.scheduledAt)}
+                              {s.unitsBilled != null
+                                ? ` · ${s.unitsBilled} ${s.unitsBilled === 1 ? 'unit' : 'units'}`
+                                : ''}
+                            </Text>
+                          </View>
+                          <Text style={styles.barDetailSessionAmount}>
+                            {formatCurrency(chwNetFromSession(s))}
+                          </Text>
+                        </View>
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+            </View>
+          )}
         </View>
 
         {/* ── Recent payouts ── */}
@@ -361,7 +492,7 @@ export function CHWEarningsScreen(): React.JSX.Element {
                     </View>
                     <View style={styles.payoutRight}>
                       <Text style={styles.payoutAmount}>
-                        {formatCurrency(session.netAmount ?? 0)}
+                        {formatCurrency(chwNetFromSession(session))}
                       </Text>
                       <View style={[styles.badge, { backgroundColor: statusColor + '18' }]}>
                         <Text style={[styles.badgeText, { color: statusColor }]}>
@@ -404,17 +535,21 @@ export function CHWEarningsScreen(): React.JSX.Element {
                   <Text style={styles.tableHeaderText}>Gross/Day</Text>
                 </View>
                 <View style={[styles.tableCell, styles.tableCellHeader]}>
-                  <Text style={styles.tableHeaderText}>Net P1/Day</Text>
+                  <Text style={styles.tableHeaderText}>Platform (15%)</Text>
                 </View>
                 <View style={[styles.tableCell, styles.tableCellHeader]}>
-                  <Text style={styles.tableHeaderText}>Net P2/Day</Text>
+                  <Text style={styles.tableHeaderText}>Rewards (25%)</Text>
+                </View>
+                <View style={[styles.tableCell, styles.tableCellHeader]}>
+                  <Text style={styles.tableHeaderText}>CHW Net (60%)</Text>
                 </View>
               </View>
               {/* Table body */}
               {EARNINGS_SCENARIOS.map((scenario, index) => {
                 const gross = scenario.unitsPerDay * MEDI_CAL_RATE;
-                const netP1 = gross * PHASE_1_RATE;
-                const netP2 = gross * PHASE_2_RATE;
+                const platformFee = gross * PLATFORM_FEE_RATE;
+                const rewardsPool = gross * REWARDS_POOL_RATE;
+                const chwNet = gross * CHW_NET_RATE;
                 const isEven = index % 2 === 0;
                 return (
                   <View
@@ -431,13 +566,18 @@ export function CHWEarningsScreen(): React.JSX.Element {
                       <Text style={styles.tableCellText}>{formatCurrency(gross)}</Text>
                     </View>
                     <View style={styles.tableCell}>
-                      <Text style={[styles.tableCellText, styles.tableCellNetP1]}>
-                        {formatCurrency(netP1)}
+                      <Text style={[styles.tableCellText, styles.tableCellMuted]}>
+                        −{formatCurrency(platformFee)}
                       </Text>
                     </View>
                     <View style={styles.tableCell}>
-                      <Text style={[styles.tableCellText, styles.tableCellNetP2]}>
-                        {formatCurrency(netP2)}
+                      <Text style={[styles.tableCellText, styles.tableCellRewards]}>
+                        −{formatCurrency(rewardsPool)}
+                      </Text>
+                    </View>
+                    <View style={styles.tableCell}>
+                      <Text style={[styles.tableCellText, styles.tableCellChwNet]}>
+                        {formatCurrency(chwNet)}
                       </Text>
                     </View>
                   </View>
@@ -445,15 +585,6 @@ export function CHWEarningsScreen(): React.JSX.Element {
               })}
             </View>
           </ScrollView>
-          {/* Phase footnote */}
-          <View style={styles.phaseFootnote}>
-            <Text style={styles.phaseFootnoteText}>
-              <Text style={styles.phaseFootnoteBold}>Phase 1 (72%)</Text>
-              {' '}— Launch rate during initial CHW onboarding period (first 6 months).{' '}
-              <Text style={styles.phaseFootnoteBold}>Phase 2 (82.6%)</Text>
-              {' '}— Graduated rate after performance milestones are met.
-            </Text>
-          </View>
         </View>
 
         {/* ── Payout schedule note ── */}
@@ -468,10 +599,8 @@ export function CHWEarningsScreen(): React.JSX.Element {
           </Text>
         </View>
 
-        {/* Medi-Cal rate footnote */}
-        <Text style={styles.footnote}>
-          Rate: $26.66/unit (15 min) · Phase 1: 72% net · Phase 2: 82.6% net.
-        </Text>
+        {/* Bottom rate sentence removed per Jemal's feedback (was misleading;
+            true split is shown in the Earnings Scenarios table above). */}
       </ScrollView>
     </SafeAreaView>
   );
@@ -645,6 +774,84 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: '#6B7A6B',
     textAlign: 'center',
+  },
+  barDayLabelSelected: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    color: colors.secondary,
+  },
+  barDetailCard: {
+    marginTop: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: colors.secondary + '12',
+    borderLeftWidth: 3,
+    borderLeftColor: colors.secondary,
+  },
+  barDetailHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  barDetailDay: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 13,
+    color: '#1E3320',
+  },
+  barDetailAmount: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 14,
+    color: colors.secondary,
+  },
+  barDetailMeta: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 12,
+    color: '#6B7A6B',
+    lineHeight: 16,
+  },
+  barDetailSessionList: {
+    marginTop: 8,
+    gap: 6,
+  },
+  barDetailSessionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 6,
+  },
+  barDetailVerticalIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  barDetailSessionInfo: {
+    flex: 1,
+    gap: 1,
+  },
+  barDetailSessionMember: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 13,
+    color: '#1E3320',
+  },
+  barDetailSessionMeta: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: '#6B7A6B',
+  },
+  barDetailSessionAmount: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 14,
+    color: colors.primary,
+    flexShrink: 0,
+  },
+  barDetailSessionDivider: {
+    height: 1,
+    backgroundColor: colors.border,
+    marginVertical: 2,
   },
   divider: {
     height: 1,
@@ -820,11 +1027,13 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: colors.foreground,
   },
-  tableCellNetP1: {
-    color: colors.secondary,
-    fontWeight: '700',
+  tableCellMuted: {
+    color: colors.mutedForeground,
   },
-  tableCellNetP2: {
+  tableCellRewards: {
+    color: colors.compassGold,
+  },
+  tableCellChwNet: {
     color: colors.primary,
     fontWeight: '700',
   },
