@@ -33,7 +33,6 @@ import {
   MessageSquare,
   FileText,
   X,
-  Check,
 } from 'lucide-react-native';
 
 import { colors } from '../../theme/colors';
@@ -246,88 +245,20 @@ const timerStyles = StyleSheet.create({
   },
 });
 
-// ─── ConsentCheckbox ──────────────────────────────────────────────────────────
-
-interface ConsentCheckboxProps {
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-}
-
-/**
- * Member recording consent checkbox displayed before starting a session.
- */
-function ConsentCheckbox({ checked, onChange }: ConsentCheckboxProps): React.JSX.Element {
-  return (
-    <TouchableOpacity
-      style={[consentStyles.row, checked && consentStyles.rowChecked]}
-      onPress={() => onChange(!checked)}
-      accessibilityRole="checkbox"
-      accessibilityState={{ checked }}
-      accessibilityLabel="I confirm the member has consented to this session being recorded"
-      activeOpacity={0.7}
-    >
-      <View style={[consentStyles.checkbox, checked && consentStyles.checkboxChecked]}>
-        {checked && <Check size={9} color="#FFFFFF" strokeWidth={3} />}
-      </View>
-      <Text style={consentStyles.text}>
-        Member has consented to session recording (required). Announce the
-        recording out loud at the start of the call.
-      </Text>
-    </TouchableOpacity>
-  );
-}
-
-const consentStyles = StyleSheet.create({
-  row: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 10,
-    padding: 10,
-    backgroundColor: colors.background,
-    marginTop: 10,
-  },
-  rowChecked: {
-    borderColor: colors.primary,
-    backgroundColor: colors.primary + '06',
-  },
-  checkbox: {
-    width: 16,
-    height: 16,
-    borderRadius: 4,
-    borderWidth: 2,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 1,
-    flexShrink: 0,
-  },
-  checkboxChecked: {
-    borderColor: colors.primary,
-    backgroundColor: colors.primary,
-  },
-  text: {
-    flex: 1,
-    ...typography.label,
-    color: colors.mutedForeground,
-    lineHeight: 18,
-  },
-});
-
 // ─── SessionCard sub-component ────────────────────────────────────────────────
+//
+// Member-recording consent used to be gated here via a checkbox above the
+// Start Session button. Per Akram instruction the consent flow now happens
+// AFTER the call session starts — handled inside SessionChat.tsx by the Mic
+// button's consent modal. The CHW announces the recording out loud at the
+// start of the call rather than pre-acknowledging it in the queue.
 
 interface SessionCardProps {
   session: SessionData;
   /** Unix ms timestamp for when session entered in_progress status */
   startedAtMs?: number;
-  /** Whether consent checkbox has been checked for this session */
-  consentChecked: boolean;
   /** True when this is the CHW's first session ever with this member */
   isFirstSession: boolean;
-  onConsentChange: (id: string, checked: boolean) => void;
   onStart: (id: string) => void;
   onComplete: (id: string) => void;
   onDocumentSession: (id: string) => void;
@@ -338,9 +269,7 @@ interface SessionCardProps {
 function SessionCard({
   session,
   startedAtMs,
-  consentChecked,
   isFirstSession,
-  onConsentChange,
   onStart,
   onComplete,
   onDocumentSession,
@@ -415,14 +344,6 @@ function SessionCard({
         </View>
       </View>
 
-      {/* Consent checkbox — shown on scheduled sessions before starting */}
-      {isScheduled && (
-        <ConsentCheckbox
-          checked={consentChecked}
-          onChange={(checked) => onConsentChange(session.id, checked)}
-        />
-      )}
-
       {/* Completed stats */}
       {isCompleted && (
         <View style={cardStyles.statsRow}>
@@ -465,15 +386,10 @@ function SessionCard({
         <View style={cardStyles.actionRow}>
           {isScheduled && (
             <TouchableOpacity
-              style={[
-                cardStyles.startButton,
-                !consentChecked && cardStyles.startButtonDisabled,
-              ]}
+              style={cardStyles.startButton}
               onPress={() => onStart(session.id)}
-              disabled={!consentChecked}
               accessibilityLabel={`Start session with ${session.memberName}`}
               accessibilityRole="button"
-              accessibilityState={{ disabled: !consentChecked }}
             >
               <Play size={14} color="#FFFFFF" />
               <Text style={cardStyles.startButtonText}>Start Session</Text>
@@ -819,9 +735,6 @@ export function CHWSessionsScreen(): React.JSX.Element {
   // The API handles the actual status; this is just for the timer UX.
   const startTimestamps = useRef<Record<string, number>>({});
 
-  // Consent checkbox state per session
-  const [consentState, setConsentState] = useState<Record<string, boolean>>({});
-
   // Documentation modal state
   const [documentingSessionId, setDocumentingSessionId] = useState<string | null>(null);
 
@@ -866,10 +779,6 @@ export function CHWSessionsScreen(): React.JSX.Element {
   }, [allSessions]);
 
   const displayedSessions = activeTab === 'active' ? activeSessions : completedSessions;
-
-  const handleConsentChange = useCallback((id: string, checked: boolean): void => {
-    setConsentState((prev) => ({ ...prev, [id]: checked }));
-  }, []);
 
   const handleStart = useCallback((id: string): void => {
     startTimestamps.current[id] = Date.now();
@@ -920,9 +829,7 @@ export function CHWSessionsScreen(): React.JSX.Element {
         startedAtMs={
           item.status === 'in_progress' ? (startTimestamps.current[item.id] ?? Date.now()) : undefined
         }
-        consentChecked={consentState[item.id] ?? false}
         isFirstSession={firstSessionIds.has(item.id)}
-        onConsentChange={handleConsentChange}
         onStart={handleStart}
         onComplete={handleComplete}
         onDocumentSession={handleDocumentSession}
@@ -931,9 +838,7 @@ export function CHWSessionsScreen(): React.JSX.Element {
       />
     ),
     [
-      consentState,
       firstSessionIds,
-      handleConsentChange,
       handleStart,
       handleComplete,
       handleDocumentSession,
