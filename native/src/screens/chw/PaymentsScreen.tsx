@@ -115,8 +115,8 @@ export function PaymentsScreen({ navigation }: Props): React.JSX.Element {
             </View>
             <Text style={s.heroTitleActive}>Direct deposit active</Text>
             <Text style={s.heroSubtitleActive}>
-              You're all set to receive payouts. Funds arrive in your bank 2 business days
-              after each session is paid.
+              You're all set to receive payouts. Stripe issues weekly payouts every
+              Friday for sessions approved that week.
             </Text>
           </View>
 
@@ -230,7 +230,7 @@ export function PaymentsScreen({ navigation }: Props): React.JSX.Element {
         />
         <BulletRow
           icon={<TrendingUp size={18} color={colors.primary} />}
-          text="Weekly automatic payouts. Funds arrive 2 business days after each session is paid."
+          text="Weekly automatic payouts every Friday. Funds typically arrive in your bank within 2 business days."
         />
 
         <Pressable

@@ -116,7 +116,8 @@ const CREDENTIAL_STATUS_LABELS: Record<CredentialStatus | 'rejected', string> = 
   rejected: 'Rejected',
 };
 
-const BIO_MAX_CHARS = 400;
+// Bio length cap. Was 400; Jemal Figma feedback: keep it short and sweet (~200).
+const BIO_MAX_CHARS = 200;
 
 // ─── Draft profile shape ──────────────────────────────────────────────────────
 
@@ -164,6 +165,71 @@ function formatCredentialDate(iso: string): string {
     year: 'numeric',
   });
 }
+
+// ─── SectionHeader with optional per-section edit pencil ─────────────────────
+//
+// Per Jemal's Figma feedback: each section gets its own pencil instead of one
+// global "Edit" button. Tapping the pencil enters the existing edit mode (same
+// state — keeps the refactor minimal). Hidden once edit mode is active so the
+// header strip stays clean.
+
+interface SectionHeaderProps {
+  title: string;
+  /** Hide the pencil — used in view mode when no editable equivalent exists */
+  hideEdit?: boolean;
+  isEditing: boolean;
+  onEdit: () => void;
+  /** Override marginBottom to match adjacent layout */
+  noMarginBottom?: boolean;
+}
+
+function SectionHeader({
+  title,
+  hideEdit,
+  isEditing,
+  onEdit,
+  noMarginBottom,
+}: SectionHeaderProps): React.JSX.Element {
+  return (
+    <View style={[sectionHeaderStyles.row, noMarginBottom && { marginBottom: 0 }]}>
+      <Text style={sectionHeaderStyles.title}>{title}</Text>
+      {!isEditing && !hideEdit ? (
+        <TouchableOpacity
+          style={sectionHeaderStyles.pencilBtn}
+          onPress={onEdit}
+          accessibilityRole="button"
+          accessibilityLabel={`Edit ${title}`}
+          hitSlop={8}
+        >
+          <Edit2 size={13} color={colors.primary} />
+        </TouchableOpacity>
+      ) : null}
+    </View>
+  );
+}
+
+const sectionHeaderStyles = StyleSheet.create({
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  title: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 16,
+    lineHeight: 22,
+    color: '#1E3320',
+  },
+  pencilBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.primary + '12',
+  },
+});
 
 // ─── InfoRow (view mode) ──────────────────────────────────────────────────────
 
@@ -592,7 +658,11 @@ export function CHWProfileScreen(): React.JSX.Element {
 
         {/* ── Personal info ── */}
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Personal Info</Text>
+          <SectionHeader
+            title="Personal Info"
+            isEditing={isEditing}
+            onEdit={handleEditPress}
+          />
           {isEditing ? (
             <>
               <EditField
@@ -643,7 +713,11 @@ export function CHWProfileScreen(): React.JSX.Element {
 
         {/* ── Bio ── */}
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>About</Text>
+          <SectionHeader
+            title="About"
+            isEditing={isEditing}
+            onEdit={handleEditPress}
+          />
           {isEditing ? (
             <EditField
               label="Bio"
@@ -660,7 +734,11 @@ export function CHWProfileScreen(): React.JSX.Element {
 
         {/* ── Specializations ── */}
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Specializations</Text>
+          <SectionHeader
+            title="Specializations"
+            isEditing={isEditing}
+            onEdit={handleEditPress}
+          />
           {isEditing ? (
             <>
               <Text style={styles.toggleHint}>Tap to select your specializations</Text>
@@ -716,7 +794,11 @@ export function CHWProfileScreen(): React.JSX.Element {
 
         {/* ── Languages ── */}
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Languages</Text>
+          <SectionHeader
+            title="Languages"
+            isEditing={isEditing}
+            onEdit={handleEditPress}
+          />
           {isEditing ? (
             <>
               <Text style={styles.toggleHint}>Tap to select the languages you speak</Text>

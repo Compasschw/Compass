@@ -23,6 +23,7 @@ import {
   CalendarDays,
   Clock,
   MapPin,
+  Target,
 } from 'lucide-react-native';
 
 import { colors } from '../../theme/colors';
@@ -32,6 +33,30 @@ import {
   type CalendarEvent,
   type Vertical,
 } from '../../data/mock';
+
+// ─── Member need-journey status (mocked) — see CHWDashboardScreen ─────────────
+// TODO(backend): expose journey_status per session.
+type JourneyStatus = 'starting' | 'awaiting_confirmation' | 'resolved';
+const JOURNEY_COLORS: Record<JourneyStatus, string> = {
+  starting: '#EF4444',
+  awaiting_confirmation: '#F59E0B',
+  resolved: '#22C55E',
+};
+const JOURNEY_LABELS: Record<JourneyStatus, string> = {
+  starting: 'Starting',
+  awaiting_confirmation: 'Awaiting confirmation',
+  resolved: 'Resolved',
+};
+function mockJourneyStatus(id: string): JourneyStatus {
+  const sum = id.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+  const idx = sum % 3;
+  return idx === 0 ? 'starting' : idx === 1 ? 'awaiting_confirmation' : 'resolved';
+}
+const JOURNEY_DESCRIPTIONS: Record<JourneyStatus, string> = {
+  starting: 'Just started finding the resource',
+  awaiting_confirmation: 'Resources shared — waiting on member',
+  resolved: 'Resources used and member moved on',
+};
 import { useSessions, type SessionData } from '../../hooks/useApiQueries';
 import { useRefreshControl } from '../../hooks/useRefreshControl';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
@@ -45,9 +70,6 @@ const MONTH_NAMES = [
 ];
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-
-/** Maximum dot indicators per cell before "+N" overflow label. */
-const MAX_DOTS_PER_CELL = 3;
 
 const VERTICAL_COLORS: Record<Vertical | 'goal_milestone', string> = {
   housing: '#3B82F6',
@@ -150,6 +172,7 @@ interface EventDetailCardProps {
 function EventDetailCard({ event }: EventDetailCardProps): React.JSX.Element {
   const barColor = eventColor(event);
   const isSession = event.type === 'session';
+  const journey = mockJourneyStatus(event.id);
 
   return (
     <View style={detailStyles.card}>
@@ -165,9 +188,12 @@ function EventDetailCard({ event }: EventDetailCardProps): React.JSX.Element {
                 {verticalLabels[event.vertical]}
               </Text>
             </View>
-          ) : event.type === 'goal_milestone' ? (
-            <View style={[detailStyles.badge, { backgroundColor: colors.primary + '18' }]}>
-              <Text style={[detailStyles.badgeText, { color: colors.primary }]}>Milestone</Text>
+          ) : null}
+          {/* Journey-status pill — same dashboard treatment per Jemal */}
+          {isSession ? (
+            <View style={detailStyles.journeyPill}>
+              <View style={[detailStyles.journeyDot, { backgroundColor: JOURNEY_COLORS[journey] }]} />
+              <Text style={detailStyles.journeyText}>{JOURNEY_LABELS[journey]}</Text>
             </View>
           ) : null}
         </View>
@@ -184,14 +210,28 @@ function EventDetailCard({ event }: EventDetailCardProps): React.JSX.Element {
 
         {event.memberName ? (
           <View style={detailStyles.metaRow}>
-            {isSession ? (
-              <MapPin size={12} color={colors.mutedForeground} />
-            ) : (
-              <CalendarDays size={12} color={colors.mutedForeground} />
-            )}
+            <CalendarDays size={12} color={colors.mutedForeground} />
             <Text style={detailStyles.metaText}>
               {event.memberName}
               {isSession && event.chwName ? ` · ${event.chwName}` : ''}
+            </Text>
+          </View>
+        ) : null}
+
+        {/* Member address — TODO(backend): expose member.address on SessionData */}
+        {isSession ? (
+          <View style={detailStyles.metaRow}>
+            <MapPin size={12} color={colors.mutedForeground} />
+            <Text style={detailStyles.metaText}>1834 W 6th St, Los Angeles, CA 90057</Text>
+          </View>
+        ) : null}
+
+        {/* Quick-action goal note — TODO(backend): expose session.goal_note */}
+        {isSession ? (
+          <View style={detailStyles.actionNote}>
+            <Target size={12} color={colors.primary} />
+            <Text style={detailStyles.actionNoteText}>
+              Goal: walk through Medi-Cal renewal paperwork together.
             </Text>
           </View>
         ) : null}
@@ -261,6 +301,47 @@ const detailStyles = StyleSheet.create({
     color: '#6B7A6B',
     flex: 1,
   },
+  journeyPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 100,
+    backgroundColor: '#F4F1ED',
+    borderWidth: 1,
+    borderColor: '#DDD6CC',
+    flexShrink: 0,
+  },
+  journeyDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  journeyText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 11,
+    color: '#6B7A6B',
+  },
+  actionNote: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    marginTop: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: colors.primary + '0D',
+    borderLeftWidth: 3,
+    borderLeftColor: colors.primary,
+  },
+  actionNoteText: {
+    flex: 1,
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12,
+    color: colors.foreground,
+    lineHeight: 16,
+  },
 });
 
 // ─── Main Component ───────────────────────────────────────────────────────────
@@ -277,8 +358,10 @@ export function CHWCalendarScreen(): React.JSX.Element {
   const { data: rawSessions, isLoading, error, refetch } = useSessions();
   const refresh = useRefreshControl([refetch]);
 
-  // Default to April 2026 to show mock data
-  const [currentDate, setCurrentDate] = useState(new Date(2026, 3, 1));
+  // Default to today's month so the chart reflects real data on first open.
+  const [currentDate, setCurrentDate] = useState(
+    () => new Date(TODAY_YEAR, TODAY_MONTH, 1),
+  );
   const [selectedDay, setSelectedDay] = useState<number | null>(null);
 
   const year = currentDate.getFullYear();
@@ -386,11 +469,10 @@ export function CHWCalendarScreen(): React.JSX.Element {
 
               const key = toDateKey(year, month, day);
               const dayEvents = eventsByDate.get(key) ?? [];
+              const memberCount = dayEvents.length;
               const isToday =
                 year === TODAY_YEAR && month === TODAY_MONTH && day === TODAY_DAY;
               const isSelected = selectedDay === day;
-              const visibleEvents = dayEvents.slice(0, MAX_DOTS_PER_CELL);
-              const overflowCount = dayEvents.length - visibleEvents.length;
 
               return (
                 <TouchableOpacity
@@ -401,7 +483,7 @@ export function CHWCalendarScreen(): React.JSX.Element {
                   ]}
                   onPress={() => handleDayPress(day)}
                   accessibilityRole="button"
-                  accessibilityLabel={`${MONTH_NAMES[month]} ${day}${dayEvents.length > 0 ? `, ${dayEvents.length} event${dayEvents.length !== 1 ? 's' : ''}` : ''}`}
+                  accessibilityLabel={`${MONTH_NAMES[month]} ${day}${memberCount > 0 ? `, ${memberCount} member${memberCount !== 1 ? 's' : ''}` : ''}`}
                   accessibilityState={{ selected: isSelected }}
                 >
                   {/* Day number */}
@@ -422,21 +504,12 @@ export function CHWCalendarScreen(): React.JSX.Element {
                     </Text>
                   </View>
 
-                  {/* Event dots */}
-                  {dayEvents.length > 0 ? (
-                    <View style={styles.dotsRow}>
-                      {visibleEvents.map((event) => (
-                        <View
-                          key={event.id}
-                          style={[
-                            styles.dot,
-                            { backgroundColor: eventColor(event) },
-                          ]}
-                        />
-                      ))}
-                      {overflowCount > 0 ? (
-                        <Text style={styles.overflowLabel}>+{overflowCount}</Text>
-                      ) : null}
+                  {/* Member-count badge — replaces the per-vertical dot strip
+                      per Jemal's Calendar Figma feedback ("better to put a
+                      number indicating how many members they have for that day"). */}
+                  {memberCount > 0 ? (
+                    <View style={styles.memberCountBadge}>
+                      <Text style={styles.memberCountText}>{memberCount}</Text>
                     </View>
                   ) : null}
                 </TouchableOpacity>
@@ -464,25 +537,22 @@ export function CHWCalendarScreen(): React.JSX.Element {
           </View>
         ) : null}
 
-        {/* Legend */}
+        {/* Legend — now shows the member-journey color code per Jemal's
+            Figma feedback (was vertical-color legend; verticals now show in
+            the EventDetailCard badge below). */}
         <View style={styles.legendCard}>
-          <Text style={styles.legendTitle}>Legend</Text>
-          <View style={styles.legendGrid}>
-            {(Object.entries(verticalLabels) as [Vertical, string][]).map(([key, label]) => (
-              <View key={key} style={styles.legendItem}>
-                <View
-                  style={[styles.legendDot, { backgroundColor: VERTICAL_COLORS[key] }]}
-                />
-                <Text style={styles.legendText}>{label}</Text>
-              </View>
-            ))}
-            <View style={styles.legendItem}>
+          <Text style={styles.legendTitle}>Member Journey</Text>
+          {(Object.keys(JOURNEY_COLORS) as JourneyStatus[]).map((key) => (
+            <View key={key} style={styles.legendRow}>
               <View
-                style={[styles.legendDot, { backgroundColor: VERTICAL_COLORS.goal_milestone }]}
+                style={[styles.legendDot, { backgroundColor: JOURNEY_COLORS[key] }]}
               />
-              <Text style={styles.legendText}>Milestone</Text>
+              <View style={styles.legendTextBlock}>
+                <Text style={styles.legendLabel}>{JOURNEY_LABELS[key]}</Text>
+                <Text style={styles.legendDesc}>{JOURNEY_DESCRIPTIONS[key]}</Text>
+              </View>
             </View>
-          </View>
+          ))}
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -589,9 +659,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 2,
+    borderWidth: 1.5,
+    borderColor: 'transparent',
   },
+  // "Today" reads as an outlined ring so it's distinguishable from the
+  // filled-green member-count badge below it. (Was previously a filled green
+  // pill which collided visually with the badge.)
   dayNumberToday: {
-    backgroundColor: '#3D5A3E',
+    borderColor: colors.primary,
+    backgroundColor: 'transparent',
   },
   dayNumberText: {
     fontFamily: 'PlusJakartaSans_400Regular',
@@ -600,28 +676,28 @@ const styles = StyleSheet.create({
     lineHeight: 14,
   },
   dayNumberTextToday: {
-    color: '#FFFFFF',
+    color: colors.primary,
     fontFamily: 'PlusJakartaSans_600SemiBold',
   },
   dayNumberTextSelected: {
     color: '#3D5A3E',
     fontFamily: 'PlusJakartaSans_600SemiBold',
   },
-  dotsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 2,
+  memberCountBadge: {
+    minWidth: 22,
+    height: 22,
+    paddingHorizontal: 6,
+    borderRadius: 11,
+    backgroundColor: colors.primary,
     alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
   },
-  dot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  overflowLabel: {
-    fontSize: 8,
-    color: colors.mutedForeground,
-    lineHeight: 10,
+  memberCountText: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 11,
+    lineHeight: 14,
+    color: '#FFFFFF',
   },
   detailSection: {
     marginBottom: 20,
@@ -668,27 +744,32 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     marginBottom: 12,
   },
-  legendGrid: {
+  legendRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-  },
-  legendItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    width: '45%',
+    alignItems: 'flex-start',
+    gap: 10,
+    paddingVertical: 6,
   },
   legendDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
     flexShrink: 0,
+    marginTop: 2,
   },
-  legendText: {
+  legendTextBlock: {
+    flex: 1,
+    gap: 1,
+  },
+  legendLabel: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 13,
+    color: '#1E3320',
+  },
+  legendDesc: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 12,
     color: '#6B7A6B',
-    flex: 1,
+    lineHeight: 16,
   },
 });

@@ -50,10 +50,7 @@ import { ErrorState } from '../../components/shared/ErrorState';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-type FilterTab = 'all' | Vertical;
-
-const FILTER_TABS: { key: FilterTab; label: string }[] = [
-  { key: 'all', label: 'All' },
+const FILTER_VERTICALS: { key: Vertical; label: string }[] = [
   { key: 'housing', label: 'Housing' },
   { key: 'food', label: 'Food' },
   { key: 'mental_health', label: 'Mental Health' },
@@ -376,7 +373,9 @@ const cardStyles = StyleSheet.create({
  * and a summary stat row showing new / accepted / passed counts.
  */
 export function CHWRequestsScreen(): React.JSX.Element {
-  const [activeFilter, setActiveFilter] = useState<FilterTab>('all');
+  // Multi-select filter (per Jemal's Figma feedback: "select all that applies").
+  // Empty set == "All" (no filter applied).
+  const [selectedVerticals, setSelectedVerticals] = useState<Set<Vertical>>(new Set());
 
   const { data: rawRequests, isLoading, error, refetch } = useRequests();
   const acceptRequest = useAcceptRequest();
@@ -395,11 +394,24 @@ export function CHWRequestsScreen(): React.JSX.Element {
 
   const filteredRequests = useMemo<ServiceRequestData[]>(
     () =>
-      activeFilter === 'all'
+      selectedVerticals.size === 0
         ? allOpenRequests
-        : allOpenRequests.filter((r) => r.vertical === activeFilter),
-    [activeFilter, allOpenRequests],
+        : allOpenRequests.filter((r) => selectedVerticals.has(r.vertical as Vertical)),
+    [selectedVerticals, allOpenRequests],
   );
+
+  const toggleVertical = useCallback((v: Vertical) => {
+    setSelectedVerticals((prev) => {
+      const next = new Set(prev);
+      if (next.has(v)) next.delete(v);
+      else next.add(v);
+      return next;
+    });
+  }, []);
+
+  const clearFilters = useCallback(() => {
+    setSelectedVerticals(new Set());
+  }, []);
 
   const handleAccept = useCallback(async (id: string): Promise<void> => {
     await acceptRequest.mutateAsync(id);
@@ -434,11 +446,9 @@ export function CHWRequestsScreen(): React.JSX.Element {
     );
   }
 
-  const tabCount = useCallback(
-    (key: FilterTab): number => {
-      if (key === 'all') return allOpenRequests.length;
-      return allOpenRequests.filter((r) => r.vertical === (key as string)).length;
-    },
+  const verticalCount = useCallback(
+    (key: Vertical): number =>
+      allOpenRequests.filter((r) => r.vertical === (key as string)).length,
     [allOpenRequests],
   );
 
@@ -480,24 +490,37 @@ export function CHWRequestsScreen(): React.JSX.Element {
           </View>
         </View>
 
-        {/* Filter tabs */}
+        {/* Multi-select filter chips — Jemal Figma feedback */}
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.tabsRow}
         >
-          {FILTER_TABS.map((tab) => {
-            const isActive = activeFilter === tab.key;
-            const count = tabCount(tab.key);
+          {/* "All" chip — active when nothing is selected. Tapping clears. */}
+          <TouchableOpacity
+            style={[styles.tab, selectedVerticals.size === 0 && styles.tabActive]}
+            onPress={clearFilters}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: selectedVerticals.size === 0 }}
+            accessibilityLabel="Show all categories"
+          >
+            <Text style={[styles.tabText, selectedVerticals.size === 0 && styles.tabTextActive]}>
+              All {allOpenRequests.length > 0 ? allOpenRequests.length : ''}
+            </Text>
+          </TouchableOpacity>
+          {FILTER_VERTICALS.map((tab) => {
+            const isSelected = selectedVerticals.has(tab.key);
+            const count = verticalCount(tab.key);
             return (
               <TouchableOpacity
                 key={tab.key}
-                style={[styles.tab, isActive && styles.tabActive]}
-                onPress={() => setActiveFilter(tab.key)}
-                accessibilityRole="tab"
-                accessibilityState={{ selected: isActive }}
+                style={[styles.tab, isSelected && styles.tabActive]}
+                onPress={() => toggleVertical(tab.key)}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: isSelected }}
+                accessibilityLabel={`Toggle ${tab.label} filter`}
               >
-                <Text style={[styles.tabText, isActive && styles.tabTextActive]}>
+                <Text style={[styles.tabText, isSelected && styles.tabTextActive]}>
                   {tab.label}
                   {count > 0 ? ` ${count}` : ''}
                 </Text>
@@ -530,9 +553,9 @@ export function CHWRequestsScreen(): React.JSX.Element {
           </View>
           <Text style={styles.emptyTitle}>No open requests</Text>
           <Text style={styles.emptySubtext}>
-            {activeFilter === 'all'
+            {selectedVerticals.size === 0
               ? 'No open requests right now. Check back soon!'
-              : 'No open requests in this category. Check back soon!'}
+              : 'No open requests in the selected categories. Try clearing filters.'}
           </Text>
         </View>
       )}

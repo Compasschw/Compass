@@ -46,6 +46,55 @@ import {
   type Vertical,
   type SessionDocumentation,
 } from '../../data/mock';
+
+// ─── Vertical labels (for "Need" badge per Jemal Sessions feedback) ──────────
+const VERTICAL_LABELS: Record<Vertical, string> = {
+  housing: 'Housing',
+  rehab: 'Rehab',
+  food: 'Food',
+  mental_health: 'Mental Health',
+  healthcare: 'Healthcare',
+};
+
+// ─── Member need-journey status (mocked) — see CHWDashboardScreen ────────────
+// TODO(backend): expose journey_status per session.
+type JourneyStatus = 'starting' | 'awaiting_confirmation' | 'resolved';
+const JOURNEY_COLORS: Record<JourneyStatus, string> = {
+  starting: '#EF4444',
+  awaiting_confirmation: '#F59E0B',
+  resolved: '#22C55E',
+};
+const JOURNEY_LABELS: Record<JourneyStatus, string> = {
+  starting: 'Starting',
+  awaiting_confirmation: 'Awaiting confirmation',
+  resolved: 'Resolved',
+};
+function mockJourneyStatus(id: string): JourneyStatus {
+  const sum = id.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+  const idx = sum % 3;
+  return idx === 0 ? 'starting' : idx === 1 ? 'awaiting_confirmation' : 'resolved';
+}
+
+// ─── Active-queue priority order (Jemal: sort by urgency + scheduled time) ──
+// Lower number = higher priority. Falls back to scheduledAt for tie-break.
+const URGENCY_PRIORITY: Record<string, number> = {
+  in_progress: 0,
+  urgent: 1,
+  soon: 2,
+  routine: 3,
+};
+function urgencyRank(s: SessionData): number {
+  if (s.status === 'in_progress') return URGENCY_PRIORITY.in_progress;
+  // SessionData doesn't carry urgency directly; the request that spawned it
+  // does. Until backend joins it through, fall back to a deterministic mock
+  // so the sort is at least stable per session.
+  // TODO(backend): expose request.urgency on SessionData (or expose
+  // session.priority computed server-side).
+  const pseudo = mockJourneyStatus(s.id);
+  if (pseudo === 'starting') return URGENCY_PRIORITY.urgent;
+  if (pseudo === 'awaiting_confirmation') return URGENCY_PRIORITY.soon;
+  return URGENCY_PRIORITY.routine;
+}
 import {
   useSessions,
   useStartSession,
@@ -221,7 +270,8 @@ function ConsentCheckbox({ checked, onChange }: ConsentCheckboxProps): React.JSX
         {checked && <Check size={9} color="#FFFFFF" strokeWidth={3} />}
       </View>
       <Text style={consentStyles.text}>
-        Member has consented to session recording (required)
+        Member has consented to session recording (required). Announce the
+        recording out loud at the start of the call.
       </Text>
     </TouchableOpacity>
   );
@@ -275,26 +325,33 @@ interface SessionCardProps {
   startedAtMs?: number;
   /** Whether consent checkbox has been checked for this session */
   consentChecked: boolean;
+  /** True when this is the CHW's first session ever with this member */
+  isFirstSession: boolean;
   onConsentChange: (id: string, checked: boolean) => void;
   onStart: (id: string) => void;
   onComplete: (id: string) => void;
   onDocumentSession: (id: string) => void;
   onOpenChat: (id: string) => void;
+  onOpenMemberProfile: (memberId: string | undefined, memberName: string | undefined) => void;
 }
 
 function SessionCard({
   session,
   startedAtMs,
   consentChecked,
+  isFirstSession,
   onConsentChange,
   onStart,
   onComplete,
   onDocumentSession,
   onOpenChat,
+  onOpenMemberProfile,
 }: SessionCardProps): React.JSX.Element {
   const verticalColor = VERTICAL_COLORS[session.vertical as Vertical] ?? '#6B7A6B';
+  const verticalLabel = VERTICAL_LABELS[session.vertical as Vertical] ?? session.vertical;
   const statusColor = SESSION_STATUS_COLORS[session.status as SessionStatus] ?? colors.mutedForeground;
   const billingStatus = deriveBillingStatus(session.id);
+  const journey = mockJourneyStatus(session.id);
 
   const isScheduled = session.status === 'scheduled';
   const isInProgress = session.status === 'in_progress';
@@ -310,17 +367,46 @@ function SessionCard({
         </View>
         <View style={cardStyles.headerInfo}>
           <View style={cardStyles.badgeRow}>
-            <Text style={cardStyles.memberName}>{session.memberName}</Text>
+            {/* Member name → tap opens profile detail (per Jemal: "should be
+                able to click it to see their full profile in more detail") */}
+            <TouchableOpacity
+              onPress={() => onOpenMemberProfile(session.memberId, session.memberName)}
+              accessibilityRole="link"
+              accessibilityLabel={`Open profile for ${session.memberName}`}
+              hitSlop={4}
+            >
+              <Text style={cardStyles.memberNameLink}>{session.memberName}</Text>
+            </TouchableOpacity>
             <View style={[cardStyles.badge, { backgroundColor: statusColor + '18' }]}>
               <Text style={[cardStyles.badgeText, { color: statusColor }]}>
                 {sessionStatusLabels[session.status as SessionStatus] ?? session.status}
               </Text>
             </View>
+            {/* "First session" chip when applicable (Jemal feedback) */}
+            {isFirstSession && (
+              <View style={cardStyles.firstSessionChip}>
+                <Text style={cardStyles.firstSessionChipText}>First session</Text>
+              </View>
+            )}
             {/* Live timer for in-progress sessions */}
             {isInProgress && startedAtMs != null && (
               <SessionTimer startedAtMs={startedAtMs} />
             )}
           </View>
+
+          {/* Need category + journey-status pills */}
+          <View style={cardStyles.subBadgeRow}>
+            <View style={[cardStyles.badge, { backgroundColor: verticalColor + '18' }]}>
+              <Text style={[cardStyles.badgeText, { color: verticalColor }]}>
+                {verticalLabel}
+              </Text>
+            </View>
+            <View style={cardStyles.journeyPill}>
+              <View style={[cardStyles.journeyDot, { backgroundColor: JOURNEY_COLORS[journey] }]} />
+              <Text style={cardStyles.journeyText}>{JOURNEY_LABELS[journey]}</Text>
+            </View>
+          </View>
+
           <Text style={cardStyles.meta}>
             {formatScheduledAt(session.scheduledAt)}
             {' · '}
@@ -480,6 +566,54 @@ const cardStyles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 22,
     color: '#1E3320',
+  },
+  memberNameLink: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 16,
+    lineHeight: 22,
+    color: colors.primary,
+    textDecorationLine: 'underline',
+  },
+  subBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 4,
+  },
+  firstSessionChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 100,
+    backgroundColor: colors.compassGold + '22',
+    borderWidth: 1,
+    borderColor: colors.compassGold + '50',
+  },
+  firstSessionChipText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 11,
+    color: colors.compassGold,
+  },
+  journeyPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 100,
+    backgroundColor: '#F4F1ED',
+    borderWidth: 1,
+    borderColor: '#DDD6CC',
+  },
+  journeyDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  journeyText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 11,
+    color: '#6B7A6B',
   },
   badge: {
     paddingHorizontal: 8,
@@ -696,15 +830,40 @@ export function CHWSessionsScreen(): React.JSX.Element {
 
   const allSessions = rawSessions ?? [];
 
-  const activeSessions = useMemo<SessionData[]>(
-    () => allSessions.filter((s) => s.status === 'scheduled' || s.status === 'in_progress'),
-    [allSessions],
-  );
+  // Active queue sorted by urgency, then by scheduled time (Jemal Sessions
+  // feedback: "ensure this queue shows up in order of priority and
+  // scheduled date/time").
+  const activeSessions = useMemo<SessionData[]>(() => {
+    const arr = allSessions.filter(
+      (s) => s.status === 'scheduled' || s.status === 'in_progress',
+    );
+    return arr.slice().sort((a, b) => {
+      const ra = urgencyRank(a);
+      const rb = urgencyRank(b);
+      if (ra !== rb) return ra - rb;
+      return new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime();
+    });
+  }, [allSessions]);
 
   const completedSessions = useMemo<SessionData[]>(
     () => allSessions.filter((s) => s.status === 'completed'),
     [allSessions],
   );
+
+  // For each member, the earliest session is treated as their "first session"
+  // for the "First session" chip per Jemal feedback. Recomputed whenever the
+  // session list changes.
+  // TODO(backend): expose session.is_first_with_member computed server-side.
+  const firstSessionIds = useMemo<Set<string>>(() => {
+    const earliest = new Map<string, { id: string; ts: number }>();
+    for (const s of allSessions) {
+      if (!s.memberId) continue;
+      const ts = new Date(s.scheduledAt).getTime();
+      const cur = earliest.get(s.memberId);
+      if (!cur || ts < cur.ts) earliest.set(s.memberId, { id: s.id, ts });
+    }
+    return new Set([...earliest.values()].map((v) => v.id));
+  }, [allSessions]);
 
   const displayedSessions = activeTab === 'active' ? activeSessions : completedSessions;
 
@@ -743,6 +902,17 @@ export function CHWSessionsScreen(): React.JSX.Element {
     setChatSessionId(id);
   }, []);
 
+  const handleOpenMemberProfile = useCallback(
+    (memberId: string | undefined, memberName: string | undefined): void => {
+      // TODO(routing): wire to a ChwMemberProfile screen once it exists.
+      // Until then, surface a friendly toast/Alert so the tap is acknowledged.
+      // (Using console for the demo; Alert.alert is unreliable on web.)
+      // eslint-disable-next-line no-console
+      console.info(`[chw] open member profile`, { memberId, memberName });
+    },
+    [],
+  );
+
   const renderItem = useCallback(
     ({ item }: { item: SessionData }) => (
       <SessionCard
@@ -751,20 +921,24 @@ export function CHWSessionsScreen(): React.JSX.Element {
           item.status === 'in_progress' ? (startTimestamps.current[item.id] ?? Date.now()) : undefined
         }
         consentChecked={consentState[item.id] ?? false}
+        isFirstSession={firstSessionIds.has(item.id)}
         onConsentChange={handleConsentChange}
         onStart={handleStart}
         onComplete={handleComplete}
         onDocumentSession={handleDocumentSession}
         onOpenChat={handleOpenChat}
+        onOpenMemberProfile={handleOpenMemberProfile}
       />
     ),
     [
       consentState,
+      firstSessionIds,
       handleConsentChange,
       handleStart,
       handleComplete,
       handleDocumentSession,
       handleOpenChat,
+      handleOpenMemberProfile,
     ],
   );
 
