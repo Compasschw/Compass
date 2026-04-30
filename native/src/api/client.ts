@@ -185,8 +185,21 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
     let detail = `HTTP ${response.status}`;
 
     try {
-      const errorBody = (await response.json()) as { detail?: string };
-      detail = errorBody.detail ?? detail;
+      // FastAPI's `detail` can be a string (HTTPException(detail="...")) or
+      // a dict (HTTPException(detail={"message": "...", ...})). The dict
+      // shape is used by endpoints that want to return structured error
+      // payloads — e.g. `/chw/intake/submit` returns
+      // `{message, missing_fields}`. Normalise both into a readable string
+      // for ApiError so toasts / banners stay legible regardless of source.
+      const errorBody = (await response.json()) as {
+        detail?: string | { message?: string; [k: string]: unknown };
+      };
+      const raw = errorBody.detail;
+      if (typeof raw === 'string') {
+        detail = raw;
+      } else if (raw && typeof raw === 'object') {
+        detail = typeof raw.message === 'string' ? raw.message : JSON.stringify(raw);
+      }
     } catch {
       // Body was not JSON — fall back to the status string.
     }

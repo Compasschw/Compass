@@ -35,17 +35,28 @@ router = APIRouter(prefix="/api/v1/chw/intake", tags=["chw-intake"])
 
 VALID_OPTIONS: dict[str, set[str]] = {
     # Section 1 — About You
+    # `no_experience` added per Jemal feedback ("what if they haven't worked
+    # in any role as CHW?"). The original question framing assumed prior
+    # experience; we now accept candidates who are new to the role.
     "years_experience": {
+        "no_experience",
         "less_than_1_year", "1_2_years", "3_5_years", "6_10_years", "more_than_10_years",
     },
     "employment_status": {
         "full_time", "part_time", "contract", "volunteer", "seeking",
     },
+    # `middle_school` added per Jemal feedback. We don't gate on this — the
+    # answer is informational and used by the matching service to surface
+    # entry-level training resources when needed.
     "education_level": {
+        "middle_school",
         "hs_ged", "some_college", "associates", "bachelors", "graduate",
     },
+    # `case_management` added per Jemal feedback ("Add an option for case
+    # management or something similar"). Many CHW-adjacent practitioners
+    # come from case-management or social-work settings.
     "primary_setting": {
-        "cbo", "mcp", "fqhc", "hospital", "county_public_health",
+        "cbo", "mcp", "fqhc", "hospital", "county_public_health", "case_management",
     },
     # Section 2 — Credentials
     "ca_chw_certificate": {
@@ -315,12 +326,28 @@ async def submit_intake(
     if row is None:
         raise HTTPException(status_code=404, detail="Intake not started yet.")
 
-    required_fields = list(VALID_OPTIONS.keys())
+    # Optional fields per Jemal Figma feedback:
+    #   - `training_pathway` (Q6): only relevant when the CHW holds or is
+    #     pursuing a CA CHW certificate (Q5 = ca_chw_certificate). When Q5
+    #     is "no_not_pursued", Q6 is hidden client-side.
+    #   - `other_language_fluency` (Q11): redundant with `additional_language`
+    #     (Q12) — if Q12 is set the member already speaks another language.
+    OPTIONAL_FIELDS = {"training_pathway", "other_language_fluency"}
+    required_fields = [f for f in VALID_OPTIONS.keys() if f not in OPTIONAL_FIELDS]
     missing = [f for f in required_fields if getattr(row, f) is None]
     if missing:
+        # Friendlier human-readable list so the client can surface specific
+        # questions to revisit (instead of opaque field names). The
+        # structured `missing_fields` is preserved for any future client
+        # that wants to navigate directly to those questions.
+        readable = ", ".join(f.replace("_", " ").title() for f in missing[:5])
+        more = f" (and {len(missing) - 5} more)" if len(missing) > 5 else ""
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={"message": "Intake is incomplete.", "missing_fields": missing},
+            detail={
+                "message": f"Intake is incomplete. Missing: {readable}{more}.",
+                "missing_fields": missing,
+            },
         )
 
     row.completed_at = datetime.now(UTC)

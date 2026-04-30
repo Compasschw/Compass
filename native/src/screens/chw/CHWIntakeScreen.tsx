@@ -55,6 +55,15 @@ export type IntakeQuestion = {
   /** When value = this, show the free-text "Other" input under field `otherField`. */
   otherValue?: string;
   otherField?: keyof CHWIntakeState;
+  /** When set, the question doesn't gate section-completion or submit. */
+  optional?: boolean;
+  /**
+   * When set, the question only renders + counts toward completion when the
+   * predicate returns true against the current draft. Used for conditional
+   * follow-ups (e.g. "training pathway" only matters if the CHW has or is
+   * pursuing a CHW certificate).
+   */
+  showWhen?: (draft: Partial<CHWIntakeState>) => boolean;
 };
 
 export type IntakeSection = {
@@ -71,6 +80,26 @@ export type IntakeSection = {
 type Option = IntakeOption;
 type Question = IntakeQuestion;
 type Section = IntakeSection;
+
+/**
+ * Returns true when a question is satisfied by the current draft.
+ * Honours `optional` (always passes) and `showWhen` (passes when hidden).
+ * Used by section-completion + submit-eligibility checks.
+ */
+function questionComplete(q: IntakeQuestion, draft: Partial<CHWIntakeState>): boolean {
+  // Hidden by predicate? Not required.
+  if (q.showWhen && !q.showWhen(draft)) return true;
+  // Optional questions never block.
+  if (q.optional) return true;
+  const v = draft[q.id] as string | undefined;
+  if (!v) return false;
+  // "Other — please specify" requires the free-text follow-up too.
+  if (q.otherValue && v === q.otherValue && q.otherField) {
+    const other = draft[q.otherField] as string | undefined;
+    return !!other && other.trim().length > 0;
+  }
+  return true;
+}
 
 // Palette for section badges — each derived from the PDF's colored rule.
 const SECTION_COLORS = {
@@ -91,10 +120,15 @@ export const INTAKE_SECTIONS: Section[] = [
     description: 'A few quick questions about your experience and training.',
     questions: [
       {
+        // Per Jemal Figma feedback: copy now mentions "case management" so
+        // candidates from adjacent backgrounds (case workers, social workers)
+        // aren't excluded by the question framing. `no_experience` option
+        // added for candidates who are new to the role entirely.
         id: 'yearsExperience',
         number: 1,
-        label: 'How many years of experience do you have as a Community Health Worker?',
+        label: 'How many years of experience do you have as a Community Health Worker or in case management?',
         options: [
+          { value: 'no_experience', label: "I'm new to this — no formal CHW or case-management experience yet" },
           { value: 'less_than_1_year', label: 'Less than 1 year' },
           { value: '1_2_years', label: '1–2 years' },
           { value: '3_5_years', label: '3–5 years' },
@@ -115,10 +149,14 @@ export const INTAKE_SECTIONS: Section[] = [
         ],
       },
       {
+        // `middle_school` added per Jemal Figma feedback. We don't gate
+        // matching on this — it's informational, used by the matching service
+        // to surface entry-level training resources when relevant.
         id: 'educationLevel',
         number: 3,
         label: 'What is your highest level of education?',
         options: [
+          { value: 'middle_school', label: 'Middle school' },
           { value: 'hs_ged', label: 'High school diploma or GED' },
           { value: 'some_college', label: 'Some college or vocational training' },
           { value: 'associates', label: "Associate's degree" },
@@ -127,15 +165,19 @@ export const INTAKE_SECTIONS: Section[] = [
         ],
       },
       {
+        // `case_management` added per Jemal Figma feedback so case workers
+        // and social-work practitioners don't have to pick the closest
+        // analogue.
         id: 'primarySetting',
         number: 4,
-        label: 'In which setting have you primarily worked as a CHW?',
+        label: 'In which setting have you primarily worked as a CHW or case manager?',
         options: [
           { value: 'cbo', label: 'Community-based organization' },
           { value: 'mcp', label: 'Health plan or managed care (Medi-Cal)' },
           { value: 'fqhc', label: 'Federally Qualified Health Center (FQHC)' },
           { value: 'hospital', label: 'Hospital or health system' },
           { value: 'county_public_health', label: 'County public health department' },
+          { value: 'case_management', label: 'Case management or social work setting' },
         ],
       },
     ],
@@ -159,9 +201,19 @@ export const INTAKE_SECTIONS: Section[] = [
         ],
       },
       {
+        // Per Jemal Figma feedback: only show this question if the CHW has
+        // or is pursuing a CHW certificate. Hiding it when Q5 is
+        // "no_not_pursued" — they have no pathway to describe yet. The
+        // optional flag + showWhen predicate are what make the section /
+        // submit gates happy when the question is hidden.
         id: 'trainingPathway',
         number: 6,
         label: 'Which best describes your CHW training pathway?',
+        optional: true,
+        showWhen: (d) =>
+          d.caChwCertificate === 'yes_accredited'
+          || d.caChwCertificate === 'in_progress'
+          || d.caChwCertificate === 'related_not_chw',
         options: [
           { value: 'ca_accredited', label: 'California accredited CHW training program (community college)' },
           { value: 'employer_sponsored', label: 'Employer-sponsored training through a CA health plan or FQHC' },
@@ -231,9 +283,16 @@ export const INTAKE_SECTIONS: Section[] = [
         otherField: 'primaryLanguageOther',
       },
       {
+        // Marked optional per Jemal Figma feedback ("Remove this question,
+        // similar to Q12") — Q12 already captures which additional language
+        // the CHW speaks, so this gate question is redundant. Leaving it
+        // visible-but-optional so existing seeded responses stay valid and
+        // CHWs who DO want to specify fluency level still can.
         id: 'otherLanguageFluency',
         number: 11,
         label: 'Are you able to provide services in a language other than English?',
+        hint: 'Optional — skip if you only speak the language above.',
+        optional: true,
         options: [
           { value: 'fluent_one', label: 'Yes, fluent in one additional language' },
           { value: 'fluent_two_plus', label: 'Yes, fluent in two or more additional languages' },
@@ -675,6 +734,9 @@ export function CHWIntakeScreen({
   const [draft, setDraft] = useState<CHWIntakeState>({});
   const [step, setStep] = useState<number>(1); // 1..6 sections, 7 = review
   const [submitted, setSubmitted] = useState(false);
+  /** Inline submit-error message (shown above the Submit button). Replaces
+   *  the previous Alert.alert which fires unreliably on web. */
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   // Hydrate local draft once when the server response arrives. Resume on the
   // section AFTER the last completed one so CHWs don't re-answer finished work.
@@ -698,29 +760,13 @@ export function CHWIntakeScreen({
   // they can advance.
   const currentSectionComplete = useMemo(() => {
     if (!currentSection) return true;
-    return currentSection.questions.every((q) => {
-      const v = draft[q.id] as string | undefined;
-      if (!v) return false;
-      if (q.otherValue && v === q.otherValue && q.otherField) {
-        const other = draft[q.otherField] as string | undefined;
-        return !!other && other.trim().length > 0;
-      }
-      return true;
-    });
+    return currentSection.questions.every((q) => questionComplete(q, draft));
   }, [currentSection, draft]);
 
   const allSectionsComplete = useMemo(
     () =>
       INTAKE_SECTIONS.every((s) =>
-        s.questions.every((q) => {
-          const v = draft[q.id] as string | undefined;
-          if (!v) return false;
-          if (q.otherValue && v === q.otherValue && q.otherField) {
-            const other = draft[q.otherField] as string | undefined;
-            return !!other && other.trim().length > 0;
-          }
-          return true;
-        }),
+        s.questions.every((q) => questionComplete(q, draft)),
       ),
     [draft],
   );
@@ -773,6 +819,7 @@ export function CHWIntakeScreen({
       setSubmitted(true);
       return;
     }
+    setSubmitError(null);
     // Save any outstanding edits one more time, then submit
     try {
       if (Object.keys(draft).length > 0) {
@@ -781,7 +828,16 @@ export function CHWIntakeScreen({
       await submitMutation.mutateAsync();
       setSubmitted(true);
     } catch (e) {
-      Alert.alert('Could not submit', 'Please review your answers and try again.');
+      // Surface the backend's specific message inline (Alert.alert was
+      // unreliable on web — the destructive button never fired). The
+      // backend now returns a friendly string like "Intake is incomplete.
+      // Missing: Years Experience, Employment Status (and 3 more)." via
+      // the api client's dict-detail handling.
+      const message =
+        e instanceof Error && e.message
+          ? e.message
+          : 'Could not submit your intake. Please review your answers and try again.';
+      setSubmitError(message);
     }
   }, [draft, patchMutation, submitMutation, previewMode]);
 
@@ -896,25 +952,36 @@ export function CHWIntakeScreen({
                 <Text style={styles.stepSubtitle}>{currentSection.description}</Text>
               </View>
 
-              {/* Questions */}
-              {currentSection.questions.map((q) => (
-                <QuestionBlock
-                  key={q.id as string}
-                  question={q}
-                  value={draft[q.id] as string | undefined}
-                  otherValue={
-                    q.otherField ? (draft[q.otherField] as string | undefined) : undefined
-                  }
-                  accentColor={currentSection.accentColor}
-                  onChange={(v) => setField(q.id, v)}
-                  onOtherChange={(v) => q.otherField && setField(q.otherField, v)}
-                />
-              ))}
+              {/* Questions — skip those whose `showWhen` predicate is false
+                  for the current draft (e.g. trainingPathway when the CHW has
+                  no certificate). */}
+              {currentSection.questions
+                .filter((q) => !q.showWhen || q.showWhen(draft))
+                .map((q) => (
+                  <QuestionBlock
+                    key={q.id as string}
+                    question={q}
+                    value={draft[q.id] as string | undefined}
+                    otherValue={
+                      q.otherField ? (draft[q.otherField] as string | undefined) : undefined
+                    }
+                    accentColor={currentSection.accentColor}
+                    onChange={(v) => setField(q.id, v)}
+                    onOtherChange={(v) => q.otherField && setField(q.otherField, v)}
+                  />
+                ))}
             </>
           )}
 
           {isReview && <ReviewPage state={draft} onEdit={(idx) => setStep(idx)} />}
         </ScrollView>
+
+        {/* Submit-error banner (replaces the unreliable Alert.alert) */}
+        {submitError !== null && isReview && (
+          <View style={styles.submitErrorBanner} accessibilityRole="alert" accessibilityLiveRegion="polite">
+            <Text style={styles.submitErrorText}>{submitError}</Text>
+          </View>
+        )}
 
         {/* Sticky bottom nav */}
         <View style={styles.bottomBar}>
@@ -1237,6 +1304,24 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bodySemibold,
     fontSize: 14,
     color: colors.foreground,
+    lineHeight: 18,
+  },
+
+  // Submit-error banner — sits between the scroll and the sticky bottom bar.
+  submitErrorBanner: {
+    marginHorizontal: 20,
+    marginBottom: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: `${colors.destructive}10`,
+    borderWidth: 1,
+    borderColor: `${colors.destructive}50`,
+  },
+  submitErrorText: {
+    fontFamily: fonts.body,
+    fontSize: 13,
+    color: colors.destructive,
     lineHeight: 18,
   },
 
