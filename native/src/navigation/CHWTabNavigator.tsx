@@ -26,6 +26,7 @@ import { CHWSessionReviewScreen } from '../screens/chw/CHWSessionReviewScreen';
 import { CHWCalendarScreen } from '../screens/chw/CHWCalendarScreen';
 import { CHWEarningsScreen } from '../screens/chw/CHWEarningsScreen';
 import { CHWIntakeScreen } from '../screens/chw/CHWIntakeScreen';
+import { CHWReviewsScreen } from '../screens/chw/CHWReviewsScreen';
 import { CHWProfileScreen } from '../screens/chw/CHWProfileScreen';
 import { PaymentsScreen } from '../screens/chw/PaymentsScreen';
 
@@ -79,6 +80,7 @@ function DashboardStackNavigator(): React.JSX.Element {
     <DashboardStack.Navigator screenOptions={{ headerShown: false }}>
       <DashboardStack.Screen name="Dashboard" component={CHWDashboardScreen} />
       <DashboardStack.Screen name="Intake" component={CHWIntakeScreen} />
+      <DashboardStack.Screen name="Reviews" component={CHWReviewsScreen} />
     </DashboardStack.Navigator>
   );
 }

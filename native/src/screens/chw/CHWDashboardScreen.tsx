@@ -31,6 +31,9 @@ import {
   RefreshCw,
   ClipboardCheck,
   ArrowRight,
+  MapPin,
+  Target,
+  Clock,
 } from 'lucide-react-native';
 
 import { colors } from '../../theme/colors';
@@ -122,17 +125,64 @@ interface StatCardProps {
   label: string;
   value: string | number;
   subtext?: string;
+  /** Tap target — when set, the card becomes a button that drills into a
+   *  detail screen (per cofounder feedback on Dashboard stat tiles). */
+  onPress?: () => void;
+  accessibilityLabel?: string;
 }
 
-function StatCard({ icon, iconBg, label, value, subtext }: StatCardProps): React.JSX.Element {
-  return (
-    <View style={styles.statCard}>
+function StatCard({ icon, iconBg, label, value, subtext, onPress, accessibilityLabel }: StatCardProps): React.JSX.Element {
+  const body = (
+    <>
       <View style={[styles.statIconCircle, { backgroundColor: iconBg }]}>{icon}</View>
       <Text style={styles.statValue}>{value}</Text>
       <Text style={styles.statLabel}>{label}</Text>
       {subtext ? <Text style={styles.statSubtext}>{subtext}</Text> : null}
-    </View>
+    </>
   );
+
+  if (onPress) {
+    return (
+      <TouchableOpacity
+        style={styles.statCard}
+        onPress={onPress}
+        accessibilityRole="button"
+        accessibilityLabel={accessibilityLabel ?? label}
+        activeOpacity={0.85}
+      >
+        {body}
+      </TouchableOpacity>
+    );
+  }
+
+  return <View style={styles.statCard}>{body}</View>;
+}
+
+// ─── Member need-journey status (mocked until backend lands) ──────────────────
+//
+// TODO(backend): expose member_journey_status per session/request as one of
+// 'starting' | 'awaiting_confirmation' | 'resolved'. Until then, derive a
+// stable mock from the entity id so the same row always shows the same dot.
+
+type JourneyStatus = 'starting' | 'awaiting_confirmation' | 'resolved';
+
+const JOURNEY_COLORS: Record<JourneyStatus, string> = {
+  starting: '#EF4444',          // red — just started finding the resource
+  awaiting_confirmation: '#F59E0B', // yellow — shared, awaiting member confirmation
+  resolved: '#22C55E',          // green — used resources and moved on
+};
+
+const JOURNEY_LABELS: Record<JourneyStatus, string> = {
+  starting: 'Starting',
+  awaiting_confirmation: 'Awaiting confirmation',
+  resolved: 'Resolved',
+};
+
+function mockJourneyStatus(id: string): JourneyStatus {
+  // Stable hash on id → one of three states. Replace with real backend field.
+  const sum = id.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+  const idx = sum % 3;
+  return idx === 0 ? 'starting' : idx === 1 ? 'awaiting_confirmation' : 'resolved';
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
@@ -262,7 +312,7 @@ export function CHWDashboardScreen(): React.JSX.Element {
           </TouchableOpacity>
         )}
 
-        {/* ── Stat cards 2×2 ── */}
+        {/* ── Stat cards 2×2 ── all clickable per Jemal's Figma feedback */}
         <View style={styles.statGrid}>
           <StatCard
             icon={<DollarSign size={20} color={colors.primary} />}
@@ -270,6 +320,8 @@ export function CHWDashboardScreen(): React.JSX.Element {
             label="This Month"
             value={earnings ? formatCurrency(earnings.thisMonth) : '$0.00'}
             subtext={earnings ? `${formatCurrency(earnings.pendingPayout)} pending` : ''}
+            onPress={() => navigation.navigate('EarningsStack')}
+            accessibilityLabel="Open earnings breakdown"
           />
           <StatCard
             icon={<Star size={20} color={colors.compassGold} />}
@@ -277,6 +329,8 @@ export function CHWDashboardScreen(): React.JSX.Element {
             label="Avg Rating"
             value={earnings ? earnings.avgRating.toFixed(1) : '—'}
             subtext="From reviews"
+            onPress={() => navigation.navigate('Reviews')}
+            accessibilityLabel="Open member reviews"
           />
           <StatCard
             icon={<CalendarCheck size={20} color={colors.secondary} />}
@@ -284,6 +338,8 @@ export function CHWDashboardScreen(): React.JSX.Element {
             label="Sessions"
             value={earnings ? earnings.sessionsThisWeek : 0}
             subtext="This week"
+            onPress={() => navigation.navigate('SessionsStack')}
+            accessibilityLabel="Open sessions list"
           />
           <StatCard
             icon={<ClipboardList size={20} color={colors.primary} />}
@@ -291,6 +347,8 @@ export function CHWDashboardScreen(): React.JSX.Element {
             label="Open Requests"
             value={openRequests.length}
             subtext="Awaiting match"
+            onPress={() => navigation.navigate('Requests')}
+            accessibilityLabel="Open requests inbox"
           />
         </View>
 
@@ -328,6 +386,17 @@ export function CHWDashboardScreen(): React.JSX.Element {
                     <View style={[styles.badge, { backgroundColor: colors.secondary + '18' }]}>
                       <Text style={[styles.badgeText, { color: colors.secondary }]}>Scheduled</Text>
                     </View>
+                    {/* Member need-journey status dot — color-coded per Jemal's
+                        Dashboard feedback. Mocked until backend exposes it. */}
+                    {(() => {
+                      const status = mockJourneyStatus(upcomingSession.id);
+                      return (
+                        <View style={styles.journeyPill}>
+                          <View style={[styles.journeyDot, { backgroundColor: JOURNEY_COLORS[status] }]} />
+                          <Text style={styles.journeyText}>{JOURNEY_LABELS[status]}</Text>
+                        </View>
+                      );
+                    })()}
                   </View>
                   <Text style={styles.memberName}>{upcomingSession.memberName}</Text>
                   <Text style={styles.sessionMeta}>
@@ -335,6 +404,22 @@ export function CHWDashboardScreen(): React.JSX.Element {
                     {' · '}
                     {SESSION_MODE_LABELS[upcomingSession.mode] ?? upcomingSession.mode}
                   </Text>
+                  {/* Member address — TODO(backend): expose member.address on
+                      SessionData so we can drop this mock. */}
+                  <View style={styles.metaIconRow}>
+                    <MapPin size={12} color={colors.mutedForeground} />
+                    <Text style={styles.sessionMeta}>
+                      1834 W 6th St, Los Angeles, CA 90057
+                    </Text>
+                  </View>
+                  {/* Quick action / session goal — TODO(backend): expose
+                      session.goal_note. */}
+                  <View style={styles.actionNote}>
+                    <Target size={12} color={colors.primary} />
+                    <Text style={styles.actionNoteText}>
+                      Goal: walk through Medi-Cal renewal paperwork together.
+                    </Text>
+                  </View>
                 </View>
               </View>
             </View>
@@ -350,63 +435,58 @@ export function CHWDashboardScreen(): React.JSX.Element {
             {recentRequests.length === 0 ? (
               <Text style={styles.emptyText}>No open requests right now.</Text>
             ) : (
-              recentRequests.map((request, index) => (
-                <View key={request.id}>
-                  {index > 0 ? <View style={styles.divider} /> : null}
-                  <View style={styles.requestRow}>
-                    <View
-                      style={[
-                        styles.verticalIconCircle,
-                        { backgroundColor: (VERTICAL_COLORS[request.vertical as Vertical] ?? '#6B7A6B') + '18' },
-                      ]}
-                    >
-                      <VerticalIconComponent vertical={request.vertical as Vertical} size={18} />
-                    </View>
-                    <View style={styles.requestInfo}>
-                      <View style={styles.badgeRow}>
-                        <Text style={styles.memberName}>{request.memberName}</Text>
-                        <View
-                          style={[
-                            styles.badge,
-                            {
-                              backgroundColor: (URGENCY_COLORS[request.urgency] ?? '#6B7A6B') + '18',
-                            },
-                          ]}
-                        >
-                          <Text
+              recentRequests.map((request, index) => {
+                const verticalLabel = VERTICAL_LABELS[request.vertical as Vertical] ?? request.vertical;
+                const verticalColor = VERTICAL_COLORS[request.vertical as Vertical] ?? '#6B7A6B';
+                return (
+                  <View key={request.id}>
+                    {index > 0 ? <View style={styles.divider} /> : null}
+                    <View style={styles.requestRow}>
+                      <View
+                        style={[
+                          styles.verticalIconCircle,
+                          { backgroundColor: verticalColor + '18' },
+                        ]}
+                      >
+                        <VerticalIconComponent vertical={request.vertical as Vertical} size={18} />
+                      </View>
+                      <View style={styles.requestInfo}>
+                        <View style={styles.badgeRow}>
+                          <Text style={styles.memberName}>{request.memberName}</Text>
+                          {/* Vertical category badge (replaces urgency per Jemal) */}
+                          <View
                             style={[
-                              styles.badgeText,
-                              { color: URGENCY_COLORS[request.urgency] ?? '#6B7A6B' },
+                              styles.badge,
+                              { backgroundColor: verticalColor + '18' },
                             ]}
                           >
-                            {URGENCY_LABELS[request.urgency] ?? request.urgency}
+                            <Text style={[styles.badgeText, { color: verticalColor }]}>
+                              {verticalLabel}
+                            </Text>
+                          </View>
+                        </View>
+                        <Text style={styles.requestDescription} numberOfLines={2}>
+                          {request.description}
+                        </Text>
+                        {/* Mode + member-requested time. TODO(backend):
+                            expose request.preferred_time so we can drop the mock. */}
+                        <View style={styles.metaIconRow}>
+                          <Clock size={12} color={colors.mutedForeground} />
+                          <Text style={styles.sessionMeta}>
+                            {SESSION_MODE_LABELS[request.preferredMode] ?? request.preferredMode}
+                            {' · Wants Thu 5:30 PM'}
                           </Text>
                         </View>
                       </View>
-                      <Text style={styles.requestDescription} numberOfLines={2}>
-                        {request.description}
-                      </Text>
-                      <Text style={styles.sessionMeta}>
-                        {SESSION_MODE_LABELS[request.preferredMode] ?? request.preferredMode}
-                        {' · '}~{request.estimatedUnits} units
-                        {' · '}
-                        {formatCurrency(
-                          request.estimatedUnits * MEDI_CAL_RATE * NET_PAYOUT_RATE,
-                        )}{' '}
-                        net
-                      </Text>
                     </View>
                   </View>
-                </View>
-              ))
+                );
+              })
             )}
           </View>
         </View>
 
-        {/* ── Rate footnote ── */}
-        <Text style={styles.footnote}>
-          Rates reflect $26.66/unit Medi-Cal reimbursement · 85% CHW net payout.
-        </Text>
+        {/* Rate footnote removed per Jemal's feedback (was misleading). */}
       </ScrollView>
     </SafeAreaView>
   );
@@ -599,6 +679,52 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     color: '#6B7A6B',
     marginTop: 2,
+  },
+  metaIconRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 2,
+  },
+  journeyPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 100,
+    backgroundColor: '#F4F1ED',
+    borderWidth: 1,
+    borderColor: '#DDD6CC',
+  },
+  journeyDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  journeyText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 11,
+    color: '#6B7A6B',
+  },
+  actionNote: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    marginTop: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: colors.primary + '0D',
+    borderLeftWidth: 3,
+    borderLeftColor: colors.primary,
+  },
+  actionNoteText: {
+    flex: 1,
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12,
+    color: colors.foreground,
+    lineHeight: 16,
   },
   requestRow: {
     flexDirection: 'row',
