@@ -58,8 +58,40 @@ class FileAttachmentResponse(BaseModel):
 
 
 class SessionMessageSend(BaseModel):
-    """Request body for POST /sessions/{session_id}/messages."""
-    body: str = Field(..., min_length=1, max_length=10_000)
+    """Request body for POST /sessions/{session_id}/messages.
+
+    ``body`` may be empty when an attachment is included (e.g. an image with
+    no caption). At least one of body/attachment must be present — enforced
+    in the router, not here, so the validation error message can mention the
+    attachment context.
+
+    Attachment flow (mirrors the conversations router):
+      1. Client calls POST /upload/presigned-url to get a PUT URL + s3_key
+      2. Client PUTs the file binary to that URL
+      3. Client posts here with attachment_s3_key + filename + size + content_type
+    """
+    body: str = Field(default="", max_length=10_000)
+    attachment_s3_key: str | None = None
+    attachment_filename: str | None = None
+    attachment_size_bytes: int | None = None
+    attachment_content_type: str | None = None
+
+
+class SessionMessageAttachmentResponse(BaseModel):
+    """Inline attachment payload returned with a session message.
+
+    ``download_url`` is a fresh presigned GET URL minted at read time — clients
+    should not cache it across requests since it expires (default 1 hour per
+    s3_service.generate_presigned_download_url).
+    """
+    model_config = ConfigDict(from_attributes=False)
+
+    id: UUID
+    filename: str
+    size_bytes: int
+    content_type: str
+    s3_key: str
+    download_url: str
 
 
 class SessionMessageResponse(BaseModel):
@@ -74,7 +106,9 @@ class SessionMessageResponse(BaseModel):
     sender_user_id: UUID
     sender_role: str  # "chw" | "member"
     body: str
+    type: str = "text"  # "text" | "image" | "file"
     created_at: datetime
+    attachment: SessionMessageAttachmentResponse | None = None
 
 
 class MarkReadRequest(BaseModel):

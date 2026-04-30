@@ -12,7 +12,12 @@ from app.models.billing import BillingClaim
 from app.models.request import ServiceRequest
 from app.models.session import MemberConsent, Session, SessionDocumentation
 from app.models.user import User
-from app.schemas.conversation import MarkReadRequest, SessionMessageResponse, SessionMessageSend
+from app.schemas.conversation import (
+    MarkReadRequest,
+    SessionMessageAttachmentResponse,
+    SessionMessageResponse,
+    SessionMessageSend,
+)
 from app.schemas.followup import ExtractFollowupsResponse, SessionFollowupResponse
 from app.schemas.session import ConsentSubmit, SessionCreate, SessionDocumentationSubmit, SessionResponse, TranscriptResponse
 from app.services.billing_service import calculate_earnings, calculate_units, check_unit_caps, validate_claim
@@ -504,15 +509,46 @@ async def _get_or_create_session_conversation(
 def _to_session_message_response(
     msg,
     session: Session,
+    attachment=None,
 ) -> SessionMessageResponse:
-    """Convert a raw Message ORM row to the session-scoped response shape."""
+    """Convert a raw Message ORM row to the session-scoped response shape.
+
+    ``attachment`` is the optional FileAttachment ORM row associated with this
+    message. When provided, we mint a fresh presigned GET URL so the client
+    can render / download the file. The URL expires per s3_service default
+    (1 hour).
+    """
+    from app.config import settings as _settings
+    from app.services.s3_service import generate_presigned_download_url
+
     sender_role = "chw" if msg.sender_id == session.chw_id else "member"
+
+    attachment_payload = None
+    if attachment is not None:
+        # Chat attachments live in the PHI bucket per upload.py routing
+        # ("document" purpose). Use the same bucket here when minting the
+        # download URL so we don't 404 on read.
+        download_url = generate_presigned_download_url(
+            _settings.s3_bucket_phi,
+            attachment.s3_key,
+        )
+        attachment_payload = SessionMessageAttachmentResponse(
+            id=attachment.id,
+            filename=attachment.filename,
+            size_bytes=attachment.size_bytes,
+            content_type=attachment.content_type,
+            s3_key=attachment.s3_key,
+            download_url=download_url,
+        )
+
     return SessionMessageResponse(
         id=msg.id,
         sender_user_id=msg.sender_id,
         sender_role=sender_role,
         body=msg.body,
+        type=msg.type or "text",
         created_at=msg.created_at,
+        attachment=attachment_payload,
     )
 
 
@@ -532,7 +568,7 @@ async def list_session_messages(
     HIPAA: message bodies are PHI.  They are returned only to verified
     participants and are never written to structured logs.
     """
-    from app.models.conversation import Message
+    from app.models.conversation import FileAttachment, Message
 
     session = await _get_session_and_assert_participant(session_id, current_user, db)
     conv = await _get_or_create_session_conversation(session, db)
@@ -553,7 +589,22 @@ async def list_session_messages(
     stmt = stmt.order_by(Message.created_at.asc()).limit(200)
     result = await db.execute(stmt)
     messages = result.scalars().all()
-    return [_to_session_message_response(m, session) for m in messages]
+
+    # Eager-load any FileAttachment rows for this batch in one query (avoids N+1).
+    attachments_by_message: dict = {}
+    if messages:
+        att_result = await db.execute(
+            select(FileAttachment).where(
+                FileAttachment.message_id.in_([m.id for m in messages])
+            )
+        )
+        for att in att_result.scalars().all():
+            attachments_by_message[att.message_id] = att
+
+    return [
+        _to_session_message_response(m, session, attachments_by_message.get(m.id))
+        for m in messages
+    ]
 
 
 @router.post("/{session_id}/messages", response_model=SessionMessageResponse, status_code=201)
@@ -568,20 +619,66 @@ async def send_session_message(
     HIPAA: the message body is PHI.  It is persisted to the encrypted
     ``messages`` table but is never logged or included in error responses.
     """
-    from app.models.conversation import Message
+    from app.models.conversation import FileAttachment, Message
 
     session = await _get_session_and_assert_participant(session_id, current_user, db)
     conv = await _get_or_create_session_conversation(session, db)
 
+    has_attachment = bool(data.attachment_s3_key)
+    body_text = data.body or ""
+
+    # Require either body text or an attachment so we don't persist empty rows.
+    if not body_text.strip() and not has_attachment:
+        raise HTTPException(
+            status_code=422,
+            detail="Message must include either a body or an attachment.",
+        )
+
+    # When an attachment is present without text, we still require the
+    # filename / size / content_type fields so the row is renderable.
+    if has_attachment and not (
+        data.attachment_filename
+        and data.attachment_size_bytes is not None
+        and data.attachment_content_type
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="attachment_filename, attachment_size_bytes and attachment_content_type are required with attachment_s3_key.",
+        )
+
+    # Derive the message type from the attachment content_type so clients can
+    # render image bubbles inline vs file rows.
+    msg_type = "text"
+    if has_attachment:
+        if (data.attachment_content_type or "").startswith("image/"):
+            msg_type = "image"
+        else:
+            msg_type = "file"
+
     msg = Message(
         conversation_id=conv.id,
         sender_id=current_user.id,
-        body=data.body,
-        type="text",
+        body=body_text,
+        type=msg_type,
     )
     db.add(msg)
+    await db.flush()  # need msg.id before linking attachment
+
+    attachment = None
+    if has_attachment:
+        attachment = FileAttachment(
+            message_id=msg.id,
+            s3_key=data.attachment_s3_key,
+            filename=data.attachment_filename,
+            size_bytes=data.attachment_size_bytes,
+            content_type=data.attachment_content_type,
+        )
+        db.add(attachment)
+
     await db.commit()
     await db.refresh(msg)
+    if attachment is not None:
+        await db.refresh(attachment)
 
     # Best-effort push notification to the other participant.
     # Truncated to 40 chars for HIPAA minimum-necessary on lock screens.
@@ -589,7 +686,14 @@ async def send_session_message(
         recipient_id = (
             session.member_id if current_user.id == session.chw_id else session.chw_id
         )
-        preview = (data.body[:40] + "…") if len(data.body) > 40 else data.body
+        # Notification preview prefers attachment filename when body is empty.
+        if body_text.strip():
+            preview = (body_text[:40] + "…") if len(body_text) > 40 else body_text
+        elif has_attachment:
+            kind = "Photo" if msg_type == "image" else "File"
+            preview = f"📎 {kind}: {data.attachment_filename}"
+        else:
+            preview = "New message"
         from app.services.notifications import NotificationPayload, notify_user
         await notify_user(
             db,
@@ -609,7 +713,7 @@ async def send_session_message(
             "Session message notification failed session=%s: %s", session_id, exc
         )
 
-    return _to_session_message_response(msg, session)
+    return _to_session_message_response(msg, session, attachment)
 
 
 @router.post("/{session_id}/messages/read", status_code=204)

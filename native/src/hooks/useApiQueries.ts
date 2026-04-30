@@ -8,8 +8,11 @@
  * All request bodies are auto-transformed from camelCase → snake_case.
  */
 
+import { Platform } from 'react-native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '../api/client';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
+import { api, getTokens } from '../api/client';
 import { transformKeys, toSnakeCase } from '../utils/caseTransform';
 
 // ─── Types (camelCase, matching what screens expect) ─────────────────────────
@@ -470,6 +473,20 @@ export function useSendMessage() {
 // ─── Session-scoped messaging (Phase 1 chat) ─────────────────────────────────
 
 /**
+ * Inline attachment payload returned with a session message. The
+ * `downloadUrl` is a freshly-minted presigned GET URL — clients should not
+ * cache it across requests since it expires after ~1 hour.
+ */
+export interface SessionMessageAttachment {
+  id: string;
+  filename: string;
+  sizeBytes: number;
+  contentType: string;
+  s3Key: string;
+  downloadUrl: string;
+}
+
+/**
  * Canonical shape of a single session message returned by
  * GET /sessions/{session_id}/messages.
  */
@@ -480,7 +497,10 @@ export interface SessionMessageData {
   /** "chw" | "member" — used for bubble alignment without needing the full user record. */
   senderRole: 'chw' | 'member';
   body: string;
+  /** "text" | "image" | "file" — set server-side based on attachment content type. */
+  type?: string;
   createdAt: string;
+  attachment?: SessionMessageAttachment | null;
 }
 
 /**
@@ -525,20 +545,34 @@ export function useSessionMessages(sessionId: string, afterId?: string) {
  *
  * Returns the created SessionMessageData row from the server.
  */
+export interface SendSessionMessageVars {
+  sessionId: string;
+  /** Body text. May be empty when an attachment is present. */
+  body: string;
+  /** Optional — attach a file previously uploaded via /upload/presigned-url. */
+  attachment?: {
+    s3Key: string;
+    filename: string;
+    sizeBytes: number;
+    contentType: string;
+  };
+}
+
 export function useSessionSendMessage() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({
-      sessionId,
-      body,
-    }: {
-      sessionId: string;
-      body: string;
-    }): Promise<SessionMessageData> => {
-      const raw = await api<unknown>(`/sessions/${sessionId}/messages`, {
+    mutationFn: async (vars: SendSessionMessageVars): Promise<SessionMessageData> => {
+      const payload: Record<string, unknown> = { body: vars.body };
+      if (vars.attachment) {
+        payload.attachment_s3_key = vars.attachment.s3Key;
+        payload.attachment_filename = vars.attachment.filename;
+        payload.attachment_size_bytes = vars.attachment.sizeBytes;
+        payload.attachment_content_type = vars.attachment.contentType;
+      }
+      const raw = await api<unknown>(`/sessions/${vars.sessionId}/messages`, {
         method: 'POST',
         // HIPAA: body content is intentionally not logged anywhere in this call.
-        body: JSON.stringify({ body }),
+        body: JSON.stringify(payload),
       });
       return transformKeys<SessionMessageData>(raw);
     },
@@ -806,6 +840,88 @@ export function useDeleteAccount() {
         method: 'DELETE',
         body: JSON.stringify({ password }),
       });
+    },
+  });
+}
+
+// ─── Transcript Export ───────────────────────────────────────────────────────
+
+/**
+ * Download the session transcript as a PDF.
+ *
+ * Native path: streams the PDF to a temporary file via expo-file-system, then
+ * opens the OS share sheet via expo-sharing.
+ * Web path: creates a temporary Blob URL and triggers a browser <a download>.
+ *
+ * HIPAA: the PDF bytes are never logged. Only the session ID and HTTP status
+ * are surfaced in error messages.
+ *
+ * Returns a cleanup function that revokes the blob URL on web.
+ */
+export function useTranscriptExport() {
+  return useMutation({
+    mutationFn: async (sessionId: string): Promise<void> => {
+      // Use raw fetch (not `api()`) so we can read the binary response body.
+      const storedTokens = await getTokens();
+
+      const API_BASE =
+        process.env.EXPO_PUBLIC_API_URL ?? 'https://api.joincompasschw.com/api/v1';
+
+      const response = await fetch(
+        `${API_BASE}/sessions/${sessionId}/transcript/export?format=pdf`,
+        {
+          method: 'GET',
+          headers: {
+            ...(storedTokens?.access
+              ? { Authorization: `Bearer ${storedTokens.access}` }
+              : {}),
+          },
+        },
+      );
+
+      if (!response.ok) {
+        throw new Error(`Export failed (HTTP ${response.status})`);
+      }
+
+      if (Platform.OS === 'web') {
+        // Web: create a temporary blob URL and trigger a browser <a download>.
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = `session-${sessionId}-transcript.pdf`;
+        document.body.appendChild(anchor);
+        anchor.click();
+        document.body.removeChild(anchor);
+        // Revoke after a short delay to let the download begin.
+        setTimeout(() => URL.revokeObjectURL(url), 5_000);
+      } else {
+        // Native: write to the cache dir then open the OS share sheet.
+        const arrayBuffer = await response.arrayBuffer();
+
+        // Convert to base64 for FileSystem.writeAsStringAsync.
+        const bytes = new Uint8Array(arrayBuffer);
+        let binary = '';
+        for (let i = 0; i < bytes.byteLength; i++) {
+          binary += String.fromCharCode(bytes[i]!);
+        }
+        const base64 = btoa(binary);
+
+        const fileUri = `${FileSystem.cacheDirectory ?? ''}session-${sessionId}-transcript.pdf`;
+        await FileSystem.writeAsStringAsync(fileUri, base64, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+
+        const canShare = await Sharing.isAvailableAsync();
+        if (!canShare) {
+          throw new Error('Sharing is not available on this device.');
+        }
+        await Sharing.shareAsync(fileUri, {
+          mimeType: 'application/pdf',
+          dialogTitle: 'Save or share session transcript',
+          UTI: 'com.adobe.pdf',
+        });
+      }
     },
   });
 }

@@ -41,7 +41,9 @@ import React, {
 import {
   ActivityIndicator,
   FlatList,
+  Image,
   KeyboardAvoidingView,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -58,7 +60,25 @@ import Animated, {
   withSequence,
   withTiming,
 } from 'react-native-reanimated';
-import { MessageSquare, Mic, MicOff, Phone, Send } from 'lucide-react-native';
+import {
+  Camera,
+  Download,
+  EyeOff,
+  Eye,
+  FileText,
+  Image as ImageIcon,
+  MessageSquare,
+  Mic,
+  MicOff,
+  Paperclip,
+  Phone,
+  Send,
+  X as XIcon,
+} from 'lucide-react-native';
+import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
+
+import { uploadFile, type RNFileAsset } from '../../api/upload';
 
 import { useAuth } from '../../context/AuthContext';
 import {
@@ -68,6 +88,7 @@ import {
   useSessionMarkRead,
   useStartCall,
   useGrantTranscriptionConsent,
+  useTranscriptExport,
   type SessionMessageLocal,
 } from '../../hooks/useApiQueries';
 import {
@@ -262,6 +283,26 @@ interface MessageBubbleProps {
   onRetry: (message: SessionMessageLocal) => void;
 }
 
+/** Format byte size as a human-readable label (e.g. "1.2 MB"). */
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** Open an attachment URL in the device's default handler (browser / file viewer). */
+async function openAttachmentUrl(url: string): Promise<void> {
+  try {
+    const supported = await Linking.canOpenURL(url);
+    if (supported) {
+      await Linking.openURL(url);
+    }
+  } catch {
+    // Silently swallow — the attachment URL is presigned and may have expired.
+    // The next message poll will refresh the URL.
+  }
+}
+
 function MessageBubble({
   message,
   isOwn,
@@ -270,6 +311,9 @@ function MessageBubble({
 }: MessageBubbleProps): React.JSX.Element {
   const isFailed = message.status === 'failed';
   const isSending = message.status === 'sending';
+  const attachment = message.attachment ?? null;
+  const isImageAttachment = attachment !== null && attachment.contentType.startsWith('image/');
+  const isFileAttachment = attachment !== null && !isImageAttachment;
 
   return (
     <View style={[b.wrapper, isOwn ? b.wrapperOwn : b.wrapperOther]}>
@@ -292,11 +336,74 @@ function MessageBubble({
             b.bubble,
             isOwn ? b.bubbleOwn : b.bubbleOther,
             isFailed && b.bubbleFailed,
+            // Image attachments get tighter padding so the photo fills the bubble
+            isImageAttachment && b.bubbleImageContainer,
           ]}
         >
-          <Text style={[b.bodyText, isOwn ? b.textOwn : b.textOther]}>
-            {message.body}
-          </Text>
+          {/* Image attachment — render inline, tappable to open full-size */}
+          {isImageAttachment && attachment && (
+            <Pressable
+              onPress={() => { void openAttachmentUrl(attachment.downloadUrl); }}
+              accessibilityRole="imagebutton"
+              accessibilityLabel={`Image attachment: ${attachment.filename}. Tap to open.`}
+            >
+              <Image
+                source={{ uri: attachment.downloadUrl }}
+                style={b.imageAttachment}
+                resizeMode="cover"
+                accessibilityIgnoresInvertColors
+              />
+            </Pressable>
+          )}
+
+          {/* File attachment — tappable row with filename / size / icon */}
+          {isFileAttachment && attachment && (
+            <Pressable
+              onPress={() => { void openAttachmentUrl(attachment.downloadUrl); }}
+              style={[b.fileRow, isOwn ? b.fileRowOwn : b.fileRowOther]}
+              accessibilityRole="button"
+              accessibilityLabel={`File attachment: ${attachment.filename}. Tap to download.`}
+            >
+              <View style={[b.fileIconCircle, isOwn ? b.fileIconCircleOwn : b.fileIconCircleOther]}>
+                <FileText
+                  size={16}
+                  color={isOwn ? colors.primaryForeground : colors.primary}
+                />
+              </View>
+              <View style={b.fileInfo}>
+                <Text
+                  style={[b.fileName, isOwn ? b.fileNameOwn : b.fileNameOther]}
+                  numberOfLines={1}
+                >
+                  {attachment.filename}
+                </Text>
+                <Text
+                  style={[b.fileMeta, isOwn ? b.fileMetaOwn : b.fileMetaOther]}
+                  numberOfLines={1}
+                >
+                  {formatFileSize(attachment.sizeBytes)} · Tap to open
+                </Text>
+              </View>
+              <Download
+                size={14}
+                color={isOwn ? colors.primaryForeground : colors.primary}
+              />
+            </Pressable>
+          )}
+
+          {/* Body text — only render when non-empty (caption with attachment) */}
+          {message.body.trim().length > 0 && (
+            <Text
+              style={[
+                b.bodyText,
+                isOwn ? b.textOwn : b.textOther,
+                attachment !== null && b.bodyTextWithAttachment,
+              ]}
+            >
+              {message.body}
+            </Text>
+          )}
+
           {isFailed && (
             <Text style={b.retryHint}>Tap to retry</Text>
           )}
@@ -356,6 +463,64 @@ const b = StyleSheet.create({
   bodyText: { ...typography.bodySm, lineHeight: 20 },
   textOwn: { color: colors.primaryForeground },
   textOther: { color: colors.foreground },
+
+  /** When body text is shown alongside an attachment, add a small top margin
+   *  so the caption sits visually below the image / file row. */
+  bodyTextWithAttachment: { marginTop: 8 },
+
+  // ── Image attachment ────────────────────────────────────────────────────────
+  bubbleImageContainer: {
+    paddingHorizontal: 4,
+    paddingTop: 4,
+    paddingBottom: 6,
+  },
+  imageAttachment: {
+    width: 220,
+    height: 220,
+    borderRadius: 12,
+    backgroundColor: colors.muted,
+  },
+
+  // ── File attachment row ─────────────────────────────────────────────────────
+  fileRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 6,
+    minWidth: 200,
+  },
+  fileRowOwn: {},
+  fileRowOther: {},
+  fileIconCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  fileIconCircleOwn: {
+    backgroundColor: 'rgba(255,255,255,0.2)',
+  },
+  fileIconCircleOther: {
+    backgroundColor: `${colors.primary}18`,
+  },
+  fileInfo: {
+    flex: 1,
+    gap: 1,
+  },
+  fileName: {
+    ...typography.bodySm,
+    fontWeight: '700',
+  },
+  fileNameOwn: { color: colors.primaryForeground },
+  fileNameOther: { color: colors.foreground },
+  fileMeta: {
+    fontSize: 11,
+    fontFamily: undefined,
+  },
+  fileMetaOwn: { color: 'rgba(255,255,255,0.85)' },
+  fileMetaOther: { color: colors.mutedForeground },
 
   retryHint: {
     marginTop: 4,
@@ -831,6 +996,15 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
   const [toastIsError, setToastIsError] = useState(false);
   const [callInitiating, setCallInitiating] = useState(false);
 
+  /**
+   * When true, transcript chunks with confidence < 0.7 are filtered from
+   * the rendered list. State is local to the session mount — not persisted.
+   */
+  const [hideLowConfidence, setHideLowConfidence] = useState(false);
+
+  /** True while the export PDF request is in flight. */
+  const [exportLoading, setExportLoading] = useState(false);
+
   // ── Transcription state ──────────────────────────────────────────────────────
 
   /** Whether the `useSessionTranscription` hook should be running. */
@@ -869,6 +1043,13 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
    */
   const [optimisticMessages, setOptimisticMessages] = useState<SessionMessageLocal[]>([]);
 
+  // ── Pending attachment state ───────────────────────────────────────────────
+  // Set when the user picks a file/image; cleared on send or remove. The chip
+  // in the input area surfaces it back to the user before sending.
+  const [pendingAttachment, setPendingAttachment] = useState<RNFileAsset | null>(null);
+  const [attachmentUploading, setAttachmentUploading] = useState(false);
+  const [attachmentSheetOpen, setAttachmentSheetOpen] = useState(false);
+
   const listRef = useRef<FlatList<RenderItem>>(null);
 
   // ── Data queries ─────────────────────────────────────────────────────────────
@@ -881,6 +1062,7 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
   const markRead = useSessionMarkRead();
   const startCall = useStartCall();
   const grantConsent = useGrantTranscriptionConsent(sessionId);
+  const transcriptExport = useTranscriptExport();
 
   // ── Derived state ─────────────────────────────────────────────────────────────
 
@@ -993,6 +1175,32 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
     }
   }, [transcription.state, transcription.errorMessage]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /**
+   * Reconnect toast: show a non-blocking warning when the WebSocket is
+   * attempting to reconnect, and dismiss it once recording resumes.
+   * Text chat remains fully operational during reconnect.
+   */
+  const prevTranscriptionStateRef = useRef<string | null>(null);
+  useEffect(() => {
+    const prev = prevTranscriptionStateRef.current;
+    const next = transcription.state;
+    prevTranscriptionStateRef.current = next;
+
+    if (next === 'reconnecting' && prev !== 'reconnecting') {
+      // Show persistent reconnecting notice (clears when state changes).
+      setToastMessage('Connection lost — reconnecting\u2026');
+      setToastIsError(true);
+    } else if (next === 'recording' && prev === 'reconnecting') {
+      // Connection restored — fade the toast out.
+      setToastMessage('Reconnected');
+      setToastIsError(false);
+      // Auto-dismiss after a short delay.
+      const timer = setTimeout(() => setToastMessage(null), 2_000);
+      return () => clearTimeout(timer);
+    }
+    return undefined;
+  }, [transcription.state]);
+
   // ── Merged render list ───────────────────────────────────────────────────────
 
   /**
@@ -1037,15 +1245,18 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
         epochMs: new Date(msg.createdAt).getTime(),
         item: { kind: 'message', message: msg } satisfies RenderItem,
       })),
-      ...transcriptChunks.map<Weighted>((chunk, index) => ({
-        epochMs: chunk.startedAtMs,
-        item: {
-          kind: 'transcript',
-          chunk,
-          // Stable ID: position index is safe here because the list only grows.
-          id: `transcript_${index}`,
-        } satisfies RenderItem,
-      })),
+      ...transcriptChunks
+        // When hideLowConfidence is enabled, drop chunks below the threshold.
+        .filter((chunk) => !hideLowConfidence || chunk.confidence >= 0.7)
+        .map<Weighted>((chunk, index) => ({
+          epochMs: chunk.startedAtMs,
+          item: {
+            kind: 'transcript',
+            chunk,
+            // Stable ID: position index is safe here because the list only grows.
+            id: `transcript_${index}`,
+          } satisfies RenderItem,
+        })),
     ];
 
     weighted.sort((a, z) => a.epochMs - z.epochMs);
@@ -1057,7 +1268,7 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
     }
 
     return sorted;
-  }, [mergedMessages, transcriptChunks, showFollowupBanner]);
+  }, [mergedMessages, transcriptChunks, showFollowupBanner, hideLowConfidence]);
 
   // ── Read receipts ─────────────────────────────────────────────────────────────
 
@@ -1187,11 +1398,121 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
     await transcription.start();
   }, [isCHW, isRecording, transcription, showToast]);
 
+  // ── Export handler ─────────────────────────────────────────────────────────────
+
+  /**
+   * Download the session transcript as PDF.
+   * Shows a loading state on the button while in flight.
+   * HIPAA: no transcript content is included in the toast messages.
+   */
+  const handleExport = useCallback(async () => {
+    if (exportLoading) return;
+    setExportLoading(true);
+    try {
+      await transcriptExport.mutateAsync(sessionId);
+      showToast('Transcript saved.', false);
+    } catch (err) {
+      const detail =
+        err instanceof Error && err.message ? err.message : 'Export failed. Try again.';
+      showToast(detail, true);
+    } finally {
+      setExportLoading(false);
+    }
+  }, [exportLoading, sessionId, transcriptExport, showToast]);
+
+  // ── Attachment pickers ────────────────────────────────────────────────────
+  //
+  // Three entry points (action sheet → handlers below):
+  //   1. Take photo (native only — uses device camera)
+  //   2. Choose photo from library (uses expo-image-picker)
+  //   3. Choose file (uses expo-document-picker; PDFs only by default)
+  //
+  // All three converge on `setPendingAttachment(asset)` which surfaces a chip
+  // in the input area. The actual S3 upload happens at send time so the user
+  // can still cancel without burning network calls.
+
+  const pickFromCamera = useCallback(async () => {
+    setAttachmentSheetOpen(false);
+    try {
+      const perm = await ImagePicker.requestCameraPermissionsAsync();
+      if (!perm.granted) {
+        showToast('Camera permission is required.', true);
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.8,
+        // exif: false avoids bloating size with extra metadata
+        exif: false,
+      });
+      if (result.canceled || result.assets.length === 0) return;
+      const a = result.assets[0];
+      setPendingAttachment({
+        uri: a.uri,
+        name: a.fileName ?? `photo_${Date.now()}.jpg`,
+        type: a.mimeType ?? 'image/jpeg',
+        sizeBytes: a.fileSize,
+      });
+    } catch {
+      showToast('Could not open camera.', true);
+    }
+  }, [showToast]);
+
+  const pickFromLibrary = useCallback(async () => {
+    setAttachmentSheetOpen(false);
+    try {
+      // No permission needed on web; native asks at launch.
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.8,
+        exif: false,
+      });
+      if (result.canceled || result.assets.length === 0) return;
+      const a = result.assets[0];
+      setPendingAttachment({
+        uri: a.uri,
+        name: a.fileName ?? `image_${Date.now()}.jpg`,
+        type: a.mimeType ?? 'image/jpeg',
+        sizeBytes: a.fileSize,
+      });
+    } catch {
+      showToast('Could not pick image.', true);
+    }
+  }, [showToast]);
+
+  const pickDocument = useCallback(async () => {
+    setAttachmentSheetOpen(false);
+    try {
+      // Backend MIME allowlist for chat: PDF only for non-image files.
+      const result = await DocumentPicker.getDocumentAsync({
+        type: 'application/pdf',
+        copyToCacheDirectory: true,
+        multiple: false,
+      });
+      if (result.canceled || result.assets.length === 0) return;
+      const a = result.assets[0];
+      setPendingAttachment({
+        uri: a.uri,
+        name: a.name ?? `document_${Date.now()}.pdf`,
+        type: a.mimeType ?? 'application/pdf',
+        sizeBytes: a.size,
+      });
+    } catch {
+      showToast('Could not pick file.', true);
+    }
+  }, [showToast]);
+
+  const clearPendingAttachment = useCallback(() => {
+    setPendingAttachment(null);
+    setAttachmentUploading(false);
+  }, []);
+
   // ── Send handler ──────────────────────────────────────────────────────────────
 
   const handleSend = useCallback(async () => {
     const trimmed = inputValue.trim();
-    if (!trimmed || sendMessage.isPending) return;
+    const hasAttachment = pendingAttachment !== null;
+    if ((!trimmed && !hasAttachment) || sendMessage.isPending || attachmentUploading) return;
 
     const tempId = `optimistic_${Date.now()}`;
     const optimisticEntry: SessionMessageLocal = {
@@ -1199,17 +1520,52 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
       senderUserId: '',          // unknown client-side; server provides authoritative
       senderRole: myRole as 'chw' | 'member',
       body: trimmed,
+      // Echo the attachment back optimistically so the user sees the bubble
+      // immediately. We don't have a download URL yet, so we use the local
+      // file URI for image previews — the next poll will replace with the
+      // server-confirmed presigned URL.
+      attachment: hasAttachment && pendingAttachment
+        ? {
+            id: `pending_${tempId}`,
+            filename: pendingAttachment.name,
+            sizeBytes: pendingAttachment.sizeBytes ?? 0,
+            contentType: pendingAttachment.type,
+            s3Key: '',
+            downloadUrl: pendingAttachment.uri,
+          }
+        : null,
       createdAt: new Date().toISOString(),
       status: 'sending',
     };
 
-    // 1. Append optimistic entry immediately
+    // 1. Append optimistic entry immediately + clear input + chip
     setOptimisticMessages((prev) => [...prev, optimisticEntry]);
     setInputValue('');
+    const attachmentToUpload = pendingAttachment;
+    setPendingAttachment(null);
 
     try {
-      // 2. Fire request; get back authoritative row
-      const confirmed = await sendMessage.mutateAsync({ sessionId, body: trimmed });
+      // 2a. Upload the attachment to S3 first (if any)
+      let uploadedAttachment: { s3Key: string; filename: string; sizeBytes: number; contentType: string } | undefined;
+      if (attachmentToUpload) {
+        setAttachmentUploading(true);
+        // 'document' purpose routes to the PHI bucket per backend upload.py
+        const s3Key = await uploadFile(attachmentToUpload, 'document');
+        uploadedAttachment = {
+          s3Key,
+          filename: attachmentToUpload.name,
+          sizeBytes: attachmentToUpload.sizeBytes ?? 0,
+          contentType: attachmentToUpload.type,
+        };
+        setAttachmentUploading(false);
+      }
+
+      // 2b. Fire send-message request; get back authoritative row
+      const confirmed = await sendMessage.mutateAsync({
+        sessionId,
+        body: trimmed,
+        attachment: uploadedAttachment,
+      });
 
       // 3. Replace optimistic entry with confirmed row (status=undefined → confirmed)
       setOptimisticMessages((prev) =>
@@ -1219,13 +1575,14 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
       );
     } catch {
       // 4. Mark as failed. HIPAA: do not include the body in any error log.
+      setAttachmentUploading(false);
       setOptimisticMessages((prev) =>
         prev.map((m) =>
           m.id === tempId ? { ...m, status: 'failed' } : m,
         ),
       );
     }
-  }, [inputValue, sessionId, myRole, sendMessage]);
+  }, [inputValue, pendingAttachment, sessionId, myRole, sendMessage, attachmentUploading]);
 
   // ── Retry handler ─────────────────────────────────────────────────────────────
 
@@ -1302,8 +1659,12 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
   const charCount = inputValue.length;
   const showCharCounter = charCount >= MAX_CHARS - COUNTER_THRESHOLD;
 
+  // Attachment-only sends are allowed: enable Send when there is text OR a
+  // pending attachment, and we're not currently uploading or sending.
   const isSendDisabled =
-    !inputValue.trim() || sendMessage.isPending;
+    (!inputValue.trim() && pendingAttachment === null)
+    || sendMessage.isPending
+    || attachmentUploading;
 
   // ── Web transcription unavailable message ─────────────────────────────────────
 
@@ -1353,6 +1714,56 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
               {/* Recording indicator — only visible while recording */}
               {transcription.state === 'recording' && (
                 <RecordingIndicator elapsedSeconds={recordingElapsedSeconds} />
+              )}
+
+              {/*
+               * Hide low-confidence toggle — CHW-only, visible when transcript
+               * chunks are present.
+               * Tapping toggles hideLowConfidence; icon reflects current state.
+               */}
+              {isCHW && transcriptChunks.length > 0 && (
+                <TouchableOpacity
+                  style={[
+                    c.iconButton,
+                    hideLowConfidence && c.iconButtonActive,
+                  ]}
+                  onPress={() => setHideLowConfidence((prev) => !prev)}
+                  accessibilityRole="switch"
+                  accessibilityLabel={
+                    hideLowConfidence
+                      ? 'Show all transcript segments (including low confidence)'
+                      : 'Hide low-confidence transcript segments'
+                  }
+                  accessibilityState={{ selected: hideLowConfidence }}
+                >
+                  {hideLowConfidence ? (
+                    <EyeOff size={16} color={colors.primary} />
+                  ) : (
+                    <Eye size={16} color={colors.mutedForeground} />
+                  )}
+                </TouchableOpacity>
+              )}
+
+              {/*
+               * Download transcript button — CHW-only, visible when there is
+               * at least one transcript chunk (i.e. recording has happened).
+               */}
+              {isCHW && transcriptChunks.length > 0 && (
+                <TouchableOpacity
+                  style={[c.iconButton, exportLoading && c.iconButtonDisabled]}
+                  onPress={() => { void handleExport(); }}
+                  disabled={exportLoading}
+                  accessibilityRole="button"
+                  accessibilityLabel="Download transcript as PDF"
+                  accessibilityHint="Saves the session transcript to your device."
+                  accessibilityState={{ disabled: exportLoading }}
+                >
+                  {exportLoading ? (
+                    <ActivityIndicator size="small" color={colors.primary} />
+                  ) : (
+                    <Download size={16} color={colors.primary} />
+                  )}
+                </TouchableOpacity>
               )}
 
               {/* Mic button — CHW-only */}
@@ -1474,12 +1885,69 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
                 {MAX_CHARS - charCount}
               </Text>
             )}
+
+            {/* Pending attachment chip — shown above the input row when the
+                user has picked a file/image but hasn't sent yet. */}
+            {pendingAttachment !== null && (
+              <View style={c.attachmentChip} accessibilityRole="none">
+                {pendingAttachment.type.startsWith('image/') ? (
+                  <Image
+                    source={{ uri: pendingAttachment.uri }}
+                    style={c.attachmentChipThumb}
+                    accessibilityIgnoresInvertColors
+                  />
+                ) : (
+                  <View style={c.attachmentChipFileIcon}>
+                    <FileText size={16} color={colors.primary} />
+                  </View>
+                )}
+                <View style={c.attachmentChipInfo}>
+                  <Text style={c.attachmentChipName} numberOfLines={1}>
+                    {pendingAttachment.name}
+                  </Text>
+                  <Text style={c.attachmentChipMeta}>
+                    {pendingAttachment.sizeBytes
+                      ? `${formatFileSize(pendingAttachment.sizeBytes)} · `
+                      : ''}
+                    {attachmentUploading ? 'Uploading…' : 'Ready to send'}
+                  </Text>
+                </View>
+                {attachmentUploading ? (
+                  <ActivityIndicator size="small" color={colors.primary} />
+                ) : (
+                  <TouchableOpacity
+                    onPress={clearPendingAttachment}
+                    style={c.attachmentChipRemove}
+                    accessibilityRole="button"
+                    accessibilityLabel="Remove attachment"
+                    hitSlop={8}
+                  >
+                    <XIcon size={14} color={colors.mutedForeground} />
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
+
             <View style={c.inputRow}>
+              {/* Attach button — opens the action sheet */}
+              <TouchableOpacity
+                style={c.attachButton}
+                onPress={() => setAttachmentSheetOpen(true)}
+                disabled={attachmentUploading || sendMessage.isPending}
+                accessibilityRole="button"
+                accessibilityLabel="Attach a file or photo"
+                accessibilityHint="Opens a menu to take a photo, choose a photo, or pick a file."
+              >
+                <Paperclip size={18} color={colors.primary} />
+              </TouchableOpacity>
+
               <TextInput
                 style={c.input}
                 value={inputValue}
                 onChangeText={(text) => setInputValue(text.slice(0, MAX_CHARS))}
-                placeholder="Type a message…"
+                placeholder={
+                  pendingAttachment !== null ? 'Add a message (optional)…' : 'Type a message…'
+                }
                 placeholderTextColor={colors.mutedForeground}
                 multiline
                 maxLength={MAX_CHARS}
@@ -1497,7 +1965,7 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
                 accessibilityState={{ disabled: isSendDisabled }}
                 activeOpacity={0.75}
               >
-                {sendMessage.isPending ? (
+                {sendMessage.isPending || attachmentUploading ? (
                   <ActivityIndicator size="small" color={colors.primaryForeground} />
                 ) : (
                   <Send size={16} color={colors.primaryForeground} />
@@ -1505,6 +1973,73 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
               </TouchableOpacity>
             </View>
           </View>
+
+          {/* Attachment action sheet */}
+          <Modal
+            visible={attachmentSheetOpen}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setAttachmentSheetOpen(false)}
+          >
+            <Pressable
+              style={c.sheetBackdrop}
+              onPress={() => setAttachmentSheetOpen(false)}
+              accessibilityRole="button"
+              accessibilityLabel="Close attachment menu"
+            >
+              <Pressable style={c.sheetCard} onPress={() => undefined}>
+                <Text style={c.sheetTitle}>Attach</Text>
+
+                {/* Camera — native only; web UAs without getUserMedia will fail */}
+                {Platform.OS !== 'web' && (
+                  <TouchableOpacity
+                    style={c.sheetOption}
+                    onPress={() => { void pickFromCamera(); }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Take a photo"
+                  >
+                    <View style={c.sheetIconCircle}>
+                      <Camera size={18} color={colors.primary} />
+                    </View>
+                    <Text style={c.sheetOptionText}>Take photo</Text>
+                  </TouchableOpacity>
+                )}
+
+                <TouchableOpacity
+                  style={c.sheetOption}
+                  onPress={() => { void pickFromLibrary(); }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Choose photo from library"
+                >
+                  <View style={c.sheetIconCircle}>
+                    <ImageIcon size={18} color={colors.primary} />
+                  </View>
+                  <Text style={c.sheetOptionText}>Choose photo</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={c.sheetOption}
+                  onPress={() => { void pickDocument(); }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Choose a PDF file"
+                >
+                  <View style={c.sheetIconCircle}>
+                    <FileText size={18} color={colors.primary} />
+                  </View>
+                  <Text style={c.sheetOptionText}>Choose file (PDF)</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={c.sheetCancel}
+                  onPress={() => setAttachmentSheetOpen(false)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Cancel"
+                >
+                  <Text style={c.sheetCancelText}>Cancel</Text>
+                </TouchableOpacity>
+              </Pressable>
+            </Pressable>
+          </Modal>
         </View>
       </KeyboardAvoidingView>
     </>
@@ -1562,6 +2097,11 @@ const c = StyleSheet.create({
   iconButtonRecording: {
     backgroundColor: `${colors.destructive}12`,
     borderColor: `${colors.destructive}30`,
+  },
+  /** Active/selected state — used by the confidence toggle when filter is ON. */
+  iconButtonActive: {
+    backgroundColor: `${colors.primary}18`,
+    borderColor: `${colors.primary}60`,
   },
 
   listContent: { padding: 16, paddingBottom: 8 },
@@ -1651,6 +2191,122 @@ const c = StyleSheet.create({
     flexShrink: 0,
   },
   sendButtonDisabled: { opacity: 0.35 },
+
+  // ── Attach button (paperclip) ────────────────────────────────────────────────
+  attachButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    backgroundColor: `${colors.primary}10`,
+    borderWidth: 1,
+    borderColor: `${colors.primary}30`,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+
+  // ── Pending-attachment chip ──────────────────────────────────────────────────
+  attachmentChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: `${colors.primary}08`,
+    borderWidth: 1,
+    borderColor: `${colors.primary}30`,
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    marginBottom: 8,
+  },
+  attachmentChipThumb: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: colors.muted,
+  },
+  attachmentChipFileIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: `${colors.primary}18`,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  attachmentChipInfo: { flex: 1, gap: 1 },
+  attachmentChipName: {
+    ...typography.bodySm,
+    fontWeight: '700',
+    color: colors.foreground,
+  },
+  attachmentChipMeta: {
+    fontSize: 11,
+    color: colors.mutedForeground,
+  },
+  attachmentChipRemove: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: colors.background,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // ── Attachment action sheet ─────────────────────────────────────────────────
+  sheetBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'flex-end',
+  },
+  sheetCard: {
+    backgroundColor: colors.card,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: Platform.OS === 'ios' ? 32 : 24,
+    gap: 8,
+  },
+  sheetTitle: {
+    ...typography.bodyMd,
+    fontWeight: '700',
+    color: colors.foreground,
+    marginBottom: 8,
+  },
+  sheetOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    borderRadius: 12,
+  },
+  sheetIconCircle: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: `${colors.primary}12`,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sheetOptionText: {
+    ...typography.bodyMd,
+    color: colors.foreground,
+    fontWeight: '600',
+  },
+  sheetCancel: {
+    marginTop: 8,
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: colors.background,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+  },
+  sheetCancelText: {
+    ...typography.bodyMd,
+    color: colors.mutedForeground,
+    fontWeight: '600',
+  },
 
   // Legacy alias kept so diffing is clean — renamed from phoneButton
   phoneButton: {
