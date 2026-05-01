@@ -3,16 +3,18 @@
  *
  * Routing logic:
  *   - While auth state is loading → blank screen (prevents flash)
- *   - Unauthenticated          → AuthStack  (Login/Register toggle, Waitlist)
+ *   - Unauthenticated          → AuthStack  (Login, Waitlist, Landing)
  *   - CHW role                 → CHWTabNavigator
  *   - Admin role               → AdminHomeScreen (Member endpoints 403 for admins)
  *   - Member role              → MemberTabNavigator
  */
 
-import React, { useCallback, useRef } from 'react';
+import React, { useCallback, useMemo, useRef } from 'react';
 import { ActivityIndicator, Platform, StyleSheet, View } from 'react-native';
+import * as Linking from 'expo-linking';
 import {
   NavigationContainer,
+  type LinkingOptions,
   type NavigationContainerRef,
 } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -26,8 +28,6 @@ import { LoginScreen } from '../screens/auth/LoginScreen';
 import { MagicLinkScreen } from '../screens/auth/MagicLinkScreen';
 import { WaitlistScreen } from '../screens/auth/WaitlistScreen';
 import { CHWIntakeScreen } from '../screens/chw/CHWIntakeScreen';
-import { CHWOnboardingScreen } from '../screens/onboarding/CHWOnboardingScreen';
-import { MemberOnboardingScreen } from '../screens/onboarding/MemberOnboardingScreen';
 import { LegalScreen, type LegalPage } from '../screens/LegalScreen';
 import { AdminHomeScreen } from '../screens/admin/AdminHomeScreen';
 import { CHWTabNavigator } from './CHWTabNavigator';
@@ -49,11 +49,8 @@ function isPreviewRequested(slug: string): boolean {
 export type AuthStackParamList = {
   Landing: undefined;
   Login: undefined;
-  Register: undefined;
   Waitlist: undefined;
   MagicLink: { token?: string } | undefined;
-  CHWOnboarding: undefined;
-  MemberOnboarding: undefined;
   Legal: { page: LegalPage } | undefined;
 };
 
@@ -98,13 +95,10 @@ function AuthNavigator({ initialRoute = 'Landing' }: AuthNavigatorProps): React.
           even pre-launch. The screen itself shows "Coming soon" if verification
           fails because the user isn't provisioned. */}
       <AuthStack.Screen name="MagicLink" component={MagicLinkScreen} />
-      {/* Login + onboarding routes — enabled for founder demo + admin access.
-          Registration is gated behind the login flow; the seed_founders.py script
-          provisions the known admin accounts. */}
+      {/* Login is sign-in only — self sign-up was removed (it hardcoded role
+          to "chw" and bypassed the waitlist invite flow). CHWs/Members come
+          via the waitlist; founders + admins are seeded by seed_founders.py. */}
       <AuthStack.Screen name="Login" component={LoginScreen} />
-      <AuthStack.Screen name="Register" component={LoginScreen} />
-      <AuthStack.Screen name="CHWOnboarding" component={CHWOnboardingScreen} />
-      <AuthStack.Screen name="MemberOnboarding" component={MemberOnboardingScreen} />
       {/* LegalScreen reads `page` from route params so a single registration
           serves Privacy / Terms / HIPAA / Contact via navigation.navigate(
           'Legal', { page: 'privacy' | 'terms' | 'hipaa' | 'contact' }). */}
@@ -138,6 +132,92 @@ function MemberNavigator(): React.JSX.Element {
 
 function AdminNavigator(): React.JSX.Element {
   return <AdminHomeScreen />;
+}
+
+// ─── Linking (URL routing on web + custom-scheme deep links on native) ──────
+//
+// Without this, every screen on web served at `https://joincompasschw.com/`
+// — no bookmarks, no sharable URLs, browser back/forward unpredictable.
+//
+// The shape mirrors the navigator tree above. React Navigation switches the
+// root screen on auth state, so unauthenticated users hitting `/chw/sessions`
+// fall through to Landing, and authenticated CHWs hitting `/` fall through
+// to their dashboard. That's the desired UX — URLs name screens, auth gates
+// access.
+
+function buildLinkingConfig(): LinkingOptions<RootStackParamList> {
+  return {
+    prefixes: [
+      Linking.createURL('/'),                  // expo-go / native (compasschw://)
+      'https://joincompasschw.com',            // production web
+      'https://www.joincompasschw.com',
+    ],
+    config: {
+      screens: {
+        // ── Unauthenticated stack ───────────────────────────────────────────
+        Auth: {
+          screens: {
+            Landing: '',
+            Login: 'login',
+            Waitlist: 'waitlist',
+            // Email magic-link callback — `?token=xyz` populates route params.
+            MagicLink: 'auth/magic',
+            // `/legal/privacy`, `/legal/terms`, `/legal/hipaa`, `/legal/contact`
+            Legal: 'legal/:page',
+          },
+        },
+        // ── CHW (authenticated, role=chw) ──────────────────────────────────
+        CHW: {
+          path: 'chw',
+          screens: {
+            DashboardStack: {
+              screens: {
+                Dashboard: '',                  // /chw
+                Intake: 'intake',               // /chw/intake
+                Reviews: 'reviews',             // /chw/reviews
+              },
+            },
+            Requests: 'requests',               // /chw/requests
+            SessionsStack: {
+              path: 'sessions',
+              screens: {
+                Sessions: '',                   // /chw/sessions
+                SessionReview: 'review/:sessionId', // /chw/sessions/review/abc123
+              },
+            },
+            Calendar: 'calendar',               // /chw/calendar
+            EarningsStack: {
+              path: 'earnings',
+              screens: {
+                Earnings: '',                   // /chw/earnings
+                Payments: 'payments',           // /chw/earnings/payments
+              },
+            },
+            Profile: 'profile',                 // /chw/profile
+          },
+        },
+        // ── Admin (authenticated, role=admin) ──────────────────────────────
+        Admin: 'admin',
+        // ── Member (authenticated, role=member) ────────────────────────────
+        Member: {
+          path: 'member',
+          screens: {
+            Home: {
+              screens: {
+                HomeMain: '',                   // /member
+                Rewards: 'rewards',             // /member/rewards
+              },
+            },
+            FindCHW: 'find',                    // /member/find
+            Sessions: 'sessions',               // /member/sessions
+            Calendar: 'calendar',               // /member/calendar
+            Roadmap: 'roadmap',                 // /member/roadmap
+            Profile: 'profile',                 // /member/profile
+          },
+        },
+      },
+    },
+  };
 }
 
 // ─── Loading splash ───────────────────────────────────────────────────────────
@@ -176,6 +256,9 @@ export function AppNavigator(): React.JSX.Element {
   // handling and no-ops on the web / in simulators.
   useDeepLinks(navigationRef, handleMagicLink);
 
+  // Built once per session — prefixes/screens are static.
+  const linking = useMemo(buildLinkingConfig, []);
+
   if (isLoading) {
     return <LoadingScreen />;
   }
@@ -192,7 +275,7 @@ export function AppNavigator(): React.JSX.Element {
   }
 
   return (
-    <NavigationContainer ref={navigationRef}>
+    <NavigationContainer ref={navigationRef} linking={linking}>
       <RootStack.Navigator screenOptions={{ headerShown: false }}>
         {!isAuthenticated ? (
           <RootStack.Screen name="Auth">

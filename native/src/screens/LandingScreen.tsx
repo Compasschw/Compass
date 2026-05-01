@@ -252,7 +252,7 @@ const MEMBER_SERVICE_CARDS: ServiceCard[] = [
 
 const CHW_HERO_STATS = [
   { label: 'MEDI-CAL MEMBERS', value: '3M+', sublabel: 'IN NEED' },
-  { label: 'AVG. EARNINGS', value: '$32/hour' },
+  { label: 'AVG. EARNINGS', value: '$29/hour' },
 ];
 
 const MEMBER_HERO_STATS = [
@@ -973,7 +973,7 @@ export function LandingScreen(): React.JSX.Element {
                     <View style={staticStyles.earningsCard}>
                       <Text style={staticStyles.earningsCardLabel}>Avg. Earnings</Text>
                       <Text style={staticStyles.earningsCardValue}>
-                        $32<Text style={staticStyles.earningsCardSuffix}> / hour</Text>
+                        $29<Text style={staticStyles.earningsCardSuffix}> / hour</Text>
                       </Text>
                       <Text style={staticStyles.earningsCardNote}>Reimbursed via Medi-Cal</Text>
                     </View>
