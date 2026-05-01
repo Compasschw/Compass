@@ -28,7 +28,7 @@ TODO (Phase 3 — transcript integration):
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -260,8 +260,9 @@ async def _post_extraction_chat_message(
     body = f"Captured {summary}. Tap to review and confirm."
 
     try:
-        from app.models.conversation import Conversation, Message
         from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        from app.models.conversation import Conversation, Message
 
         # Get or create the session conversation (mirrors _get_or_create in sessions.py).
         conv_result = await db.execute(

@@ -55,7 +55,7 @@ async def update_validation(
     data: CredentialValidationPatch,
     current_user=Depends(require_role("chw")),
     db: AsyncSession = Depends(get_db),
-) -> "CHWCredentialValidation":
+) -> "CHWCredentialValidation":  # noqa: F821 — imported lazily inside function
     """Allow a CHW to attach a document S3 key or expiry date after initial submission.
 
     Typical flow: CHW calls POST /validate to create the record, then the
@@ -89,7 +89,7 @@ async def review_validation(
     notes: str = "",
     current_user=Depends(require_role("admin")),
     db: AsyncSession = Depends(get_db),
-) -> "CHWCredentialValidation":
+) -> "CHWCredentialValidation":  # noqa: F821 — imported lazily inside function
     """Admin endpoint to approve or reject a CHW credential validation.
 
     Returns the full updated record so the admin UI can reflect the new

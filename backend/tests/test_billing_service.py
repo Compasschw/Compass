@@ -48,12 +48,17 @@ class TestCalculateEarnings:
         assert result["gross"] == 106.64
 
     def test_fee_split_rounds_to_cents(self):
-        """Fees must be rounded to 2 decimals — never emit sub-cent values."""
+        """Fees must be rounded to 2 decimals — never emit sub-cent values.
+
+        Split: 15% platform / 25% member rewards / 60% CHW net (per Jemal's
+        Earnings Figma feedback). The DB column is named `pear_suite_fee` for
+        backward-compat but is now the rewards-pool field. See billing_service.py.
+        """
         result = calculate_earnings(1)
         # Platform: 15% of $26.66 = $4.00 (rounded half-up from 3.999)
         assert result["platform_fee"] == 4.0
-        # Pear Suite: 10% of $26.66 = $2.67 (rounded half-up from 2.666)
-        assert result["pear_suite_fee"] == 2.67
+        # Rewards pool: 25% of $26.66 = $6.67 (rounded half-up from 6.665)
+        assert result["pear_suite_fee"] == 6.67
 
     def test_net_is_gross_minus_fees(self):
         result = calculate_earnings(2)

@@ -4,7 +4,8 @@ To switch providers, change TRANSCRIPTION_PROVIDER in config / env.
 No other code changes required — the factory wires the correct adapter.
 """
 
-from app.services.transcription.base import TranscriptionProvider
+# Legacy Phase-1 re-exports — remove once all callers migrate.
+from app.services.transcription.base import Transcript, TranscriptionProvider, TranscriptSegment
 from app.services.transcription.types import (
     ActionItem,
     ExtractedFollowups,
@@ -18,9 +19,6 @@ from app.services.transcription.types import (
     TranscriptionResult,
     VerticalEnum,
 )
-
-# Legacy Phase-1 re-exports — remove once all callers migrate.
-from app.services.transcription.base import Transcript, TranscriptSegment
 
 _provider_instance: TranscriptionProvider | None = None
 

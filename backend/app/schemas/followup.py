@@ -11,7 +11,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
 # ── Enums for constrained string fields ──────────────────────────────────────
 
 class FollowupKind(str, Enum):

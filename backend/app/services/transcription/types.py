@@ -12,7 +12,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-
 # ---------------------------------------------------------------------------
 # Enums
 # ---------------------------------------------------------------------------
@@ -104,7 +103,7 @@ class SpeakerLabel(str, Enum):
     UNKNOWN = "UNKNOWN"
 
     @classmethod
-    def _missing_(cls, value: object) -> "SpeakerLabel":
+    def _missing_(cls, value: object) -> SpeakerLabel:
         """Accept arbitrary diarization labels gracefully."""
         return cls.UNKNOWN
 
@@ -227,6 +226,6 @@ class ExtractedFollowups(BaseModel):
     )
 
     @classmethod
-    def degraded(cls, reason: str) -> "ExtractedFollowups":
+    def degraded(cls, reason: str) -> ExtractedFollowups:
         """Return a safe empty instance for use when extraction fails."""
         return cls(extraction_failed=True, failure_reason=reason)
