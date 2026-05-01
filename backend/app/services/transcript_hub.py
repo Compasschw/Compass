@@ -66,7 +66,7 @@ class MockStreamingSession(StreamingSession):
     def __init__(
         self,
         session_id: UUID,
-        on_transcript_chunk: "TranscriptChunkCallback",
+        on_transcript_chunk: TranscriptChunkCallback,
     ) -> None:
         self._session_id = session_id
         self._on_chunk = on_transcript_chunk
@@ -360,7 +360,7 @@ class TranscriptHub:
             for ws in state.subscribers:
                 try:
                     await ws.close(code=close_code)
-                except Exception:  # noqa: BLE001
+                except Exception:  # noqa: BLE001, S110 — websocket may already be closed; nothing to log
                     pass  # Already closed — fine
 
         logger.info("transcript session closed session=%s", session_id)

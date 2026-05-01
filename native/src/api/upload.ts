@@ -27,7 +27,11 @@ export interface RNFileAsset {
   sizeBytes?: number;
 }
 
-export type UploadPurpose = 'credential' | 'profile_photo' | 'documentation';
+// Must stay in sync with backend/app/routers/upload.py — 'credential',
+// 'recording', 'document' route to the PHI bucket; everything else (e.g.
+// 'profile_photo') is public. 'documentation' is a legacy alias kept while
+// callers migrate to 'document'.
+export type UploadPurpose = 'credential' | 'profile_photo' | 'documentation' | 'document' | 'recording';
 
 // ─── API functions ────────────────────────────────────────────────────────────
 

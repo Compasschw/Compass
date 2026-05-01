@@ -52,7 +52,7 @@ async def get_rewards(current_user=Depends(require_role("member")), db: AsyncSes
     return {"transactions": result.scalars().all()}
 
 
-@router.get("/roadmap", response_model=list["RoadmapItemResponse"])
+@router.get("/roadmap", response_model=list["RoadmapItemResponse"])  # noqa: F821 — imported lazily in handler
 async def get_my_roadmap(
     current_user=Depends(require_role("member")),
     db: AsyncSession = Depends(get_db),

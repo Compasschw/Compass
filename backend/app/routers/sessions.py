@@ -19,7 +19,13 @@ from app.schemas.conversation import (
     SessionMessageSend,
 )
 from app.schemas.followup import ExtractFollowupsResponse, SessionFollowupResponse
-from app.schemas.session import ConsentSubmit, SessionCreate, SessionDocumentationSubmit, SessionResponse, TranscriptResponse
+from app.schemas.session import (
+    ConsentSubmit,
+    SessionCreate,
+    SessionDocumentationSubmit,
+    SessionResponse,
+    TranscriptResponse,
+)
 from app.services.billing_service import calculate_earnings, calculate_units, check_unit_caps, validate_claim
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["sessions"])
@@ -732,7 +738,7 @@ async def mark_session_messages_read(
     The cursor only ever moves forward; sending an older message id is a no-op
     (we compare ``created_at`` timestamps to determine ordering).
     """
-    from app.models.conversation import Conversation, Message
+    from app.models.conversation import Message
 
     session = await _get_session_and_assert_participant(session_id, current_user, db)
     conv = await _get_or_create_session_conversation(session, db)
@@ -931,7 +937,6 @@ async def extract_followups(
     """
     import logging
 
-    from app.models.followup import SessionFollowup as SessionFollowupModel
     from app.services.followup_extraction import extract_session_followups
 
     _logger = logging.getLogger("compass.sessions.extract_followups")

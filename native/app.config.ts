@@ -39,6 +39,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
      * automatically on every production build. Do not manually edit.
      */
     buildNumber: "1",
+    // @ts-expect-error — `minimumOsVersion` is a real EAS field but missing
+    // from the Expo SDK 54 IOS type. Sets the iOS deployment target.
     minimumOsVersion: "15.0",
     infoPlist: {
       // ---- Privacy usage strings (App Store review requirement) ----

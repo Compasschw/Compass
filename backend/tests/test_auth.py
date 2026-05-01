@@ -83,7 +83,9 @@ async def test_refresh_token_reuse_fails(client: AsyncClient, chw_tokens):
 @pytest.mark.asyncio
 async def test_logout_requires_auth(client: AsyncClient, chw_tokens):
     res = await client.post("/api/v1/auth/logout", json={"refresh_token": chw_tokens["refresh_token"]})
-    assert res.status_code == 403
+    # FastAPI's HTTPBearer(auto_error=True) returns 401 on missing header in
+    # current versions (was 403 in older releases). Either is a hard reject.
+    assert res.status_code in (401, 403)
 
 
 @pytest.mark.asyncio

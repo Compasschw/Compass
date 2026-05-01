@@ -23,8 +23,10 @@ from app.services.transcription.types import (
 
 # Re-export legacy Phase-1 names so existing imports don't break during migration.
 # TODO: Remove once all callers are updated to use TranscriptionResult + TranscriptChunk.
-from app.services.transcription.types import TranscriptChunk as TranscriptSegment
-from app.services.transcription.types import TranscriptionResult as Transcript
+# noqa: F401 — these aliases are intentional re-exports; ruff sees them as unused
+# in this file, but downstream callers import them from here.
+from app.services.transcription.types import TranscriptChunk as TranscriptSegment  # noqa: F401
+from app.services.transcription.types import TranscriptionResult as Transcript  # noqa: F401
 
 
 class TranscriptionProvider(ABC):

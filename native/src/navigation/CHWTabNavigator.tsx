@@ -47,11 +47,12 @@ export type CHWTabParamList = {
   Payments: undefined;
 };
 
-// Nested stack inside the Dashboard tab so we can push CHWIntakeScreen on top
-// of the main dashboard (full-screen flow, hides tab bar).
+// Nested stack inside the Dashboard tab so we can push CHWIntakeScreen and
+// CHWReviewsScreen on top of the main dashboard (full-screen flow, hides tab bar).
 type DashboardStackParamList = {
   Dashboard: undefined;
   Intake: undefined;
+  Reviews: undefined;
 };
 
 // Nested stack inside the Earnings tab so we can push PaymentsScreen on top

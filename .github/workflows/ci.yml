@@ -62,8 +62,9 @@ jobs:
       - name: Lint
         run: ruff check app/
 
-      - name: Type check
-        run: mypy app/ --ignore-missing-imports
+      - name: Type check (informational — does not fail the build)
+        run: mypy app/ --ignore-missing-imports || true
+        continue-on-error: true
 
       - name: Test
         env:

@@ -75,7 +75,7 @@ class TestAdminPage:
     async def test_admin_login_rejects_wrong_key(self, client: AsyncClient):
         """Wrong admin key on POST /api/v1/admin/waitlist/login returns 401."""
         res = await client.post(
-            "/admin/waitlist/login",
+            "/api/v1/admin/waitlist/login",
             data={"key": "wrong-key-definitely-not-admin"},
         )
         assert res.status_code == 401
@@ -83,7 +83,7 @@ class TestAdminPage:
     async def test_admin_login_sets_cookie_on_success(self, client: AsyncClient):
         """Correct admin key returns a redirect with Set-Cookie header."""
         res = await client.post(
-            "/admin/waitlist/login",
+            "/api/v1/admin/waitlist/login",
             data={"key": ADMIN_KEY},
             follow_redirects=False,
         )

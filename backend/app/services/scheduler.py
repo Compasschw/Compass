@@ -330,7 +330,7 @@ async def check_expiring_credentials() -> None:
                     db,
                     credential.chw_id,
                     credential.program_name,  # generic program name — no PHI
-                    credential.expiry_date,   # type: date
+                    credential.expiry_date,   # date
                 )
                 # Stamp today so we don't re-warn on the next scheduler run
                 record = await db.get(CHWCredentialValidation, credential.id)

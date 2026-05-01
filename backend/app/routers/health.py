@@ -145,7 +145,8 @@ async def ready(db: AsyncSession = Depends(get_db)) -> dict[str, str]:
     pull this instance from rotation.  Use ``/api/v1/health`` for richer
     diagnostic information.
     """
-    from fastapi import HTTPException, status as http_status
+    from fastapi import HTTPException
+    from fastapi import status as http_status
 
     try:
         await db.execute(text("SELECT 1"))

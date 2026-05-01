@@ -343,7 +343,7 @@ async def transcript_stream(
                     websocket.receive(),
                     timeout=float(HEARTBEAT_TIMEOUT_S),
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(
                     "transcript receive timeout session=%s user=%s — closing",
                     session_id,
