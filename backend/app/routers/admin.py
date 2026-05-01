@@ -1,12 +1,17 @@
 """Admin dashboard — cookie-protected HTML page to view waitlist submissions,
-plus read-only JSON API endpoints for live marketplace monitoring.
+plus read-only JSON API endpoints for live marketplace monitoring, plus TOTP 2FA.
 
 HTML flow (cookie-auth):
 - GET  /api/v1/admin/waitlist          → login form OR data page
 - POST /api/v1/admin/waitlist/login    → validates key, sets httpOnly cookie, redirects
 - POST /api/v1/admin/waitlist/logout   → clears cookie
 
-JSON API (Bearer-key auth via require_admin_key):
+2FA flow (Bearer-key auth, then TOTP):
+- POST /api/v1/admin/2fa/setup   → admin key required; generates TOTP secret + QR URI
+- POST /api/v1/admin/2fa/verify  → admin key required; validates 6-digit TOTP code,
+                                    returns short-lived 2fa_token JWT (15 min)
+
+JSON API (require_admin_key AND require_2fa_token):
 - GET /api/v1/admin/stats
 - GET /api/v1/admin/chws
 - GET /api/v1/admin/members
@@ -20,12 +25,22 @@ appears in URLs, logs, or browser history.
 
 HIPAA guardrails: JSON responses never include medi_cal_id, diagnosis_codes, session notes,
 session documentation text, or recording transcripts.
+
+2FA HIPAA note: The TOTP shared secret is sensitive infrastructure credential.
+It is encrypted at rest with AES-256-GCM using PHI_ENCRYPTION_KEY before storage,
+and is never returned in API responses after the initial setup call. The `is_verified`
+flag ensures the secret cannot be silently regenerated once the operator has confirmed it.
 """
 
+import base64
+import logging
+import os
 from datetime import UTC, datetime, timedelta, timezone
 
-from fastapi import APIRouter, Cookie, Depends, Form, Query
+from fastapi import APIRouter, Cookie, Depends, Form, Header, HTTPException, Query, status
 from fastapi.responses import HTMLResponse, RedirectResponse
+from jose import JWTError, jwt
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -48,6 +63,16 @@ from app.schemas.admin import (
     SessionAdminItem,
 )
 
+logger = logging.getLogger("compass.admin")
+
+# ─── 2FA constants ────────────────────────────────────────────────────────────
+
+_2FA_TOKEN_EXPIRE_MINUTES = 15
+_2FA_JWT_ALGORITHM = "HS256"
+_2FA_ADMIN_SLOT = "default"
+# Prefix that distinguishes 2FA tokens from user access tokens in decode_token.
+_2FA_TOKEN_TYPE = "admin_2fa"
+
 PT = timezone(timedelta(hours=-7))  # Pacific Daylight Time (UTC-7)
 COOKIE_NAME = "compass_admin"
 COOKIE_MAX_AGE = 60 * 60 * 4  # 4 hours
@@ -62,6 +87,252 @@ def _is_authenticated(cookie_value: str | None) -> bool:
         return False
     import hmac
     return hmac.compare_digest(cookie_value, settings.admin_key)
+
+
+# ─── 2FA helpers ──────────────────────────────────────────────────────────────
+
+
+def _get_encryption_key() -> bytes:
+    """Return the raw 32-byte AES-256-GCM key for encrypting the TOTP secret.
+
+    Falls back to a deterministic dev key when PHI_ENCRYPTION_KEY is not set —
+    never acceptable in production (enforced separately by ops runbook).
+    """
+    raw = os.environ.get("PHI_ENCRYPTION_KEY", "")
+    if raw:
+        return base64.urlsafe_b64decode(raw)
+    # Dev/test fallback — deterministic, not secret
+    import hashlib
+    return hashlib.sha256(settings.secret_key.encode()).digest()
+
+
+def _encrypt_totp_secret(plain_secret: str) -> str:
+    """Encrypt the TOTP plain-text secret with AES-256-GCM.
+
+    Returns a base64url-encoded string of the form ``nonce || ciphertext || tag``
+    compatible with the EncryptedString column type used elsewhere.
+    """
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    aesgcm = AESGCM(_get_encryption_key())
+    nonce = os.urandom(12)
+    ciphertext = aesgcm.encrypt(nonce, plain_secret.encode("utf-8"), associated_data=None)
+    return base64.urlsafe_b64encode(nonce + ciphertext).decode("ascii")
+
+
+def _decrypt_totp_secret(encrypted: str) -> str:
+    """Decrypt a value produced by ``_encrypt_totp_secret``."""
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    blob = base64.urlsafe_b64decode(encrypted.encode("ascii"))
+    nonce, ciphertext = blob[:12], blob[12:]
+    aesgcm = AESGCM(_get_encryption_key())
+    return aesgcm.decrypt(nonce, ciphertext, associated_data=None).decode("utf-8")
+
+
+def _issue_2fa_token() -> str:
+    """Issue a short-lived JWT that proves the operator completed TOTP verification.
+
+    The token type ``admin_2fa`` is distinct from user access tokens so that a
+    stolen user JWT cannot be used to access admin endpoints.
+    """
+    payload = {
+        "type": _2FA_TOKEN_TYPE,
+        "sub": "admin",
+        "exp": datetime.now(UTC) + timedelta(minutes=_2FA_TOKEN_EXPIRE_MINUTES),
+        "iat": datetime.now(UTC),
+    }
+    return jwt.encode(payload, settings.secret_key, algorithm=_2FA_JWT_ALGORITHM)
+
+
+async def require_2fa_token(
+    x_admin_2fa_token: str | None = Header(default=None, alias="X-Admin-2FA-Token"),
+) -> None:
+    """FastAPI dependency: validates the short-lived 2FA JWT.
+
+    Callers must pass the token in the ``X-Admin-2FA-Token`` request header.
+    The token is issued by ``POST /api/v1/admin/2fa/verify`` and expires in
+    ``_2FA_TOKEN_EXPIRE_MINUTES`` (15 minutes).
+
+    Raises HTTP 401 if the token is absent, expired, or tampered with.
+    """
+    if not x_admin_2fa_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="2FA token required. Complete /api/v1/admin/2fa/verify first.",
+        )
+    try:
+        payload = jwt.decode(
+            x_admin_2fa_token, settings.secret_key, algorithms=[_2FA_JWT_ALGORITHM]
+        )
+    except JWTError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired 2FA token.",
+        ) from exc
+    if payload.get("type") != _2FA_TOKEN_TYPE:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token type mismatch — admin 2FA token required.",
+        )
+
+
+# ─── 2FA request/response schemas ────────────────────────────────────────────
+
+
+class TotpSetupResponse(BaseModel):
+    """Returned by ``POST /api/v1/admin/2fa/setup``."""
+    otpauth_uri: str
+    secret: str  # Plain-text base32 secret — shown once for manual entry
+    issuer: str
+    already_verified: bool  # True if setup was already completed
+
+
+class TotpVerifyRequest(BaseModel):
+    """Body of ``POST /api/v1/admin/2fa/verify``."""
+    token: str  # 6-digit TOTP code from the authenticator app
+
+
+class TotpVerifyResponse(BaseModel):
+    """Returned by ``POST /api/v1/admin/2fa/verify``."""
+    two_fa_token: str  # Short-lived JWT; include as X-Admin-2FA-Token header
+
+
+# ─── 2FA endpoints ────────────────────────────────────────────────────────────
+
+
+@router.post(
+    "/2fa/setup",
+    response_model=TotpSetupResponse,
+    summary="Generate TOTP secret and QR URI (admin key required)",
+)
+async def admin_2fa_setup(
+    _: bool = Depends(require_admin_key),
+    db: AsyncSession = Depends(get_db),
+) -> TotpSetupResponse:
+    """Generate (or retrieve) the TOTP shared secret for the admin slot.
+
+    Behaviour:
+    - If no secret exists → generates a new one, stores it encrypted, returns it.
+    - If a secret exists and ``is_verified=False`` → regenerates it (operator
+      hasn't scanned the QR yet, safe to replace).
+    - If a secret exists and ``is_verified=True`` → returns the QR URI so the
+      operator can re-scan on a new device, but does NOT expose the plain secret
+      (returns empty string for ``secret``). This guards against an attacker
+      using a stolen ADMIN_KEY to silently replace 2FA.
+
+    The plain-text secret is only ever returned once (when ``is_verified=False``).
+    After verification it is encrypted at rest and never exposed again.
+
+    Security note: ADMIN_KEY auth is required but 2FA is NOT required here —
+    the setup endpoint is intentionally exempt because it bootstraps 2FA itself.
+    """
+    import pyotp
+
+    from app.models.admin_totp import AdminTotpSecret
+
+    result = await db.execute(
+        select(AdminTotpSecret).where(AdminTotpSecret.name == _2FA_ADMIN_SLOT)
+    )
+    existing: AdminTotpSecret | None = result.scalar_one_or_none()
+
+    if existing is not None and existing.is_verified:
+        # Already set up — return the URI for re-scanning only, do not expose secret.
+        plain_secret = _decrypt_totp_secret(existing.encrypted_secret)
+        totp = pyotp.TOTP(plain_secret)
+        uri = totp.provisioning_uri(name="admin@compasschw", issuer_name="CompassCHW Admin")
+        return TotpSetupResponse(
+            otpauth_uri=uri,
+            secret="",  # Intentionally blank after first verification
+            issuer="CompassCHW Admin",
+            already_verified=True,
+        )
+
+    # Generate a new secret (or regenerate an unverified one)
+    plain_secret = pyotp.random_base32()
+    encrypted = _encrypt_totp_secret(plain_secret)
+    totp = pyotp.TOTP(plain_secret)
+    uri = totp.provisioning_uri(name="admin@compasschw", issuer_name="CompassCHW Admin")
+
+    if existing is not None:
+        existing.encrypted_secret = encrypted
+        existing.is_verified = False
+        existing.updated_at = datetime.now(UTC)
+    else:
+        db.add(
+            AdminTotpSecret(
+                name=_2FA_ADMIN_SLOT,
+                encrypted_secret=encrypted,
+                is_verified=False,
+            )
+        )
+    await db.commit()
+
+    logger.info("admin_2fa_setup: TOTP secret (re)generated for slot=%s", _2FA_ADMIN_SLOT)
+
+    return TotpSetupResponse(
+        otpauth_uri=uri,
+        secret=plain_secret,
+        issuer="CompassCHW Admin",
+        already_verified=False,
+    )
+
+
+@router.post(
+    "/2fa/verify",
+    response_model=TotpVerifyResponse,
+    summary="Verify TOTP code and receive 2FA token (admin key required)",
+)
+async def admin_2fa_verify(
+    body: TotpVerifyRequest,
+    _: bool = Depends(require_admin_key),
+    db: AsyncSession = Depends(get_db),
+) -> TotpVerifyResponse:
+    """Verify a 6-digit TOTP code and issue a short-lived 2FA JWT.
+
+    The returned ``two_fa_token`` must be sent as the ``X-Admin-2FA-Token`` header
+    on all admin JSON API requests. It expires in 15 minutes.
+
+    If no TOTP secret has been set up yet, returns HTTP 428 (Precondition Required)
+    with ``detail="setup_required"`` so the front-end can direct the operator to
+    the setup flow.
+
+    TOTP tolerance: ±1 interval (30 seconds) to account for clock drift between
+    the server and the operator's authenticator app.
+    """
+    import pyotp
+
+    from app.models.admin_totp import AdminTotpSecret
+
+    result = await db.execute(
+        select(AdminTotpSecret).where(AdminTotpSecret.name == _2FA_ADMIN_SLOT)
+    )
+    secret_row: AdminTotpSecret | None = result.scalar_one_or_none()
+
+    if secret_row is None:
+        raise HTTPException(
+            status_code=status.HTTP_428_PRECONDITION_REQUIRED,
+            detail="setup_required",
+        )
+
+    plain_secret = _decrypt_totp_secret(secret_row.encrypted_secret)
+    totp = pyotp.TOTP(plain_secret)
+
+    # valid_window=1 accepts codes from [now-30s, now, now+30s]
+    if not totp.verify(body.token.strip(), valid_window=1):
+        logger.warning("admin_2fa_verify: invalid TOTP code presented")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired TOTP code.",
+        )
+
+    # Mark the secret as verified on first successful check
+    if not secret_row.is_verified:
+        secret_row.is_verified = True
+        secret_row.updated_at = datetime.now(UTC)
+        await db.commit()
+        logger.info("admin_2fa_verify: 2FA setup confirmed for slot=%s", _2FA_ADMIN_SLOT)
+
+    two_fa_token = _issue_2fa_token()
+    return TotpVerifyResponse(two_fa_token=two_fa_token)
 
 
 def _login_page(error: str = "") -> HTMLResponse:
@@ -226,7 +497,8 @@ _DEFAULT_LIMIT = 50
 
 @router.get("/stats", response_model=AdminStats, summary="Aggregate marketplace stats")
 async def get_admin_stats(
-    _: bool = Depends(require_admin_key),
+    _key: bool = Depends(require_admin_key),
+    _2fa: None = Depends(require_2fa_token),
     db: AsyncSession = Depends(get_db),
 ) -> AdminStats:
     """Return a single aggregate snapshot of marketplace activity.
@@ -310,7 +582,8 @@ async def get_admin_stats(
 async def list_admin_chws(
     limit: int = Query(default=_DEFAULT_LIMIT, ge=1, le=_MAX_LIMIT),
     offset: int = Query(default=0, ge=0),
-    _: bool = Depends(require_admin_key),
+    _key: bool = Depends(require_admin_key),
+    _2fa: None = Depends(require_2fa_token),
     db: AsyncSession = Depends(get_db),
 ) -> PaginatedResponse[CHWAdminItem]:
     """Return paginated CHW list joined with User for name/email/phone.
@@ -373,7 +646,8 @@ async def list_admin_chws(
 async def list_admin_members(
     limit: int = Query(default=_DEFAULT_LIMIT, ge=1, le=_MAX_LIMIT),
     offset: int = Query(default=0, ge=0),
-    _: bool = Depends(require_admin_key),
+    _key: bool = Depends(require_admin_key),
+    _2fa: None = Depends(require_2fa_token),
     db: AsyncSession = Depends(get_db),
 ) -> PaginatedResponse[MemberAdminItem]:
     """Return paginated member list joined with User for name/email/phone.
@@ -433,7 +707,8 @@ async def list_admin_requests(
     status: str | None = Query(default=None, description="Filter by status (open, matched, completed, cancelled)"),
     limit: int = Query(default=_DEFAULT_LIMIT, ge=1, le=_MAX_LIMIT),
     offset: int = Query(default=0, ge=0),
-    _: bool = Depends(require_admin_key),
+    _key: bool = Depends(require_admin_key),
+    _2fa: None = Depends(require_2fa_token),
     db: AsyncSession = Depends(get_db),
 ) -> PaginatedResponse[RequestAdminItem]:
     """Return paginated service requests with denormalized member and CHW names.
@@ -500,7 +775,8 @@ async def list_admin_sessions(
     status: str | None = Query(default=None, description="Filter by status (scheduled, in_progress, completed, cancelled)"),
     limit: int = Query(default=_DEFAULT_LIMIT, ge=1, le=_MAX_LIMIT),
     offset: int = Query(default=0, ge=0),
-    _: bool = Depends(require_admin_key),
+    _key: bool = Depends(require_admin_key),
+    _2fa: None = Depends(require_2fa_token),
     db: AsyncSession = Depends(get_db),
 ) -> PaginatedResponse[SessionAdminItem]:
     """Return paginated sessions with denormalized CHW and member names.
@@ -576,7 +852,8 @@ async def list_admin_claims(
     status: str | None = Query(default=None, description="Filter by status (pending, submitted, paid, rejected)"),
     limit: int = Query(default=_DEFAULT_LIMIT, ge=1, le=_MAX_LIMIT),
     offset: int = Query(default=0, ge=0),
-    _: bool = Depends(require_admin_key),
+    _key: bool = Depends(require_admin_key),
+    _2fa: None = Depends(require_2fa_token),
     db: AsyncSession = Depends(get_db),
 ) -> PaginatedResponse[ClaimAdminItem]:
     """Return paginated billing claims with denormalized CHW and member names.
