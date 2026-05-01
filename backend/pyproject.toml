@@ -25,6 +25,9 @@ dependencies = [
     "stripe>=10.0.0",
     "vonage>=4.0.0",
     "assemblyai>=0.63.0",
+    "reportlab>=4.2.0",
+    # TOTP 2FA for the admin dashboard (RFC 6238)
+    "pyotp>=2.9.0",
 ]
 
 [project.optional-dependencies]

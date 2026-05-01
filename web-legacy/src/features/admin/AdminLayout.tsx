@@ -10,7 +10,7 @@ import {
   LogOut,
   type LucideIcon,
 } from 'lucide-react';
-import { ADMIN_KEY_STORAGE } from './adminApi';
+import { ADMIN_KEY_STORAGE, ADMIN_2FA_TOKEN_STORAGE } from './adminApi';
 
 // ─── Nav config ───────────────────────────────────────────────────────────────
 
@@ -36,6 +36,7 @@ function AdminSidebar() {
 
   function handleLogout() {
     sessionStorage.removeItem(ADMIN_KEY_STORAGE);
+    sessionStorage.removeItem(ADMIN_2FA_TOKEN_STORAGE);
     navigate('/admin/login', { replace: true });
   }
 
@@ -102,6 +103,7 @@ function AdminMobileNav() {
 
   function handleLogout() {
     sessionStorage.removeItem(ADMIN_KEY_STORAGE);
+    sessionStorage.removeItem(ADMIN_2FA_TOKEN_STORAGE);
     navigate('/admin/login', { replace: true });
   }
 

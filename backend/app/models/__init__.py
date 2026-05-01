@@ -1,3 +1,4 @@
+from app.models.admin_totp import AdminTotpSecret
 from app.models.audit import AuditLog
 from app.models.auth import RefreshToken
 from app.models.billing import BillingClaim
@@ -33,4 +34,5 @@ __all__ = [
     "MagicLinkToken",
     "WaitlistEntry",
     "CHWIntakeResponse",
+    "AdminTotpSecret",
 ]

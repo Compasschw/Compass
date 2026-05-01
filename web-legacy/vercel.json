@@ -1,4 +1,31 @@
 {
+  "_csp_audit_notes": [
+    "=== CSP AUDIT — 2026-04-22 ===",
+    "",
+    "CHANGES FROM PREVIOUS VERSION (3 directives added):",
+    "",
+    "1. worker-src 'self'",
+    "   Added because the PWA registers a service worker from the same origin.",
+    "   Without this, Chrome 64+ blocks SW registration and offline caching",
+    "   silently fails. 'self' is the minimum; no third-party workers are used.",
+    "",
+    "2. connect-src += https://*.stripe.com",
+    "   Added ahead of Stripe Connect onboarding (marketplace payment flow).",
+    "   Stripe JS makes XHR/fetch calls to stripe.com subdomains for",
+    "   tokenization, 3DS redirects, and radar signals. Blocked without this.",
+    "",
+    "3. frame-src 'self' https://js.stripe.com",
+    "   Stripe 3DS and the Payment Element render inside a cross-origin iframe.",
+    "   frame-ancestors 'none' (anti-clickjacking) is preserved and unrelated.",
+    "",
+    "CONFIRMED UNCHANGED:",
+    "   connect-src already includes https://api.joincompasschw.com — no change.",
+    "   script-src 'unsafe-inline' retained (Vite inline bootstrap chunk).",
+    "   TODO: Replace unsafe-inline with nonce/hash after Vite CSP plugin added.",
+    "",
+    "VERIFICATION COMMAND (run after deploy):",
+    "   curl -sI https://joincompasschw.com | grep -i content-security-policy"
+  ],
   "headers": [
     {
       "source": "/(.*)",
@@ -25,7 +52,7 @@
         },
         {
           "key": "Content-Security-Policy",
-          "value": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://api.joincompasschw.com; img-src 'self' data: https:; font-src 'self' data:; frame-ancestors 'none'"
+          "value": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://api.joincompasschw.com https://*.stripe.com; img-src 'self' data: https:; font-src 'self' data:; frame-src 'self' https://js.stripe.com; frame-ancestors 'none'; worker-src 'self'"
         }
       ]
     }

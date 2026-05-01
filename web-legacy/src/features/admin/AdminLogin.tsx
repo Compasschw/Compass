@@ -4,14 +4,15 @@ import { ShieldCheck, Eye, EyeOff } from 'lucide-react';
 import { ADMIN_KEY_STORAGE, validateAdminKey, AdminApiError } from './adminApi';
 
 /**
- * Admin key login page.
+ * Admin key login page — step 1 of the 2-factor admin auth flow.
  *
  * The ADMIN_KEY is a shared secret (not a user JWT).
  * It is stored in sessionStorage — cleared automatically when the browser closes.
  *
  * On submit:
  *   1. Calls /api/v1/admin/stats to validate the key.
- *   2. On 200 → stores key + navigates to /admin.
+ *   2. On 200 → stores key in sessionStorage and navigates to /admin/2fa
+ *      (TOTP verification is required before accessing the dashboard).
  *   3. On 401 → shows "Invalid admin key" error.
  *   4. On other errors → shows the API error message.
  */
@@ -37,8 +38,10 @@ export function AdminLogin() {
         setError('Invalid admin key. Check your credentials and try again.');
         return;
       }
+      // Store key so the 2FA screen can use it for the verify request.
       sessionStorage.setItem(ADMIN_KEY_STORAGE, trimmed);
-      navigate('/admin', { replace: true });
+      // Step 2: TOTP verification before accessing the dashboard.
+      navigate('/admin/2fa', { replace: true });
     } catch (err) {
       if (err instanceof AdminApiError) {
         setError(`Server error (${err.status}): ${err.message}`);

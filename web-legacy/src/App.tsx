@@ -2,7 +2,7 @@ import { lazy, Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './features/auth/AuthContext';
 import { Layout } from './shared/components/Layout';
-import { ADMIN_KEY_STORAGE } from './features/admin/adminApi';
+import { ADMIN_KEY_STORAGE, ADMIN_2FA_TOKEN_STORAGE } from './features/admin/adminApi';
 import { InstallPWA } from './shared/components/InstallPWA';
 
 // Lazy-loaded page components
@@ -23,6 +23,7 @@ const AdminMembers = lazy(() => import('./features/admin/AdminMembers').then(m =
 const AdminRequests = lazy(() => import('./features/admin/AdminRequests').then(m => ({ default: m.AdminRequests })));
 const AdminSessions = lazy(() => import('./features/admin/AdminSessions').then(m => ({ default: m.AdminSessions })));
 const AdminClaims = lazy(() => import('./features/admin/AdminClaims').then(m => ({ default: m.AdminClaims })));
+const Admin2FAVerify = lazy(() => import('./features/admin/Admin2FAVerify').then(m => ({ default: m.Admin2FAVerify })));
 const LegalPage = lazy(() => import('./features/legal/LegalPage').then(m => ({ default: m.LegalPage })));
 const CHWDashboard = lazy(() => import('./features/chw/CHWDashboard').then(m => ({ default: m.CHWDashboard })));
 const CHWRequests = lazy(() => import('./features/chw/CHWRequests').then(m => ({ default: m.CHWRequests })));
@@ -51,15 +52,23 @@ function LoadingSpinner() {
 // ─── Admin route guard ────────────────────────────────────────────────────────
 
 /**
- * Protects admin dashboard routes by checking for a stored admin key.
- * The admin key is stored in sessionStorage (cleared on browser close).
- * If missing, redirects to /admin/login.
- * Renders children inside AdminLayout when authenticated.
+ * Protects admin dashboard routes by checking for both the admin key (step 1)
+ * and the 2FA token (step 2) in sessionStorage.
+ *
+ * Guard logic:
+ *   - No admin key → /admin/login
+ *   - Admin key present but no 2FA token → /admin/2fa
+ *   - Both present → renders children inside AdminLayout
  */
 function AdminRoute({ children }: { children: React.ReactNode }) {
   const hasKey = Boolean(sessionStorage.getItem(ADMIN_KEY_STORAGE));
+  const has2FA = Boolean(sessionStorage.getItem(ADMIN_2FA_TOKEN_STORAGE));
+
   if (!hasKey) {
     return <Navigate to="/admin/login" replace />;
+  }
+  if (!has2FA) {
+    return <Navigate to="/admin/2fa" replace />;
   }
   return <AdminLayout>{children}</AdminLayout>;
 }
@@ -237,8 +246,9 @@ export default function App() {
       <Route path="/hipaa" element={<LegalPage page="hipaa" />} />
       <Route path="/contact" element={<LegalPage page="contact" />} />
 
-      {/* Admin — key-based auth (sessionStorage) */}
+      {/* Admin — two-factor auth (ADMIN_KEY + TOTP) */}
       <Route path="/admin/login" element={<AdminLogin />} />
+      <Route path="/admin/2fa" element={<Admin2FAVerify />} />
       <Route
         path="/admin"
         element={
