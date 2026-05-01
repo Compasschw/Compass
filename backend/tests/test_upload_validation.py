@@ -4,12 +4,35 @@ Apr 9 audit C2: Upload endpoint accepted any content_type and had no size limit.
 This test enforces the Apr 18 fix.
 """
 
+import os
+
+import pytest
 from httpx import AsyncClient
 
 from tests.conftest import auth_header
 
 
+def _aws_creds_available() -> bool:
+    """True iff boto3 can resolve AWS credentials (env, profile, or instance role).
+
+    The happy-path upload test calls boto3, which raises NoCredentialsError
+    on CI runners without AWS credentials configured. The validation tests
+    below don't reach boto3 (they fail before the S3 call).
+    """
+    if os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_SECRET_ACCESS_KEY"):
+        return True
+    try:
+        import boto3
+        return boto3.Session().get_credentials() is not None
+    except Exception:
+        return False
+
+
 class TestUploadValidation:
+    @pytest.mark.skipif(
+        not _aws_creds_available(),
+        reason="Requires AWS credentials to call generate_presigned_url",
+    )
     async def test_valid_image_upload_accepted(
         self, client: AsyncClient, chw_tokens: dict
     ):
