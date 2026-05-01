@@ -14,7 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.database import Base, get_db  # noqa: E402
 from app.main import app  # noqa: E402
 
-TEST_DB_URL = "postgresql+asyncpg://compass:compass_dev_password@localhost:5432/compass_test"
+# Honour DATABASE_URL when set (CI passes its own postgres credentials via env).
+# Default to the local docker-compose dev DB so `pytest` works out of the box.
+TEST_DB_URL = os.environ.get(
+    "DATABASE_URL",
+    "postgresql+asyncpg://compass:compass_dev_password@localhost:5432/compass_test",
+)
 
 test_engine = create_async_engine(TEST_DB_URL, echo=False)
 test_session = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
