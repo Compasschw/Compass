@@ -503,6 +503,11 @@ const styles = StyleSheet.create({
   content: {
     padding: 20,
     paddingBottom: 40,
+    // flexGrow:1 stops RN-Web from re-rendering the content twice with
+    // whitespace between at extreme viewport heights (~2400px+). Without it
+    // the inner container under-measures and the layout engine fills the
+    // gap by re-mounting the children. Cosmetic-only at normal heights.
+    flexGrow: 1,
   },
   greetingBlock: {
     marginBottom: 24,

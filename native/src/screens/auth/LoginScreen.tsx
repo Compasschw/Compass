@@ -1,11 +1,18 @@
 /**
- * LoginScreen — sign in / sign up toggle styled to match the Lovable /auth page.
+ * LoginScreen — sign-in only, styled to match the Lovable /auth page.
+ *
+ * Self sign-up is intentionally NOT exposed here:
+ *   - CHWs are provisioned via the waitlist invite flow (WaitlistScreen)
+ *   - Members are provisioned via waitlist invite + magic link
+ *   - Founders / admins are seeded by `scripts/seed_founders.py`
+ *
+ * Anyone hitting this screen who doesn't yet have an account is routed to
+ * the waitlist via the "Looking to join?" link below the submit button.
  *
  * Layout:
  *   - Sticky navbar (64px, matching LandingScreen pattern) with desktop nav links
  *   - 2-column layout on desktop (marketing copy left / form card right)
  *   - Single column on mobile (form card below marketing copy)
- *   - No Full Name field — register call derives display name from email
  */
 
 import React, { useCallback, useRef, useState } from 'react';
@@ -55,7 +62,7 @@ type LoginNavProp = NativeStackNavigationProp<AuthStackParamList>;
 
 const VALUE_PROPS = [
   'Set your own schedule and work flexibly',
-  'Earn $32+/hour via Medi-Cal reimbursement',
+  'Earn $29+/hour via Medi-Cal reimbursement',
   'Make a real impact in your community',
 ] as const;
 
@@ -142,12 +149,11 @@ function ContentWrapper({
  *   - Right: auth form card (max-width 450)
  */
 export function LoginScreen(): React.JSX.Element {
-  const { login, register } = useAuth();
+  const { login } = useAuth();
   const navigation = useNavigation<LoginNavProp>();
   const { width } = useWindowDimensions();
   const isDesktop = width >= DESKTOP_BREAKPOINT;
 
-  const [isSignUp, setIsSignUp] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -172,13 +178,7 @@ export function LoginScreen(): React.JSX.Element {
     setError(null);
 
     try {
-      if (isSignUp) {
-        // Derive a display name from the local part of the email address.
-        const derivedName = email.trim().split('@')[0];
-        await register(email.trim(), password, derivedName, 'chw');
-      } else {
-        await login(email.trim(), password);
-      }
+      await login(email.trim(), password);
       // Navigation happens automatically via AppNavigator watching isAuthenticated.
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Authentication failed.';
@@ -186,7 +186,7 @@ export function LoginScreen(): React.JSX.Element {
     } finally {
       setIsLoading(false);
     }
-  }, [email, password, isSignUp, login, register]);
+  }, [email, password, login]);
 
   // ── Social login ─────────────────────────────────────────────────────────
   //
@@ -199,25 +199,19 @@ export function LoginScreen(): React.JSX.Element {
   //   - Backend: /auth/oauth/{provider} endpoint that verifies the ID token
   //     and exchanges it for our JWT pair via signInWithTokens.
   //
-  // Until the credentials are provisioned, route the user to the email/
-  // password form: switch to sign-in mode, focus the email input, and show
+  // Until the credentials are provisioned, focus the email input and surface
   // an inline notice — no broken Alert dialogs.
   const handleSocialLogin = useCallback((provider: 'Google' | 'Apple'): void => {
     setSocialNotice(provider);
-    setIsSignUp(false);
     setError(null);
-    // Defer focus until after the form re-renders in sign-in mode.
     setTimeout(() => emailInputRef.current?.focus(), 50);
   }, []);
 
-  // ── Toggle between sign in / sign up ────────────────────────────────────
+  // ── Navigate to waitlist (replaces the old "Sign up" toggle) ────────────
 
-  const toggleMode = useCallback((): void => {
-    setIsSignUp((prev) => !prev);
-    setError(null);
-    setEmail('');
-    setPassword('');
-  }, []);
+  const handleNavToWaitlist = useCallback((): void => {
+    navigation.navigate('Waitlist');
+  }, [navigation]);
 
   // ── Navigate back to Landing ─────────────────────────────────────────────
 
@@ -374,13 +368,9 @@ export function LoginScreen(): React.JSX.Element {
                   <View style={s.cardBody}>
                     {/* Heading */}
                     <View style={s.cardHeader}>
-                      <Text style={s.cardTitle}>
-                        {isSignUp ? 'Create your account' : 'Welcome back'}
-                      </Text>
+                      <Text style={s.cardTitle}>Welcome back</Text>
                       <Text style={s.cardSubtitle}>
-                        {isSignUp
-                          ? 'Sign up to start earning as a Community Health Worker.'
-                          : 'Sign in to access your Compass dashboard.'}
+                        Sign in to access your Compass dashboard.
                       </Text>
                     </View>
 
@@ -469,7 +459,7 @@ export function LoginScreen(): React.JSX.Element {
                           value={password}
                           onChangeText={setPassword}
                           secureTextEntry={!showPassword}
-                          autoComplete={isSignUp ? 'new-password' : 'current-password'}
+                          autoComplete="current-password"
                           returnKeyType="done"
                           onSubmitEditing={handleSubmit}
                           editable={!isLoading}
@@ -496,31 +486,27 @@ export function LoginScreen(): React.JSX.Element {
                       onPress={handleSubmit}
                       disabled={isLoading}
                       activeOpacity={0.85}
-                      accessibilityLabel={isSignUp ? 'Create account' : 'Sign in'}
+                      accessibilityLabel="Sign in"
                       accessibilityRole="button"
                     >
                       {isLoading ? (
                         <ActivityIndicator size="small" color="#FFFFFF" />
                       ) : (
-                        <Text style={s.submitButtonText}>
-                          {isSignUp ? 'Create Account' : 'Sign In'}
-                        </Text>
+                        <Text style={s.submitButtonText}>Sign In</Text>
                       )}
                     </TouchableOpacity>
 
-                    {/* Toggle sign in / sign up */}
+                    {/* Route prospective users to the waitlist instead of self-signup */}
                     <View style={s.toggleRow}>
                       <Text style={s.toggleText}>
-                        {isSignUp ? 'Already have an account? ' : "Don't have an account? "}
+                        Don&apos;t have an account?{' '}
                       </Text>
                       <TouchableOpacity
-                        onPress={toggleMode}
+                        onPress={handleNavToWaitlist}
                         accessibilityRole="button"
-                        accessibilityLabel={isSignUp ? 'Switch to sign in' : 'Switch to sign up'}
+                        accessibilityLabel="Apply to join the waitlist"
                       >
-                        <Text style={s.toggleLink}>
-                          {isSignUp ? 'Sign in' : 'Sign up'}
-                        </Text>
+                        <Text style={s.toggleLink}>Join the waitlist</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
