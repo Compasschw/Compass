@@ -44,10 +44,14 @@ class SessionFollowup(Base):
     )
 
     # ── Ownership / context ───────────────────────────────────────────────────
-    session_id: Mapped[uuid.UUID] = mapped_column(
+    # session_id + chw_id are NULLABLE for member-self-set roadmap goals
+    # (POST /api/v1/member/roadmap). All LLM-extracted and CHW-session-derived
+    # rows have non-NULL values for both. CHW-attributed analytics must filter
+    # with WHERE chw_id IS NOT NULL. See migration n6j9k0l1m2n3.
+    session_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("sessions.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
     member_id: Mapped[uuid.UUID] = mapped_column(
@@ -56,10 +60,10 @@ class SessionFollowup(Base):
         nullable=False,
         index=True,
     )
-    chw_id: Mapped[uuid.UUID] = mapped_column(
+    chw_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id"),
-        nullable=False,
+        nullable=True,
     )
 
     # ── Classification ────────────────────────────────────────────────────────
