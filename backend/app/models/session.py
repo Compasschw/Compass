@@ -27,6 +27,15 @@ class Session(Base):
     notes: Mapped[str | None] = mapped_column(Text)
     gross_amount: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     net_amount: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    # Set when the member affirmatively consents to call recording —
+    # DTMF "1" on the IVR for phone calls, explicit consent button for chat.
+    # The full audit record (signature method, IP, UA) lives in the
+    # member_consents table; this column is denormalized for fast joinless
+    # lookups during billing claim creation. NULL means recording was never
+    # consented (and therefore must not have happened).
+    recording_consent_given_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

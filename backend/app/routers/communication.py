@@ -123,8 +123,18 @@ async def voice_answer(
     session: str | None = Query(default=None, description="Internal session id."),
     member: str | None = Query(default=None, description="Member phone number (digits only)."),
 ):
-    """Vonage calls this when the CHW answers — returns an NCCO to connect
-    the call to the member.
+    """Vonage calls this when the CHW answers — returns an NCCO that bridges
+    the call to the member through a recording-consent IVR.
+
+    Consent flow (California Civil Code §632 — two-party consent):
+      1. CHW answers (this endpoint fires).
+      2. NCCO: ``connect`` to member, then on member-answer the IVR plays
+         the disclosure and collects DTMF.
+      3. Member presses 1 → /voice/consent-result returns the record+connect
+         NCCO and writes a MemberConsent row.
+      4. Member presses 2 (or no input) → /voice/consent-result returns a
+         polite hangup, no recording, session marked
+         ``cancelled_no_consent`` by the events webhook.
 
     NCCO reference: https://developer.vonage.com/en/voice/voice-api/ncco-reference
     """
@@ -132,7 +142,6 @@ async def voice_answer(
     logger.info("voice/answer received (session=%s member=%s): %s", session, member, payload)
 
     if not member:
-        # No member to bridge to — play a short message and hang up.
         return [
             {
                 "action": "talk",
@@ -142,24 +151,184 @@ async def voice_answer(
 
     from app.config import settings
 
-    # Full NCCO: announce, then connect, with recording enabled.
+    # The "answerOnAnswer" pattern: connect to member; once the member's leg
+    # picks up, the inner `onAnswer` URL fires and returns the consent IVR.
+    # That second NCCO drives the disclosure → DTMF → consent decision.
+    consent_url = (
+        f"{_public_base_url()}/api/v1/communication/voice/consent-prompt"
+        f"?session={session or ''}"
+    )
     return [
         {
             "action": "talk",
-            "text": "Connecting you to your CompassCHW session.",
+            "text": "Hold while we connect you to your member.",
             "bargeIn": True,
-        },
-        {
-            "action": "record",
-            "eventUrl": [f"{_public_base_url()}/api/v1/communication/voice/events?session={session}"],
-            "endOnSilence": 3,
-            "format": "mp3",
-            "beepStart": False,
         },
         {
             "action": "connect",
             "from": settings.vonage_from_number or "",
-            "endpoint": [{"type": "phone", "number": member}],
+            "endpoint": [
+                {
+                    "type": "phone",
+                    "number": member,
+                    # When the member picks up, Vonage fetches this NCCO and
+                    # plays it on the member leg before bridging audio.
+                    "onAnswer": {"url": consent_url},
+                }
+            ],
+        },
+    ]
+
+
+@router.post("/voice/consent-prompt")
+async def voice_consent_prompt(
+    request: Request,
+    session: str | None = Query(default=None, description="Internal session id."),
+):
+    """Played to the member's leg the moment they answer the call.
+
+    Reads the recording-consent disclosure required by California's two-party
+    consent law (Cal. Civ. Code §632) and collects a single DTMF digit. The
+    digit is delivered to /voice/consent-result, which returns either the
+    record+connect continuation (consent granted) or a polite hangup
+    (consent declined).
+
+    Repeating the prompt on no-input / invalid-input gives the member a
+    second chance before we treat silence as a decline.
+    """
+    payload = await _safely_read_body(request)
+    logger.info("voice/consent-prompt (session=%s): %s", session, payload)
+
+    consent_result_url = (
+        f"{_public_base_url()}/api/v1/communication/voice/consent-result"
+        f"?session={session or ''}"
+    )
+    disclosure = (
+        "Hello. This call is from your CompassCHW community health worker. "
+        "For documentation and Medi-Cal billing, this call needs to be recorded. "
+        "Press 1 to consent and continue. Press 2 to decline and hang up."
+    )
+    return [
+        {
+            "action": "talk",
+            "text": disclosure,
+            "bargeIn": True,
+        },
+        {
+            "action": "input",
+            "type": ["dtmf"],
+            "dtmf": {
+                "maxDigits": 1,
+                "timeOut": 8,
+                "submitOnHash": False,
+            },
+            "eventUrl": [consent_result_url],
+        },
+    ]
+
+
+@router.post("/voice/consent-result")
+async def voice_consent_result(
+    request: Request,
+    session: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Receives the DTMF digit collected by /voice/consent-prompt.
+
+    Decision matrix:
+      digit == "1"  → write MemberConsent (consent_type='session_recording'),
+                      return record + (no-op) NCCO so audio is captured for
+                      the remainder of the call.
+      anything else → polite goodbye NCCO + hangup. The events webhook will
+                      see the call ended and mark the session
+                      ``cancelled_no_consent``.
+
+    NCCO reference for `input.dtmf`:
+    https://developer.vonage.com/en/voice/voice-api/ncco-reference#input
+    """
+    from datetime import UTC, datetime
+    from uuid import UUID as _UUID
+
+    from app.models.session import MemberConsent, Session
+
+    payload = await _safely_read_body(request)
+    logger.info("voice/consent-result (session=%s): %s", session, payload)
+
+    digit = ""
+    if isinstance(payload, dict):
+        # Vonage sends `dtmf` as either a string or a dict per SDK version.
+        dtmf_field = payload.get("dtmf")
+        if isinstance(dtmf_field, dict):
+            digit = (dtmf_field.get("digits") or "").strip()
+        elif isinstance(dtmf_field, str):
+            digit = dtmf_field.strip()
+
+    if digit == "1" and session:
+        # Write the consent record. `typed_signature` is repurposed here as a
+        # method-of-consent marker — "DTMF:1@<phone>" — so audit trails can
+        # tell IVR consent apart from typed-signature web consent.
+        try:
+            session_uuid = _UUID(session)
+            session_row = await db.get(Session, session_uuid)
+            if session_row is not None:
+                caller_number = ""
+                if isinstance(payload, dict):
+                    caller_number = str(payload.get("from") or payload.get("to") or "")
+                consent = MemberConsent(
+                    session_id=session_uuid,
+                    member_id=session_row.member_id,
+                    consent_type="session_recording",
+                    typed_signature=f"DTMF:1@{caller_number}"[:255],
+                )
+                db.add(consent)
+                # Mark the audio-recording opt-in on the session itself for
+                # quick joinless lookups by the billing pipeline.
+                session_row.recording_consent_given_at = datetime.now(UTC)
+                await db.commit()
+                logger.info("Recording consent recorded for session %s via DTMF", session)
+        except Exception as e:  # noqa: BLE001
+            logger.error("Failed to persist DTMF consent for session %s: %s", session, e)
+
+        return [
+            {
+                "action": "talk",
+                "text": "Thank you. You are now connected.",
+                "bargeIn": True,
+            },
+            {
+                "action": "record",
+                "eventUrl": [
+                    f"{_public_base_url()}/api/v1/communication/voice/events"
+                    f"?session={session or ''}"
+                ],
+                "endOnSilence": 3,
+                "format": "mp3",
+                "beepStart": False,
+            },
+        ]
+
+    # Decline path (digit "2", invalid, or timeout).
+    if session:
+        try:
+            session_uuid = _UUID(session)
+            session_row = await db.get(Session, session_uuid)
+            if session_row is not None and session_row.status == "in_progress":
+                session_row.status = "cancelled_no_consent"
+                await db.commit()
+                logger.info(
+                    "Session %s marked cancelled_no_consent after declined IVR consent",
+                    session,
+                )
+        except Exception as e:  # noqa: BLE001
+            logger.error("Failed to mark session %s as cancelled_no_consent: %s", session, e)
+
+    return [
+        {
+            "action": "talk",
+            "text": (
+                "We could not record consent. Your CHW will follow up with you. "
+                "Goodbye."
+            ),
         },
     ]
 
