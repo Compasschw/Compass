@@ -12,7 +12,7 @@
  *  - Submit Documentation button
  */
 
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import {
   Alert,
   Modal,
@@ -34,6 +34,7 @@ import {
   FileText,
 } from 'lucide-react-native';
 
+import { api } from '../../api/client';
 import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
 import {
@@ -861,6 +862,44 @@ export function DocumentationModal({
   const [followUpDate, setFollowUpDate] = useState('');
   const [sessionNotes, setSessionNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
+  const [summaryFromAI, setSummaryFromAI] = useState(false);
+
+  // ── Auto-generate a draft summary on modal open ─────────────────────────
+  // Calls POST /sessions/{id}/summary in the background. If the LLM returns
+  // a non-empty draft, we pre-fill the notes field and badge it as
+  // AI-generated so the CHW knows to review before submitting. CHW can edit
+  // freely or wipe the field — they remain author of record.
+  useEffect(() => {
+    if (!visible || !sessionId) return;
+    // Only generate once per modal-open. If the CHW already typed something,
+    // don't overwrite their text.
+    if (sessionNotes.trim().length > 0) return;
+    let cancelled = false;
+    setIsGeneratingSummary(true);
+    (async () => {
+      try {
+        const res = await api<{ session_id: string; summary: string }>(
+          `/sessions/${sessionId}/summary`,
+          { method: 'POST' },
+        );
+        if (cancelled) return;
+        const draft = (res.summary ?? '').trim();
+        if (draft.length > 0) {
+          setSessionNotes(draft.slice(0, NOTES_MAX));
+          setSummaryFromAI(true);
+        }
+      } catch {
+        // Silent: empty draft = CHW types from scratch (existing behavior).
+      } finally {
+        if (!cancelled) setIsGeneratingSummary(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, sessionId]);
 
   const isValid = selectedDiagnosisCodes.length > 0 && selectedProcedureCode.length > 0;
 
@@ -1045,11 +1084,22 @@ export function DocumentationModal({
                 {sessionNotes.length}/{NOTES_MAX}
               </Text>
             </View>
+            {isGeneratingSummary && (
+              <Text style={m.aiSummaryBadge}>Drafting summary from transcript…</Text>
+            )}
+            {!isGeneratingSummary && summaryFromAI && (
+              <Text style={m.aiSummaryBadge}>
+                AI-drafted from transcript — review and edit before submitting
+              </Text>
+            )}
             <TextInput
               style={m.notesInput}
               value={sessionNotes}
               onChangeText={(v) => {
                 if (v.length <= NOTES_MAX) setSessionNotes(v);
+                // Once the CHW edits, drop the "AI-drafted" badge — it's
+                // their note now, not the model's.
+                if (summaryFromAI) setSummaryFromAI(false);
               }}
               placeholder="Add any additional notes about this session..."
               placeholderTextColor={colors.mutedForeground}
@@ -1139,6 +1189,16 @@ const m = StyleSheet.create({
   charCounter: {
     ...typography.label,
     color: colors.mutedForeground,
+  },
+  aiSummaryBadge: {
+    ...typography.label,
+    color: colors.primary,
+    backgroundColor: 'rgba(107,143,113,0.10)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    marginBottom: 8,
+    overflow: 'hidden',
   },
   notesInput: {
     borderWidth: 1,

@@ -530,6 +530,65 @@ class AssemblyAIProvider(TranscriptionProvider):
 
         return self._parse_lemur_response(raw_response)
 
+    async def summarize_transcript(
+        self,
+        transcript: str,
+        member_name: str | None = None,
+    ) -> str:
+        """Generate a 2-4 sentence draft summary via LeMUR.
+
+        Mirrors extract_followups for plumbing: SDK call wrapped in
+        ``asyncio.to_thread``, exceptions caught, empty string on any
+        failure. The CHW always remains author of record — this is a
+        draft they edit before submitting documentation.
+        """
+        if not self._api_key:
+            logger.info("summarize_transcript: AssemblyAI key not configured, returning empty")
+            return ""
+        if not transcript.strip():
+            return ""
+
+        aai = self._get_sdk()
+        member_clause = f" with {member_name}" if member_name else ""
+        prompt = (
+            "You are a clinical documentation assistant for a Community Health "
+            f"Worker (CHW). Summarize this CHW–member session{member_clause} in "
+            "2-4 plain English sentences suitable for a Medi-Cal case management "
+            "note. Focus on: what the member needed, what was discussed, and "
+            "next steps the CHW committed to. Do not invent facts not present "
+            "in the transcript. Do not include diagnostic language or clinical "
+            "judgment. Keep it neutral and factual.\n\n"
+            f"Transcript:\n{transcript}\n\nSummary:"
+        )
+
+        def _run_lemur() -> str:
+            lemur = aai.Lemur()
+            response = lemur.task(
+                prompt=prompt,
+                final_model=(
+                    aai.LemurModel.default
+                    if self._lemur_model == "default"
+                    else self._lemur_model
+                ),
+            )
+            return response.response or ""
+
+        try:
+            raw: str = await asyncio.to_thread(_run_lemur)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "summarize_transcript LeMUR call failed error_type=%s",
+                type(exc).__name__,
+            )
+            return ""
+
+        # Strip leading "Summary:" if model echoes the prompt label,
+        # then collapse whitespace so the frontend renders cleanly.
+        summary = raw.strip()
+        if summary.lower().startswith("summary:"):
+            summary = summary[len("summary:"):].lstrip()
+        return summary
+
     # ------------------------------------------------------------------
     # LeMUR response parsing
     # ------------------------------------------------------------------
