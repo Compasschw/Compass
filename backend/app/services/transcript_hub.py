@@ -182,20 +182,24 @@ async def _persist_transcript_chunk(session_id: UUID, payload: dict) -> None:
     from app.database import async_session
     from app.models.session import SessionTranscript
 
-    row = SessionTranscript(
-        id=uuid.uuid4(),
-        session_id=session_id,
-        speaker_label=payload.get("speaker_label"),
-        speaker_role=payload.get("speaker_role"),
-        speaker_user_id=payload.get("speaker_user_id"),
-        text=payload["text"],
-        is_final=payload.get("is_final", True),
-        confidence=payload.get("confidence"),
-        started_at_ms=payload.get("started_at_ms"),
-        ended_at_ms=payload.get("ended_at_ms"),
-    )
-
+    chunk_id = uuid.uuid4()
     try:
+        # Build the row + commit inside the same try so a malformed payload
+        # (e.g., missing 'text') is treated as any other persist failure:
+        # log the type name + IDs only (never the payload contents — PHI),
+        # then return cleanly so the live fan-out stream is not interrupted.
+        row = SessionTranscript(
+            id=chunk_id,
+            session_id=session_id,
+            speaker_label=payload.get("speaker_label"),
+            speaker_role=payload.get("speaker_role"),
+            speaker_user_id=payload.get("speaker_user_id"),
+            text=payload["text"],
+            is_final=payload.get("is_final", True),
+            confidence=payload.get("confidence"),
+            started_at_ms=payload.get("started_at_ms"),
+            ended_at_ms=payload.get("ended_at_ms"),
+        )
         async with async_session() as db:
             db.add(row)
             await db.commit()
@@ -203,7 +207,7 @@ async def _persist_transcript_chunk(session_id: UUID, payload: dict) -> None:
         logger.error(
             "transcript persist failed session=%s chunk_id=%s: %s",
             session_id,
-            row.id,
+            chunk_id,
             type(exc).__name__,
         )
 
