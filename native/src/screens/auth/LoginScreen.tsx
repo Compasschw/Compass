@@ -213,6 +213,12 @@ export function LoginScreen(): React.JSX.Element {
     navigation.navigate('Waitlist');
   }, [navigation]);
 
+  // ── Navigate to RegisterScreen (self-service signup, post-launch) ────────
+
+  const handleNavToRegister = useCallback((): void => {
+    navigation.navigate('Register');
+  }, [navigation]);
+
   // ── Navigate back to Landing ─────────────────────────────────────────────
 
   const handleNavToLanding = useCallback((): void => {
@@ -496,17 +502,31 @@ export function LoginScreen(): React.JSX.Element {
                       )}
                     </TouchableOpacity>
 
-                    {/* Route prospective users to the waitlist instead of self-signup */}
+                    {/* Self-service signup is the primary path post-launch.
+                        Waitlist remains a secondary option for users who want
+                        to be notified about new market expansions. */}
                     <View style={s.toggleRow}>
                       <Text style={s.toggleText}>
                         Don&apos;t have an account?{' '}
                       </Text>
                       <TouchableOpacity
+                        onPress={handleNavToRegister}
+                        accessibilityRole="button"
+                        accessibilityLabel="Create an account"
+                      >
+                        <Text style={s.toggleLink}>Sign up</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <View style={s.toggleRow}>
+                      <Text style={s.toggleSubtle}>
+                        Not in our market yet?{' '}
+                      </Text>
+                      <TouchableOpacity
                         onPress={handleNavToWaitlist}
                         accessibilityRole="button"
-                        accessibilityLabel="Apply to join the waitlist"
+                        accessibilityLabel="Join the waitlist"
                       >
-                        <Text style={s.toggleLink}>Join the waitlist</Text>
+                        <Text style={s.toggleSubtleLink}>Join the waitlist</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -877,6 +897,17 @@ const s = StyleSheet.create({
     fontFamily: fonts.bodySemibold,
     fontSize: 14,
     color: colors.primary,
+  },
+  toggleSubtle: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: colors.mutedForeground,
+  },
+  toggleSubtleLink: {
+    fontFamily: fonts.bodySemibold,
+    fontSize: 12,
+    color: colors.mutedForeground,
+    textDecorationLine: 'underline',
   },
 
 });

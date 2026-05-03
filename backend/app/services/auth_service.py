@@ -9,12 +9,42 @@ from app.utils.security import create_access_token, create_refresh_token, hash_p
 
 
 async def register_user(db: AsyncSession, email: str, password: str, name: str, role: str, phone: str | None = None):
-    from app.models.user import User
+    """Register a new User and provision the role-appropriate profile row.
+
+    A `MemberProfile` (or `CHWProfile`) is created with sensible defaults at
+    signup time so downstream endpoints — `GET /member/profile`, `PUT
+    /member/profile`, `GET /chw/intake`, request submission, etc. — never 404
+    on a freshly-registered account. Onboarding flows then PATCH the empty
+    fields with the user's real data (zip, language, Medi-Cal ID, etc.).
+
+    Returns None when the email is already taken (handled at the router layer
+    as HTTP 400).
+    """
+    from app.models.user import CHWProfile, MemberProfile, User
+
     existing = await db.execute(select(User).where(User.email == email))
     if existing.scalar_one_or_none():
         return None
-    user = User(email=email, password_hash=hash_password(password), name=name, role=role, phone=phone)
+
+    user = User(
+        email=email,
+        password_hash=hash_password(password),
+        name=name,
+        role=role,
+        phone=phone,
+    )
     db.add(user)
+    await db.flush()  # populate user.id without ending the transaction
+
+    # Provision the role-specific profile in the same transaction so the user
+    # never exists in a half-onboarded state where queries against the join
+    # row would 404.
+    if role == "member":
+        db.add(MemberProfile(user_id=user.id))
+    elif role == "chw":
+        db.add(CHWProfile(user_id=user.id))
+    # Other roles (admin) don't need a profile row.
+
     await db.commit()
     await db.refresh(user)
     return user
