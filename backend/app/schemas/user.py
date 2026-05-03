@@ -57,3 +57,6 @@ class MemberProfileUpdate(BaseModel):
     primary_need: str | None = None
     insurance_provider: str | None = None
     preferred_mode: str | None = None
+    # Medi-Cal beneficiary identification number — required for billing.
+    # Stored encrypted at rest via the EncryptedString column type.
+    medi_cal_id: str | None = None

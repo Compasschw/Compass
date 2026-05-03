@@ -124,6 +124,7 @@ interface Step2Data {
 
 interface Step3Data {
   insuranceProvider: string;
+  mediCalId: string;
 }
 
 // ─── Step 1: Basic Info ───────────────────────────────────────────────────────
@@ -378,6 +379,32 @@ function StepInsurance({ data, onChange }: StepInsuranceProps) {
             aria-hidden="true"
           />
         </div>
+      </div>
+
+      {/* Medi-Cal beneficiary ID — required for billing claims */}
+      <div>
+        <label
+          htmlFor="member-medi-cal-id"
+          className="block text-sm font-medium text-[#2C3E2D] mb-1.5"
+        >
+          Medi-Cal ID{' '}
+          <span className="text-[#8B9B8D] font-normal">(optional, can add later)</span>
+        </label>
+        <input
+          id="member-medi-cal-id"
+          type="text"
+          inputMode="numeric"
+          autoComplete="off"
+          value={data.mediCalId}
+          onChange={(e: ChangeEvent<HTMLInputElement>) =>
+            onChange({ ...data, mediCalId: e.target.value })
+          }
+          placeholder="9-digit beneficiary number"
+          className="w-full rounded-[12px] border border-[rgba(44,62,45,0.1)] px-3.5 py-2.5 text-sm text-[#2C3E2D] placeholder:text-[#8B9B8D] focus:outline-none focus:ring-2 focus:ring-[#6B8F71] focus:border-transparent transition"
+        />
+        <p className="text-xs text-[#8B9B8D] mt-1">
+          Found on your Medi-Cal Benefits Identification Card (BIC). Stored encrypted; required before a CHW session can be billed.
+        </p>
       </div>
 
       {/* Connect button — placeholder action */}
@@ -651,7 +678,10 @@ export function MemberOnboarding() {
 
   const [insuranceData, setInsuranceData] = useState<Step3Data>({
     insuranceProvider: '',
+    mediCalId: '',
   });
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   const fullName = basicInfo.firstName.trim() || 'Member';
 
@@ -674,9 +704,42 @@ export function MemberOnboarding() {
     }
   }
 
-  function handleNext() {
+  async function persistOnboarding(): Promise<boolean> {
+    setSaveError(null);
+    setIsSaving(true);
+    try {
+      const { updateMemberProfile } = await import('../../api/member');
+      // Map the SDOH primary need: pick the first selected challenge as the
+      // primary, additional ones go into a future `additional_needs` patch.
+      const primaryNeed =
+        healthData.sdohChallenges.length > 0 ? healthData.sdohChallenges[0] : undefined;
+      await updateMemberProfile({
+        zip_code: basicInfo.zipCode || undefined,
+        primary_language: basicInfo.preferredLanguage || undefined,
+        primary_need: primaryNeed,
+        insurance_provider: insuranceData.insuranceProvider || undefined,
+        medi_cal_id: insuranceData.mediCalId.trim() || undefined,
+      });
+      return true;
+    } catch (err) {
+      setSaveError(
+        err instanceof Error
+          ? err.message
+          : 'Could not save your profile. Check your connection and try again.',
+      );
+      return false;
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleNext() {
     if (step === 3) {
-      // Transition to welcome step — log in here
+      // Persist the collected profile data to the backend BEFORE marking the
+      // user as logged in. If the save fails we hold the user on step 3 with
+      // an error message so they can retry — never silently dropping data.
+      const ok = await persistOnboarding();
+      if (!ok) return;
       login('member', fullName);
     }
     if (step < TOTAL_STEPS) {
@@ -733,6 +796,16 @@ export function MemberOnboarding() {
           <StepWelcome firstName={basicInfo.firstName.trim()} onGetStarted={handleGetStarted} />
         )}
 
+        {/* Save error — surfaces when persistOnboarding() fails on step 3 */}
+        {saveError && !isWelcomeStep && (
+          <div
+            role="alert"
+            className="mt-6 p-3 rounded-[12px] bg-red-50 border border-red-200 text-sm text-red-700"
+          >
+            {saveError}
+          </div>
+        )}
+
         {/* Navigation — hidden on welcome step (it has its own CTA) */}
         {!isWelcomeStep && (
           <div className="flex items-center justify-between mt-8 pt-6 border-t border-[rgba(44,62,45,0.1)]">
@@ -753,10 +826,10 @@ export function MemberOnboarding() {
             <button
               type="button"
               onClick={handleNext}
-              disabled={!canProceed()}
+              disabled={!canProceed() || isSaving}
               className="inline-flex items-center gap-1.5 bg-[#2C3E2D] hover:bg-[#3A5240] disabled:bg-[rgba(107,143,113,0.15)] disabled:cursor-not-allowed text-white font-semibold px-5 py-2.5 rounded-[12px] text-sm transition-colors"
             >
-              {step === 3 ? 'Finish' : 'Continue'}
+              {step === 3 ? (isSaving ? 'Saving…' : 'Finish') : 'Continue'}
               <ArrowRight size={15} />
             </button>
           </div>

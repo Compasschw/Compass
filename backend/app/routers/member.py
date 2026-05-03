@@ -34,16 +34,37 @@ async def get_profile(current_user=Depends(require_role("member")), db: AsyncSes
 
 @router.put("/profile", response_model=MemberProfileResponse)
 async def update_profile(data: MemberProfileUpdate, current_user=Depends(require_role("member")), db: AsyncSession = Depends(get_db)):
+    """Upsert the member profile.
+
+    Auto-creates the profile row if one doesn't exist — defensive cover for
+    accounts created before the auth_service.register_user signup-time
+    provisioning landed. New signups always have a profile row, so this
+    branch only fires for legacy users.
+    """
     from app.models.user import MemberProfile
     result = await db.execute(select(MemberProfile).where(MemberProfile.user_id == current_user.id))
     profile = result.scalar_one_or_none()
     if not profile:
-        raise HTTPException(status_code=404, detail="Profile not found")
+        profile = MemberProfile(user_id=current_user.id)
+        db.add(profile)
+        await db.flush()
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(profile, field, value)
     await db.commit()
     await db.refresh(profile)
-    return profile
+    # Re-read with the User join so the response matches GET /profile shape.
+    return MemberProfileResponse(
+        id=profile.id,
+        user_id=profile.user_id,
+        zip_code=profile.zip_code,
+        primary_language=profile.primary_language,
+        primary_need=profile.primary_need,
+        rewards_balance=profile.rewards_balance,
+        insurance_provider=profile.insurance_provider,
+        name=current_user.name,
+        phone=current_user.phone,
+        email=current_user.email,
+    )
 
 @router.get("/rewards")
 async def get_rewards(current_user=Depends(require_role("member")), db: AsyncSession = Depends(get_db)):

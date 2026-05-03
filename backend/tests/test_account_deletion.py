@@ -292,22 +292,20 @@ class TestDeleteAccountMemberProfilePhi:
         tokens = reg_res.json()
         user_id = _extract_user_id(tokens)
 
-        # Seed a MemberProfile with PHI directly via the ORM so we have
+        # Populate the auto-created MemberProfile (signup-time provisioning
+        # added in Phase 1A) with PHI directly via the ORM so we have
         # something to assert against after the deletion scrubs it.
+        from sqlalchemy import select as _select
         async with _test_session_factory() as db:
-            db.add(
-                MemberProfile(
-                    id=uuid.uuid4(),
-                    user_id=user_id,
-                    zip_code="90210",
-                    insurance_provider="Blue Shield",
-                    medi_cal_id="MCAL-12345678",
-                    latitude=34.0901,
-                    longitude=-118.4065,
-                    primary_language="English",
-                    rewards_balance=0,
-                )
+            existing = await db.execute(
+                _select(MemberProfile).where(MemberProfile.user_id == user_id)
             )
+            profile = existing.scalar_one()
+            profile.zip_code = "90210"
+            profile.insurance_provider = "Blue Shield"
+            profile.medi_cal_id = "MCAL-12345678"
+            profile.latitude = 34.0901
+            profile.longitude = -118.4065
             await db.commit()
         return tokens, user_id
 
