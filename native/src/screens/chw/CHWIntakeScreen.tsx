@@ -880,7 +880,20 @@ export function CHWIntakeScreen({
           </Text>
           <TouchableOpacity
             style={styles.submitBtn}
-            onPress={() => navigation.goBack()}
+            onPress={() => {
+              // navigation.goBack() is a no-op on web when this screen was
+              // entered via a direct URL (no history to pop). Explicitly
+              // navigate to the Dashboard route inside the same nested stack
+              // so the button always lands somewhere useful regardless of
+              // entry path.
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const nav = navigation as any;
+              if (typeof nav?.navigate === 'function') {
+                nav.navigate('Dashboard');
+              } else {
+                nav?.goBack?.();
+              }
+            }}
             accessibilityRole="button"
             accessibilityLabel="Back to dashboard"
             activeOpacity={0.85}
