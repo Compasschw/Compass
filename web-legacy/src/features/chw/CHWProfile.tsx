@@ -412,9 +412,15 @@ function FieldLabel({ htmlFor, children }: FieldLabelProps) {
  * 7. Danger zone: log out
  */
 export function CHWProfile() {
-  const { logout } = useAuth();
+  const { logout, userName } = useAuth();
   const navigate = useNavigate();
 
+  // NOTE: this screen still reads its non-PII fields (specializations, bio,
+  // zip, availability) from chwProfiles[0] — a placeholder until the full
+  // /chw/profile API integration lands on web. Name/phone/email are sourced
+  // from auth context (and empty strings) instead of hard-coded mock PII so
+  // a real CHW never sees "Maria Reyes" in their own profile during the
+  // demo. Full migration to the API is tracked separately.
   const profile: CHWProfileData = chwProfiles[0];
 
   // ── Profile picture ──
@@ -423,12 +429,17 @@ export function CHWProfile() {
   // ── Global edit mode ──
   const [isEditing, setIsEditing] = useState(false);
 
+  // ── Derive name parts from auth context (no hard-coded mock identity) ──
+  const authNameParts = (userName ?? '').split(' ').filter(Boolean);
+  const initialFirstName = authNameParts[0] ?? '';
+  const initialLastName = authNameParts.slice(1).join(' ');
+
   // ── Draft + saved snapshot for discard ──
   const initialDraft: ProfileDraft = {
-    firstName: 'Maria Guadalupe',
-    lastName: 'Reyes',
-    phone: '(323) 555-0192',
-    email: 'maria.reyes@compasschw.org',
+    firstName: initialFirstName,
+    lastName: initialLastName,
+    phone: '',
+    email: '',
     zipCode: profile.zipCode,
     bio: profile.bio,
     specializations: profile.specializations,

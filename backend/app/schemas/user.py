@@ -22,6 +22,12 @@ class CHWProfileResponse(BaseModel):
     is_available: bool
     bio: str | None
     zip_code: str | None
+    # Surfaced from the associated User row so the Profile screens can render
+    # name/email/phone without a separate /users/me call. Mirrors the
+    # MemberProfileResponse shape. Always populated by /chw/profile.
+    name: str | None = None
+    email: str | None = None
+    phone: str | None = None
 
 class CHWProfileUpdate(BaseModel):
     specializations: list[str] | None = None

@@ -11,6 +11,31 @@ from app.schemas.user import CHWProfileResponse, CHWProfileUpdate
 
 router = APIRouter(prefix="/api/v1/chw", tags=["chw"])
 
+def _serialize_chw_profile(profile, current_user) -> "CHWProfileResponse":
+    """Build the CHWProfileResponse with the User row's name/email/phone joined in.
+
+    Mirrors the /member/profile shape so the mobile/web Profile screens can
+    render the operator's real contact info without a second round-trip
+    against /users/me. This is the fix for the long-standing bug where the
+    CHW Profile rendered hard-coded mock email/phone fallbacks.
+    """
+    return CHWProfileResponse(
+        id=profile.id,
+        user_id=profile.user_id,
+        specializations=profile.specializations or [],
+        languages=profile.languages or [],
+        rating=profile.rating,
+        years_experience=profile.years_experience,
+        total_sessions=profile.total_sessions,
+        is_available=profile.is_available,
+        bio=profile.bio,
+        zip_code=profile.zip_code,
+        name=current_user.name,
+        email=current_user.email,
+        phone=current_user.phone,
+    )
+
+
 @router.get("/profile", response_model=CHWProfileResponse)
 async def get_profile(current_user=Depends(require_role("chw")), db: AsyncSession = Depends(get_db)):
     from app.models.user import CHWProfile
@@ -18,7 +43,7 @@ async def get_profile(current_user=Depends(require_role("chw")), db: AsyncSessio
     profile = result.scalar_one_or_none()
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")
-    return profile
+    return _serialize_chw_profile(profile, current_user)
 
 @router.put("/profile", response_model=CHWProfileResponse)
 async def update_profile(data: CHWProfileUpdate, current_user=Depends(require_role("chw")), db: AsyncSession = Depends(get_db)):
@@ -31,7 +56,7 @@ async def update_profile(data: CHWProfileUpdate, current_user=Depends(require_ro
         setattr(profile, field, value)
     await db.commit()
     await db.refresh(profile)
-    return profile
+    return _serialize_chw_profile(profile, current_user)
 
 @router.patch("/profile/availability")
 async def toggle_availability(current_user=Depends(require_role("chw")), db: AsyncSession = Depends(get_db)):

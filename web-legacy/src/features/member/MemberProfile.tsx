@@ -335,9 +335,14 @@ function Toast({ message, onDismiss }: { message: string; onDismiss: () => void 
  * 8. Danger zone: log out
  */
 export function MemberProfile() {
-  const { logout } = useAuth();
+  const { logout, userName } = useAuth();
   const navigate = useNavigate();
 
+  // NOTE: this screen still pulls non-PII defaults (zipCode, language,
+  // primary need) from memberProfiles[0] until full /member/profile
+  // wiring lands on web. Name/phone/email come from auth context (or are
+  // empty) so a real member never sees Rosa Delgado's contact info as
+  // their own. Migration to the real API is tracked separately.
   const member = memberProfiles[0];
 
   // ── Profile picture ──
@@ -348,11 +353,11 @@ export function MemberProfile() {
 
   // ── Draft and saved snapshot ──
   const initialDraft: ProfileDraft = {
-    firstName: member.name,
+    firstName: (userName ?? '').split(' ')[0] ?? '',
     zipCode: member.zipCode,
     preferredLanguage: member.primaryLanguage,
-    phone: '(323) 555-0100',
-    email: 'rosa.delgado@email.com',
+    phone: '',
+    email: '',
     primaryNeed: member.primaryNeed,
     urgency: 'routine',
     insuranceProvider: 'Medi-Cal (LA Care)',

@@ -418,12 +418,23 @@ export function CHWProfileScreen(): React.JSX.Element {
    * Build a draft from the current API profile.
    */
   function buildDraft(p: ChwProfile | undefined): ProfileDraft {
+    // Prefer name from the API (joined from the User row); fall back to
+    // the auth-context display name if the API hasn't loaded yet. Never
+    // fall back to hard-coded values — the previous mock fallback
+    // ("maria.reyes@compasschw.org" / "(213) 555-0192") misled real CHWs
+    // into thinking the platform had cached someone else's identity.
     const authNameParts = displayName.split(' ');
+    const apiNameParts = (p?.name ?? '').split(' ').filter(Boolean);
+    const firstName = apiNameParts[0] ?? authNameParts[0] ?? '';
+    const lastName =
+      apiNameParts.length > 1
+        ? apiNameParts.slice(1).join(' ')
+        : authNameParts.slice(1).join(' ');
     return {
-      firstName: authNameParts[0] ?? '',
-      lastName: authNameParts.slice(1).join(' '),
-      phone: '(213) 555-0192',
-      email: 'maria.reyes@compasschw.org',
+      firstName,
+      lastName,
+      phone: p?.phone ?? '',
+      email: p?.email ?? '',
       zipCode: p?.zipCode ?? '',
       bio: p?.bio ?? '',
       specializations: [...(p?.specializations ?? [])] as Vertical[],
@@ -526,8 +537,10 @@ export function CHWProfileScreen(): React.JSX.Element {
     }
   }, [deleteAccount, logout]);
 
-  const displayEmail = 'maria.reyes@compasschw.org';
-  const displayPhone = '(213) 555-0192';
+  // Sourced from the joined User row in /chw/profile. Empty strings render
+  // as a "—" placeholder downstream (no hard-coded mock identities).
+  const displayEmail = apiProfile?.email ?? '';
+  const displayPhone = apiProfile?.phone ?? '';
 
   if (isLoading) {
     return (
