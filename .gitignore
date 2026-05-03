@@ -53,3 +53,4 @@ pgdata/
 .gstack/
 landing-new
 web/.vite/
+.vercel

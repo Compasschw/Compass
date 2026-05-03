@@ -1,12 +1,20 @@
 /**
- * Bottom-tab navigator for CHW (Community Health Worker) users.
+ * CHW navigator — adaptive shell for Community Health Worker users.
  *
- * Tabs: Dashboard, Requests, Sessions, Calendar, Earnings, Profile
+ * - Native (iOS/Android): bottom-tab bar (mobile-first ergonomics).
+ * - Web: permanent left drawer (desktop ergonomics — admin/CHWs spend
+ *   working sessions in front of a wide screen, side-by-side with notes,
+ *   transcripts, calendars, etc.).
+ *
+ * Both variants register the same screens and the same param list, so any
+ * `navigation.navigate(...)` call written against `CHWTabParamList` works
+ * identically on every platform.
  */
 
 import React from 'react';
 import { Platform } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { createDrawerNavigator } from '@react-navigation/drawer';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import {
   LayoutDashboard,
@@ -72,6 +80,7 @@ export type CHWSessionsStackParamList = {
 };
 
 const Tab = createBottomTabNavigator<CHWTabParamList>();
+const Drawer = createDrawerNavigator<CHWTabParamList>();
 const DashboardStack = createNativeStackNavigator<DashboardStackParamList>();
 const EarningsStack = createNativeStackNavigator<EarningsStackParamList>();
 const SessionsStack = createNativeStackNavigator<CHWSessionsStackParamList>();
@@ -104,9 +113,27 @@ function SessionsStackNavigator(): React.JSX.Element {
   );
 }
 
-// ─── Navigator ────────────────────────────────────────────────────────────────
+// ─── Screen registry (shared across both variants) ────────────────────────────
 
-export function CHWTabNavigator(): React.JSX.Element {
+interface ScreenSpec {
+  name: keyof CHWTabParamList;
+  title: string;
+  component: React.ComponentType;
+  icon: React.ComponentType<{ color: string; size: number }>;
+}
+
+const SCREENS: ScreenSpec[] = [
+  { name: 'DashboardStack', title: 'Dashboard', component: DashboardStackNavigator, icon: LayoutDashboard },
+  { name: 'Requests',       title: 'Requests',  component: CHWRequestsScreen,       icon: Inbox },
+  { name: 'SessionsStack',  title: 'Sessions',  component: SessionsStackNavigator,  icon: ClipboardList },
+  { name: 'Calendar',       title: 'Calendar',  component: CHWCalendarScreen,       icon: CalendarDays },
+  { name: 'EarningsStack',  title: 'Earnings',  component: EarningsStackNavigator,  icon: DollarSign },
+  { name: 'Profile',        title: 'Profile',   component: CHWProfileScreen,        icon: UserCircle },
+];
+
+// ─── Native variant: bottom tab bar ───────────────────────────────────────────
+
+function CHWBottomTabNavigator(): React.JSX.Element {
   return (
     <Tab.Navigator
       screenOptions={{
@@ -118,7 +145,6 @@ export function CHWTabNavigator(): React.JSX.Element {
           borderTopColor: colors.border,
           borderTopWidth: 1,
           height: Platform.OS === 'ios' ? 60 : undefined,
-          // iOS shadow on the tab bar
           ...Platform.select({
             ios: {
               shadowColor: colors.primary,
@@ -135,63 +161,70 @@ export function CHWTabNavigator(): React.JSX.Element {
         },
       }}
     >
-      <Tab.Screen
-        name="DashboardStack"
-        component={DashboardStackNavigator}
-        options={{
-          title: 'Dashboard',
-          tabBarIcon: ({ color, size }) => (
-            <LayoutDashboard color={color} size={size} />
-          ),
-        }}
-      />
-      <Tab.Screen
-        name="Requests"
-        component={CHWRequestsScreen}
-        options={{
-          tabBarIcon: ({ color, size }) => (
-            <Inbox color={color} size={size} />
-          ),
-        }}
-      />
-      <Tab.Screen
-        name="SessionsStack"
-        component={SessionsStackNavigator}
-        options={{
-          title: 'Sessions',
-          tabBarIcon: ({ color, size }) => (
-            <ClipboardList color={color} size={size} />
-          ),
-        }}
-      />
-      <Tab.Screen
-        name="Calendar"
-        component={CHWCalendarScreen}
-        options={{
-          tabBarIcon: ({ color, size }) => (
-            <CalendarDays color={color} size={size} />
-          ),
-        }}
-      />
-      <Tab.Screen
-        name="EarningsStack"
-        component={EarningsStackNavigator}
-        options={{
-          title: 'Earnings',
-          tabBarIcon: ({ color, size }) => (
-            <DollarSign color={color} size={size} />
-          ),
-        }}
-      />
-      <Tab.Screen
-        name="Profile"
-        component={CHWProfileScreen}
-        options={{
-          tabBarIcon: ({ color, size }) => (
-            <UserCircle color={color} size={size} />
-          ),
-        }}
-      />
+      {SCREENS.map(({ name, title, component, icon: Icon }) => (
+        <Tab.Screen
+          key={name}
+          name={name}
+          component={component}
+          options={{
+            title,
+            tabBarIcon: ({ color, size }) => <Icon color={color} size={size} />,
+          }}
+        />
+      ))}
     </Tab.Navigator>
   );
+}
+
+// ─── Web variant: permanent left drawer ───────────────────────────────────────
+
+function CHWWebDrawerNavigator(): React.JSX.Element {
+  return (
+    <Drawer.Navigator
+      screenOptions={{
+        headerShown: false,
+        drawerType: 'permanent',
+        drawerStyle: {
+          width: 224,
+          backgroundColor: colors.card,
+          borderRightColor: colors.border,
+          borderRightWidth: 1,
+        },
+        drawerActiveTintColor: colors.primary,
+        drawerInactiveTintColor: colors.mutedForeground,
+        drawerActiveBackgroundColor: 'rgba(107,143,113,0.12)',
+        drawerLabelStyle: {
+          fontSize: 14,
+          fontFamily: fonts.bodySemibold,
+          marginLeft: -8, // tighten icon-to-label spacing
+        },
+        drawerItemStyle: {
+          borderRadius: 10,
+          marginHorizontal: 8,
+          marginVertical: 2,
+        },
+      }}
+    >
+      {SCREENS.map(({ name, title, component, icon: Icon }) => (
+        <Drawer.Screen
+          key={name}
+          name={name}
+          component={component}
+          options={{
+            title,
+            drawerIcon: ({ color, size }) => <Icon color={color} size={size} />,
+          }}
+        />
+      ))}
+    </Drawer.Navigator>
+  );
+}
+
+// ─── Public entry — picks the right shell per platform ────────────────────────
+
+export function CHWTabNavigator(): React.JSX.Element {
+  if (Platform.OS === 'web') {
+    return <CHWWebDrawerNavigator />;
+  }
+  return <CHWBottomTabNavigator />;
 }
