@@ -959,6 +959,37 @@ async def _require_chw_on_session_or_admin(
 
 
 @router.post(
+    "/{session_id}/summary",
+    status_code=200,
+    summary="Generate a draft session summary via LLM",
+    description=(
+        "Returns a 2-4 sentence draft summary of the session transcript "
+        "intended to pre-populate the DocumentationModal. The CHW edits "
+        "the draft before submitting documentation; the field they save "
+        "is what's persisted (not this draft). Empty string is returned "
+        "when no transcript is available, the session is not in a "
+        "summarizable state, or the LLM provider is unavailable — the "
+        "frontend treats empty as 'CHW types from scratch'."
+    ),
+)
+async def generate_session_summary_endpoint(
+    session_id: UUID,
+    credentials: "HTTPAuthorizationCredentials" = Depends(HTTPBearer()),
+    db: AsyncSession = Depends(get_db),
+):
+    """POST /api/v1/sessions/{session_id}/summary
+
+    Auth: CHW on the session or admin key. Synchronous (LLM round-trip is
+    typically 1-3s; the documentation modal opens with a small spinner).
+    """
+    from app.services.summary_generation import generate_session_summary
+
+    await _require_chw_on_session_or_admin(session_id, credentials, db)
+    summary = await generate_session_summary(session_id, db)
+    return {"session_id": str(session_id), "summary": summary}
+
+
+@router.post(
     "/{session_id}/extract-followups",
     response_model=ExtractFollowupsResponse,
     status_code=200,

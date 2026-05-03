@@ -159,6 +159,34 @@ class TranscriptionProvider(ABC):
             ExtractedFollowups. Check extraction_failed for partial results.
         """
 
+    async def summarize_transcript(
+        self,
+        transcript: str,
+        member_name: str | None = None,
+    ) -> str:
+        """Run LLM to produce a 2-4 sentence neutral summary of the session.
+
+        Used to pre-populate the SessionDocumentation.summary field that the
+        CHW edits before submitting documentation. The CHW remains the
+        author of record — this is a draft, not a final note.
+
+        Default implementation returns the empty string ("") so providers
+        without LLM access fall back to the CHW typing the summary by hand.
+        Concrete providers (e.g., AssemblyAI LeMUR) override.
+
+        On any failure the implementation MUST return the empty string —
+        never raise. The endpoint that calls this is best-effort and a
+        provider hiccup must not block the documentation modal opening.
+
+        Args:
+            transcript:  Full transcript text. PHI — never log.
+            member_name: Optional first name for prompt personalisation.
+
+        Returns:
+            Summary text (1-4 sentences) or empty string on degradation.
+        """
+        return ""
+
     # ------------------------------------------------------------------
     # Legacy Phase-1 compatibility shim
     # ------------------------------------------------------------------
