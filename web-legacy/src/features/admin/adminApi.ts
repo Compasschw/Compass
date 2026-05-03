@@ -192,14 +192,25 @@ export async function verifyTotpCode(code: string): Promise<TotpVerifyResponse> 
 }
 
 /**
- * Validates an admin key by calling /stats.
+ * Validates an admin key by calling /admin/2fa/setup.
+ *
+ * We probe /2fa/setup rather than /stats because /stats now requires BOTH
+ * the admin key AND a valid 2FA token (require_2fa_token dependency). At
+ * login time we don't have the 2FA token yet, so /stats would 401 even
+ * with a valid admin key, surfacing as a misleading "Invalid admin key"
+ * error to the operator.
+ *
+ * /2fa/setup requires only the admin key (it's exempt from the 2FA gate
+ * because it bootstraps the 2FA flow itself), and it's idempotent: the
+ * second+ call just returns the existing provisioning URI.
+ *
  * Returns true on success, false on 401.
  * Throws `AdminApiError` for other non-2xx responses.
  */
 export async function validateAdminKey(key: string): Promise<boolean> {
-  const url = `${API_BASE}/admin/stats`;
+  const url = `${API_BASE}/admin/2fa/setup`;
   const response = await fetch(url, {
-    method: 'GET',
+    method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${key}`,
