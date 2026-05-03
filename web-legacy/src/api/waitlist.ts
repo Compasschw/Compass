@@ -21,12 +21,3 @@ export async function submitWaitlist(data: {
     skipAuth: true,
   });
 }
-
-export async function fetchWaitlistEntries(): Promise<WaitlistEntry[]> {
-  return api<WaitlistEntry[]>('/waitlist/', { skipAuth: true });
-}
-
-export async function fetchWaitlistCount(): Promise<number> {
-  const res = await api<{ count: number }>('/waitlist/count', { skipAuth: true });
-  return res.count;
-}

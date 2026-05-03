@@ -145,3 +145,19 @@ class ClaimAdminItem(BaseModel):
     service_date: date | None
     submitted_at: datetime | None
     paid_at: datetime | None
+
+
+class WaitlistAdminItem(BaseModel):
+    """Pre-launch waitlist signup row for admin view.
+
+    No PHI — landing page captures name, email, and self-selected role only.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    first_name: str
+    last_name: str
+    email: str
+    role: str
+    created_at: datetime
