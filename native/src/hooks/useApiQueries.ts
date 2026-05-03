@@ -72,6 +72,11 @@ export interface ChwProfile {
   isAvailable: boolean;
   bio: string;
   zipCode: string;
+  // Joined from the User row by /chw/profile (mirrors MemberProfile shape).
+  // Optional in the type because older API responses may pre-date the join.
+  name?: string | null;
+  email?: string | null;
+  phone?: string | null;
 }
 
 export interface MemberProfile {
