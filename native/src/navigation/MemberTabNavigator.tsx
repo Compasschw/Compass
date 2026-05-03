@@ -1,12 +1,19 @@
 /**
- * Bottom-tab navigator for Member users.
+ * Member navigator — adaptive shell for Medi-Cal Member users.
  *
- * Tabs: Home, Find CHW, Sessions, Calendar, Roadmap, Profile
+ * - Native (iOS/Android): bottom-tab bar (mobile-first ergonomics).
+ * - Web: permanent left drawer (desktop ergonomics — mirrors the CHW
+ *   sidebar so member-side and provider-side feel consistent).
+ *
+ * Both variants register the same screens and the same param list, so any
+ * `navigation.navigate(...)` call written against `MemberTabParamList`
+ * works identically on every platform.
  */
 
 import React from 'react';
 import { Platform } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { createDrawerNavigator } from '@react-navigation/drawer';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import {
   Home,
@@ -27,7 +34,7 @@ import { MemberRoadmapScreen } from '../screens/member/MemberRoadmapScreen';
 import { MemberProfileScreen } from '../screens/member/MemberProfileScreen';
 import { MemberRewardsScreen } from '../screens/member/MemberRewardsScreen';
 
-// ─── Navigator param list ─────────────────────────────────────────────────────
+// ─── Navigator param lists ────────────────────────────────────────────────────
 
 export type MemberHomeStackParamList = {
   HomeMain: undefined;
@@ -44,11 +51,12 @@ export type MemberTabParamList = {
 };
 
 const Tab = createBottomTabNavigator<MemberTabParamList>();
+const Drawer = createDrawerNavigator<MemberTabParamList>();
 const HomeStack = createNativeStackNavigator<MemberHomeStackParamList>();
 
 /**
- * Nested stack inside the Home tab so we can push MemberRewardsScreen on top
- * (per JT Figma feedback: Redeem Rewards opens its own screen).
+ * Nested stack inside the Home tab so we can push MemberRewardsScreen on
+ * top (per JT Figma feedback: Redeem Rewards opens its own screen).
  */
 function HomeStackNavigator(): React.JSX.Element {
   return (
@@ -59,9 +67,27 @@ function HomeStackNavigator(): React.JSX.Element {
   );
 }
 
-// ─── Navigator ────────────────────────────────────────────────────────────────
+// ─── Screen registry (shared across both variants) ────────────────────────────
 
-export function MemberTabNavigator(): React.JSX.Element {
+interface ScreenSpec {
+  name: keyof MemberTabParamList;
+  title: string;
+  component: React.ComponentType;
+  icon: React.ComponentType<{ color: string; size: number }>;
+}
+
+const SCREENS: ScreenSpec[] = [
+  { name: 'Home',     title: 'Home',     component: HomeStackNavigator,    icon: Home },
+  { name: 'FindCHW',  title: 'Find CHW', component: MemberFindScreen,      icon: Search },
+  { name: 'Sessions', title: 'Sessions', component: MemberSessionsScreen,  icon: ClipboardList },
+  { name: 'Calendar', title: 'Calendar', component: MemberCalendarScreen,  icon: CalendarDays },
+  { name: 'Roadmap',  title: 'Roadmap',  component: MemberRoadmapScreen,   icon: Map },
+  { name: 'Profile',  title: 'Profile',  component: MemberProfileScreen,   icon: UserCircle },
+];
+
+// ─── Native variant: bottom tab bar ───────────────────────────────────────────
+
+function MemberBottomTabNavigator(): React.JSX.Element {
   return (
     <Tab.Navigator
       screenOptions={{
@@ -73,7 +99,6 @@ export function MemberTabNavigator(): React.JSX.Element {
           borderTopColor: colors.border,
           borderTopWidth: 1,
           height: Platform.OS === 'ios' ? 60 : undefined,
-          // iOS shadow on the tab bar
           ...Platform.select({
             ios: {
               shadowColor: colors.primary,
@@ -90,61 +115,70 @@ export function MemberTabNavigator(): React.JSX.Element {
         },
       }}
     >
-      <Tab.Screen
-        name="Home"
-        component={HomeStackNavigator}
-        options={{
-          tabBarIcon: ({ color, size }) => (
-            <Home color={color} size={size} />
-          ),
-        }}
-      />
-      <Tab.Screen
-        name="FindCHW"
-        component={MemberFindScreen}
-        options={{
-          title: 'Find CHW',
-          tabBarIcon: ({ color, size }) => (
-            <Search color={color} size={size} />
-          ),
-        }}
-      />
-      <Tab.Screen
-        name="Sessions"
-        component={MemberSessionsScreen}
-        options={{
-          tabBarIcon: ({ color, size }) => (
-            <ClipboardList color={color} size={size} />
-          ),
-        }}
-      />
-      <Tab.Screen
-        name="Calendar"
-        component={MemberCalendarScreen}
-        options={{
-          tabBarIcon: ({ color, size }) => (
-            <CalendarDays color={color} size={size} />
-          ),
-        }}
-      />
-      <Tab.Screen
-        name="Roadmap"
-        component={MemberRoadmapScreen}
-        options={{
-          tabBarIcon: ({ color, size }) => (
-            <Map color={color} size={size} />
-          ),
-        }}
-      />
-      <Tab.Screen
-        name="Profile"
-        component={MemberProfileScreen}
-        options={{
-          tabBarIcon: ({ color, size }) => (
-            <UserCircle color={color} size={size} />
-          ),
-        }}
-      />
+      {SCREENS.map(({ name, title, component, icon: Icon }) => (
+        <Tab.Screen
+          key={name}
+          name={name}
+          component={component}
+          options={{
+            title,
+            tabBarIcon: ({ color, size }) => <Icon color={color} size={size} />,
+          }}
+        />
+      ))}
     </Tab.Navigator>
   );
+}
+
+// ─── Web variant: permanent left drawer ───────────────────────────────────────
+
+function MemberWebDrawerNavigator(): React.JSX.Element {
+  return (
+    <Drawer.Navigator
+      screenOptions={{
+        headerShown: false,
+        drawerType: 'permanent',
+        drawerStyle: {
+          width: 224,
+          backgroundColor: colors.card,
+          borderRightColor: colors.border,
+          borderRightWidth: 1,
+        },
+        drawerActiveTintColor: colors.primary,
+        drawerInactiveTintColor: colors.mutedForeground,
+        drawerActiveBackgroundColor: 'rgba(107,143,113,0.12)',
+        drawerLabelStyle: {
+          fontSize: 14,
+          fontFamily: fonts.bodySemibold,
+          marginLeft: -8,
+        },
+        drawerItemStyle: {
+          borderRadius: 10,
+          marginHorizontal: 8,
+          marginVertical: 2,
+        },
+      }}
+    >
+      {SCREENS.map(({ name, title, component, icon: Icon }) => (
+        <Drawer.Screen
+          key={name}
+          name={name}
+          component={component}
+          options={{
+            title,
+            drawerIcon: ({ color, size }) => <Icon color={color} size={size} />,
+          }}
+        />
+      ))}
+    </Drawer.Navigator>
+  );
+}
+
+// ─── Public entry — picks the right shell per platform ────────────────────────
+
+export function MemberTabNavigator(): React.JSX.Element {
+  if (Platform.OS === 'web') {
+    return <MemberWebDrawerNavigator />;
+  }
+  return <MemberBottomTabNavigator />;
 }

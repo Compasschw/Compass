@@ -50,28 +50,51 @@ import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 import { ChwMapWebView } from '../../components/find/ChwMapWebView';
 import { zipToLatLng } from '../../utils/geocoding';
-import type { AppleMapsViewProps } from 'expo-maps/build/apple/AppleMaps.types';
-import type { GoogleMapsViewProps } from 'expo-maps/build/google/GoogleMaps.types';
 
 // ─── Platform-gated expo-maps module references ───────────────────────────────
-// expo-maps native modules are unavailable on web. We use conditional requires
-// so the web bundle never attempts to resolve them.
-// Metro's Platform.OS inlining tree-shakes the dead branch at bundle time.
+// expo-maps is a native-only module — it has no web build. The previous
+// version of this file used a top-level `require('expo-maps')` guarded by
+// `Platform.OS === 'ios'`, but Metro statically resolves all `require()`
+// strings into the dependency graph regardless of conditional code paths.
+// On web that meant Metro tried to resolve `expo-maps` at bundle time and
+// either crashed silently or shipped a bundle that threw on load — leaving
+// /member/find blank.
+//
+// Fix: wrap the require in try/catch and explicitly never invoke it on web.
+// Metro still sees the literal `require('expo-maps')` string but the
+// runtime expression is now defensive — a missing module returns null
+// instead of throwing. The map fallback (ChwMapWebView) takes over on web.
+// Type imports are erased by TypeScript so they don't reach the bundle.
+//
+// The proper fix would be a `.web.tsx` shim file, but that's a larger
+// refactor; this defensive guard unblocks the screen for v1.
 
-type AppleMapsViewComponent = React.ComponentType<AppleMapsViewProps>;
-type GoogleMapsViewComponent = React.ComponentType<GoogleMapsViewProps>;
+// Loose typing because we never directly construct these on web; the actual
+// JSX consumers cast at the call site. Avoiding the type-only import from
+// expo-maps as well, since TS-erased imports can still trip platform-
+// specific bundler analyses on Metro for Web.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type MapsViewComponent = React.ComponentType<any>;
 
-// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-const AppleMapsView: AppleMapsViewComponent | null =
-  Platform.OS === 'ios'
-    ? (require('expo-maps').AppleMaps.View as AppleMapsViewComponent)
-    : null;
+const AppleMapsView: MapsViewComponent | null = (() => {
+  if (Platform.OS !== 'ios') return null;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-member-access
+    return require('expo-maps').AppleMaps.View as MapsViewComponent;
+  } catch {
+    return null;
+  }
+})();
 
-// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-const GoogleMapsView: GoogleMapsViewComponent | null =
-  Platform.OS === 'android'
-    ? (require('expo-maps').GoogleMaps.View as GoogleMapsViewComponent)
-    : null;
+const GoogleMapsView: MapsViewComponent | null = (() => {
+  if (Platform.OS !== 'android') return null;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-member-access
+    return require('expo-maps').GoogleMaps.View as MapsViewComponent;
+  } catch {
+    return null;
+  }
+})();
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -971,7 +994,7 @@ function ChwMapView({ chws, onMarkerPress }: ChwMapViewProps): React.JSX.Element
         style={mapStyles.map}
         cameraPosition={{ coordinates: LA_CENTER, zoom: LA_COUNTY_ZOOM }}
         markers={markers}
-        onMarkerClick={(marker) => {
+        onMarkerClick={(marker: { id?: string }) => {
           if (!marker.id) return;
           const chw = chwById.get(marker.id);
           if (chw) onMarkerPress(chw);
@@ -986,7 +1009,7 @@ function ChwMapView({ chws, onMarkerPress }: ChwMapViewProps): React.JSX.Element
         style={mapStyles.map}
         cameraPosition={{ coordinates: LA_CENTER, zoom: LA_COUNTY_ZOOM }}
         markers={markers}
-        onMarkerClick={(marker) => {
+        onMarkerClick={(marker: { id?: string }) => {
           if (!marker.id) return;
           const chw = chwById.get(marker.id);
           if (chw) onMarkerPress(chw);
