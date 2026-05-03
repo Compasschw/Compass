@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { mockCalendarEvents, sessions, goals, verticalLabels } from '../../data/mock';
 import type { CalendarEvent, Vertical } from '../../data/mock';
+import { useAuth } from '../auth/AuthContext';
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
@@ -18,8 +19,16 @@ const TODAY_YEAR = now.getFullYear();
 const TODAY_MONTH = now.getMonth();
 const TODAY_DAY = now.getDate();
 
-/** Demo member whose sessions and milestones we display. */
-const DEMO_MEMBER_NAME = 'Rosa Delgado';
+/**
+ * Filter key — the signed-in member's display name. Used to scope mock
+ * sessions / calendar events to the current user. Real-user data comes
+ * from the API when this screen is migrated to useSessions(); for now
+ * a real registered member sees an empty calendar (their name doesn't
+ * match any mock entry), which is the correct truthful behavior.
+ *
+ * Replaces the previous hardcoded `DEMO_MEMBER_NAME = 'Rosa Delgado'`
+ * that misled real users into seeing a fake member's calendar.
+ */
 
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -121,10 +130,18 @@ function firstName(fullName: string): string {
  *
  * Deduplication is done by date+memberName for sessions and date+goalId for milestones.
  */
-function buildMemberEvents(): CalendarEvent[] {
+function buildMemberEvents(memberName: string | null): CalendarEvent[] {
+  // Real-user calendar data should come from the API; until this screen
+  // migrates to /api/v1/calendar-events, the only mock entries we surface
+  // are those whose `memberName` matches the signed-in user. For real
+  // newly-registered members that's typically zero matches → empty
+  // calendar (correct truthful state) instead of fake "Rosa Delgado"
+  // events that misrepresent the platform.
+  if (!memberName) return [];
+
   // Step 1: filter existing mock events to this member only
   const mockMemberEvents = mockCalendarEvents.filter(
-    (e) => e.memberName === DEMO_MEMBER_NAME,
+    (e) => e.memberName === memberName,
   );
 
   // Build a dedup key set from existing session events
@@ -137,7 +154,7 @@ function buildMemberEvents(): CalendarEvent[] {
   // Step 2: derive from sessions array
   const derivedSessionEvents: CalendarEvent[] = sessions
     .filter((session) => {
-      if (session.memberName !== DEMO_MEMBER_NAME) return false;
+      if (session.memberName !== memberName) return false;
       const dt = new Date(session.scheduledAt);
       const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
       const dd = String(dt.getUTCDate()).padStart(2, '0');
@@ -202,7 +219,7 @@ function buildMemberEvents(): CalendarEvent[] {
         endTime: startTime,
         vertical: goal.category,
         type: 'goal_milestone' as const,
-        memberName: DEMO_MEMBER_NAME,
+        memberName,
       };
     });
 
@@ -467,14 +484,20 @@ export function MemberCalendar() {
   const [currentMonth, setCurrentMonth] = useState(new Date(2026, 3, 1)); // April 2026
   const [selectedDay, setSelectedDay] = useState<number | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const { userName } = useAuth();
 
   const year = currentMonth.getFullYear();
   const month = currentMonth.getMonth();
 
   const cells = getMonthDays(year, month);
 
-  /** Full merged event list for this member — sessions + milestones, deduped. */
-  const memberEvents = useMemo<CalendarEvent[]>(() => buildMemberEvents(), []);
+  /** Full merged event list for the signed-in member — sessions +
+   * milestones, deduped. Empty for newly-registered users until this
+   * screen migrates to the real /api/v1/calendar-events endpoint. */
+  const memberEvents = useMemo<CalendarEvent[]>(
+    () => buildMemberEvents(userName),
+    [userName],
+  );
 
   const eventsByDate = useMemo(() => groupEventsByDate(memberEvents), [memberEvents]);
 

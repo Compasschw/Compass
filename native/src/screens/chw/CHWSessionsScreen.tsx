@@ -95,10 +95,12 @@ function urgencyRank(s: SessionData): number {
   return URGENCY_PRIORITY.routine;
 }
 import {
+  useChwClaims,
   useSessions,
   useStartSession,
   useCompleteSession,
   useSubmitDocumentation,
+  type ChwClaim,
   type SessionData,
 } from '../../hooks/useApiQueries';
 import { useRefreshControl } from '../../hooks/useRefreshControl';
@@ -117,19 +119,39 @@ const VERTICAL_COLORS: Record<Vertical, string> = {
   healthcare: '#06B6D4',
 };
 
-type BillingStatus = 'pending' | 'submitted' | 'approved';
+type BillingStatus = 'pending' | 'submitted' | 'approved' | 'rejected';
 
 const BILLING_STATUS_COLORS: Record<BillingStatus, string> = {
   pending: colors.compassGold,
   submitted: colors.secondary,
   approved: colors.primary,
+  rejected: '#DC2626',
 };
 
 const BILLING_STATUS_LABELS: Record<BillingStatus, string> = {
   pending: 'Pending',
   submitted: 'Submitted',
-  approved: 'Approved',
+  approved: 'Paid',
+  rejected: 'Rejected',
 };
+
+/**
+ * Convert a backend BillingClaim.status string into the local BillingStatus
+ * union the badge renders. Mirrors the helper in CHWEarningsScreen so both
+ * screens display identical status labels for the same claim.
+ */
+function mapClaimStatus(claimStatus: string | undefined): BillingStatus {
+  switch (claimStatus) {
+    case 'submitted':
+      return 'submitted';
+    case 'paid':
+      return 'approved';
+    case 'rejected':
+      return 'rejected';
+    default:
+      return 'pending';
+  }
+}
 
 const SESSION_STATUS_COLORS: Record<SessionStatus, string> = {
   scheduled: colors.secondary,
@@ -141,15 +163,18 @@ const SESSION_STATUS_COLORS: Record<SessionStatus, string> = {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
- * Derives a mock billing/payout status from the session ID for demo purposes.
+ * Look up a real billing status for a given session by inspecting the
+ * /chw/claims response. Falls back to 'pending' when no claim has been
+ * filed yet — common for sessions that just completed and whose CHW
+ * hasn't submitted documentation. Replaces the hardcoded sess-002/003/004
+ * mock map that misled CHWs about the actual lifecycle of their claims.
  */
-function deriveBillingStatus(sessionId: string): BillingStatus {
-  const map: Record<string, BillingStatus> = {
-    'sess-002': 'submitted',
-    'sess-003': 'approved',
-    'sess-004': 'approved',
-  };
-  return map[sessionId] ?? 'pending';
+function lookupBillingStatus(
+  sessionId: string,
+  claimsBySession: Map<string, ChwClaim>,
+): BillingStatus {
+  const claim = claimsBySession.get(sessionId);
+  return mapClaimStatus(claim?.status);
 }
 
 function formatScheduledAt(iso: string): string {
@@ -259,6 +284,8 @@ interface SessionCardProps {
   startedAtMs?: number;
   /** True when this is the CHW's first session ever with this member */
   isFirstSession: boolean;
+  /** Map of session_id → claim, indexed once at the parent for O(1) lookup */
+  claimsBySession: Map<string, ChwClaim>;
   onStart: (id: string) => void;
   onComplete: (id: string) => void;
   onDocumentSession: (id: string) => void;
@@ -270,6 +297,7 @@ function SessionCard({
   session,
   startedAtMs,
   isFirstSession,
+  claimsBySession,
   onStart,
   onComplete,
   onDocumentSession,
@@ -279,7 +307,7 @@ function SessionCard({
   const verticalColor = VERTICAL_COLORS[session.vertical as Vertical] ?? '#6B7A6B';
   const verticalLabel = VERTICAL_LABELS[session.vertical as Vertical] ?? session.vertical;
   const statusColor = SESSION_STATUS_COLORS[session.status as SessionStatus] ?? colors.mutedForeground;
-  const billingStatus = deriveBillingStatus(session.id);
+  const billingStatus = lookupBillingStatus(session.id, claimsBySession);
   const journey = mockJourneyStatus(session.id);
 
   const isScheduled = session.status === 'scheduled';
@@ -726,6 +754,16 @@ export function CHWSessionsScreen(): React.JSX.Element {
   const [activeTab, setActiveTab] = useState<SessionTab>('active');
 
   const { data: rawSessions, isLoading, error, refetch } = useSessions();
+  const { data: rawClaims } = useChwClaims();
+  const claimsBySession = useMemo<Map<string, ChwClaim>>(() => {
+    const map = new Map<string, ChwClaim>();
+    for (const claim of rawClaims ?? []) {
+      if (claim.sessionId && !map.has(claim.sessionId)) {
+        map.set(claim.sessionId, claim);
+      }
+    }
+    return map;
+  }, [rawClaims]);
   const refresh = useRefreshControl([refetch]);
   const startSession = useStartSession();
   const completeSession = useCompleteSession();
@@ -830,6 +868,7 @@ export function CHWSessionsScreen(): React.JSX.Element {
           item.status === 'in_progress' ? (startTimestamps.current[item.id] ?? Date.now()) : undefined
         }
         isFirstSession={firstSessionIds.has(item.id)}
+        claimsBySession={claimsBySession}
         onStart={handleStart}
         onComplete={handleComplete}
         onDocumentSession={handleDocumentSession}
@@ -839,6 +878,7 @@ export function CHWSessionsScreen(): React.JSX.Element {
     ),
     [
       firstSessionIds,
+      claimsBySession,
       handleStart,
       handleComplete,
       handleDocumentSession,

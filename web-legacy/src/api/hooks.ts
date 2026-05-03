@@ -3,7 +3,7 @@ import { fetchSessions, startSession, completeSession } from "./sessions";
 import { fetchRequests, acceptRequest, passRequest } from "./requests";
 import { fetchConversations, fetchMessages, sendMessage } from "./conversations";
 import { fetchValidations } from "./credentials";
-import { fetchChwEarnings, fetchChwBrowse } from "./chw";
+import { fetchChwEarnings, fetchChwBrowse, fetchChwClaims } from "./chw";
 
 // Sessions
 export function useSessions() {
@@ -38,6 +38,10 @@ export function usePassRequest() {
 // CHW
 export function useChwEarnings() {
   return useQuery({ queryKey: ["chw-earnings"], queryFn: fetchChwEarnings });
+}
+
+export function useChwClaims() {
+  return useQuery({ queryKey: ["chw-claims"], queryFn: fetchChwClaims });
 }
 
 export function useChwBrowse(vertical?: string) {

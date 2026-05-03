@@ -30,7 +30,8 @@ import {
   type SessionDocumentation,
   type ZCodeCategory,
 } from '../../data/mock';
-import { useSessions, useStartSession, useCompleteSession } from '../../api/hooks';
+import { useSessions, useStartSession, useCompleteSession, useChwClaims } from '../../api/hooks';
+import type { ChwClaimData } from '../../api/chw';
 import type { SessionData } from '../../api/sessions';
 import { SessionChat } from './SessionChat';
 
@@ -64,31 +65,49 @@ function formatElapsed(seconds: number): string {
 
 // ─── Billing status helpers ───────────────────────────────────────────────────
 
-type BillingStatus = 'pending' | 'submitted' | 'approved';
+type BillingStatus = 'pending' | 'submitted' | 'approved' | 'rejected';
 
 /**
  * Derives a mock billing status from session ID for demo purposes.
  * In production this would come from the backend billing record.
  */
-function deriveBillingStatus(sessionId: string): BillingStatus {
-  const map: Record<string, BillingStatus> = {
-    'sess-002': 'submitted',
-    'sess-003': 'approved',
-    'sess-004': 'approved',
-  };
-  return map[sessionId] ?? 'pending';
+/**
+ * Convert a backend BillingClaim.status string to the local BillingStatus
+ * union the badge renders. Mirrors the helper in CHWEarningsScreen so
+ * both screens display identical status labels for the same claim.
+ */
+function mapClaimStatus(claimStatus: string | undefined): BillingStatus {
+  switch (claimStatus) {
+    case 'submitted':
+      return 'submitted';
+    case 'paid':
+      return 'approved';
+    case 'rejected':
+      return 'rejected';
+    default:
+      return 'pending';
+  }
+}
+
+function lookupBillingStatus(
+  sessionId: string,
+  claimsBySession: Map<string, ChwClaimData>,
+): BillingStatus {
+  return mapClaimStatus(claimsBySession.get(sessionId)?.status);
 }
 
 const billingStatusStyles: Record<BillingStatus, string> = {
   pending: 'bg-yellow-100 text-yellow-800',
   submitted: 'bg-blue-100 text-blue-700',
   approved: 'bg-green-100 text-green-700',
+  rejected: 'bg-red-100 text-red-700',
 };
 
 const billingStatusLabels: Record<BillingStatus, string> = {
   pending: 'Pending',
   submitted: 'Submitted',
-  approved: 'Approved',
+  approved: 'Paid',
+  rejected: 'Rejected',
 };
 
 // ─── Recording state types ────────────────────────────────────────────────────
@@ -910,14 +929,17 @@ interface CompletedSessionCardProps {
   session: Session;
   isExpanded: boolean;
   onToggleExpand: (id: string) => void;
+  /** Map of session_id → claim, indexed at the parent for O(1) lookup. */
+  claimsBySession: Map<string, ChwClaimData>;
 }
 
 function CompletedSessionCard({
   session,
   isExpanded,
   onToggleExpand,
+  claimsBySession,
 }: CompletedSessionCardProps) {
-  const billingStatus = deriveBillingStatus(session.id);
+  const billingStatus = lookupBillingStatus(session.id, claimsBySession);
   const gross = session.grossAmount ?? 0;
   const net = session.netAmount ?? 0;
 
@@ -1130,10 +1152,20 @@ export function CHWSessions() {
 
   // Real API data
   const { data: apiSessions = [], isLoading } = useSessions();
+  const { data: apiClaims = [] } = useChwClaims();
   const startMutation = useStartSession();
   const completeMutation = useCompleteSession();
   const sessions: Session[] = apiSessions.map(toSession);
   const chwId = apiSessions[0]?.chw_id ?? '';
+
+  // Index claims by session_id once for O(1) lookup inside the rows.
+  // Replaces the hardcoded sess-002/003/004 → status mock map.
+  const claimsBySession: Map<string, ChwClaimData> = new Map();
+  for (const claim of apiClaims) {
+    if (claim.session_id && !claimsBySession.has(claim.session_id)) {
+      claimsBySession.set(claim.session_id, claim);
+    }
+  }
 
   // Per-session recording state
   const [recordingStates, setRecordingStates] = useState<Record<string, RecordingState>>({});
@@ -1434,6 +1466,7 @@ export function CHWSessions() {
                     session={enrichedSession}
                     isExpanded={expandedIds.has(session.id)}
                     onToggleExpand={handleToggleExpand}
+                    claimsBySession={claimsBySession}
                   />
                 );
               })}
