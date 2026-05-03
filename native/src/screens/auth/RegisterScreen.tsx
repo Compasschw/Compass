@@ -185,34 +185,37 @@ export function RegisterScreen(): React.JSX.Element {
             </FormField>
 
             {/* Password */}
+            {/* The eye toggle is absolute-positioned over the TextInput so the
+                input itself stays a sibling of the icon View — same layout
+                contract as every other field. The previous nested wrapper
+                broke the height inheritance and made this row visibly thinner
+                than the others. */}
             <FormField label="Password" icon={<Lock size={18} color={colors.mutedForeground} />}>
-              <View style={s.passwordRow}>
-                <TextInput
-                  ref={refs.password}
-                  value={password}
-                  onChangeText={setPassword}
-                  placeholder="At least 8 characters"
-                  placeholderTextColor={colors.mutedForeground}
-                  secureTextEntry={!showPassword}
-                  autoComplete="new-password"
-                  returnKeyType="next"
-                  onSubmitEditing={() => refs.zip.current?.focus()}
-                  style={[s.input, s.passwordInput]}
-                />
-                <TouchableOpacity
-                  onPress={() => setShowPassword((v) => !v)}
-                  hitSlop={10}
-                  accessibilityRole="button"
-                  accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
-                  style={s.eyeButton}
-                >
-                  {showPassword ? (
-                    <EyeOff size={18} color={colors.mutedForeground} />
-                  ) : (
-                    <Eye size={18} color={colors.mutedForeground} />
-                  )}
-                </TouchableOpacity>
-              </View>
+              <TextInput
+                ref={refs.password}
+                value={password}
+                onChangeText={setPassword}
+                placeholder="At least 8 characters"
+                placeholderTextColor={colors.mutedForeground}
+                secureTextEntry={!showPassword}
+                autoComplete="new-password"
+                returnKeyType="next"
+                onSubmitEditing={() => refs.zip.current?.focus()}
+                style={[s.input, s.passwordInput]}
+              />
+              <TouchableOpacity
+                onPress={() => setShowPassword((v) => !v)}
+                hitSlop={10}
+                accessibilityRole="button"
+                accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
+                style={s.eyeButton}
+              >
+                {showPassword ? (
+                  <EyeOff size={18} color={colors.mutedForeground} />
+                ) : (
+                  <Eye size={18} color={colors.mutedForeground} />
+                )}
+              </TouchableOpacity>
             </FormField>
 
             {/* ZIP */}
@@ -433,7 +436,6 @@ const s = StyleSheet.create({
     fontFamily: fonts.body,
     color: colors.foreground,
   },
-  passwordRow: { flex: 1, position: 'relative' },
   passwordInput: { paddingRight: 40 },
   eyeButton: {
     position: 'absolute',
