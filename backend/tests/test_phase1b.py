@@ -151,3 +151,52 @@ async def test_voice_consent_result_records_audio_only_when_dtmf_is_one(
     assert res.status_code == 200
     actions = [item.get("action") for item in res.json()]
     assert "record" not in actions
+
+
+# ─── Phase 1C: /chw/claims real-status endpoint ──────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_chw_claims_returns_empty_list_for_new_chw(
+    client: AsyncClient, chw_tokens
+):
+    """A freshly-registered CHW with no completed sessions → empty list,
+    not a 404 or 500. Earnings screen relies on this returning [] cleanly.
+    """
+    res = await client.get(
+        "/api/v1/chw/claims",
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert isinstance(body, list)
+    assert body == []
+
+
+@pytest.mark.asyncio
+async def test_chw_claims_requires_chw_role(
+    client: AsyncClient, member_tokens
+):
+    """A member auth token must be rejected from the CHW-scoped claims list."""
+    res = await client.get(
+        "/api/v1/chw/claims",
+        headers=auth_header(member_tokens),
+    )
+    assert res.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_chw_claims_response_shape(
+    client: AsyncClient, chw_tokens
+):
+    """The response shape must be a JSON list (even when empty) so the
+    Earnings screen's `useChwClaims().data ?? []` fallback never breaks.
+    """
+    res = await client.get(
+        "/api/v1/chw/claims",
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 200
+    assert res.headers["content-type"].startswith("application/json")
+    body = res.json()
+    assert isinstance(body, list)

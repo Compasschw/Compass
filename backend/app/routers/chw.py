@@ -140,3 +140,51 @@ async def get_earnings(current_user=Depends(require_role("chw")), db: AsyncSessi
         sessions_this_week=sessions_this_week,
         pending_payout=pending_payout,
     )
+
+
+# ─── Claims (per-CHW lifecycle) ──────────────────────────────────────────────
+
+
+@router.get("/claims")
+async def list_claims(
+    current_user=Depends(require_role("chw")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the authenticated CHW's billing claims, newest first.
+
+    Replaces the per-session mocked status badges in CHWEarningsScreen
+    (`derivePayoutStatus(sess-002 → "submitted")`) with real claim status
+    sourced from BillingClaim. Each row includes the claim id, the session
+    that generated it, the four-stage status (pending → submitted → paid /
+    rejected), and the financial breakdown.
+
+    No PHI: claim status, amounts, code identifiers only — no diagnoses,
+    no rejection_reason free text, no transcript.
+    """
+    from app.models.billing import BillingClaim
+
+    result = await db.execute(
+        select(BillingClaim)
+        .where(BillingClaim.chw_id == current_user.id)
+        .order_by(BillingClaim.created_at.desc())
+        .limit(200)
+    )
+    rows = list(result.scalars().all())
+    return [
+        {
+            "id": str(c.id),
+            "session_id": str(c.session_id) if c.session_id else None,
+            "procedure_code": c.procedure_code,
+            "units": c.units,
+            "gross_amount": float(c.gross_amount) if c.gross_amount is not None else 0.0,
+            "platform_fee": float(c.platform_fee) if c.platform_fee is not None else 0.0,
+            "pear_suite_fee": float(c.pear_suite_fee) if c.pear_suite_fee is not None else None,
+            "net_payout": float(c.net_payout) if c.net_payout is not None else 0.0,
+            "status": c.status,
+            "service_date": c.service_date.isoformat() if c.service_date else None,
+            "submitted_at": c.submitted_at.isoformat() if c.submitted_at else None,
+            "paid_at": c.paid_at.isoformat() if c.paid_at else None,
+            "created_at": c.created_at.isoformat() if c.created_at else None,
+        }
+        for c in rows
+    ]
