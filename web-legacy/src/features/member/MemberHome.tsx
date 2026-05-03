@@ -95,14 +95,32 @@ export function MemberHome() {
         </div>
       </section>
 
-      {/* CTA to find CHW */}
+      {/* Primary CTA — direct request submission */}
+      <div className="bg-[#2C3E2D] rounded-[12px] p-5 flex items-center gap-4">
+        <div className="flex-1">
+          <p className="text-white font-semibold text-sm">
+            Need help right now?
+          </p>
+          <p className="text-[rgba(255,255,255,0.7)] text-xs mt-1">
+            Submit a request and a CHW matched to your needs will reach out.
+          </p>
+        </div>
+        <Link
+          to="/member/request"
+          className="shrink-0 bg-white text-[#2C3E2D] hover:bg-[#FBF7F0] font-semibold text-sm px-4 py-2 rounded-[12px] transition-colors flex items-center gap-1.5"
+        >
+          Request Help <ArrowRight size={14} />
+        </Link>
+      </div>
+
+      {/* Secondary CTA — browse-then-pick flow (existing entry point) */}
       <div className="bg-[#0077B6] rounded-[12px] p-5 flex items-center gap-4">
         <div className="flex-1">
           <p className="text-white font-semibold text-sm">
-            Need help with a new goal?
+            Want to pick a specific CHW?
           </p>
           <p className="text-blue-100 text-xs mt-1">
-            Find a Community Health Worker near you.
+            Browse profiles and schedule a session with someone you choose.
           </p>
         </div>
         <Link

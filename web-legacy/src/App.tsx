@@ -33,6 +33,7 @@ const CHWProfile = lazy(() => import('./features/chw/CHWProfile').then(m => ({ d
 const CHWCalendar = lazy(() => import('./features/chw/CHWCalendar').then(m => ({ default: m.CHWCalendar })));
 const MemberHome = lazy(() => import('./features/member/MemberHome').then(m => ({ default: m.MemberHome })));
 const MemberFind = lazy(() => import('./features/member/MemberFind').then(m => ({ default: m.MemberFind })));
+const MemberRequestHelp = lazy(() => import('./features/member/MemberRequestHelp').then(m => ({ default: m.MemberRequestHelp })));
 const MemberSessions = lazy(() => import('./features/member/MemberSessions').then(m => ({ default: m.MemberSessions })));
 const MemberRoadmap = lazy(() => import('./features/member/MemberRoadmap').then(m => ({ default: m.MemberRoadmap })));
 const MemberProfile = lazy(() => import('./features/member/MemberProfile').then(m => ({ default: m.MemberProfile })));
@@ -194,6 +195,14 @@ export default function App() {
         element={
           <ProtectedRoute requiredRole="member">
             <MemberFind />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/member/request"
+        element={
+          <ProtectedRoute requiredRole="member">
+            <MemberRequestHelp />
           </ProtectedRoute>
         }
       />
