@@ -882,12 +882,10 @@ export function DocumentationModal({
     );
   }, []);
 
-  const handleSubmit = useCallback(async (): Promise<void> => {
+  const performSubmit = useCallback(async (): Promise<void> => {
     if (!isValid || isSubmitting) return;
 
     setIsSubmitting(true);
-
-    // Simulate async submission
     await new Promise<void>((resolve) => setTimeout(resolve, 600));
 
     const documentation: SessionDocumentation = {
@@ -908,7 +906,7 @@ export function DocumentationModal({
 
     Alert.alert(
       'Documentation Submitted',
-      `Session documented successfully. ${unitsToBill} unit(s) submitted for billing.`,
+      `Claim filed for ${unitsToBill} unit(s).`,
       [{ text: 'Done', onPress: onClose }],
     );
   }, [
@@ -925,6 +923,51 @@ export function DocumentationModal({
     unitsToBill,
     onSubmit,
     onClose,
+  ]);
+
+  /**
+   * Two-stage submit: tap once → confirmation alert showing the dollar
+   * amount about to be billed → tap "Submit Claim" → real submit fires.
+   * Cheap claim-preview gate so a CHW can't accidentally one-tap a claim
+   * without seeing the gross/net breakdown. Replaces silent auto-submission.
+   */
+  const handleSubmit = useCallback((): void => {
+    if (!isValid || isSubmitting) return;
+
+    const gross = unitsToBill * 26.66; // Medi-Cal T1016 rate per 15-min unit
+    const platformFee = gross * 0.15;
+    const rewardsPool = gross * 0.25;
+    const chwNet = gross * 0.6;
+    const procedureLabel = selectedProcedureCode || 'CPT/HCPCS';
+    const diagCount = selectedDiagnosisCodes.length;
+
+    Alert.alert(
+      'Review claim before submitting',
+      `${unitsToBill} unit(s) of ${procedureLabel}\n` +
+        `Diagnoses: ${diagCount} code${diagCount === 1 ? '' : 's'}\n\n` +
+        `Gross:        $${gross.toFixed(2)}\n` +
+        `Platform fee: -$${platformFee.toFixed(2)}\n` +
+        `Rewards pool: -$${rewardsPool.toFixed(2)}\n` +
+        `Your payout:  $${chwNet.toFixed(2)}\n\n` +
+        `This will file the claim with PearSuite. Continue?`,
+      [
+        { text: 'Edit', style: 'cancel' },
+        {
+          text: 'Submit Claim',
+          style: 'default',
+          onPress: () => {
+            void performSubmit();
+          },
+        },
+      ],
+    );
+  }, [
+    isValid,
+    isSubmitting,
+    unitsToBill,
+    selectedProcedureCode,
+    selectedDiagnosisCodes,
+    performSubmit,
   ]);
 
   return (

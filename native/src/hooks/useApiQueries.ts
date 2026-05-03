@@ -142,6 +142,7 @@ export const queryKeys = {
   session: (id: string) => ['sessions', id] as const,
   requests: ['requests'] as const,
   chwEarnings: ['chw', 'earnings'] as const,
+  chwClaims: ['chw', 'claims'] as const,
   chwProfile: ['chw', 'profile'] as const,
   memberProfile: ['member', 'profile'] as const,
   memberRewards: ['member', 'rewards'] as const,
@@ -149,6 +150,27 @@ export const queryKeys = {
   conversations: ['conversations'] as const,
   messages: (conversationId: string) => ['conversations', conversationId, 'messages'] as const,
 };
+
+/**
+ * Per-claim row returned by GET /chw/claims. Exposes the lifecycle status
+ * (pending / submitted / paid / rejected) so the Earnings screen can show
+ * accurate per-session badges instead of mocked-by-id values.
+ */
+export interface ChwClaim {
+  id: string;
+  sessionId: string | null;
+  procedureCode: string;
+  units: number;
+  grossAmount: number;
+  platformFee: number;
+  pearSuiteFee: number | null;
+  netPayout: number;
+  status: 'pending' | 'submitted' | 'paid' | 'rejected' | string;
+  serviceDate: string | null;
+  submittedAt: string | null;
+  paidAt: string | null;
+  createdAt: string | null;
+}
 
 // ─── Query Hooks ─────────────────────────────────────────────────────────────
 
@@ -189,6 +211,21 @@ export function useChwEarnings() {
     queryFn: async () => {
       const raw = await api<unknown>('/chw/earnings');
       return transformKeys<EarningsSummary>(raw);
+    },
+  });
+}
+
+/**
+ * Per-claim list for the authenticated CHW (newest first, capped at 200).
+ * Replaces the mocked `derivePayoutStatus(sess-002 → "submitted")` table in
+ * CHWEarningsScreen with real BillingClaim status sourced from PostgreSQL.
+ */
+export function useChwClaims() {
+  return useQuery({
+    queryKey: queryKeys.chwClaims,
+    queryFn: async () => {
+      const raw = await api<unknown>('/chw/claims');
+      return transformKeys<ChwClaim[]>(raw);
     },
   });
 }

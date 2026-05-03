@@ -44,9 +44,11 @@ import {
   type Vertical,
 } from '../../data/mock';
 import {
+  useChwClaims,
   useChwEarnings,
   usePaymentsAccountStatus,
   useSessions,
+  type ChwClaim,
   type SessionData,
 } from '../../hooks/useApiQueries';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
@@ -87,19 +89,45 @@ const VERTICAL_COLORS: Record<Vertical, string> = {
   healthcare: '#06B6D4',
 };
 
-type PayoutStatus = 'pending' | 'submitted' | 'approved';
+/**
+ * Maps the four backend BillingClaim statuses to the visual buckets the
+ * payout-status pill renders. `paid` is what eventually moves money to the
+ * CHW; until then we show finer-grained progress (`pending` while the claim
+ * is created locally, `submitted` once it's been sent to PearSuite).
+ */
+type PayoutStatus = 'pending' | 'submitted' | 'approved' | 'rejected';
 
 const PAYOUT_STATUS_COLORS: Record<PayoutStatus, string> = {
   pending: colors.compassGold,
   submitted: colors.secondary,
   approved: colors.primary,
+  rejected: '#DC2626',
 };
 
 const PAYOUT_STATUS_LABELS: Record<PayoutStatus, string> = {
   pending: 'Pending Payout', // per Jemal's Earnings Figma feedback
   submitted: 'Submitted',
-  approved: 'Approved',
+  approved: 'Paid',
+  rejected: 'Rejected',
 };
+
+/**
+ * Convert a backend BillingClaim.status string into the local PayoutStatus
+ * union the UI renders. Unknown values fall back to 'pending' so a future
+ * status added server-side never crashes the render.
+ */
+function mapClaimStatus(claimStatus: string | undefined): PayoutStatus {
+  switch (claimStatus) {
+    case 'submitted':
+      return 'submitted';
+    case 'paid':
+      return 'approved';
+    case 'rejected':
+      return 'rejected';
+    default:
+      return 'pending';
+  }
+}
 
 /** Day-of-week labels for the Weekly Breakdown chart, Mon–Sun. */
 const WEEK_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const;
@@ -137,15 +165,17 @@ function chwNetFromSession(s: SessionData): number {
 }
 
 /**
- * Derives a mock payout status from session ID for demo purposes.
+ * Look up a real payout status for a given session by inspecting the
+ * /chw/claims response. Falls back to 'pending' when no claim has been
+ * filed yet — common for sessions that just completed and whose CHW hasn't
+ * submitted documentation.
  */
-function derivePayoutStatus(sessionId: string): PayoutStatus {
-  const map: Record<string, PayoutStatus> = {
-    'sess-002': 'submitted',
-    'sess-003': 'approved',
-    'sess-004': 'approved',
-  };
-  return map[sessionId] ?? 'pending';
+function lookupPayoutStatus(
+  sessionId: string,
+  claimsBySession: Map<string, ChwClaim>,
+): PayoutStatus {
+  const claim = claimsBySession.get(sessionId);
+  return mapClaimStatus(claim?.status);
 }
 
 function formatShortDate(iso: string): string {
@@ -188,21 +218,41 @@ export function CHWEarningsScreen(): React.JSX.Element {
   const navigation = useNavigation();
   const earningsQuery = useChwEarnings();
   const sessionsQuery = useSessions();
+  const claimsQuery = useChwClaims();
   const payoutsQuery = usePaymentsAccountStatus();
   const payoutsEnabled = payoutsQuery.data?.payoutsEnabled === true;
   const payoutsInProgress =
     !!payoutsQuery.data?.accountId && !payoutsQuery.data.payoutsEnabled;
 
-  const isLoading = earningsQuery.isLoading || sessionsQuery.isLoading;
-  const queryError = earningsQuery.error ?? sessionsQuery.error;
+  const isLoading =
+    earningsQuery.isLoading || sessionsQuery.isLoading || claimsQuery.isLoading;
+  const queryError =
+    earningsQuery.error ?? sessionsQuery.error ?? claimsQuery.error;
 
   const handleRetry = () => {
     void earningsQuery.refetch();
     void sessionsQuery.refetch();
+    void claimsQuery.refetch();
   };
 
   const earnings = earningsQuery.data;
   const allSessions = sessionsQuery.data ?? [];
+  const allClaims: ChwClaim[] = claimsQuery.data ?? [];
+
+  // Index claims by sessionId once so the per-row payout-status lookup is
+  // O(1) inside the (possibly long) Recent Payouts loop. Multiple claims
+  // per session would be unusual (one BillingClaim per documentation
+  // submit) but if it ever happens, the most recent wins because the
+  // backend returns claims newest-first.
+  const claimsBySession = useMemo<Map<string, ChwClaim>>(() => {
+    const map = new Map<string, ChwClaim>();
+    for (const claim of allClaims) {
+      if (claim.sessionId && !map.has(claim.sessionId)) {
+        map.set(claim.sessionId, claim);
+      }
+    }
+    return map;
+  }, [allClaims]);
 
   const completedSessions = useMemo<SessionData[]>(
     () => allSessions.filter((s) => s.status === 'completed'),
@@ -462,7 +512,7 @@ export function CHWEarningsScreen(): React.JSX.Element {
             </View>
           ) : (
             completedSessions.map((session, index) => {
-              const payoutStatus = derivePayoutStatus(session.id);
+              const payoutStatus = lookupPayoutStatus(session.id, claimsBySession);
               const statusColor = PAYOUT_STATUS_COLORS[payoutStatus];
               const verticalColor = VERTICAL_COLORS[session.vertical as Vertical] ?? '#6B7A6B';
               return (
