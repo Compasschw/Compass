@@ -44,7 +44,7 @@ function AdminSidebar() {
 
   return (
     <aside
-      className="hidden lg:flex flex-col w-56 shrink-0 bg-white border-r border-[rgba(44,62,45,0.1)] min-h-screen"
+      className="hidden md:flex flex-col w-56 shrink-0 bg-white border-r border-[rgba(44,62,45,0.1)] min-h-screen"
       aria-label="Admin navigation"
     >
       {/* Brand */}
@@ -110,7 +110,7 @@ function AdminMobileNav() {
   }
 
   return (
-    <header className="lg:hidden bg-white border-b border-[rgba(44,62,45,0.1)] px-4 py-3">
+    <header className="md:hidden bg-white border-b border-[rgba(44,62,45,0.1)] px-4 py-3">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 rounded-lg bg-[#2C3E2D] flex items-center justify-center">
