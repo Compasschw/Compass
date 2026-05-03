@@ -61,6 +61,7 @@ from app.schemas.admin import (
     PaginatedResponse,
     RequestAdminItem,
     SessionAdminItem,
+    WaitlistAdminItem,
 )
 
 logger = logging.getLogger("compass.admin")
@@ -840,6 +841,45 @@ async def list_admin_sessions(
         for row in rows
     ]
     return PaginatedResponse[SessionAdminItem](items=items, total=total)
+
+
+@router.get(
+    "/waitlist/entries",
+    response_model=PaginatedResponse[WaitlistAdminItem],
+    summary="List pre-launch waitlist signups (admin JSON)",
+)
+async def list_admin_waitlist_entries(
+    limit: int = Query(default=_DEFAULT_LIMIT, ge=1, le=_MAX_LIMIT),
+    offset: int = Query(default=0, ge=0),
+    _key: bool = Depends(require_admin_key),
+    _2fa: None = Depends(require_2fa_token),
+    db: AsyncSession = Depends(get_db),
+) -> PaginatedResponse[WaitlistAdminItem]:
+    """Return paginated waitlist signups for the admin dashboard.
+
+    Distinct from the legacy ``GET /admin/waitlist`` HTML page (cookie-auth).
+    This JSON variant is consumed by the React admin SPA via ``adminFetch`` and
+    requires both the admin key and a valid 2FA token, matching the security
+    posture of all other admin JSON endpoints.
+
+    No PHI — waitlist captures self-supplied first/last name, email, role only.
+    Ordered by created_at DESC (newest first).
+    """
+    total_result = await db.execute(
+        select(func.count()).select_from(WaitlistEntry)
+    )
+    total: int = total_result.scalar() or 0
+
+    stmt = (
+        select(WaitlistEntry)
+        .order_by(WaitlistEntry.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    rows = (await db.execute(stmt)).scalars().all()
+
+    items = [WaitlistAdminItem.model_validate(row) for row in rows]
+    return PaginatedResponse[WaitlistAdminItem](items=items, total=total)
 
 
 @router.get(

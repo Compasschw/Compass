@@ -297,8 +297,14 @@ export default function App() {
           </AdminRoute>
         }
       />
-      {/* Existing waitlist admin (user-JWT protected) */}
-      <Route path="/admin/waitlist" element={<ProtectedRoute><WaitlistAdmin /></ProtectedRoute>} />
+      <Route
+        path="/admin/waitlist"
+        element={
+          <AdminRoute>
+            <WaitlistAdmin />
+          </AdminRoute>
+        }
+      />
 
       {/* Catch-all — redirect to root */}
       <Route path="*" element={<Navigate to="/" replace />} />

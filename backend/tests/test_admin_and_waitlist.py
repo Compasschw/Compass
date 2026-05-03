@@ -1,14 +1,45 @@
 """Tests for admin key auth + waitlist endpoint protection.
 
 These tests verify the fix for Apr 9 audit findings C1 (waitlist leak) and
-the Apr 18 finding (hardcoded admin key → env-configured).
+the Apr 18 finding (hardcoded admin key → env-configured), plus the May 2026
+move of the admin-facing list endpoint behind the 2FA gate at
+``GET /api/v1/admin/waitlist/entries``.
 """
 
 import os
 
+import pyotp
 from httpx import AsyncClient
 
 ADMIN_KEY = os.environ.get("ADMIN_KEY", "test-admin-key-16-chars-min")
+WAITLIST_ADMIN_PATH = "/api/v1/admin/waitlist/entries"
+
+
+def _admin_header() -> dict[str, str]:
+    return {"Authorization": f"Bearer {ADMIN_KEY}"}
+
+
+def _full_admin_headers(two_fa_token: str) -> dict[str, str]:
+    return {**_admin_header(), "X-Admin-2FA-Token": two_fa_token}
+
+
+async def _setup_and_verify_2fa(client: AsyncClient) -> str:
+    """Walk TOTP setup → verify and return the short-lived 2FA JWT."""
+    setup_res = await client.post(
+        "/api/v1/admin/2fa/setup", headers=_admin_header()
+    )
+    assert setup_res.status_code == 200, setup_res.text
+    secret = setup_res.json()["secret"]
+    assert secret, "Expected plain secret on first setup"
+
+    code = pyotp.TOTP(secret).now()
+    verify_res = await client.post(
+        "/api/v1/admin/2fa/verify",
+        headers=_admin_header(),
+        json={"token": code},
+    )
+    assert verify_res.status_code == 200, verify_res.text
+    return verify_res.json()["two_fa_token"]
 
 
 class TestWaitlistAuth:
@@ -20,42 +51,64 @@ class TestWaitlistAuth:
         })
         assert res.status_code == 201
 
-    async def test_get_waitlist_requires_admin_key(self, client: AsyncClient):
-        """GET /waitlist/ must NOT be readable without the admin key."""
-        res = await client.get("/api/v1/waitlist/")
-        # 401 because no Authorization header, 403 if key is wrong — either is fine,
-        # as long as the list doesn't leak
+    async def test_admin_waitlist_requires_admin_key(self, client: AsyncClient):
+        """GET /api/v1/admin/waitlist/entries must reject anonymous callers."""
+        res = await client.get(WAITLIST_ADMIN_PATH)
         assert res.status_code in (401, 403)
 
-    async def test_get_waitlist_rejects_wrong_key(self, client: AsyncClient):
+    async def test_admin_waitlist_rejects_wrong_key(self, client: AsyncClient):
         res = await client.get(
-            "/api/v1/waitlist/",
+            WAITLIST_ADMIN_PATH,
             headers={"Authorization": "Bearer wrong-key"},
         )
         assert res.status_code == 401
 
-    async def test_get_waitlist_rejects_user_jwt(
+    async def test_admin_waitlist_rejects_user_jwt(
         self, client: AsyncClient, chw_tokens: dict
     ):
         """A valid CHW/member JWT is NOT sufficient for admin endpoints.
-        This is a defense-in-depth check — an authenticated user should
-        not see other users' waitlist PII.
+        Defense-in-depth — an authenticated marketplace user must not see
+        waitlist PII.
         """
         res = await client.get(
-            "/api/v1/waitlist/",
+            WAITLIST_ADMIN_PATH,
             headers={"Authorization": f"Bearer {chw_tokens['access_token']}"},
         )
-        # JWT !== admin key; must be rejected
         assert res.status_code == 401
 
-    async def test_get_waitlist_accepts_admin_key(self, client: AsyncClient):
+    async def test_admin_waitlist_rejects_admin_key_without_2fa(
+        self, client: AsyncClient
+    ):
+        """Admin key alone is insufficient — 2FA token is required.
+
+        Locks the door against the historical backdoor where the legacy
+        ``GET /api/v1/waitlist/`` accepted admin_key only.
+        """
+        res = await client.get(WAITLIST_ADMIN_PATH, headers=_admin_header())
+        assert res.status_code == 401
+
+    async def test_admin_waitlist_accepts_admin_key_plus_2fa(
+        self, client: AsyncClient
+    ):
+        token = await _setup_and_verify_2fa(client)
         res = await client.get(
-            "/api/v1/waitlist/",
-            headers={"Authorization": f"Bearer {ADMIN_KEY}"},
+            WAITLIST_ADMIN_PATH, headers=_full_admin_headers(token)
         )
         assert res.status_code == 200
-        data = res.json()
-        assert isinstance(data, list)
+        body = res.json()
+        assert "items" in body and "total" in body
+        assert isinstance(body["items"], list)
+
+    async def test_legacy_get_waitlist_is_gone(self, client: AsyncClient):
+        """The pre-2FA legacy admin list endpoint must no longer exist.
+
+        Returns 405 (not 404) because the path still hosts POST for public
+        signup — only the admin-key-only GET handler was removed.
+        """
+        res = await client.get(
+            "/api/v1/waitlist/", headers=_admin_header()
+        )
+        assert res.status_code == 405
 
     async def test_waitlist_count_does_not_require_admin(self, client: AsyncClient):
         """The count endpoint is public — it's used by the landing page."""

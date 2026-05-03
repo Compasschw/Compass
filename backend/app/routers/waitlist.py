@@ -3,7 +3,6 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.dependencies import require_admin_key
 from app.models.waitlist import WaitlistEntry
 from app.schemas.waitlist import WaitlistCreate, WaitlistResponse
 
@@ -35,16 +34,10 @@ async def create_waitlist_entry(
     return entry
 
 
-@router.get("/", response_model=list[WaitlistResponse])
-async def list_waitlist_entries(
-    _: bool = Depends(require_admin_key),
-    db: AsyncSession = Depends(get_db),
-) -> list[WaitlistEntry]:
-    """Admin-only. Requires `Authorization: Bearer <ADMIN_KEY>` header."""
-    result = await db.execute(
-        select(WaitlistEntry).order_by(WaitlistEntry.created_at.desc())
-    )
-    return list(result.scalars().all())
+# NOTE: the admin-facing list endpoint moved to GET /api/v1/admin/waitlist/entries
+# (routers/admin.py). It is gated by admin_key + 2FA token, matching the rest of
+# the admin JSON API. The previous list endpoint here required only admin_key,
+# which created an unprotected path around the 2FA gate.
 
 
 @router.get("/count")

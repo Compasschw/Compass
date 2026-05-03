@@ -8,6 +8,7 @@ import {
   Calendar,
   FileText,
   LogOut,
+  Mail,
   type LucideIcon,
 } from 'lucide-react';
 import { ADMIN_KEY_STORAGE, ADMIN_2FA_TOKEN_STORAGE } from './adminApi';
@@ -27,6 +28,7 @@ const adminNav: AdminNavItem[] = [
   { label: 'Requests', to: '/admin/requests', icon: ClipboardList },
   { label: 'Sessions', to: '/admin/sessions', icon: Calendar },
   { label: 'Claims', to: '/admin/claims', icon: FileText },
+  { label: 'Waitlist', to: '/admin/waitlist', icon: Mail },
 ];
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
