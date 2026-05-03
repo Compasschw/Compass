@@ -10,13 +10,11 @@ import {
   type Session,
   type SessionStatus,
 } from '../../data/mock';
+import { useAuth } from '../auth/AuthContext';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 type TabKey = 'active' | 'completed';
-
-/** Mock: which member's view we are showing. */
-const MOCK_MEMBER_NAME = 'Rosa Delgado';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -397,8 +395,16 @@ export function MemberSessions() {
   const [expandedNotes, setExpandedNotes] = useState<Set<string>>(new Set());
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Filter sessions for this member only
-  const memberSessions = sessions.filter((s) => s.memberName === MOCK_MEMBER_NAME);
+  // Filter mock sessions for the signed-in member by name. Real-user
+  // sessions come from the API and are not in the mock array, so this
+  // filter intentionally returns [] for newly-registered users — they
+  // see the empty state until the screen migrates to useSessions().
+  // Replaces the hardcoded "Rosa Delgado" filter that misled real users
+  // into seeing a fake member's session history.
+  const { userName } = useAuth();
+  const memberSessions = sessions.filter(
+    (s) => !!userName && s.memberName === userName,
+  );
 
   const activeSessions = memberSessions.filter(
     (s) =>

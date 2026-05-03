@@ -1,8 +1,7 @@
 import { DollarSign, Star, CalendarCheck, TrendingUp, Banknote } from 'lucide-react';
 import { StatCard } from '../../shared/components/StatCard';
-import { VerticalIcon } from '../../shared/components/VerticalIcon';
 import { formatCurrency, formatShortDate, MEDI_CAL_RATE } from '../../shared/utils/format';
-import { earningsSummary, sessions, sessionModeLabels } from '../../data/mock';
+import { useChwClaims, useChwEarnings } from '../../api/hooks';
 
 // ─── Scenario table data ──────────────────────────────────────────────────────
 
@@ -58,30 +57,33 @@ const earningsScenarios: EarningsScenario[] = [
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type PayoutStatus = 'pending' | 'submitted' | 'approved';
+type PayoutStatus = 'pending' | 'submitted' | 'approved' | 'rejected';
 
 const payoutStatusStyles: Record<PayoutStatus, string> = {
   pending: 'bg-yellow-100 text-yellow-800',
   submitted: 'bg-blue-100 text-blue-700',
   approved: 'bg-green-100 text-green-700',
+  rejected: 'bg-red-100 text-red-700',
 };
 
 const payoutStatusLabels: Record<PayoutStatus, string> = {
   pending: 'Pending',
   submitted: 'Submitted',
-  approved: 'Approved',
+  approved: 'Paid',
+  rejected: 'Rejected',
 };
 
-/**
- * Derives a mock payout status from session ID for demo purposes.
- */
-function derivePayoutStatus(sessionId: string): PayoutStatus {
-  const map: Record<string, PayoutStatus> = {
-    'sess-002': 'submitted',
-    'sess-003': 'approved',
-    'sess-004': 'approved',
-  };
-  return map[sessionId] ?? 'pending';
+function mapClaimStatus(status: string | undefined): PayoutStatus {
+  switch (status) {
+    case 'submitted':
+      return 'submitted';
+    case 'paid':
+      return 'approved';
+    case 'rejected':
+      return 'rejected';
+    default:
+      return 'pending';
+  }
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -97,7 +99,15 @@ function derivePayoutStatus(sessionId: string): PayoutStatus {
  * 5. Payout schedule note
  */
 export function CHWEarnings() {
-  const completedSessions = sessions.filter((s) => s.status === 'completed');
+  const { data: earnings } = useChwEarnings();
+  const { data: claims = [] } = useChwClaims();
+
+  // Pull live numbers off /chw/earnings (snake_case from the API).
+  const pendingPayout = earnings?.pending_payout ?? 0;
+  const sessionsThisWeek = earnings?.sessions_this_week ?? 0;
+  const thisMonth = earnings?.this_month ?? 0;
+  const allTime = earnings?.all_time ?? 0;
+  const avgRating = earnings?.avg_rating ?? 0;
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
@@ -138,10 +148,10 @@ export function CHWEarnings() {
             id="hero-earnings-heading"
             className="text-5xl font-bold text-white leading-none tracking-tight"
           >
-            {formatCurrency(earningsSummary.pendingPayout)}
+            {formatCurrency(pendingPayout)}
           </p>
           <p className="text-sm text-white/70 mt-2">
-            This week · {earningsSummary.sessionsThisWeek} sessions completed
+            This week · {sessionsThisWeek} sessions completed
           </p>
         </div>
       </section>
@@ -151,28 +161,28 @@ export function CHWEarnings() {
         <StatCard
           icon={<DollarSign size={18} className="text-[#6B8F71]" />}
           label="This Month"
-          value={formatCurrency(earningsSummary.thisMonth)}
+          value={formatCurrency(thisMonth)}
           subtext="Apr 2026"
           iconBg="bg-[rgba(107,143,113,0.15)]"
         />
         <StatCard
           icon={<TrendingUp size={18} className="text-[#0077B6]" />}
           label="All Time"
-          value={formatCurrency(earningsSummary.allTime)}
+          value={formatCurrency(allTime)}
           subtext="Career total"
           iconBg="bg-blue-100"
         />
         <StatCard
           icon={<Star size={18} className="text-yellow-500" />}
           label="Avg Rating"
-          value={earningsSummary.avgRating.toFixed(1)}
+          value={avgRating.toFixed(1)}
           subtext="Last 30 sessions"
           iconBg="bg-yellow-100"
         />
         <StatCard
           icon={<CalendarCheck size={18} className="text-purple-600" />}
           label="Sessions"
-          value={earningsSummary.sessionsThisWeek}
+          value={sessionsThisWeek}
           subtext="This week"
           iconBg="bg-purple-100"
         />
@@ -279,42 +289,40 @@ export function CHWEarnings() {
           Recent Payouts
         </h3>
 
-        {completedSessions.length > 0 ? (
+        {claims.length > 0 ? (
           <div className="bg-white rounded-[20px] border border-[rgba(44,62,45,0.1)] divide-y divide-[rgba(44,62,45,0.1)]">
-            {completedSessions.map((session) => {
-              const status = derivePayoutStatus(session.id);
+            {claims.map((claim) => {
+              const status = mapClaimStatus(claim.status);
+              const dateStr = claim.service_date ?? claim.created_at ?? null;
               return (
                 <div
-                  key={session.id}
+                  key={claim.id}
                   className="flex items-center gap-3 p-4"
                 >
-                  {/* Vertical icon */}
+                  {/* Procedure icon */}
                   <div
-                    className="w-9 h-9 rounded-[12px] bg-[#FBF7F0] border border-[rgba(44,62,45,0.1)] flex items-center justify-center shrink-0"
+                    className="w-9 h-9 rounded-[12px] bg-[#FBF7F0] border border-[rgba(44,62,45,0.1)] flex items-center justify-center shrink-0 text-xs font-semibold text-[#2C3E2D]"
                     aria-hidden="true"
                   >
-                    <VerticalIcon vertical={session.vertical} size={16} />
+                    {claim.procedure_code || '—'}
                   </div>
 
                   {/* Details */}
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-semibold text-[#2C3E2D] truncate">
-                      {session.memberName}
+                      Claim {claim.id.slice(0, 8)}
                     </p>
                     <p className="text-xs text-[#8B9B8D]">
-                      {formatShortDate(session.scheduledAt)}
-                      {session.unitsBilled != null && (
-                        <> · {session.unitsBilled} {session.unitsBilled === 1 ? 'unit' : 'units'}</>
-                      )}
+                      {dateStr ? formatShortDate(dateStr) : 'Date pending'}
                       {' · '}
-                      {sessionModeLabels[session.mode]}
+                      {claim.units} {claim.units === 1 ? 'unit' : 'units'}
                     </p>
                   </div>
 
                   {/* Amount + status */}
                   <div className="text-right shrink-0">
                     <p className="text-sm font-bold text-[#2C3E2D]">
-                      {formatCurrency(session.netAmount ?? 0)}
+                      {formatCurrency(claim.net_payout)}
                     </p>
                     <span
                       className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium mt-1 ${payoutStatusStyles[status]}`}

@@ -5,12 +5,6 @@ import { useAuth } from './AuthContext';
 import { loginUser } from '../../api/auth';
 import type { UserRole } from '../../data/mock';
 
-// Demo quick-login helpers (keep for investor demos)
-const DEMO_ACCOUNTS: { role: UserRole; name: string; label: string; email: string; password: string }[] = [
-  { role: 'chw', name: 'Maria Guadalupe Reyes', label: 'Demo as CHW', email: 'maria@demo.compasschw.com', password: 'demo1234' },
-  { role: 'member', name: 'Rosa Delgado', label: 'Demo as Member', email: 'rosa@demo.compasschw.com', password: 'demo1234' },
-];
-
 export function LoginPage() {
   const navigate = useNavigate();
   const { login } = useAuth();
@@ -33,22 +27,6 @@ export function LoginPage() {
       navigate(res.role === 'chw' ? '/chw/dashboard' : '/member/home');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed. Please try again.');
-    } finally {
-      setIsLoading(false);
-    }
-  }
-
-  async function handleDemoLogin(account: typeof DEMO_ACCOUNTS[number]) {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const res = await loginUser(account.email, account.password);
-      login(res.role as UserRole, res.name);
-      navigate(account.role === 'chw' ? '/chw/dashboard' : '/member/home');
-    } catch {
-      // Fallback to mock login if backend is not running (demo mode)
-      login(account.role, account.name);
-      navigate(account.role === 'chw' ? '/chw/dashboard' : '/member/home');
     } finally {
       setIsLoading(false);
     }
@@ -132,27 +110,6 @@ export function LoginPage() {
             )}
           </button>
         </form>
-
-        {/* Divider */}
-        <div className="flex items-center gap-3 my-6">
-          <div className="flex-1 border-t border-[rgba(44,62,45,0.1)]" />
-          <span className="text-xs text-[#8B9B8D] font-medium">or try a demo</span>
-          <div className="flex-1 border-t border-[rgba(44,62,45,0.1)]" />
-        </div>
-
-        {/* Demo quick-login buttons */}
-        <div className="space-y-2">
-          {DEMO_ACCOUNTS.map((account) => (
-            <button
-              key={account.role}
-              type="button"
-              onClick={() => handleDemoLogin(account)}
-              className="w-full border border-[rgba(44,62,45,0.1)] hover:border-[#6B8F71] hover:bg-[#FBF7F0] text-[#6B7B6D] hover:text-[#6B8F71] font-medium py-2.5 rounded-[12px] text-sm transition-colors"
-            >
-              {account.label}
-            </button>
-          ))}
-        </div>
 
         {/* Register link */}
         <p className="text-center text-xs text-[#6B7B6D] mt-6">
