@@ -243,8 +243,48 @@ async def complete_session(session_id: UUID, current_user=Depends(get_current_us
     return session
 
 
+async def _run_extraction_in_background(session_id: UUID) -> None:
+    """Run LLM follow-up extraction in a fresh DB session, fire-and-forget.
+
+    Called by ``submit_documentation`` after the request returns so the CHW
+    sees a fast 200, while the (potentially slow) AssemblyAI LeMUR pass
+    runs out-of-band and pre-populates ``session_followups`` rows for the
+    Roadmap / Followups review screen.
+
+    The service is idempotent — if extraction has already run for this
+    session it returns the cached rows without a second LLM call. Any
+    exception is caught and logged; the user-facing flow has already
+    committed, so we never want a transcription provider hiccup to surface
+    as a 5xx on the documentation submit.
+    """
+    import logging
+
+    from app.database import async_session as _async_session_factory
+    from app.services.followup_extraction import extract_session_followups
+
+    logger = logging.getLogger("compass.sessions.bg_extract")
+    try:
+        async with _async_session_factory() as bg_db:
+            rows = await extract_session_followups(session_id, bg_db)
+        logger.info(
+            "Background followup extraction complete for session %s: %d rows",
+            session_id, len(rows),
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "Background followup extraction failed for session %s: %s",
+            session_id, e,
+        )
+
+
 @router.post("/{session_id}/documentation")
-async def submit_documentation(session_id: UUID, data: SessionDocumentationSubmit, current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def submit_documentation(
+    session_id: UUID,
+    data: SessionDocumentationSubmit,
+    background_tasks: BackgroundTasks,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     session = await db.get(Session, session_id)
     if not session or session.chw_id != current_user.id:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -321,6 +361,13 @@ async def submit_documentation(session_id: UUID, data: SessionDocumentationSubmi
     except Exception as e:  # noqa: BLE001
         import logging
         logging.getLogger("compass").warning("Pear Suite claim submission deferred: %s", e)
+
+    # Auto-trigger follow-up extraction in the background. Fires AFTER the
+    # response is sent, so the CHW gets a fast 200 and the LLM call doesn't
+    # gate the documentation save. Idempotent at the service layer — if the
+    # CHW manually re-runs extraction later the existing rows are returned
+    # rather than duplicated. See _run_extraction_in_background above.
+    background_tasks.add_task(_run_extraction_in_background, session_id)
 
     return {"documentation_id": str(doc.id), "claim_id": str(claim.id), "earnings": earnings}
 
