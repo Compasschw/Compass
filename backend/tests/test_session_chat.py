@@ -19,12 +19,31 @@ Cross-session leak is the primary confidentiality concern: a CHW or member who
 is not a participant on a session must receive 403 on both read and write paths.
 """
 
+import os
+
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
 
 from app.models.conversation import Conversation, FileAttachment, Message
 from tests.conftest import auth_header, test_session as _test_session_factory
+
+
+def _aws_creds_available() -> bool:
+    """True iff boto3 can resolve AWS credentials.
+
+    Attachment endpoints generate presigned S3 GET URLs via boto3; without
+    creds they raise NoCredentialsError. CI runners don't have AWS creds,
+    so attachment-touching tests are skipped there. Validation-only tests
+    (cross-session 403, mark-read cursor, etc.) don't hit S3 and run anywhere.
+    """
+    if os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_SECRET_ACCESS_KEY"):
+        return True
+    try:
+        import boto3
+        return boto3.Session().get_credentials() is not None
+    except Exception:
+        return False
 
 
 # ─── Shared helpers ────────────────────────────────────────────────────────────
@@ -199,6 +218,10 @@ class TestSessionChat:
 
     # ── 5. Attachment metadata is persisted and returned on GET ──────────────
 
+    @pytest.mark.skipif(
+        not _aws_creds_available(),
+        reason="Requires AWS credentials to generate presigned S3 GET URLs",
+    )
     @pytest.mark.asyncio
     async def test_attachment_metadata_persisted_and_returned(
         self, client: AsyncClient, chw_tokens: dict, member_tokens: dict
@@ -249,6 +272,10 @@ class TestSessionChat:
         assert len(fetched) == 1
         assert fetched[0]["attachment"]["filename"] == "report.pdf"
 
+    @pytest.mark.skipif(
+        not _aws_creds_available(),
+        reason="Requires AWS credentials to generate presigned S3 GET URLs",
+    )
     @pytest.mark.asyncio
     async def test_image_attachment_sets_type_image(
         self, client: AsyncClient, chw_tokens: dict, member_tokens: dict
