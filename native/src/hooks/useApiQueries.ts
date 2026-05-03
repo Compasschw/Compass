@@ -753,13 +753,33 @@ export function useCHWIntake(enabled = true) {
   });
 }
 
+/**
+ * Server-managed fields on the intake row that the client must NEVER include
+ * in a PATCH body. The backend's `IntakeUpdate` schema is `extra="forbid"`,
+ * so sending these triggers a 422 "Extra inputs are not permitted" error.
+ *
+ * The bug: CHWIntakeScreen seeds `draft` from the GET /chw/intake response
+ * (which DOES include `completedAt`), then on Submit pipes the entire draft
+ * through this hook. We filter those keys out at the boundary so any future
+ * caller is protected without having to remember the rule.
+ */
+const CHW_INTAKE_SERVER_MANAGED: ReadonlySet<keyof CHWIntakeState> = new Set([
+  'completedAt',
+]);
+
 export function useUpdateCHWIntake() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (patch: Partial<CHWIntakeState>) => {
+      const safe: Partial<CHWIntakeState> = {};
+      for (const [k, v] of Object.entries(patch)) {
+        if (!CHW_INTAKE_SERVER_MANAGED.has(k as keyof CHWIntakeState)) {
+          (safe as Record<string, unknown>)[k] = v;
+        }
+      }
       const raw = await api<unknown>('/chw/intake', {
         method: 'PATCH',
-        body: JSON.stringify(toSnakeCase(patch)),
+        body: JSON.stringify(toSnakeCase(safe)),
       });
       return transformKeys<CHWIntakeState>(raw);
     },
