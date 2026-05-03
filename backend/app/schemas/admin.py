@@ -91,7 +91,8 @@ class RequestAdminItem(BaseModel):
     matched_chw_name: str | None
     vertical: str
     urgency: str
-    description: str
+    # `description` removed — was free-text PHI member-supplied narrative.
+    # Admin dashboard exposes vertical + urgency + status only.
     preferred_mode: str
     status: str
     estimated_units: int

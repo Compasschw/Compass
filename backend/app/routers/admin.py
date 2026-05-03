@@ -731,7 +731,7 @@ async def list_admin_requests(
             CHWUser.name.label("matched_chw_name"),
             ServiceRequest.vertical,
             ServiceRequest.urgency,
-            ServiceRequest.description,
+            # `description` deliberately NOT selected — free-text member PHI.
             ServiceRequest.preferred_mode,
             ServiceRequest.status,
             ServiceRequest.estimated_units,
@@ -755,7 +755,6 @@ async def list_admin_requests(
             matched_chw_name=row.matched_chw_name,
             vertical=row.vertical,
             urgency=row.urgency,
-            description=row.description,
             preferred_mode=row.preferred_mode,
             status=row.status,
             estimated_units=row.estimated_units,

@@ -6,6 +6,15 @@ import os
 # Without this, tests that POST /auth/register more than 3x/min cascade-fail.
 os.environ.setdefault("DISABLE_RATE_LIMIT", "1")
 
+# Pin DATABASE_URL to the test DB BEFORE app.main loads, so app.database.engine
+# (used by services like _persist_transcript_chunk) and conftest's test_engine
+# point at the same Postgres database. Without this, the app reads from the
+# dev DB while tests seed/inspect the test DB — silent FK-violation hell.
+os.environ.setdefault(
+    "DATABASE_URL",
+    "postgresql+asyncpg://compass:compass_dev_password@localhost:5432/compass_test",
+)
+
 import pytest  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402
 from sqlalchemy import text  # noqa: E402
@@ -39,17 +48,27 @@ async def setup_db():
     # (each table FKs the other). dispose() between phases forces the asyncpg
     # pool to release connections - otherwise stale checkouts from the prior
     # test block the schema drop with "another operation is in progress".
+    #
+    # We dispose BOTH engines (test_engine + app.database.engine) because some
+    # services call `app.database.async_session()` directly (e.g., transcript
+    # persistence). Without disposing app.database.engine, prepared-statement
+    # cache from a prior test fails when the schema is recreated.
+    from app.database import engine as _app_engine
+
     await test_engine.dispose()
+    await _app_engine.dispose()
     async with test_engine.begin() as conn:
         await conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
         await conn.execute(text("CREATE SCHEMA public"))
         await conn.run_sync(Base.metadata.create_all)
     yield
     await test_engine.dispose()
+    await _app_engine.dispose()
     async with test_engine.begin() as conn:
         await conn.execute(text("DROP SCHEMA public CASCADE"))
         await conn.execute(text("CREATE SCHEMA public"))
     await test_engine.dispose()
+    await _app_engine.dispose()
 
 
 async def override_get_db():
