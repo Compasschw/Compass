@@ -50,7 +50,10 @@ export interface RequestAdminItem {
   matched_chw_name: string | null;
   vertical: string;
   urgency: string;
-  description: string;
+  // `description` removed — backend redacts free-text member-supplied PHI
+  // (see backend/app/schemas/admin.py::RequestAdminItem). Keeping a stale
+  // string-typed field here caused a runtime crash in AdminRequests when
+  // the column tried to read `.length` on `undefined`.
   preferred_mode: string;
   status: string;
   estimated_units: number;

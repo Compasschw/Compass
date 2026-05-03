@@ -30,41 +30,13 @@ interface RequestListResponse {
   total: number;
 }
 
-/** Truncated description with click-to-expand. */
-function DescriptionCell({ text }: { text: string }) {
-  const [expanded, setExpanded] = useState(false);
-  const LIMIT = 80;
-  if (text.length <= LIMIT || expanded) {
-    return (
-      <span>
-        {text}
-        {expanded && text.length > LIMIT && (
-          <button
-            onClick={() => setExpanded(false)}
-            className="ml-1 text-xs text-[#0077B6] hover:underline focus:outline-none focus:underline"
-          >
-            less
-          </button>
-        )}
-      </span>
-    );
-  }
-  return (
-    <span>
-      {text.slice(0, LIMIT)}…
-      <button
-        onClick={() => setExpanded(true)}
-        className="ml-1 text-xs text-[#0077B6] hover:underline focus:outline-none focus:underline"
-        aria-label="Expand description"
-      >
-        more
-      </button>
-    </span>
-  );
-}
-
 /**
  * Admin Requests page — paginated table with server-side status filter.
+ *
+ * The `description` column was removed when the backend stopped returning
+ * the field (it's free-text member-supplied PHI). Operators see vertical,
+ * urgency, mode, status, and units; clinical narrative stays out of the
+ * admin surface.
  */
 export function AdminRequests() {
   const [page, setPage] = useState(0);
@@ -136,7 +108,6 @@ export function AdminRequests() {
                       'Mode',
                       'Units',
                       'Status',
-                      'Description',
                     ].map((col) => (
                       <th
                         key={col}
@@ -151,7 +122,7 @@ export function AdminRequests() {
                 <tbody>
                   {items.length === 0 ? (
                     <tr>
-                      <td colSpan={9}>
+                      <td colSpan={8}>
                         <EmptyTableState message="No requests found for the selected filter." />
                       </td>
                     </tr>
@@ -186,9 +157,6 @@ export function AdminRequests() {
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap">
                           <StatusBadge status={req.status} />
-                        </td>
-                        <td className="px-4 py-3 text-[#6B7B6D] max-w-[240px]">
-                          <DescriptionCell text={req.description} />
                         </td>
                       </tr>
                     ))
