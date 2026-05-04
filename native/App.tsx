@@ -14,6 +14,7 @@ import {
   PlusJakartaSans_600SemiBold,
   PlusJakartaSans_700Bold,
 } from '@expo-google-fonts/plus-jakarta-sans';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider } from './src/context/AuthContext';
 import { AppNavigator } from './src/navigation/AppNavigator';
 import { ErrorBoundary } from './src/components/shared/ErrorBoundary';
@@ -55,11 +56,21 @@ export default function App(): React.JSX.Element {
 
   return (
     <ErrorBoundary>
-      <QueryClientProvider client={queryClient}>
-        <AuthProvider>
-          <AppNavigator />
-        </AuthProvider>
-      </QueryClientProvider>
+      {/*
+        SafeAreaProvider is REQUIRED by every screen that uses SafeAreaView
+        from react-native-safe-area-context. On native iOS/Android the OS
+        supplies insets directly, but the web build of the library throws
+        "No safe area value available" if no provider is mounted higher in
+        the tree. MemberFindScreen (and several others) called SafeAreaView
+        and blanked the page on web until this provider was added.
+      */}
+      <SafeAreaProvider>
+        <QueryClientProvider client={queryClient}>
+          <AuthProvider>
+            <AppNavigator />
+          </AuthProvider>
+        </QueryClientProvider>
+      </SafeAreaProvider>
     </ErrorBoundary>
   );
 }
