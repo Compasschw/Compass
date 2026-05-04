@@ -925,7 +925,6 @@ export function DocumentationModal({
     if (!isValid || isSubmitting) return;
 
     setIsSubmitting(true);
-    await new Promise<void>((resolve) => setTimeout(resolve, 600));
 
     const documentation: SessionDocumentation = {
       sessionId,
@@ -940,9 +939,32 @@ export function DocumentationModal({
       submittedAt: new Date().toISOString(),
     };
 
-    setIsSubmitting(false);
-    onSubmit(documentation);
+    // Await the parent's onSubmit so we only show "submitted" after the
+    // API call actually succeeds. The parent is responsible for surfacing
+    // its own error toast if the mutation fails — we simply re-enable the
+    // button and let the modal stay open for retry.
+    try {
+      const maybePromise = onSubmit(documentation) as unknown;
+      if (maybePromise && typeof (maybePromise as Promise<unknown>).then === 'function') {
+        await maybePromise;
+      }
+    } catch {
+      // Parent surfaces the error; we just stop the spinner and bail.
+      setIsSubmitting(false);
+      return;
+    }
 
+    setIsSubmitting(false);
+
+    // RN's Alert.alert() is a no-op for multi-button dialogs on web; use
+    // window.alert() so the CHW gets visible confirmation on the web build.
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined') {
+        window.alert(`Documentation Submitted\n\nClaim filed for ${unitsToBill} unit(s).`);
+      }
+      onClose();
+      return;
+    }
     Alert.alert(
       'Documentation Submitted',
       `Claim filed for ${unitsToBill} unit(s).`,
@@ -980,15 +1002,31 @@ export function DocumentationModal({
     const procedureLabel = selectedProcedureCode || 'CPT/HCPCS';
     const diagCount = selectedDiagnosisCodes.length;
 
+    const previewBody =
+      `${unitsToBill} unit(s) of ${procedureLabel}\n` +
+      `Diagnoses: ${diagCount} code${diagCount === 1 ? '' : 's'}\n\n` +
+      `Gross:        $${gross.toFixed(2)}\n` +
+      `Platform fee: -$${platformFee.toFixed(2)}\n` +
+      `Rewards pool: -$${rewardsPool.toFixed(2)}\n` +
+      `Your payout:  $${chwNet.toFixed(2)}\n\n` +
+      `This will file the claim with PearSuite. Continue?`;
+
+    // RN's Alert.alert() with a multi-button [Edit / Submit Claim] callback
+    // shape is a no-op on web — the dialog never renders and `onPress` never
+    // fires, so the CHW taps Submit and nothing visibly happens. Bridge to
+    // window.confirm() on web; native keeps the styled Alert.
+    if (Platform.OS === 'web') {
+      if (typeof window === 'undefined') return;
+      const confirmed = window.confirm(`Review claim before submitting\n\n${previewBody}`);
+      if (confirmed) {
+        void performSubmit();
+      }
+      return;
+    }
+
     Alert.alert(
       'Review claim before submitting',
-      `${unitsToBill} unit(s) of ${procedureLabel}\n` +
-        `Diagnoses: ${diagCount} code${diagCount === 1 ? '' : 's'}\n\n` +
-        `Gross:        $${gross.toFixed(2)}\n` +
-        `Platform fee: -$${platformFee.toFixed(2)}\n` +
-        `Rewards pool: -$${rewardsPool.toFixed(2)}\n` +
-        `Your payout:  $${chwNet.toFixed(2)}\n\n` +
-        `This will file the claim with PearSuite. Continue?`,
+      previewBody,
       [
         { text: 'Edit', style: 'cancel' },
         {
