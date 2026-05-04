@@ -75,7 +75,15 @@ async def browse_chws(
     current_user=Depends(require_role("member")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Browse available CHWs. Returns profiles with display names for MemberFind."""
+    """Browse available CHWs. Returns profiles with display names for MemberFind.
+
+    Demo / seeded CHW accounts (emails ending in `.demo@compasschw.com`) are
+    excluded server-side as a defense-in-depth guard. The cleanup script
+    `scripts/cleanup_seed_data.py` removes the rows themselves, but this
+    filter ensures real members never see Maria / Kevin / Ana even if a
+    cleanup is missed or a fresh seed re-introduces them. Production will
+    surface only real, onboarded CHWs.
+    """
     from app.models.user import CHWProfile, User
     stmt = (
         select(CHWProfile, User.name)
@@ -85,6 +93,11 @@ async def browse_chws(
         # may still have a CHWProfile row. Browsing should never surface
         # non-CHW users regardless of their profile state.
         .where(User.role == "chw")
+        # Exclude seeded demo CHW accounts (Maria / Kevin / Ana etc).
+        # Pattern matches the DEMO_EMAIL_SUFFIX used by seed_founders.py
+        # and cleanup_seed_data.py — keep these in sync if the suffix
+        # ever changes.
+        .where(~User.email.like("%.demo@compasschw.com"))
     )
     if vertical:
         stmt = stmt.where(CHWProfile.specializations.any(vertical))
