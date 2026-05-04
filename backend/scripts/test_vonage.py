@@ -339,6 +339,115 @@ def cmd_bridge(chw_e164: str, member_e164: str) -> int:
     return 0
 
 
+def cmd_diagnose(recipient_e164: str) -> int:
+    """Try every plausible create_call shape and print the full traceback for
+    each so we can see exactly which shape the installed SDK accepts.
+
+    Useful when `ring` returns the cryptic 'Either `from_` or `random_from_number`
+    must be set' but our model_dump shows from_ correctly populated.
+
+    Each attempt is wrapped in try/except — we never short-circuit, so every
+    shape gets exercised. The first one that succeeds also actually places a
+    call, so make sure the recipient phone is available before running.
+    """
+    import traceback
+
+    cfg = _preflight(verbose=True)
+    recipient_digits = _strip_e164(recipient_e164)
+    from_digits = _strip_e164(cfg["from_number"])
+    answer_url = f"{_public_base_url()}/voice/answer?session=diag"
+    event_url = f"{_public_base_url()}/voice/events?session=diag"
+
+    print()
+    print(_bold("Trying every plausible create_call shape…"))
+    print("─" * 72)
+
+    client = _client(cfg)
+    attempts: list[tuple[str, callable]] = []
+
+    # Attempt 1 — typed Pydantic model (vonage SDK v4+ canonical form).
+    def attempt_typed_model():
+        from vonage_voice.models import CreateCallRequest, Phone, ToPhone
+        req = CreateCallRequest(
+            to=[ToPhone(number=recipient_digits)],
+            from_=Phone(number=from_digits),
+            answer_url=[answer_url],
+            event_url=[event_url],
+        )
+        return client.voice.create_call(req)
+    attempts.append(("typed CreateCallRequest + Phone/ToPhone", attempt_typed_model))
+
+    # Attempt 2 — typed model dumped to dict via model_dump(by_alias=True).
+    def attempt_dict_by_alias():
+        from vonage_voice.models import CreateCallRequest, Phone, ToPhone
+        req = CreateCallRequest(
+            to=[ToPhone(number=recipient_digits)],
+            from_=Phone(number=from_digits),
+            answer_url=[answer_url],
+            event_url=[event_url],
+        )
+        return client.voice.create_call(req.model_dump(by_alias=True, exclude_none=True))
+    attempts.append(("dict from model_dump(by_alias=True)", attempt_dict_by_alias))
+
+    # Attempt 3 — raw dict with `from_` key (snake_case).
+    def attempt_dict_from_underscore():
+        return client.voice.create_call({
+            "to": [{"type": "phone", "number": recipient_digits}],
+            "from_": {"type": "phone", "number": from_digits},
+            "answer_url": [answer_url],
+            "event_url": [event_url],
+        })
+    attempts.append(("dict with key `from_` (underscore)", attempt_dict_from_underscore))
+
+    # Attempt 4 — raw dict with `from` key (HTTP-API spelling).
+    def attempt_dict_from_plain():
+        return client.voice.create_call({
+            "to": [{"type": "phone", "number": recipient_digits}],
+            "from": {"type": "phone", "number": from_digits},
+            "answer_url": [answer_url],
+            "event_url": [event_url],
+        })
+    attempts.append(("dict with key `from` (HTTP spelling)", attempt_dict_from_plain))
+
+    # Attempt 5 — typed model with random_from_number=False explicitly set.
+    def attempt_typed_model_no_random():
+        from vonage_voice.models import CreateCallRequest, Phone, ToPhone
+        req = CreateCallRequest(
+            to=[ToPhone(number=recipient_digits)],
+            from_=Phone(number=from_digits),
+            random_from_number=False,
+            answer_url=[answer_url],
+            event_url=[event_url],
+        )
+        return client.voice.create_call(req)
+    attempts.append(("typed model + random_from_number=False", attempt_typed_model_no_random))
+
+    succeeded: str | None = None
+    for label, fn in attempts:
+        print(f"\n  {_bold(label)}")
+        try:
+            result = fn()
+            _print_ok(f"SUCCESS — {type(result).__name__}: {result!r}")
+            succeeded = label
+            break
+        except Exception as e:  # noqa: BLE001
+            print(f"  {_red('[FAIL]')} {type(e).__name__}: {e}")
+            tb_lines = traceback.format_exc().splitlines()
+            for line in tb_lines[-6:]:
+                print(f"    {line}")
+
+    print()
+    if succeeded:
+        _print_ok(f"Working shape: {succeeded}")
+        print(
+            "  Patch _create_call() in this file (and "
+            "vonage_provider.create_proxy_session) to use this shape."
+        )
+        return 0
+    _print_fail("No shape succeeded. Check Vonage dashboard config + SDK version.")
+    return 1
+
+
 # ─── CLI wiring ──────────────────────────────────────────────────────────────
 
 
@@ -358,6 +467,15 @@ def _build_parser() -> argparse.ArgumentParser:
     p_bridge.add_argument("chw_number", help="E.164 phone number for the CHW leg.")
     p_bridge.add_argument("member_number", help="E.164 phone number for the member leg.")
 
+    p_diag = sub.add_parser(
+        "diagnose",
+        help="Try every plausible create_call shape; print which one works.",
+    )
+    p_diag.add_argument(
+        "number",
+        help="E.164 phone number — first successful shape will actually ring it.",
+    )
+
     return parser
 
 
@@ -367,6 +485,8 @@ def main() -> int:
         return cmd_preflight()
     if args.command == "ring":
         return cmd_ring(args.number)
+    if args.command == "diagnose":
+        return cmd_diagnose(args.number)
     if args.command == "bridge":
         return cmd_bridge(args.chw_number, args.member_number)
     print(f"Unknown command: {args.command}", file=sys.stderr)
