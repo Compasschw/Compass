@@ -36,6 +36,7 @@ import base64
 import logging
 import os
 from datetime import UTC, datetime, timedelta, timezone
+from uuid import UUID
 
 from fastapi import APIRouter, Cookie, Depends, Form, Header, HTTPException, Query, status
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -54,6 +55,8 @@ from app.models.session import Session
 from app.models.user import CHWProfile, MemberProfile, User
 from app.models.waitlist import WaitlistEntry
 from app.schemas.admin import (
+    AdminClaimStatusResponse,
+    AdminClaimStatusUpdate,
     AdminStats,
     CHWAdminItem,
     ClaimAdminItem,
@@ -957,3 +960,120 @@ async def list_admin_claims(
         for row in rows
     ]
     return PaginatedResponse[ClaimAdminItem](items=items, total=total)
+
+
+# ─── Claim status advancement ─────────────────────────────────────────────────
+#
+# The production lifecycle (pending → submitted → paid) is normally driven
+# by the upstream billing provider's webhook. Today that provider is Pear
+# Suite, but their webhook isn't wired yet, so claims sit at `pending`
+# forever. This admin endpoint lets ops advance a claim manually — also the
+# mechanism we use during demos to walk a complete member→CHW→payout
+# story without depending on Pear Suite being live.
+#
+# The transition to `paid` triggers a Stripe Transfer to the CHW's
+# connected account via the existing `trigger_chw_payout` helper. The
+# `transfer.paid` Stripe webhook subsequently fills in
+# `BillingClaim.paid_to_chw_at` and `stripe_transfer_id` — so a successful
+# advance here returns `payout_triggered=True` but the bank-arrival
+# timestamp shows up async.
+
+_VALID_CLAIM_STATUS_TARGETS: frozenset[str] = frozenset({"submitted", "paid", "rejected"})
+
+# Allowed status transitions. Keys are current status, values are the set
+# of next statuses we permit. `paid` and `rejected` are terminal.
+_CLAIM_STATUS_TRANSITIONS: dict[str, frozenset[str]] = {
+    "pending": frozenset({"submitted", "paid", "rejected"}),
+    "submitted": frozenset({"paid", "rejected"}),
+}
+
+
+@router.patch(
+    "/claims/{claim_id}/status",
+    response_model=AdminClaimStatusResponse,
+    summary="Advance billing claim status (admin)",
+)
+async def update_claim_status(
+    claim_id: UUID,
+    body: AdminClaimStatusUpdate,
+    _key: bool = Depends(require_admin_key),
+    _2fa: None = Depends(require_2fa_token),
+    db: AsyncSession = Depends(get_db),
+) -> AdminClaimStatusResponse:
+    """Advance a billing claim through its lifecycle.
+
+    Validates the target status and the transition (e.g. cannot go
+    paid → submitted). Sets the appropriate timestamp column. When the
+    target is `paid`, kicks off a Stripe Transfer to the CHW's connected
+    account; the response reports whether that succeeded so the operator
+    knows whether a follow-up action (e.g. asking the CHW to finish
+    Stripe onboarding) is needed.
+    """
+    from datetime import UTC
+
+    from app.models.billing import BillingClaim
+    from app.routers.payments import trigger_chw_payout
+
+    target = body.status
+    if target not in _VALID_CLAIM_STATUS_TARGETS:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Invalid target status '{target}'. "
+                f"Must be one of: {sorted(_VALID_CLAIM_STATUS_TARGETS)}."
+            ),
+        )
+
+    claim = await db.get(BillingClaim, claim_id)
+    if claim is None:
+        raise HTTPException(status_code=404, detail="Claim not found")
+
+    current = claim.status or "pending"
+    allowed = _CLAIM_STATUS_TRANSITIONS.get(current, frozenset())
+    if target not in allowed:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Cannot transition claim from '{current}' to '{target}'. "
+                f"Allowed next statuses: {sorted(allowed) or 'none (terminal)'}"
+            ),
+        )
+
+    now = datetime.now(UTC)
+    claim.status = target
+    if target == "submitted":
+        claim.submitted_at = now
+    elif target == "paid":
+        # Mark adjudicated and paid at the provider level. The
+        # transfer.paid webhook later fills in `paid_to_chw_at` once
+        # Stripe confirms the transfer settled to the CHW.
+        if claim.submitted_at is None:
+            claim.submitted_at = now
+        claim.adjudicated_at = now
+        claim.paid_at = now
+
+    await db.commit()
+    await db.refresh(claim)
+
+    payout_triggered = False
+    payout_blocked_reason: str | None = None
+    if target == "paid":
+        try:
+            payout_triggered = await trigger_chw_payout(db, claim_id)
+            if not payout_triggered:
+                payout_blocked_reason = (
+                    "CHW has not completed Stripe Connect onboarding, "
+                    "or claim net_payout is zero."
+                )
+        except Exception as e:  # noqa: BLE001
+            logger.exception("trigger_chw_payout failed for claim %s", claim_id)
+            payout_blocked_reason = f"Stripe transfer error: {e}"
+
+    return AdminClaimStatusResponse(
+        id=claim.id,
+        status=claim.status,
+        submitted_at=claim.submitted_at,
+        paid_at=claim.paid_at,
+        payout_triggered=payout_triggered,
+        payout_blocked_reason=payout_blocked_reason,
+    )
