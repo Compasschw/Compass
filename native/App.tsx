@@ -82,29 +82,23 @@ export default function App(): React.JSX.Element {
   }
 
   return (
-    <ErrorBoundary>
-      {/*
-        SafeAreaProvider is REQUIRED by every screen that uses SafeAreaView
-        from react-native-safe-area-context. On native iOS/Android the OS
-        supplies insets directly, but the web build of the library throws
-        "No safe area value available" if no provider is mounted higher in
-        the tree.
-
-        `initialMetrics={initialWindowMetrics}` seeds the provider with
-        non-null insets immediately so `useSafeAreaInsets()` doesn't throw
-        on the first render before web's async measurement settles. On
-        native this falls back to the OS values; on web it provides
-        (0,0,0,0) defaults until JS measurement completes — never null,
-        which is the trigger for the throw. Without this, MemberFindScreen
-        blanked even with the provider mounted.
-      */}
-      <SafeAreaProvider initialMetrics={SAFE_AREA_INITIAL_METRICS}>
+    // SafeAreaProvider MUST wrap ErrorBoundary, not the other way around.
+    // ErrorBoundary's fallback UI (and any other code it renders) needs
+    // access to SafeAreaInsetsContext. If the boundary catches an error
+    // and tries to render a SafeAreaView while sitting above the provider,
+    // the fallback itself throws "No safe area value available" and React
+    // unmounts the whole tree — leaving a blank `<div id="root">`. That is
+    // exactly what was blanking /member/find: a transient render error in
+    // the screen tripped the boundary, and the boundary's fallback then
+    // crashed because no provider was in scope above it.
+    <SafeAreaProvider initialMetrics={SAFE_AREA_INITIAL_METRICS}>
+      <ErrorBoundary>
         <QueryClientProvider client={queryClient}>
           <AuthProvider>
             <AppNavigator />
           </AuthProvider>
         </QueryClientProvider>
-      </SafeAreaProvider>
-    </ErrorBoundary>
+      </ErrorBoundary>
+    </SafeAreaProvider>
   );
 }
