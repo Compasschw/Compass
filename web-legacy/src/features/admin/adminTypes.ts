@@ -92,6 +92,15 @@ export interface ClaimAdminItem {
   paid_at: string | null;
 }
 
+export interface AdminClaimStatusResponse {
+  id: string;
+  status: string;
+  submitted_at: string | null;
+  paid_at: string | null;
+  payout_triggered: boolean;
+  payout_blocked_reason: string | null;
+}
+
 export interface WaitlistAdminItem {
   id: string;
   first_name: string;
