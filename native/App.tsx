@@ -14,7 +14,7 @@ import {
   PlusJakartaSans_600SemiBold,
   PlusJakartaSans_700Bold,
 } from '@expo-google-fonts/plus-jakarta-sans';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { SafeAreaProvider, initialWindowMetrics } from 'react-native-safe-area-context';
 import { AuthProvider } from './src/context/AuthContext';
 import { AppNavigator } from './src/navigation/AppNavigator';
 import { ErrorBoundary } from './src/components/shared/ErrorBoundary';
@@ -61,10 +61,17 @@ export default function App(): React.JSX.Element {
         from react-native-safe-area-context. On native iOS/Android the OS
         supplies insets directly, but the web build of the library throws
         "No safe area value available" if no provider is mounted higher in
-        the tree. MemberFindScreen (and several others) called SafeAreaView
-        and blanked the page on web until this provider was added.
+        the tree.
+
+        `initialMetrics={initialWindowMetrics}` seeds the provider with
+        non-null insets immediately so `useSafeAreaInsets()` doesn't throw
+        on the first render before web's async measurement settles. On
+        native this falls back to the OS values; on web it provides
+        (0,0,0,0) defaults until JS measurement completes — never null,
+        which is the trigger for the throw. Without this, MemberFindScreen
+        blanked even with the provider mounted.
       */}
-      <SafeAreaProvider>
+      <SafeAreaProvider initialMetrics={initialWindowMetrics}>
         <QueryClientProvider client={queryClient}>
           <AuthProvider>
             <AppNavigator />
