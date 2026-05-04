@@ -12,8 +12,10 @@
 
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import {
+  Alert,
   FlatList,
   Modal,
+  Platform,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -833,14 +835,27 @@ export function CHWSessionsScreen(): React.JSX.Element {
   }, []);
 
   const handleDocumentationSubmit = useCallback(
-    (data: SessionDocumentation): void => {
-      if (documentingSessionId != null) {
-        void submitDocumentation.mutateAsync({
+    async (data: SessionDocumentation): Promise<void> => {
+      if (documentingSessionId == null) return;
+      try {
+        await submitDocumentation.mutateAsync({
           sessionId: documentingSessionId,
           data: data as unknown as Record<string, unknown>,
         });
+        setDocumentingSessionId(null);
+      } catch (err) {
+        // Surface the real error instead of silently closing the modal.
+        // Keeps the modal open so the CHW can fix and resubmit.
+        const reason =
+          err instanceof Error && err.message ? err.message : 'Unknown error';
+        // eslint-disable-next-line no-console
+        console.error('[CHWSessions] submitDocumentation failed:', err);
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.alert(`Failed to submit documentation\n\n${reason}\n\nThe modal will stay open so you can adjust and try again.`);
+        } else {
+          Alert.alert('Failed to submit documentation', reason);
+        }
       }
-      setDocumentingSessionId(null);
     },
     [documentingSessionId, submitDocumentation],
   );
