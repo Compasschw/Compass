@@ -21,6 +21,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import {
   ArrowRight,
+  ChevronRight,
   DollarSign,
   TrendingUp,
   CalendarCheck,
@@ -518,7 +519,16 @@ export function CHWEarningsScreen(): React.JSX.Element {
               return (
                 <View key={session.id}>
                   {index > 0 ? <View style={styles.divider} /> : null}
-                  <View style={styles.payoutRow}>
+                  <TouchableOpacity
+                    style={styles.payoutRow}
+                    onPress={() =>
+                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                      (navigation as any).navigate('PayoutDetail', { sessionId: session.id })
+                    }
+                    accessibilityRole="button"
+                    accessibilityLabel={`View payout details for session with ${session.memberName ?? 'member'} on ${formatShortDate(session.scheduledAt)}`}
+                    activeOpacity={0.7}
+                  >
                     <View
                       style={[
                         styles.payoutIconCircle,
@@ -550,7 +560,12 @@ export function CHWEarningsScreen(): React.JSX.Element {
                         </Text>
                       </View>
                     </View>
-                  </View>
+                    <ChevronRight
+                      size={18}
+                      color={colors.mutedForeground}
+                      style={styles.payoutChevron}
+                    />
+                  </TouchableOpacity>
                 </View>
               );
             })
@@ -940,6 +955,10 @@ const styles = StyleSheet.create({
   payoutRight: {
     alignItems: 'flex-end',
     gap: 4,
+    flexShrink: 0,
+  },
+  payoutChevron: {
+    marginLeft: 4,
     flexShrink: 0,
   },
   payoutAmount: {
