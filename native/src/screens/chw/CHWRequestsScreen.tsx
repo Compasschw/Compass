@@ -29,8 +29,7 @@ import {
   Stethoscope,
   Bell,
   ThumbsDown,
-  MapPin,
-  Target,
+  Lock,
 } from 'lucide-react-native';
 
 import { colors } from '../../theme/colors';
@@ -80,24 +79,17 @@ const SESSION_MODE_LABELS: Record<string, string> = {
   phone: 'Phone',
 };
 
-// ─── Member need-journey status (mocked — see CHWDashboardScreen) ────────────
-// TODO(backend): expose journey_status on ServiceRequestData.
-type JourneyStatus = 'starting' | 'awaiting_confirmation' | 'resolved';
-const JOURNEY_COLORS: Record<JourneyStatus, string> = {
-  starting: '#EF4444',
-  awaiting_confirmation: '#F59E0B',
-  resolved: '#22C55E',
+// Urgency-pill colors. Real data, sourced from request.urgency.
+const URGENCY_COLORS: Record<string, string> = {
+  routine: '#22C55E',
+  soon: '#F59E0B',
+  urgent: '#EF4444',
 };
-const JOURNEY_LABELS: Record<JourneyStatus, string> = {
-  starting: 'Starting',
-  awaiting_confirmation: 'Awaiting confirmation',
-  resolved: 'Resolved',
+const URGENCY_LABELS: Record<string, string> = {
+  routine: 'Routine',
+  soon: 'Soon',
+  urgent: 'Urgent',
 };
-function mockJourneyStatus(id: string): JourneyStatus {
-  const sum = id.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
-  const idx = sum % 3;
-  return idx === 0 ? 'starting' : idx === 1 ? 'awaiting_confirmation' : 'resolved';
-}
 
 // ─── VerticalIcon helper ──────────────────────────────────────────────────────
 
@@ -133,60 +125,54 @@ interface RequestCardProps {
 
 function RequestCard({ request, onAccept, onPass }: RequestCardProps): React.JSX.Element {
   const verticalColor = VERTICAL_COLORS[request.vertical as Vertical] ?? '#6B7A6B';
-  const journey = mockJourneyStatus(request.id);
+  const urgencyColor = URGENCY_COLORS[request.urgency] ?? colors.mutedForeground;
+  const urgencyLabel = URGENCY_LABELS[request.urgency] ?? request.urgency;
 
   return (
     <View style={cardStyles.card}>
-      {/* Header row */}
+      {/* Header row — vertical icon + category badge + urgency badge.
+          Member name + description are intentionally hidden until accept
+          per HIPAA minimum-necessary (45 CFR §164.514(d)). The summary
+          endpoint omits them; the card mirrors that on the wire. */}
       <View style={cardStyles.headerRow}>
         <View style={[cardStyles.iconCircle, { backgroundColor: verticalColor + '18' }]}>
           <VerticalIconComponent vertical={request.vertical as Vertical} size={18} />
         </View>
         <View style={cardStyles.headerContent}>
+          <Text style={cardStyles.cardTitle}>
+            {VERTICAL_LABELS[request.vertical as Vertical] ?? request.vertical} request
+          </Text>
           <View style={cardStyles.badgeRow}>
-            <Text style={cardStyles.memberName}>{request.memberName}</Text>
             <View style={[cardStyles.badge, { backgroundColor: verticalColor + '18' }]}>
               <Text style={[cardStyles.badgeText, { color: verticalColor }]}>
                 {VERTICAL_LABELS[request.vertical as Vertical] ?? request.vertical}
               </Text>
             </View>
-            {/* Member need-journey pill — same dashboard treatment */}
-            <View style={cardStyles.journeyPill}>
-              <View style={[cardStyles.journeyDot, { backgroundColor: JOURNEY_COLORS[journey] }]} />
-              <Text style={cardStyles.journeyText}>{JOURNEY_LABELS[journey]}</Text>
+            <View style={[cardStyles.badge, { backgroundColor: urgencyColor + '18' }]}>
+              <Text style={[cardStyles.badgeText, { color: urgencyColor }]}>{urgencyLabel}</Text>
             </View>
+            <Text style={cardStyles.modeLabel}>
+              · {SESSION_MODE_LABELS[request.preferredMode] ?? request.preferredMode}
+            </Text>
           </View>
-          <Text style={cardStyles.modeLabel}>
-            {SESSION_MODE_LABELS[request.preferredMode] ?? request.preferredMode}
-          </Text>
         </View>
       </View>
 
-      {/* Description */}
-      <Text style={cardStyles.description} numberOfLines={3}>
-        {request.description}
-      </Text>
-
-      {/* Member address — TODO(backend): expose member.address on ServiceRequestData */}
-      <View style={cardStyles.metaIconRow}>
-        <MapPin size={12} color={colors.mutedForeground} />
-        <Text style={cardStyles.metaText}>1834 W 6th St, Los Angeles, CA 90057</Text>
-      </View>
-
-      {/* Quick action note — TODO(backend): expose request.goal_note */}
-      <View style={cardStyles.actionNote}>
-        <Target size={12} color={colors.primary} />
-        <Text style={cardStyles.actionNoteText}>
-          Goal: walk through Medi-Cal renewal paperwork together.
+      {/* HIPAA notice in place of member name/description until accepted. */}
+      <View style={cardStyles.privacyNote}>
+        <Lock size={12} color={colors.mutedForeground} />
+        <Text style={cardStyles.privacyText}>
+          Member name and details revealed after you accept (HIPAA minimum necessary).
         </Text>
       </View>
 
-      {/* Action buttons */}
+      {/* Action buttons. Accessibility labels reference vertical, not member
+          name, since member identity is hidden until accept. */}
       <View style={cardStyles.actionRow}>
         <TouchableOpacity
           style={cardStyles.acceptButton}
           onPress={() => onAccept(request.id)}
-          accessibilityLabel={`Accept request from ${request.memberName}`}
+          accessibilityLabel={`Accept ${VERTICAL_LABELS[request.vertical as Vertical] ?? request.vertical} request`}
           accessibilityRole="button"
         >
           <CheckCircle size={15} color="#FFFFFF" />
@@ -195,7 +181,7 @@ function RequestCard({ request, onAccept, onPass }: RequestCardProps): React.JSX
         <TouchableOpacity
           style={cardStyles.passButton}
           onPress={() => onPass(request.id)}
-          accessibilityLabel={`Pass on request from ${request.memberName}`}
+          accessibilityLabel={`Pass on ${VERTICAL_LABELS[request.vertical as Vertical] ?? request.vertical} request`}
           accessibilityRole="button"
         >
           <XCircle size={15} color={colors.mutedForeground} />
@@ -240,17 +226,18 @@ const cardStyles = StyleSheet.create({
     flex: 1,
     gap: 4,
   },
+  cardTitle: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 16,
+    lineHeight: 22,
+    color: '#1E3320',
+    marginBottom: 4,
+  },
   badgeRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     alignItems: 'center',
     gap: 6,
-  },
-  memberName: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 16,
-    lineHeight: 22,
-    color: '#1E3320',
   },
   badge: {
     paddingHorizontal: 8,
@@ -268,64 +255,24 @@ const cardStyles = StyleSheet.create({
     letterSpacing: 1,
     color: '#6B7A6B',
   },
-  description: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 14,
-    color: '#6B7A6B',
-    lineHeight: 20,
-    marginBottom: 8,
-  },
-  metaIconRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 4,
-  },
-  metaText: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 12,
-    color: '#6B7A6B',
-    letterSpacing: 0.5,
-  },
-  journeyPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 100,
-    backgroundColor: '#F4F1ED',
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-  },
-  journeyDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-  },
-  journeyText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 11,
-    color: '#6B7A6B',
-  },
-  actionNote: {
+  privacyNote: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 6,
-    marginTop: 6,
+    marginTop: 8,
     marginBottom: 12,
     paddingHorizontal: 10,
     paddingVertical: 8,
     borderRadius: 8,
-    backgroundColor: colors.primary + '0D',
+    backgroundColor: '#F4F1ED',
     borderLeftWidth: 3,
-    borderLeftColor: colors.primary,
+    borderLeftColor: colors.mutedForeground,
   },
-  actionNoteText: {
+  privacyText: {
     flex: 1,
-    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 12,
-    color: colors.foreground,
+    color: colors.mutedForeground,
     lineHeight: 16,
   },
   actionRow: {

@@ -1160,11 +1160,19 @@ export function MemberFindScreen(): React.JSX.Element {
             ? `${count} requests submitted! ${chwFirstName} will be in touch soon.`
             : `Request submitted! ${chwFirstName} will be in touch soon.`,
         );
-      } catch {
+      } catch (err) {
+        // Surface the real backend reason so we can diagnose 401 / 422 /
+        // 500 instead of swallowing it behind a generic "please try again"
+        // toast. ApiError carries `.detail` from FastAPI's HTTPException;
+        // a network failure becomes a plain Error.
+        const reason =
+          err instanceof Error && err.message ? err.message : 'Unknown error';
+        // eslint-disable-next-line no-console
+        console.error('[MemberFindScreen] createRequest failed:', err);
         showToast(
           count > 1
-            ? 'Some requests failed. Please review and try again.'
-            : 'Failed to submit request. Please try again.',
+            ? `Some requests failed: ${reason}`
+            : `Failed to submit request: ${reason}`,
         );
       }
     },
