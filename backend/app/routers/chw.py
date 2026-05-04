@@ -92,6 +92,7 @@ async def browse_chws(
     results until their profile is actually usable.
     """
     from sqlalchemy import func
+
     from app.models.user import CHWProfile, User
     stmt = (
         select(CHWProfile, User.name)
