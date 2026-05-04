@@ -11,7 +11,7 @@ from datetime import date, datetime
 from typing import Generic, TypeVar
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 T = TypeVar("T")
 
@@ -145,6 +145,44 @@ class ClaimAdminItem(BaseModel):
     service_date: date | None
     submitted_at: datetime | None
     paid_at: datetime | None
+
+
+class AdminClaimStatusUpdate(BaseModel):
+    """Body for PATCH /admin/claims/{id}/status.
+
+    Drives the claim through its lifecycle when the upstream provider
+    (Pear Suite, today) hasn't fired its webhook yet — used by ops to
+    unstick stuck claims and used during the demo to advance a claim
+    through pending → submitted → paid manually.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: str = Field(
+        description=(
+            "Target status. Must be one of: 'submitted', 'paid', 'rejected'. "
+            "Reverting to 'pending' is not allowed — request a new "
+            "documentation submit instead."
+        ),
+    )
+
+
+class AdminClaimStatusResponse(BaseModel):
+    """Result of a status-advance call.
+
+    `payout_triggered` is True when the transition to `paid` successfully
+    initiated a Stripe Transfer to the CHW's connected account. False means
+    the status was advanced but the CHW hasn't completed Stripe Connect
+    onboarding (or net_payout was zero) — the claim sits at `paid` and an
+    operator can re-run after the CHW finishes onboarding.
+    """
+
+    id: UUID
+    status: str
+    submitted_at: datetime | None
+    paid_at: datetime | None
+    payout_triggered: bool
+    payout_blocked_reason: str | None = None
 
 
 class WaitlistAdminItem(BaseModel):
