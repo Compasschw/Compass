@@ -165,11 +165,15 @@ async def voice_answer(
         f"{_public_base_url()}/api/v1/communication/voice/consent-prompt"
         f"?session={session or ''}"
     )
+    # NOTE: `bargeIn` on a `talk` action is only valid when the *next*
+    # action is `input` (DTMF/speech capture). When followed by `connect`
+    # (as here) Vonage rejects the entire NCCO with:
+    #   reason=Syntax error in NCCO. Invalid value type or action.
+    # …and silently aborts the call. So no bargeIn here.
     return [
         {
             "action": "talk",
             "text": "Hold while we connect you to your member.",
-            "bargeIn": True,
         },
         {
             "action": "connect",
@@ -296,11 +300,12 @@ async def voice_consent_result(
         except Exception as e:  # noqa: BLE001
             logger.error("Failed to persist DTMF consent for session %s: %s", session, e)
 
+        # No bargeIn — next action is `record`, not `input`. Vonage rejects
+        # bargeIn-followed-by-non-input as a syntax error.
         return [
             {
                 "action": "talk",
                 "text": "Thank you. You are now connected.",
-                "bargeIn": True,
             },
             {
                 "action": "record",
