@@ -117,7 +117,7 @@ async def call_bridge(
 # ─── Vonage webhooks ─────────────────────────────────────────────────────────
 
 
-@router.post("/voice/answer")
+@router.api_route("/voice/answer", methods=["GET", "POST"])
 async def voice_answer(
     request: Request,
     session: str | None = Query(default=None, description="Internal session id."),
@@ -125,6 +125,13 @@ async def voice_answer(
 ):
     """Vonage calls this when the CHW answers — returns an NCCO that bridges
     the call to the member through a recording-consent IVR.
+
+    NOTE: Accepts both GET and POST. Vonage's default `answer_method` on a
+    Voice Application is GET (the per-call request data lives in the query
+    string, not the body), and registering POST-only here causes Vonage to
+    abort the call with 405 the moment the recipient answers. Body parsing
+    (`_safely_read_body`) returns `{}` for GET, which our logic tolerates —
+    `session` and `member` come from the query string regardless.
 
     Consent flow (California Civil Code §632 — two-party consent):
       1. CHW answers (this endpoint fires).
@@ -180,7 +187,7 @@ async def voice_answer(
     ]
 
 
-@router.post("/voice/consent-prompt")
+@router.api_route("/voice/consent-prompt", methods=["GET", "POST"])
 async def voice_consent_prompt(
     request: Request,
     session: str | None = Query(default=None, description="Internal session id."),
@@ -227,7 +234,7 @@ async def voice_consent_prompt(
     ]
 
 
-@router.post("/voice/consent-result")
+@router.api_route("/voice/consent-result", methods=["GET", "POST"])
 async def voice_consent_result(
     request: Request,
     session: str | None = Query(default=None),
@@ -333,7 +340,7 @@ async def voice_consent_result(
     ]
 
 
-@router.post("/voice/events")
+@router.api_route("/voice/events", methods=["GET", "POST"])
 async def voice_events(
     request: Request,
     session: str | None = Query(default=None),
@@ -344,19 +351,27 @@ async def voice_events(
     Event types we care about:
       - started, ringing, answered, completed: lifecycle logging
       - record: persists the recording URL on CommunicationSession
+
+    Accepts both GET and POST. Vonage sends most lifecycle events as POST
+    with a JSON body, but a few error/status pings come through as GET with
+    the data in query params (e.g. `?reason=NCCO%20download%20error`). We
+    merge query params into the parsed payload so both code paths see the
+    same shape downstream.
     """
     from sqlalchemy import select
 
     from app.models.communication import CommunicationSession
 
     payload = await _safely_read_body(request)
-    event_type = (payload.get("status") if isinstance(payload, dict) else None) or (
-        payload.get("event_type") if isinstance(payload, dict) else None
-    )
+    if not isinstance(payload, dict) or not payload:
+        # GET ping or empty body — promote query params so downstream logic
+        # still sees a dict it can read from.
+        payload = dict(request.query_params)
+    event_type = payload.get("status") or payload.get("event_type") or payload.get("reason")
     logger.info("voice/events (session=%s type=%s): %s", session, event_type, payload)
 
     # If this is a recording event, persist the URL on the session.
-    if isinstance(payload, dict) and payload.get("recording_url"):
+    if payload.get("recording_url"):
         recording_url = payload["recording_url"]
         provider_session_id = payload.get("conversation_uuid") or payload.get("call_uuid")
         if provider_session_id:
