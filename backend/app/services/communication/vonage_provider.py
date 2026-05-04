@@ -112,11 +112,18 @@ class VonageProvider(CommunicationProvider):
         # in the custom `event_url` query so we can look up the member phone
         # at bridge time. The answer URL is configured on the Vonage
         # Application (points at /api/v1/communication/voice/answer).
+        #
+        # NOTE: The Vonage Python SDK v4+ uses pydantic models where the
+        # source-number field is `from_` (trailing underscore — `from` is a
+        # Python keyword). The legacy dict form requires the same `from_`
+        # key. Using `from` here triggers `VoiceError: Either `from_` or
+        # `random_from_number` must be set`. See scripts/test_vonage.py
+        # for a typed-model variant of this same call.
         try:
             response = client.voice.create_call(
                 {
                     "to": [{"type": "phone", "number": _strip(chw_phone)}],
-                    "from": {"type": "phone", "number": _strip(self._from_number)},
+                    "from_": {"type": "phone", "number": _strip(self._from_number)},
                     # Pass context as query params so the webhook can route
                     # the call to the right member without touching the DB.
                     "answer_url": [
