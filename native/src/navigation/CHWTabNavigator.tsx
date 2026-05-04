@@ -37,6 +37,7 @@ import { CHWIntakeScreen } from '../screens/chw/CHWIntakeScreen';
 import { CHWReviewsScreen } from '../screens/chw/CHWReviewsScreen';
 import { CHWProfileScreen } from '../screens/chw/CHWProfileScreen';
 import { PaymentsScreen } from '../screens/chw/PaymentsScreen';
+import { PayoutDetailScreen } from '../screens/chw/PayoutDetailScreen';
 
 // ─── Navigator param lists ────────────────────────────────────────────────────
 
@@ -63,11 +64,14 @@ type DashboardStackParamList = {
   Reviews: undefined;
 };
 
-// Nested stack inside the Earnings tab so we can push PaymentsScreen on top
-// of the main earnings dashboard without leaving the tab bar.
-type EarningsStackParamList = {
+// Nested stack inside the Earnings tab so we can push PaymentsScreen and
+// per-session PayoutDetailScreen on top of the main earnings dashboard
+// without leaving the tab bar. Exported so PayoutDetailScreen can type its
+// navigation prop against the canonical param list.
+export type EarningsStackParamList = {
   Earnings: undefined;
   Payments: undefined;
+  PayoutDetail: { sessionId: string };
 };
 
 /**
@@ -100,6 +104,7 @@ function EarningsStackNavigator(): React.JSX.Element {
     <EarningsStack.Navigator screenOptions={{ headerShown: false }}>
       <EarningsStack.Screen name="Earnings" component={CHWEarningsScreen} />
       <EarningsStack.Screen name="Payments" component={PaymentsScreen} />
+      <EarningsStack.Screen name="PayoutDetail" component={PayoutDetailScreen} />
     </EarningsStack.Navigator>
   );
 }
