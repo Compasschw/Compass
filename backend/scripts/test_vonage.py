@@ -166,6 +166,46 @@ def _client(cfg: dict[str, str]):
     return Vonage(auth)
 
 
+def _create_call(
+    *,
+    cfg: dict[str, str],
+    to_digits: str,
+    from_digits: str,
+    answer_url: str,
+    event_url: str,
+):
+    """Place an outbound voice call.
+
+    The Vonage Python SDK v4+ uses pydantic CreateCallRequest models with
+    `from_` (Python keyword collision: `from` is reserved). We try the
+    typed API first, then fall back to the legacy dict shape for older SDK
+    versions. Either way the wire payload is the same.
+    """
+    client = _client(cfg)
+
+    try:
+        from vonage_voice.models import CreateCallRequest, Phone, ToPhone
+
+        req = CreateCallRequest(
+            to=[ToPhone(number=to_digits)],
+            from_=Phone(number=from_digits),
+            answer_url=[answer_url],
+            event_url=[event_url],
+        )
+        return client.voice.create_call(req)
+    except ImportError:
+        pass  # Older SDK — fall through to dict form.
+
+    return client.voice.create_call(
+        {
+            "to": [{"type": "phone", "number": to_digits}],
+            "from_": {"type": "phone", "number": from_digits},
+            "answer_url": [answer_url],
+            "event_url": [event_url],
+        }
+    )
+
+
 # ─── Subcommands ─────────────────────────────────────────────────────────────
 
 
@@ -196,14 +236,12 @@ def cmd_ring(recipient_e164: str) -> int:
     _print_info("event_url", event_url)
 
     try:
-        client = _client(cfg)
-        response = client.voice.create_call(
-            {
-                "to": [{"type": "phone", "number": recipient_digits}],
-                "from": {"type": "phone", "number": from_digits},
-                "answer_url": [answer_url],
-                "event_url": [event_url],
-            }
+        response = _create_call(
+            cfg=cfg,
+            to_digits=recipient_digits,
+            from_digits=from_digits,
+            answer_url=answer_url,
+            event_url=event_url,
         )
     except Exception as e:  # noqa: BLE001
         _print_fail(f"create_call raised: {type(e).__name__}: {e}")
@@ -263,14 +301,12 @@ def cmd_bridge(chw_e164: str, member_e164: str) -> int:
     _print_info("event_url", event_url)
 
     try:
-        client = _client(cfg)
-        response = client.voice.create_call(
-            {
-                "to": [{"type": "phone", "number": chw_digits}],
-                "from": {"type": "phone", "number": from_digits},
-                "answer_url": [answer_url],
-                "event_url": [event_url],
-            }
+        response = _create_call(
+            cfg=cfg,
+            to_digits=chw_digits,
+            from_digits=from_digits,
+            answer_url=answer_url,
+            event_url=event_url,
         )
     except Exception as e:  # noqa: BLE001
         _print_fail(f"create_call raised: {type(e).__name__}: {e}")
