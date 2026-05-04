@@ -21,9 +21,20 @@ import {
   type ViewStyle,
   type TextStyle,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { AlertTriangle } from 'lucide-react-native';
 import { colors } from '../../theme/colors';
+
+// NOTE: this fallback intentionally uses plain `View`, not `SafeAreaView`
+// from react-native-safe-area-context. An ErrorBoundary's job is to render
+// SOMETHING when everything else has failed — it can't depend on context
+// providers being in scope, because the boundary may itself sit above the
+// provider, or the original error may have been thrown by a sibling that
+// shares the provider tree. Using SafeAreaView here once blanked
+// /member/find: the boundary caught a screen error, then its fallback's
+// SafeAreaView threw "No safe area value available" because the
+// SafeAreaProvider was below the boundary in the tree. That second throw
+// took down the whole React tree and produced an empty `<div id="root">`.
+// Plain View has no such dependency and always renders.
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -72,7 +83,7 @@ export class ErrorBoundary extends Component<Props, State> {
     }
 
     return (
-      <SafeAreaView style={styles.safeArea}>
+      <View style={styles.safeArea}>
         <View style={styles.container}>
           <View style={styles.card}>
             <View style={styles.iconWrap}>
@@ -93,7 +104,7 @@ export class ErrorBoundary extends Component<Props, State> {
             </TouchableOpacity>
           </View>
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 }
