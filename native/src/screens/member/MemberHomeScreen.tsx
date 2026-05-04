@@ -1,12 +1,18 @@
 /**
- * MemberHomeScreen — Landing page for community members.
+ * MemberHomeScreen — analytics dashboard for community members.
  *
- * Shows:
- * - Personalised greeting using auth userName
- * - Stat cards: Rewards points, Upcoming Sessions, Active Goals
- * - My Goals section with goal cards or empty state
- * - CTA card to find a CHW
- * - Upcoming sessions list
+ * Mirrors the CHW dashboard's information architecture:
+ *   - Personalised greeting + subtext
+ *   - 2x2 stat-card grid (rewards / upcoming sessions / active goals / open requests)
+ *   - Active goals from /member/roadmap with link to full Roadmap screen
+ *   - Upcoming sessions list
+ *   - "Request Help" primary CTA
+ *
+ * Data sources (all real APIs):
+ *   - useMemberProfile  → rewards balance, profile name fallback
+ *   - useSessions       → upcoming + completed session counts
+ *   - useMemberRoadmap  → active goals count + preview rows
+ *   - useRequests       → open (unmatched) request count
  */
 
 import React, { useCallback, useMemo, useState } from 'react';
@@ -27,11 +33,13 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronUp,
+  ClipboardList,
   Gift,
   ListChecks,
   Map,
   Square,
   CheckSquare,
+  Target,
 } from 'lucide-react-native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
@@ -47,8 +55,10 @@ import {
 import {
   useSessions,
   useMemberProfile,
+  useRequests,
   type SessionData,
 } from '../../hooks/useApiQueries';
+import { useMemberRoadmap } from '../../hooks/useFollowupQueries';
 import { useRefreshControl } from '../../hooks/useRefreshControl';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
@@ -105,9 +115,26 @@ interface StatCardProps {
   /** When set, the card becomes pressable */
   onPress?: () => void;
   accessibilityLabel?: string;
+  /**
+   * Layout variant. `half` = 47% width (used inside a 2×2 grid with
+   * flexWrap). `full` = flex:1 (used inside a single-row layout).
+   * Defaults to `full` so existing call sites stay backwards-compatible.
+   */
+  variant?: 'half' | 'full';
 }
 
-function StatCard({ icon, label, value, subtext, iconBg, onPress, accessibilityLabel }: StatCardProps): React.JSX.Element {
+function StatCard({
+  icon,
+  label,
+  value,
+  subtext,
+  iconBg,
+  onPress,
+  accessibilityLabel,
+  variant = 'full',
+}: StatCardProps): React.JSX.Element {
+  const cardStyle =
+    variant === 'half' ? styles.statCardHalf : styles.statCard;
   const body = (
     <>
       <View style={[styles.statIconContainer, { backgroundColor: iconBg }]}>
@@ -125,7 +152,7 @@ function StatCard({ icon, label, value, subtext, iconBg, onPress, accessibilityL
     return (
       <Pressable
         onPress={onPress}
-        style={({ pressed }) => [styles.statCard, pressed && { opacity: 0.85 }]}
+        style={({ pressed }) => [cardStyle, pressed && { opacity: 0.85 }]}
         accessibilityRole="button"
         accessibilityLabel={accessibilityLabel ?? label}
       >
@@ -134,7 +161,7 @@ function StatCard({ icon, label, value, subtext, iconBg, onPress, accessibilityL
     );
   }
 
-  return <View style={styles.statCard}>{body}</View>;
+  return <View style={cardStyle}>{body}</View>;
 }
 
 interface GoalCardProps {
@@ -307,10 +334,19 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
 
   const sessionsQuery = useSessions();
   const profileQuery = useMemberProfile();
-  const refresh = useRefreshControl([sessionsQuery.refetch, profileQuery.refetch]);
+  const roadmapQuery = useMemberRoadmap();
+  const requestsQuery = useRequests();
+  const refresh = useRefreshControl([
+    sessionsQuery.refetch,
+    profileQuery.refetch,
+    roadmapQuery.refetch,
+    requestsQuery.refetch,
+  ]);
 
   const allSessions = sessionsQuery.data ?? [];
   const profile = profileQuery.data;
+  const roadmap = roadmapQuery.data ?? [];
+  const allRequests = requestsQuery.data ?? [];
 
   const firstName = (userName ?? profile?.userId ?? 'there').split(' ')[0];
   const rewardsBalance = profile?.rewardsBalance ?? 0;
@@ -322,8 +358,23 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
     (s) => s.status === 'scheduled' && new Date(s.scheduledAt).getTime() >= nowMs,
   );
   const completedSessionsCount = allSessions.filter((s) => s.status === 'completed').length;
-  // Goals endpoint not in the backend yet — render the empty state until
-  // /member/goals lands. MemberRoadmapScreen is the canonical goals UI.
+
+  // Active goals = roadmap items NOT yet completed. Aggregated from
+  // SessionFollowup rows where show_on_roadmap=True for this member.
+  // Empty until the LLM extracts followups OR the member self-adds a goal.
+  const activeRoadmapItems = roadmap.filter(
+    (item) => item.status !== 'completed' && item.status !== 'dismissed',
+  );
+
+  // Open requests = ones the member submitted that haven't been picked up
+  // by a CHW yet. Drives the "Awaiting CHW" stat tile.
+  const openRequestsCount = allRequests.filter(
+    (r) => r.status === 'open',
+  ).length;
+
+  // Legacy seed-data goals (Goal[]) replaced by real SessionFollowup roadmap
+  // rows. Kept the variable name so the existing "My Goals" empty-state copy
+  // still compiles; it just renders [] when the member has no roadmap yet.
   const activeGoals: Goal[] = [];
 
   const handleFindCHW = useCallback(() => {
@@ -340,13 +391,27 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
     navigation.navigate('Sessions');
   }, [navigation]);
 
-  const isLoading = sessionsQuery.isLoading || profileQuery.isLoading;
-  const hasError = !isLoading && (sessionsQuery.error !== null || profileQuery.error !== null);
+  const handleOpenRoadmap = useCallback(() => {
+    navigation.navigate('Roadmap');
+  }, [navigation]);
+
+  const isLoading =
+    sessionsQuery.isLoading ||
+    profileQuery.isLoading ||
+    roadmapQuery.isLoading ||
+    requestsQuery.isLoading;
+  // Only block render on a HARD error (sessions or profile). Roadmap and
+  // requests degrade gracefully to empty arrays; their network errors get
+  // logged but shouldn't tombstone the whole dashboard.
+  const hasError =
+    !isLoading && (sessionsQuery.error !== null || profileQuery.error !== null);
 
   const handleRetry = useCallback(() => {
     void sessionsQuery.refetch();
     void profileQuery.refetch();
-  }, [sessionsQuery, profileQuery]);
+    void roadmapQuery.refetch();
+    void requestsQuery.refetch();
+  }, [sessionsQuery, profileQuery, roadmapQuery, requestsQuery]);
 
   if (isLoading) {
     return (
@@ -391,34 +456,67 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
           </Text>
         </View>
 
-        {/* Stat cards */}
-        <View style={styles.statRow}>
+        {/* Stat grid — 2×2, matches CHW dashboard pattern. All tiles
+            navigate to the relevant detail screen on tap. */}
+        <View style={styles.statGrid}>
           <StatCard
-            icon={<Gift color={colors.primary} size={18} />}
+            variant="half"
+            icon={<Gift color={colors.primary} size={20} />}
             label="Rewards"
-            value={rewardsBalance}
-            subtext="pts"
-            iconBg={`${colors.primary}15`}
+            value={rewardsBalance.toLocaleString()}
+            subtext="Points earned"
+            iconBg={`${colors.primary}18`}
             onPress={handleOpenRewards}
             accessibilityLabel="Open rewards catalog"
           />
           <StatCard
-            icon={<CalendarCheck color={colors.secondary} size={18} />}
+            variant="half"
+            icon={<CalendarCheck color={colors.secondary} size={20} />}
             label="Upcoming"
             value={upcomingSessions.length}
-            subtext="Sessions"
-            iconBg={`${colors.secondary}15`}
+            subtext={upcomingSessions.length === 1 ? 'Session' : 'Sessions'}
+            iconBg={`${colors.secondary}18`}
             onPress={handleOpenSessions}
             accessibilityLabel="Open sessions list"
           />
           <StatCard
-            icon={<CheckCircle2 color={colors.primary} size={18} />}
+            variant="half"
+            icon={<Target color={colors.compassGold} size={20} />}
+            label="Active Goals"
+            value={activeRoadmapItems.length}
+            subtext="On your roadmap"
+            iconBg={`${colors.compassGold}18`}
+            onPress={handleOpenRoadmap}
+            accessibilityLabel="Open roadmap"
+          />
+          <StatCard
+            variant="half"
+            icon={<ClipboardList color={colors.primary} size={20} />}
+            label="Open Requests"
+            value={openRequestsCount}
+            subtext="Awaiting CHW"
+            iconBg={`${colors.primary}18`}
+            onPress={handleFindCHW}
+            accessibilityLabel="View open requests"
+          />
+        </View>
+
+        {/* Secondary stat row — completed sessions runs the full width
+            beneath the 2×2 grid so the dashboard reads as
+            "live state at a glance, then lifetime totals". */}
+        <View style={styles.statRow}>
+          <StatCard
+            icon={<CheckCircle2 color={colors.primary} size={20} />}
             label="Completed"
             value={completedSessionsCount}
-            subtext="Sessions"
-            iconBg={`${colors.primary}15`}
+            subtext={
+              completedSessionsCount === 1
+                ? 'Session all-time'
+                : 'Sessions all-time'
+            }
+            iconBg={`${colors.primary}18`}
             onPress={handleOpenSessions}
-            accessibilityLabel="Open sessions list"
+            accessibilityLabel="Open completed sessions"
           />
         </View>
 
@@ -536,8 +634,36 @@ const styles = StyleSheet.create({
     gap: 10,
     marginBottom: 20,
   },
+  // 2×2 stat grid — mirrors the CHW dashboard's stat grid layout. Each
+  // child StatCard already has flex: 1, so on a row of 2 they split the
+  // available width evenly. Vertical spacing handled by the rowGap.
+  statGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    rowGap: 10,
+    marginBottom: 10,
+  },
   statCard: {
     flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#DDD6CC',
+    alignItems: 'center',
+    gap: 4,
+    shadowColor: '#3D5A3E',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 24,
+    elevation: 3,
+  },
+  // 2×2-grid variant — fixed width so flexWrap: 'wrap' on the parent
+  // breaks the row into pairs. 47% (vs 50%) leaves room for the 10px
+  // gap between cards. Mirrors CHW dashboard's statCard width.
+  statCardHalf: {
+    width: '47%',
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 12,
