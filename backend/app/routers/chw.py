@@ -77,26 +77,33 @@ async def browse_chws(
 ):
     """Browse available CHWs. Returns profiles with display names for MemberFind.
 
-    Demo / seeded CHW accounts (emails ending in `.demo@compasschw.com`) are
-    excluded server-side as a defense-in-depth guard. The cleanup script
-    `scripts/cleanup_seed_data.py` removes the rows themselves, but this
-    filter ensures real members never see Maria / Kevin / Ana even if a
-    cleanup is missed or a fresh seed re-introduces them. Production will
-    surface only real, onboarded CHWs.
+    Visibility gates (all must be true):
+    - User.role == "chw"  (defensive — a flipped-role user with an old
+      CHWProfile shouldn't surface)
+    - CHWProfile.is_available == True  (CHW opted into receiving requests)
+    - User.is_onboarded == True  (CHW completed the intake questionnaire)
+    - cardinality(CHWProfile.specializations) >= 1  (CHW picked at least one
+      vertical — without this they have nothing to match a request against)
+    - email NOT LIKE %.demo@compasschw.com  (defense in depth against the
+      seed_founders.py demo accounts even after cleanup_seed_data.py runs)
+
+    The combination keeps half-registered CHW accounts (someone who signed
+    up to test the flow but never completed intake) out of the Find CHW
+    results until their profile is actually usable.
     """
+    from sqlalchemy import func
     from app.models.user import CHWProfile, User
     stmt = (
         select(CHWProfile, User.name)
         .join(User, CHWProfile.user_id == User.id)
         .where(CHWProfile.is_available == True)  # noqa: E712
-        # Defensive guard: a user whose role was flipped (e.g. CHW → admin)
-        # may still have a CHWProfile row. Browsing should never surface
-        # non-CHW users regardless of their profile state.
         .where(User.role == "chw")
-        # Exclude seeded demo CHW accounts (Maria / Kevin / Ana etc).
-        # Pattern matches the DEMO_EMAIL_SUFFIX used by seed_founders.py
-        # and cleanup_seed_data.py — keep these in sync if the suffix
-        # ever changes.
+        .where(User.is_onboarded == True)  # noqa: E712
+        # cardinality() returns 0 for an empty ARRAY (or NULL via coalesce).
+        # Postgres-specific; fine since we're on Postgres in prod and tests.
+        .where(func.coalesce(func.cardinality(CHWProfile.specializations), 0) >= 1)
+        # Exclude seeded demo CHW accounts. Pattern matches DEMO_EMAIL_SUFFIX
+        # in seed_founders.py / cleanup_seed_data.py — keep in sync.
         .where(~User.email.like("%.demo@compasschw.com"))
     )
     if vertical:
