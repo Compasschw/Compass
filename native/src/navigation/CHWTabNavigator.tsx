@@ -120,14 +120,25 @@ interface ScreenSpec {
   title: string;
   component: React.ComponentType;
   icon: React.ComponentType<{ color: string; size: number }>;
+  /**
+   * For tabs whose component is a nested stack, this is the root screen
+   * inside that stack. Tapping the tab when it's already focused will
+   * navigate back to this screen instead of being a no-op (the default
+   * React Navigation behavior).
+   *
+   * Without this, a CHW deep on `DashboardStack > Reviews` who taps the
+   * "Dashboard" item in the drawer sees nothing happen — the drawer item
+   * IS the focused tab, so React Navigation skips re-navigating.
+   */
+  rootScreen?: string;
 }
 
 const SCREENS: ScreenSpec[] = [
-  { name: 'DashboardStack', title: 'Dashboard', component: DashboardStackNavigator, icon: LayoutDashboard },
+  { name: 'DashboardStack', title: 'Dashboard', component: DashboardStackNavigator, icon: LayoutDashboard, rootScreen: 'Dashboard' },
   { name: 'Requests',       title: 'Requests',  component: CHWRequestsScreen,       icon: Inbox },
-  { name: 'SessionsStack',  title: 'Sessions',  component: SessionsStackNavigator,  icon: ClipboardList },
+  { name: 'SessionsStack',  title: 'Sessions',  component: SessionsStackNavigator,  icon: ClipboardList, rootScreen: 'Sessions' },
   { name: 'Calendar',       title: 'Calendar',  component: CHWCalendarScreen,       icon: CalendarDays },
-  { name: 'EarningsStack',  title: 'Earnings',  component: EarningsStackNavigator,  icon: DollarSign },
+  { name: 'EarningsStack',  title: 'Earnings',  component: EarningsStackNavigator,  icon: DollarSign,    rootScreen: 'Earnings' },
   { name: 'Profile',        title: 'Profile',   component: CHWProfileScreen,        icon: UserCircle },
 ];
 
@@ -161,7 +172,7 @@ function CHWBottomTabNavigator(): React.JSX.Element {
         },
       }}
     >
-      {SCREENS.map(({ name, title, component, icon: Icon }) => (
+      {SCREENS.map(({ name, title, component, icon: Icon, rootScreen }) => (
         <Tab.Screen
           key={name}
           name={name}
@@ -170,6 +181,18 @@ function CHWBottomTabNavigator(): React.JSX.Element {
             title,
             tabBarIcon: ({ color, size }) => <Icon color={color} size={size} />,
           }}
+          listeners={rootScreen ? ({ navigation }) => ({
+            tabPress: (e) => {
+              // If this tab is already focused and the user taps it again,
+              // pop back to the stack's root instead of being a no-op.
+              const state = navigation.getState();
+              const isFocused = state.routes[state.index]?.name === name;
+              if (isFocused) {
+                e.preventDefault();
+                navigation.navigate(name as never, { screen: rootScreen } as never);
+              }
+            },
+          }) : undefined}
         />
       ))}
     </Tab.Navigator>
@@ -205,7 +228,7 @@ function CHWWebDrawerNavigator(): React.JSX.Element {
         },
       }}
     >
-      {SCREENS.map(({ name, title, component, icon: Icon }) => (
+      {SCREENS.map(({ name, title, component, icon: Icon, rootScreen }) => (
         <Drawer.Screen
           key={name}
           name={name}
@@ -214,6 +237,20 @@ function CHWWebDrawerNavigator(): React.JSX.Element {
             title,
             drawerIcon: ({ color, size }) => <Icon color={color} size={size} />,
           }}
+          listeners={rootScreen ? ({ navigation }) => ({
+            drawerItemPress: (e) => {
+              // Same fix as the bottom-tab variant: when the user is deep
+              // in a nested stack (e.g. DashboardStack > Reviews) and taps
+              // the parent tab in the drawer, navigate back to the stack
+              // root instead of doing nothing.
+              const state = navigation.getState();
+              const isFocused = state.routes[state.index]?.name === name;
+              if (isFocused) {
+                e.preventDefault();
+                navigation.navigate(name as never, { screen: rootScreen } as never);
+              }
+            },
+          }) : undefined}
         />
       ))}
     </Drawer.Navigator>

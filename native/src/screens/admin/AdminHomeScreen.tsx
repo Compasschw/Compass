@@ -43,6 +43,17 @@ export function AdminHomeScreen(): React.JSX.Element {
   const firstName = (userName ?? 'Admin').split(' ')[0];
 
   const handleOpenDashboard = useCallback(async () => {
+    // On web, `Linking.canOpenURL('/admin')` returns false (relative paths
+    // aren't a registered scheme), so the previous flow always fell into the
+    // 'unsupported' alert branch. Use window.location directly on web; keep
+    // Linking for iOS/Android where it does the right thing for absolute
+    // URLs.
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined') {
+        window.location.href = ADMIN_DASHBOARD_URL;
+      }
+      return;
+    }
     try {
       const supported = await Linking.canOpenURL(ADMIN_DASHBOARD_URL);
       if (supported) {
