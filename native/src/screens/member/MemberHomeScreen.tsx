@@ -417,7 +417,7 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
     return (
       <SafeAreaView style={styles.safeArea} edges={['top']}>
         <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
-        <View style={{ flex: 1, padding: 16, paddingTop: 20 }}>
+        <View style={styles.pageWrap}>
           <LoadingSkeleton variant="stat-grid" />
           <LoadingSkeleton variant="rows" rows={3} />
         </View>
@@ -446,6 +446,7 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
         showsVerticalScrollIndicator={false}
         refreshControl={refresh.control}
       >
+        <View style={styles.pageWrap}>
         {/* Greeting */}
         <View style={styles.greetingSection}>
           <Text style={styles.greeting}>
@@ -587,6 +588,7 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
         )}
 
         <View style={styles.bottomPadding} />
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -603,6 +605,14 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
+    flexGrow: 1,
+    alignItems: 'center',
+  },
+  // 960 px — dashboard with 2×2 stat grid and cards, matches CHW dashboard.
+  pageWrap: {
+    width: '100%',
+    maxWidth: 960,
+    alignSelf: 'center',
     paddingHorizontal: 16,
     paddingTop: 20,
   },

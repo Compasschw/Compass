@@ -109,6 +109,7 @@ export function PaymentsScreen({ navigation }: Props): React.JSX.Element {
       <SafeAreaView style={s.safeArea} edges={['top', 'bottom']}>
         <Header onBack={() => navigation.goBack()} />
         <ScrollView contentContainerStyle={s.content}>
+          <View style={s.pageWrap}>
           <View style={[s.heroCard, s.heroCardActive]}>
             <View style={s.heroIconCircle}>
               <CheckCircle size={28} color="#FFFFFF" />
@@ -152,6 +153,7 @@ export function PaymentsScreen({ navigation }: Props): React.JSX.Element {
             Tax documents (1099-NEC) are generated automatically by Stripe at year-end
             for CHWs earning over $600. You'll receive them by email from Stripe.
           </Text>
+          </View>
         </ScrollView>
       </SafeAreaView>
     );
@@ -164,6 +166,7 @@ export function PaymentsScreen({ navigation }: Props): React.JSX.Element {
       <SafeAreaView style={s.safeArea} edges={['top', 'bottom']}>
         <Header onBack={() => navigation.goBack()} />
         <ScrollView contentContainerStyle={s.content}>
+          <View style={s.pageWrap}>
           <View style={[s.heroCard, s.heroCardPending]}>
             <View style={[s.heroIconCircle, s.heroIconCirclePending]}>
               <CreditCard size={28} color="#FFFFFF" />
@@ -198,6 +201,7 @@ export function PaymentsScreen({ navigation }: Props): React.JSX.Element {
               </>
             )}
           </Pressable>
+          </View>
         </ScrollView>
       </SafeAreaView>
     );
@@ -209,6 +213,7 @@ export function PaymentsScreen({ navigation }: Props): React.JSX.Element {
     <SafeAreaView style={s.safeArea} edges={['top', 'bottom']}>
       <Header onBack={() => navigation.goBack()} />
       <ScrollView contentContainerStyle={s.content}>
+        <View style={s.pageWrap}>
         <View style={[s.heroCard, s.heroCardEmpty]}>
           <View style={s.heroIconCircle}>
             <CreditCard size={28} color="#FFFFFF" />
@@ -258,6 +263,7 @@ export function PaymentsScreen({ navigation }: Props): React.JSX.Element {
           Stripe Connect is PCI DSS Level 1 certified. Your SSN, tax ID, and bank account
           details are collected directly by Stripe and never touch CompassCHW servers.
         </Text>
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -323,6 +329,14 @@ const s = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: colors.background },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   content: {
+    flexGrow: 1,
+    alignItems: 'center',
+  },
+  // Constrains payout setup to a single-column form on desktop web.
+  pageWrap: {
+    width: '100%',
+    maxWidth: 560,
+    alignSelf: 'center',
     paddingHorizontal: spacing.lg,
     paddingBottom: spacing.xxl,
     gap: spacing.md,

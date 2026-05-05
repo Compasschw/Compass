@@ -304,8 +304,10 @@ export function CHWEarningsScreen(): React.JSX.Element {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
-          <LoadingSkeleton variant="stat-grid" />
-          <LoadingSkeleton variant="rows" rows={3} />
+          <View style={styles.pageWrap}>
+            <LoadingSkeleton variant="stat-grid" />
+            <LoadingSkeleton variant="rows" rows={3} />
+          </View>
         </ScrollView>
       </SafeAreaView>
     );
@@ -326,6 +328,7 @@ export function CHWEarningsScreen(): React.JSX.Element {
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
       >
+        <View style={styles.pageWrap}>
         {/* Page header */}
         <View style={styles.pageHeader}>
           <Text style={styles.pageTitle}>Earnings & Payouts</Text>
@@ -651,6 +654,7 @@ export function CHWEarningsScreen(): React.JSX.Element {
 
         {/* Bottom rate sentence removed per Jemal's feedback (was misleading;
             true split is shown in the Earnings Scenarios table above). */}
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -667,6 +671,15 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
+    flexGrow: 1,
+    alignItems: 'center',
+  },
+  // 960 px lets the stat cards and payout table breathe on wide viewports
+  // while keeping the horizontal-scroll table still scrollable inside it.
+  pageWrap: {
+    width: '100%',
+    maxWidth: 960,
+    alignSelf: 'center',
     padding: 20,
     paddingBottom: 40,
   },

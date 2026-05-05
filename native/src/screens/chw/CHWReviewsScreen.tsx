@@ -23,6 +23,7 @@ export function CHWReviewsScreen(): React.JSX.Element {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
       <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
+        <View style={styles.pageWrap}>
         <Text style={styles.pageTitle}>Reviews</Text>
         <Text style={styles.pageSub}>What members are saying about your work.</Text>
 
@@ -49,6 +50,7 @@ export function CHWReviewsScreen(): React.JSX.Element {
             Member reviews will appear here after completed sessions.
           </Text>
         </View>
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -57,7 +59,14 @@ export function CHWReviewsScreen(): React.JSX.Element {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: '#F4F1ED' },
   scroll: { flex: 1 },
-  content: { padding: 20 },
+  content: { flexGrow: 1, alignItems: 'center' },
+  // 560 px — single-column review list matches profile/form screens.
+  pageWrap: {
+    width: '100%',
+    maxWidth: 560,
+    alignSelf: 'center',
+    padding: 20,
+  },
   pageTitle: {
     fontFamily: 'DMSans_700Bold',
     fontSize: 24,

@@ -877,6 +877,7 @@ export function MemberRoadmapScreen(): React.JSX.Element {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
+        <View style={styles.pageWrap}>
         {/* Page header */}
         <View style={styles.pageHeader}>
           <Text style={styles.pageTitle}>My Roadmap</Text>
@@ -999,6 +1000,7 @@ export function MemberRoadmapScreen(): React.JSX.Element {
         </TouchableOpacity>
 
         <View style={{ height: 24 }} />
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -1015,6 +1017,14 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
+    flexGrow: 1,
+    alignItems: 'center',
+  },
+  // 560 px — roadmap is a single-column form/list matching profile screens.
+  pageWrap: {
+    width: '100%',
+    maxWidth: 560,
+    alignSelf: 'center',
     paddingHorizontal: 16,
     paddingTop: 20,
   },

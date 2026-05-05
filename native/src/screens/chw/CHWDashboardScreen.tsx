@@ -252,8 +252,10 @@ export function CHWDashboardScreen(): React.JSX.Element {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
-          <LoadingSkeleton variant="stat-grid" />
-          <LoadingSkeleton variant="rows" rows={2} />
+          <View style={styles.pageWrap}>
+            <LoadingSkeleton variant="stat-grid" />
+            <LoadingSkeleton variant="rows" rows={2} />
+          </View>
         </ScrollView>
       </SafeAreaView>
     );
@@ -275,6 +277,7 @@ export function CHWDashboardScreen(): React.JSX.Element {
         showsVerticalScrollIndicator={false}
         refreshControl={refresh.control}
       >
+        <View style={styles.pageWrap}>
         {/* ── Greeting ── */}
         <View style={styles.greetingBlock}>
           <Text style={styles.greetingText}>
@@ -485,6 +488,7 @@ export function CHWDashboardScreen(): React.JSX.Element {
         </View>
 
         {/* Rate footnote removed per Jemal's feedback (was misleading). */}
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -501,13 +505,18 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
+    flexGrow: 1,
+    alignItems: 'center',
+  },
+  // Constrains the dashboard content to a readable max-width on desktop web
+  // without affecting native. 960 px gives the 2×2 stat grid breathing room
+  // while keeping the layout looking intentional on wide viewports.
+  pageWrap: {
+    width: '100%',
+    maxWidth: 960,
+    alignSelf: 'center',
     padding: 20,
     paddingBottom: 40,
-    // flexGrow:1 stops RN-Web from re-rendering the content twice with
-    // whitespace between at extreme viewport heights (~2400px+). Without it
-    // the inner container under-measures and the layout engine fills the
-    // gap by re-mounting the children. Cosmetic-only at normal heights.
-    flexGrow: 1,
   },
   greetingBlock: {
     marginBottom: 24,

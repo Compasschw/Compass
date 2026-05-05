@@ -918,6 +918,7 @@ export function CHWSessionReviewScreen(): React.JSX.Element {
         onClose={() => setEditingId(null)}
       />
 
+      <View style={s.pageWrap}>
       {/* Header */}
       <View style={s.header}>
         <TouchableOpacity
@@ -1012,6 +1013,7 @@ export function CHWSessionReviewScreen(): React.JSX.Element {
           ) : null
         }
       />
+      </View>
     </SafeAreaView>
   );
 }
@@ -1022,6 +1024,14 @@ const s = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: colors.background,
+  },
+  // Constrains the review flow to a readable column on desktop web.
+  // 960 px lets the follow-up item cards breathe while staying focused.
+  pageWrap: {
+    width: '100%',
+    maxWidth: 960,
+    alignSelf: 'center',
+    flex: 1,
   },
   header: {
     flexDirection: 'row',

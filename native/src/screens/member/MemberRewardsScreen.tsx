@@ -138,6 +138,7 @@ export function MemberRewardsScreen({ navigation }: Props): React.JSX.Element {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
+        <View style={styles.pageWrap}>
         {/* Hero balance card */}
         <View style={styles.heroCard}>
           <View style={styles.heroHeader}>
@@ -215,6 +216,7 @@ export function MemberRewardsScreen({ navigation }: Props): React.JSX.Element {
         </View>
 
         <View style={{ height: 24 }} />
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -249,7 +251,14 @@ function RewardRow({ item, showDivider }: { item: RewardTransaction; showDivider
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: '#F4F1ED' },
   scroll: { flex: 1 },
-  scrollContent: { padding: 16 },
+  scrollContent: { flexGrow: 1, alignItems: 'center' },
+  // 560 px — single-column rewards catalog matches form screens.
+  pageWrap: {
+    width: '100%',
+    maxWidth: 560,
+    alignSelf: 'center',
+    padding: 16,
+  },
 
   header: {
     flexDirection: 'row',
