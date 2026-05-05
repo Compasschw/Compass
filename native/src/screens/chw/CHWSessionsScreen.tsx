@@ -6,12 +6,14 @@
  *  - Session cards with vertical icon, member name, status badge, date/time, mode
  *  - Active sessions: live timer (MM:SS), consent checkbox before start, Start / Complete actions
  *  - In-progress sessions: Chat button (opens SessionChat modal)
+ *  - In-progress sessions: "Call Member (masked)" button — triggers Vonage masked bridge
  *  - Completed sessions: "Document Session" button (opens DocumentationModal)
  *  - Duration, units billed, net earnings on completed sessions
  */
 
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   FlatList,
   Modal,
@@ -34,6 +36,7 @@ import {
   DollarSign,
   MessageSquare,
   FileText,
+  Phone,
   X,
 } from 'lucide-react-native';
 
@@ -110,6 +113,7 @@ import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 import { DocumentationModal } from '../../components/sessions/DocumentationModal';
 import { SessionChatWithFollowup } from '../../components/sessions/SessionChatWithFollowup';
+import { phone } from '../../services/phone';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -189,7 +193,7 @@ function formatScheduledAt(iso: string): string {
 }
 
 /**
- * Formats elapsed seconds as MM:SS (e.g. 65 → "01:05").
+ * Formats elapsed seconds as MM:SS (e.g. 65 to "01:05").
  */
 function formatElapsedTime(seconds: number): string {
   const m = Math.floor(seconds / 60);
@@ -286,12 +290,16 @@ interface SessionCardProps {
   startedAtMs?: number;
   /** True when this is the CHW's first session ever with this member */
   isFirstSession: boolean;
-  /** Map of session_id → claim, indexed once at the parent for O(1) lookup */
+  /** Map of session_id to claim, indexed once at the parent for O(1) lookup */
   claimsBySession: Map<string, ChwClaim>;
+  /** True while the Vonage call-bridge request for this session is in flight */
+  isCallingMember: boolean;
   onStart: (id: string) => void;
   onComplete: (id: string) => void;
   onDocumentSession: (id: string) => void;
   onOpenChat: (id: string) => void;
+  /** Initiate a masked Vonage call to the member on this session. */
+  onCallMember: (session: SessionData) => void;
   onOpenMemberProfile: (memberId: string | undefined, memberName: string | undefined) => void;
 }
 
@@ -300,10 +308,12 @@ function SessionCard({
   startedAtMs,
   isFirstSession,
   claimsBySession,
+  isCallingMember,
   onStart,
   onComplete,
   onDocumentSession,
   onOpenChat,
+  onCallMember,
   onOpenMemberProfile,
 }: SessionCardProps): React.JSX.Element {
   const verticalColor = VERTICAL_COLORS[session.vertical as Vertical] ?? '#6B7A6B';
@@ -326,7 +336,7 @@ function SessionCard({
         </View>
         <View style={cardStyles.headerInfo}>
           <View style={cardStyles.badgeRow}>
-            {/* Member name → tap opens profile detail (per Jemal: "should be
+            {/* Member name: tap opens profile detail (per Jemal: "should be
                 able to click it to see their full profile in more detail") */}
             <TouchableOpacity
               onPress={() => onOpenMemberProfile(session.memberId, session.memberName)}
@@ -435,6 +445,28 @@ function SessionCard({
               >
                 <MessageSquare size={14} color={colors.secondary} />
                 <Text style={cardStyles.chatButtonText}>Chat</Text>
+              </TouchableOpacity>
+              {/* Vonage masked-call bridge — only visible on in_progress sessions.
+                  The member's real number is never exposed to the CHW device. */}
+              <TouchableOpacity
+                style={[
+                  cardStyles.callButton,
+                  isCallingMember && cardStyles.callButtonDisabled,
+                ]}
+                onPress={() => onCallMember(session)}
+                disabled={isCallingMember}
+                accessibilityLabel={`Call ${session.memberName ?? 'member'} using masked number`}
+                accessibilityRole="button"
+                accessibilityState={{ disabled: isCallingMember }}
+              >
+                {isCallingMember ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Phone size={14} color="#FFFFFF" />
+                )}
+                <Text style={cardStyles.callButtonText}>
+                  {isCallingMember ? 'Connecting...' : 'Call Member (masked)'}
+                </Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={cardStyles.completeButton}
@@ -656,6 +688,25 @@ const cardStyles = StyleSheet.create({
     fontSize: 14,
     color: '#7A9F5A',
   },
+  /** Vonage masked-call button — indigo fill distinguishes it from the green/white CHW palette */
+  callButton: {
+    flex: 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#1D4ED8',
+    paddingVertical: 14,
+    borderRadius: 12,
+  },
+  callButtonDisabled: {
+    opacity: 0.55,
+  },
+  callButtonText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 13,
+    color: '#FFFFFF',
+  },
   documentButton: {
     flex: 1,
     flexDirection: 'row',
@@ -741,6 +792,66 @@ const chatModalStyles = StyleSheet.create({
   },
 });
 
+// ─── ToastBanner ─────────────────────────────────────────────────────────────
+
+interface ToastBannerProps {
+  message: string;
+}
+
+/**
+ * Ephemeral banner shown at the top of the screen for short-lived feedback.
+ * Auto-dismissed by the parent after a timeout — this component is purely
+ * presentational.
+ */
+function ToastBanner({ message }: ToastBannerProps): React.JSX.Element {
+  return (
+    <View
+      style={toastBannerStyles.container}
+      accessibilityRole="alert"
+      accessibilityLiveRegion="polite"
+    >
+      <Phone size={14} color="#FFFFFF" />
+      <Text style={toastBannerStyles.text} numberOfLines={2}>
+        {message}
+      </Text>
+    </View>
+  );
+}
+
+const toastBannerStyles = StyleSheet.create({
+  container: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 54 : 16,
+    left: 16,
+    right: 16,
+    zIndex: 99,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#1D4ED8',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 16,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.2,
+        shadowRadius: 12,
+      },
+      android: {
+        elevation: 8,
+      },
+    }),
+  },
+  text: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 13,
+    color: '#FFFFFF',
+    flex: 1,
+  },
+});
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 type SessionTab = 'active' | 'completed';
@@ -750,6 +861,7 @@ type SessionTab = 'active' | 'completed';
  * - Live timer for in-progress sessions
  * - Consent checkbox before starting
  * - Chat modal for active sessions
+ * - "Call Member (masked)" button on in-progress sessions (Vonage bridge)
  * - Documentation modal for completed sessions
  */
 export function CHWSessionsScreen(): React.JSX.Element {
@@ -780,6 +892,15 @@ export function CHWSessionsScreen(): React.JSX.Element {
 
   // Chat modal state
   const [chatSessionId, setChatSessionId] = useState<string | null>(null);
+
+  // Call-bridge state: tracks which session is currently dialing (null = idle).
+  // Only one call can be in flight at a time — the button disables itself while
+  // callingSessionId matches its own session id.
+  const [callingSessionId, setCallingSessionId] = useState<string | null>(null);
+
+  // Toast notification — auto-clears after 3.5 s.
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const allSessions = rawSessions ?? [];
 
@@ -875,6 +996,80 @@ export function CHWSessionsScreen(): React.JSX.Element {
     [],
   );
 
+  /**
+   * Show a short-lived toast banner at the top of the screen.
+   * Cancels any in-flight timer so rapid calls don't stack banners.
+   */
+  const showToast = useCallback((message: string): void => {
+    if (toastTimerRef.current !== null) {
+      clearTimeout(toastTimerRef.current);
+    }
+    setToastMessage(message);
+    toastTimerRef.current = setTimeout(() => {
+      setToastMessage(null);
+      toastTimerRef.current = null;
+    }, 3500);
+  }, []);
+
+  /**
+   * Initiate a Vonage masked call for an in-progress session.
+   *
+   * Guard clauses:
+   *   - Rejects if a call is already in flight (prevents double-dial).
+   *   - Rejects with a toast if chwId or memberId is absent on the session row.
+   *
+   * Happy path:
+   *   phone.dial() calls VonageMaskedDialProvider which POSTs to
+   *   /communication/call-bridge. Vonage dials the CHW; on answer it
+   *   bridges to the member's masked number.
+   *
+   * Error path:
+   *   Surfaces a native Alert (or window.alert on web) with the error message
+   *   and re-enables the button via the finally-block.
+   */
+  const handleCallMember = useCallback(
+    async (session: SessionData): Promise<void> => {
+      if (callingSessionId !== null) {
+        // Prevent double-tap while a bridge request is already in flight.
+        return;
+      }
+
+      const missingFields = [
+        !session.chwId ? 'CHW id' : null,
+        !session.memberId ? 'member id' : null,
+      ].filter(Boolean);
+
+      if (missingFields.length > 0) {
+        showToast(`Cannot initiate call — missing ${missingFields.join(', ')}.`);
+        return;
+      }
+
+      setCallingSessionId(session.id);
+      try {
+        await phone.dial({
+          callerId: session.chwId,
+          recipientId: session.memberId,
+          sessionId: session.id,
+        });
+        showToast('Call connected — member is being bridged via masked number.');
+      } catch (err) {
+        const reason =
+          err instanceof Error && err.message.trim().length > 0
+            ? err.message
+            : 'Unable to connect the call. Please try again.';
+
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.alert(`Call failed\n\n${reason}`);
+        } else {
+          Alert.alert('Call failed', reason);
+        }
+      } finally {
+        setCallingSessionId(null);
+      }
+    },
+    [callingSessionId, showToast],
+  );
+
   const renderItem = useCallback(
     ({ item }: { item: SessionData }) => (
       <SessionCard
@@ -884,20 +1079,24 @@ export function CHWSessionsScreen(): React.JSX.Element {
         }
         isFirstSession={firstSessionIds.has(item.id)}
         claimsBySession={claimsBySession}
+        isCallingMember={callingSessionId === item.id}
         onStart={handleStart}
         onComplete={handleComplete}
         onDocumentSession={handleDocumentSession}
         onOpenChat={handleOpenChat}
+        onCallMember={(session) => { void handleCallMember(session); }}
         onOpenMemberProfile={handleOpenMemberProfile}
       />
     ),
     [
       firstSessionIds,
       claimsBySession,
+      callingSessionId,
       handleStart,
       handleComplete,
       handleDocumentSession,
       handleOpenChat,
+      handleCallMember,
       handleOpenMemberProfile,
     ],
   );
@@ -925,6 +1124,9 @@ export function CHWSessionsScreen(): React.JSX.Element {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
+      {/* Toast overlay — positioned absolutely over all content */}
+      {toastMessage !== null && <ToastBanner message={toastMessage} />}
+
       {/* Page header */}
       <View style={styles.headerBlock}>
         <Text style={styles.pageTitle}>Sessions</Text>
