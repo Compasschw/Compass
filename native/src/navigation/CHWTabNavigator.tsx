@@ -25,6 +25,9 @@ import {
   UserCircle,
 } from 'lucide-react-native';
 
+import { SidebarProvider, useSidebar } from './SidebarContext';
+import { CollapsibleDrawerContent } from './CollapsibleDrawerContent';
+
 import { colors } from '../theme/colors';
 import { fonts } from '../theme/typography';
 import { CHWDashboardScreen } from '../screens/chw/CHWDashboardScreen';
@@ -199,32 +202,52 @@ function CHWBottomTabNavigator(): React.JSX.Element {
   );
 }
 
-// ─── Web variant: permanent left drawer ───────────────────────────────────────
+// ─── Web variant: permanent left drawer (collapsible) ─────────────────────────
 
-function CHWWebDrawerNavigator(): React.JSX.Element {
+/**
+ * Inner drawer navigator that reads collapsed state from SidebarContext.
+ * Must be rendered inside `SidebarProvider`.
+ */
+function CHWWebDrawerNavigatorInner(): React.JSX.Element {
+  const { isCollapsed, drawerWidth } = useSidebar();
+
   return (
     <Drawer.Navigator
+      drawerContent={(props) => <CollapsibleDrawerContent {...props} />}
       screenOptions={{
         headerShown: false,
         drawerType: 'permanent',
         drawerStyle: {
-          width: 224,
+          width: drawerWidth,
           backgroundColor: colors.card,
           borderRightColor: colors.border,
           borderRightWidth: 1,
+          // Web-only CSS transition so the width animates smoothly on collapse.
+          ...(Platform.OS === 'web' && {
+            transitionProperty: 'width',
+            transitionDuration: '200ms',
+            transitionTimingFunction: 'ease-in-out',
+            overflow: 'hidden',
+          }),
         },
         drawerActiveTintColor: colors.primary,
         drawerInactiveTintColor: colors.mutedForeground,
         drawerActiveBackgroundColor: 'rgba(107,143,113,0.12)',
-        drawerLabelStyle: {
-          fontSize: 14,
-          fontFamily: fonts.bodySemibold,
-          marginLeft: -8, // tighten icon-to-label spacing
-        },
+        // Hide labels when collapsed so only icons show in the rail.
+        drawerLabelStyle: isCollapsed
+          ? { display: 'none' }
+          : {
+              fontSize: 14,
+              fontFamily: fonts.bodySemibold,
+              marginLeft: -8, // tighten icon-to-label spacing
+            },
         drawerItemStyle: {
           borderRadius: 10,
-          marginHorizontal: 8,
+          // When collapsed, center the icon by removing horizontal margin.
+          marginHorizontal: isCollapsed ? 4 : 8,
           marginVertical: 2,
+          // Constrain to icon size so the item doesn't overflow the rail.
+          ...(isCollapsed && { width: 48, alignSelf: 'center' }),
         },
       }}
     >
@@ -254,6 +277,19 @@ function CHWWebDrawerNavigator(): React.JSX.Element {
         />
       ))}
     </Drawer.Navigator>
+  );
+}
+
+/**
+ * Public wrapper that provides the sidebar context before mounting the drawer.
+ * Keeping the provider here (rather than at the app root) means the CHW and
+ * Member drawers each own their own collapsed state independently.
+ */
+function CHWWebDrawerNavigator(): React.JSX.Element {
+  return (
+    <SidebarProvider>
+      <CHWWebDrawerNavigatorInner />
+    </SidebarProvider>
   );
 }
 
