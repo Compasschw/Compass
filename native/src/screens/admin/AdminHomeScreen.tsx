@@ -29,13 +29,18 @@ import { colors } from '../../theme/colors';
 import { confirmAsync } from '../../utils/confirm';
 
 /**
- * URL for the legacy web admin dashboard. Override at build time via
- * EXPO_PUBLIC_ADMIN_DASHBOARD_URL — defaults to a relative `/admin` path
- * which is fine for the web bundle when both are co-deployed, and a
- * harmless no-op on native (where Linking.openURL on a relative path
- * silently fails — we surface a friendly Alert in that case).
+ * URL for the legacy admin dashboard SPA (sourced from web-legacy/ in the
+ * monorepo, deployed as a separate Vercel project at
+ * compass-admin-git-main-compasschw.vercel.app).
+ *
+ * The native Expo Web bundle ALSO serves a route at /admin (this very
+ * screen), so a relative `/admin` URL would just refresh this page.
+ * Override at build time via EXPO_PUBLIC_ADMIN_DASHBOARD_URL when the
+ * admin SPA moves to a custom domain.
  */
-const ADMIN_DASHBOARD_URL = process.env.EXPO_PUBLIC_ADMIN_DASHBOARD_URL ?? '/admin';
+const ADMIN_DASHBOARD_URL =
+  process.env.EXPO_PUBLIC_ADMIN_DASHBOARD_URL ??
+  'https://compass-admin-git-main-compasschw.vercel.app/admin/login';
 
 export function AdminHomeScreen(): React.JSX.Element {
   const { userName, logout } = useAuth();
