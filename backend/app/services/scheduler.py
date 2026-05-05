@@ -389,17 +389,17 @@ def start_scheduler() -> None:
         coalesce=True,
     )
 
-    # Daily credential-expiry check — 09:00 US/Pacific (17:00 UTC).
-    # Uses UTC wall-clock time; the offset is correct for PDT (UTC-7).
-    # Operators in PST (UTC-8) season should update hour=17 to hour=17 — no
-    # change needed because we fire 9 AM PT regardless of DST when the
-    # scheduler timezone is set to US/Pacific below.
+    # Daily credential-expiry check — 09:00 America/Los_Angeles.
+    # Use the canonical IANA name (`America/Los_Angeles`), not the deprecated
+    # `US/Pacific` alias which isn't bundled with Python's stdlib `zoneinfo`
+    # by default and crashes the scheduler at boot with:
+    #   Scheduler startup failed: 'No time zone found with key US/Pacific'
     _scheduler.add_job(
         check_expiring_credentials,
         "cron",
         hour=9,
         minute=0,
-        timezone="US/Pacific",
+        timezone="America/Los_Angeles",
         id="credential_expiry_check",
         max_instances=1,
         coalesce=True,
@@ -414,7 +414,7 @@ def start_scheduler() -> None:
         "cron",
         hour=2,
         minute=0,
-        timezone="US/Pacific",
+        timezone="America/Los_Angeles",
         id="hipaa_hard_delete",
         max_instances=1,
         coalesce=True,

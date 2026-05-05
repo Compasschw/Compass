@@ -123,6 +123,48 @@ export async function adminFetch<T>(
   return response.json() as Promise<T>;
 }
 
+/**
+ * Typed PATCH wrapper for `/api/v1/admin/*` endpoints.
+ *
+ * Same auth layout as `adminFetch` but for body-bearing PATCH requests
+ * (status transitions, etc.). The response is parsed as JSON; callers are
+ * responsible for the response shape.
+ */
+export async function adminPatch<T>(
+  path: string,
+  body: Record<string, unknown>,
+): Promise<T> {
+  const key = getAdminKey();
+  const twoFaToken = get2FAToken();
+
+  const url = `${API_BASE}/admin${path}`;
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${key}`,
+  };
+  if (twoFaToken) {
+    headers['X-Admin-2FA-Token'] = twoFaToken;
+  }
+
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify(body),
+  });
+
+  if (response.status === 401) {
+    handleUnauthorized();
+  }
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}));
+    const detail = (errorBody as { detail?: string }).detail ?? response.statusText;
+    throw new AdminApiError(response.status, detail, errorBody);
+  }
+
+  return response.json() as Promise<T>;
+}
+
 // ─── 2FA API calls ────────────────────────────────────────────────────────────
 
 export interface TotpSetupResponse {
