@@ -401,6 +401,7 @@ export function CHWRequestsScreen(): React.JSX.Element {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
+      <View style={styles.pageWrap}>
       {/* Page header — fixed above scroll */}
       <View style={styles.headerBlock}>
         <View style={styles.titleRow}>
@@ -506,6 +507,7 @@ export function CHWRequestsScreen(): React.JSX.Element {
           </Text>
         </View>
       )}
+      </View>
     </SafeAreaView>
   );
 }
@@ -516,6 +518,14 @@ const styles = StyleSheet.create({
   safe: {
     flex: 1,
     backgroundColor: '#F4F1ED',
+  },
+  // Constrains the entire requests screen to a readable column on desktop web.
+  // 960 px gives the filter chips and request cards enough room while keeping
+  // the layout looking intentional on wide viewports.
+  pageWrap: {
+    width: '100%',
+    maxWidth: 960,
+    alignSelf: 'center',
   },
   headerBlock: {
     paddingHorizontal: 20,

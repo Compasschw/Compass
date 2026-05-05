@@ -763,7 +763,7 @@ export function MemberProfileScreen(): React.JSX.Element {
     return (
       <SafeAreaView style={styles.safeArea} edges={['top']}>
         <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
-        <View style={{ flex: 1, padding: 16, paddingTop: 20 }}>
+        <View style={styles.pageWrap}>
           <LoadingSkeleton variant="card" />
           <LoadingSkeleton variant="rows" rows={4} />
         </View>
@@ -830,6 +830,7 @@ export function MemberProfileScreen(): React.JSX.Element {
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
+        <View style={styles.pageWrap}>
         {/* Banner + Avatar + name */}
         <View style={styles.bannerContainer}>
           <View style={styles.banner} />
@@ -1226,6 +1227,7 @@ export function MemberProfileScreen(): React.JSX.Element {
 
         <Text style={styles.versionText}>Compass CHW · v1.0.0</Text>
         <View style={{ height: 24 }} />
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -1308,6 +1310,14 @@ const styles = StyleSheet.create({
 
   scroll: { flex: 1 },
   scrollContent: {
+    flexGrow: 1,
+    alignItems: 'center',
+  },
+  // 560 px — single-column profile form matches CHW profile and intake screens.
+  pageWrap: {
+    width: '100%',
+    maxWidth: 560,
+    alignSelf: 'center',
     paddingHorizontal: 16,
     paddingTop: 0,
   },

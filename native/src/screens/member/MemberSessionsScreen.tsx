@@ -932,7 +932,7 @@ export function MemberSessionsScreen(): React.JSX.Element {
     return (
       <SafeAreaView style={styles.safeArea} edges={['top']}>
         <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
-        <View style={{ flex: 1, padding: 16, paddingTop: 20 }}>
+        <View style={styles.pageWrap}>
           <LoadingSkeleton variant="rows" rows={4} />
         </View>
       </SafeAreaView>
@@ -966,6 +966,7 @@ export function MemberSessionsScreen(): React.JSX.Element {
         />
       ) : null}
 
+      <View style={styles.pageWrap}>
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.title}>My Sessions</Text>
@@ -1063,6 +1064,7 @@ export function MemberSessionsScreen(): React.JSX.Element {
           onClose={() => setChatSessionId(null)}
         />
       )}
+      </View>
     </SafeAreaView>
   );
 }
@@ -1073,6 +1075,14 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: '#F4F1ED',
+    alignItems: 'center',
+  },
+  // 960 px — session list matches the dashboard and requests screens.
+  pageWrap: {
+    width: '100%',
+    maxWidth: 960,
+    alignSelf: 'center',
+    flex: 1,
   },
   header: {
     paddingHorizontal: 16,

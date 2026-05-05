@@ -1197,6 +1197,7 @@ export function MemberFindScreen(): React.JSX.Element {
         />
       ) : null}
 
+      <View style={styles.pageWrap}>
       {/* Page header */}
       <View style={styles.pageHeader}>
         <Text style={styles.pageTitle}>Find Your CHW</Text>
@@ -1308,6 +1309,7 @@ export function MemberFindScreen(): React.JSX.Element {
           )}
         />
       )}
+      </View>
     </SafeAreaView>
   );
 }
@@ -1318,6 +1320,14 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: '#F4F1ED',
+    alignItems: 'center',
+  },
+  // 960 px — CHW browse list is info-dense; needs room for the map + cards.
+  pageWrap: {
+    width: '100%',
+    maxWidth: 960,
+    flex: 1,
+    alignSelf: 'center',
   },
   pageHeader: {
     paddingHorizontal: 16,

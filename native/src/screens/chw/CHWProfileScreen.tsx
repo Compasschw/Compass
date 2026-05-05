@@ -549,8 +549,10 @@ export function CHWProfileScreen(): React.JSX.Element {
           <Text style={styles.headerTitle}>My Profile</Text>
         </View>
         <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
-          <LoadingSkeleton variant="card" />
-          <LoadingSkeleton variant="rows" rows={4} />
+          <View style={styles.pageWrap}>
+            <LoadingSkeleton variant="card" />
+            <LoadingSkeleton variant="rows" rows={4} />
+          </View>
         </ScrollView>
       </SafeAreaView>
     );
@@ -609,6 +611,7 @@ export function CHWProfileScreen(): React.JSX.Element {
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
+        <View style={styles.pageWrap}>
         {/* ── Banner + Avatar header ── */}
         <View style={styles.bannerContainer}>
           <View style={styles.banner} />
@@ -1024,6 +1027,7 @@ export function CHWProfileScreen(): React.JSX.Element {
           onConfirm={handleDeleteAccountConfirm}
           errorMessage={deleteErrorMessage}
         />
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -1106,6 +1110,15 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
+    flexGrow: 1,
+    alignItems: 'center',
+  },
+  // Constrains the profile form to a readable column on desktop web.
+  // 560 px matches the CHWIntakeScreen pattern for single-column forms.
+  pageWrap: {
+    width: '100%',
+    maxWidth: 560,
+    alignSelf: 'center',
     padding: 20,
     paddingBottom: 48,
   },
