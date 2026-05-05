@@ -74,10 +74,16 @@ interface ScreenSpec {
   title: string;
   component: React.ComponentType;
   icon: React.ComponentType<{ color: string; size: number }>;
+  /**
+   * For tabs whose component is a nested stack, this is the root screen
+   * inside that stack. Tapping the tab when it's already focused will
+   * navigate back to this screen. See CHWTabNavigator for the same fix.
+   */
+  rootScreen?: string;
 }
 
 const SCREENS: ScreenSpec[] = [
-  { name: 'Home',     title: 'Home',     component: HomeStackNavigator,    icon: Home },
+  { name: 'Home',     title: 'Home',     component: HomeStackNavigator,    icon: Home, rootScreen: 'HomeMain' },
   { name: 'FindCHW',  title: 'Find CHW', component: MemberFindScreen,      icon: Search },
   { name: 'Sessions', title: 'Sessions', component: MemberSessionsScreen,  icon: ClipboardList },
   { name: 'Calendar', title: 'Calendar', component: MemberCalendarScreen,  icon: CalendarDays },
@@ -115,7 +121,7 @@ function MemberBottomTabNavigator(): React.JSX.Element {
         },
       }}
     >
-      {SCREENS.map(({ name, title, component, icon: Icon }) => (
+      {SCREENS.map(({ name, title, component, icon: Icon, rootScreen }) => (
         <Tab.Screen
           key={name}
           name={name}
@@ -124,6 +130,16 @@ function MemberBottomTabNavigator(): React.JSX.Element {
             title,
             tabBarIcon: ({ color, size }) => <Icon color={color} size={size} />,
           }}
+          listeners={rootScreen ? ({ navigation }) => ({
+            tabPress: (e) => {
+              const state = navigation.getState();
+              const isFocused = state.routes[state.index]?.name === name;
+              if (isFocused) {
+                e.preventDefault();
+                navigation.navigate(name as never, { screen: rootScreen } as never);
+              }
+            },
+          }) : undefined}
         />
       ))}
     </Tab.Navigator>
@@ -159,7 +175,7 @@ function MemberWebDrawerNavigator(): React.JSX.Element {
         },
       }}
     >
-      {SCREENS.map(({ name, title, component, icon: Icon }) => (
+      {SCREENS.map(({ name, title, component, icon: Icon, rootScreen }) => (
         <Drawer.Screen
           key={name}
           name={name}
@@ -168,6 +184,16 @@ function MemberWebDrawerNavigator(): React.JSX.Element {
             title,
             drawerIcon: ({ color, size }) => <Icon color={color} size={size} />,
           }}
+          listeners={rootScreen ? ({ navigation }) => ({
+            drawerItemPress: (e) => {
+              const state = navigation.getState();
+              const isFocused = state.routes[state.index]?.name === name;
+              if (isFocused) {
+                e.preventDefault();
+                navigation.navigate(name as never, { screen: rootScreen } as never);
+              }
+            },
+          }) : undefined}
         />
       ))}
     </Drawer.Navigator>
