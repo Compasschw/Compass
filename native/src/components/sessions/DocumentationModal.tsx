@@ -864,6 +864,15 @@ export function DocumentationModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
   const [summaryFromAI, setSummaryFromAI] = useState(false);
+  // Inline confirmation overlay state. We can't rely on Alert.alert (no-op
+  // on RN Web with multi-button) or window.confirm (Chrome blocks it after
+  // a "prevent additional dialogs" tick, PWAs often suppress it, some
+  // extensions intercept it). A real React modal is bulletproof.
+  const [showConfirmPreview, setShowConfirmPreview] = useState(false);
+  // Same reasoning for the success message — render it inline as a
+  // toast/banner instead of relying on Alert.alert / window.alert.
+  const [showSuccessBanner, setShowSuccessBanner] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   // ── Auto-generate a draft summary on modal open ─────────────────────────
   // Calls POST /sessions/{id}/summary in the background. If the LLM returns
@@ -925,6 +934,7 @@ export function DocumentationModal({
     if (!isValid || isSubmitting) return;
 
     setIsSubmitting(true);
+    setSubmitError(null);
 
     const documentation: SessionDocumentation = {
       sessionId,
@@ -940,36 +950,24 @@ export function DocumentationModal({
     };
 
     // Await the parent's onSubmit so we only show "submitted" after the
-    // API call actually succeeds. The parent is responsible for surfacing
-    // its own error toast if the mutation fails — we simply re-enable the
-    // button and let the modal stay open for retry.
+    // API call actually succeeds.
     try {
       const maybePromise = onSubmit(documentation) as unknown;
       if (maybePromise && typeof (maybePromise as Promise<unknown>).then === 'function') {
         await maybePromise;
       }
-    } catch {
-      // Parent surfaces the error; we just stop the spinner and bail.
+    } catch (err) {
+      const reason =
+        err instanceof Error && err.message ? err.message : 'Unknown error';
+      setSubmitError(reason);
       setIsSubmitting(false);
+      setShowConfirmPreview(false);
       return;
     }
 
     setIsSubmitting(false);
-
-    // RN's Alert.alert() is a no-op for multi-button dialogs on web; use
-    // window.alert() so the CHW gets visible confirmation on the web build.
-    if (Platform.OS === 'web') {
-      if (typeof window !== 'undefined') {
-        window.alert(`Documentation Submitted\n\nClaim filed for ${unitsToBill} unit(s).`);
-      }
-      onClose();
-      return;
-    }
-    Alert.alert(
-      'Documentation Submitted',
-      `Claim filed for ${unitsToBill} unit(s).`,
-      [{ text: 'Done', onPress: onClose }],
-    );
+    setShowConfirmPreview(false);
+    setShowSuccessBanner(true);
   }, [
     isValid,
     isSubmitting,
@@ -994,58 +992,26 @@ export function DocumentationModal({
    */
   const handleSubmit = useCallback((): void => {
     if (!isValid || isSubmitting) return;
+    // Open the inline confirmation overlay. Cross-platform; doesn't depend
+    // on Alert.alert (broken multi-button on web) or window.confirm
+    // (suppressible by the user / extensions / PWA shell).
+    setSubmitError(null);
+    setShowConfirmPreview(true);
+  }, [isValid, isSubmitting]);
 
-    const gross = unitsToBill * 26.66; // Medi-Cal T1016 rate per 15-min unit
+  // ── Derived values for the inline confirmation overlay ────────────────────
+  const previewMath = useMemo(() => {
+    const gross = unitsToBill * 26.66;
     const platformFee = gross * 0.15;
     const rewardsPool = gross * 0.25;
     const chwNet = gross * 0.6;
-    const procedureLabel = selectedProcedureCode || 'CPT/HCPCS';
-    const diagCount = selectedDiagnosisCodes.length;
+    return { gross, platformFee, rewardsPool, chwNet };
+  }, [unitsToBill]);
 
-    const previewBody =
-      `${unitsToBill} unit(s) of ${procedureLabel}\n` +
-      `Diagnoses: ${diagCount} code${diagCount === 1 ? '' : 's'}\n\n` +
-      `Gross:        $${gross.toFixed(2)}\n` +
-      `Platform fee: -$${platformFee.toFixed(2)}\n` +
-      `Rewards pool: -$${rewardsPool.toFixed(2)}\n` +
-      `Your payout:  $${chwNet.toFixed(2)}\n\n` +
-      `This will file the claim with PearSuite. Continue?`;
-
-    // RN's Alert.alert() with a multi-button [Edit / Submit Claim] callback
-    // shape is a no-op on web — the dialog never renders and `onPress` never
-    // fires, so the CHW taps Submit and nothing visibly happens. Bridge to
-    // window.confirm() on web; native keeps the styled Alert.
-    if (Platform.OS === 'web') {
-      if (typeof window === 'undefined') return;
-      const confirmed = window.confirm(`Review claim before submitting\n\n${previewBody}`);
-      if (confirmed) {
-        void performSubmit();
-      }
-      return;
-    }
-
-    Alert.alert(
-      'Review claim before submitting',
-      previewBody,
-      [
-        { text: 'Edit', style: 'cancel' },
-        {
-          text: 'Submit Claim',
-          style: 'default',
-          onPress: () => {
-            void performSubmit();
-          },
-        },
-      ],
-    );
-  }, [
-    isValid,
-    isSubmitting,
-    unitsToBill,
-    selectedProcedureCode,
-    selectedDiagnosisCodes,
-    performSubmit,
-  ]);
+  const handleSuccessClose = useCallback((): void => {
+    setShowSuccessBanner(false);
+    onClose();
+  }, [onClose]);
 
   return (
     <Modal
@@ -1157,6 +1123,11 @@ export function DocumentationModal({
               Select at least one diagnosis code and a procedure code to submit.
             </Text>
           )}
+          {submitError ? (
+            <Text style={m.errorHint} accessibilityRole="alert">
+              Failed to submit: {submitError}
+            </Text>
+          ) : null}
           <TouchableOpacity
             style={[m.submitButton, (!isValid || isSubmitting) && m.submitButtonDisabled]}
             onPress={handleSubmit}
@@ -1172,6 +1143,86 @@ export function DocumentationModal({
             </Text>
           </TouchableOpacity>
         </View>
+
+        {/* Inline confirmation overlay — replaces Alert.alert (no-op on
+            web) and window.confirm (suppressible). Always renders. */}
+        {showConfirmPreview ? (
+          <View style={m.overlayBackdrop} accessibilityViewIsModal accessibilityLiveRegion="polite">
+            <View style={m.overlayCard}>
+              <Text style={m.overlayTitle}>Review claim before submitting</Text>
+              <Text style={m.overlayBody}>
+                {unitsToBill} unit(s) of {selectedProcedureCode || 'CPT/HCPCS'}
+                {'\n'}Diagnoses: {selectedDiagnosisCodes.length} code{selectedDiagnosisCodes.length === 1 ? '' : 's'}
+              </Text>
+              <View style={m.overlayDivider} />
+              <View style={m.overlayRow}>
+                <Text style={m.overlayLabel}>Gross</Text>
+                <Text style={m.overlayValue}>${previewMath.gross.toFixed(2)}</Text>
+              </View>
+              <View style={m.overlayRow}>
+                <Text style={m.overlayLabel}>Platform fee</Text>
+                <Text style={m.overlayValue}>-${previewMath.platformFee.toFixed(2)}</Text>
+              </View>
+              <View style={m.overlayRow}>
+                <Text style={m.overlayLabel}>Rewards pool</Text>
+                <Text style={m.overlayValue}>-${previewMath.rewardsPool.toFixed(2)}</Text>
+              </View>
+              <View style={m.overlayDivider} />
+              <View style={m.overlayRow}>
+                <Text style={m.overlayPayoutLabel}>Your payout</Text>
+                <Text style={m.overlayPayoutValue}>${previewMath.chwNet.toFixed(2)}</Text>
+              </View>
+              <Text style={m.overlayFootnote}>
+                This will file the claim with PearSuite. Continue?
+              </Text>
+              <View style={m.overlayActions}>
+                <TouchableOpacity
+                  style={m.overlayCancelBtn}
+                  onPress={() => setShowConfirmPreview(false)}
+                  disabled={isSubmitting}
+                  accessibilityRole="button"
+                  accessibilityLabel="Edit claim before submitting"
+                >
+                  <Text style={m.overlayCancelText}>Edit</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[m.overlayConfirmBtn, isSubmitting && m.submitButtonDisabled]}
+                  onPress={() => { void performSubmit(); }}
+                  disabled={isSubmitting}
+                  accessibilityRole="button"
+                  accessibilityLabel="Confirm and submit claim"
+                >
+                  <Text style={m.overlayConfirmText}>
+                    {isSubmitting ? 'Submitting...' : 'Submit Claim'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        ) : null}
+
+        {/* Inline success banner — replaces Alert.alert("Documentation
+            Submitted", ...) which is unreliable on web. */}
+        {showSuccessBanner ? (
+          <View style={m.overlayBackdrop} accessibilityViewIsModal accessibilityLiveRegion="polite">
+            <View style={m.overlayCard}>
+              <Text style={m.overlayTitle}>Documentation submitted</Text>
+              <Text style={m.overlayBody}>
+                Claim filed for {unitsToBill} unit(s). PearSuite will process it.
+              </Text>
+              <View style={m.overlayActions}>
+                <TouchableOpacity
+                  style={m.overlayConfirmBtn}
+                  onPress={handleSuccessClose}
+                  accessibilityRole="button"
+                  accessibilityLabel="Close documentation modal"
+                >
+                  <Text style={m.overlayConfirmText}>Done</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        ) : null}
       </View>
     </Modal>
   );
@@ -1277,6 +1328,109 @@ const m = StyleSheet.create({
   },
   submitButtonText: {
     ...typography.bodyMd,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  errorHint: {
+    ...typography.label,
+    color: colors.destructive,
+    textAlign: 'center',
+  },
+  overlayBackdrop: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+    zIndex: 100,
+  },
+  overlayCard: {
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    padding: 24,
+    gap: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.18,
+    shadowRadius: 24,
+    elevation: 12,
+  },
+  overlayTitle: {
+    ...typography.displaySm,
+    color: colors.foreground,
+  },
+  overlayBody: {
+    ...typography.bodySm,
+    color: colors.mutedForeground,
+    lineHeight: 20,
+  },
+  overlayDivider: {
+    height: 1,
+    backgroundColor: colors.border,
+    marginVertical: 4,
+  },
+  overlayRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  overlayLabel: {
+    ...typography.bodySm,
+    color: colors.mutedForeground,
+  },
+  overlayValue: {
+    ...typography.bodySm,
+    color: colors.foreground,
+  },
+  overlayPayoutLabel: {
+    ...typography.bodyMd,
+    fontWeight: '700',
+    color: colors.foreground,
+  },
+  overlayPayoutValue: {
+    ...typography.bodyMd,
+    fontWeight: '700',
+    color: colors.primary,
+  },
+  overlayFootnote: {
+    ...typography.label,
+    color: colors.mutedForeground,
+    marginTop: 8,
+  },
+  overlayActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 14,
+  },
+  overlayCancelBtn: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: colors.background,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+  },
+  overlayCancelText: {
+    ...typography.bodySm,
+    fontWeight: '600',
+    color: colors.foreground,
+  },
+  overlayConfirmBtn: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+  },
+  overlayConfirmText: {
+    ...typography.bodySm,
     fontWeight: '700',
     color: '#FFFFFF',
   },
