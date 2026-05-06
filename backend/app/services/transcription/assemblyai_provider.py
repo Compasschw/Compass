@@ -192,13 +192,16 @@ class AssemblyAIProvider(TranscriptionProvider):
         """Build an assemblyai.TranscriptionConfig for async transcription."""
         aai = self._get_sdk()
 
-        speech_model = (
-            aai.SpeechModel.conformer2 if medical_model else aai.SpeechModel.default
-        )
+        # AssemblyAI 2026 batch API accepts ONLY "universal-3-pro" or
+        # "universal-2" in the speech_models list — the SDK's SpeechModel
+        # enum (`best`, `slam-1`, `nano`) is rejected with a 4xx. Pass the
+        # literal string. medical_model → universal-3-pro (highest quality
+        # for clinical conversations); default → universal-2.
+        speech_models = ["universal-3-pro" if medical_model else "universal-2"]
 
         return aai.TranscriptionConfig(
             language_code=language,
-            speech_model=speech_model,
+            speech_models=speech_models,
             speaker_labels=True,
             entity_detection=True,
             punctuate=True,
