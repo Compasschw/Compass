@@ -43,7 +43,11 @@ export interface ServiceRequestData {
   id: string;
   memberId: string;
   matchedChwId?: string;
+  /** Legacy single-vertical field — always set to verticals[0]. */
   vertical: string;
+  /** Authoritative multi-vertical array. May be empty for pre-migration rows;
+   *  fall back to [vertical] when rendering in that case. */
+  verticals: string[];
   urgency: string;
   description: string;
   preferredMode: string;
@@ -140,6 +144,34 @@ export interface MessageData {
   attachment?: FileAttachmentInline | null;
 }
 
+// ─── CHW Member Profile (HIPAA-gated) ────────────────────────────────────────
+
+/**
+ * HIPAA minimum-necessary member profile returned by GET /chw/members/{id}/profile.
+ *
+ * Excludes: medi_cal_id, insurance_provider, session notes/transcripts, and
+ * session data belonging to other CHWs. See backend CHWMemberProfileView for
+ * the full exclusion list and statutory justification.
+ */
+export interface ChwMemberProfileView {
+  id: string;
+  name: string;
+  /** Phone for masked-call initiation only. May be null. */
+  phone: string | null;
+  primaryLanguage: string;
+  primaryNeed: string | null;
+  /** ZIP for service-area context; not precise enough for re-identification. */
+  zipCode: string | null;
+  /** Completed sessions with this CHW only. */
+  totalSessionsWithYou: number;
+  /** Completed sessions across all CHWs — care-continuity context. */
+  totalSessionsAllTime: number;
+  /** ISO timestamp of the last completed session between this CHW and member. */
+  lastSessionAt: string | null;
+  /** Open service_request.id matched to this CHW, if any. */
+  activeRequestId: string | null;
+}
+
 // ─── Query Keys ──────────────────────────────────────────────────────────────
 
 export const queryKeys = {
@@ -154,6 +186,7 @@ export const queryKeys = {
   chwBrowse: (vertical?: string) => ['chw', 'browse', vertical ?? 'all'] as const,
   conversations: ['conversations'] as const,
   messages: (conversationId: string) => ['conversations', conversationId, 'messages'] as const,
+  chwMemberProfile: (memberId: string) => ['chw', 'members', memberId, 'profile'] as const,
 };
 
 /**
@@ -278,6 +311,39 @@ export function useChwBrowse(vertical?: string) {
   });
 }
 
+/**
+ * Fetch the HIPAA-scoped member profile for a given member, gated on the
+ * authenticated CHW having an active relationship (session or accepted request).
+ *
+ * Returns null data when memberId is empty — callers should guard on that.
+ *
+ * HTTP 403 from the backend (no relationship) is surfaced as-is so the screen
+ * can render the "no access" empty state instead of a generic error.
+ */
+export function useChwMemberProfile(memberId: string) {
+  return useQuery({
+    queryKey: queryKeys.chwMemberProfile(memberId),
+    queryFn: async () => {
+      const raw = await api<unknown>(`/chw/members/${memberId}/profile`);
+      return transformKeys<ChwMemberProfileView>(raw);
+    },
+    enabled: memberId.length > 0,
+    staleTime: 60_000, // 1 min — profile data is slow-moving
+    retry: (failureCount, error: unknown) => {
+      // Never retry a 403 — the gate is intentional, not transient.
+      if (
+        error != null &&
+        typeof error === 'object' &&
+        'status' in error &&
+        (error as { status: number }).status === 403
+      ) {
+        return false;
+      }
+      return failureCount < 2;
+    },
+  });
+}
+
 export function useConversations() {
   return useQuery({
     queryKey: queryKeys.conversations,
@@ -326,16 +392,26 @@ export function usePassRequest() {
   });
 }
 
+export interface CreateRequestPayload {
+  /**
+   * One or more verticals the member needs help with.
+   * Replaces the old per-vertical fan-out pattern: the frontend now sends a
+   * single POST with all selected verticals instead of N separate requests.
+   */
+  verticals: string[];
+  urgency: string;
+  description: string;
+  preferredMode: string;
+  estimatedUnits: number;
+}
+
 export function useCreateRequest() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (data: {
-      vertical: string;
-      urgency: string;
-      description: string;
-      preferredMode: string;
-      estimatedUnits: number;
-    }) => {
+    mutationFn: async (data: CreateRequestPayload) => {
+      // POST one request carrying the full verticals array.
+      // The backend writes both `verticals` (authoritative) and
+      // `vertical = verticals[0]` (backwards-compat for sessions/claims).
       await api('/requests/', {
         method: 'POST',
         body: JSON.stringify(toSnakeCase(data)),

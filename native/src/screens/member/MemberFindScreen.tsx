@@ -45,6 +45,7 @@ import {
   useCreateRequest,
   useSessions,
   type ChwBrowseItem,
+  type CreateRequestPayload,
 } from '../../hooks/useApiQueries';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
@@ -285,9 +286,9 @@ function ScheduleModal({
   onClose,
   onSubmit,
 }: ScheduleModalProps): React.JSX.Element {
-  // Multi-select per Akram's instruction: one schedule submission can cover
-  // multiple needs. The form submits one create-request call per selected
-  // vertical so the CHW sees one ticket per need on their inbox.
+  // Multi-select: one schedule submission can cover multiple needs.
+  // The form now submits ONE request carrying all selected verticals —
+  // no more per-vertical fan-out. The CHW sees a single ticket in their inbox.
   const [selectedVerticals, setSelectedVerticals] = useState<Set<Vertical>>(new Set());
   const [urgency, setUrgency] = useState<Urgency>('routine');
   const [mode, setMode] = useState<SessionMode>('in_person');
@@ -513,7 +514,14 @@ function ScheduleModal({
               accessibilityLabel="Description"
             />
 
-            {/* Submit */}
+            {/* Submit — always one request regardless of how many verticals are
+                selected. Show a category count below the button when more than
+                one vertical is selected so the member knows what they're submitting. */}
+            {selectedVerticals.size > 1 ? (
+              <Text style={modalStyles.selectedCountHint}>
+                {selectedVerticals.size} categories selected
+              </Text>
+            ) : null}
             <TouchableOpacity
               onPress={handleSubmit}
               disabled={selectedVerticals.size === 0}
@@ -522,19 +530,13 @@ function ScheduleModal({
                 selectedVerticals.size === 0 && modalStyles.submitBtnDisabled,
               ]}
               accessibilityRole="button"
-              accessibilityLabel={
-                selectedVerticals.size > 1
-                  ? `Submit ${selectedVerticals.size} requests`
-                  : 'Submit request'
-              }
+              accessibilityLabel="Submit request"
             >
               <Text style={[
                 modalStyles.submitBtnText,
                 selectedVerticals.size === 0 && { color: colors.mutedForeground },
               ]}>
-                {selectedVerticals.size > 1
-                  ? `Submit ${selectedVerticals.size} Requests`
-                  : 'Submit Request'}
+                Submit Request
               </Text>
             </TouchableOpacity>
 
@@ -712,6 +714,13 @@ const modalStyles = StyleSheet.create({
     minHeight: 80,
     marginBottom: 20,
     backgroundColor: '#FFFFFF',
+  },
+  selectedCountHint: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: '#6B7A6B',
+    textAlign: 'center',
+    marginBottom: 8,
   },
   submitBtn: {
     backgroundColor: '#3D5A3E',
@@ -1141,23 +1150,20 @@ export function MemberFindScreen(): React.JSX.Element {
       setSchedulingChw(null);
       const count = formData.verticals.length;
       try {
-        // Fan out one create-request per selected vertical so the CHW sees
-        // a separate ticket per need. Same description/urgency/mode applies
-        // to all — the vertical is what differentiates the rows.
-        await Promise.all(
-          formData.verticals.map((vertical) =>
-            createRequest.mutateAsync({
-              vertical,
-              urgency: formData.urgency,
-              description: formData.description,
-              preferredMode: formData.mode,
-              estimatedUnits: 1,
-            }),
-          ),
-        );
+        // Send ONE request carrying all selected verticals. The backend
+        // writes both `verticals` (authoritative array) and `vertical`
+        // (first element, for sessions/claims backwards-compat).
+        const payload: CreateRequestPayload = {
+          verticals: formData.verticals,
+          urgency: formData.urgency,
+          description: formData.description,
+          preferredMode: formData.mode,
+          estimatedUnits: 1,
+        };
+        await createRequest.mutateAsync(payload);
         showToast(
           count > 1
-            ? `${count} requests submitted! ${chwFirstName} will be in touch soon.`
+            ? `Request submitted with ${count} categories! ${chwFirstName} will be in touch soon.`
             : `Request submitted! ${chwFirstName} will be in touch soon.`,
         );
       } catch (err) {
@@ -1169,11 +1175,7 @@ export function MemberFindScreen(): React.JSX.Element {
           err instanceof Error && err.message ? err.message : 'Unknown error';
         // eslint-disable-next-line no-console
         console.error('[MemberFindScreen] createRequest failed:', err);
-        showToast(
-          count > 1
-            ? `Some requests failed: ${reason}`
-            : `Failed to submit request: ${reason}`,
-        );
+        showToast(`Failed to submit request: ${reason}`);
       }
     },
     [createRequest, showToast],
