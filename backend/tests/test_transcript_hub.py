@@ -23,6 +23,8 @@ from sqlalchemy import select
 from app.models.session import SessionTranscript
 from app.services.transcript_hub import (
     MockStreamingSession,
+    NoOpStreamingSession,
+    StreamingSession,
     Subscription,
     TranscriptHub,
     _SessionState,
@@ -226,7 +228,15 @@ class TestTranscriptHubSubscribe:
         assert subscription.websocket is ws
 
     async def test_first_subscriber_can_start_provider_stream(self):
+        """Without an API key the hub creates a NoOpStreamingSession.
+
+        The hub resolves the API key lazily. With no key set in the test
+        environment, it must fall back to NoOpStreamingSession so the
+        WebSocket stays open without crashing.
+        """
         hub = _make_hub()
+        # Force the hub to treat no-key as the resolved state.
+        hub._api_key = ""
         session_id = uuid.uuid4()
         ws = _make_ws()
 
@@ -234,9 +244,10 @@ class TestTranscriptHubSubscribe:
         stream = await hub.get_or_create_provider_stream(session_id)
 
         assert stream is not None
-        assert isinstance(stream, MockStreamingSession)
+        assert isinstance(stream, StreamingSession)
+        # Without a key, hub must choose NoOpStreamingSession (graceful degrade).
+        assert isinstance(stream, NoOpStreamingSession)
 
-        # Teardown: prevent leaked background task
         await hub.close_session(session_id)
 
     # -----------------------------------------------------------------------

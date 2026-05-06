@@ -12,7 +12,7 @@
  *  - Submit Documentation button
  */
 
-import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import {
   Alert,
   Modal,
@@ -32,11 +32,13 @@ import {
   Plus,
   Minus,
   FileText,
+  Sparkles,
+  RefreshCw,
 } from 'lucide-react-native';
 
-import { api } from '../../api/client';
 import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
+import { useGenerateAISummary } from '../../hooks/useApiQueries';
 import {
   diagnosisCodes,
   procedureCodes,
@@ -74,6 +76,24 @@ const Z_CODE_CATEGORIES: ZCodeCategory[] = [
 ];
 
 const NOTES_MAX = 200;
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Format an ISO8601 timestamp from the AI summary into a short time string
+ * (e.g. "2:34 PM"). Falls back to the raw string if parsing fails.
+ */
+function formatAITimestamp(iso: string): string {
+  try {
+    return new Date(iso).toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    });
+  } catch {
+    return iso;
+  }
+}
 
 // ─── DiagnosisCodeSection ─────────────────────────────────────────────────────
 
@@ -843,7 +863,13 @@ const fu = StyleSheet.create({
 
 /**
  * Full-screen modal for documenting a completed CHW session.
- * Validates that at least one diagnosis code is selected before submit.
+ *
+ * The notes area is split into two distinct sections:
+ *  1. "Your Notes" — CHW-authored, editable, required for submit.
+ *  2. "AI Summary" — read-only card generated from session transcript.
+ *
+ * Validates that at least one diagnosis code is selected and CHW notes are
+ * non-empty before allowing submit.
  */
 export function DocumentationModal({
   visible,
@@ -860,48 +886,103 @@ export function DocumentationModal({
   const [selectedResources, setSelectedResources] = useState<string[]>([]);
   const [followUpNeeded, setFollowUpNeeded] = useState<boolean | null>(null);
   const [followUpDate, setFollowUpDate] = useState('');
-  const [sessionNotes, setSessionNotes] = useState('');
+  // CHW-authored notes — required, separate from AI summary.
+  const [chwNotes, setChwNotes] = useState('');
+  // AI summary state — fetched once on modal open, regeneratable via button.
+  const [aiSummary, setAiSummary] = useState<string | null>(null);
+  const [aiGeneratedAt, setAiGeneratedAt] = useState<string | null>(null);
+  const [aiExcluded, setAiExcluded] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
-  const [summaryFromAI, setSummaryFromAI] = useState(false);
 
-  // ── Auto-generate a draft summary on modal open ─────────────────────────
-  // Calls POST /sessions/{id}/summary in the background. If the LLM returns
-  // a non-empty draft, we pre-fill the notes field and badge it as
-  // AI-generated so the CHW knows to review before submitting. CHW can edit
-  // freely or wipe the field — they remain author of record.
+  const generateAISummary = useGenerateAISummary();
+
+  // Guard: auto-fetch only once per modal-open, not on remount.
+  const hasFetchedRef = useRef(false);
+
+  // ── Auto-generate AI summary on modal open ──────────────────────────────
+  // Called once when modal becomes visible. The "Regenerate" button is the
+  // only way to refetch afterward. Does NOT pre-fill the CHW notes field —
+  // the two are now separate fields per spec.
   useEffect(() => {
     if (!visible || !sessionId) return;
-    // Only generate once per modal-open. If the CHW already typed something,
-    // don't overwrite their text.
-    if (sessionNotes.trim().length > 0) return;
-    let cancelled = false;
-    setIsGeneratingSummary(true);
-    (async () => {
-      try {
-        const res = await api<{ session_id: string; summary: string }>(
-          `/sessions/${sessionId}/summary`,
-          { method: 'POST' },
-        );
-        if (cancelled) return;
-        const draft = (res.summary ?? '').trim();
-        if (draft.length > 0) {
-          setSessionNotes(draft.slice(0, NOTES_MAX));
-          setSummaryFromAI(true);
+    if (hasFetchedRef.current) return;
+    hasFetchedRef.current = true;
+
+    generateAISummary.mutate(sessionId, {
+      onSuccess: (result) => {
+        const text = (result.ai_summary ?? '').trim();
+        const ts = result.generated_at ?? null;
+        // Hide section when summary is empty or timestamp is null.
+        if (text.length > 0 && ts !== null) {
+          setAiSummary(text);
+          setAiGeneratedAt(ts);
+        } else {
+          setAiSummary(null);
+          setAiGeneratedAt(null);
         }
-      } catch {
-        // Silent: empty draft = CHW types from scratch (existing behavior).
-      } finally {
-        if (!cancelled) setIsGeneratingSummary(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+      },
+      onError: () => {
+        // Network or server error — treat as unavailable, not a hard failure.
+        setAiSummary(null);
+        setAiGeneratedAt(null);
+      },
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, sessionId]);
 
-  const isValid = selectedDiagnosisCodes.length > 0 && selectedProcedureCode.length > 0;
+  // Reset all form state and the fetch guard when modal closes.
+  useEffect(() => {
+    if (!visible) {
+      hasFetchedRef.current = false;
+      setChwNotes('');
+      setAiSummary(null);
+      setAiGeneratedAt(null);
+      setAiExcluded(false);
+      setSelectedDiagnosisCodes([]);
+      setSelectedProcedureCode(procedureCodes[0]?.code ?? '');
+      setUnitsToBill(2);
+      setSelectedGoals([]);
+      setSelectedResources([]);
+      setFollowUpNeeded(null);
+      setFollowUpDate('');
+    }
+  }, [visible]);
+
+  /**
+   * Regenerate the AI summary from the transcript.
+   * Called only when the CHW taps the "Regenerate" button.
+   */
+  const handleRegenerateAISummary = useCallback((): void => {
+    generateAISummary.mutate(sessionId, {
+      onSuccess: (result) => {
+        const text = (result.ai_summary ?? '').trim();
+        const ts = result.generated_at ?? null;
+        if (text.length > 0 && ts !== null) {
+          setAiSummary(text);
+          setAiGeneratedAt(ts);
+          setAiExcluded(false);
+        } else {
+          setAiSummary(null);
+          setAiGeneratedAt(null);
+        }
+      },
+      onError: () => {
+        setAiSummary(null);
+        setAiGeneratedAt(null);
+      },
+    });
+  }, [generateAISummary, sessionId]);
+
+  const isAiLoading = generateAISummary.isPending;
+
+  // Summary is displayable when non-null and non-empty AND not loading.
+  const hasDisplayableAiSummary =
+    !isAiLoading && aiSummary !== null && aiSummary.trim().length > 0 && aiGeneratedAt !== null;
+
+  const isValid =
+    selectedDiagnosisCodes.length > 0 &&
+    selectedProcedureCode.length > 0 &&
+    chwNotes.trim().length > 0;
 
   const toggleDiagnosisCode = useCallback((code: string): void => {
     setSelectedDiagnosisCodes((prev) =>
@@ -928,7 +1009,8 @@ export function DocumentationModal({
 
     const documentation: SessionDocumentation = {
       sessionId,
-      summary: sessionNotes,
+      // CHW-authored notes field — always the canonical `summary` key per backend contract.
+      summary: chwNotes,
       resourcesReferred: selectedResources,
       memberGoals: selectedGoals,
       followUpNeeded: followUpNeeded === true,
@@ -937,6 +1019,10 @@ export function DocumentationModal({
       procedureCode: selectedProcedureCode,
       unitsToBill,
       submittedAt: new Date().toISOString(),
+      // AI summary fields — included when a summary was generated.
+      aiSummary: aiSummary ?? null,
+      aiSummaryGeneratedAt: aiGeneratedAt ?? null,
+      aiSummaryExcluded: aiExcluded,
     };
 
     // Await the parent's onSubmit so we only show "submitted" after the
@@ -974,7 +1060,7 @@ export function DocumentationModal({
     isValid,
     isSubmitting,
     sessionId,
-    sessionNotes,
+    chwNotes,
     selectedResources,
     selectedGoals,
     followUpNeeded,
@@ -982,6 +1068,9 @@ export function DocumentationModal({
     selectedDiagnosisCodes,
     selectedProcedureCode,
     unitsToBill,
+    aiSummary,
+    aiGeneratedAt,
+    aiExcluded,
     onSubmit,
     onClose,
   ]);
@@ -1114,39 +1203,127 @@ export function DocumentationModal({
             onDateChange={setFollowUpDate}
           />
 
-          {/* Session notes */}
-          <View style={ds.section}>
+          {/* ── A) CHW Notes — authored, required ──────────────────────── */}
+          <View
+            style={ds.section}
+            accessible={false}
+            accessibilityLabel="Your Notes"
+          >
             <View style={m.notesHeader}>
-              <Text style={ds.sectionTitle}>Session Notes</Text>
+              <Text style={ds.sectionTitle}>
+                Your Notes <Text style={m.requiredStar}>*</Text>
+              </Text>
               <Text style={m.charCounter}>
-                {sessionNotes.length}/{NOTES_MAX}
+                {chwNotes.length}/{NOTES_MAX}
               </Text>
             </View>
-            {isGeneratingSummary && (
-              <Text style={m.aiSummaryBadge}>Drafting summary from transcript…</Text>
-            )}
-            {!isGeneratingSummary && summaryFromAI && (
-              <Text style={m.aiSummaryBadge}>
-                AI-drafted from transcript — review and edit before submitting
-              </Text>
-            )}
+            <Text style={m.notesHelper}>
+              Visible to billing/audit as CHW-authored
+            </Text>
             <TextInput
               style={m.notesInput}
-              value={sessionNotes}
+              value={chwNotes}
               onChangeText={(v) => {
-                if (v.length <= NOTES_MAX) setSessionNotes(v);
-                // Once the CHW edits, drop the "AI-drafted" badge — it's
-                // their note now, not the model's.
-                if (summaryFromAI) setSummaryFromAI(false);
+                if (v.length <= NOTES_MAX) setChwNotes(v);
               }}
-              placeholder="Add any additional notes about this session..."
+              placeholder="What did you discuss with the member? Any concerns, follow-ups, observations…"
               placeholderTextColor={colors.mutedForeground}
               multiline
               numberOfLines={4}
               textAlignVertical="top"
               maxLength={NOTES_MAX}
-              accessibilityLabel="Session notes"
+              accessibilityLabel="Your notes — CHW-authored"
             />
+          </View>
+
+          {/* ── B) AI Summary — read-only card ─────────────────────────── */}
+          <View
+            accessible={false}
+            accessibilityLabel="AI Summary"
+            style={m.aiCardSection}
+          >
+            <Text style={ds.sectionTitle}>AI Summary</Text>
+
+            {isAiLoading ? (
+              /* Loading skeleton */
+              <View style={m.aiCard} accessible accessibilityLabel="Generating AI summary">
+                <View style={m.aiCardHeaderRow}>
+                  <Sparkles size={14} color={colors.secondary} />
+                  <Text style={m.aiCardHeaderText}>Generating summary from session transcript…</Text>
+                </View>
+                <View style={m.shimmerLine} />
+                <View style={[m.shimmerLine, m.shimmerLineMid]} />
+                <View style={[m.shimmerLine, m.shimmerLineShort]} />
+              </View>
+            ) : hasDisplayableAiSummary ? (
+              /* Populated AI card */
+              <View
+                style={[m.aiCard, aiExcluded && m.aiCardExcluded]}
+                accessible
+                accessibilityLabel="AI-generated summary, read only"
+                accessibilityHint="This summary was generated from the session transcript and is not editable"
+              >
+                {/* Header row */}
+                <View style={m.aiCardHeaderRow}>
+                  <Sparkles size={14} color={aiExcluded ? colors.mutedForeground : colors.secondary} />
+                  <Text style={[m.aiCardHeaderText, aiExcluded && m.aiCardHeaderTextDimmed]}>
+                    AI Summary
+                  </Text>
+                  <View style={m.aiGeneratedBadge}>
+                    <Text style={m.aiGeneratedBadgeText}>Generated from transcript</Text>
+                  </View>
+                  <Text style={m.aiTimestamp}>
+                    {formatAITimestamp(aiGeneratedAt!)}
+                  </Text>
+                </View>
+
+                {/* Body — read-only, italic styling */}
+                <Text
+                  style={[m.aiBodyText, aiExcluded && m.aiBodyTextExcluded]}
+                  selectable
+                >
+                  {aiSummary}
+                </Text>
+
+                {/* Footer row */}
+                <View style={m.aiCardFooter}>
+                  <TouchableOpacity
+                    style={m.regenerateButton}
+                    onPress={handleRegenerateAISummary}
+                    disabled={isAiLoading}
+                    accessibilityRole="button"
+                    accessibilityLabel="Regenerate AI summary from transcript"
+                    accessibilityState={{ disabled: isAiLoading }}
+                  >
+                    <RefreshCw size={12} color={colors.secondary} />
+                    <Text style={m.regenerateButtonText}>Regenerate</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={m.excludeRow}
+                    onPress={() => setAiExcluded((prev) => !prev)}
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked: aiExcluded }}
+                    accessibilityLabel="Don't include AI summary in documentation"
+                    activeOpacity={0.7}
+                  >
+                    <View style={[m.excludeCheckbox, aiExcluded && m.excludeCheckboxChecked]}>
+                      {aiExcluded && <Check size={9} color="#FFFFFF" strokeWidth={3} />}
+                    </View>
+                    <Text style={[m.excludeLabel, aiExcluded && m.excludeLabelChecked]}>
+                      Don&apos;t include in documentation
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : (
+              /* Unavailable state */
+              <View style={m.aiUnavailable}>
+                <Text style={m.aiUnavailableText}>
+                  AI summary unavailable — transcript was too short or audio capture failed.
+                </Text>
+              </View>
+            )}
           </View>
         </ScrollView>
 
@@ -1154,7 +1331,11 @@ export function DocumentationModal({
         <View style={m.footer}>
           {!isValid && (
             <Text style={m.validationHint}>
-              Select at least one diagnosis code and a procedure code to submit.
+              {selectedDiagnosisCodes.length === 0
+                ? 'Select at least one diagnosis code to submit.'
+                : !selectedProcedureCode
+                ? 'Select a procedure code to submit.'
+                : 'Your notes are required before submitting.'}
             </Text>
           )}
           <TouchableOpacity
@@ -1222,21 +1403,19 @@ const m = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 10,
+    marginBottom: 4,
+  },
+  requiredStar: {
+    color: colors.destructive,
+  },
+  notesHelper: {
+    ...typography.label,
+    color: colors.mutedForeground,
+    marginBottom: 8,
   },
   charCounter: {
     ...typography.label,
     color: colors.mutedForeground,
-  },
-  aiSummaryBadge: {
-    ...typography.label,
-    color: colors.primary,
-    backgroundColor: 'rgba(107,143,113,0.10)',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-    marginBottom: 8,
-    overflow: 'hidden',
   },
   notesInput: {
     borderWidth: 1,
@@ -1248,6 +1427,148 @@ const m = StyleSheet.create({
     minHeight: 96,
     ...typography.bodyMd,
     color: colors.foreground,
+  },
+  // ── AI Summary card styles ────────────────────────────────────────────────
+  aiCardSection: {
+    marginBottom: 20,
+  },
+  aiCard: {
+    borderWidth: 1,
+    borderColor: '#C8D8E4',
+    borderRadius: 14,
+    backgroundColor: '#EDF4F8',
+    padding: 14,
+    gap: 10,
+    marginTop: 2,
+  },
+  aiCardExcluded: {
+    opacity: 0.55,
+    backgroundColor: colors.muted,
+    borderColor: colors.border,
+  },
+  aiCardHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  aiCardHeaderText: {
+    ...typography.label,
+    fontWeight: '700',
+    color: colors.secondary,
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+  },
+  aiCardHeaderTextDimmed: {
+    color: colors.mutedForeground,
+  },
+  aiGeneratedBadge: {
+    backgroundColor: colors.secondary + '20',
+    borderRadius: 100,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  aiGeneratedBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: colors.secondary,
+    letterSpacing: 0.3,
+  },
+  aiTimestamp: {
+    ...typography.label,
+    color: colors.mutedForeground,
+    marginLeft: 'auto' as unknown as number,
+  },
+  aiBodyText: {
+    ...typography.bodySm,
+    fontStyle: 'italic',
+    color: colors.foreground,
+    lineHeight: 22,
+    letterSpacing: 0.1,
+  },
+  aiBodyTextExcluded: {
+    textDecorationLine: 'line-through',
+    color: colors.mutedForeground,
+  },
+  aiCardFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 12,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#C8D8E4',
+  },
+  regenerateButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.secondary + '60',
+    backgroundColor: colors.secondary + '12',
+  },
+  regenerateButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.secondary,
+  },
+  excludeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  excludeCheckbox: {
+    width: 16,
+    height: 16,
+    borderRadius: 4,
+    borderWidth: 2,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  excludeCheckboxChecked: {
+    borderColor: colors.mutedForeground,
+    backgroundColor: colors.mutedForeground,
+  },
+  excludeLabel: {
+    ...typography.label,
+    color: colors.mutedForeground,
+  },
+  excludeLabelChecked: {
+    color: colors.foreground,
+    fontWeight: '600',
+  },
+  // Loading shimmer lines
+  shimmerLine: {
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#C8D8E4',
+    width: '100%',
+  },
+  shimmerLineMid: {
+    width: '80%',
+  },
+  shimmerLineShort: {
+    width: '55%',
+  },
+  aiUnavailable: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 12,
+    backgroundColor: colors.background,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginTop: 2,
+  },
+  aiUnavailableText: {
+    ...typography.bodySm,
+    color: colors.mutedForeground,
+    fontStyle: 'italic',
   },
   footer: {
     paddingHorizontal: 20,

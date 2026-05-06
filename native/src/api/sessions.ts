@@ -71,6 +71,7 @@ export function completeSession(id: string): Promise<SessionData> {
  *
  * @param sessionId - The session being documented.
  * @param data      - Documentation payload (summary, Z-codes, billing units, etc.).
+ *                    Additive fields: ai_summary, ai_summary_generated_at, ai_summary_excluded.
  */
 export function submitDocumentation(
   sessionId: string,
@@ -80,4 +81,24 @@ export function submitDocumentation(
     method: 'POST',
     body: JSON.stringify(data),
   });
+}
+
+/** Response shape for POST /sessions/{id}/ai-summary */
+export interface AISummaryResponse {
+  ai_summary: string;
+  generated_at: string | null;
+}
+
+/**
+ * Generate (or regenerate) an AI summary from the session transcript.
+ *
+ * POST semantics: calling this again regenerates the summary.
+ * Callers should gate regeneration on a button press — do not poll.
+ *
+ * @param sessionId - The session to summarize.
+ * @returns         - ai_summary (empty string when unavailable) and
+ *                    generated_at (null when no transcript exists).
+ */
+export function getSessionAISummary(sessionId: string): Promise<AISummaryResponse> {
+  return api<AISummaryResponse>(`/sessions/${sessionId}/ai-summary`, { method: 'POST' });
 }

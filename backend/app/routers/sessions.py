@@ -305,10 +305,20 @@ async def submit_documentation(
         raise HTTPException(status_code=422, detail=f"Yearly unit cap exceeded. {caps['yearly_remaining']} units remaining this year.")
 
     doc = SessionDocumentation(
-        session_id=session_id, summary=data.summary, resources_referred=data.resources_referred,
-        member_goals=data.member_goals, follow_up_needed=data.follow_up_needed,
-        follow_up_date=data.follow_up_date, diagnosis_codes=data.diagnosis_codes,
-        procedure_code=data.procedure_code, units_to_bill=data.units_to_bill,
+        session_id=session_id,
+        summary=data.summary,
+        resources_referred=data.resources_referred,
+        member_goals=data.member_goals,
+        follow_up_needed=data.follow_up_needed,
+        follow_up_date=data.follow_up_date,
+        diagnosis_codes=data.diagnosis_codes,
+        procedure_code=data.procedure_code,
+        units_to_bill=data.units_to_bill,
+        # AI summary provenance — persisted so audit trails can distinguish
+        # the AI-generated draft from the CHW-authored note permanently.
+        ai_summary=data.ai_summary,
+        ai_summary_generated_at=data.ai_summary_generated_at,
+        ai_summary_excluded=data.ai_summary_excluded,
     )
     db.add(doc)
 
@@ -959,34 +969,46 @@ async def _require_chw_on_session_or_admin(
 
 
 @router.post(
-    "/{session_id}/summary",
+    "/{session_id}/ai-summary",
     status_code=200,
-    summary="Generate a draft session summary via LLM",
+    summary="Generate an AI summary of the session transcript",
     description=(
-        "Returns a 2-4 sentence draft summary of the session transcript "
-        "intended to pre-populate the DocumentationModal. The CHW edits "
-        "the draft before submitting documentation; the field they save "
-        "is what's persisted (not this draft). Empty string is returned "
-        "when no transcript is available, the session is not in a "
-        "summarizable state, or the LLM provider is unavailable — the "
-        "frontend treats empty as 'CHW types from scratch'."
+        "Calls the configured LLM (Claude via Anthropic) to produce a 3-5 "
+        "sentence plain-language summary of the CHW–member transcript.  The "
+        "result is a DRAFT — the CHW may edit or discard it before submitting "
+        "documentation.  The AI summary is a separate field from the CHW-authored "
+        "notes; both are stored on SessionDocumentation so audit trails can "
+        "distinguish them permanently.\n\n"
+        "Returns ``{\"ai_summary\": \"\", \"generated_at\": null}`` (HTTP 200) "
+        "when no transcript is available, the session is not in a summarisable "
+        "state, or the LLM provider is unavailable — the frontend hides the "
+        "AI-summary section in that case."
     ),
 )
-async def generate_session_summary_endpoint(
+async def generate_ai_summary_endpoint(
     session_id: UUID,
     credentials: "HTTPAuthorizationCredentials" = Depends(HTTPBearer()),
     db: AsyncSession = Depends(get_db),
 ):
-    """POST /api/v1/sessions/{session_id}/summary
+    """POST /api/v1/sessions/{session_id}/ai-summary
 
-    Auth: CHW on the session or admin key. Synchronous (LLM round-trip is
-    typically 1-3s; the documentation modal opens with a small spinner).
+    Auth: CHW on the session or admin key.  Synchronous — LLM round-trip is
+    typically 1-3 s; the DocumentationModal opens with a spinner.
+
+    Response shape:
+        {
+            "ai_summary":   "<text or empty string>",
+            "generated_at": "<ISO-8601 UTC timestamp or null>"
+        }
     """
     from app.services.summary_generation import generate_session_summary
 
     await _require_chw_on_session_or_admin(session_id, credentials, db)
-    summary = await generate_session_summary(session_id, db)
-    return {"session_id": str(session_id), "summary": summary}
+    result = await generate_session_summary(session_id, db)
+    return {
+        "ai_summary": result.text,
+        "generated_at": result.generated_at.isoformat() if result.generated_at else None,
+    }
 
 
 @router.post(

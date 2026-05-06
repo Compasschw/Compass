@@ -14,6 +14,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { api, getTokens } from '../api/client';
 import { transformKeys, toSnakeCase } from '../utils/caseTransform';
+import { getSessionAISummary, type AISummaryResponse } from '../api/sessions';
 
 // ─── Types (camelCase, matching what screens expect) ─────────────────────────
 
@@ -33,7 +34,14 @@ export interface SessionData {
   unitsBilled?: number;
   grossAmount?: number;
   netAmount?: number;
+  /** CHW-authored notes — the canonical `summary` field on the documentation row. */
   notes?: string;
+  /** AI-generated summary from session transcript. Null/absent when unavailable. */
+  aiSummary?: string | null;
+  /** ISO8601 timestamp of AI summary generation. */
+  aiSummaryGeneratedAt?: string | null;
+  /** When true, the CHW opted to exclude the AI summary from submitted documentation. */
+  aiSummaryExcluded?: boolean;
   createdAt: string;
   chwName?: string;
   memberName?: string;
@@ -187,6 +195,7 @@ export interface ChwMemberProfileView {
 export const queryKeys = {
   sessions: ['sessions'] as const,
   session: (id: string) => ['sessions', id] as const,
+  sessionAiSummary: (id: string) => ['sessions', id, 'ai-summary'] as const,
   requests: ['requests'] as const,
   chwEarnings: ['chw', 'earnings'] as const,
   chwClaims: ['chw', 'claims'] as const,
@@ -198,6 +207,9 @@ export const queryKeys = {
   messages: (conversationId: string) => ['conversations', conversationId, 'messages'] as const,
   chwMemberProfile: (memberId: string) => ['chw', 'members', memberId, 'profile'] as const,
 };
+
+/** Re-export so callers don't need a second import from api/sessions. */
+export type { AISummaryResponse };
 
 /**
  * Per-claim row returned by GET /chw/claims. Exposes the lifecycle status
@@ -470,6 +482,24 @@ export function useSubmitDocumentation() {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.sessions });
     },
+  });
+}
+
+/**
+ * Mutation to generate (or regenerate) an AI summary from the session transcript.
+ *
+ * Call pattern:
+ *   const { mutateAsync, isPending } = useGenerateAISummary();
+ *   const result = await mutateAsync(sessionId);
+ *
+ * On success the result is the raw AISummaryResponse — callers store it in local
+ * modal state. We don't cache it in React Query because the user can regenerate
+ * on demand and the value is ephemeral until documentation is submitted.
+ */
+export function useGenerateAISummary() {
+  return useMutation({
+    mutationFn: (sessionId: string): Promise<AISummaryResponse> =>
+      getSessionAISummary(sessionId),
   });
 }
 

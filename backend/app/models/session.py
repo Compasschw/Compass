@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import ARRAY, BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, Numeric, String, Text, func
+from sqlalchemy import ARRAY, BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, Numeric, String, Text, false, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -57,6 +57,19 @@ class SessionDocumentation(Base):
     # gate in app.services.followup_extraction.extract_session_followups.
     followups_extracted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+
+    # AI-generated summary fields (distinct from the CHW-authored `summary` above).
+    # Investors and HIPAA auditors must be able to tell the two apart at a glance.
+    # ai_summary: the raw LLM output — never edited by the CHW.
+    # ai_summary_generated_at: UTC timestamp of the generation call.
+    # ai_summary_excluded: CHW can flag the AI draft as inappropriate/inapplicable.
+    ai_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ai_summary_generated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    ai_summary_excluded: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=false()
     )
 
 class MemberConsent(Base):

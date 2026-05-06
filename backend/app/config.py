@@ -76,6 +76,11 @@ class Settings(BaseSettings):
     # Alternatives: "anthropic/claude-3-haiku", "anthropic/claude-3-5-sonnet"
     assemblyai_lemur_model: str = "default"
 
+    # Anthropic API key — used for AI summary generation via Claude.
+    # When set, AnthropicSummarizer is used; otherwise NoopSummarizer returns empty.
+    # Generate at: https://console.anthropic.com/settings/keys
+    anthropic_api_key: str | None = None
+
     # Observability
     sentry_dsn: str = ""
     environment: str = "development"  # development | staging | production
