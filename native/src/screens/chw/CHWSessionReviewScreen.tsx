@@ -705,11 +705,20 @@ const cardS = StyleSheet.create({
  * Route params: { sessionId, memberName }
  * Reads from followupQueryKeys.extraction(sessionId) — populated by
  * useExtractSessionFollowups before navigation.
+ *
+ * The member name in the header is rendered as a tappable link that navigates
+ * to CHWMemberProfileScreen when the route carries a memberId. The route type
+ * is extended to accept an optional memberId for this purpose; callers that
+ * don't have a memberId (e.g. legacy navigation) still work since the link is
+ * only rendered when the param is present.
  */
 export function CHWSessionReviewScreen(): React.JSX.Element {
   const route = useRoute<ReviewRouteProp>();
   const navigation = useNavigation<ReviewNavProp>();
   const { sessionId, memberName } = route.params;
+  // Optional memberId — present when navigation originated from a session card
+  // that carries a member_id. Used to make the header name tappable.
+  const memberId = (route.params as { memberId?: string }).memberId;
 
   const { data: extractionResult, isLoading, error } = useSessionFollowups(sessionId);
   const updateFollowup = useUpdateFollowup(sessionId);
@@ -933,9 +942,24 @@ export function CHWSessionReviewScreen(): React.JSX.Element {
           <Text style={s.headerTitle} numberOfLines={1}>
             Review Session Items
           </Text>
-          <Text style={s.headerSub} numberOfLines={1}>
-            {memberName}
-          </Text>
+          {/* Member name is tappable when a memberId is available in route params.
+              Navigates to CHWMemberProfileScreen (HIPAA-gated). */}
+          {memberId ? (
+            <TouchableOpacity
+              onPress={() => navigation.navigate('MemberProfile', { memberId })}
+              accessibilityRole="link"
+              accessibilityLabel={`View profile for ${memberName}`}
+              hitSlop={4}
+            >
+              <Text style={[s.headerSub, s.headerSubLink]} numberOfLines={1}>
+                {memberName}
+              </Text>
+            </TouchableOpacity>
+          ) : (
+            <Text style={s.headerSub} numberOfLines={1}>
+              {memberName}
+            </Text>
+          )}
         </View>
         <View style={{ width: 40 }} />
       </View>
@@ -1067,6 +1091,10 @@ const s = StyleSheet.create({
     fontSize: 12,
     color: colors.mutedForeground,
     marginTop: 1,
+  },
+  headerSubLink: {
+    color: colors.primary,
+    textDecorationLine: 'underline',
   },
   summaryStrip: {
     backgroundColor: colors.card,

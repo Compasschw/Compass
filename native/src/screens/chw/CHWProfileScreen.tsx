@@ -51,6 +51,7 @@ import { useNavigation } from '@react-navigation/native';
 import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
 import { useAuth } from '../../context/AuthContext';
+import { PhoneVerificationModal } from '../../components/shared/PhoneVerificationModal';
 import {
   type Vertical,
   type Credential,
@@ -394,6 +395,10 @@ export function CHWProfileScreen(): React.JSX.Element {
   const [deleteErrorMessage, setDeleteErrorMessage] = useState<string | null>(null);
   const deleteAccount = useDeleteAccount();
 
+  // Phone verification — triggered in handleSave when draft.phone changes.
+  const [isPhoneVerificationVisible, setIsPhoneVerificationVisible] = useState(false);
+  const [pendingPhone, setPendingPhone] = useState<string>('');
+
   // Derive display name from auth context (API profile has no name field)
   const displayName = userName ?? 'My Profile';
   const nameParts = displayName.split(' ');
@@ -462,6 +467,16 @@ export function CHWProfileScreen(): React.JSX.Element {
       languages: draft.languages,
     });
     setIsEditing(false);
+
+    // If the phone field changed, trigger SMS verification.
+    // The backend updates User.phone only on confirm-verification success,
+    // so the current draft.phone is shown as pending until verified.
+    const trimmedPhone = draft.phone.trim();
+    const currentPhone = apiProfile?.phone ?? '';
+    if (trimmedPhone && trimmedPhone !== currentPhone) {
+      setPendingPhone(trimmedPhone);
+      setIsPhoneVerificationVisible(true);
+    }
   }, [draft, apiProfile, updateProfile]);
 
   const handleToggleSpecialization = useCallback((vertical: Vertical) => {
@@ -714,8 +729,14 @@ export function CHWProfileScreen(): React.JSX.Element {
               <View style={styles.divider} />
               <InfoRow
                 icon={<Phone size={16} color={colors.primary} />}
-                label="Phone"
-                value={displayPhone}
+                label={
+                  displayPhone && apiProfile?.phoneVerifiedAt
+                    ? 'Phone (verified)'
+                    : displayPhone
+                    ? 'Phone (unverified)'
+                    : 'Phone'
+                }
+                value={displayPhone || '—'}
               />
               <View style={styles.divider} />
               <InfoRow
@@ -1026,6 +1047,18 @@ export function CHWProfileScreen(): React.JSX.Element {
           onClose={() => setIsDeleteModalVisible(false)}
           onConfirm={handleDeleteAccountConfirm}
           errorMessage={deleteErrorMessage}
+        />
+
+        {/* Phone verification modal — appears after saving a changed phone */}
+        <PhoneVerificationModal
+          visible={isPhoneVerificationVisible}
+          initialPhone={pendingPhone}
+          onVerified={() => {
+            setIsPhoneVerificationVisible(false);
+            // Refresh CHW profile so phone_verified_at is up to date
+            void refetch();
+          }}
+          onClose={() => setIsPhoneVerificationVisible(false)}
         />
         </View>
       </ScrollView>

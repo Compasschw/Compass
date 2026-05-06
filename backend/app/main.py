@@ -106,6 +106,7 @@ from app.routers.health import router as health_router
 from app.routers.matching import router as matching_router
 from app.routers.member import router as member_router
 from app.routers.payments import router as payments_router
+from app.routers.phone_verification import router as phone_verification_router
 from app.routers.requests import router as requests_router
 from app.routers.sessions import router as sessions_router
 from app.routers.transcript import router as transcript_router
@@ -113,6 +114,7 @@ from app.routers.upload import router as upload_router
 from app.routers.waitlist import router as waitlist_router
 
 app.include_router(auth_router)
+app.include_router(phone_verification_router)
 app.include_router(chw_router)
 app.include_router(chw_intake_router)
 app.include_router(member_router)
