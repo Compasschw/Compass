@@ -734,6 +734,7 @@ async def list_admin_requests(
             MemberUser.name.label("member_name"),
             CHWUser.name.label("matched_chw_name"),
             ServiceRequest.vertical,
+            ServiceRequest.verticals,
             ServiceRequest.urgency,
             # `description` deliberately NOT selected — free-text member PHI.
             ServiceRequest.preferred_mode,
@@ -758,6 +759,9 @@ async def list_admin_requests(
             member_name=row.member_name,
             matched_chw_name=row.matched_chw_name,
             vertical=row.vertical,
+            # Backfill: pre-migration rows have verticals=[] — fall back to
+            # [vertical] so the admin UI never sees an empty array.
+            verticals=row.verticals if row.verticals else [row.vertical],
             urgency=row.urgency,
             preferred_mode=row.preferred_mode,
             status=row.status,

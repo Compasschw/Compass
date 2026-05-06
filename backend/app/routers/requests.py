@@ -77,13 +77,45 @@ async def get_request(
     return ServiceRequestResponse.model_validate({**req.__dict__, "member_name": member_name})
 
 @router.post("/", response_model=ServiceRequestResponse, status_code=201)
-async def create_request(data: ServiceRequestCreate, current_user=Depends(require_role("member")), db: AsyncSession = Depends(get_db)):
+async def create_request(
+    data: ServiceRequestCreate,
+    current_user=Depends(require_role("member")),
+    db: AsyncSession = Depends(get_db),
+) -> ServiceRequestResponse:
+    """Create a single service request covering one or more verticals.
+
+    Accepts either the new `verticals` array or the legacy `vertical` string
+    field (backwards-compatible with old mobile clients). Always writes both:
+      - `verticals` = the authoritative array
+      - `vertical`  = verticals[0] (for sessions, claims, and admin views
+                       that consume the single-vertical column)
+
+    Raises 422 if no vertical is specified via either field.
+    """
     from app.models.request import ServiceRequest
-    req = ServiceRequest(member_id=current_user.id, vertical=data.vertical.value, urgency=data.urgency.value, description=data.description, preferred_mode=data.preferred_mode.value, estimated_units=data.estimated_units)
+
+    try:
+        resolved = data.resolved_verticals()
+    except ValueError as exc:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    verticals_values = [v.value for v in resolved]
+    primary_vertical = verticals_values[0]
+
+    req = ServiceRequest(
+        member_id=current_user.id,
+        vertical=primary_vertical,
+        verticals=verticals_values,
+        urgency=data.urgency.value,
+        description=data.description,
+        preferred_mode=data.preferred_mode.value,
+        estimated_units=data.estimated_units,
+    )
     db.add(req)
     await db.commit()
     await db.refresh(req)
-    return req
+    return ServiceRequestResponse.model_validate(req)
 
 @router.patch("/{request_id}/accept")
 async def accept_request(request_id: UUID, current_user=Depends(require_role("chw")), db: AsyncSession = Depends(get_db)):

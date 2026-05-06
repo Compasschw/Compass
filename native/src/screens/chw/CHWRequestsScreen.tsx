@@ -18,6 +18,8 @@ import {
   FlatList,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
   CheckCircle,
   XCircle,
@@ -30,7 +32,9 @@ import {
   Bell,
   ThumbsDown,
   Lock,
+  User,
 } from 'lucide-react-native';
+import type { CHWSessionsStackParamList } from '../../navigation/CHWTabNavigator';
 
 import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
@@ -117,37 +121,77 @@ function VerticalIconComponent({
 
 // ─── RequestCard sub-component ────────────────────────────────────────────────
 
+type RequestsNavProp = NativeStackNavigationProp<CHWSessionsStackParamList, 'Sessions'>;
+
 interface RequestCardProps {
   request: ServiceRequestData;
   onAccept: (id: string) => void;
   onPass: (id: string) => void;
+  /** When true, renders the accepted-state UI with a "View Member Profile" link. */
+  isAccepted?: boolean;
+  onViewMemberProfile?: (memberId: string) => void;
 }
 
-function RequestCard({ request, onAccept, onPass }: RequestCardProps): React.JSX.Element {
-  const verticalColor = VERTICAL_COLORS[request.vertical as Vertical] ?? '#6B7A6B';
+function RequestCard({
+  request,
+  onAccept,
+  onPass,
+  isAccepted = false,
+  onViewMemberProfile,
+}: RequestCardProps): React.JSX.Element {
+  // Use the authoritative verticals array; fall back to [vertical] for rows
+  // created before the multi-vertical migration.
+  const effectiveVerticals: string[] =
+    request.verticals && request.verticals.length > 0
+      ? request.verticals
+      : [request.vertical];
+
+  // Primary vertical drives the icon and accessibility label.
+  const primaryVertical = effectiveVerticals[0] as Vertical;
+  const primaryColor = VERTICAL_COLORS[primaryVertical] ?? '#6B7A6B';
+
   const urgencyColor = URGENCY_COLORS[request.urgency] ?? colors.mutedForeground;
   const urgencyLabel = URGENCY_LABELS[request.urgency] ?? request.urgency;
 
+  // Joined label for display: "Housing • Mental Health • Food Security"
+  const verticalsLabel = effectiveVerticals
+    .map((v) => VERTICAL_LABELS[v as Vertical] ?? v)
+    .join(' • ');
+
   return (
-    <View style={cardStyles.card}>
-      {/* Header row — vertical icon + category badge + urgency badge.
+    <View style={[cardStyles.card, isAccepted && cardStyles.cardAccepted]}>
+      {/* Header row — vertical icon + category badges + urgency badge.
           Member name + description are intentionally hidden until accept
           per HIPAA minimum-necessary (45 CFR §164.514(d)). The summary
           endpoint omits them; the card mirrors that on the wire. */}
       <View style={cardStyles.headerRow}>
-        <View style={[cardStyles.iconCircle, { backgroundColor: verticalColor + '18' }]}>
-          <VerticalIconComponent vertical={request.vertical as Vertical} size={18} />
+        <View style={[cardStyles.iconCircle, { backgroundColor: primaryColor + '18' }]}>
+          <VerticalIconComponent vertical={primaryVertical} size={18} />
         </View>
         <View style={cardStyles.headerContent}>
-          <Text style={cardStyles.cardTitle}>
-            {VERTICAL_LABELS[request.vertical as Vertical] ?? request.vertical} request
-          </Text>
+          <View style={cardStyles.titleRow}>
+            <Text style={cardStyles.cardTitle}>
+              {verticalsLabel} request
+            </Text>
+            {isAccepted ? (
+              <View style={cardStyles.acceptedBadge}>
+                <CheckCircle size={10} color="#3D5A3E" />
+                <Text style={cardStyles.acceptedBadgeText}>Accepted</Text>
+              </View>
+            ) : null}
+          </View>
           <View style={cardStyles.badgeRow}>
-            <View style={[cardStyles.badge, { backgroundColor: verticalColor + '18' }]}>
-              <Text style={[cardStyles.badgeText, { color: verticalColor }]}>
-                {VERTICAL_LABELS[request.vertical as Vertical] ?? request.vertical}
-              </Text>
-            </View>
+            {/* Render one badge per vertical */}
+            {effectiveVerticals.map((v) => {
+              const color = VERTICAL_COLORS[v as Vertical] ?? '#6B7A6B';
+              return (
+                <View key={v} style={[cardStyles.badge, { backgroundColor: color + '18' }]}>
+                  <Text style={[cardStyles.badgeText, { color }]}>
+                    {VERTICAL_LABELS[v as Vertical] ?? v}
+                  </Text>
+                </View>
+              );
+            })}
             <View style={[cardStyles.badge, { backgroundColor: urgencyColor + '18' }]}>
               <Text style={[cardStyles.badgeText, { color: urgencyColor }]}>{urgencyLabel}</Text>
             </View>
@@ -158,36 +202,58 @@ function RequestCard({ request, onAccept, onPass }: RequestCardProps): React.JSX
         </View>
       </View>
 
-      {/* HIPAA notice in place of member name/description until accepted. */}
-      <View style={cardStyles.privacyNote}>
-        <Lock size={12} color={colors.mutedForeground} />
-        <Text style={cardStyles.privacyText}>
-          Member name and details revealed after you accept (HIPAA minimum necessary).
-        </Text>
-      </View>
+      {/* On accepted requests: show member name (now visible) + profile link.
+          On open requests: HIPAA privacy notice. */}
+      {isAccepted ? (
+        <View style={cardStyles.acceptedMemberRow}>
+          {request.memberName ? (
+            <Text style={cardStyles.acceptedMemberName}>{request.memberName}</Text>
+          ) : null}
+          {request.memberId && onViewMemberProfile ? (
+            <TouchableOpacity
+              style={cardStyles.viewProfileLink}
+              onPress={() => onViewMemberProfile(request.memberId)}
+              accessibilityRole="button"
+              accessibilityLabel={`View profile for ${request.memberName ?? 'this member'}`}
+            >
+              <User size={13} color="#3D5A3E" />
+              <Text style={cardStyles.viewProfileLinkText}>View Member Profile</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      ) : (
+        <View style={cardStyles.privacyNote}>
+          <Lock size={12} color={colors.mutedForeground} />
+          <Text style={cardStyles.privacyText}>
+            Member name and details revealed after you accept (HIPAA minimum necessary).
+          </Text>
+        </View>
+      )}
 
-      {/* Action buttons. Accessibility labels reference vertical, not member
-          name, since member identity is hidden until accept. */}
-      <View style={cardStyles.actionRow}>
-        <TouchableOpacity
-          style={cardStyles.acceptButton}
-          onPress={() => onAccept(request.id)}
-          accessibilityLabel={`Accept ${VERTICAL_LABELS[request.vertical as Vertical] ?? request.vertical} request`}
-          accessibilityRole="button"
-        >
-          <CheckCircle size={15} color="#FFFFFF" />
-          <Text style={cardStyles.acceptButtonText}>Accept</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={cardStyles.passButton}
-          onPress={() => onPass(request.id)}
-          accessibilityLabel={`Pass on ${VERTICAL_LABELS[request.vertical as Vertical] ?? request.vertical} request`}
-          accessibilityRole="button"
-        >
-          <XCircle size={15} color={colors.mutedForeground} />
-          <Text style={cardStyles.passButtonText}>Pass</Text>
-        </TouchableOpacity>
-      </View>
+      {/* Action buttons — only shown on open requests. Accepted requests
+          already have a session created and don't need these controls here. */}
+      {!isAccepted ? (
+        <View style={cardStyles.actionRow}>
+          <TouchableOpacity
+            style={cardStyles.acceptButton}
+            onPress={() => onAccept(request.id)}
+            accessibilityLabel={`Accept ${verticalsLabel} request`}
+            accessibilityRole="button"
+          >
+            <CheckCircle size={15} color="#FFFFFF" />
+            <Text style={cardStyles.acceptButtonText}>Accept</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={cardStyles.passButton}
+            onPress={() => onPass(request.id)}
+            accessibilityLabel={`Pass on ${verticalsLabel} request`}
+            accessibilityRole="button"
+          >
+            <XCircle size={15} color={colors.mutedForeground} />
+            <Text style={cardStyles.passButtonText}>Pass</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -406,7 +472,13 @@ export function CHWRequestsScreen(): React.JSX.Element {
     () =>
       selectedVerticals.size === 0
         ? allOpenRequests
-        : allOpenRequests.filter((r) => selectedVerticals.has(r.vertical as Vertical)),
+        : allOpenRequests.filter((r) => {
+            // Match if ANY of the request's verticals are in the active filter
+            // set. Fall back to the legacy single-vertical field for pre-migration rows.
+            const effectiveVerticals =
+              r.verticals && r.verticals.length > 0 ? r.verticals : [r.vertical];
+            return effectiveVerticals.some((v) => selectedVerticals.has(v as Vertical));
+          }),
     [selectedVerticals, allOpenRequests],
   );
 
@@ -462,7 +534,11 @@ export function CHWRequestsScreen(): React.JSX.Element {
 
   const verticalCount = useCallback(
     (key: Vertical): number =>
-      allOpenRequests.filter((r) => r.vertical === (key as string)).length,
+      allOpenRequests.filter((r) => {
+        const effectiveVerticals =
+          r.verticals && r.verticals.length > 0 ? r.verticals : [r.vertical];
+        return effectiveVerticals.includes(key as string);
+      }).length,
     [allOpenRequests],
   );
 

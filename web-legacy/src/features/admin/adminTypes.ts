@@ -48,7 +48,14 @@ export interface RequestAdminItem {
   id: string;
   member_name: string | null;
   matched_chw_name: string | null;
+  /** Legacy single-vertical field — always equals verticals[0]. */
   vertical: string;
+  /**
+   * Authoritative multi-vertical array (from migration r1s4t5u6v7w8).
+   * The backend falls back to [vertical] for pre-migration rows so this
+   * is always non-empty.
+   */
+  verticals: string[];
   urgency: string;
   // `description` removed — backend redacts free-text member-supplied PHI
   // (see backend/app/schemas/admin.py::RequestAdminItem). Keeping a stale

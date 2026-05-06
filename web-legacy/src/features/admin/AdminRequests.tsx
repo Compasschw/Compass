@@ -143,8 +143,14 @@ export function AdminRequests() {
                         <td className="px-4 py-3 text-[#555555] whitespace-nowrap">
                           {req.matched_chw_name ?? '—'}
                         </td>
-                        <td className="px-4 py-3 text-[#555555] whitespace-nowrap">
-                          {req.vertical}
+                        <td className="px-4 py-3 text-[#555555]">
+                          {/* Render all verticals joined by a bullet separator.
+                              Fall back to the legacy `vertical` field for rows
+                              created before the multi-vertical migration. */}
+                          {(req.verticals && req.verticals.length > 0
+                            ? req.verticals
+                            : [req.vertical]
+                          ).join(' • ')}
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap">
                           <StatusBadge status={req.urgency} />

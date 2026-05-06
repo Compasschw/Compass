@@ -89,7 +89,13 @@ class RequestAdminItem(BaseModel):
     id: UUID
     member_name: str | None
     matched_chw_name: str | None
+    # Legacy single-vertical field — kept for backwards compatibility with
+    # admin consumers that have not yet migrated to the array.
     vertical: str
+    # Authoritative multi-vertical array (from migration r1s4t5u6v7w8).
+    # May be empty for requests created before the migration; in that case
+    # the admin UI falls back to displaying `vertical`.
+    verticals: list[str] = []
     urgency: str
     # `description` removed — was free-text PHI member-supplied narrative.
     # Admin dashboard exposes vertical + urgency + status only.
