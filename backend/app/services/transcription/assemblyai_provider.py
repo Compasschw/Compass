@@ -192,17 +192,17 @@ class AssemblyAIProvider(TranscriptionProvider):
         """Build an assemblyai.TranscriptionConfig for async transcription."""
         aai = self._get_sdk()
 
-        # AssemblyAI deprecated the `speech_model` (singular) API parameter
-        # in 2026 — the new field is `speech_models` (plural). Rather than
-        # chase the SDK-vs-API drift, omit the parameter entirely and let
-        # AssemblyAI auto-select via the `best` meta-model, which routes to
-        # SLAM-1 for medical conversations and Universal-3 Pro otherwise.
-        # `medical_model` is preserved as an arg for forward compatibility
-        # but no longer changes routing.
-        _ = medical_model  # kept for caller signature stability
+        # AssemblyAI 2026 API renamed `speech_model` (singular) to
+        # `speech_models` (plural list). SDK 0.64.0 supports both, but the
+        # API itself now rejects requests that don't include the plural
+        # field. Map medical → SLAM-1, default → best (auto-select).
+        speech_models = [
+            aai.SpeechModel.slam_1 if medical_model else aai.SpeechModel.best
+        ]
 
         return aai.TranscriptionConfig(
             language_code=language,
+            speech_models=speech_models,
             speaker_labels=True,
             entity_detection=True,
             punctuate=True,
