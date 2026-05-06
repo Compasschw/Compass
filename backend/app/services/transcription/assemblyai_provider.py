@@ -193,7 +193,7 @@ class AssemblyAIProvider(TranscriptionProvider):
         aai = self._get_sdk()
 
         speech_model = (
-            aai.SpeechModel.conformer2 if medical_model else aai.SpeechModel.default
+            aai.SpeechModel.slam_1 if medical_model else aai.SpeechModel.universal
         )
 
         return aai.TranscriptionConfig(
