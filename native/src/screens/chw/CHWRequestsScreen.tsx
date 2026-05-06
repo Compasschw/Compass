@@ -457,9 +457,21 @@ export function CHWRequestsScreen(): React.JSX.Element {
   const [acceptedCount, setAcceptedCount] = useState(0);
   const [passedCount, setPassedCount] = useState(0);
 
+  // Session-local set of request IDs the CHW has passed on. The backend's
+  // /pass endpoint is a no-op when the request isn't already matched to this
+  // CHW (a CHW passing on an open request doesn't change global status, since
+  // another CHW might want it). So the request stays at status="open" and
+  // would otherwise stay in the list — bad UX. We dismiss it client-side for
+  // the rest of the session. Refreshing the page re-shows it, which is the
+  // desired behavior for "I'm not sure right now".
+  const [passedIds, setPassedIds] = useState<Set<string>>(() => new Set());
+
   const allOpenRequests = useMemo<ServiceRequestData[]>(
-    () => (rawRequests ?? []).filter((r) => r.status === 'open'),
-    [rawRequests],
+    () =>
+      (rawRequests ?? []).filter(
+        (r) => r.status === 'open' && !passedIds.has(r.id),
+      ),
+    [rawRequests, passedIds],
   );
 
   // Accepted requests matched to this CHW — show with member name + profile link.
@@ -501,8 +513,16 @@ export function CHWRequestsScreen(): React.JSX.Element {
   }, [acceptRequest]);
 
   const handlePass = useCallback(async (id: string): Promise<void> => {
-    await passRequest.mutateAsync(id);
+    // Optimistically dismiss before the network call finishes — the request
+    // disappears from the list immediately, even if /pass is slow or fails
+    // (it's idempotent and the worst case is a stale UI on next refresh).
+    setPassedIds((prev) => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
     setPassedCount((prev) => prev + 1);
+    await passRequest.mutateAsync(id);
   }, [passRequest]);
 
   const handleViewMemberProfile = useCallback((memberId: string): void => {
