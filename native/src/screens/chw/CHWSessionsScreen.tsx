@@ -24,6 +24,9 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { CHWSessionsStackParamList } from '../../navigation/CHWTabNavigator';
 import {
   Play,
   CheckCircle,
@@ -864,8 +867,11 @@ type SessionTab = 'active' | 'completed';
  * - "Call Member (masked)" button on in-progress sessions (Vonage bridge)
  * - Documentation modal for completed sessions
  */
+type SessionsNavProp = NativeStackNavigationProp<CHWSessionsStackParamList, 'Sessions'>;
+
 export function CHWSessionsScreen(): React.JSX.Element {
   const [activeTab, setActiveTab] = useState<SessionTab>('active');
+  const navigation = useNavigation<SessionsNavProp>();
 
   const { data: rawSessions, isLoading, error, refetch } = useSessions();
   const { data: rawClaims } = useChwClaims();
@@ -986,14 +992,14 @@ export function CHWSessionsScreen(): React.JSX.Element {
   }, []);
 
   const handleOpenMemberProfile = useCallback(
-    (memberId: string | undefined, memberName: string | undefined): void => {
-      // TODO(routing): wire to a ChwMemberProfile screen once it exists.
-      // Until then, surface a friendly toast/Alert so the tap is acknowledged.
-      // (Using console for the demo; Alert.alert is unreliable on web.)
-      // eslint-disable-next-line no-console
-      console.info(`[chw] open member profile`, { memberId, memberName });
+    (memberId: string | undefined, _memberName: string | undefined): void => {
+      if (!memberId) {
+        // Guard: session card may not have a memberId in edge-case data states.
+        return;
+      }
+      navigation.navigate('MemberProfile', { memberId });
     },
-    [],
+    [navigation],
   );
 
   /**

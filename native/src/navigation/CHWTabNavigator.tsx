@@ -31,6 +31,7 @@ import { CollapsibleDrawerContent } from './CollapsibleDrawerContent';
 import { colors } from '../theme/colors';
 import { fonts } from '../theme/typography';
 import { CHWDashboardScreen } from '../screens/chw/CHWDashboardScreen';
+import { CHWMemberProfileScreen } from '../screens/chw/CHWMemberProfileScreen';
 import { CHWRequestsScreen } from '../screens/chw/CHWRequestsScreen';
 import { CHWSessionsScreen } from '../screens/chw/CHWSessionsScreen';
 import { CHWSessionReviewScreen } from '../screens/chw/CHWSessionReviewScreen';
@@ -74,12 +75,20 @@ type EarningsStackParamList = {
 };
 
 /**
- * Sessions stack — Sessions list + full-screen post-session review.
- * Exported so CHWSessionReviewScreen can type its navigation prop.
+ * Sessions stack — Sessions list + full-screen post-session review + member profile.
+ * Exported so CHWSessionReviewScreen and CHWMemberProfileScreen can type their
+ * navigation props. MemberProfile is part of this stack so it can be pushed from
+ * any session surface without leaving the tab context.
  */
 export type CHWSessionsStackParamList = {
   Sessions: undefined;
-  SessionReview: { sessionId: string; memberName: string };
+  /**
+   * Post-session follow-up review. `memberId` is optional — when present the
+   * member name in the header renders as a tappable link to MemberProfile.
+   */
+  SessionReview: { sessionId: string; memberName: string; memberId?: string };
+  /** HIPAA-gated member profile — requires an active CHW relationship. */
+  MemberProfile: { memberId: string };
 };
 
 const Tab = createBottomTabNavigator<CHWTabParamList>();
@@ -112,6 +121,7 @@ function SessionsStackNavigator(): React.JSX.Element {
     <SessionsStack.Navigator screenOptions={{ headerShown: false }}>
       <SessionsStack.Screen name="Sessions" component={CHWSessionsScreen} />
       <SessionsStack.Screen name="SessionReview" component={CHWSessionReviewScreen} />
+      <SessionsStack.Screen name="MemberProfile" component={CHWMemberProfileScreen} />
     </SessionsStack.Navigator>
   );
 }

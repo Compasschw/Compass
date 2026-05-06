@@ -17,6 +17,12 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(20), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     phone: Mapped[str | None] = mapped_column(String(20))
+    # Non-null once the user completes an SMS OTP challenge for this number.
+    # Reset to NULL if the user starts a new phone-change flow (before
+    # confirmation) so the old verified number stays valid during the window.
+    phone_verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     profile_picture_url: Mapped[str | None] = mapped_column(String(500))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_onboarded: Mapped[bool] = mapped_column(Boolean, default=False)

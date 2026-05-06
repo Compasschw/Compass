@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import extract, func, select
@@ -7,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.dependencies import require_role
 from app.schemas.billing import EarningsSummary
+from app.schemas.chw import CHWMemberProfileView
 from app.schemas.user import CHWProfileResponse, CHWProfileUpdate
 
 router = APIRouter(prefix="/api/v1/chw", tags=["chw"])
@@ -234,3 +236,128 @@ async def list_claims(
         }
         for c in rows
     ]
+
+
+# ─── CHW Member Profile (HIPAA-gated) ────────────────────────────────────────
+
+
+@router.get("/members/{member_id}/profile", response_model=CHWMemberProfileView)
+async def get_chw_member_profile(
+    member_id: UUID,
+    current_user=Depends(require_role("chw")),
+    db: AsyncSession = Depends(get_db),
+) -> CHWMemberProfileView:
+    """Return a HIPAA-scoped member profile to an authenticated CHW.
+
+    Authorization gate (minimum-necessary, 45 CFR §164.514(d)):
+    The CHW must have at least one of:
+    - A session (any status) where chw_id == current_user.id AND member_id == path param
+    - A service_request matched to this CHW (matched_chw_id == current_user.id)
+      AND member_id == path param
+
+    If neither condition is met, the endpoint returns 403 rather than 404 to
+    avoid disclosing whether the member_id exists in the system at all.
+
+    Response fields are the HIPAA minimum set for care delivery. See
+    CHWMemberProfileView docstring for the explicit exclusion list.
+    """
+    from app.models.request import ServiceRequest
+    from app.models.session import Session
+    from app.models.user import MemberProfile, User
+
+    # ── Authorization: does this CHW have a relationship with this member? ──────
+    # We check both sessions and service_requests tables. Using EXISTS-style
+    # subqueries keeps the authorization logic independent of the data fetch so
+    # neither path can accidentally leak data through a join order ambiguity.
+
+    session_exists_result = await db.execute(
+        select(func.count())
+        .select_from(Session)
+        .where(Session.chw_id == current_user.id)
+        .where(Session.member_id == member_id)
+    )
+    chw_has_session = (session_exists_result.scalar() or 0) > 0
+
+    if not chw_has_session:
+        request_exists_result = await db.execute(
+            select(func.count())
+            .select_from(ServiceRequest)
+            .where(ServiceRequest.matched_chw_id == current_user.id)
+            .where(ServiceRequest.member_id == member_id)
+        )
+        chw_has_request = (request_exists_result.scalar() or 0) > 0
+
+        if not chw_has_request:
+            raise HTTPException(
+                status_code=403,
+                detail="You do not have an active relationship with this member.",
+            )
+
+    # ── Fetch member User + MemberProfile ────────────────────────────────────────
+    # We join User and MemberProfile here because CHWMemberProfileView requires
+    # fields from both tables (name/phone from User, language/need/zip from Profile).
+    member_result = await db.execute(
+        select(User, MemberProfile)
+        .join(MemberProfile, MemberProfile.user_id == User.id)
+        .where(User.id == member_id)
+        .where(User.role == "member")
+    )
+    row = member_result.one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Member not found.")
+    member_user, member_profile = row
+
+    # ── Session statistics scoped to THIS CHW only ────────────────────────────
+    # total_sessions_with_you: completed sessions with this CHW specifically.
+    # HIPAA: we do NOT return session notes, summary, transcript, or other-CHW counts.
+    with_you_result = await db.execute(
+        select(func.count())
+        .select_from(Session)
+        .where(Session.chw_id == current_user.id)
+        .where(Session.member_id == member_id)
+        .where(Session.status == "completed")
+    )
+    total_sessions_with_you: int = with_you_result.scalar() or 0
+
+    # total_sessions_all_time: completed sessions across ALL CHWs.
+    # Provides care-continuity context without exposing per-CHW PHI.
+    all_time_result = await db.execute(
+        select(func.count())
+        .select_from(Session)
+        .where(Session.member_id == member_id)
+        .where(Session.status == "completed")
+    )
+    total_sessions_all_time: int = all_time_result.scalar() or 0
+
+    # last_session_at: most recent session this CHW had with the member.
+    last_session_result = await db.execute(
+        select(func.max(Session.ended_at))
+        .where(Session.chw_id == current_user.id)
+        .where(Session.member_id == member_id)
+        .where(Session.status == "completed")
+    )
+    last_session_at = last_session_result.scalar()
+
+    # ── Active open service request matched to this CHW ───────────────────────
+    active_request_result = await db.execute(
+        select(ServiceRequest.id)
+        .where(ServiceRequest.matched_chw_id == current_user.id)
+        .where(ServiceRequest.member_id == member_id)
+        .where(ServiceRequest.status.in_(["accepted", "open"]))
+        .order_by(ServiceRequest.created_at.desc())
+        .limit(1)
+    )
+    active_request_id = active_request_result.scalar()
+
+    return CHWMemberProfileView(
+        id=member_user.id,
+        name=member_user.name,
+        phone=member_user.phone,
+        primary_language=member_profile.primary_language,
+        primary_need=member_profile.primary_need,
+        zip_code=member_profile.zip_code,
+        total_sessions_with_you=total_sessions_with_you,
+        total_sessions_all_time=total_sessions_all_time,
+        last_session_at=last_session_at,
+        active_request_id=active_request_id,
+    )

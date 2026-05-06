@@ -206,11 +206,66 @@ const cardStyles = StyleSheet.create({
     shadowRadius: 24,
     elevation: 3,
   },
+  cardAccepted: {
+    borderColor: '#3D5A3E40',
+    backgroundColor: '#3D5A3E06',
+  },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 12,
     marginBottom: 10,
+  },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  acceptedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#3D5A3E18',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 100,
+  },
+  acceptedBadgeText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 11,
+    color: '#3D5A3E',
+  },
+  acceptedMemberRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    marginTop: 2,
+    marginBottom: 4,
+    flexWrap: 'wrap',
+  },
+  acceptedMemberName: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 14,
+    color: '#1E3320',
+    flex: 1,
+  },
+  viewProfileLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#3D5A3E40',
+    backgroundColor: '#3D5A3E10',
+  },
+  viewProfileLinkText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12,
+    color: '#3D5A3E',
   },
   iconCircle: {
     width: 44,
@@ -324,6 +379,8 @@ export function CHWRequestsScreen(): React.JSX.Element {
   // Empty set == "All" (no filter applied).
   const [selectedVerticals, setSelectedVerticals] = useState<Set<Vertical>>(new Set());
 
+  const navigation = useNavigation<RequestsNavProp>();
+
   const { data: rawRequests, isLoading, error, refetch } = useRequests();
   const acceptRequest = useAcceptRequest();
   const passRequest = usePassRequest();
@@ -336,6 +393,12 @@ export function CHWRequestsScreen(): React.JSX.Element {
 
   const allOpenRequests = useMemo<ServiceRequestData[]>(
     () => (rawRequests ?? []).filter((r) => r.status === 'open'),
+    [rawRequests],
+  );
+
+  // Accepted requests matched to this CHW — show with member name + profile link.
+  const acceptedRequests = useMemo<ServiceRequestData[]>(
+    () => (rawRequests ?? []).filter((r) => r.status === 'accepted'),
     [rawRequests],
   );
 
@@ -369,6 +432,10 @@ export function CHWRequestsScreen(): React.JSX.Element {
     await passRequest.mutateAsync(id);
     setPassedCount((prev) => prev + 1);
   }, [passRequest]);
+
+  const handleViewMemberProfile = useCallback((memberId: string): void => {
+    navigation.navigate('MemberProfile', { memberId });
+  }, [navigation]);
 
   if (isLoading) {
     return (
@@ -478,35 +545,53 @@ export function CHWRequestsScreen(): React.JSX.Element {
         </ScrollView>
       </View>
 
-      {/* Request list */}
-      {filteredRequests.length > 0 ? (
-        <FlatList
-          data={filteredRequests}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => (
-            <RequestCard
-              request={item}
-              onAccept={(id) => void handleAccept(id)}
-              onPass={(id) => void handlePass(id)}
-            />
-          )}
-          contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={false}
-          refreshControl={refresh.control}
-        />
-      ) : (
-        <View style={styles.emptyState}>
-          <View style={styles.emptyIconCircle}>
-            <Inbox size={24} color={colors.mutedForeground} />
+      {/* Open request list + accepted requests section */}
+      <FlatList
+        data={filteredRequests}
+        keyExtractor={(item) => item.id}
+        renderItem={({ item }) => (
+          <RequestCard
+            request={item}
+            onAccept={(id) => void handleAccept(id)}
+            onPass={(id) => void handlePass(id)}
+          />
+        )}
+        contentContainerStyle={styles.listContent}
+        showsVerticalScrollIndicator={false}
+        refreshControl={refresh.control}
+        ListEmptyComponent={
+          <View style={styles.emptyState}>
+            <View style={styles.emptyIconCircle}>
+              <Inbox size={24} color={colors.mutedForeground} />
+            </View>
+            <Text style={styles.emptyTitle}>No open requests</Text>
+            <Text style={styles.emptySubtext}>
+              {selectedVerticals.size === 0
+                ? 'No open requests right now. Check back soon!'
+                : 'No open requests in the selected categories. Try clearing filters.'}
+            </Text>
           </View>
-          <Text style={styles.emptyTitle}>No open requests</Text>
-          <Text style={styles.emptySubtext}>
-            {selectedVerticals.size === 0
-              ? 'No open requests right now. Check back soon!'
-              : 'No open requests in the selected categories. Try clearing filters.'}
-          </Text>
-        </View>
-      )}
+        }
+        ListFooterComponent={
+          acceptedRequests.length > 0 ? (
+            <View style={styles.acceptedSection}>
+              <Text style={styles.acceptedSectionTitle}>
+                Accepted Requests ({acceptedRequests.length})
+              </Text>
+              {acceptedRequests.map((req) => (
+                <RequestCard
+                  key={req.id}
+                  request={req}
+                  isAccepted
+                  onAccept={() => undefined}
+                  onPass={() => undefined}
+                  onViewMemberProfile={handleViewMemberProfile}
+                />
+              ))}
+            </View>
+          ) : null
+        }
+      />
       </View>
     </SafeAreaView>
   );
@@ -665,5 +750,19 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 8,
     paddingBottom: 8,
+  },
+  acceptedSection: {
+    marginTop: 8,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#DDD6CC',
+  },
+  acceptedSectionTitle: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12,
+    color: '#6B7A6B',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    marginBottom: 12,
   },
 });

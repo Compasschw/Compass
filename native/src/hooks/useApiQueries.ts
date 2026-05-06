@@ -77,6 +77,11 @@ export interface ChwProfile {
   name?: string | null;
   email?: string | null;
   phone?: string | null;
+  /**
+   * ISO-8601 timestamp set by POST /phone/confirm-verification.
+   * Null means the stored phone number has not been SMS-verified.
+   */
+  phoneVerifiedAt?: string | null;
 }
 
 export interface MemberProfile {
@@ -92,6 +97,11 @@ export interface MemberProfile {
   name?: string;
   phone?: string;
   email?: string;
+  /**
+   * ISO-8601 timestamp set by POST /phone/confirm-verification.
+   * Null / absent means the stored phone number has not been SMS-verified.
+   */
+  phoneVerifiedAt?: string | null;
 }
 
 export interface ChwBrowseItem {
