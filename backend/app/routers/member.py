@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies import require_role
+from app.schemas.followup import RoadmapItemResponse
 from app.schemas.user import MemberProfileResponse, MemberProfileUpdate
 
 router = APIRouter(prefix="/api/v1/member", tags=["member"])
@@ -73,7 +74,7 @@ async def get_rewards(current_user=Depends(require_role("member")), db: AsyncSes
     return {"transactions": result.scalars().all()}
 
 
-@router.get("/roadmap", response_model=list["RoadmapItemResponse"])  # noqa: F821 — imported lazily in handler
+@router.get("/roadmap", response_model=list[RoadmapItemResponse])
 async def get_my_roadmap(
     current_user=Depends(require_role("member")),
     db: AsyncSession = Depends(get_db),
@@ -83,9 +84,16 @@ async def get_my_roadmap(
     Filter: ``member_id == current_user`` AND ``show_on_roadmap == True``
     AND ``status != 'dismissed'``. Sorted by status (pending/confirmed first,
     then completed) and due_date ascending.
+
+    NOTE: ``RoadmapItemResponse`` MUST be imported at module level (not inside
+    the handler). FastAPI resolves ``response_model`` at app-registration time,
+    not request time, so a string forward reference like
+    ``response_model=list["RoadmapItemResponse"]`` paired with a lazy in-handler
+    import raises:
+      pydantic.errors.PydanticUserError: TypeAdapter ... is not fully defined
+    on the first request and 500s every roadmap fetch.
     """
     from app.models.followup import SessionFollowup
-    from app.schemas.followup import RoadmapItemResponse  # noqa: F401
 
     result = await db.execute(
         select(SessionFollowup)
