@@ -3,16 +3,20 @@
  *
  * Single-step form: role chooser, then name + email + password + ZIP + phone.
  * On submit, calls AuthContext.register which POSTs /auth/register and stores
- * the JWT pair. The root navigator picks up the resulting role and routes the
- * user to their respective tab navigator (CHW → CHWTabNavigator with the
- * intake banner, Member → MemberTabNavigator).
+ * the JWT pair.
  *
- * Self sign-up was previously suppressed on the LoginScreen and routed to the
- * waitlist instead. That gate has been lifted for the v1 launch — Jemal and
- * JT need to be able to onboard as real users, and waitlist mode does not
- * provision accounts. CHWs still complete the rich intake questionnaire
- * (CHWIntakeScreen) after registration; members complete profile fields
- * (Medi-Cal ID, primary need) via the Profile screen.
+ * Post-registration phone verification
+ * -------------------------------------
+ * If the user entered a phone number, a PhoneVerificationModal is shown
+ * immediately after the account is created (while the user is already
+ * authenticated via the issued JWT).  Completing verification stores the
+ * verified number on the server.  Dismissing or skipping the modal is
+ * permitted — the number remains unverified until the user visits their
+ * profile screen.
+ *
+ * The root navigator picks up the resulting role and routes the user to their
+ * respective tab navigator once the modal is closed (CHW → CHWTabNavigator
+ * with the intake banner, Member → MemberTabNavigator).
  */
 
 import React, { useCallback, useRef, useState } from 'react';
@@ -34,6 +38,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Mail, Lock, User as UserIcon, MapPin, Phone, Eye, EyeOff, ArrowRight } from 'lucide-react-native';
 
 import { useAuth } from '../../context/AuthContext';
+import { PhoneVerificationModal } from '../../components/shared/PhoneVerificationModal';
 import { colors } from '../../theme/colors';
 import { fonts } from '../../theme/typography';
 import { radii, spacing } from '../../theme/spacing';
@@ -67,6 +72,12 @@ export function RegisterScreen(): React.JSX.Element {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Phone verification modal — shown after successful registration when the
+  // user provided a phone number.  The modal fires against the live backend
+  // using the JWT already stored by AuthContext.register.
+  const [showPhoneVerification, setShowPhoneVerification] = useState(false);
+  const [registeredPhone, setRegisteredPhone] = useState<string>('');
+
   const refs: FieldRefs = {
     name: useRef<TextInput>(null),
     email: useRef<TextInput>(null),
@@ -87,16 +98,28 @@ export function RegisterScreen(): React.JSX.Element {
     setError(null);
     setIsSubmitting(true);
     try {
+      const trimmedPhone = phone.trim();
       await register(
         email.trim().toLowerCase(),
         password,
         name.trim(),
         role,
-        phone.trim() || undefined,
+        trimmedPhone || undefined,
       );
-      // AuthContext.register flips authState; the root navigator swaps to the
-      // role-appropriate stack automatically. CHW intake banner appears on
-      // CHWDashboardScreen; members land on MemberHome.
+      // AuthContext.register stores JWT tokens and flips authState.
+      // If the user provided a phone number, show the verification modal
+      // before the root navigator swaps to the role-appropriate stack.
+      // The modal runs authenticated API calls using the newly-stored JWT.
+      if (trimmedPhone) {
+        setRegisteredPhone(trimmedPhone);
+        setShowPhoneVerification(true);
+        // Note: we intentionally do NOT set isSubmitting = false here.
+        // The spinner keeps the form disabled while the modal is open,
+        // preventing double-submission.
+        return;
+      }
+      // No phone — navigate immediately (authState flip triggers the
+      // root navigator to swap to CHW/Member tabs).
     } catch (err) {
       const message =
         err instanceof Error ? err.message : 'Could not create your account.';
@@ -113,6 +136,22 @@ export function RegisterScreen(): React.JSX.Element {
   const handleNavToLogin = useCallback((): void => {
     navigation.navigate('Login');
   }, [navigation]);
+
+  // Called when phone verification succeeds.  The root navigator will already
+  // be swapping to the authenticated stack (authState was flipped by register);
+  // we just close the modal.
+  const handlePhoneVerified = useCallback((): void => {
+    setShowPhoneVerification(false);
+    setIsSubmitting(false);
+  }, []);
+
+  // Called when the user closes the verification modal without completing it.
+  // The account already exists and the JWT is stored, so navigation proceeds
+  // normally.  The phone field will remain unverified.
+  const handlePhoneVerificationClose = useCallback((): void => {
+    setShowPhoneVerification(false);
+    setIsSubmitting(false);
+  }, []);
 
   return (
     <SafeAreaView style={s.safeArea} edges={['top']}>
@@ -289,6 +328,16 @@ export function RegisterScreen(): React.JSX.Element {
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* Phone verification — slides up after successful registration when
+          the user provided a phone number.  Runs authenticated because the
+          JWT is already stored in secure-store by AuthContext.register. */}
+      <PhoneVerificationModal
+        visible={showPhoneVerification}
+        initialPhone={registeredPhone}
+        onVerified={handlePhoneVerified}
+        onClose={handlePhoneVerificationClose}
+      />
     </SafeAreaView>
   );
 }

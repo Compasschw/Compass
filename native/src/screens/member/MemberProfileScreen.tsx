@@ -45,6 +45,7 @@ import {
 } from 'lucide-react-native';
 
 import { useAuth } from '../../context/AuthContext';
+import { PhoneVerificationModal } from '../../components/shared/PhoneVerificationModal';
 import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
 import {
@@ -672,7 +673,18 @@ export function MemberProfileScreen(): React.JSX.Element {
       // Silently ignore network errors — local state is already updated
     });
     setIsEditing(false);
-  }, [draft, chwPreferences.sessionModePreference, updateProfile]);
+
+    // If the phone field changed, kick off SMS verification.
+    // The backend phone field is updated by confirm-verification, not here,
+    // so we only trigger the modal — the unverified draft.phone is displayed
+    // locally until confirmed.
+    const trimmedPhone = draft.phone.trim();
+    const currentPhone = apiProfile?.phone ?? '';
+    if (trimmedPhone && trimmedPhone !== currentPhone) {
+      setPendingPhone(trimmedPhone);
+      setIsPhoneVerificationVisible(true);
+    }
+  }, [draft, chwPreferences.sessionModePreference, updateProfile, apiProfile?.phone]);
 
   const handleToggleLanguagePref = useCallback((lang: string) => {
     setChwPreferences((prev) => {
@@ -735,6 +747,13 @@ export function MemberProfileScreen(): React.JSX.Element {
   const [isDeleteModalVisible, setIsDeleteModalVisible] = useState(false);
   const [deleteErrorMessage, setDeleteErrorMessage] = useState<string | null>(null);
   const deleteAccount = useDeleteAccount();
+
+  // Phone verification flow — triggered when the user saves an edit that
+  // changed the phone field.  The modal is shown post-save so the draft is
+  // already committed to the server (phone stored but unverified); on
+  // confirmation the backend flips phone_verified_at.
+  const [isPhoneVerificationVisible, setIsPhoneVerificationVisible] = useState(false);
+  const [pendingPhone, setPendingPhone] = useState<string>('');
 
   const handleDeleteAccountConfirm = useCallback(async (password: string) => {
     setDeleteErrorMessage(null);
@@ -992,7 +1011,13 @@ export function MemberProfileScreen(): React.JSX.Element {
             <View style={styles.divider} />
             <InfoRow
               icon={<Phone color={colors.primary} size={16} />}
-              label="Phone"
+              label={
+                committedDraft.phone && apiProfile?.phoneVerifiedAt
+                  ? 'Phone (verified)'
+                  : committedDraft.phone
+                  ? 'Phone (unverified)'
+                  : 'Phone'
+              }
               value={committedDraft.phone || NOT_PROVIDED}
               placeholder={!committedDraft.phone}
             />
@@ -1223,6 +1248,18 @@ export function MemberProfileScreen(): React.JSX.Element {
           onClose={() => setIsDeleteModalVisible(false)}
           onConfirm={handleDeleteAccountConfirm}
           errorMessage={deleteErrorMessage}
+        />
+
+        {/* Phone verification modal — appears after saving a new phone number */}
+        <PhoneVerificationModal
+          visible={isPhoneVerificationVisible}
+          initialPhone={pendingPhone}
+          onVerified={() => {
+            setIsPhoneVerificationVisible(false);
+            // Refresh the profile so the verified badge reflects the new state
+            void profileQuery.refetch();
+          }}
+          onClose={() => setIsPhoneVerificationVisible(false)}
         />
 
         <Text style={styles.versionText}>Compass CHW · v1.0.0</Text>
