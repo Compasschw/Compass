@@ -1,10 +1,12 @@
 """LLM-generated session summary service.
 
-Wrapper around the transcription provider's `summarize_transcript` method that:
-  1. Loads the session and validates it's completed.
+Assembles the session transcript and delegates to the configured
+``SummarizerProvider`` (currently ``AnthropicSummarizer`` via Claude, or
+``NoopSummarizer`` when the API key is absent).
+
+  1. Loads the session and validates it is in a summarisable state.
   2. Assembles the transcript text (chat messages + persisted transcript chunks).
-  3. Calls the provider's summarize.
-  4. Returns the draft summary string for the DocumentationModal to pre-fill.
+  3. Calls ``get_summarizer().summarize(...)`` and returns a ``SummaryResult``.
 
 Distinct from extract_session_followups (which persists structured rows).
 This function does NOT persist anything — the CHW edits the draft and
@@ -12,7 +14,7 @@ submits it as part of the documentation save, which is the persistence point.
 
 Why a separate file: same plumbing pattern as followup_extraction.py
 (transcript assembly, status guards, provider call) but a different output
-shape (free-text string vs structured ExtractedFollowups). Keeping them
+shape (SummaryResult vs structured ExtractedFollowups). Keeping them
 parallel makes it obvious where to add the next derived-from-transcript
 artifact (e.g., suggested procedure code, vertical reclassification).
 """
@@ -24,7 +26,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.session import Session
-from app.models.user import User
+from app.services.transcription.summarizer import SummaryResult, get_summarizer
 
 logger = logging.getLogger("compass.sessions.summary")
 
@@ -32,22 +34,25 @@ logger = logging.getLogger("compass.sessions.summary")
 async def generate_session_summary(
     session_id: UUID,
     db: AsyncSession,
-) -> str:
-    """Generate a draft summary for the given session.
+) -> SummaryResult:
+    """Generate a draft summary for the given session via the configured LLM.
 
-    Returns the summary text, or empty string when:
+    Returns a ``SummaryResult`` (text + generated_at).  ``SummaryResult.empty()``
+    is returned when:
       - session doesn't exist
-      - session is not completed
-      - transcript is empty
+      - session is not completed or in_progress
+      - transcript is empty or under the minimum length threshold
       - provider key is missing or the LLM call fails
 
-    Caller (the /sessions/{id}/summary endpoint) treats empty string as
-    "no draft available — CHW types from scratch".
+    Caller (the /sessions/{id}/ai-summary endpoint) maps the result to the
+    ``{"ai_summary": ..., "generated_at": ...}`` response shape.
+
+    PHI contract: session_id is the only value safe to log here.
     """
     session = await db.get(Session, session_id)
     if session is None:
         logger.warning("generate_session_summary: unknown session_id=%s", session_id)
-        return ""
+        return SummaryResult.empty()
     if session.status not in {"completed", "in_progress"}:
         # We allow in_progress so a CHW can pre-generate a draft mid-call —
         # useful for chat sessions where the CHW wraps up by writing the note
@@ -56,34 +61,18 @@ async def generate_session_summary(
             "generate_session_summary: session=%s status=%s — skipping",
             session_id, session.status,
         )
-        return ""
+        return SummaryResult.empty()
 
     transcript_text = await _build_transcript_text(session, db)
     if not transcript_text.strip():
-        return ""
+        return SummaryResult.empty()
 
-    member_first_name = await _resolve_member_first_name(session.member_id, db)
-
-    # Lazy import — keeps the transcription provider out of the import graph
-    # for tests that don't need it.
-    from app.services.transcription import get_transcription_provider
-
-    try:
-        provider = get_transcription_provider()
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Transcription provider unavailable for summary: %s", exc)
-        return ""
-
-    if not hasattr(provider, "summarize_transcript"):
-        return ""
-
-    try:
-        summary = await provider.summarize_transcript(transcript_text, member_first_name)
-    except Exception as exc:  # noqa: BLE001
-        logger.error("summarize_transcript raised: %s", type(exc).__name__)
-        return ""
-
-    return summary or ""
+    summarizer = get_summarizer()
+    result = await summarizer.summarize(
+        transcript_text,
+        vertical=getattr(session, "vertical", None),
+    )
+    return result
 
 
 async def _build_transcript_text(session: Session, db: AsyncSession) -> str:
@@ -154,18 +143,3 @@ async def _build_transcript_text(session: Session, db: AsyncSession) -> str:
     return "\n".join(pieces)
 
 
-async def _resolve_member_first_name(
-    member_id: UUID, db: AsyncSession
-) -> str | None:
-    """Pull the member's first name to personalise the LLM prompt.
-
-    Returns None on any error so the prompt falls back to the unpersonalised
-    template — never block summary generation on a missing name.
-    """
-    try:
-        member = await db.get(User, member_id)
-        if member is None or not member.name:
-            return None
-        return member.name.split(" ")[0] or None
-    except Exception:  # noqa: BLE001
-        return None

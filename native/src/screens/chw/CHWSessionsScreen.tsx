@@ -40,6 +40,7 @@ import {
   MessageSquare,
   FileText,
   Phone,
+  Sparkles,
   X,
 } from 'lucide-react-native';
 
@@ -202,6 +203,21 @@ function formatElapsedTime(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+/**
+ * Format an ISO8601 timestamp into a short time string (e.g. "2:34 PM").
+ */
+function formatAITimestamp(iso: string): string {
+  try {
+    return new Date(iso).toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    });
+  } catch {
+    return iso;
+  }
 }
 
 // ─── VerticalIcon helper ──────────────────────────────────────────────────────
@@ -485,6 +501,53 @@ function SessionCard({
         </View>
       )}
 
+      {/* Submitted documentation cards — CHW Notes + AI Summary */}
+      {isCompleted && session.notes ? (
+        <View
+          style={cardStyles.documentationSection}
+          accessible={false}
+          accessibilityLabel="Submitted documentation"
+        >
+          {/* Card 1: CHW Notes — always visible */}
+          <View style={cardStyles.chwNotesCard}>
+            <Text style={cardStyles.docCardLabel}>CHW Notes</Text>
+            <Text style={cardStyles.chwNotesText}>{session.notes}</Text>
+          </View>
+
+          {/* Card 2: AI Summary — shown only when present and not excluded */}
+          {session.aiSummary &&
+           session.aiSummaryGeneratedAt &&
+           session.aiSummaryExcluded !== true ? (
+            <View
+              style={cardStyles.aiSummaryCard}
+              accessible
+              accessibilityLabel="AI-generated summary, read only"
+              accessibilityHint="Generated from the session transcript"
+            >
+              <View style={cardStyles.aiSummaryHeaderRow}>
+                <Sparkles size={12} color={colors.secondary} />
+                <Text style={cardStyles.aiSummaryCardLabel}>AI Summary</Text>
+                <View style={cardStyles.aiSummaryBadge}>
+                  <Text style={cardStyles.aiSummaryBadgeText}>
+                    Generated from transcript
+                  </Text>
+                </View>
+                <Text style={cardStyles.aiSummaryTimestamp}>
+                  {formatAITimestamp(session.aiSummaryGeneratedAt)}
+                </Text>
+              </View>
+              <Text style={cardStyles.aiSummaryText} selectable>
+                {session.aiSummary}
+              </Text>
+            </View>
+          ) : session.aiSummary && session.aiSummaryExcluded === true ? (
+            <Text style={cardStyles.aiExcludedNote}>
+              AI summary was generated but excluded by CHW.
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
+
       {/* Document button — shown on completed sessions */}
       {isCompleted && (
         <View style={[cardStyles.actionRow, { marginTop: 10 }]}>
@@ -726,6 +789,84 @@ const cardStyles = StyleSheet.create({
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 14,
     color: '#3D5A3E',
+  },
+  // ── Documentation cards ──────────────────────────────────────────────────
+  documentationSection: {
+    marginTop: 10,
+    gap: 8,
+  },
+  docCardLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    color: colors.mutedForeground,
+    marginBottom: 4,
+  },
+  chwNotesCard: {
+    backgroundColor: colors.background,
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  chwNotesText: {
+    fontSize: 12,
+    lineHeight: 18,
+    color: colors.foreground,
+    fontFamily: 'PlusJakartaSans_400Regular',
+  },
+  aiSummaryCard: {
+    backgroundColor: '#EDF4F8',
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#C8D8E4',
+    gap: 8,
+  },
+  aiSummaryHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 5,
+  },
+  aiSummaryCardLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    color: colors.secondary,
+  },
+  aiSummaryBadge: {
+    backgroundColor: colors.secondary + '20',
+    borderRadius: 100,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+  },
+  aiSummaryBadgeText: {
+    fontSize: 9,
+    fontWeight: '600',
+    color: colors.secondary,
+    letterSpacing: 0.2,
+  },
+  aiSummaryTimestamp: {
+    fontSize: 10,
+    color: colors.mutedForeground,
+    marginLeft: 'auto' as unknown as number,
+  },
+  aiSummaryText: {
+    fontSize: 12,
+    fontStyle: 'italic',
+    lineHeight: 18,
+    color: colors.foreground,
+    fontFamily: 'PlusJakartaSans_400Regular',
+  },
+  aiExcludedNote: {
+    fontSize: 12,
+    fontStyle: 'italic',
+    color: colors.mutedForeground,
+    fontFamily: 'PlusJakartaSans_400Regular',
+    paddingLeft: 4,
   },
 });
 

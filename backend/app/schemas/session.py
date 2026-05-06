@@ -40,6 +40,15 @@ class SessionResponse(BaseModel):
 
 
 class SessionDocumentationSubmit(BaseModel):
+    """Body for POST /sessions/{id}/documentation.
+
+    ``summary`` is the CHW-authored manual note — exclusively human-written.
+    The three ``ai_summary*`` fields carry the AI-generated draft that was
+    shown in the DocumentationModal; the frontend passes them through so the
+    long-term record can distinguish AI output from CHW narrative at a glance
+    (required for HIPAA audit trails and investor due diligence).
+    """
+
     summary: str
     resources_referred: list[str] = []
     member_goals: list[str] = []
@@ -48,6 +57,38 @@ class SessionDocumentationSubmit(BaseModel):
     diagnosis_codes: list[str]
     procedure_code: str
     units_to_bill: int = Field(ge=1, le=4)
+
+    # AI summary provenance — optional; frontend passes through what it received
+    # from POST /ai-summary so the submission record has permanent provenance.
+    ai_summary: str | None = None
+    ai_summary_generated_at: datetime | None = None
+    ai_summary_excluded: bool = False
+
+
+class SessionDocumentationResponse(BaseModel):
+    """Response for GET /sessions/{id}/documentation (and the submit response body
+    when consumers need the full record).
+
+    Surfaces both the CHW-authored note (``summary``) and the AI-generated
+    fields so audit tooling can compare them side-by-side.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    session_id: UUID
+    summary: str
+    resources_referred: list[str] | None
+    member_goals: list[str] | None
+    follow_up_needed: bool
+    follow_up_date: datetime | None
+    diagnosis_codes: list[str] | None
+    procedure_code: str | None
+    units_to_bill: int | None
+    submitted_at: datetime
+    ai_summary: str | None
+    ai_summary_generated_at: datetime | None
+    ai_summary_excluded: bool
 
 
 class ConsentSubmit(BaseModel):

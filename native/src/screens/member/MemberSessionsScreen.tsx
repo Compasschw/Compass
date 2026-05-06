@@ -28,6 +28,7 @@ import {
   ChevronUp,
   Inbox,
   MessageCircle,
+  Sparkles,
   Star,
   X,
   XCircle,
@@ -106,6 +107,21 @@ function getInitials(name: string): string {
     .map((part) => part[0] ?? '')
     .join('')
     .toUpperCase();
+}
+
+/**
+ * Format an ISO8601 timestamp into a short time string (e.g. "2:34 PM").
+ */
+function formatAITimestamp(iso: string): string {
+  try {
+    return new Date(iso).toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    });
+  } catch {
+    return iso;
+  }
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -679,9 +695,13 @@ function CompletedSessionCard({
         <StarRating sessionId={session.id} currentRating={rating} onRate={onRate} />
       </View>
 
-      {/* Expandable notes */}
+      {/* Documentation section — two distinct cards when expanded */}
       {session.notes ? (
-        <View style={completedCardStyles.notesSection}>
+        <View
+          style={completedCardStyles.notesSection}
+          accessible={false}
+          accessibilityLabel="Session documentation"
+        >
           <TouchableOpacity
             onPress={() => onToggleExpand(session.id)}
             style={completedCardStyles.notesToggle}
@@ -697,9 +717,50 @@ function CompletedSessionCard({
               {isExpanded ? 'Hide notes' : 'View session notes'}
             </Text>
           </TouchableOpacity>
+
           {isExpanded ? (
-            <View style={completedCardStyles.notesBox}>
-              <Text style={completedCardStyles.notesText}>{session.notes}</Text>
+            <View style={completedCardStyles.documentationCards}>
+              {/* Card 1: CHW Notes — always visible when there are notes */}
+              <View
+                style={completedCardStyles.chwNotesCard}
+                accessible={false}
+                accessibilityLabel="CHW Notes"
+              >
+                <Text style={completedCardStyles.cardLabel}>CHW Notes</Text>
+                <Text style={completedCardStyles.chwNotesText}>{session.notes}</Text>
+              </View>
+
+              {/* Card 2: AI Summary — shown only when present and not excluded */}
+              {session.aiSummary &&
+               session.aiSummaryGeneratedAt &&
+               session.aiSummaryExcluded !== true ? (
+                <View
+                  style={completedCardStyles.aiSummaryCard}
+                  accessible
+                  accessibilityLabel="AI-generated summary, read only"
+                  accessibilityHint="This summary was generated from the session transcript"
+                >
+                  <View style={completedCardStyles.aiSummaryHeaderRow}>
+                    <Sparkles size={12} color={colors.secondary} />
+                    <Text style={completedCardStyles.aiSummaryCardLabel}>AI Summary</Text>
+                    <View style={completedCardStyles.aiSummaryBadge}>
+                      <Text style={completedCardStyles.aiSummaryBadgeText}>
+                        Generated from transcript
+                      </Text>
+                    </View>
+                    <Text style={completedCardStyles.aiSummaryTimestamp}>
+                      {formatAITimestamp(session.aiSummaryGeneratedAt)}
+                    </Text>
+                  </View>
+                  <Text style={completedCardStyles.aiSummaryText} selectable>
+                    {session.aiSummary}
+                  </Text>
+                </View>
+              ) : session.aiSummary && session.aiSummaryExcluded === true ? (
+                <Text style={completedCardStyles.aiExcludedNote}>
+                  AI summary was generated but excluded by CHW.
+                </Text>
+              ) : null}
             </View>
           ) : null}
         </View>
@@ -831,16 +892,81 @@ const completedCardStyles = StyleSheet.create({
     fontWeight: '500',
     color: colors.secondary,
   },
-  notesBox: {
-    marginTop: 8,
+  documentationCards: {
+    marginTop: 10,
+    gap: 10,
+  },
+  // Card 1: CHW Notes
+  chwNotesCard: {
     backgroundColor: colors.background,
     borderRadius: 10,
     padding: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    gap: 6,
   },
-  notesText: {
+  cardLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    color: colors.mutedForeground,
+  },
+  chwNotesText: {
+    ...typography.label,
+    color: colors.foreground,
+    lineHeight: 18,
+  },
+  // Card 2: AI Summary
+  aiSummaryCard: {
+    backgroundColor: '#EDF4F8',
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#C8D8E4',
+    gap: 8,
+  },
+  aiSummaryHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 5,
+  },
+  aiSummaryCardLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    color: colors.secondary,
+  },
+  aiSummaryBadge: {
+    backgroundColor: colors.secondary + '20',
+    borderRadius: 100,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+  },
+  aiSummaryBadgeText: {
+    fontSize: 9,
+    fontWeight: '600',
+    color: colors.secondary,
+    letterSpacing: 0.2,
+  },
+  aiSummaryTimestamp: {
+    fontSize: 10,
+    color: colors.mutedForeground,
+    marginLeft: 'auto' as unknown as number,
+  },
+  aiSummaryText: {
+    ...typography.label,
+    fontStyle: 'italic',
+    color: colors.foreground,
+    lineHeight: 18,
+  },
+  aiExcludedNote: {
     ...typography.label,
     color: colors.mutedForeground,
-    lineHeight: 18,
+    fontStyle: 'italic',
+    paddingLeft: 4,
   },
   bookAgainBtn: {
     borderWidth: 1,

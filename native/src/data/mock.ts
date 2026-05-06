@@ -81,6 +81,7 @@ export interface ProcedureCode {
 
 export interface SessionDocumentation {
   sessionId: string;
+  /** CHW-authored notes — required, visible to billing/audit as CHW-authored. */
   summary: string;
   resourcesReferred: string[];
   memberGoals: string[];
@@ -90,6 +91,12 @@ export interface SessionDocumentation {
   procedureCode?: string;
   unitsToBill: number;
   submittedAt?: string;
+  /** AI-generated summary text from session transcript. Null when unavailable. */
+  aiSummary?: string | null;
+  /** ISO8601 timestamp of AI summary generation. Null when no transcript. */
+  aiSummaryGeneratedAt?: string | null;
+  /** When true, the AI summary was generated but intentionally omitted by the CHW. */
+  aiSummaryExcluded?: boolean;
 }
 
 export interface Credential {
