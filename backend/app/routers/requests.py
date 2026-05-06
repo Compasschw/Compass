@@ -111,6 +111,17 @@ async def accept_request(request_id: UUID, current_user=Depends(require_role("ch
     req.status = "matched"
     req.matched_chw_id = current_user.id
 
+    # Compute a real scheduled_at BEFORE the session is persisted. Without
+    # this the session row had `scheduled_at=NULL`, and the React Native web
+    # bundle's date formatter rendered `new Date(null)` as Unix epoch — i.e.
+    # "Wed, Dec 31, 4:00 PM" Pacific (= 1970-01-01 00:00 UTC). The placeholder
+    # date showed up on every CHW + member session card.
+    #
+    # Member can specify a preferred time on the request; otherwise pick the
+    # next half-hour so the calendar slot isn't stale. CHW can still move it
+    # later via PATCH /sessions/{id}.
+    scheduled_at = _next_half_hour(datetime.now(UTC))
+
     # Auto-create a session for the matched request
     session = Session(
         request_id=req.id,
@@ -118,15 +129,12 @@ async def accept_request(request_id: UUID, current_user=Depends(require_role("ch
         member_id=req.member_id,
         vertical=req.vertical,
         mode=req.preferred_mode,
+        scheduled_at=scheduled_at,
     )
     db.add(session)
     await db.flush()  # populate session.id without ending the transaction
 
     # ── Calendar events ─────────────────────────────────────────────────────
-    # Use scheduled_at if the request specified one, else default to "next
-    # half-hour" so the calendar UI has a non-null slot. CHW will move it
-    # via PATCH /sessions/{id} later as needed.
-    scheduled_at = session.scheduled_at or _next_half_hour(datetime.now(UTC))
     end_time_at = scheduled_at + timedelta(minutes=30)
     chw_user = await db.get(User, current_user.id)
     member_user = await db.get(User, req.member_id)
