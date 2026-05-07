@@ -63,6 +63,7 @@ import {
   toSpeakerRole,
 } from '../utils/audioStreaming';
 import { IOSOutputFormat, AudioQuality } from 'expo-audio/build/RecordingConstants';
+import { useSessionTranscriptionWeb } from './useSessionTranscriptionWeb';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -158,6 +159,16 @@ interface SessionRefs {
  * WebSocket transcript endpoint. Consumes transcript chunks returned by the
  * server and accumulates them for the UI layer.
  *
+ * On web (`Platform.OS === 'web'`) the hook transparently delegates to
+ * `useSessionTranscriptionWeb`, which uses the Web Audio API (`getUserMedia`
+ * + `AudioWorkletNode`) instead of `expo-audio`.
+ *
+ * On native (iOS / Android) the hook uses `expo-audio`'s `AudioRecorder` and
+ * a segment-loop pattern identical to the v1 implementation.
+ *
+ * Both paths share the same `UseSessionTranscriptionResult` interface so
+ * callers (`SessionChat.tsx`) are unaffected.
+ *
  * @example
  * ```tsx
  * const { state, transcripts, start, stop } = useSessionTranscription({
@@ -170,6 +181,19 @@ interface SessionRefs {
 export function useSessionTranscription(
   opts: UseSessionTranscriptionOptions,
 ): UseSessionTranscriptionResult {
+  // Delegate to the web implementation on the web platform.
+  // Rules of Hooks: this call is unconditional — Platform.OS is a compile-time
+  // constant on each platform bundle (Metro tree-shakes the unused branch).
+  const webResult = useSessionTranscriptionWeb(opts);
+
+  // The native implementation is below. On web, we return early here.
+  // NOTE: all hooks below this point are still called unconditionally so React's
+  // hook count stays consistent across renders. We rely on Metro's platform
+  // bundling to ship only the relevant code to each platform target.
+  // On web, the native hooks below run but are immediately short-circuited
+  // by the `isWeb` guards — they hold no resources and cost essentially nothing.
+  const isWeb = Platform.OS === 'web';
+
   const { sessionId, enabled, onTranscriptChunk } = opts;
 
   const [state, setState] = useState<TranscriptionState>('idle');
@@ -404,11 +428,9 @@ export function useSessionTranscription(
   const start = useCallback(async (): Promise<void> => {
     const r = refs.current;
 
-    // Web is not supported for this feature.
-    if (Platform.OS === 'web') {
-      transitionError('In-person transcription requires the mobile app.');
-      return;
-    }
+    // On web the hook returns `webResult` at the bottom of this function; the
+    // native start() path should never execute there. Guard defensively.
+    if (isWeb) return;
 
     if (state === 'recording' || state === 'connecting') return;
 
@@ -501,6 +523,12 @@ export function useSessionTranscription(
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // On web, all native hooks have run above (satisfying hook count rules) but
+  // hold no resources. Return the web implementation's result instead.
+  if (isWeb) {
+    return webResult;
+  }
 
   return { state, errorMessage, transcripts, start, stop };
 }

@@ -214,10 +214,20 @@ const toastStyles = StyleSheet.create({
 
 interface RecordingIndicatorProps {
   elapsedSeconds: number;
+  /**
+   * When non-null, the indicator shows a "Connecting..." or "Reconnecting..." spinner
+   * instead of the animated dot + timer. The dot animation is paused to avoid
+   * misleading the CHW into thinking audio is flowing when the socket is not yet open.
+   */
+  connectingState: 'connecting' | 'reconnecting' | null;
 }
 
 /**
  * Animated red dot + MM:SS timer shown in the header when transcription is live.
+ *
+ * When `connectingState` is non-null, renders an ActivityIndicator + "Connecting..."
+ * or "Reconnecting..." label instead of the pulsing dot + timer, so the CHW can
+ * see exactly what phase the transcription pipeline is in.
  *
  * Animation: the dot pulses between full opacity and ~20% opacity on a 1-second
  * cycle using withRepeat + withSequence from react-native-reanimated. The
@@ -225,7 +235,10 @@ interface RecordingIndicatorProps {
  * The useSharedValue + useAnimatedStyle pattern means only the Animated.View
  * node re-renders — the parent component is not touched.
  */
-function RecordingIndicator({ elapsedSeconds }: RecordingIndicatorProps): React.JSX.Element {
+function RecordingIndicator({
+  elapsedSeconds,
+  connectingState,
+}: RecordingIndicatorProps): React.JSX.Element {
   const dotOpacity = useSharedValue(1);
 
   useEffect(() => {
@@ -243,10 +256,32 @@ function RecordingIndicator({ elapsedSeconds }: RecordingIndicatorProps): React.
     opacity: dotOpacity.value,
   }));
 
+  // Connecting / reconnecting state — show spinner + label instead of dot + timer.
+  if (connectingState !== null) {
+    const label = connectingState === 'reconnecting' ? 'Reconnecting...' : 'Connecting...';
+    return (
+      <View
+        style={recStyles.container}
+        accessibilityRole="none"
+        accessibilityLabel={label}
+        accessibilityLiveRegion="polite"
+      >
+        <ActivityIndicator size="small" color={colors.mutedForeground} />
+        <Text style={recStyles.connectingLabel}>{label}</Text>
+      </View>
+    );
+  }
+
   return (
     <View style={recStyles.container} accessibilityRole="none">
       <Animated.View style={[recStyles.dot, animatedDotStyle]} />
-      <Text style={recStyles.timer} accessibilityLabel={`Recording — ${formatDuration(elapsedSeconds)}`}>
+      <Text
+        style={recStyles.label}
+        accessibilityLabel={`Live transcribing — ${formatDuration(elapsedSeconds)}`}
+      >
+        {'Live '}
+      </Text>
+      <Text style={recStyles.timer} importantForAccessibility="no-hide-descendants">
         {formatDuration(elapsedSeconds)}
       </Text>
     </View>
@@ -265,11 +300,23 @@ const recStyles = StyleSheet.create({
     borderRadius: 4,
     backgroundColor: colors.destructive,
   },
+  /** "Live" label shown beside the timer when actively recording. */
+  label: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.destructive,
+  },
   timer: {
     fontSize: 11,
     fontWeight: '600',
     color: colors.destructive,
     fontVariant: ['tabular-nums'],
+  },
+  /** Shown in the connecting / reconnecting states instead of dot + timer. */
+  connectingLabel: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: colors.mutedForeground,
   },
 });
 
@@ -1375,15 +1422,6 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
       return;
     }
 
-    // Web fallback — transcription unsupported on web
-    if (Platform.OS === 'web') {
-      showToast(
-        'Session transcription is only available in the mobile app.',
-        true,
-      );
-      return;
-    }
-
     // Consent not yet granted → open consent modal
     if (!consentGrantedRef.current) {
       setConsentGateState('closed');
@@ -1666,10 +1704,9 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
     || sendMessage.isPending
     || attachmentUploading;
 
-  // ── Web transcription unavailable message ─────────────────────────────────────
-
-  const showWebTranscriptionNote =
-    Platform.OS === 'web' && isCHW && transcription.state === 'error';
+  // ── Web transcription note ────────────────────────────────────────────────────
+  // Web now supports mic transcription via AudioWorklet. This note is never shown.
+  const showWebTranscriptionNote = false;
 
   // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1711,9 +1748,19 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
             </View>
 
             <View style={c.headerRight}>
-              {/* Recording indicator — only visible while recording */}
-              {transcription.state === 'recording' && (
-                <RecordingIndicator elapsedSeconds={recordingElapsedSeconds} />
+              {/* Recording indicator — shown while recording, connecting, or reconnecting */}
+              {(transcription.state === 'recording' ||
+                transcription.state === 'connecting' ||
+                transcription.state === 'reconnecting') && (
+                <RecordingIndicator
+                  elapsedSeconds={recordingElapsedSeconds}
+                  connectingState={
+                    transcription.state === 'connecting' ||
+                    transcription.state === 'reconnecting'
+                      ? transcription.state
+                      : null
+                  }
+                />
               )}
 
               {/*

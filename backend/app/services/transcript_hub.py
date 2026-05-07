@@ -17,8 +17,8 @@ import logging
 import os
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable
 from uuid import UUID
 
 from fastapi import WebSocket
@@ -264,14 +264,14 @@ class AssemblyAIStreamingSession(StreamingSession):
         def _close() -> None:
             try:
                 transcriber.close()  # type: ignore[attr-defined]
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
                 # SDK may raise if connection was already dropped by the server.
-                pass
+                logger.debug("assemblyai transcriber close raised %s (ignored)", type(exc).__name__)
 
         try:
             await asyncio.to_thread(_close)
-        except Exception:  # noqa: BLE001
-            pass  # Errors during close are best-effort; session is already ending.
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("assemblyai close thread raised %s (ignored)", type(exc).__name__)
 
         elapsed = time.monotonic() - self._started_at
         logger.info(
@@ -464,8 +464,8 @@ def _resolve_api_key() -> str:
         key: str = getattr(settings, "assemblyai_api_key", "") or ""
         if key:
             return key
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("settings import for assemblyai key failed: %s (falling back to env)", type(exc).__name__)
     return os.environ.get("ASSEMBLYAI_API_KEY", "")
 
 

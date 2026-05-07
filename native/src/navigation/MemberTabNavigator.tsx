@@ -139,7 +139,7 @@ function MemberBottomTabNavigator(): React.JSX.Element {
               const isFocused = state.routes[state.index]?.name === name;
               if (isFocused) {
                 e.preventDefault();
-                navigation.navigate(name as never, { screen: rootScreen } as never);
+                (navigation as any).navigate(name, { screen: rootScreen });
               }
             },
           }) : undefined}
@@ -213,7 +213,7 @@ function MemberWebDrawerNavigatorInner(): React.JSX.Element {
               const isFocused = state.routes[state.index]?.name === name;
               if (isFocused) {
                 e.preventDefault();
-                navigation.navigate(name as never, { screen: rootScreen } as never);
+                (navigation as any).navigate(name, { screen: rootScreen });
               }
             },
           }) : undefined}
