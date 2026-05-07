@@ -409,21 +409,50 @@ async def submit_documentation(
 
 @router.post("/{session_id}/consent")
 async def submit_consent(session_id: UUID, data: ConsentSubmit, request: Request, current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Record consent for a session.
+
+    Two valid callers:
+      - The session member (member_id matches current_user) — direct consent.
+      - The session CHW (chw_id matches current_user) when ``chw_attestation``
+        is True — attests that the member gave verbal consent on the call.
+        Required for single-device demo / phone-call flows where the member
+        does not have the app open to tap Approve themselves. The audit
+        layer (HTTP middleware) records the CHW's identity, IP, and UA
+        on the row so the attestation is reviewable.
+    """
     session = await db.get(Session, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    if session.member_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Only the session member can submit consent")
+
+    is_member_self = session.member_id == current_user.id
+    is_chw_attesting = (
+        data.chw_attestation
+        and session.chw_id == current_user.id
+        and data.consent_type == "ai_transcription"
+    )
+    if not (is_member_self or is_chw_attesting):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Only the session member can submit consent, or the session "
+                "CHW with chw_attestation=true for ai_transcription."
+            ),
+        )
 
     consent = MemberConsent(
-        session_id=session_id, member_id=current_user.id,
-        consent_type=data.consent_type, typed_signature=data.typed_signature,
+        session_id=session_id,
+        # member_id is always the member of record on the consent row, even
+        # when the CHW attests on their behalf. The audit trail captures
+        # who actually performed the POST via IP + UA.
+        member_id=session.member_id,
+        consent_type=data.consent_type,
+        typed_signature=data.typed_signature,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
     )
     db.add(consent)
     await db.commit()
-    return {"consent_id": str(consent.id)}
+    return {"consent_id": str(consent.id), "chw_attested": is_chw_attesting}
 
 
 # ─── Transcript replay ───────────────────────────────────────────────────────

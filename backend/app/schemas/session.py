@@ -97,10 +97,17 @@ class ConsentSubmit(BaseModel):
     ``consent_type`` must be one of the values in ``ConsentType``.
     The default is ``medical_billing`` for backwards compatibility with
     existing clients that pre-date the ai_transcription consent flow.
+
+    ``chw_attestation`` lets the CHW record consent on the member's behalf
+    when the member has given verbal consent on the call. Only the CHW on
+    the session may set this true; setting it from a member account is
+    rejected. The typed_signature in this case is the CHW's name and the
+    backend records the attestation source for audit.
     """
 
     consent_type: ConsentType = "medical_billing"
     typed_signature: str
+    chw_attestation: bool = False
 
 
 class TranscriptChunkResponse(BaseModel):
