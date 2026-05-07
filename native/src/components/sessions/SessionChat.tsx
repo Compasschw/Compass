@@ -1375,14 +1375,7 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
    * skip the actual API call and jump straight to 'awaiting_tap'.
    */
   const handleConsentConfirm = useCallback(
-    async (demoOverride: boolean) => {
-      if (demoOverride) {
-        // DEMO ONLY — bypass consent POST. Remove before production.
-        consentGrantedRef.current = true;
-        setConsentGateState('awaiting_tap');
-        return;
-      }
-
+    async (chwAttests: boolean) => {
       setConsentGateState('sending');
       setConsentError(null);
 
@@ -1390,6 +1383,10 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
         await grantConsent.mutateAsync({
           consentType: 'ai_transcription',
           typedSignature: userName ?? 'CHW',
+          // When the CHW attests verbal consent, the backend records the
+          // consent row on the member's behalf. Without this flag the POST
+          // 403s because only the member account may grant consent directly.
+          chwAttestation: chwAttests,
         });
         consentGrantedRef.current = true;
         setConsentGateState('awaiting_tap');
@@ -1735,6 +1732,27 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
             setConsentModalOpen(false);
           }}
         />
+      )}
+
+      {/*
+       * Member-side recording-possibility banner.
+       * Shown only to the member, only when the session is in_progress.
+       * The CHW *may* be recording at any moment of an in-progress session.
+       * The banner tells the member they could be on the record so they
+       * can ask the CHW to stop or revoke consent.
+       *
+       * TODO: replace "may be recording" with a real recording-state check
+       * (poll a /sessions/{id}/recording-status endpoint that asks the
+       * transcript_hub whether a streaming session is open). Until then,
+       * an honest superset is correct over zero indicator.
+       */}
+      {!isCHW && session?.status === 'in_progress' && (
+        <View style={memberRecBannerStyles.container}>
+          <View style={memberRecBannerStyles.dot} />
+          <Text style={memberRecBannerStyles.text}>
+            This session may be recorded for clinical notes. You can ask your CHW to stop at any time.
+          </Text>
+        </View>
       )}
 
       <KeyboardAvoidingView
@@ -2097,6 +2115,32 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
+
+const memberRecBannerStyles = StyleSheet.create({
+  container: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#FEF3C7',
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: '#FCD34D',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  dot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#DC2626',
+  },
+  text: {
+    flex: 1,
+    fontSize: 13,
+    color: '#78350F',
+    fontWeight: '500',
+  },
+});
 
 const c = StyleSheet.create({
   flex: { flex: 1 },
