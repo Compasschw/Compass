@@ -882,6 +882,256 @@ export function useGrantTranscriptionConsent(sessionId: string) {
   });
 }
 
+// ─── Two-party consent request hooks ─────────────────────────────────────────
+//
+// HIPAA + California §632 compliant in-app two-party consent flow.
+//
+// CHW side:
+//   useCreateConsentRequest — POST /sessions/{id}/consent-requests
+//   useCancelConsentRequest — POST /consent-requests/{id}/cancel
+//   useConsentRequestStatus — GET  /consent-requests/{id} (polling)
+//
+// Member side:
+//   usePendingConsents      — GET  /sessions/{id}/pending-consents (polling)
+//   useApproveConsentRequest — POST /consent-requests/{id}/approve
+//   useDenyConsentRequest   — POST /consent-requests/{id}/deny
+//
+// Polling interval: 3 000 ms.  This gives sub-5-second latency while keeping
+// the request rate modest (20 req/min per active session per side).  The
+// upgrade path to WebSocket push is documented below each polling hook.
+
+/** The status values returned by the backend for a ConsentRequest row. */
+export type ConsentRequestStatus =
+  | 'pending'
+  | 'approved'
+  | 'denied'
+  | 'cancelled'
+  | 'expired';
+
+/** Terminal statuses — polling should stop when the status reaches one of these. */
+const CONSENT_TERMINAL_STATUSES = new Set<ConsentRequestStatus>([
+  'approved',
+  'denied',
+  'cancelled',
+  'expired',
+]);
+
+/**
+ * Wire shape for a ConsentRequest row returned by the backend.
+ * All fields are camelCase (auto-transformed by the api client).
+ */
+export interface ConsentRequestData {
+  id: string;
+  sessionId: string;
+  chwId: string;
+  memberId: string;
+  consentType: string;
+  status: ConsentRequestStatus;
+  requestedAt: string;
+  respondedAt: string | null;
+  expiresAt: string;
+}
+
+/** Query-key namespace for consent-request data. */
+export const consentRequestQueryKeys = {
+  pendingConsents: (sessionId: string) =>
+    ['sessions', sessionId, 'pending-consents'] as const,
+  consentRequest: (requestId: string) =>
+    ['consent-requests', requestId] as const,
+};
+
+/**
+ * CHW mutation — create a pending ConsentRequest for the session.
+ *
+ * POST /api/v1/sessions/{sessionId}/consent-requests
+ *
+ * Returns the created ConsentRequestData row (status="pending").
+ * Throws with HTTP 409 if a non-expired pending request already exists —
+ * callers should surface this as "Request already in progress".
+ *
+ * HIPAA: no PHI is transmitted in this call — only the session ID and the
+ * consent type ("ai_transcription").
+ */
+export function useCreateConsentRequest(sessionId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (
+      consentType: 'ai_transcription' = 'ai_transcription',
+    ): Promise<ConsentRequestData> => {
+      const raw = await api<unknown>(
+        `/sessions/${sessionId}/consent-requests`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ consent_type: consentType }),
+        },
+      );
+      return transformKeys<ConsentRequestData>(raw);
+    },
+    onSuccess: (data) => {
+      // Seed the individual request cache so CHW polling starts with a value.
+      qc.setQueryData(
+        consentRequestQueryKeys.consentRequest(data.id),
+        data,
+      );
+    },
+  });
+}
+
+/**
+ * Member query — poll for pending consent requests on this session.
+ *
+ * GET /api/v1/sessions/{sessionId}/pending-consents
+ *
+ * Polls every 3 000 ms while:
+ *   - the component is mounted
+ *   - `opts.enabled` is true (callers pass `myRole === 'member' && session.status === 'in_progress'`)
+ *
+ * Returns an array of pending ConsentRequestData rows (normally 0 or 1 items).
+ *
+ * Upgrade path to WebSocket push: when APNs/FCM is live, the member side can
+ * rely on a push notification instead of polling.  Swap `refetchInterval` for
+ * an FCM-triggered `queryClient.invalidateQueries` call at that point.
+ */
+export function usePendingConsents(
+  sessionId: string,
+  opts: { enabled: boolean },
+) {
+  return useQuery({
+    queryKey: consentRequestQueryKeys.pendingConsents(sessionId),
+    queryFn: async (): Promise<ConsentRequestData[]> => {
+      const raw = await api<unknown[]>(
+        `/sessions/${sessionId}/pending-consents`,
+      );
+      return transformKeys<ConsentRequestData[]>(raw);
+    },
+    enabled: opts.enabled && sessionId.length > 0,
+    refetchInterval: 3_000,
+    staleTime: 0,
+  });
+}
+
+/**
+ * Member mutation — approve a pending consent request.
+ *
+ * POST /api/v1/consent-requests/{requestId}/approve
+ *
+ * ``typedSignature`` is the member's full name — stored on the resulting
+ * MemberConsent row as the HIPAA-required individual authorization signature.
+ *
+ * On success the backend creates a MemberConsent row with the member's own
+ * user ID (not the CHW's), satisfying California §632 two-party consent.
+ */
+export function useApproveConsentRequest() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      requestId,
+      typedSignature,
+    }: {
+      requestId: string;
+      typedSignature: string;
+    }): Promise<ConsentRequestData> => {
+      const raw = await api<unknown>(
+        `/consent-requests/${requestId}/approve`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ typed_signature: typedSignature }),
+        },
+      );
+      return transformKeys<ConsentRequestData>(raw);
+    },
+    onSuccess: (data) => {
+      // Update the cached status so the CHW polling sees "approved" immediately.
+      qc.setQueryData(consentRequestQueryKeys.consentRequest(data.id), data);
+    },
+  });
+}
+
+/**
+ * Member mutation — deny a pending consent request.
+ *
+ * POST /api/v1/consent-requests/{requestId}/deny
+ *
+ * Denial is final for this request — the CHW must create a new ConsentRequest
+ * to ask again.  No MemberConsent row is created.
+ */
+export function useDenyConsentRequest() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (requestId: string): Promise<ConsentRequestData> => {
+      const raw = await api<unknown>(
+        `/consent-requests/${requestId}/deny`,
+        { method: 'POST' },
+      );
+      return transformKeys<ConsentRequestData>(raw);
+    },
+    onSuccess: (data) => {
+      qc.setQueryData(consentRequestQueryKeys.consentRequest(data.id), data);
+    },
+  });
+}
+
+/**
+ * CHW mutation — cancel an outstanding consent request.
+ *
+ * POST /api/v1/consent-requests/{requestId}/cancel
+ *
+ * Called when the CHW closes the "Waiting for member…" modal before the
+ * member responds.  Prevents the member from seeing a stale approval modal
+ * after the CHW has given up.
+ */
+export function useCancelConsentRequest() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (requestId: string): Promise<ConsentRequestData> => {
+      const raw = await api<unknown>(
+        `/consent-requests/${requestId}/cancel`,
+        { method: 'POST' },
+      );
+      return transformKeys<ConsentRequestData>(raw);
+    },
+    onSuccess: (data) => {
+      qc.setQueryData(consentRequestQueryKeys.consentRequest(data.id), data);
+    },
+  });
+}
+
+/**
+ * CHW query — poll for status updates on a specific consent request.
+ *
+ * GET /api/v1/consent-requests/{requestId}
+ *
+ * Polls every 3 000 ms while:
+ *   - `opts.enabled` is true (callers pass `status === 'pending'`)
+ *   - the request status has not reached a terminal value
+ *
+ * The `refetchInterval` callback stops polling automatically once the status
+ * transitions to approved, denied, cancelled, or expired — eliminating the
+ * need for callers to manually manage the polling lifecycle.
+ *
+ * Upgrade path to WebSocket push: replace `refetchInterval` with an
+ * FCM-triggered invalidation when APNs/FCM push is deployed.
+ */
+export function useConsentRequestStatus(
+  requestId: string,
+  opts: { enabled: boolean },
+) {
+  return useQuery({
+    queryKey: consentRequestQueryKeys.consentRequest(requestId),
+    queryFn: async (): Promise<ConsentRequestData> => {
+      const raw = await api<unknown>(`/consent-requests/${requestId}`);
+      return transformKeys<ConsentRequestData>(raw);
+    },
+    enabled: opts.enabled && requestId.length > 0,
+    refetchInterval: (query) => {
+      const data = query.state.data as ConsentRequestData | undefined;
+      if (data === undefined) return 3_000;
+      return CONSENT_TERMINAL_STATUSES.has(data.status) ? false : 3_000;
+    },
+    staleTime: 0,
+  });
+}
+
 // ─── CHW Intake Questionnaire ───────────────────────────────────────────────
 
 export interface CHWIntakeState {
