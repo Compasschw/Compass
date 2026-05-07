@@ -374,7 +374,17 @@ export function useSessionTranscription(
           endedAtMs: msg.ended_at_ms,
         };
 
-        setTranscripts((prev) => [...prev, chunk]);
+        // Coalesce successive partials for the same turn into a single
+        // entry: if the trailing chunk is still a partial, the incoming
+        // chunk (partial or final) continues that turn — replace in place.
+        // A final after a partial replaces it (same turn). A new partial
+        // after a final begins a fresh turn → append.
+        setTranscripts((prev) => {
+          if (prev.length > 0 && !prev[prev.length - 1].isFinal) {
+            return [...prev.slice(0, -1), chunk];
+          }
+          return [...prev, chunk];
+        });
         onChunkRef.current?.(chunk);
       };
 

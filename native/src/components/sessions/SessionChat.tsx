@@ -1494,7 +1494,19 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
    * never included in any error report or analytics event.
    */
   const handleTranscriptChunk = useCallback((chunk: TranscriptChunk) => {
-    setTranscriptChunks((prev) => [...prev, chunk]);
+    setTranscriptChunks((prev) => {
+      // AssemblyAI Universal Streaming emits multiple TurnEvents per turn:
+      // a series of partials (is_final=false) culminating in one final
+      // (is_final=true). To render a single live-updating bubble per turn
+      // instead of every partial as its own message, replace the trailing
+      // chunk in place if it is still a partial — that's the in-progress
+      // turn this chunk continues. Once a final lands, the next partial
+      // belongs to a new turn and gets appended.
+      if (prev.length > 0 && !prev[prev.length - 1].isFinal) {
+        return [...prev.slice(0, -1), chunk];
+      }
+      return [...prev, chunk];
+    });
   }, []);
 
   const transcription = useSessionTranscription({
