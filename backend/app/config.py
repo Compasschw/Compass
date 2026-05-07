@@ -91,6 +91,14 @@ class Settings(BaseSettings):
     stripe_webhook_secret: str = ""  # whsec_... from Stripe dashboard
     stripe_platform_name: str = "CompassCHW"
 
+    # Vonage WebSocket JWT auth — signs short-lived tokens embedded in NCCO
+    # websocket endpoints so Vonage can authenticate to our audio-ingestion WS.
+    # Intentionally NOT validated at startup (backwards compat — existing deploys
+    # without this key keep running; the Vonage WS route simply refuses new
+    # connections until the key is configured).
+    # Generate: python -c "import secrets; print(secrets.token_urlsafe(48))"
+    vonage_ws_jwt_secret: str = ""
+
     class Config:
         env_file = ".env"
 
