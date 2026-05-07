@@ -98,6 +98,7 @@ function urgencyRank(s: SessionData): number {
   if (pseudo === 'awaiting_confirmation') return URGENCY_PRIORITY.soon;
   return URGENCY_PRIORITY.routine;
 }
+import { ApiError } from '../../api/client';
 import {
   useChwClaims,
   useSessions,
@@ -302,6 +303,12 @@ interface SessionCardProps {
   claimsBySession: Map<string, ChwClaim>;
   /** True while the Vonage call-bridge request for this session is in flight */
   isCallingMember: boolean;
+  /**
+   * When true the Start Session button on THIS card is disabled because another
+   * session is already in_progress. The button is visually dimmed and labelled
+   * "Another session active" to signal the reason to the CHW.
+   */
+  isStartDisabled: boolean;
   onStart: (id: string) => void;
   onComplete: (id: string) => void;
   onDocumentSession: (id: string) => void;
@@ -309,6 +316,8 @@ interface SessionCardProps {
   /** Initiate a masked Vonage call to the member on this session. */
   onCallMember: (session: SessionData) => void;
   onOpenMemberProfile: (memberId: string | undefined, memberName: string | undefined) => void;
+  /** Called when the CHW taps a disabled Start Session button. */
+  onStartDisabledPress: () => void;
 }
 
 function SessionCard({
@@ -317,12 +326,14 @@ function SessionCard({
   isFirstSession,
   claimsBySession,
   isCallingMember,
+  isStartDisabled,
   onStart,
   onComplete,
   onDocumentSession,
   onOpenChat,
   onCallMember,
   onOpenMemberProfile,
+  onStartDisabledPress,
 }: SessionCardProps): React.JSX.Element {
   const verticalColor = VERTICAL_COLORS[session.vertical as Vertical] ?? '#6B7A6B';
   const verticalLabel = VERTICAL_LABELS[session.vertical as Vertical] ?? session.vertical;
@@ -434,13 +445,31 @@ function SessionCard({
         <View style={cardStyles.actionRow}>
           {isScheduled && (
             <TouchableOpacity
-              style={cardStyles.startButton}
-              onPress={() => onStart(session.id)}
-              accessibilityLabel={`Start session with ${session.memberName}`}
+              style={[cardStyles.startButton, isStartDisabled && cardStyles.startButtonDisabled]}
+              onPress={() => {
+                if (isStartDisabled) {
+                  onStartDisabledPress();
+                } else {
+                  onStart(session.id);
+                }
+              }}
+              accessibilityLabel={
+                isStartDisabled
+                  ? `Cannot start — another session is already in progress`
+                  : `Start session with ${session.memberName}`
+              }
               accessibilityRole="button"
+              accessibilityState={{ disabled: isStartDisabled }}
             >
-              <Play size={14} color="#FFFFFF" />
-              <Text style={cardStyles.startButtonText}>Start Session</Text>
+              <Play size={14} color={isStartDisabled ? '#AAAAAA' : '#FFFFFF'} />
+              <Text
+                style={[
+                  cardStyles.startButtonText,
+                  isStartDisabled && cardStyles.startButtonDisabledText,
+                ]}
+              >
+                {isStartDisabled ? 'Another session active' : 'Start Session'}
+              </Text>
             </TouchableOpacity>
           )}
           {isInProgress && (
@@ -702,12 +731,19 @@ const cardStyles = StyleSheet.create({
     borderRadius: 12,
   },
   startButtonDisabled: {
-    opacity: 0.4,
+    backgroundColor: '#E5E5E5',
+    borderWidth: 1,
+    borderColor: '#CCCCCC',
+    opacity: 1,
   },
   startButtonText: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 14,
     color: '#FFFFFF',
+  },
+  startButtonDisabledText: {
+    color: '#888888',
+    fontSize: 13,
   },
   completeButton: {
     flex: 1,
@@ -985,6 +1021,88 @@ const toastBannerStyles = StyleSheet.create({
   },
 });
 
+// ─── ActiveSessionBanner ─────────────────────────────────────────────────────
+//
+// Shown at the top of the Active tab when the CHW already has a session in
+// in_progress. Tapping "View" scrolls the FlatList to the in-progress card.
+
+interface ActiveSessionBannerProps {
+  /** ID of the currently in-progress session. Used to build the "View" action. */
+  activeSessionId: string;
+  /** Called when the CHW taps the "View active session" link. */
+  onViewActiveSession: (sessionId: string) => void;
+}
+
+/**
+ * Persistent inline banner reminding the CHW that one session is in progress.
+ * Uses the same visual language as the consent/error banners in the app:
+ * gold/amber background with dark text, rounded card, left accent.
+ */
+function ActiveSessionBanner({
+  activeSessionId,
+  onViewActiveSession,
+}: ActiveSessionBannerProps): React.JSX.Element {
+  return (
+    <View
+      style={activeBannerStyles.container}
+      accessibilityRole="alert"
+      accessibilityLiveRegion="polite"
+    >
+      <View style={activeBannerStyles.accentBar} />
+      <View style={activeBannerStyles.body}>
+        <Text style={activeBannerStyles.message}>
+          You have a session in progress. Complete it before starting another.
+        </Text>
+        <TouchableOpacity
+          onPress={() => onViewActiveSession(activeSessionId)}
+          accessibilityRole="link"
+          accessibilityLabel="View active session"
+          hitSlop={8}
+        >
+          <Text style={activeBannerStyles.link}>View active session →</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
+const activeBannerStyles = StyleSheet.create({
+  container: {
+    flexDirection: 'row',
+    backgroundColor: colors.compassGold + '18',
+    borderWidth: 1,
+    borderColor: colors.compassGold + '60',
+    borderRadius: 12,
+    marginHorizontal: 20,
+    marginBottom: 8,
+    overflow: 'hidden',
+  },
+  accentBar: {
+    width: 4,
+    backgroundColor: colors.compassGold,
+    borderTopLeftRadius: 12,
+    borderBottomLeftRadius: 12,
+  },
+  body: {
+    flex: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 4,
+  },
+  message: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 13,
+    color: '#7A5800',
+    lineHeight: 18,
+  },
+  link: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12,
+    color: colors.compassGold,
+    textDecorationLine: 'underline',
+  },
+});
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 type SessionTab = 'active' | 'completed';
@@ -1077,10 +1195,82 @@ export function CHWSessionsScreen(): React.JSX.Element {
 
   const displayedSessions = activeTab === 'active' ? activeSessions : completedSessions;
 
-  const handleStart = useCallback((id: string): void => {
-    startTimestamps.current[id] = Date.now();
-    void startSession.mutateAsync(id);
-  }, [startSession]);
+  // ── One-active-session-per-CHW gating ────────────────────────────────────────
+  // Computed from the live sessions list so it auto-updates after start/complete.
+  const inProgressSession = useMemo<SessionData | undefined>(
+    () => allSessions.find((s) => s.status === 'in_progress'),
+    [allSessions],
+  );
+  const hasActiveInProgress = inProgressSession !== undefined;
+
+  // Ref to the FlatList so we can scroll to the in-progress card when the CHW
+  // taps "View active session →" in the banner.
+  const flatListRef = useRef<FlatList<SessionData>>(null);
+
+  /**
+   * Show a short-lived toast banner at the top of the screen.
+   * Cancels any in-flight timer so rapid calls don't stack banners.
+   * Defined before all handlers that reference it.
+   */
+  const showToast = useCallback((message: string): void => {
+    if (toastTimerRef.current !== null) {
+      clearTimeout(toastTimerRef.current);
+    }
+    setToastMessage(message);
+    toastTimerRef.current = setTimeout(() => {
+      setToastMessage(null);
+      toastTimerRef.current = null;
+    }, 3500);
+  }, []);
+
+  const handleViewActiveSession = useCallback(
+    (activeSessionId: string): void => {
+      const idx = activeSessions.findIndex((s) => s.id === activeSessionId);
+      if (idx >= 0 && flatListRef.current) {
+        flatListRef.current.scrollToIndex({ index: idx, animated: true, viewPosition: 0 });
+      }
+    },
+    [activeSessions],
+  );
+
+  /**
+   * Called when the CHW taps a disabled Start Session button. Shows a toast
+   * reminding them to complete the current session first.
+   */
+  const handleStartDisabledPress = useCallback((): void => {
+    showToast(
+      'You have a session in progress. Complete it before starting another.',
+    );
+  }, [showToast]);
+
+  const handleStart = useCallback(
+    async (id: string): Promise<void> => {
+      startTimestamps.current[id] = Date.now();
+      try {
+        await startSession.mutateAsync(id);
+      } catch (err) {
+        // Check for the structured 409 — another session is already in progress.
+        if (
+          err instanceof ApiError &&
+          err.status === 409 &&
+          err.rawDetail !== null &&
+          err.rawDetail['code'] === 'ANOTHER_SESSION_IN_PROGRESS'
+        ) {
+          showToast(
+            'You have a session in progress. Complete it before starting another.',
+          );
+          return;
+        }
+        // All other errors — surface the message so the CHW knows what happened.
+        const reason =
+          err instanceof Error && err.message.trim().length > 0
+            ? err.message
+            : 'Failed to start session. Please try again.';
+        showToast(reason);
+      }
+    },
+    [startSession, showToast],
+  );
 
   const handleComplete = useCallback((id: string): void => {
     void completeSession.mutateAsync(id);
@@ -1131,21 +1321,6 @@ export function CHWSessionsScreen(): React.JSX.Element {
     },
     [navigation],
   );
-
-  /**
-   * Show a short-lived toast banner at the top of the screen.
-   * Cancels any in-flight timer so rapid calls don't stack banners.
-   */
-  const showToast = useCallback((message: string): void => {
-    if (toastTimerRef.current !== null) {
-      clearTimeout(toastTimerRef.current);
-    }
-    setToastMessage(message);
-    toastTimerRef.current = setTimeout(() => {
-      setToastMessage(null);
-      toastTimerRef.current = null;
-    }, 3500);
-  }, []);
 
   /**
    * Initiate a Vonage masked call for an in-progress session.
@@ -1207,28 +1382,40 @@ export function CHWSessionsScreen(): React.JSX.Element {
   );
 
   const renderItem = useCallback(
-    ({ item }: { item: SessionData }) => (
-      <SessionCard
-        session={item}
-        startedAtMs={
-          item.status === 'in_progress' ? (startTimestamps.current[item.id] ?? Date.now()) : undefined
-        }
-        isFirstSession={firstSessionIds.has(item.id)}
-        claimsBySession={claimsBySession}
-        isCallingMember={callingSessionId === item.id}
-        onStart={handleStart}
-        onComplete={handleComplete}
-        onDocumentSession={handleDocumentSession}
-        onOpenChat={handleOpenChat}
-        onCallMember={(session) => { void handleCallMember(session); }}
-        onOpenMemberProfile={handleOpenMemberProfile}
-      />
-    ),
+    ({ item }: { item: SessionData }) => {
+      // The Start Session button is disabled when another session is in_progress
+      // AND this card is not itself the in-progress one (in-progress cards don't
+      // show a Start button at all, but we guard here for safety).
+      const isStartDisabled =
+        hasActiveInProgress && item.status === 'scheduled';
+
+      return (
+        <SessionCard
+          session={item}
+          startedAtMs={
+            item.status === 'in_progress' ? (startTimestamps.current[item.id] ?? Date.now()) : undefined
+          }
+          isFirstSession={firstSessionIds.has(item.id)}
+          claimsBySession={claimsBySession}
+          isCallingMember={callingSessionId === item.id}
+          isStartDisabled={isStartDisabled}
+          onStart={(id) => { void handleStart(id); }}
+          onComplete={handleComplete}
+          onDocumentSession={handleDocumentSession}
+          onOpenChat={handleOpenChat}
+          onCallMember={(session) => { void handleCallMember(session); }}
+          onOpenMemberProfile={handleOpenMemberProfile}
+          onStartDisabledPress={handleStartDisabledPress}
+        />
+      );
+    },
     [
+      hasActiveInProgress,
       firstSessionIds,
       claimsBySession,
       callingSessionId,
       handleStart,
+      handleStartDisabledPress,
       handleComplete,
       handleDocumentSession,
       handleOpenChat,
@@ -1290,15 +1477,32 @@ export function CHWSessionsScreen(): React.JSX.Element {
         </View>
       </View>
 
+      {/* Active-session lock banner — shown above the active list when
+          a session is already in_progress. Positioned between the tab bar and
+          the session list so it is visible without scrolling. Only shown on the
+          Active tab (where scheduled cards are visible and could be tapped). */}
+      {activeTab === 'active' && hasActiveInProgress && inProgressSession !== undefined && (
+        <ActiveSessionBanner
+          activeSessionId={inProgressSession.id}
+          onViewActiveSession={handleViewActiveSession}
+        />
+      )}
+
       {/* Session list */}
       {displayedSessions.length > 0 ? (
         <FlatList<SessionData>
+          ref={flatListRef}
           data={displayedSessions}
           keyExtractor={(item) => item.id}
           renderItem={renderItem}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
           refreshControl={refresh.control}
+          onScrollToIndexFailed={() => {
+            // If the index is not yet measured (list hasn't fully laid out),
+            // scroll to the top as a graceful fallback.
+            flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
+          }}
         />
       ) : (
         <View style={styles.emptyState}>

@@ -150,6 +150,31 @@ async def start_session(session_id: UUID, current_user=Depends(get_current_user)
         raise HTTPException(status_code=404, detail="Session not found")
     if session.status != "scheduled":
         raise HTTPException(status_code=409, detail=f"Cannot start session with status '{session.status}'. Must be 'scheduled'.")
+
+    # Enforce one active session per CHW. A CHW may only have a single session
+    # in `in_progress` at any time — the device shows one live timer and the
+    # billing pipeline assumes a 1:1 CHW→session relationship per window.
+    existing_result = await db.execute(
+        select(Session).where(
+            Session.chw_id == current_user.id,
+            Session.status == "in_progress",
+            Session.id != session_id,
+        )
+    )
+    existing_in_progress = existing_result.scalar_one_or_none()
+    if existing_in_progress is not None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "ANOTHER_SESSION_IN_PROGRESS",
+                "message": (
+                    "You already have a session in progress. "
+                    "Complete or cancel it before starting another."
+                ),
+                "active_session_id": str(existing_in_progress.id),
+            },
+        )
+
     session.status = "in_progress"
     session.started_at = datetime.now(UTC)
 

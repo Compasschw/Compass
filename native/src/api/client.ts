@@ -63,13 +63,28 @@ export interface ApiOptions extends RequestInit {
 
 export class ApiError extends Error {
   public readonly status: number;
+  /** Human-readable message extracted from the response `detail` field. */
   public readonly detail: string;
+  /**
+   * Raw `detail` payload when the server returned a structured object rather
+   * than a plain string. Callers that need machine-readable codes (e.g. the
+   * ANOTHER_SESSION_IN_PROGRESS 409) should inspect this field.
+   *
+   * Example shape for a structured 409:
+   *   { code: "ANOTHER_SESSION_IN_PROGRESS", message: "...", active_session_id: "uuid" }
+   */
+  public readonly rawDetail: Record<string, unknown> | null;
 
-  constructor(status: number, detail: string) {
+  constructor(
+    status: number,
+    detail: string,
+    rawDetail: Record<string, unknown> | null = null,
+  ) {
     super(detail);
     this.name = 'ApiError';
     this.status = status;
     this.detail = detail;
+    this.rawDetail = rawDetail;
   }
 }
 
@@ -183,6 +198,7 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
   // ── Error handling ─────────────────────────────────────────────────────────
   if (!response.ok) {
     let detail = `HTTP ${response.status}`;
+    let rawDetail: Record<string, unknown> | null = null;
 
     try {
       // FastAPI's `detail` can be a string (HTTPException(detail="...")) or
@@ -191,6 +207,9 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
       // payloads — e.g. `/chw/intake/submit` returns
       // `{message, missing_fields}`. Normalise both into a readable string
       // for ApiError so toasts / banners stay legible regardless of source.
+      // The raw object is also preserved in `rawDetail` so callers that need
+      // machine-readable codes (e.g. ANOTHER_SESSION_IN_PROGRESS) can inspect
+      // it without re-parsing the message string.
       const errorBody = (await response.json()) as {
         detail?: string | { message?: string; [k: string]: unknown };
       };
@@ -198,13 +217,14 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
       if (typeof raw === 'string') {
         detail = raw;
       } else if (raw && typeof raw === 'object') {
+        rawDetail = raw as Record<string, unknown>;
         detail = typeof raw.message === 'string' ? raw.message : JSON.stringify(raw);
       }
     } catch {
       // Body was not JSON — fall back to the status string.
     }
 
-    throw new ApiError(response.status, detail);
+    throw new ApiError(response.status, detail, rawDetail);
   }
 
   // 204 No Content — return empty object cast to T.
