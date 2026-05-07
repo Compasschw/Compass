@@ -1022,7 +1022,7 @@ function MemberConsentModal({
       <View style={mcm.backdrop}>
         <View
           style={mcm.card}
-          accessibilityRole="dialog"
+          accessibilityRole="alert"
           accessibilityLabel="Recording consent request"
           accessibilityViewIsModal
         >
