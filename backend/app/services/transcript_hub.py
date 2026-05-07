@@ -164,12 +164,22 @@ class AssemblyAIStreamingSession(StreamingSession):
               - ``speaker_label``: only set when speaker_labels=True (Phase 3)
             """
             text: str = getattr(event, "transcript", "") or ""
+            words = getattr(event, "words", None) or []
+            is_final: bool = bool(getattr(event, "end_of_turn", False))
+
+            # Per-turn diagnostic — INFO so it's visible without re-deploying.
+            # Logs only metadata (length, count, flag) — never the text itself.
+            logger.info(
+                "assemblyai turn session=%s end_of_turn=%s words=%d text_len=%d",
+                session_id,
+                is_final,
+                len(words),
+                len(text),
+            )
+
             if not text:
                 # Silence / empty partial — skip to avoid noisy fan-out.
                 return
-
-            words = getattr(event, "words", None) or []
-            is_final: bool = bool(getattr(event, "end_of_turn", False))
 
             # Derive timing from word-level offsets (milliseconds since
             # session start, per the v3 schema).
@@ -232,6 +242,11 @@ class AssemblyAIStreamingSession(StreamingSession):
                     sample_rate=_STREAMING_SAMPLE_RATE,
                     speech_model=SpeechModel.universal_streaming_english,
                     format_turns=True,
+                    # Emit partial TurnEvents during a turn (end_of_turn=False)
+                    # in addition to the formatted final at end_of_turn=True.
+                    # Without this, a continuous monologue with no clear silence
+                    # pause never fires a turn boundary and nothing comes back.
+                    include_partial_turns=True,
                 )
             )
             return client
