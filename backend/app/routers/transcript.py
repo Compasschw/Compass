@@ -179,13 +179,17 @@ async def _load_session_and_authorize(
     # Admin users bypass this check — they may need to monitor sessions for
     # compliance without going through the member consent flow.
     if user.role != "admin":
+        # ``.first()`` (not ``.scalar_one_or_none()``) — duplicate consent rows
+        # are legal here.  Each ConsentRequest the member approves writes a new
+        # MemberConsent row for audit purposes; the gate only cares whether at
+        # least one exists, so multiple rows must not raise.
         consent_result = await db.execute(
-            select(MemberConsent).where(
+            select(MemberConsent.id).where(
                 MemberConsent.session_id == session_id,
                 MemberConsent.consent_type == CONSENT_TYPE_AI_TRANSCRIPTION,
             )
         )
-        if consent_result.scalar_one_or_none() is None:
+        if consent_result.first() is None:
             logger.warning(
                 "transcript WS rejected: no ai_transcription consent for session=%s user=%s",
                 session_id,
