@@ -108,6 +108,7 @@ from app.routers.member import router as member_router
 from app.routers.payments import router as payments_router
 from app.routers.phone_verification import router as phone_verification_router
 from app.routers.requests import router as requests_router
+from app.routers.sessions import _consent_request_router as consent_request_router
 from app.routers.sessions import router as sessions_router
 from app.routers.transcript import router as transcript_router
 from app.routers.upload import router as upload_router
@@ -119,6 +120,7 @@ app.include_router(chw_router)
 app.include_router(chw_intake_router)
 app.include_router(member_router)
 app.include_router(sessions_router)
+app.include_router(consent_request_router)
 app.include_router(transcript_router)
 app.include_router(requests_router)
 app.include_router(matching_router)
