@@ -41,6 +41,10 @@ import {
   type Vertical,
 } from '../../data/mock';
 import {
+  VERTICAL_FILTER_OPTIONS,
+  VERTICAL_PICKER_OPTIONS,
+} from '../../lib/verticals';
+import {
   useChwBrowse,
   useCreateRequest,
   useSessions,
@@ -111,21 +115,12 @@ interface ScheduleFormData {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const FILTER_VERTICALS: { key: Vertical; label: string }[] = [
-  { key: 'housing', label: 'Housing' },
-  { key: 'food', label: 'Food' },
-  { key: 'mental_health', label: 'Mental Health' },
-  { key: 'rehab', label: 'Rehab' },
-  { key: 'healthcare', label: 'Healthcare' },
-];
+// Sourced from lib/verticals — single source of truth for labels.
+const FILTER_VERTICALS: ReadonlyArray<{ key: Vertical; label: string }> =
+  VERTICAL_FILTER_OPTIONS as ReadonlyArray<{ key: Vertical; label: string }>;
 
-const VERTICAL_OPTIONS: { key: Vertical; label: string; emoji: string }[] = [
-  { key: 'housing', label: 'Housing', emoji: '🏠' },
-  { key: 'food', label: 'Food Security', emoji: '🛒' },
-  { key: 'mental_health', label: 'Mental Health', emoji: '🧠' },
-  { key: 'rehab', label: 'Rehab & Recovery', emoji: '💪' },
-  { key: 'healthcare', label: 'Healthcare Access', emoji: '🏥' },
-];
+const VERTICAL_OPTIONS: ReadonlyArray<{ key: Vertical; label: string; emoji: string }> =
+  VERTICAL_PICKER_OPTIONS as ReadonlyArray<{ key: Vertical; label: string; emoji: string }>;
 
 const URGENCY_OPTIONS: { key: Urgency; label: string }[] = [
   { key: 'routine', label: 'Routine' },

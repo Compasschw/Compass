@@ -43,6 +43,7 @@ import { useSessions } from '../../hooks/useApiQueries';
 import { useRefreshControl } from '../../hooks/useRefreshControl';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
+import { VERTICAL_COLOR } from '../../lib/verticals';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -60,11 +61,7 @@ const TODAY_MONTH = now.getMonth();
 const TODAY_DAY = now.getDate();
 
 const verticalColors: Record<Vertical | 'goal_milestone', string> = {
-  housing: '#3B82F6',
-  rehab: '#EF4444',
-  food: '#F59E0B',
-  mental_health: '#8B5CF6',
-  healthcare: '#06B6D4',
+  ...(VERTICAL_COLOR as Record<Vertical, string>),
   goal_milestone: colors.secondary,
 };
 

@@ -464,12 +464,19 @@ export const earningsSummary: EarningsSummary = {
 
 // ─── Display label maps ───────────────────────────────────────────────────────
 
+/**
+ * Vertical display labels — delegates to the canonical map in lib/verticals.ts.
+ * Kept here for backwards compatibility with the many screens that import from
+ * data/mock. New code should import from lib/verticals directly.
+ *
+ * @deprecated Import VERTICAL_LABEL or verticalLabel() from lib/verticals.ts.
+ */
 export const verticalLabels: Record<Vertical, string> = {
   housing: 'Housing',
   rehab: 'Rehab & Recovery',
   food: 'Food Security',
   mental_health: 'Mental Health',
-  healthcare: 'Healthcare Access',
+  healthcare: 'Healthcare',
 };
 
 export const urgencyLabels: Record<Urgency, string> = {

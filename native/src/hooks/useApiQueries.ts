@@ -197,6 +197,8 @@ export const queryKeys = {
   session: (id: string) => ['sessions', id] as const,
   sessionAiSummary: (id: string) => ['sessions', id, 'ai-summary'] as const,
   requests: ['requests'] as const,
+  /** Member-scoped: the authenticated member's own requests regardless of status. */
+  myRequests: ['requests', 'mine'] as const,
   chwEarnings: ['chw', 'earnings'] as const,
   chwClaims: ['chw', 'claims'] as const,
   chwProfile: ['chw', 'profile'] as const,
@@ -262,6 +264,31 @@ export function useRequests() {
       const raw = await api<unknown[]>('/requests/');
       return transformKeys<ServiceRequestData[]>(raw);
     },
+    // Re-fetch every 15 s while the component is mounted so the CHW open-request
+    // list reflects member cancellations without requiring a manual pull-to-refresh.
+    refetchInterval: 15_000,
+    refetchOnWindowFocus: true,
+  });
+}
+
+/**
+ * Member-side query: returns all of the authenticated member's own requests,
+ * ordered newest-first. The backend's GET /requests/ already scopes to the
+ * caller when the caller is a member, so this reuses the same endpoint but
+ * stores the result under a separate query key so member and CHW caches don't
+ * collide.
+ *
+ * Polls every 15 s so the member sees CHW-pass events without a manual refresh.
+ */
+export function useMyRequests() {
+  return useQuery({
+    queryKey: queryKeys.myRequests,
+    queryFn: async () => {
+      const raw = await api<unknown[]>('/requests/');
+      return transformKeys<ServiceRequestData[]>(raw);
+    },
+    refetchInterval: 15_000,
+    refetchOnWindowFocus: true,
   });
 }
 
@@ -409,6 +436,35 @@ export function usePassRequest() {
       await api(`/requests/${requestId}/pass`, { method: 'PATCH' });
     },
     onSuccess: () => {
+      // Invalidate both the CHW open-requests list and the member pending list
+      // so both sides reflect the pass within the next polling cycle.
+      void qc.invalidateQueries({ queryKey: queryKeys.requests });
+      void qc.invalidateQueries({ queryKey: queryKeys.myRequests });
+    },
+  });
+}
+
+/**
+ * Member cancels one of their own open requests.
+ *
+ * Optimistic behaviour: the caller removes the request from the local list
+ * immediately (via the `pendingCancelIds` state in `MemberSessionsScreen`).
+ * On success we invalidate both the member and CHW request caches so both
+ * sides pick up the cancellation within the next polling cycle (≤15 s).
+ *
+ * Calls PATCH /requests/{id}/cancel — the backend enforces that only the
+ * owning member may cancel, and only while the request is still `open`.
+ */
+export function useCancelRequest() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (requestId: string) => {
+      await api(`/requests/${requestId}/cancel`, { method: 'PATCH' });
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.myRequests });
+      // Also invalidate the CHW-facing requests query so any CHW browsing open
+      // requests sees the cancellation within the next polling cycle.
       void qc.invalidateQueries({ queryKey: queryKeys.requests });
     },
   });

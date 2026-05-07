@@ -40,7 +40,10 @@ import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
 import {
   type Vertical,
-} from '../../data/mock';
+  VERTICAL_LABEL,
+  VERTICAL_COLOR,
+  VERTICAL_FILTER_OPTIONS,
+} from '../../lib/verticals';
 import {
   useRequests,
   useAcceptRequest,
@@ -51,31 +54,13 @@ import { useRefreshControl } from '../../hooks/useRefreshControl';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// ─── Constants (sourced from lib/verticals — single source of truth) ──────────
 
-const FILTER_VERTICALS: { key: Vertical; label: string }[] = [
-  { key: 'housing', label: 'Housing' },
-  { key: 'food', label: 'Food' },
-  { key: 'mental_health', label: 'Mental Health' },
-  { key: 'rehab', label: 'Rehab' },
-  { key: 'healthcare', label: 'Healthcare' },
-];
+const FILTER_VERTICALS: ReadonlyArray<{ key: Vertical; label: string }> =
+  VERTICAL_FILTER_OPTIONS;
 
-const VERTICAL_COLORS: Record<Vertical, string> = {
-  housing: '#3B82F6',
-  rehab: '#EF4444',
-  food: '#F59E0B',
-  mental_health: '#8B5CF6',
-  healthcare: '#06B6D4',
-};
-
-const VERTICAL_LABELS: Record<Vertical, string> = {
-  housing: 'Housing',
-  rehab: 'Rehab & Recovery',
-  food: 'Food Security',
-  mental_health: 'Mental Health',
-  healthcare: 'Healthcare',
-};
+const VERTICAL_COLORS: Record<Vertical, string> = VERTICAL_COLOR;
+const VERTICAL_LABELS: Record<Vertical, string> = VERTICAL_LABEL;
 
 const SESSION_MODE_LABELS: Record<string, string> = {
   in_person: 'In Person',

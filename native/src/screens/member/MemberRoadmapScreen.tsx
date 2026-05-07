@@ -39,6 +39,7 @@ import {
   type Goal,
   type Vertical,
 } from '../../data/mock';
+import { VERTICAL_LABEL, VERTICAL_PICKER_OPTIONS } from '../../lib/verticals';
 import {
   useMemberRoadmap,
   useCompleteRoadmapItem,
@@ -55,13 +56,9 @@ interface LocalGoal extends Goal {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const VERTICAL_OPTIONS: { key: Vertical; label: string; emoji: string }[] = [
-  { key: 'housing', label: 'Housing', emoji: '🏠' },
-  { key: 'food', label: 'Food Security', emoji: '🛒' },
-  { key: 'mental_health', label: 'Mental Health', emoji: '🧠' },
-  { key: 'rehab', label: 'Rehab & Recovery', emoji: '💪' },
-  { key: 'healthcare', label: 'Healthcare Access', emoji: '🏥' },
-];
+// Sourced from lib/verticals — single source of truth for labels.
+const VERTICAL_OPTIONS: ReadonlyArray<{ key: Vertical; label: string; emoji: string }> =
+  VERTICAL_PICKER_OPTIONS as ReadonlyArray<{ key: Vertical; label: string; emoji: string }>;
 
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -283,13 +280,8 @@ const goalCardStyles = StyleSheet.create({
 
 // ─── Session Followup rendering ──────────────────────────────────────────────
 
-const FOLLOWUP_VERTICAL_LABELS: Record<FollowupVertical, string> = {
-  housing: 'Housing',
-  food: 'Food Security',
-  mental_health: 'Mental Health',
-  rehab: 'Rehab',
-  healthcare: 'Healthcare',
-};
+// Sourced from lib/verticals — single source of truth for labels.
+const FOLLOWUP_VERTICAL_LABELS: Record<FollowupVertical, string> = VERTICAL_LABEL as Record<FollowupVertical, string>;
 
 const FOLLOWUP_PRIORITY_COLORS: Record<string, string> = {
   low: colors.secondary,

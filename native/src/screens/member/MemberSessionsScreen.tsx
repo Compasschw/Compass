@@ -26,10 +26,16 @@ import {
   CheckCircle,
   ChevronDown,
   ChevronUp,
+  Clock,
+  Home,
   Inbox,
   MessageCircle,
+  RefreshCw,
+  ShoppingBasket,
+  Brain,
   Sparkles,
   Star,
+  Stethoscope,
   X,
   XCircle,
 } from 'lucide-react-native';
@@ -46,16 +52,26 @@ import {
 } from '../../data/mock';
 import {
   useSessions,
+  useMyRequests,
+  useCancelRequest,
   type SessionData,
+  type ServiceRequestData,
 } from '../../hooks/useApiQueries';
 import { useRefreshControl } from '../../hooks/useRefreshControl';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 import { SessionChat } from '../../components/sessions/SessionChat';
+import {
+  VERTICAL_COLOR,
+  VERTICAL_EMOJI,
+  VERTICAL_LABEL,
+  verticalLabel,
+  type Vertical as VerticalLib,
+} from '../../lib/verticals';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-type TabKey = 'active' | 'completed';
+type TabKey = 'active' | 'pending' | 'completed';
 
 const statusBadgeColors: Record<SessionStatus, { bg: string; text: string }> = {
   scheduled: { bg: `${colors.secondary}20`, text: colors.secondary },
@@ -64,21 +80,9 @@ const statusBadgeColors: Record<SessionStatus, { bg: string; text: string }> = {
   cancelled: { bg: `${colors.mutedForeground}15`, text: colors.mutedForeground },
 };
 
-const verticalColors: Record<Vertical, string> = {
-  housing: '#3B82F6',
-  rehab: '#EF4444',
-  food: '#F59E0B',
-  mental_health: '#8B5CF6',
-  healthcare: '#06B6D4',
-};
-
-const verticalEmoji: Record<Vertical, string> = {
-  housing: '🏠',
-  rehab: '💪',
-  food: '🛒',
-  mental_health: '🧠',
-  healthcare: '🏥',
-};
+// Delegate to lib/verticals — single source of truth.
+const verticalColors: Record<Vertical, string> = VERTICAL_COLOR as Record<Vertical, string>;
+const verticalEmoji: Record<Vertical, string> = VERTICAL_EMOJI as Record<Vertical, string>;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -983,20 +987,269 @@ const completedCardStyles = StyleSheet.create({
   },
 });
 
+// ─── Pending Request Card ─────────────────────────────────────────────────────
+
+interface PendingRequestCardProps {
+  request: ServiceRequestData;
+  isPendingCancel: boolean;
+  onCancel: (requestId: string) => void;
+}
+
+function PendingRequestCard({
+  request,
+  isPendingCancel,
+  onCancel,
+}: PendingRequestCardProps): React.JSX.Element {
+  // Prefer the multi-vertical array; fall back to the legacy single-vertical field.
+  const effectiveVerticals: string[] =
+    request.verticals && request.verticals.length > 0
+      ? request.verticals
+      : [request.vertical];
+
+  const primaryVertical = effectiveVerticals[0] as VerticalLib;
+  const primaryColor = VERTICAL_COLOR[primaryVertical] ?? '#6B7A6B';
+
+  const urgencyColor =
+    request.urgency === 'urgent'
+      ? '#EF4444'
+      : request.urgency === 'soon'
+      ? '#F59E0B'
+      : '#22C55E';
+
+  const urgencyLabel =
+    request.urgency === 'urgent'
+      ? 'Urgent'
+      : request.urgency === 'soon'
+      ? 'Soon'
+      : 'Routine';
+
+  const modeLabel: Record<string, string> = {
+    in_person: 'In Person',
+    virtual: 'Video Call',
+    phone: 'Phone',
+  };
+
+  const verticalsDisplay = effectiveVerticals.map(verticalLabel).join(' • ');
+
+  return (
+    <View
+      style={[
+        pendingCardStyles.container,
+        isPendingCancel && pendingCardStyles.containerDimmed,
+      ]}
+      accessible
+      accessibilityLabel={`Pending ${verticalsDisplay} request, ${urgencyLabel}`}
+    >
+      {/* Header */}
+      <View style={pendingCardStyles.headerRow}>
+        <View
+          style={[
+            pendingCardStyles.iconCircle,
+            { backgroundColor: `${primaryColor}18` },
+          ]}
+        >
+          <Clock size={18} color={primaryColor} />
+        </View>
+        <View style={pendingCardStyles.headerContent}>
+          <Text style={pendingCardStyles.title}>{verticalsDisplay} request</Text>
+          <View style={pendingCardStyles.badgeRow}>
+            {effectiveVerticals.map((v) => {
+              const color = VERTICAL_COLOR[v as VerticalLib] ?? '#6B7A6B';
+              return (
+                <View
+                  key={v}
+                  style={[pendingCardStyles.badge, { backgroundColor: `${color}18` }]}
+                >
+                  <Text style={[pendingCardStyles.badgeText, { color }]}>
+                    {verticalLabel(v)}
+                  </Text>
+                </View>
+              );
+            })}
+            <View
+              style={[
+                pendingCardStyles.badge,
+                { backgroundColor: `${urgencyColor}18` },
+              ]}
+            >
+              <Text style={[pendingCardStyles.badgeText, { color: urgencyColor }]}>
+                {urgencyLabel}
+              </Text>
+            </View>
+            <Text style={pendingCardStyles.modeText}>
+              · {modeLabel[request.preferredMode] ?? request.preferredMode}
+            </Text>
+          </View>
+        </View>
+      </View>
+
+      {/* Status note */}
+      <View style={pendingCardStyles.statusNote}>
+        <Text style={pendingCardStyles.statusNoteText}>
+          Waiting for a CHW to accept. You'll be notified when matched.
+        </Text>
+        <Text style={pendingCardStyles.submittedAt}>
+          Submitted {new Date(request.createdAt).toLocaleDateString('en-US', {
+            month: 'short',
+            day: 'numeric',
+          })}
+        </Text>
+      </View>
+
+      {/* Cancel */}
+      <TouchableOpacity
+        style={[
+          pendingCardStyles.cancelBtn,
+          isPendingCancel && pendingCardStyles.cancelBtnDisabled,
+        ]}
+        onPress={() => !isPendingCancel && onCancel(request.id)}
+        disabled={isPendingCancel}
+        accessibilityRole="button"
+        accessibilityLabel={`Cancel ${verticalsDisplay} request`}
+        accessibilityState={{ disabled: isPendingCancel }}
+      >
+        <XCircle size={13} color={isPendingCancel ? colors.border : colors.mutedForeground} />
+        <Text
+          style={[
+            pendingCardStyles.cancelBtnText,
+            isPendingCancel && { color: colors.border },
+          ]}
+        >
+          {isPendingCancel ? 'Cancelling…' : 'Cancel Request'}
+        </Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+const pendingCardStyles = StyleSheet.create({
+  container: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#DDD6CC',
+    padding: 16,
+    marginBottom: 12,
+    shadowColor: '#3D5A3E',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 24,
+    elevation: 3,
+  },
+  containerDimmed: {
+    opacity: 0.5,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    marginBottom: 10,
+  },
+  iconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+    marginTop: 2,
+  },
+  headerContent: {
+    flex: 1,
+    gap: 4,
+  },
+  title: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 15,
+    lineHeight: 20,
+    color: '#1E3320',
+    marginBottom: 4,
+  },
+  badgeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 6,
+  },
+  badge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 100,
+  },
+  badgeText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  modeText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12,
+    letterSpacing: 1,
+    color: '#6B7A6B',
+  },
+  statusNote: {
+    backgroundColor: '#F4F1ED',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 12,
+    gap: 4,
+  },
+  statusNoteText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: '#6B7A6B',
+    lineHeight: 18,
+  },
+  submittedAt: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 11,
+    color: colors.mutedForeground,
+    letterSpacing: 0.5,
+  },
+  cancelBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderColor: '#DDD6CC',
+    borderRadius: 12,
+    paddingVertical: 12,
+    backgroundColor: '#FFFFFF',
+  },
+  cancelBtnDisabled: {
+    borderColor: colors.border,
+    backgroundColor: '#F9F9F9',
+  },
+  cancelBtnText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 14,
+    color: '#6B7A6B',
+  },
+});
+
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export function MemberSessionsScreen(): React.JSX.Element {
   const [activeTab, setActiveTab] = useState<TabKey>('active');
   const [cancellingSession, setCancellingSession] = useState<SessionData | null>(null);
   const [cancelledIds, setCancelledIds] = useState<Set<string>>(new Set());
+  /** Request IDs optimistically dismissed while the cancel API call is in-flight. */
+  const [pendingCancelRequestIds, setPendingCancelRequestIds] = useState<Set<string>>(
+    new Set(),
+  );
   const [ratings, setRatings] = useState<Record<string, number>>({});
   const [expandedNotes, setExpandedNotes] = useState<Set<string>>(new Set());
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [chatSessionId, setChatSessionId] = useState<string | null>(null);
 
   const sessionsQuery = useSessions();
-  const refresh = useRefreshControl([sessionsQuery.refetch]);
+  const myRequestsQuery = useMyRequests();
+  const cancelRequest = useCancelRequest();
+  const refresh = useRefreshControl([sessionsQuery.refetch, myRequestsQuery.refetch]);
   const allSessions = sessionsQuery.data ?? [];
+  const allMyRequests = myRequestsQuery.data ?? [];
 
   // API already scopes to the authenticated member — no client-side name filter needed
   const activeSessions = allSessions.filter(
@@ -1006,6 +1259,11 @@ export function MemberSessionsScreen(): React.JSX.Element {
   );
 
   const completedSessions = allSessions.filter((s) => s.status === 'completed');
+
+  /** Open (unmatched) requests — visible as "Pending" to the member. */
+  const pendingRequests = allMyRequests.filter(
+    (r) => r.status === 'open' && !pendingCancelRequestIds.has(r.id),
+  );
 
   const showToast = useCallback((message: string) => {
     setToastMessage(message);
@@ -1054,7 +1312,31 @@ export function MemberSessionsScreen(): React.JSX.Element {
     showToast('Navigate to Find CHW to book a new session.');
   }, [showToast]);
 
-  if (sessionsQuery.isLoading) {
+  /** Optimistic cancel: dismiss immediately, fire the API call, rollback on error. */
+  const handleCancelRequest = useCallback(
+    async (requestId: string): Promise<void> => {
+      // Optimistically hide
+      setPendingCancelRequestIds((prev) => new Set(prev).add(requestId));
+      try {
+        await cancelRequest.mutateAsync(requestId);
+        showToast('Request cancelled.');
+      } catch {
+        // Rollback
+        setPendingCancelRequestIds((prev) => {
+          const next = new Set(prev);
+          next.delete(requestId);
+          return next;
+        });
+        showToast('Could not cancel request. Please try again.');
+      }
+    },
+    [cancelRequest, showToast],
+  );
+
+  const isLoading = sessionsQuery.isLoading || myRequestsQuery.isLoading;
+  const hasError = sessionsQuery.error && myRequestsQuery.error;
+
+  if (isLoading) {
     return (
       <SafeAreaView style={styles.safeArea} edges={['top']}>
         <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
@@ -1065,13 +1347,16 @@ export function MemberSessionsScreen(): React.JSX.Element {
     );
   }
 
-  if (sessionsQuery.error) {
+  if (hasError) {
     return (
       <SafeAreaView style={styles.safeArea} edges={['top']}>
         <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
         <ErrorState
           message="Could not load your sessions. Please try again."
-          onRetry={() => void sessionsQuery.refetch()}
+          onRetry={() => {
+            void sessionsQuery.refetch();
+            void myRequestsQuery.refetch();
+          }}
         />
       </SafeAreaView>
     );
@@ -1099,11 +1384,12 @@ export function MemberSessionsScreen(): React.JSX.Element {
         <Text style={styles.subtitle}>View and manage your CHW sessions</Text>
       </View>
 
-      {/* Tab bar */}
+      {/* Tab bar — Active | Pending | Completed */}
       <View style={styles.tabBar} accessibilityRole="tablist">
         {(
           [
             { key: 'active' as TabKey, label: 'Active', count: activeSessions.length },
+            { key: 'pending' as TabKey, label: 'Pending', count: pendingRequests.length },
             { key: 'completed' as TabKey, label: 'Completed', count: completedSessions.length },
           ] as const
         ).map(({ key, label, count }) => {
@@ -1154,6 +1440,25 @@ export function MemberSessionsScreen(): React.JSX.Element {
               <Inbox color={colors.mutedForeground} size={28} />
               <Text style={styles.emptyTitle}>No active sessions</Text>
               <Text style={styles.emptySub}>Find a CHW to get started!</Text>
+            </View>
+          )
+        ) : activeTab === 'pending' ? (
+          pendingRequests.length > 0 ? (
+            pendingRequests.map((req) => (
+              <PendingRequestCard
+                key={req.id}
+                request={req}
+                isPendingCancel={pendingCancelRequestIds.has(req.id)}
+                onCancel={(id) => void handleCancelRequest(id)}
+              />
+            ))
+          ) : (
+            <View style={styles.emptyState}>
+              <Inbox color={colors.mutedForeground} size={28} />
+              <Text style={styles.emptyTitle}>No pending requests</Text>
+              <Text style={styles.emptySub}>
+                Requests waiting to be matched with a CHW will appear here.
+              </Text>
             </View>
           )
         ) : (

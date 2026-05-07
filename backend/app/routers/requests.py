@@ -256,3 +256,40 @@ async def pass_request(request_id: UUID, current_user=Depends(require_role("chw"
         req.status = "open"
         await db.commit()
     return {"status": "passed", "request_id": str(req.id)}
+
+
+@router.patch("/{request_id}/cancel")
+async def cancel_request(
+    request_id: UUID,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Cancel an open request.
+
+    Only the member who owns the request may cancel it. Cancellation is only
+    allowed while the request is in the ``open`` state — once a CHW has
+    accepted (status=``matched``) the member should contact the CHW directly
+    or cancel the resulting session instead.
+
+    Returns 403 when the caller is not the owning member.
+    Returns 409 when the request is not in a cancellable state.
+    """
+    from app.models.request import ServiceRequest
+
+    req = await db.get(ServiceRequest, request_id)
+    if req is None:
+        raise HTTPException(status_code=404, detail="Request not found")
+
+    if req.member_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to cancel this request")
+
+    if req.status != "open":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot cancel a request with status '{req.status}'. "
+                   "Only open requests may be cancelled by the member.",
+        )
+
+    req.status = "cancelled"
+    await db.commit()
+    return {"status": "cancelled", "request_id": str(req.id)}

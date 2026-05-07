@@ -54,24 +54,12 @@ import {
 import { useRefreshControl } from '../../hooks/useRefreshControl';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
+import { VERTICAL_LABEL, VERTICAL_COLOR } from '../../lib/verticals';
 
-// ─── Vertical helpers ─────────────────────────────────────────────────────────
+// ─── Vertical helpers — sourced from lib/verticals (single source of truth) ───
 
-const VERTICAL_COLORS: Record<Vertical, string> = {
-  housing: '#3B82F6',
-  rehab: '#EF4444',
-  food: '#F59E0B',
-  mental_health: '#8B5CF6',
-  healthcare: '#06B6D4',
-};
-
-const VERTICAL_LABELS: Record<Vertical, string> = {
-  housing: 'Housing',
-  rehab: 'Rehab',
-  food: 'Food',
-  mental_health: 'Mental Health',
-  healthcare: 'Healthcare',
-};
+const VERTICAL_COLORS: Record<Vertical, string> = VERTICAL_COLOR;
+const VERTICAL_LABELS: Record<Vertical, string> = VERTICAL_LABEL;
 
 const URGENCY_COLORS: Record<string, string> = {
   routine: colors.secondary,
