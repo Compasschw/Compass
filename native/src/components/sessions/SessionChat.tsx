@@ -2241,7 +2241,6 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
         </View>
       )}
 
-
       <KeyboardAvoidingView
         style={c.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -2602,6 +2601,32 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
+
+const memberRecBannerStyles = StyleSheet.create({
+  container: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#FEF3C7',
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: '#FCD34D',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  dot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#DC2626',
+  },
+  text: {
+    flex: 1,
+    fontSize: 13,
+    color: '#78350F',
+    fontWeight: '500',
+  },
+});
 
 const c = StyleSheet.create({
   flex: { flex: 1 },

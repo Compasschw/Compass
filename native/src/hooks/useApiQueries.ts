@@ -849,6 +849,12 @@ export interface TranscriptionConsentPayload {
    * Must be non-empty before the CHW initiates recording.
    */
   typedSignature: string;
+  /**
+   * If true, the calling CHW attests that the member gave verbal consent
+   * on the call. Backend accepts this only when the caller is the session
+   * CHW. Used for single-device / phone-call flows.
+   */
+  chwAttestation?: boolean;
 }
 
 /**
@@ -869,6 +875,7 @@ export function useGrantTranscriptionConsent(sessionId: string) {
         body: JSON.stringify({
           consent_type: payload.consentType,
           typed_signature: payload.typedSignature,
+          chw_attestation: payload.chwAttestation ?? false,
         }),
       });
     },
