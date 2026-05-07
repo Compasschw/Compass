@@ -1225,10 +1225,12 @@ export function CHWSessionsScreen(): React.JSX.Element {
 
   const handleViewActiveSession = useCallback(
     (activeSessionId: string): void => {
+      // Open the in-progress session's Chat view so the CHW can immediately
+      // continue or complete it. Falls back to scrolling the list if the
+      // chat can't open (e.g. session disappeared).
       const idx = activeSessions.findIndex((s) => s.id === activeSessionId);
-      if (idx >= 0 && flatListRef.current) {
-        flatListRef.current.scrollToIndex({ index: idx, animated: true, viewPosition: 0 });
-      }
+      if (idx < 0) return;
+      setChatSessionId(activeSessionId);
     },
     [activeSessions],
   );
