@@ -124,6 +124,7 @@ from app.routers.sessions import _consent_request_router as consent_request_rout
 from app.routers.sessions import router as sessions_router
 from app.routers.transcript import router as transcript_router
 from app.routers.upload import router as upload_router
+from app.routers.vonage_audio import router as vonage_audio_router
 from app.routers.waitlist import router as waitlist_router
 
 app.include_router(auth_router)
@@ -145,3 +146,4 @@ app.include_router(admin_router)
 app.include_router(devices_router)
 app.include_router(payments_router)
 app.include_router(communication_router)
+app.include_router(vonage_audio_router)

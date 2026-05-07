@@ -15,6 +15,17 @@ os.environ.setdefault(
     "postgresql+asyncpg://compass:compass_dev_password@localhost:5432/compass_test",
 )
 
+# Provide safe placeholder values for required settings that have no defaults.
+# These setdefault calls are no-ops when real secrets are present in the shell
+# environment (e.g., in CI or when the developer has a .env file loaded).
+# The values below satisfy the length/value guards in config.py without
+# enabling any real integration — they are test-only stand-ins.
+os.environ.setdefault(
+    "SECRET_KEY",
+    "test-secret-key-for-pytest-runner-placeholder-AABBCCDD",
+)
+os.environ.setdefault("ADMIN_KEY", "test-admin-key-for-pytest-1234")
+
 import pytest  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402
 from sqlalchemy import text  # noqa: E402
