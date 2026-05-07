@@ -14,6 +14,13 @@ from app.middleware.audit import AuditMiddleware
 
 logger = logging.getLogger("compass")
 
+# Lift the compass.* logger family to INFO so transcript / streaming
+# diagnostics ("transcript WS connected", "assemblyai streaming session
+# opened", etc.) surface in container logs. Without this, the root
+# logger's default WARNING level hides every diagnostic short of an
+# error, making live incidents very hard to debug.
+logging.getLogger("compass").setLevel(logging.INFO)
+
 # ─── Sentry initialization ─────────────────────────────────────────────────────
 # Must happen before the FastAPI app is instantiated so the integration can
 # patch it cleanly. No-ops silently if SENTRY_DSN isn't set.
