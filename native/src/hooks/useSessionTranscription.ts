@@ -122,10 +122,29 @@ export type TranscriptionState =
   | 'error'
   | 'stopped';
 
+/**
+ * Controls whether the hook captures the device microphone or only subscribes
+ * to the server's fan-out stream.
+ *
+ * - `'mic_capture'`     — (default) acquire mic, stream audio to backend, receive
+ *                          transcript chunks back.  Used for in-person sessions.
+ * - `'subscribe_only'`  — skip mic permission, AudioWorklet, and AudioContext
+ *                          entirely.  Opens the WebSocket in receive-only mode so
+ *                          the CHW sees captions driven by audio that the backend
+ *                          is receiving from another source (e.g. Vonage call audio
+ *                          forked to AssemblyAI).  Used for phone sessions.
+ */
+export type TranscriptionMode = 'mic_capture' | 'subscribe_only';
+
 export interface UseSessionTranscriptionOptions {
   sessionId: string;
   /** Toggle false to trigger graceful shutdown. */
   enabled: boolean;
+  /**
+   * Transcription mode — see `TranscriptionMode` for full semantics.
+   * Defaults to `'mic_capture'` so all existing call-sites are unaffected.
+   */
+  mode?: TranscriptionMode;
   onTranscriptChunk?: (chunk: TranscriptChunk) => void;
 }
 
@@ -194,7 +213,7 @@ export function useSessionTranscription(
   // by the `isWeb` guards — they hold no resources and cost essentially nothing.
   const isWeb = Platform.OS === 'web';
 
-  const { sessionId, enabled, onTranscriptChunk } = opts;
+  const { sessionId, enabled, mode = 'mic_capture', onTranscriptChunk } = opts;
 
   const [state, setState] = useState<TranscriptionState>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -447,6 +466,17 @@ export function useSessionTranscription(
     r.teardownRequested = false;
     r.reconnectAttempt = 0;
 
+    // ── subscribe_only mode (phone sessions on native) ───────────────────────
+    // Opens the transcript WebSocket in receive-only mode — no mic required.
+    // The backend is already streaming audio from the Vonage call leg and
+    // fanning out transcript chunks; this just subscribes to that fan-out.
+    if (mode === 'subscribe_only') {
+      await connectWebSocket(false);
+      return;
+    }
+
+    // ── mic_capture mode — full pipeline below ────────────────────────────────
+
     // ── 1. Mic permission ───────────────────────────────────────────────────
     setState('requesting_permission');
     let granted = false;
@@ -497,7 +527,7 @@ export function useSessionTranscription(
     r.segmentTimer = setInterval(() => {
       void runSegmentCycle();
     }, SEGMENT_DURATION_MS);
-  }, [state, connectWebSocket, closeSocket, runSegmentCycle, transitionError]);
+  }, [state, mode, connectWebSocket, closeSocket, runSegmentCycle, transitionError]);
 
   // ── stop() ────────────────────────────────────────────────────────────────
 

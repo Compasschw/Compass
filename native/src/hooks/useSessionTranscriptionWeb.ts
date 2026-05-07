@@ -60,7 +60,12 @@ import {
   toSpeakerLabel,
   toSpeakerRole,
 } from '../utils/audioStreaming';
-import type { TranscriptChunk, TranscriptionState, UseSessionTranscriptionOptions, UseSessionTranscriptionResult } from './useSessionTranscription';
+import type {
+  TranscriptChunk,
+  TranscriptionState,
+  UseSessionTranscriptionOptions,
+  UseSessionTranscriptionResult,
+} from './useSessionTranscription';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -181,11 +186,21 @@ interface WebSessionRefs {
  *
  * Exposes the identical `UseSessionTranscriptionResult` interface as the mobile
  * hook so `useSessionTranscription` can delegate to it transparently.
+ *
+ * When `opts.mode === 'subscribe_only'` the hook skips all mic acquisition
+ * (getUserMedia, AudioContext, AudioWorkletNode) and only opens the WebSocket
+ * in receive-only mode to display captions fanned out by the backend from an
+ * external audio source (e.g. a Vonage call leg).  No binary audio frames are
+ * sent.  The server tolerates subscribe-only clients with no protocol change.
+ *
+ * When `opts.mode === 'mic_capture'` (the default) behaviour is bit-for-bit
+ * identical to the pre-refactor implementation so in-person sessions are
+ * completely unaffected.
  */
 export function useSessionTranscriptionWeb(
   opts: UseSessionTranscriptionOptions,
 ): UseSessionTranscriptionResult {
-  const { sessionId, enabled, onTranscriptChunk } = opts;
+  const { sessionId, enabled, mode = 'mic_capture', onTranscriptChunk } = opts;
 
   const [state, setState] = useState<TranscriptionState>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -510,6 +525,22 @@ export function useSessionTranscriptionWeb(
     r.teardownRequested = false;
     r.reconnectAttempt = 0;
 
+    // ── subscribe_only mode (phone sessions) ────────────────────────────────
+    //
+    // Skip mic permission, AudioContext, and AudioWorklet entirely.  The CHW's
+    // browser opens the WebSocket in receive-only mode to display captions that
+    // the backend fans out from the Vonage call leg's audio.  No binary frames
+    // are ever sent from this client — the server is the audio source.
+    //
+    // `isRecording` will be true (state='recording') once the socket opens,
+    // giving the UI the signal it needs to show the "Captions active" indicator.
+    if (mode === 'subscribe_only') {
+      await connectWebSocket(false);
+      return;
+    }
+
+    // ── mic_capture mode — full pipeline below ────────────────────────────────
+
     // ── 1. Secure context guard ─────────────────────────────────────────────
     if (!window.isSecureContext) {
       transitionError(
@@ -573,7 +604,7 @@ export function useSessionTranscriptionWeb(
       for (const track of stream.getTracks()) track.stop();
       // transitionError already called by startCapture.
     }
-  }, [state, connectWebSocket, startCapture, closeSocket, transitionError]);
+  }, [state, mode, connectWebSocket, startCapture, closeSocket, transitionError]);
 
   // ── stop() ────────────────────────────────────────────────────────────────
 
@@ -582,12 +613,18 @@ export function useSessionTranscriptionWeb(
     r.teardownRequested = true;
 
     clearReconnectTimer();
-    teardownAudio();
+
+    // In subscribe_only mode there is no audio chain to tear down — the
+    // MediaStream, AudioContext, and AudioWorkletNode were never created.
+    if (mode === 'mic_capture') {
+      teardownAudio();
+    }
+
     closeSocket(true);
 
     setState('stopped');
     console.log('[TranscriptionWeb] stopped');
-  }, [clearReconnectTimer, teardownAudio, closeSocket]);
+  }, [mode, clearReconnectTimer, teardownAudio, closeSocket]);
 
   // ── enabled watcher ───────────────────────────────────────────────────────
 
