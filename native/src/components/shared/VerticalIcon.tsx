@@ -2,8 +2,8 @@
  * VerticalIcon — renders the lucide-react-native icon for a social-determinants
  * vertical with the canonical colour coding used across the entire app.
  *
- * Single source of truth — eliminates the inline VERTICAL_COLORS / icon maps
- * duplicated across individual screens.
+ * Colours and icon selection delegate to lib/verticals.ts — single source of
+ * truth. If you need to change a colour or swap an icon, do it there.
  */
 
 import React from 'react';
@@ -15,6 +15,7 @@ import {
   Stethoscope,
 } from 'lucide-react-native';
 import type { Vertical } from '../../data/mock';
+import { VERTICAL_COLOR } from '../../lib/verticals';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -22,7 +23,7 @@ export interface VerticalIconProps {
   vertical: Vertical;
   /** Icon size in dp. Defaults to 20. */
   size?: number;
-  /** Override colour. Falls back to the canonical vertical colour. */
+  /** Override colour. Falls back to the canonical vertical colour from lib/verticals. */
   color?: string;
 }
 
@@ -38,14 +39,15 @@ const iconMap: Record<Vertical, LucideRNComponent> = {
   healthcare:    Stethoscope,
 };
 
-/** Canonical colours — matches the web VerticalIcon and Badge components. */
-export const verticalColors: Record<Vertical, string> = {
-  housing:       '#D97706', // amber-600
-  rehab:         '#9333EA', // purple-600
-  food:          '#F97316', // orange-500
-  mental_health: '#DB2777', // pink-600
-  healthcare:    '#2563EB', // blue-600
-};
+/**
+ * Canonical colours — sourced from lib/verticals.ts.
+ *
+ * Re-exported for legacy callers that imported `verticalColors` directly from
+ * this component. New code should import VERTICAL_COLOR from lib/verticals.
+ *
+ * @deprecated Import VERTICAL_COLOR from lib/verticals.ts instead.
+ */
+export const verticalColors: Record<Vertical, string> = VERTICAL_COLOR as Record<Vertical, string>;
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -58,7 +60,7 @@ export function VerticalIcon({
   color,
 }: VerticalIconProps): React.JSX.Element {
   const Icon = iconMap[vertical];
-  const resolvedColor = color ?? verticalColors[vertical];
+  const resolvedColor = color ?? VERTICAL_COLOR[vertical];
 
   return <Icon size={size} color={resolvedColor} />;
 }

@@ -54,15 +54,10 @@ import {
   type Vertical,
   type SessionDocumentation,
 } from '../../data/mock';
+import { VERTICAL_LABEL, VERTICAL_COLOR } from '../../lib/verticals';
 
-// ─── Vertical labels (for "Need" badge per Jemal Sessions feedback) ──────────
-const VERTICAL_LABELS: Record<Vertical, string> = {
-  housing: 'Housing',
-  rehab: 'Rehab',
-  food: 'Food',
-  mental_health: 'Mental Health',
-  healthcare: 'Healthcare',
-};
+// ─── Vertical labels — delegated to lib/verticals (single source of truth) ───
+const VERTICAL_LABELS: Record<Vertical, string> = VERTICAL_LABEL;
 
 // ─── Member need-journey status (mocked) — see CHWDashboardScreen ────────────
 // TODO(backend): expose journey_status per session.
@@ -121,13 +116,7 @@ import { phone } from '../../services/phone';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const VERTICAL_COLORS: Record<Vertical, string> = {
-  housing: '#3B82F6',
-  rehab: '#EF4444',
-  food: '#F59E0B',
-  mental_health: '#8B5CF6',
-  healthcare: '#06B6D4',
-};
+const VERTICAL_COLORS: Record<Vertical, string> = VERTICAL_COLOR;
 
 type BillingStatus = 'pending' | 'submitted' | 'approved' | 'rejected';
 
