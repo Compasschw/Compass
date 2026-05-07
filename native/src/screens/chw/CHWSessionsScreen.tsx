@@ -1528,6 +1528,15 @@ export function CHWSessionsScreen(): React.JSX.Element {
           visible={documentingSessionId != null}
           onClose={() => setDocumentingSessionId(null)}
           sessionId={documentingSessionId}
+          // Look up the session row from either tab so the modal can derive
+          // units-to-bill from the actual session duration.  Backend will
+          // recompute and authoritatively bill, but the CHW sees the right
+          // number up front.
+          durationMinutes={
+            [...activeSessions, ...completedSessions].find(
+              (s) => s.id === documentingSessionId,
+            )?.durationMinutes ?? null
+          }
           onSubmit={handleDocumentationSubmit}
         />
       )}

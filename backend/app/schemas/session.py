@@ -56,7 +56,11 @@ class SessionDocumentationSubmit(BaseModel):
     follow_up_date: datetime | None = None
     diagnosis_codes: list[str]
     procedure_code: str
-    units_to_bill: int = Field(ge=1, le=4)
+    # Optional — the backend authoritatively computes units from session
+    # duration via app.services.billing_service.calculate_units to prevent
+    # CHW upcoding. The field is accepted (with the ge/le bounds) for legacy
+    # clients but the value is overwritten server-side at submission.
+    units_to_bill: int | None = Field(default=None, ge=1, le=4)
 
     # AI summary provenance — optional; frontend passes through what it received
     # from POST /ai-summary so the submission record has permanent provenance.

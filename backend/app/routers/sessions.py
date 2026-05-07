@@ -321,15 +321,21 @@ async def submit_documentation(
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Documentation already submitted for this session")
 
-    errors = validate_claim(data.diagnosis_codes, data.procedure_code, data.units_to_bill)
+    # Authoritatively compute units from the session's actual duration so a
+    # CHW cannot upcode by submitting a higher units_to_bill from the client.
+    # The client's data.units_to_bill is intentionally ignored.
+    from app.services.billing_service import calculate_units
+    computed_units = calculate_units(session.duration_minutes)
+
+    errors = validate_claim(data.diagnosis_codes, data.procedure_code, computed_units)
     if errors:
         raise HTTPException(status_code=422, detail=errors)
 
     session_date = (session.started_at or session.created_at).date()
     caps = await check_unit_caps(db, session.chw_id, session.member_id, session_date)
-    if data.units_to_bill > caps["daily_remaining"]:
+    if computed_units > caps["daily_remaining"]:
         raise HTTPException(status_code=422, detail=f"Daily unit cap exceeded. {caps['daily_remaining']} units remaining today.")
-    if data.units_to_bill > caps["yearly_remaining"]:
+    if computed_units > caps["yearly_remaining"]:
         raise HTTPException(status_code=422, detail=f"Yearly unit cap exceeded. {caps['yearly_remaining']} units remaining this year.")
 
     doc = SessionDocumentation(
@@ -341,7 +347,7 @@ async def submit_documentation(
         follow_up_date=data.follow_up_date,
         diagnosis_codes=data.diagnosis_codes,
         procedure_code=data.procedure_code,
-        units_to_bill=data.units_to_bill,
+        units_to_bill=computed_units,
         # AI summary provenance — persisted so audit trails can distinguish
         # the AI-generated draft from the CHW-authored note permanently.
         ai_summary=data.ai_summary,
@@ -350,18 +356,18 @@ async def submit_documentation(
     )
     db.add(doc)
 
-    earnings = calculate_earnings(data.units_to_bill)
+    earnings = calculate_earnings(computed_units)
     claim = BillingClaim(
         session_id=session_id, chw_id=session.chw_id, member_id=session.member_id,
         diagnosis_codes=data.diagnosis_codes, procedure_code=data.procedure_code,
-        units=data.units_to_bill, gross_amount=earnings["gross"],
+        units=computed_units, gross_amount=earnings["gross"],
         platform_fee=earnings["platform_fee"], pear_suite_fee=earnings["pear_suite_fee"],
         net_payout=earnings["net"],
         service_date=session_date,
     )
     db.add(claim)
 
-    session.units_billed = data.units_to_bill
+    session.units_billed = computed_units
     session.gross_amount = earnings["gross"]
     session.net_amount = earnings["net"]
     await db.commit()
@@ -386,7 +392,7 @@ async def submit_documentation(
             procedure_code=data.procedure_code,
             modifier=claim.modifier or "U2",
             diagnosis_codes=data.diagnosis_codes,
-            units=data.units_to_bill,
+            units=computed_units,
             gross_amount=_Dec(str(earnings["gross"])),
         ))
         if result.success and result.provider_claim_id:

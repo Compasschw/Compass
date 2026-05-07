@@ -29,8 +29,6 @@ import {
   ChevronDown,
   ChevronRight,
   Check,
-  Plus,
-  Minus,
   FileText,
   Sparkles,
   RefreshCw,
@@ -61,8 +59,37 @@ export interface DocumentationModalProps {
   onClose: () => void;
   /** Session ID being documented */
   sessionId: string;
+  /**
+   * Total session duration in minutes. Used to auto-derive the units-to-bill
+   * value the CHW sees in the modal — see ``computeUnitsFromDuration``. The
+   * backend ignores any client-supplied units and recomputes from the same
+   * formula, so this prop is for display only. ``null`` / undefined defaults
+   * to 1 unit (the schema's minimum).
+   */
+  durationMinutes?: number | null;
   /** Called with the completed documentation data on submit */
   onSubmit: (data: SessionDocumentation) => void;
+}
+
+/**
+ * Auto-derive the units-to-bill from a session's total duration.
+ *
+ * Founder-set bracket (2026-05-07) — must match the backend
+ * ``app.services.billing_service.calculate_units`` exactly:
+ *
+ *   - ≤ 45 min  → 1 unit
+ *   - 45–75 min → 2 units
+ *   - 75–105 min → 3 units
+ *   - > 105 min → 4 units (Medi-Cal daily cap)
+ *
+ * Returns 1 when the duration is missing so the schema's ``ge=1`` constraint
+ * is honored and the CHW always gets credit for the visit.
+ */
+function computeUnitsFromDuration(durationMinutes: number | null | undefined): number {
+  if (durationMinutes == null || durationMinutes <= 45) return 1;
+  if (durationMinutes <= 75) return 2;
+  if (durationMinutes <= 105) return 3;
+  return 4;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -436,56 +463,39 @@ const p = StyleSheet.create({
   },
 });
 
-// ─── UnitsStepper ─────────────────────────────────────────────────────────────
+// ─── UnitsSummary (read-only, derived from session duration) ─────────────────
 
-interface UnitsStepperProps {
+interface UnitsSummaryProps {
+  /** Auto-computed units from session duration. Always 1–4. */
   value: number;
-  onChange: (units: number) => void;
+  /** Total session duration in minutes (for the rate-explanation footnote). */
+  durationMinutes: number | null | undefined;
 }
 
-function UnitsStepper({ value, onChange }: UnitsStepperProps): React.JSX.Element {
+/**
+ * Read-only billing summary. Replaces the legacy interactive +/- stepper —
+ * the units value is now derived authoritatively from the session's duration
+ * (see ``computeUnitsFromDuration``) so CHWs cannot upcode at the form. The
+ * server recomputes from the same bracket and ignores any client-sent units.
+ */
+function UnitsSummary({ value, durationMinutes }: UnitsSummaryProps): React.JSX.Element {
   const grossAmount = value * MEDI_CAL_RATE;
   const netAmount = grossAmount * NET_PAYOUT_RATE;
-
-  function decrement(): void {
-    if (value > 1) onChange(value - 1);
-  }
-
-  function increment(): void {
-    if (value < 16) onChange(value + 1);
-  }
+  const durationLabel =
+    durationMinutes != null ? `${durationMinutes} min session` : 'Session duration unavailable';
 
   return (
     <View style={ds.section}>
       <Text style={ds.sectionTitle}>Units to Bill</Text>
 
-      <View style={u.row}>
-        <TouchableOpacity
-          style={[u.stepperButton, value <= 1 && u.stepperButtonDisabled]}
-          onPress={decrement}
-          disabled={value <= 1}
-          accessibilityRole="button"
-          accessibilityLabel="Decrease units"
-          accessibilityState={{ disabled: value <= 1 }}
-        >
-          <Minus size={16} color={value <= 1 ? colors.border : colors.foreground} />
-        </TouchableOpacity>
-
+      <View style={u.summaryRow}>
         <View style={u.valueDisplay}>
           <Text style={u.valueText}>{value}</Text>
-          <Text style={u.valueLabel}>units</Text>
+          <Text style={u.valueLabel}>{value === 1 ? 'unit' : 'units'}</Text>
         </View>
-
-        <TouchableOpacity
-          style={[u.stepperButton, value >= 16 && u.stepperButtonDisabled]}
-          onPress={increment}
-          disabled={value >= 16}
-          accessibilityRole="button"
-          accessibilityLabel="Increase units"
-          accessibilityState={{ disabled: value >= 16 }}
-        >
-          <Plus size={16} color={value >= 16 ? colors.border : colors.foreground} />
-        </TouchableOpacity>
+        <Text style={u.derivedFootnote}>
+          Auto-calculated from {durationLabel}
+        </Text>
       </View>
 
       <View style={u.billingRow}>
@@ -509,25 +519,16 @@ function UnitsStepper({ value, onChange }: UnitsStepperProps): React.JSX.Element
 }
 
 const u = StyleSheet.create({
-  row: {
-    flexDirection: 'row',
+  summaryRow: {
+    flexDirection: 'column',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 20,
+    gap: 6,
     marginBottom: 12,
   },
-  stepperButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  stepperButtonDisabled: {
-    opacity: 0.4,
+  derivedFootnote: {
+    ...typography.label,
+    color: colors.mutedForeground,
+    fontStyle: 'italic',
   },
   valueDisplay: {
     alignItems: 'center',
@@ -875,13 +876,17 @@ export function DocumentationModal({
   visible,
   onClose,
   sessionId,
+  durationMinutes,
   onSubmit,
 }: DocumentationModalProps): React.JSX.Element {
   const [selectedDiagnosisCodes, setSelectedDiagnosisCodes] = useState<string[]>([]);
   const [selectedProcedureCode, setSelectedProcedureCode] = useState<string>(
     procedureCodes[0]?.code ?? '',
   );
-  const [unitsToBill, setUnitsToBill] = useState(2);
+  // Units are derived authoritatively from the session duration — no manual
+  // override.  The backend recomputes from the same formula and ignores any
+  // client-supplied value (see app/services/billing_service.calculate_units).
+  const unitsToBill = computeUnitsFromDuration(durationMinutes);
   const [selectedGoals, setSelectedGoals] = useState<string[]>([]);
   const [selectedResources, setSelectedResources] = useState<string[]>([]);
   const [followUpNeeded, setFollowUpNeeded] = useState<boolean | null>(null);
@@ -940,7 +945,7 @@ export function DocumentationModal({
       setAiExcluded(false);
       setSelectedDiagnosisCodes([]);
       setSelectedProcedureCode(procedureCodes[0]?.code ?? '');
-      setUnitsToBill(2);
+      // unitsToBill is derived from durationMinutes prop — no reset needed.
       setSelectedGoals([]);
       setSelectedResources([]);
       setFollowUpNeeded(null);
@@ -1182,7 +1187,7 @@ export function DocumentationModal({
           />
 
           {/* Units to bill */}
-          <UnitsStepper value={unitsToBill} onChange={setUnitsToBill} />
+          <UnitsSummary value={unitsToBill} durationMinutes={durationMinutes} />
 
           {/* Member goals */}
           <MultiSelectList

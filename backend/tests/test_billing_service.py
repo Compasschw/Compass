@@ -14,27 +14,37 @@ from app.services.billing_service import (
 
 
 class TestCalculateUnits:
-    """Medi-Cal CHW billing uses 15-min unit brackets, 4-unit daily cap."""
+    """Founder-set unit bracket (2026-05-07): the first unit covers up to 45
+    minutes, then every additional 30 minutes earns one more, capped at the
+    Medi-Cal daily maximum of 4 units."""
 
     @pytest.mark.parametrize("duration,expected", [
-        (0, 0),
-        (14, 0),     # under 15 min — not billable
-        (15, 1),     # 15-29 min
-        (29, 1),
-        (30, 2),     # 30-44 min
-        (44, 2),
-        (45, 3),     # 45-59 min
-        (59, 3),
-        (60, 4),     # 60+ min hits daily cap
-        (120, 4),    # still cap at 4
-        (480, 4),    # 8 hours still caps at 4
+        (0, 1),      # very short session still earns the minimum 1 unit
+        (15, 1),
+        (30, 1),
+        (45, 1),     # boundary — 45 exact stays at 1
+        (46, 2),     # > 45 → 2
+        (60, 2),
+        (75, 2),     # boundary — 75 exact stays at 2
+        (76, 3),     # > 75 → 3
+        (90, 3),
+        (105, 3),    # boundary — 105 exact stays at 3
+        (106, 4),    # > 105 → 4 (cap)
+        (120, 4),
+        (480, 4),    # 8 hours still capped at 4
     ])
     def test_unit_brackets(self, duration, expected):
         assert calculate_units(duration) == expected
 
-    def test_negative_duration_returns_zero(self):
-        """Defensive: negative durations shouldn't be billable."""
-        assert calculate_units(-5) == 0
+    def test_none_duration_defaults_to_one(self):
+        """Missing duration defaults to 1 unit so the schema's ge=1 holds."""
+        assert calculate_units(None) == 1
+
+    def test_negative_duration_returns_one(self):
+        """Defensive: negative durations are treated as the minimum 1 unit
+        rather than 0 — the documented session still happened, and the
+        SessionDocumentationSubmit schema requires units_to_bill >= 1."""
+        assert calculate_units(-5) == 1
 
 
 class TestCalculateEarnings:
