@@ -77,7 +77,7 @@ class SummaryResult:
     generated_at: datetime | None = field(default=None)
 
     @classmethod
-    def empty(cls) -> "SummaryResult":
+    def empty(cls) -> SummaryResult:
         """Canonical empty result — transcript too short or provider unavailable."""
         return cls(text="", generated_at=None)
 
@@ -197,7 +197,6 @@ class AnthropicSummarizer:
         )
 
         try:
-            import anthropic  # type: ignore[import-untyped]
 
             response = await self._client.messages.create(
                 model=_CLAUDE_MODEL,
