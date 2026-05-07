@@ -822,29 +822,32 @@ function ConsentModal({
               )}
 
               {/*
-               * DEMO ONLY — remove this entire block before production.
-               * Allows founders to test the full flow on a single device by
-               * treating the CHW as having confirmed consent for both parties.
-               * Issue #[demo-consent-override].
+               * Demo / verbal-consent override.
+               * Lets the CHW attest that the member has given verbal consent
+               * (e.g. on the call) so transcription can begin without bouncing
+               * the consent flow through a separate device. Required for any
+               * single-device testing or live demo.
+               *
+               * TODO(production): replace with a real CHW-attestation field
+               * audited at the API layer (`grantConsent` should accept a
+               * `chw_attestation: bool` and require an attestation timestamp).
                */}
-              {__DEV__ && (
-                <TouchableOpacity
-                  style={cm.checkRow}
-                  onPress={() => onDemoOverrideChange(!demoOverrideChecked)}
-                  activeOpacity={0.75}
-                  accessibilityRole="checkbox"
-                  accessibilityState={{ checked: demoOverrideChecked }}
+              <TouchableOpacity
+                style={cm.checkRow}
+                onPress={() => onDemoOverrideChange(!demoOverrideChecked)}
+                activeOpacity={0.75}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: demoOverrideChecked }}
+              >
+                <View
+                  style={[cm.checkbox, demoOverrideChecked && cm.checkboxChecked]}
                 >
-                  <View
-                    style={[cm.checkbox, demoOverrideChecked && cm.checkboxChecked]}
-                  >
-                    {demoOverrideChecked && <Text style={cm.checkmark}>✓</Text>}
-                  </View>
-                  <Text style={cm.checkLabel}>
-                    [Demo] I confirm consent for both parties
-                  </Text>
-                </TouchableOpacity>
-              )}
+                  {demoOverrideChecked && <Text style={cm.checkmark}>✓</Text>}
+                </View>
+                <Text style={cm.checkLabel}>
+                  Member gave verbal consent (CHW attests)
+                </Text>
+              </TouchableOpacity>
 
               <View style={cm.buttonRow}>
                 <TouchableOpacity
