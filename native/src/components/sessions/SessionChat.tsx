@@ -89,7 +89,15 @@ import {
   useStartCall,
   useGrantTranscriptionConsent,
   useTranscriptExport,
+  useCreateConsentRequest,
+  usePendingConsents,
+  useApproveConsentRequest,
+  useDenyConsentRequest,
+  useCancelConsentRequest,
+  useConsentRequestStatus,
   type SessionMessageLocal,
+  type ConsentRequestData,
+  type ConsentRequestStatus,
 } from '../../hooks/useApiQueries';
 import {
   useSessionTranscription,
@@ -126,14 +134,32 @@ type RenderItem =
   | { kind: 'followup_banner' };
 
 /**
- * Consent-gate lifecycle for the recording flow.
+ * Consent-gate lifecycle for the CHW's recording consent flow (two-party path).
  *
- *   closed         → CHW has not opened the modal yet
- *   sending        → consent POST in flight
- *   awaiting_tap   → consent recorded; member notified; waiting for CHW 2nd tap
- *   error          → consent POST failed
+ *   closed            → CHW has not opened the modal yet
+ *   requesting        → POST /consent-requests in flight
+ *   waiting_for_member → ConsentRequest row exists, CHW polls for member response
+ *   approved          → member approved; CHW closes modal and starts recording
+ *   denied            → member denied; show toast and close modal
+ *   expired           → 5-min TTL elapsed with no response
+ *   error             → network or server error during request creation
  */
-type ConsentGateState = 'closed' | 'sending' | 'awaiting_tap' | 'error';
+type ConsentGateState =
+  | 'closed'
+  | 'requesting'
+  | 'waiting_for_member'
+  | 'approved'
+  | 'denied'
+  | 'expired'
+  | 'error';
+
+/**
+ * Which tab is active in the CHW's consent modal.
+ *
+ *   request_consent  → (default) send an in-app two-party consent request
+ *   verbal_attest    → CHW attests member gave verbal consent (fallback for phone-only)
+ */
+type ConsentModalMode = 'request_consent' | 'verbal_attest';
 
 // ─── Timestamp formatter ──────────────────────────────────────────────────────
 
@@ -760,38 +786,59 @@ const fb = StyleSheet.create({
   },
 });
 
-// ─── ConsentModal ─────────────────────────────────────────────────────────────
+// ─── ConsentModal (CHW side — two-party flow) ─────────────────────────────────
+//
+// Default mode: "Request consent from member" (in-app two-party consent).
+// Fallback mode: "Verbal attestation" (phone-only, collapsed under Advanced).
+//
+// State machine for the request_consent mode:
+//   closed            → initial state, shows Send Request button
+//   requesting        → POST /consent-requests in flight (spinner)
+//   waiting_for_member → request sent, CHW sees spinner + "Waiting for …" + Cancel
+//   approved          → member tapped Approve (auto-closes, recording starts)
+//   denied            → member tapped Deny (toast shown, modal closes)
+//   expired           → 5-min TTL elapsed (toast shown, modal closes)
+//   error             → network error (error text shown, retry available)
 
 interface ConsentModalProps {
   visible: boolean;
   memberFirstName: string;
   chwName: string;
   consentState: ConsentGateState;
+  consentModalMode: ConsentModalMode;
   /** Error message from a failed consent POST, if any. */
   consentError: string | null;
-  /**
-   * DEMO ONLY — CHW-side override that treats both parties as having consented
-   * on the same device. This checkbox and the associated logic MUST be removed
-   * before production launch. See issue #[demo-consent-override].
-   */
-  demoOverrideChecked: boolean;
-  onDemoOverrideChange: (checked: boolean) => void;
-  /** CHW tapped "Send consent request" or "I understand, start recording". */
-  onConfirm: (demoOverride: boolean) => void;
+  /** Whether the Advanced (verbal attestation) section is expanded. */
+  advancedExpanded: boolean;
+  onAdvancedToggle: () => void;
+  /** CHW tapped "Send Request" in the request_consent mode. */
+  onSendRequest: () => void;
+  /** CHW tapped "Cancel" while waiting for member. */
+  onCancelRequest: () => void;
+  /** CHW switched to verbal attestation mode and tapped confirm. */
+  onVerbalAttest: () => void;
   onClose: () => void;
 }
 
 function ConsentModal({
   visible,
   memberFirstName,
-  chwName,
   consentState,
+  consentModalMode: _mode,
   consentError,
-  demoOverrideChecked,
-  onDemoOverrideChange,
-  onConfirm,
+  advancedExpanded,
+  onAdvancedToggle,
+  onSendRequest,
+  onCancelRequest,
+  onVerbalAttest,
   onClose,
 }: ConsentModalProps): React.JSX.Element {
+  // Verbal-attestation checkbox state is local to the modal lifetime.
+  const [verbalChecked, setVerbalChecked] = React.useState(false);
+
+  const isWaiting = consentState === 'waiting_for_member';
+  const isRequesting = consentState === 'requesting';
+
   return (
     <Modal
       visible={visible}
@@ -802,7 +849,7 @@ function ConsentModal({
     >
       <Pressable
         style={cm.backdrop}
-        onPress={onClose}
+        onPress={isWaiting ? undefined : onClose}
         accessibilityRole="button"
         accessibilityLabel="Close consent dialog"
       >
@@ -810,44 +857,51 @@ function ConsentModal({
         <Pressable style={cm.card} onPress={() => undefined}>
           <Text style={cm.title}>Enable Session Recording</Text>
 
-          {consentState === 'closed' || consentState === 'error' ? (
+          {/* ── Requesting state — spinner while POST /consent-requests is in flight */}
+          {isRequesting && (
+            <View style={cm.centeredRow}>
+              <ActivityIndicator color={colors.primary} />
+              <Text style={cm.body}>Sending request…</Text>
+            </View>
+          )}
+
+          {/* ── Waiting for member — after request is sent */}
+          {isWaiting && (
+            <>
+              <View style={cm.centeredRow}>
+                <ActivityIndicator color={colors.primary} />
+                <Text style={cm.body}>
+                  Waiting for{' '}
+                  <Text style={cm.memberName}>{memberFirstName}</Text>{' '}
+                  to approve…
+                </Text>
+              </View>
+              <Text style={cm.bodySmall}>
+                {memberFirstName} will see a consent prompt on their device.
+                The request expires in 5 minutes.
+              </Text>
+              <TouchableOpacity
+                style={cm.cancelButton}
+                onPress={onCancelRequest}
+                accessibilityRole="button"
+                accessibilityLabel="Cancel consent request"
+              >
+                <Text style={cm.cancelText}>Cancel Request</Text>
+              </TouchableOpacity>
+            </>
+          )}
+
+          {/* ── Initial / error state — show Send Request button */}
+          {!isRequesting && !isWaiting && (
             <>
               <Text style={cm.body}>
-                Recording will begin once{' '}
-                <Text style={cm.memberName}>{memberFirstName}</Text> confirms
-                consent. Sending consent request…
+                <Text style={cm.memberName}>{memberFirstName}</Text> will
+                receive an in-app prompt to approve session recording.
               </Text>
+
               {consentError !== null && (
                 <Text style={cm.errorText}>{consentError}</Text>
               )}
-
-              {/*
-               * Demo / verbal-consent override.
-               * Lets the CHW attest that the member has given verbal consent
-               * (e.g. on the call) so transcription can begin without bouncing
-               * the consent flow through a separate device. Required for any
-               * single-device testing or live demo.
-               *
-               * TODO(production): replace with a real CHW-attestation field
-               * audited at the API layer (`grantConsent` should accept a
-               * `chw_attestation: bool` and require an attestation timestamp).
-               */}
-              <TouchableOpacity
-                style={cm.checkRow}
-                onPress={() => onDemoOverrideChange(!demoOverrideChecked)}
-                activeOpacity={0.75}
-                accessibilityRole="checkbox"
-                accessibilityState={{ checked: demoOverrideChecked }}
-              >
-                <View
-                  style={[cm.checkbox, demoOverrideChecked && cm.checkboxChecked]}
-                >
-                  {demoOverrideChecked && <Text style={cm.checkmark}>✓</Text>}
-                </View>
-                <Text style={cm.checkLabel}>
-                  Member gave verbal consent (CHW attests)
-                </Text>
-              </TouchableOpacity>
 
               <View style={cm.buttonRow}>
                 <TouchableOpacity
@@ -860,34 +914,62 @@ function ConsentModal({
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={cm.confirmButton}
-                  onPress={() => onConfirm(demoOverrideChecked)}
+                  onPress={onSendRequest}
                   accessibilityRole="button"
-                  accessibilityLabel="Send consent request"
+                  accessibilityLabel="Send consent request to member"
                 >
                   <Text style={cm.confirmText}>Send Request</Text>
                 </TouchableOpacity>
               </View>
-            </>
-          ) : consentState === 'sending' ? (
-            <View style={cm.centeredRow}>
-              <ActivityIndicator color={colors.primary} />
-              <Text style={cm.body}>Sending consent request…</Text>
-            </View>
-          ) : (
-            /* awaiting_tap */
-            <>
-              <Text style={cm.body}>
-                Member can now grant consent on their device. Tap{' '}
-                <Text style={cm.bold}>Mic</Text> again to start recording.
-              </Text>
+
+              {/* ── Advanced: verbal attestation (fallback for phone-only sessions) */}
               <TouchableOpacity
-                style={cm.confirmButton}
-                onPress={onClose}
+                style={cm.advancedToggle}
+                onPress={onAdvancedToggle}
                 accessibilityRole="button"
-                accessibilityLabel="Close — ready to start recording"
+                accessibilityLabel={
+                  advancedExpanded ? 'Collapse advanced options' : 'Show advanced options'
+                }
               >
-                <Text style={cm.confirmText}>Got it</Text>
+                <Text style={cm.advancedToggleText}>
+                  {advancedExpanded ? '▲ Advanced' : '▼ Advanced'}
+                </Text>
               </TouchableOpacity>
+
+              {advancedExpanded && (
+                <View style={cm.advancedSection}>
+                  <Text style={cm.advancedLabel}>
+                    Phone-only fallback: if the member is on a call and
+                    cannot open the app, the CHW may attest to verbal consent.
+                  </Text>
+                  <TouchableOpacity
+                    style={cm.checkRow}
+                    onPress={() => setVerbalChecked((prev) => !prev)}
+                    activeOpacity={0.75}
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked: verbalChecked }}
+                  >
+                    <View
+                      style={[cm.checkbox, verbalChecked && cm.checkboxChecked]}
+                    >
+                      {verbalChecked && <Text style={cm.checkmark}>✓</Text>}
+                    </View>
+                    <Text style={cm.checkLabel}>
+                      Member gave verbal consent (CHW attests)
+                    </Text>
+                  </TouchableOpacity>
+                  {verbalChecked && (
+                    <TouchableOpacity
+                      style={[cm.confirmButton, cm.attestButton]}
+                      onPress={onVerbalAttest}
+                      accessibilityRole="button"
+                      accessibilityLabel="Submit verbal attestation and start recording"
+                    >
+                      <Text style={cm.confirmText}>{'Attest & Start Recording'}</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              )}
             </>
           )}
         </Pressable>
@@ -895,6 +977,178 @@ function ConsentModal({
     </Modal>
   );
 }
+
+// ─── MemberConsentModal ───────────────────────────────────────────────────────
+//
+// Rendered on the MEMBER's side when a pending ConsentRequest is detected.
+// California §632 two-party consent: this is the member's affirmative tap.
+//
+// Disclosure text follows HIPAA "minimum necessary" principle:
+//   - What is recorded (session audio for clinical notes)
+//   - Where stored (encrypted, secure storage)
+//   - How used (generate session documentation only)
+//   - Right to revoke (member can ask CHW to stop at any time)
+
+interface MemberConsentModalProps {
+  visible: boolean;
+  consentRequest: ConsentRequestData;
+  memberName: string;
+  onApprove: (request: ConsentRequestData) => void;
+  onDeny: (request: ConsentRequestData) => void;
+  isApproving: boolean;
+  isDenying: boolean;
+}
+
+function MemberConsentModal({
+  visible,
+  consentRequest,
+  memberName,
+  onApprove,
+  onDeny,
+  isApproving,
+  isDenying,
+}: MemberConsentModalProps): React.JSX.Element {
+  const isActing = isApproving || isDenying;
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={() => undefined} // member must explicitly choose
+      statusBarTranslucent
+    >
+      {/* No backdrop dismiss — member must make an explicit choice */}
+      <View style={mcm.backdrop}>
+        <View
+          style={mcm.card}
+          accessibilityRole="dialog"
+          accessibilityLabel="Recording consent request"
+          accessibilityViewIsModal
+        >
+          <Text style={mcm.title}>Recording Consent Request</Text>
+
+          {/*
+           * HIPAA minimum-necessary disclosure + California §632 language.
+           * Both parties must affirmatively consent; this copy explains:
+           *   - what is being recorded
+           *   - how it is stored and used
+           *   - the member's right to revoke
+           */}
+          <Text style={mcm.body}>
+            Your CHW would like to record this session for clinical notes.
+            Recordings are encrypted, stored securely, and used only to
+            generate session documentation.
+          </Text>
+          <Text style={mcm.body}>
+            You can revoke consent at any time by asking your CHW to stop
+            the recording.
+          </Text>
+
+          <View style={mcm.buttonRow}>
+            <TouchableOpacity
+              style={[mcm.denyButton, isActing && mcm.buttonDisabled]}
+              onPress={() => !isActing && onDeny(consentRequest)}
+              disabled={isActing}
+              accessibilityRole="button"
+              accessibilityLabel="Deny recording"
+              accessibilityState={{ disabled: isActing }}
+            >
+              {isDenying ? (
+                <ActivityIndicator size="small" color={colors.mutedForeground} />
+              ) : (
+                <Text style={mcm.denyText}>Deny</Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[mcm.approveButton, isActing && mcm.buttonDisabled]}
+              onPress={() => !isActing && onApprove(consentRequest)}
+              disabled={isActing}
+              accessibilityRole="button"
+              accessibilityLabel="Approve recording"
+              accessibilityState={{ disabled: isActing }}
+            >
+              {isApproving ? (
+                <ActivityIndicator size="small" color={colors.primaryForeground} />
+              ) : (
+                <Text style={mcm.approveText}>Approve</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+const mcm = StyleSheet.create({
+  backdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  card: {
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: colors.card,
+    borderRadius: 20,
+    padding: 24,
+    gap: 14,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.2,
+    shadowRadius: 24,
+    elevation: 12,
+  },
+  title: {
+    ...typography.displaySm,
+    color: colors.foreground,
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  body: {
+    ...typography.bodySm,
+    color: colors.foreground,
+    lineHeight: 22,
+  },
+  buttonRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 6,
+  },
+  denyButton: {
+    flex: 1,
+    paddingVertical: 13,
+    borderRadius: 12,
+    backgroundColor: colors.background,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+  },
+  denyText: {
+    ...typography.bodySm,
+    fontWeight: '600',
+    color: colors.mutedForeground,
+  },
+  approveButton: {
+    flex: 1,
+    paddingVertical: 13,
+    borderRadius: 12,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+  },
+  approveText: {
+    ...typography.bodySm,
+    fontWeight: '600',
+    color: colors.primaryForeground,
+  },
+  buttonDisabled: {
+    opacity: 0.6,
+  },
+});
 
 const cm = StyleSheet.create({
   backdrop: {
@@ -1007,6 +1261,36 @@ const cm = StyleSheet.create({
     gap: 10,
     paddingVertical: 8,
   },
+  bodySmall: {
+    fontSize: 12,
+    color: colors.mutedForeground,
+    lineHeight: 18,
+  },
+  advancedToggle: {
+    paddingTop: 4,
+    alignSelf: 'flex-start',
+  },
+  advancedToggleText: {
+    fontSize: 12,
+    color: colors.mutedForeground,
+    fontWeight: '500',
+  },
+  advancedSection: {
+    gap: 10,
+    paddingTop: 4,
+    paddingLeft: 4,
+    borderLeftWidth: 2,
+    borderLeftColor: colors.border,
+  },
+  advancedLabel: {
+    fontSize: 12,
+    color: colors.mutedForeground,
+    lineHeight: 18,
+    fontStyle: 'italic',
+  },
+  attestButton: {
+    marginTop: 4,
+  },
 });
 
 // ─── Main component ───────────────────────────────────────────────────────────
@@ -1066,17 +1350,31 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
   /** Show the "followup processing" banner after the session is stopped. */
   const [showFollowupBanner, setShowFollowupBanner] = useState(false);
 
+  // ── Two-party consent request state (CHW side) ───────────────────────────────
+
   /** Consent gate lifecycle state. */
   const [consentGateState, setConsentGateState] = useState<ConsentGateState>('closed');
   const [consentError, setConsentError] = useState<string | null>(null);
   const [consentModalOpen, setConsentModalOpen] = useState(false);
-  const [demoOverrideChecked, setDemoOverrideChecked] = useState(false);
+  /** Whether the Advanced (verbal attestation) section is expanded. */
+  const [advancedExpanded, setAdvancedExpanded] = useState(false);
+  /** The active consent request ID (set after POST /consent-requests succeeds). */
+  const [activeConsentRequestId, setActiveConsentRequestId] = useState<string | null>(null);
 
   /**
-   * Tracks whether the consent POST has been completed for this mount.
-   * Resets if the component unmounts (i.e. a new session would re-require consent).
+   * Tracks whether the member has approved consent for this mount.
+   * Resets if the component unmounts (new session re-requires consent).
    */
   const consentGrantedRef = useRef(false);
+
+  // ── Member-side consent polling state ────────────────────────────────────────
+
+  /**
+   * The pending consent request the member sees, or null when none is active.
+   * Populated by the usePendingConsents poll (member side only).
+   */
+  const [pendingConsentForMember, setPendingConsentForMember] =
+    useState<ConsentRequestData | null>(null);
 
   // ── Recording timer ──────────────────────────────────────────────────────────
 
@@ -1102,10 +1400,18 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
 
   const listRef = useRef<FlatList<RenderItem>>(null);
 
+  // ── Derived role (needed before hooks that depend on it) ────────────────────
+
+  const myRole = userRole ?? 'member';
+  /** True only for CHW users. Only CHWs have the Mic button. */
+  const isCHW = myRole === 'chw';
+
   // ── Data queries ─────────────────────────────────────────────────────────────
 
   const sessionQuery = useSession(sessionId);
   const session = sessionQuery.data;
+
+  const isCallable = session ? CALLABLE_STATUSES.has(session.status) : false;
 
   const messagesQuery = useSessionMessages(sessionId);
   const sendMessage = useSessionSendMessage();
@@ -1114,13 +1420,29 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
   const grantConsent = useGrantTranscriptionConsent(sessionId);
   const transcriptExport = useTranscriptExport();
 
-  // ── Derived state ─────────────────────────────────────────────────────────────
+  // ── Two-party consent hooks (CHW side) ───────────────────────────────────────
+  const createConsentRequest = useCreateConsentRequest(sessionId);
+  const cancelConsentRequest = useCancelConsentRequest();
 
-  const myRole = userRole ?? 'member';
-  const isCallable = session ? CALLABLE_STATUSES.has(session.status) : false;
+  // CHW polls for status of the active consent request.
+  // Stops automatically when status reaches a terminal value.
+  const consentRequestStatusQuery = useConsentRequestStatus(
+    activeConsentRequestId ?? '',
+    {
+      enabled:
+        isCHW &&
+        activeConsentRequestId !== null &&
+        consentGateState === 'waiting_for_member',
+    },
+  );
 
-  /** True only for CHW users. Only CHWs have the Mic button. */
-  const isCHW = myRole === 'chw';
+  // ── Two-party consent hooks (member side) ────────────────────────────────────
+  // Poll for pending requests every 3 s while in an active session.
+  const pendingConsentsQuery = usePendingConsents(sessionId, {
+    enabled: !isCHW && session?.status === 'in_progress',
+  });
+  const approveConsentRequest = useApproveConsentRequest();
+  const denyConsentRequest = useDenyConsentRequest();
 
   /**
    * Resolve the display name of the other party based on auth role and
@@ -1184,6 +1506,15 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
   const isRecording = TRANSCRIPTION_ACTIVE_STATES.has(
     transcription.state as 'recording' | 'connecting' | 'reconnecting',
   );
+
+  // ── Toast helpers — declared early because effects below depend on it ─────────
+
+  const showToast = useCallback((message: string, isError: boolean) => {
+    setToastMessage(message);
+    setToastIsError(isError);
+    const timer = setTimeout(() => setToastMessage(null), 3_500);
+    return () => clearTimeout(timer);
+  }, []);
 
   // ── Recording timer lifecycle ─────────────────────────────────────────────────
 
@@ -1250,6 +1581,62 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
     }
     return undefined;
   }, [transcription.state]);
+
+  // ── CHW polling: react to consent request status changes ─────────────────────
+  //
+  // Watches the polled consent-request status and transitions the consent gate
+  // state machine accordingly.  The useConsentRequestStatus hook already stops
+  // polling on terminal statuses — this effect handles the UI side effects.
+
+  const consentRequestStatus = consentRequestStatusQuery.data?.status as
+    | ConsentRequestStatus
+    | undefined;
+
+  useEffect(() => {
+    if (!isCHW || activeConsentRequestId === null) return;
+    if (consentGateState !== 'waiting_for_member') return;
+    if (consentRequestStatus === undefined) return;
+
+    if (consentRequestStatus === 'approved') {
+      consentGrantedRef.current = true;
+      setConsentGateState('approved');
+      setConsentModalOpen(false);
+      setActiveConsentRequestId(null);
+      // Transition to recording: the next Mic tap (or the auto-start below) will fire.
+      // We auto-start here so the CHW doesn't need a second tap after approval.
+      setTranscriptionEnabled(true);
+      void transcription.start();
+    } else if (consentRequestStatus === 'denied') {
+      setConsentGateState('denied');
+      setConsentModalOpen(false);
+      setActiveConsentRequestId(null);
+      showToast('Member declined — you can ask again later.', false);
+    } else if (consentRequestStatus === 'cancelled') {
+      // Should not happen (CHW cancels from the modal), but handle defensively.
+      setConsentGateState('closed');
+      setConsentModalOpen(false);
+      setActiveConsentRequestId(null);
+    } else if (consentRequestStatus === 'expired') {
+      setConsentGateState('expired');
+      setConsentModalOpen(false);
+      setActiveConsentRequestId(null);
+      showToast('Request timed out — please try again.', true);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [consentRequestStatus, isCHW, activeConsentRequestId, consentGateState]);
+
+  // ── Member polling: surface the pending consent request in a modal ───────────
+  //
+  // Keeps pendingConsentForMember in sync with the latest poll result.
+  // Only renders if there is exactly one pending request (expected invariant:
+  // the backend 409-guards duplicate-pending rows per session+consent_type).
+
+  useEffect(() => {
+    if (isCHW) return; // CHW does not see the member approval modal
+    const rows = pendingConsentsQuery.data ?? [];
+    // Surface the first pending request (newest, by requested_at desc from backend).
+    setPendingConsentForMember(rows.length > 0 ? (rows[0] ?? null) : null);
+  }, [pendingConsentsQuery.data, isCHW]);
 
   // ── Merged render list ───────────────────────────────────────────────────────
 
@@ -1357,58 +1744,98 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
     prevItemCountRef.current = count;
   }, [renderItems.length, scrollToBottom]);
 
-  // ── Toast helpers ─────────────────────────────────────────────────────────────
-
-  const showToast = useCallback((message: string, isError: boolean) => {
-    setToastMessage(message);
-    setToastIsError(isError);
-    const timer = setTimeout(() => setToastMessage(null), 3_500);
-    return () => clearTimeout(timer);
-  }, []);
-
-  // ── Consent + Mic handler ─────────────────────────────────────────────────────
+  // ── Consent + Mic handlers ────────────────────────────────────────────────────
 
   /**
-   * Handle the consent POST (called from inside the consent modal).
+   * CHW tapped "Send Request" in the consent modal (two-party path).
    *
-   * Uses the CHW's userName as the typed_signature. For the demo override, we
-   * skip the actual API call and jump straight to 'awaiting_tap'.
+   * POSTs to /sessions/{id}/consent-requests, transitions modal to
+   * "waiting_for_member" state, and lets the CHW polling effect react
+   * to the member's response.
    */
-  const handleConsentConfirm = useCallback(
-    async (chwAttests: boolean) => {
-      setConsentGateState('sending');
-      setConsentError(null);
+  const handleSendConsentRequest = useCallback(async () => {
+    setConsentGateState('requesting');
+    setConsentError(null);
 
-      try {
-        await grantConsent.mutateAsync({
-          consentType: 'ai_transcription',
-          typedSignature: userName ?? 'CHW',
-          // When the CHW attests verbal consent, the backend records the
-          // consent row on the member's behalf. Without this flag the POST
-          // 403s because only the member account may grant consent directly.
-          chwAttestation: chwAttests,
-        });
-        consentGrantedRef.current = true;
-        setConsentGateState('awaiting_tap');
-      } catch (err) {
-        const detail =
-          err instanceof Error && err.message
-            ? err.message
-            : 'Could not record consent. Please try again.';
-        setConsentError(detail);
-        setConsentGateState('error');
-      }
-    },
-    [grantConsent, userName],
-  );
+    try {
+      const cr = await createConsentRequest.mutateAsync('ai_transcription');
+      setActiveConsentRequestId(cr.id);
+      setConsentGateState('waiting_for_member');
+    } catch (err) {
+      const detail =
+        err instanceof Error && err.message
+          ? err.message
+          : 'Could not send consent request. Please try again.';
+      setConsentError(detail);
+      setConsentGateState('error');
+    }
+  }, [createConsentRequest]);
+
+  /**
+   * CHW tapped "Cancel Request" while waiting for the member to respond.
+   *
+   * POSTs to /consent-requests/{id}/cancel and closes the modal.
+   * The member's pending-consents poll will return an empty list on the next
+   * cycle, hiding the member's approval modal.
+   */
+  const handleCancelConsentRequest = useCallback(async () => {
+    if (activeConsentRequestId === null) {
+      setConsentModalOpen(false);
+      setConsentGateState('closed');
+      return;
+    }
+    try {
+      await cancelConsentRequest.mutateAsync(activeConsentRequestId);
+    } catch {
+      // Best-effort cancel — even if it fails the CHW is closing the modal.
+    } finally {
+      setActiveConsentRequestId(null);
+      setConsentGateState('closed');
+      setConsentModalOpen(false);
+    }
+  }, [activeConsentRequestId, cancelConsentRequest]);
+
+  /**
+   * CHW used the verbal-attestation fallback (phone-only sessions).
+   *
+   * Calls the existing /sessions/{id}/consent endpoint with chw_attestation=true,
+   * which creates a MemberConsent row on the member's behalf (CHW as surrogate).
+   * This is the pre-existing fallback path — compliant for phone calls where the
+   * member cannot open the app.
+   */
+  const handleVerbalAttest = useCallback(async () => {
+    setConsentGateState('requesting');
+    setConsentError(null);
+
+    try {
+      await grantConsent.mutateAsync({
+        consentType: 'ai_transcription',
+        typedSignature: userName ?? 'CHW',
+        chwAttestation: true,
+      });
+      consentGrantedRef.current = true;
+      setConsentModalOpen(false);
+      setConsentGateState('approved');
+      // Start recording immediately after verbal attestation.
+      setTranscriptionEnabled(true);
+      await transcription.start();
+    } catch (err) {
+      const detail =
+        err instanceof Error && err.message
+          ? err.message
+          : 'Could not record consent. Please try again.';
+      setConsentError(detail);
+      setConsentGateState('error');
+    }
+  }, [grantConsent, userName, transcription]);
 
   /**
    * Handle Mic button press.
    *
    * State machine:
    *   - If currently recording → stop transcription + show followup banner.
-   *   - If consent not yet granted → open the consent modal.
-   *   - If consent granted (awaiting_tap) → start transcription.
+   *   - If consent already granted (previous approval) → start recording directly.
+   *   - Otherwise → open the consent modal (default: request_consent mode).
    */
   const handleMicPress = useCallback(async () => {
     if (!isCHW) return;
@@ -1422,19 +1849,64 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
       return;
     }
 
-    // Consent not yet granted → open consent modal
-    if (!consentGrantedRef.current) {
-      setConsentGateState('closed');
-      setConsentError(null);
-      setDemoOverrideChecked(false);
-      setConsentModalOpen(true);
+    // Consent already granted this session mount → start recording directly.
+    if (consentGrantedRef.current) {
+      setTranscriptionEnabled(true);
+      await transcription.start();
       return;
     }
 
-    // Consent granted, second tap → start recording
-    setTranscriptionEnabled(true);
-    await transcription.start();
-  }, [isCHW, isRecording, transcription, showToast]);
+    // Open the consent modal (default: "Request consent from member").
+    setConsentGateState('closed');
+    setConsentError(null);
+    setAdvancedExpanded(false);
+    setConsentModalOpen(true);
+  }, [isCHW, isRecording, transcription]);
+
+  // ── Member consent handlers ───────────────────────────────────────────────────
+
+  /**
+   * Member tapped "Approve" on the consent modal.
+   *
+   * POSTs typed_signature (member's name) to /consent-requests/{id}/approve.
+   * The backend creates a MemberConsent row with member_id = the member's own
+   * user ID — this is the HIPAA "individual authorization" record.
+   */
+  const handleMemberApproveConsent = useCallback(
+    async (consentRequest: ConsentRequestData) => {
+      try {
+        await approveConsentRequest.mutateAsync({
+          requestId: consentRequest.id,
+          // Use the member's display name as the typed signature.
+          typedSignature: userName ?? 'Member',
+        });
+        setPendingConsentForMember(null);
+        showToast('Recording approved.', false);
+      } catch {
+        showToast('Could not approve. Please try again.', true);
+      }
+    },
+    [approveConsentRequest, userName, showToast],
+  );
+
+  /**
+   * Member tapped "Deny" on the consent modal.
+   *
+   * POSTs to /consent-requests/{id}/deny. No MemberConsent row is created.
+   * Denial is final for this request — the CHW must send a new request to ask again.
+   */
+  const handleMemberDenyConsent = useCallback(
+    async (consentRequest: ConsentRequestData) => {
+      try {
+        await denyConsentRequest.mutateAsync(consentRequest.id);
+        setPendingConsentForMember(null);
+        showToast('Recording declined.', false);
+      } catch {
+        showToast('Could not submit response. Please try again.', true);
+      }
+    },
+    [denyConsentRequest, showToast],
+  );
 
   // ── Export handler ─────────────────────────────────────────────────────────────
 
@@ -1712,25 +2184,39 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
 
   return (
     <>
-      {/* Consent gate modal */}
+      {/* CHW consent gate modal — two-party consent request flow */}
       {isCHW && (
         <ConsentModal
           visible={consentModalOpen}
           memberFirstName={memberFirstName}
           chwName={userName ?? 'You'}
           consentState={consentGateState}
+          consentModalMode="request_consent"
           consentError={consentError}
-          demoOverrideChecked={demoOverrideChecked}
-          onDemoOverrideChange={setDemoOverrideChecked}
-          onConfirm={(demoOverride) => { void handleConsentConfirm(demoOverride); }}
+          advancedExpanded={advancedExpanded}
+          onAdvancedToggle={() => setAdvancedExpanded((prev) => !prev)}
+          onSendRequest={() => { void handleSendConsentRequest(); }}
+          onCancelRequest={() => { void handleCancelConsentRequest(); }}
+          onVerbalAttest={() => { void handleVerbalAttest(); }}
           onClose={() => {
-            // If consent was already granted and we are closing from "awaiting_tap",
-            // allow the state to persist so the next Mic tap starts recording.
-            if (consentGateState !== 'awaiting_tap') {
-              setConsentGateState('closed');
-            }
+            // Don't allow closing while waiting — CHW must Cancel explicitly.
+            if (consentGateState === 'waiting_for_member') return;
+            setConsentGateState('closed');
             setConsentModalOpen(false);
           }}
+        />
+      )}
+
+      {/* Member consent modal — shown when CHW has sent a consent request */}
+      {!isCHW && pendingConsentForMember !== null && (
+        <MemberConsentModal
+          visible
+          consentRequest={pendingConsentForMember}
+          memberName={userName ?? 'Member'}
+          onApprove={(cr) => { void handleMemberApproveConsent(cr); }}
+          onDeny={(cr) => { void handleMemberDenyConsent(cr); }}
+          isApproving={approveConsentRequest.isPending}
+          isDenying={denyConsentRequest.isPending}
         />
       )}
 

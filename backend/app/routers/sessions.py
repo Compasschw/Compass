@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
@@ -10,7 +10,7 @@ from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.billing import BillingClaim
 from app.models.request import ServiceRequest
-from app.models.session import MemberConsent, Session, SessionDocumentation
+from app.models.session import ConsentRequest, MemberConsent, Session, SessionDocumentation
 from app.models.user import User
 from app.schemas.conversation import (
     MarkReadRequest,
@@ -20,6 +20,9 @@ from app.schemas.conversation import (
 )
 from app.schemas.followup import ExtractFollowupsResponse, SessionFollowupResponse
 from app.schemas.session import (
+    ConsentRequestApprove,
+    ConsentRequestCreate,
+    ConsentRequestResponse,
     ConsentSubmit,
     SessionCreate,
     SessionDocumentationSubmit,
@@ -453,6 +456,373 @@ async def submit_consent(session_id: UUID, data: ConsentSubmit, request: Request
     db.add(consent)
     await db.commit()
     return {"consent_id": str(consent.id), "chw_attested": is_chw_attesting}
+
+
+# ─── Two-party consent request flow ─────────────────────────────────────────
+#
+# HIPAA + California Penal Code §632 compliance
+# -----------------------------------------------
+# California §632 requires *all* parties to an in-person or telephone
+# conversation to affirmatively consent before audio is recorded.  The
+# existing /consent endpoint supports CHW attestation (verbal consent given
+# by phone) as a fallback, but it does not capture the member's own in-app
+# tap.  These six endpoints implement the full digital two-party consent loop:
+#
+#   1. CHW creates a ConsentRequest row (status=pending).
+#   2. Member's app polls for pending requests and renders an approval modal.
+#   3. Member approves → MemberConsent row is created with member's own user ID.
+#   4. Member denies  → ConsentRequest.status = "denied"; no MemberConsent row.
+#   5. CHW can cancel the outstanding request (e.g. they close the modal).
+#   6. Either party can read the request status for polling.
+#
+# Expiry (5 min TTL) prevents stale pending rows from bypassing future consent
+# decisions without any background worker — we check expires_at at read time.
+#
+# Audit trail: the HTTP audit middleware records IP + UA + timestamp on every
+# mutating call.  The MemberConsent row created via approve carries
+# member_id = the member's own user ID (not chw_id), typed_signature, IP,
+# and UA — satisfying HIPAA "individual authorization" documentation.
+
+_CONSENT_REQUEST_TTL_MINUTES = 5
+
+
+@router.post(
+    "/{session_id}/consent-requests",
+    response_model=ConsentRequestResponse,
+    status_code=201,
+    summary="CHW requests in-app recording consent from the member",
+)
+async def create_consent_request(
+    session_id: UUID,
+    data: ConsentRequestCreate,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ConsentRequestResponse:
+    """POST /api/v1/sessions/{session_id}/consent-requests
+
+    Creates a pending ConsentRequest row that the member's app polls for.
+    Only the CHW on the session may call this endpoint.
+
+    Errors:
+      404 — session not found
+      403 — caller is not the CHW on this session
+      409 — there is already an active pending consent request for this
+             session + consent_type (prevents duplicate modal spam)
+    """
+    session = await db.get(Session, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.chw_id != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the CHW on this session may request recording consent.",
+        )
+
+    # Guard: reject if there is already a non-terminal pending request.
+    existing_result = await db.execute(
+        select(ConsentRequest).where(
+            ConsentRequest.session_id == session_id,
+            ConsentRequest.consent_type == data.consent_type,
+            ConsentRequest.status == "pending",
+        )
+    )
+    existing = existing_result.scalar_one_or_none()
+    if existing is not None:
+        # If the existing row has already expired by TTL, treat it as gone and
+        # let the CHW create a fresh one.
+        now = datetime.now(UTC)
+        if not existing.is_expired(now):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "A consent request is already pending for this session. "
+                    "Cancel it before creating a new one, or wait for the member to respond."
+                ),
+            )
+        # Expired — mark it so and proceed to create a new row.
+        existing.status = "expired"
+        existing.responded_at = now
+
+    now = datetime.now(UTC)
+    consent_request = ConsentRequest(
+        session_id=session_id,
+        chw_id=current_user.id,
+        member_id=session.member_id,
+        consent_type=data.consent_type,
+        status="pending",
+        requested_at=now,
+        expires_at=now + timedelta(minutes=_CONSENT_REQUEST_TTL_MINUTES),
+    )
+    db.add(consent_request)
+    await db.commit()
+    await db.refresh(consent_request)
+    return ConsentRequestResponse.model_validate(consent_request)
+
+
+@router.get(
+    "/{session_id}/pending-consents",
+    response_model=list[ConsentRequestResponse],
+    summary="Member polls for pending recording consent requests",
+)
+async def list_pending_consents(
+    session_id: UUID,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[ConsentRequestResponse]:
+    """GET /api/v1/sessions/{session_id}/pending-consents
+
+    Returns all pending (non-expired) ConsentRequest rows for this session
+    addressed to the calling member.  Polled every 3 seconds by the member's
+    SessionChat while the session is in_progress.
+
+    Only the session member may call this endpoint (403 otherwise).
+
+    Expired requests are transparently upgraded to status="expired" on the
+    first read after their TTL elapses, so the member never sees a stale modal.
+    """
+    session = await db.get(Session, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.member_id != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the session member may view pending consent requests.",
+        )
+
+    result = await db.execute(
+        select(ConsentRequest).where(
+            ConsentRequest.session_id == session_id,
+            ConsentRequest.member_id == current_user.id,
+            ConsentRequest.status == "pending",
+        ).order_by(ConsentRequest.requested_at.desc())
+    )
+    rows = result.scalars().all()
+
+    # Expire stale rows in-place (lazy expiry — no background job needed).
+    now = datetime.now(UTC)
+    active: list[ConsentRequest] = []
+    for row in rows:
+        if row.is_expired(now):
+            row.status = "expired"
+            row.responded_at = now
+        else:
+            active.append(row)
+
+    if len(rows) != len(active):
+        await db.commit()
+
+    return [ConsentRequestResponse.model_validate(r) for r in active]
+
+
+# ── Consent-request operations (not session-scoped) ───────────────────────────
+
+_consent_request_router = APIRouter(
+    prefix="/api/v1/consent-requests",
+    tags=["consent-requests"],
+)
+
+
+@_consent_request_router.get(
+    "/{request_id}",
+    response_model=ConsentRequestResponse,
+    summary="Get the current status of a consent request (CHW polling)",
+)
+async def get_consent_request(
+    request_id: UUID,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ConsentRequestResponse:
+    """GET /api/v1/consent-requests/{request_id}
+
+    Returns the single ConsentRequest row.  Both the CHW (who polls for
+    approval/denial) and the member (who needs the row to render the modal)
+    may call this endpoint.
+
+    Lazy expiry: if the request is still "pending" but has passed its TTL,
+    it is marked "expired" before returning.
+    """
+    consent_req = await db.get(ConsentRequest, request_id)
+    if not consent_req:
+        raise HTTPException(status_code=404, detail="Consent request not found")
+
+    is_participant = (
+        current_user.id == consent_req.chw_id
+        or current_user.id == consent_req.member_id
+    )
+    if not is_participant and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Not authorized to view this consent request")
+
+    now = datetime.now(UTC)
+    if consent_req.is_expired(now):
+        consent_req.status = "expired"
+        consent_req.responded_at = now
+        await db.commit()
+
+    return ConsentRequestResponse.model_validate(consent_req)
+
+
+@_consent_request_router.post(
+    "/{request_id}/approve",
+    response_model=ConsentRequestResponse,
+    summary="Member approves the recording consent request",
+)
+async def approve_consent_request(
+    request_id: UUID,
+    data: ConsentRequestApprove,
+    request: Request,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ConsentRequestResponse:
+    """POST /api/v1/consent-requests/{request_id}/approve
+
+    Member-only.  Marks the ConsentRequest approved and creates a MemberConsent
+    row with:
+      - member_id = current_user.id   (the actual member, NOT a CHW surrogate)
+      - typed_signature = data.typed_signature
+      - ip_address / user_agent from the HTTP request (audit trail)
+
+    The resulting MemberConsent row satisfies both:
+      - HIPAA 45 CFR §164.508 "individual authorization" (member signs themselves)
+      - California Penal Code §632 two-party consent (member taps Approve)
+
+    Errors:
+      404 — request not found
+      403 — caller is not the session member
+      409 — request is not in "pending" status (already approved/denied/cancelled/expired)
+    """
+    consent_req = await db.get(ConsentRequest, request_id)
+    if not consent_req:
+        raise HTTPException(status_code=404, detail="Consent request not found")
+    if consent_req.member_id != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the session member may approve a consent request.",
+        )
+
+    now = datetime.now(UTC)
+    if consent_req.is_expired(now):
+        consent_req.status = "expired"
+        consent_req.responded_at = now
+        await db.commit()
+        raise HTTPException(status_code=409, detail="This consent request has expired.")
+
+    if consent_req.status != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot approve a consent request with status '{consent_req.status}'.",
+        )
+
+    consent_req.status = "approved"
+    consent_req.responded_at = now
+
+    # Create the real MemberConsent row — member_id is the member's own user ID.
+    # This is categorically distinct from a CHW attestation row.
+    member_consent = MemberConsent(
+        session_id=consent_req.session_id,
+        member_id=current_user.id,
+        consent_type=consent_req.consent_type,
+        typed_signature=data.typed_signature,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+    db.add(member_consent)
+    await db.commit()
+    await db.refresh(consent_req)
+    return ConsentRequestResponse.model_validate(consent_req)
+
+
+@_consent_request_router.post(
+    "/{request_id}/deny",
+    response_model=ConsentRequestResponse,
+    summary="Member denies the recording consent request",
+)
+async def deny_consent_request(
+    request_id: UUID,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ConsentRequestResponse:
+    """POST /api/v1/consent-requests/{request_id}/deny
+
+    Member-only.  Marks the ConsentRequest denied.  No MemberConsent row is
+    created.  The denial is final for this request — the CHW must create a new
+    ConsentRequest to ask again (ensuring the member always sees a fresh modal
+    with accurate disclosure rather than retrying silently).
+
+    Errors:
+      404 — request not found
+      403 — caller is not the session member
+      409 — request is not in "pending" status
+    """
+    consent_req = await db.get(ConsentRequest, request_id)
+    if not consent_req:
+        raise HTTPException(status_code=404, detail="Consent request not found")
+    if consent_req.member_id != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the session member may deny a consent request.",
+        )
+
+    now = datetime.now(UTC)
+    if consent_req.is_expired(now):
+        consent_req.status = "expired"
+        consent_req.responded_at = now
+        await db.commit()
+        raise HTTPException(status_code=409, detail="This consent request has already expired.")
+
+    if consent_req.status != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot deny a consent request with status '{consent_req.status}'.",
+        )
+
+    consent_req.status = "denied"
+    consent_req.responded_at = now
+    await db.commit()
+    await db.refresh(consent_req)
+    return ConsentRequestResponse.model_validate(consent_req)
+
+
+@_consent_request_router.post(
+    "/{request_id}/cancel",
+    response_model=ConsentRequestResponse,
+    summary="CHW cancels an outstanding consent request",
+)
+async def cancel_consent_request(
+    request_id: UUID,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ConsentRequestResponse:
+    """POST /api/v1/consent-requests/{request_id}/cancel
+
+    CHW-only.  Marks the ConsentRequest cancelled.  Called when the CHW closes
+    the "Waiting for member…" modal before the member responds.  Prevents the
+    member from seeing a stale modal after the CHW has given up.
+
+    Errors:
+      404 — request not found
+      403 — caller is not the CHW who created the request
+      409 — request is not in "pending" status
+    """
+    consent_req = await db.get(ConsentRequest, request_id)
+    if not consent_req:
+        raise HTTPException(status_code=404, detail="Consent request not found")
+    if consent_req.chw_id != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the CHW who created this request may cancel it.",
+        )
+    if consent_req.status != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot cancel a consent request with status '{consent_req.status}'.",
+        )
+
+    now = datetime.now(UTC)
+    consent_req.status = "cancelled"
+    consent_req.responded_at = now
+    await db.commit()
+    await db.refresh(consent_req)
+    return ConsentRequestResponse.model_validate(consent_req)
 
 
 # ─── Transcript replay ───────────────────────────────────────────────────────

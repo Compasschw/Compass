@@ -110,6 +110,50 @@ class ConsentSubmit(BaseModel):
     chw_attestation: bool = False
 
 
+# ── Two-party consent request schemas ────────────────────────────────────────
+
+class ConsentRequestCreate(BaseModel):
+    """Body for POST /sessions/{id}/consent-requests.
+
+    ``consent_type`` is always "ai_transcription" for v1.  The field is kept
+    explicit so future callers (e.g. video consent) can reuse the same endpoint.
+    """
+
+    consent_type: ConsentType = "ai_transcription"
+
+
+class ConsentRequestResponse(BaseModel):
+    """Wire shape for a ConsentRequest row returned to both the CHW and the member.
+
+    ``status`` reflects the current lifecycle state of the request.  Clients
+    should treat any value outside {"pending","approved","denied","cancelled",
+    "expired"} as an unknown terminal state and stop polling.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    session_id: UUID
+    chw_id: UUID
+    member_id: UUID
+    consent_type: str
+    status: str
+    requested_at: datetime
+    responded_at: datetime | None
+    expires_at: datetime
+
+
+class ConsentRequestApprove(BaseModel):
+    """Body for POST /consent-requests/{id}/approve.
+
+    ``typed_signature`` is the member's full name as a digital signature.
+    Required — it becomes the ``typed_signature`` on the resulting MemberConsent
+    row and is the audit-trail evidence of the member's explicit affirmation.
+    """
+
+    typed_signature: str
+
+
 class TranscriptChunkResponse(BaseModel):
     """A single persisted transcript chunk returned by GET /sessions/{id}/transcript."""
 
