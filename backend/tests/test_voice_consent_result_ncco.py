@@ -8,7 +8,7 @@ POST /api/v1/communication/voice/consent-result.
 Tests that require ``create_vonage_ws_token`` from ``app.utils.security``
 (built by the parallel compass-wt-backend agent) are marked::
 
-    @pytest.mark.skip(reason="depends on feat/vonage-ws-backend merge")
+    # un-skipped after feat/vonage-ws-backend merged into main
 
 so this suite stays green before the parallel branch lands. The parent will
 unskip them after merging feat/vonage-ws-backend into main.
@@ -133,7 +133,7 @@ async def _post_consent_result(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skip(reason="depends on feat/vonage-ws-backend merge")
+# un-skipped after feat/vonage-ws-backend merged into main
 @pytest.mark.asyncio
 async def test_digit_1_ws_fork_present_when_fully_configured() -> None:
     """digit=1 with vonage_ws_audio_url_base + vonage_ws_jwt_secret set →
@@ -150,7 +150,7 @@ async def test_digit_1_ws_fork_present_when_fully_configured() -> None:
     try:
         with (
             patch(
-                "app.routers.communication.settings",
+                "app.config.settings",
                 vonage_ws_audio_url_base=ws_base,
                 vonage_from_number="18127224291",
             ),
@@ -200,7 +200,7 @@ async def test_digit_1_ws_fork_present_when_fully_configured() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skip(reason="depends on feat/vonage-ws-backend merge")
+# un-skipped after feat/vonage-ws-backend merged into main
 @pytest.mark.asyncio
 async def test_websocket_uri_uses_session_id_from_query_param() -> None:
     """The session_id threaded through the WS URI must match the query param
@@ -218,7 +218,7 @@ async def test_websocket_uri_uses_session_id_from_query_param() -> None:
     try:
         with (
             patch(
-                "app.routers.communication.settings",
+                "app.config.settings",
                 vonage_ws_audio_url_base=ws_base,
                 vonage_from_number="18127224291",
             ),
