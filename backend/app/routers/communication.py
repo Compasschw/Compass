@@ -300,24 +300,98 @@ async def voice_consent_result(
         except Exception as e:  # noqa: BLE001
             logger.error("Failed to persist DTMF consent for session %s: %s", session, e)
 
-        # No bargeIn — next action is `record`, not `input`. Vonage rejects
-        # bargeIn-followed-by-non-input as a syntax error.
-        return [
+        from app.config import settings
+
+        # Build the WebSocket fork action.  Requires BOTH vonage_ws_audio_url_base
+        # (wss:// base URL) AND vonage_ws_jwt_secret (owned by the parallel
+        # backend agent) to be configured.  Either missing → graceful degradation
+        # to the existing record-only NCCO so production calls are never dropped.
+        ws_connect_action: dict | None = None
+        if settings.vonage_ws_audio_url_base and session:
+            try:
+                from uuid import UUID as _UUIDWS
+
+                from app.utils.security import create_vonage_ws_token
+
+                ws_token = create_vonage_ws_token(_UUIDWS(session))
+                ws_uri = (
+                    f"{settings.vonage_ws_audio_url_base}"
+                    f"/api/v1/sessions/{session}/transcript/vonage-stream"
+                    f"?token={ws_token}"
+                )
+                ws_connect_action = {
+                    "action": "connect",
+                    "from": settings.vonage_from_number or "",
+                    "endpoint": [
+                        {
+                            "type": "websocket",
+                            "uri": ws_uri,
+                            # 16 kHz PCM signed int16 — matches AssemblyAI v3 streaming
+                            # parameters (universal_streaming_english / u3_rt_pro).
+                            "content-type": "audio/l16;rate=16000",
+                            # Pass session_id in headers so the receiving handler can
+                            # correlate the stream without parsing the query string.
+                            "headers": {"session_id": session},
+                        }
+                    ],
+                }
+                logger.info(
+                    "WebSocket audio fork configured for session %s → %s",
+                    session,
+                    settings.vonage_ws_audio_url_base,
+                )
+            except RuntimeError as exc:
+                # create_vonage_ws_token raises RuntimeError when
+                # vonage_ws_jwt_secret is not set.  Fall back gracefully.
+                logger.warning(
+                    "WebSocket fork skipped for session %s — token generation failed: %s",
+                    session,
+                    exc,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "WebSocket fork skipped for session %s — unexpected error: %s",
+                    session,
+                    exc,
+                )
+        else:
+            if not settings.vonage_ws_audio_url_base:
+                logger.debug(
+                    "vonage_ws_audio_url_base not configured — WebSocket fork disabled "
+                    "(set VONAGE_WS_AUDIO_URL_BASE=wss://api.joincompasschw.com to enable)"
+                )
+
+        # Assemble the final NCCO.  Action order matters to Vonage:
+        #   1. talk — immediate acknowledgement to the member.
+        #   2. connect (websocket) — forks audio to the live transcription
+        #      endpoint BEFORE the recording starts so there is no gap.
+        #   3. record — backup mp3 upload to S3 via /voice/events; this path
+        #      must remain regardless of whether the WS fork is active.
+        #
+        # No bargeIn — the next action after talk is `connect` (not `input`).
+        # Vonage rejects bargeIn-followed-by-non-input as a syntax error.
+        record_action: dict = {
+            "action": "record",
+            "eventUrl": [
+                f"{_public_base_url()}/api/v1/communication/voice/events"
+                f"?session={session or ''}"
+            ],
+            "endOnSilence": 3,
+            "format": "mp3",
+            "beepStart": False,
+        }
+
+        ncco: list[dict] = [
             {
                 "action": "talk",
                 "text": "Thank you. You are now connected.",
             },
-            {
-                "action": "record",
-                "eventUrl": [
-                    f"{_public_base_url()}/api/v1/communication/voice/events"
-                    f"?session={session or ''}"
-                ],
-                "endOnSilence": 3,
-                "format": "mp3",
-                "beepStart": False,
-            },
         ]
+        if ws_connect_action is not None:
+            ncco.append(ws_connect_action)
+        ncco.append(record_action)
+
+        return ncco
 
     # Decline path (digit "2", invalid, or timeout).
     if session:

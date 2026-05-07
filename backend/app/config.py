@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     # The rented virtual number that both parties see on caller ID during
     # masked calls. Format: E.164 without the + (e.g. "18127224291").
     vonage_from_number: str = ""
+    # Base URL for the backend WebSocket server that receives the live audio
+    # fork from Vonage.  Must be a wss:// URL with no trailing slash.
+    # e.g. "wss://api.joincompasschw.com"
+    # When empty, the WebSocket fork is silently skipped and only the
+    # existing mp3 record action runs (safe fallback for local dev / staging).
+    vonage_ws_audio_url_base: str = ""
 
     # Twilio (future option)
     twilio_account_sid: str = ""
