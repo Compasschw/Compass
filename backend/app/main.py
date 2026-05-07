@@ -14,11 +14,16 @@ from app.middleware.audit import AuditMiddleware
 
 logger = logging.getLogger("compass")
 
-# Lift the compass.* logger family to INFO so transcript / streaming
-# diagnostics ("transcript WS connected", "assemblyai streaming session
-# opened", etc.) surface in container logs. Without this, the root
-# logger's default WARNING level hides every diagnostic short of an
-# error, making live incidents very hard to debug.
+# Configure a StreamHandler on root at INFO level so compass.* INFO logs
+# (e.g. "transcript WS connected", "assemblyai streaming session opened")
+# actually reach stdout instead of being silently dropped by Python's
+# lastResort handler (which only fires at WARNING+). ``force=True`` makes
+# this win even if uvicorn or another import set up basicConfig first.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    force=True,
+)
 logging.getLogger("compass").setLevel(logging.INFO)
 
 # ─── Sentry initialization ─────────────────────────────────────────────────────
