@@ -102,6 +102,7 @@ import {
 import {
   useSessionTranscription,
   type TranscriptChunk,
+  type TranscriptionMode,
 } from '../../hooks/useSessionTranscription';
 import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
@@ -1413,6 +1414,32 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
 
   const isCallable = session ? CALLABLE_STATUSES.has(session.status) : false;
 
+  /**
+   * True when this session is conducted over a phone call (mode='phone').
+   *
+   * Phone sessions fork Vonage call audio to the backend independently — the
+   * CHW's browser must NOT capture the device mic.  Instead, the transcription
+   * hook subscribes to the server's fan-out stream via WebSocket (subscribe_only
+   * mode) and the CHW sees live captions without ever acquiring getUserMedia.
+   *
+   * Consent is handled by the Vonage IVR during the call setup — the in-app
+   * consent modal must NOT appear for phone sessions.
+   */
+  const isPhoneSession = session?.mode === 'phone';
+
+  /**
+   * The transcription mode forwarded to the hook.
+   *
+   * - Phone sessions → `'subscribe_only'`: WS receive-only, no mic.
+   * - All other sessions → `'mic_capture'` (default): full mic + WS pipeline.
+   *
+   * This is a derived constant (same value every render for the same session)
+   * so it does not cause additional re-renders.
+   */
+  const transcriptionMode: TranscriptionMode = isPhoneSession
+    ? 'subscribe_only'
+    : 'mic_capture';
+
   const messagesQuery = useSessionMessages(sessionId);
   const sendMessage = useSessionSendMessage();
   const markRead = useSessionMarkRead();
@@ -1512,12 +1539,41 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
   const transcription = useSessionTranscription({
     sessionId,
     enabled: transcriptionEnabled,
+    mode: transcriptionMode,
     onTranscriptChunk: handleTranscriptChunk,
   });
 
   const isRecording = TRANSCRIPTION_ACTIVE_STATES.has(
     transcription.state as 'recording' | 'connecting' | 'reconnecting',
   );
+
+  // ── Phone session: auto-start subscribe-only transcription ────────────────────
+  //
+  // When the CHW opens a phone session that transitions to 'in_progress', the
+  // Vonage IVR has already collected consent on the call leg.  We auto-enable
+  // the WS subscription without any in-app consent modal so captions appear
+  // immediately when the backend starts fanning out transcript chunks.
+  //
+  // Design decisions:
+  //   - Only the CHW side subscribes — members never see live captions (product
+  //     rule enforced via isCHW gate).
+  //   - We guard against double-starts with the `isRecording` check; React strict
+  //     mode's double-effect is harmless because `start()` is idempotent when
+  //     `state === 'connecting'`.
+  //   - If the WebSocket fails, the existing error→toast path handles it; the CHW
+  //     sees a toast and the indicator disappears — text chat is unaffected.
+  //   - We do NOT start before `in_progress` to avoid a WS open on a session that
+  //     may never connect (race with Vonage call placement).
+  useEffect(() => {
+    if (!isCHW || !isPhoneSession) return;
+    if (session?.status !== 'in_progress') return;
+    if (isRecording || transcriptionEnabled) return;
+
+    // Auto-enable and start the subscribe-only WS connection.
+    setTranscriptionEnabled(true);
+    void transcription.start();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCHW, isPhoneSession, session?.status]);
 
   // ── Toast helpers — declared early because effects below depend on it ─────────
 
@@ -2196,8 +2252,13 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
 
   return (
     <>
-      {/* CHW consent gate modal — two-party consent request flow */}
-      {isCHW && (
+      {/*
+       * CHW consent gate modal — two-party consent request flow.
+       *
+       * Suppressed for phone sessions: consent is collected by the Vonage IVR
+       * during call setup, so the in-app modal must not appear.
+       */}
+      {isCHW && !isPhoneSession && (
         <ConsentModal
           visible={consentModalOpen}
           memberFirstName={memberFirstName}
@@ -2332,8 +2393,28 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
                 </TouchableOpacity>
               )}
 
-              {/* Mic button — CHW-only */}
-              {isCHW && (
+              {/*
+               * Phone session: show "Captions active" indicator instead of mic
+               * button.  The mic button is hidden for phone sessions because audio
+               * comes from the Vonage call leg — the CHW's device mic is not used.
+               * The green dot + label gives passive confirmation that captions are
+               * connected, matching the green dot convention used elsewhere in the
+               * product for "live" states.
+               */}
+              {isCHW && isPhoneSession && isRecording && (
+                <View
+                  style={captionsActiveStyles.container}
+                  accessibilityRole="none"
+                  accessibilityLabel="Live captions active"
+                  accessibilityLiveRegion="polite"
+                >
+                  <View style={captionsActiveStyles.dot} />
+                  <Text style={captionsActiveStyles.label}>Captions active</Text>
+                </View>
+              )}
+
+              {/* Mic button — CHW-only, hidden for phone sessions */}
+              {isCHW && !isPhoneSession && (
                 <TouchableOpacity
                   style={[
                     c.iconButton,
@@ -2914,5 +2995,37 @@ const c = StyleSheet.create({
   phoneButtonDisabled: {
     backgroundColor: colors.background,
     borderColor: colors.border,
+  },
+});
+
+/**
+ * Styles for the "Captions active" indicator shown in the header during phone
+ * sessions.  Replaces the mic button — the CHW's device mic is not used for
+ * phone sessions, so no interactive button is appropriate.  The green dot
+ * mirrors the brand convention for "live" states and is distinct from the red
+ * recording dot used for in-person mic capture.
+ */
+const captionsActiveStyles = StyleSheet.create({
+  container: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 10,
+    backgroundColor: `${colors.compassSage}14`,
+    borderWidth: 1,
+    borderColor: `${colors.compassSage}40`,
+  },
+  dot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: colors.compassSage,
+  },
+  label: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.compassSage,
   },
 });
