@@ -130,9 +130,13 @@ export const MAX_RECONNECT_ATTEMPTS = 4;
 /**
  * Shape of a raw transcript message arriving over the WebSocket.
  * Mirrors the server's wire format so callers can validate before mapping.
+ *
+ * `speaker_label` is `null` when speaker diarization is disabled — the
+ * single-mic Phase-2 deployment does not request diarization, so the
+ * server emits null and the client falls through to a default label.
  */
 export interface RawTranscriptMessage {
-  speaker_label: string;
+  speaker_label: string | null;
   speaker_role: string;
   text: string;
   is_final: boolean;
@@ -153,8 +157,14 @@ export function parseTranscriptMessage(raw: unknown): RawTranscriptMessage | nul
 
   const obj = raw as Record<string, unknown>;
 
+  // speaker_label is allowed to be null (diarization off) or a string.
+  // Anything else (number, boolean, undefined, missing key) is a malformed payload.
+  const speakerLabelRaw = obj['speaker_label'];
+  const speakerLabelValid =
+    speakerLabelRaw === null || typeof speakerLabelRaw === 'string';
+
   if (
-    typeof obj['speaker_label'] !== 'string' ||
+    !speakerLabelValid ||
     typeof obj['speaker_role'] !== 'string' ||
     typeof obj['text'] !== 'string' ||
     typeof obj['is_final'] !== 'boolean' ||
@@ -169,10 +179,10 @@ export function parseTranscriptMessage(raw: unknown): RawTranscriptMessage | nul
 }
 
 /**
- * Narrow a raw string to the `SpeakerLabel` union.
- * Defaults to `'A'` for any unexpected value.
+ * Narrow a raw string (or null) to the `SpeakerLabel` union.
+ * Defaults to `'A'` for null or any unexpected value.
  */
-export function toSpeakerLabel(raw: string): SpeakerLabel {
+export function toSpeakerLabel(raw: string | null): SpeakerLabel {
   return raw === 'B' ? 'B' : 'A';
 }
 
