@@ -9,6 +9,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
@@ -95,6 +96,77 @@ class MemberConsent(Base):
     consented_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     ip_address: Mapped[str | None] = mapped_column(String(45))
     user_agent: Mapped[str | None] = mapped_column(Text)
+
+
+class ConsentRequest(Base):
+    """In-app two-party consent request for session recording.
+
+    HIPAA + California Penal Code §632 compliance
+    ---------------------------------------------------
+    Two-party consent for audio recording is required under California §632.
+    This model represents the CHW's request for the member to explicitly approve
+    session recording within the app, creating an immutable audit trail of:
+      - who requested consent (chw_id), and when (requested_at)
+      - who responded (member_id), and when (responded_at)
+      - the final decision (status)
+      - expiry guard: requests auto-expire after 5 minutes to prevent stale
+        pending rows from bypassing future consent decisions
+
+    Statuses
+    --------
+    pending   → created by CHW; member has not responded yet
+    approved  → member tapped Approve; a MemberConsent row was created
+    denied    → member tapped Deny; no MemberConsent row exists
+    cancelled → CHW cancelled before the member responded
+    expired   → responded_at is NULL and expires_at < now() (checked at read time)
+
+    The MemberConsent row created on approval carries member_id = the member's
+    own user ID and no chw_attestation flag — this is a genuine member-tap
+    consent, not a CHW surrogate, satisfying both HIPAA "individual authorization"
+    and California §632 two-party consent requirements.
+    """
+
+    __tablename__ = "consent_requests"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    chw_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+    member_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True
+    )
+    # "ai_transcription" for session recording consent; extensible for future types.
+    consent_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    # pending | approved | denied | cancelled | expired
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pending", index=True
+    )
+    requested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    # Stamped when the member approves or denies, or the CHW cancels.
+    responded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Default: 5 minutes from creation. Checked at read time; no background job needed.
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+    __table_args__ = (
+        # Fast look-up: "all pending consent requests for this session"
+        Index("ix_consent_requests_session_status", "session_id", "status"),
+    )
+
+    def is_expired(self, now: datetime) -> bool:
+        """Return True when this request has not been responded to and its TTL has elapsed."""
+        return self.status == "pending" and now >= self.expires_at
 
 
 class SessionTranscript(Base):
