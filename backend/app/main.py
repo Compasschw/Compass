@@ -107,6 +107,7 @@ app.add_middleware(
 app.add_middleware(AuditMiddleware)
 
 from app.routers.admin import router as admin_router
+from app.routers.assessments import router as assessments_router
 from app.routers.auth import router as auth_router
 from app.routers.chw import router as chw_router
 from app.routers.chw_intake import router as chw_intake_router
@@ -147,3 +148,4 @@ app.include_router(devices_router)
 app.include_router(payments_router)
 app.include_router(communication_router)
 app.include_router(vonage_audio_router)
+app.include_router(assessments_router)

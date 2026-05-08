@@ -1,4 +1,5 @@
 from app.models.admin_totp import AdminTotpSecret
+from app.models.assessment import MemberAssessment, MemberAssessmentResponse
 from app.models.audit import AuditLog
 from app.models.auth import RefreshToken
 from app.models.billing import BillingClaim
@@ -35,4 +36,6 @@ __all__ = [
     "WaitlistEntry",
     "CHWIntakeResponse",
     "AdminTotpSecret",
+    "MemberAssessment",
+    "MemberAssessmentResponse",
 ]

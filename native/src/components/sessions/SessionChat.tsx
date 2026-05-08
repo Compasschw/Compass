@@ -62,6 +62,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import {
   Camera,
+  ClipboardList,
   Download,
   EyeOff,
   Eye,
@@ -1299,6 +1300,12 @@ const cm = StyleSheet.create({
 export interface SessionChatProps {
   /** The session UUID — used directly against the session-scoped endpoints. */
   sessionId: string;
+  /**
+   * Optional callback invoked when the CHW taps "Start health assessment".
+   * The parent screen (e.g. CHWSessionsScreen) navigates to CHWMemberAssessment.
+   * Omitting this prop hides the assessment button.
+   */
+  onStartAssessment?: () => void;
 }
 
 /**
@@ -1323,7 +1330,7 @@ export interface SessionChatProps {
  *      the render list by startedAtMs timestamp alongside text messages.
  *   6. CHW taps MicOff (active state) → transcription stops → followup banner appears.
  */
-export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element {
+export function SessionChat({ sessionId, onStartAssessment }: SessionChatProps): React.JSX.Element {
   const { userRole, userName } = useAuth();
 
   const [inputValue, setInputValue] = useState('');
@@ -2445,6 +2452,19 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
                       }
                     />
                   )}
+                </TouchableOpacity>
+              )}
+
+              {/* Start health assessment — CHW-only */}
+              {isCHW && onStartAssessment != null && (
+                <TouchableOpacity
+                  style={c.iconButton}
+                  onPress={onStartAssessment}
+                  accessibilityRole="button"
+                  accessibilityLabel="Start health assessment"
+                  accessibilityHint="Opens the Member Health and Wellness questionnaire for this session."
+                >
+                  <ClipboardList size={16} color={colors.primary} />
                 </TouchableOpacity>
               )}
 
