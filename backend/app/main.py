@@ -107,6 +107,12 @@ app.add_middleware(
 app.add_middleware(AuditMiddleware)
 
 from app.routers.admin import router as admin_router
+from app.routers.resources import (
+    _suggestions_router as resource_suggestions_router,
+    admin_router as resources_admin_router,
+    chw_router as resources_chw_router,
+    public_router as resources_public_router,
+)
 from app.routers.auth import router as auth_router
 from app.routers.chw import router as chw_router
 from app.routers.chw_intake import router as chw_intake_router
@@ -147,3 +153,12 @@ app.include_router(devices_router)
 app.include_router(payments_router)
 app.include_router(communication_router)
 app.include_router(vonage_audio_router)
+
+# ─── Resource Folder routes ────────────────────────────────────────────────────
+# Registration order matters: the static suggestion queue routes must be
+# registered BEFORE the parameterised admin resource routes to prevent
+# FastAPI from trying to parse "suggestions" as a UUID in /admin/resources/{id}.
+app.include_router(resource_suggestions_router)  # /api/v1/admin/resources/suggestions/...
+app.include_router(resources_admin_router)        # /api/v1/admin/resources/...
+app.include_router(resources_chw_router)          # /api/v1/chw/resources/...
+app.include_router(resources_public_router)       # /api/v1/resources/...

@@ -33,6 +33,7 @@ import {
   Sparkles,
   RefreshCw,
 } from 'lucide-react-native';
+import { ResourceMentionInput } from '../resources/ResourceMentionInput';
 
 import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
@@ -1225,19 +1226,19 @@ export function DocumentationModal({
             <Text style={m.notesHelper}>
               Visible to billing/audit as CHW-authored
             </Text>
-            <TextInput
+            <ResourceMentionInput
               style={m.notesInput}
               value={chwNotes}
               onChangeText={(v) => {
                 if (v.length <= NOTES_MAX) setChwNotes(v);
               }}
-              placeholder="What did you discuss with the member? Any concerns, follow-ups, observations…"
+              placeholder="What did you discuss? Type @ to mention a community resource…"
               placeholderTextColor={colors.mutedForeground}
               multiline
               numberOfLines={4}
               textAlignVertical="top"
               maxLength={NOTES_MAX}
-              accessibilityLabel="Your notes — CHW-authored"
+              accessibilityLabel="Your notes — CHW-authored. Type @ to mention a resource."
             />
           </View>
 

@@ -11,6 +11,7 @@ from app.models.device import DeviceToken
 from app.models.enums import *
 from app.models.magic_link import MagicLinkToken
 from app.models.request import ServiceRequest
+from app.models.resource import Resource, ResourceSuggestion
 from app.models.reward import RedemptionItem, RewardTransaction
 from app.models.session import MemberConsent, Session, SessionDocumentation
 from app.models.twilio import TwilioProxySession
@@ -35,4 +36,6 @@ __all__ = [
     "WaitlistEntry",
     "CHWIntakeResponse",
     "AdminTotpSecret",
+    "Resource",
+    "ResourceSuggestion",
 ]

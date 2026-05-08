@@ -81,6 +81,8 @@ import * as DocumentPicker from 'expo-document-picker';
 import { uploadFile, type RNFileAsset } from '../../api/upload';
 
 import { useAuth } from '../../context/AuthContext';
+import { ResourceMentionInput } from '../resources/ResourceMentionInput';
+import { ResourceMentionText } from '../resources/ResourceMentionText';
 import {
   useSession,
   useSessionMessages,
@@ -465,17 +467,19 @@ function MessageBubble({
             </Pressable>
           )}
 
-          {/* Body text — only render when non-empty (caption with attachment) */}
+          {/* Body text — only render when non-empty (caption with attachment).
+              ResourceMentionText renders @[Name](resource:uuid) tokens as
+              tappable chips with a resource detail popover. Plain text messages
+              (no tokens) fall through to a simple <Text> to avoid any overhead. */}
           {message.body.trim().length > 0 && (
-            <Text
-              style={[
+            <ResourceMentionText
+              text={message.body}
+              textStyle={[
                 b.bodyText,
                 isOwn ? b.textOwn : b.textOther,
                 attachment !== null && b.bodyTextWithAttachment,
               ]}
-            >
-              {message.body}
-            </Text>
+            />
           )}
 
           {isFailed && (
@@ -2588,20 +2592,20 @@ export function SessionChat({ sessionId }: SessionChatProps): React.JSX.Element 
                 <Paperclip size={18} color={colors.primary} />
               </TouchableOpacity>
 
-              <TextInput
+              <ResourceMentionInput
                 style={c.input}
                 value={inputValue}
                 onChangeText={(text) => setInputValue(text.slice(0, MAX_CHARS))}
                 placeholder={
-                  pendingAttachment !== null ? 'Add a message (optional)…' : 'Type a message…'
+                  pendingAttachment !== null ? 'Add a message (optional)…' : 'Type a message… (@resource)'
                 }
                 placeholderTextColor={colors.mutedForeground}
                 multiline
                 maxLength={MAX_CHARS}
                 returnKeyType="send"
                 blurOnSubmit
-                onSubmitEditing={() => { void handleSend(); }}
-                accessibilityLabel="Message input"
+                onSubmit={() => { void handleSend(); }}
+                accessibilityLabel="Message input. Type @ to mention a resource."
               />
               <TouchableOpacity
                 style={[c.sendButton, isSendDisabled && c.sendButtonDisabled]}
