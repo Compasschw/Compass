@@ -14,6 +14,7 @@ from app.models.followup import SessionFollowup
 from app.models.magic_link import MagicLinkToken
 from app.models.request import ServiceRequest
 from app.models.resource import Resource, ResourceSuggestion
+from app.models.testimonial import Testimonial
 from app.models.reward import RedemptionItem, RewardTransaction
 from app.models.session import MemberConsent, Session, SessionDocumentation
 from app.models.twilio import TwilioProxySession
@@ -43,4 +44,5 @@ __all__ = [
     "Resource",
     "ResourceSuggestion",
     "SessionFollowup",
+    "Testimonial",
 ]

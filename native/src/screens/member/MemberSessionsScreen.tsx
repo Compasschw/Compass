@@ -68,6 +68,7 @@ import {
   verticalLabel,
   type Vertical as VerticalLib,
 } from '../../lib/verticals';
+import { RateChwModal } from '../../components/testimonials/RateChwModal';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -637,6 +638,10 @@ interface CompletedSessionCardProps {
   onRate: (sessionId: string, rating: number) => void;
   onToggleExpand: (sessionId: string) => void;
   onBookAgain: () => void;
+  /** Whether the member has already submitted a testimonial for this session. */
+  hasTestimonial: boolean;
+  /** Called when the member taps "Rate this CHW" to open the RateChwModal. */
+  onOpenRateModal: (session: SessionData) => void;
 }
 
 function CompletedSessionCard({
@@ -646,6 +651,8 @@ function CompletedSessionCard({
   onRate,
   onToggleExpand,
   onBookAgain,
+  hasTestimonial,
+  onOpenRateModal,
 }: CompletedSessionCardProps): React.JSX.Element {
   const chwDisplayName = session.chwName ?? 'CHW';
   const initials = getInitials(chwDisplayName);
@@ -769,6 +776,19 @@ function CompletedSessionCard({
           ) : null}
         </View>
       ) : null}
+
+      {/* Rate this CHW — hidden once the member has already submitted a testimonial */}
+      {!hasTestimonial && (
+        <TouchableOpacity
+          onPress={() => onOpenRateModal(session)}
+          style={completedCardStyles.rateChwBtn}
+          accessibilityRole="button"
+          accessibilityLabel={`Rate your session with ${session.chwName ?? 'CHW'}`}
+        >
+          <Star size={14} color={colors.compassGold} fill={colors.compassGold} />
+          <Text style={completedCardStyles.rateChwText}>Rate this CHW</Text>
+        </TouchableOpacity>
+      )}
 
       {/* Book again */}
       <TouchableOpacity
@@ -971,6 +991,24 @@ const completedCardStyles = StyleSheet.create({
     color: colors.mutedForeground,
     fontStyle: 'italic',
     paddingLeft: 4,
+  },
+  // "Rate this CHW" CTA — shown above Book Again when no testimonial yet.
+  rateChwBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderColor: colors.compassGold,
+    borderRadius: 12,
+    paddingVertical: 12,
+    backgroundColor: `${colors.compassGold}12`,
+    marginBottom: 8,
+  },
+  rateChwText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 14,
+    color: colors.compassGold,
   },
   bookAgainBtn: {
     borderWidth: 1,
@@ -1244,6 +1282,19 @@ export function MemberSessionsScreen(): React.JSX.Element {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [chatSessionId, setChatSessionId] = useState<string | null>(null);
 
+  /**
+   * Testimonials state
+   * ------------------
+   * rateModalSession — the session currently being rated (null = modal hidden).
+   * submittedTestimonialSessionIds — set of session IDs for which the member
+   *   has already submitted a testimonial in this session. Persisted in-memory
+   *   only; a full implementation would fetch this from the API on mount.
+   */
+  const [rateModalSession, setRateModalSession] = useState<SessionData | null>(null);
+  const [submittedTestimonialSessionIds, setSubmittedTestimonialSessionIds] = useState<Set<string>>(
+    new Set(),
+  );
+
   const sessionsQuery = useSessions();
   const myRequestsQuery = useMyRequests();
   const cancelRequest = useCancelRequest();
@@ -1311,6 +1362,29 @@ export function MemberSessionsScreen(): React.JSX.Element {
   const handleBookAgain = useCallback(() => {
     showToast('Navigate to Find CHW to book a new session.');
   }, [showToast]);
+
+  /** Open the RateChwModal for the given session. */
+  const handleOpenRateModal = useCallback((session: SessionData) => {
+    setRateModalSession(session);
+  }, []);
+
+  /** Close the RateChwModal (user cancelled without submitting). */
+  const handleCloseRateModal = useCallback(() => {
+    setRateModalSession(null);
+  }, []);
+
+  /**
+   * Called when a testimonial is successfully submitted from RateChwModal.
+   * Adds the session ID to the submitted set so the "Rate this CHW" button
+   * is hidden immediately without a full data refetch.
+   */
+  const handleTestimonialSubmitted = useCallback(() => {
+    if (rateModalSession) {
+      setSubmittedTestimonialSessionIds((prev) => new Set(prev).add(rateModalSession.id));
+    }
+    setRateModalSession(null);
+    showToast('Thank you for your rating!');
+  }, [rateModalSession, showToast]);
 
   /** Optimistic cancel: dismiss immediately, fire the API call, rollback on error. */
   const handleCancelRequest = useCallback(
@@ -1472,6 +1546,8 @@ export function MemberSessionsScreen(): React.JSX.Element {
                 onRate={handleRate}
                 onToggleExpand={handleToggleExpand}
                 onBookAgain={handleBookAgain}
+                hasTestimonial={submittedTestimonialSessionIds.has(session.id)}
+                onOpenRateModal={handleOpenRateModal}
               />
             ))
           ) : (
@@ -1493,6 +1569,17 @@ export function MemberSessionsScreen(): React.JSX.Element {
           visible={chatSessionId != null}
           sessionId={chatSessionId}
           onClose={() => setChatSessionId(null)}
+        />
+      )}
+
+      {/* Rate CHW modal — rendered when a member taps "Rate this CHW" on a completed session */}
+      {rateModalSession != null && (
+        <RateChwModal
+          visible={rateModalSession != null}
+          sessionId={rateModalSession.id}
+          chwName={rateModalSession.chwName ?? 'your CHW'}
+          onClose={handleCloseRateModal}
+          onSubmitted={handleTestimonialSubmitted}
         />
       )}
       </View>
