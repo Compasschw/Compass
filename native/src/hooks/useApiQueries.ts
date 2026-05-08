@@ -117,7 +117,15 @@ export interface MemberProfile {
 }
 
 export interface ChwBrowseItem {
+  /** CHWProfile primary key (not the user UUID). */
   id: string;
+  /**
+   * CHW User.id (UUID). Use this — not `id` — as the chw_id path param for
+   * GET /member/chws/{chw_id} and any other user-scoped CHW endpoints.
+   * The backend browse endpoint returns both fields; this is the one that
+   * joins against the users table.
+   */
+  userId: string;
   name: string;
   specializations: string[];
   languages: string[];
@@ -160,6 +168,48 @@ export interface MessageData {
   type: string;
   createdAt: string;
   attachment?: FileAttachmentInline | null;
+}
+
+// ─── Member-facing CHW Profile ───────────────────────────────────────────────
+
+/**
+ * Public-style CHW profile returned by GET /member/chws/{chw_id}.
+ *
+ * Any authenticated member may fetch this for any CHW — no relationship gate.
+ * Fields are the CHW's professional/public attributes; phone/email/payout state
+ * are explicitly excluded (members contact CHWs through the platform).
+ */
+export interface MemberFacingCHWProfile {
+  /** CHW user ID — the canonical identifier used in navigation params. */
+  id: string;
+  /** First name from the CHW's display name. */
+  firstName: string;
+  /**
+   * Privacy shorthand: first character of the last name + ".".
+   * E.g. "Smith" → "S.".
+   */
+  lastNameInitial: string;
+  /** Primary language from CHWProfile.languages[0], defaulting to "English". */
+  primaryLanguage: string;
+  /** Remaining elements of CHWProfile.languages after the first. */
+  additionalLanguages: string[];
+  /** First element of CHWProfile.specializations, or null. */
+  primarySpecialization: string | null;
+  /**
+   * Human-readable experience bracket derived from CHWProfile.years_experience.
+   * E.g. "<1 year", "1 year", "5 years". Null when CHWProfile row is absent.
+   */
+  yearsExperience: string | null;
+  /** True when the CHW's intake confirms CA CHW certification. */
+  caChwCertified: boolean;
+  /** Preferred modality: "in_person" | "virtual" | "hybrid" | null. */
+  modality: string | null;
+  /** ZIP codes the CHW serves. Currently single-element (CHWProfile.zip_code). */
+  serviceAreaZips: string[];
+  /** Day abbreviations from availability_windows JSONB. E.g. ["mon","wed","fri"]. */
+  availableDays: string[];
+  /** Count of sessions the calling member has had with this CHW (any status). */
+  sharedSessionCount: number;
 }
 
 // ─── CHW Member Profile (HIPAA-gated) ────────────────────────────────────────
@@ -257,6 +307,8 @@ export const queryKeys = {
   /** Full rich member profile for the CHW Member Profile screen. */
   chwMemberDetail: (memberId: string) => ['chw', 'members', memberId, 'detail'] as const,
   chwMapData: ['chw', 'map-data'] as const,
+  /** Public-style CHW profile for the member-facing CHW Profile screen. */
+  memberFacingCHWProfile: (chwId: string) => ['member', 'chws', chwId] as const,
 };
 
 /** Re-export so callers don't need a second import from api/sessions. */
@@ -460,6 +512,43 @@ export function useChwMapData() {
       return transformKeys<ChwMapData>(raw);
     },
     staleTime: 120_000, // 2 min — map data changes slowly
+  });
+}
+
+/**
+ * Fetch the public-style CHW profile for the member-facing CHW Profile screen.
+ *
+ * Any authenticated member may call this for any CHW — there is no relationship
+ * gate on the backend (unlike useChwMemberProfile which requires an active
+ * session or service request). This is the "public discovery" surface.
+ *
+ * Stale after 2 minutes — CHW profile data changes rarely (specializations,
+ * languages, availability). The shared_session_count portion changes more often
+ * but is low-stakes to serve slightly stale.
+ *
+ * @param chwId - The CHW's user UUID (from ChwBrowseItem.id or session.chwId).
+ */
+export function useMemberFacingCHWProfile(chwId: string) {
+  return useQuery({
+    queryKey: queryKeys.memberFacingCHWProfile(chwId),
+    queryFn: async (): Promise<MemberFacingCHWProfile> => {
+      const raw = await api<unknown>(`/member/chws/${chwId}`);
+      return transformKeys<MemberFacingCHWProfile>(raw);
+    },
+    enabled: chwId.length > 0,
+    staleTime: 120_000, // 2 min — CHW profile data is slow-moving
+    retry: (failureCount, error: unknown) => {
+      // Never retry a 404 — the CHW genuinely doesn't exist.
+      if (
+        error != null &&
+        typeof error === 'object' &&
+        'status' in error &&
+        (error as { status: number }).status === 404
+      ) {
+        return false;
+      }
+      return failureCount < 2;
+    },
   });
 }
 

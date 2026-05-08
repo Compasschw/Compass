@@ -24,13 +24,17 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
   CheckCircle,
   Map as MapIcon,
   Search,
   Star,
+  User,
   X,
 } from 'lucide-react-native';
+import type { MemberFindStackParamList } from '../../navigation/MemberTabNavigator';
 
 import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
@@ -738,9 +742,11 @@ const modalStyles = StyleSheet.create({
 interface CHWCardProps {
   chw: ChwBrowseItem;
   onSchedule: (chw: ChwBrowseItem) => void;
+  /** Navigate to the member-facing CHW profile screen for this CHW. */
+  onViewProfile: (chw: ChwBrowseItem) => void;
 }
 
-function CHWCard({ chw, onSchedule }: CHWCardProps): React.JSX.Element {
+function CHWCard({ chw, onSchedule, onViewProfile }: CHWCardProps): React.JSX.Element {
   const initials = chw.name
     .split(' ')
     .slice(0, 2)
@@ -801,18 +807,37 @@ function CHWCard({ chw, onSchedule }: CHWCardProps): React.JSX.Element {
         </View>
       </View>
 
-      {/* Schedule button */}
-      <TouchableOpacity
-        onPress={() => onSchedule(chw)}
-        style={[cardStyles.scheduleBtn, !chw.isAvailable && cardStyles.scheduleBtnDisabled]}
-        disabled={!chw.isAvailable}
-        accessibilityRole="button"
-        accessibilityLabel={`Schedule a session with ${chw.name}`}
-      >
-        <Text style={[cardStyles.scheduleBtnText, !chw.isAvailable && { color: colors.mutedForeground }]}>
-          {chw.isAvailable ? 'Schedule Session' : 'Not Available'}
-        </Text>
-      </TouchableOpacity>
+      {/* Action row: View Profile + Schedule */}
+      <View style={cardStyles.actionRow}>
+        <TouchableOpacity
+          onPress={() => onViewProfile(chw)}
+          style={cardStyles.profileBtn}
+          accessibilityRole="button"
+          accessibilityLabel={`View ${chw.name}'s profile`}
+        >
+          <User size={14} color={colors.primary} />
+          <Text style={cardStyles.profileBtnText}>Profile</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => onSchedule(chw)}
+          style={[
+            cardStyles.scheduleBtn,
+            !chw.isAvailable && cardStyles.scheduleBtnDisabled,
+          ]}
+          disabled={!chw.isAvailable}
+          accessibilityRole="button"
+          accessibilityLabel={`Schedule a session with ${chw.name}`}
+        >
+          <Text
+            style={[
+              cardStyles.scheduleBtnText,
+              !chw.isAvailable && { color: colors.mutedForeground },
+            ]}
+          >
+            {chw.isAvailable ? 'Schedule Session' : 'Not Available'}
+          </Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
@@ -931,7 +956,30 @@ const cardStyles = StyleSheet.create({
     color: '#6B7A6B',
     lineHeight: 16,
   },
+  actionRow: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+  },
+  profileBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.primary + '50',
+    backgroundColor: colors.primary + '10',
+    flexShrink: 0,
+  },
+  profileBtnText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 13,
+    color: colors.primary,
+  },
   scheduleBtn: {
+    flex: 1,
     backgroundColor: '#3D5A3E',
     borderRadius: 12,
     paddingVertical: 14,
@@ -1041,6 +1089,8 @@ const mapStyles = StyleSheet.create({
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export function MemberFindScreen(): React.JSX.Element {
+  const navigation = useNavigation<NativeStackNavigationProp<MemberFindStackParamList>>();
+
   const [searchQuery, setSearchQuery] = useState('');
   // Multi-select category filter (per JT Figma feedback: "select CHW with
   // multiple categories. Not just one or all but multi-select"). Empty set
@@ -1127,6 +1177,20 @@ export function MemberFindScreen(): React.JSX.Element {
   const handleSchedule = useCallback((chw: ChwBrowseItem) => {
     setSchedulingChw(chw);
   }, []);
+
+  /**
+   * Navigate to the member-facing CHW profile screen.
+   *
+   * ChwBrowseItem.userId is the CHW's User.id UUID (from `user_id` in the
+   * browse endpoint response). This matches the chw_id path param expected
+   * by GET /member/chws/{chw_id}. Do NOT use chw.id (CHWProfile PK) here.
+   */
+  const handleViewProfile = useCallback(
+    (chw: ChwBrowseItem) => {
+      navigation.navigate('CHWProfile', { chwId: chw.userId });
+    },
+    [navigation],
+  );
 
   const handleModalClose = useCallback(() => {
     setSchedulingChw(null);
@@ -1291,7 +1355,11 @@ export function MemberFindScreen(): React.JSX.Element {
           data={filteredChws}
           keyExtractor={(item) => item.id}
           renderItem={({ item }) => (
-            <CHWCard chw={item} onSchedule={handleSchedule} />
+            <CHWCard
+              chw={item}
+              onSchedule={handleSchedule}
+              onViewProfile={handleViewProfile}
+            />
           )}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}

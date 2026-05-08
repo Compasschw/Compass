@@ -1,12 +1,14 @@
 from datetime import UTC, datetime
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies import require_role
 from app.schemas.followup import RoadmapItemResponse
+from app.schemas.member import CHWMemberFacingProfile
 from app.schemas.user import MemberProfileResponse, MemberProfileUpdate
 
 router = APIRouter(prefix="/api/v1/member", tags=["member"])
@@ -176,3 +178,193 @@ async def delete_my_account(
 
     await db.commit()
     return None
+
+
+# ─── Member-facing CHW Profile ────────────────────────────────────────────────
+
+
+def _format_years_experience(years: int) -> str:
+    """Convert an integer years_experience value to a human-readable bracket.
+
+    CHWProfile stores years_experience as an integer (default 0).  Members see
+    a friendlier label instead of the raw number.
+
+    Examples:
+        0  → "<1 year"
+        1  → "1 year"
+        2  → "2 years"
+        10 → "10 years"
+    """
+    if years < 1:
+        return "<1 year"
+    if years == 1:
+        return "1 year"
+    return f"{years} years"
+
+
+def _extract_available_days(availability_windows: dict | None) -> list[str]:
+    """Extract day-abbreviation keys from the CHWProfile.availability_windows JSONB.
+
+    The JSONB schema stores availability as a dict keyed by lowercase day
+    abbreviations (e.g. {"mon": "9-17", "wed": "9-17", "fri": "9-17"}).
+    When the field is None or not a dict, we fall back to an empty list so
+    callers never receive a null.
+
+    Args:
+        availability_windows: The raw JSONB value from CHWProfile, which may
+            be None, an empty dict, or a populated schedule dict.
+
+    Returns:
+        A sorted list of day-abbreviation strings, e.g. ["fri", "mon", "wed"].
+    """
+    if not availability_windows or not isinstance(availability_windows, dict):
+        return []
+    return sorted(availability_windows.keys())
+
+
+@router.get("/chws/{chw_id}", response_model=CHWMemberFacingProfile)
+async def get_chw_member_facing_profile(
+    chw_id: UUID,
+    current_user=Depends(require_role("member")),
+    db: AsyncSession = Depends(get_db),
+) -> CHWMemberFacingProfile:
+    """Return the public-style CHW profile to an authenticated member.
+
+    Any authenticated member may view any CHW's public profile — there is no
+    relationship gate on this endpoint (unlike the inverse CHW→member endpoint
+    which requires an active session or service request).
+
+    Visibility rules:
+    - The chw_id must correspond to a User with role == "chw". Returns 404
+      if the user doesn't exist, is not a CHW, or is inactive / deleted.
+    - CHWProfile fields are read defensively; missing fields fall back to
+      sensible defaults (None, [], False) rather than raising a 500.
+
+    The ``shared_session_count`` is scoped to the calling member only: it
+    counts sessions WHERE chw_id == path_param AND member_id == current_user.id
+    regardless of session status (scheduled, in_progress, completed, cancelled).
+
+    HIPAA minimum-necessary (45 CFR §164.514(d)):
+    - CHW phone and email are NOT returned — members contact CHWs through the
+      Compass platform (session initiation, in-app messaging).
+    - Stripe / payout fields are NOT returned — irrelevant to a member.
+    - Full caseload or per-member details for other members are NOT returned.
+    """
+    from app.models.user import CHWProfile, User
+
+    # ── Resolve the CHW user row ──────────────────────────────────────────────
+    # Require role == "chw" and is_active so deactivated/deleted accounts
+    # don't surface in member-facing discovery. deleted_at IS NULL is an
+    # additional guard for soft-deleted accounts.
+    user_result = await db.execute(
+        select(User)
+        .where(User.id == chw_id)
+        .where(User.role == "chw")
+        .where(User.is_active.is_(True))
+        .where(User.deleted_at.is_(None))
+    )
+    chw_user = user_result.scalar_one_or_none()
+    if chw_user is None:
+        raise HTTPException(status_code=404, detail="CHW not found.")
+
+    # ── Fetch CHWProfile (may not exist for newly-registered CHWs) ───────────
+    profile_result = await db.execute(
+        select(CHWProfile).where(CHWProfile.user_id == chw_id)
+    )
+    chw_profile = profile_result.scalar_one_or_none()
+
+    # ── Fetch CHWIntake for cert + modality fields ────────────────────────────
+    # CHWIntake is stored in the chw_intake table (not in CHWProfile). We import
+    # it here to avoid a circular import at module level. It may not exist for
+    # newly-registered CHWs who haven't completed the questionnaire.
+    ca_chw_certified = False
+    modality: str | None = None
+    try:
+        from app.models.chw_intake import CHWIntakeResponse  # noqa: PLC0415
+
+        intake_result = await db.execute(
+            select(CHWIntakeResponse).where(CHWIntakeResponse.user_id == chw_id)
+        )
+        intake = intake_result.scalar_one_or_none()
+        if intake is not None:
+            ca_chw_certified = getattr(intake, "ca_chw_certificate", None) == "yes"
+            raw_modality = getattr(intake, "preferred_modality", None)
+            # Map intake values to the canonical three-state enum.
+            # The intake questionnaire uses values like "in_person", "virtual",
+            # "hybrid" (or "both" as an older alias for "hybrid").
+            _MODALITY_MAP: dict[str, str] = {
+                "in_person": "in_person",
+                "virtual": "virtual",
+                "hybrid": "hybrid",
+                "both": "hybrid",
+            }
+            modality = _MODALITY_MAP.get(raw_modality or "", None)
+    except ImportError:
+        # CHWIntakeResponse model may not exist in all migration states.
+        pass
+
+    # ── Split CHW display name into first / last ──────────────────────────────
+    # User.name stores the full display name as a single string. We split on
+    # the first space; any additional tokens are treated as part of the last name.
+    name_parts = (chw_user.name or "").strip().split(" ", 1)
+    first_name = name_parts[0] if name_parts else ""
+    last_name_raw = name_parts[1] if len(name_parts) > 1 else ""
+
+    # Privacy shorthand: first character of last name + period.
+    # Guards against empty last_name (e.g. single-name account).
+    last_name_initial = f"{last_name_raw[0].upper()}." if last_name_raw else ""
+
+    # ── Build language fields from CHWProfile.languages ───────────────────────
+    all_languages: list[str] = (chw_profile.languages or []) if chw_profile else []
+    primary_language = all_languages[0] if all_languages else "English"
+    additional_languages = all_languages[1:] if len(all_languages) > 1 else []
+
+    # ── Primary specialization ────────────────────────────────────────────────
+    all_specializations: list[str] = (
+        (chw_profile.specializations or []) if chw_profile else []
+    )
+    primary_specialization = all_specializations[0] if all_specializations else None
+
+    # ── Years experience bracket ──────────────────────────────────────────────
+    years_experience: str | None = None
+    if chw_profile is not None:
+        years_experience = _format_years_experience(chw_profile.years_experience or 0)
+
+    # ── Service area ZIPs ─────────────────────────────────────────────────────
+    # Today: single-ZIP from CHWProfile.zip_code; Phase 2 adds multi-ZIP table.
+    service_area_zips: list[str] = []
+    if chw_profile is not None and chw_profile.zip_code:
+        service_area_zips = [chw_profile.zip_code]
+
+    # ── Available days from availability_windows JSONB ────────────────────────
+    available_days = _extract_available_days(
+        chw_profile.availability_windows if chw_profile else None
+    )
+
+    # ── Shared session count (member-scoped) ──────────────────────────────────
+    # Count ALL sessions between this CHW and the calling member — any status.
+    # This tells the member "we've worked together N times" for social proof.
+    from app.models.session import Session  # noqa: PLC0415
+
+    session_count_result = await db.execute(
+        select(func.count())
+        .select_from(Session)
+        .where(Session.chw_id == chw_id)
+        .where(Session.member_id == current_user.id)
+    )
+    shared_session_count: int = session_count_result.scalar() or 0
+
+    return CHWMemberFacingProfile(
+        id=chw_user.id,
+        first_name=first_name,
+        last_name_initial=last_name_initial,
+        primary_language=primary_language,
+        additional_languages=additional_languages,
+        primary_specialization=primary_specialization,
+        years_experience=years_experience,
+        ca_chw_certified=ca_chw_certified,
+        modality=modality,
+        service_area_zips=service_area_zips,
+        available_days=available_days,
+        shared_session_count=shared_session_count,
+    )

@@ -31,6 +31,7 @@ import { colors } from '../theme/colors';
 import { fonts } from '../theme/typography';
 import { MemberHomeScreen } from '../screens/member/MemberHomeScreen';
 import { MemberFindScreen } from '../screens/member/MemberFindScreen';
+import { MemberFacingCHWProfileScreen } from '../screens/member/MemberFacingCHWProfileScreen';
 import { MemberSessionsScreen } from '../screens/member/MemberSessionsScreen';
 import { MemberCalendarScreen } from '../screens/member/MemberCalendarScreen';
 import { MemberRoadmapScreen } from '../screens/member/MemberRoadmapScreen';
@@ -42,6 +43,17 @@ import { MemberRewardsScreen } from '../screens/member/MemberRewardsScreen';
 export type MemberHomeStackParamList = {
   HomeMain: undefined;
   Rewards: undefined;
+};
+
+/**
+ * Stack param list for the Find CHW tab.
+ * CHWProfile is a stack screen (not a tab) pushed from MemberFindScreen.
+ * Registered here so navigation.navigate('CHWProfile', { chwId }) works from
+ * any screen inside this stack (Find list, session card, chat header).
+ */
+export type MemberFindStackParamList = {
+  FindMain: undefined;
+  CHWProfile: { chwId: string };
 };
 
 export type MemberTabParamList = {
@@ -56,6 +68,7 @@ export type MemberTabParamList = {
 const Tab = createBottomTabNavigator<MemberTabParamList>();
 const Drawer = createDrawerNavigator<MemberTabParamList>();
 const HomeStack = createNativeStackNavigator<MemberHomeStackParamList>();
+const FindStack = createNativeStackNavigator<MemberFindStackParamList>();
 
 /**
  * Nested stack inside the Home tab so we can push MemberRewardsScreen on
@@ -67,6 +80,24 @@ function HomeStackNavigator(): React.JSX.Element {
       <HomeStack.Screen name="HomeMain" component={MemberHomeScreen} />
       <HomeStack.Screen name="Rewards" component={MemberRewardsScreen} />
     </HomeStack.Navigator>
+  );
+}
+
+/**
+ * Nested stack inside the Find CHW tab.
+ *
+ * FindMain is the root (MemberFindScreen — the CHW list + map).
+ * CHWProfile is a stack screen pushed on top when a member taps "View Profile"
+ * on any CHW card. It is NOT a tab — it belongs here so it can be pushed from
+ * MemberFindScreen and from future entry points (session card, chat header)
+ * inside the same stack without touching the tab bar.
+ */
+function FindStackNavigator(): React.JSX.Element {
+  return (
+    <FindStack.Navigator screenOptions={{ headerShown: false }}>
+      <FindStack.Screen name="FindMain" component={MemberFindScreen} />
+      <FindStack.Screen name="CHWProfile" component={MemberFacingCHWProfileScreen} />
+    </FindStack.Navigator>
   );
 }
 
@@ -87,7 +118,10 @@ interface ScreenSpec {
 
 const SCREENS: ScreenSpec[] = [
   { name: 'Home',     title: 'Home',     component: HomeStackNavigator,    icon: Home, rootScreen: 'HomeMain' },
-  { name: 'FindCHW',  title: 'Find CHW', component: MemberFindScreen,      icon: Search },
+  // FindCHW mounts a nested stack so tapping a CHW card pushes CHWProfile
+  // without affecting the tab bar. rootScreen resets the stack to FindMain
+  // when the user taps the active tab.
+  { name: 'FindCHW',  title: 'Find CHW', component: FindStackNavigator,    icon: Search, rootScreen: 'FindMain' },
   { name: 'Sessions', title: 'Sessions', component: MemberSessionsScreen,  icon: ClipboardList },
   { name: 'Calendar', title: 'Calendar', component: MemberCalendarScreen,  icon: CalendarDays },
   { name: 'Roadmap',  title: 'Roadmap',  component: MemberRoadmapScreen,   icon: Map },
