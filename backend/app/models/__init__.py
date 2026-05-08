@@ -10,6 +10,7 @@ from app.models.conversation import CallLog, Conversation, FileAttachment, Messa
 from app.models.credential import CHWCredentialValidation, Credential, InstitutionRegistry
 from app.models.device import DeviceToken
 from app.models.enums import *
+from app.models.followup import SessionFollowup
 from app.models.magic_link import MagicLinkToken
 from app.models.request import ServiceRequest
 from app.models.resource import Resource, ResourceSuggestion
@@ -41,4 +42,5 @@ __all__ = [
     "MemberAssessmentResponse",
     "Resource",
     "ResourceSuggestion",
+    "SessionFollowup",
 ]
