@@ -121,6 +121,12 @@ from app.routers.member import router as member_router
 from app.routers.payments import router as payments_router
 from app.routers.phone_verification import router as phone_verification_router
 from app.routers.requests import router as requests_router
+from app.routers.resources import (
+    _suggestions_router as resource_suggestions_router,
+    admin_router as resources_admin_router,
+    chw_router as resources_chw_router,
+    public_router as resources_public_router,
+)
 from app.routers.sessions import _consent_request_router as consent_request_router
 from app.routers.sessions import router as sessions_router
 from app.routers.transcript import router as transcript_router
@@ -149,3 +155,12 @@ app.include_router(payments_router)
 app.include_router(communication_router)
 app.include_router(vonage_audio_router)
 app.include_router(assessments_router)
+
+# ─── Resource Folder routes ────────────────────────────────────────────────────
+# Registration order matters: the static suggestion queue routes must be
+# registered BEFORE the parameterised admin resource routes to prevent
+# FastAPI from trying to parse "suggestions" as a UUID in /admin/resources/{id}.
+app.include_router(resource_suggestions_router)  # /api/v1/admin/resources/suggestions/...
+app.include_router(resources_admin_router)        # /api/v1/admin/resources/...
+app.include_router(resources_chw_router)          # /api/v1/chw/resources/...
+app.include_router(resources_public_router)       # /api/v1/resources/...
