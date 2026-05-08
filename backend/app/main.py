@@ -127,6 +127,11 @@ from app.routers.resources import (
     chw_router as resources_chw_router,
     public_router as resources_public_router,
 )
+from app.routers.testimonials import (
+    admin_router as testimonials_admin_router,
+    member_router as testimonials_member_router,
+    public_router as testimonials_public_router,
+)
 from app.routers.sessions import _consent_request_router as consent_request_router
 from app.routers.sessions import router as sessions_router
 from app.routers.transcript import router as transcript_router
@@ -155,6 +160,16 @@ app.include_router(payments_router)
 app.include_router(communication_router)
 app.include_router(vonage_audio_router)
 app.include_router(assessments_router)
+
+# ─── Testimonials routes ──────────────────────────────────────────────────────
+# Registration order: summary (/testimonials/summary) must come BEFORE the
+# generic list (/testimonials) to prevent FastAPI capturing "summary" as an
+# offset/limit query param. The public_router registers both under /chws/{id};
+# FastAPI resolves them correctly because /summary is a literal path segment
+# after {chw_id}, but explicit ordering here makes intent clear.
+app.include_router(testimonials_admin_router)   # /api/v1/admin/testimonials/...
+app.include_router(testimonials_member_router)  # /api/v1/sessions/{id}/testimonials
+app.include_router(testimonials_public_router)  # /api/v1/chws/{id}/testimonials[/summary]
 
 # ─── Resource Folder routes ────────────────────────────────────────────────────
 # Registration order matters: the static suggestion queue routes must be
