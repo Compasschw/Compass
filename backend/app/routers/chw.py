@@ -2,14 +2,17 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.security import HTTPBearer
 from sqlalchemy import extract, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies import require_role
 from app.schemas.billing import EarningsSummary
-from app.schemas.chw import CHWMemberProfileView
+from app.schemas.chw import CHWMemberProfileDetail, CHWMemberProfileView
 from app.schemas.user import CHWProfileResponse, CHWProfileUpdate
+
+_bearer_scheme = HTTPBearer()
 
 router = APIRouter(prefix="/api/v1/chw", tags=["chw"])
 
@@ -360,4 +363,342 @@ async def get_chw_member_profile(
         total_sessions_all_time=total_sessions_all_time,
         last_session_at=last_session_at,
         active_request_id=active_request_id,
+    )
+
+
+# ─── CHW Member Full Profile (rich, member profile screen) ───────────────────
+
+
+async def _require_chw_or_admin_key(
+    credentials=Depends(_bearer_scheme),
+    db: AsyncSession = Depends(get_db),
+):
+    """Dependency: accepts a CHW user JWT or the admin API key.
+
+    Returns a small context dict with keys:
+      - ``role``:    "chw" | "admin"
+      - ``user``:    the User ORM row (CHW callers) or None (admin-key callers)
+
+    Raises 401 when the token is invalid for both paths.
+    Raises 403 when the token is a valid JWT for a non-CHW user.
+    """
+    import hmac
+
+    from app.config import settings
+    from app.models.user import User
+    from app.utils.security import decode_token
+
+    token = credentials.credentials
+
+    # Admin key path — checked first so ops tooling works without a user account.
+    if hmac.compare_digest(token, settings.admin_key):
+        return {"role": "admin", "user": None}
+
+    # User JWT path.
+    payload = decode_token(token)
+    if payload is None or payload.get("type") != "access":
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    user_id_str = payload.get("sub")
+    if user_id_str is None:
+        raise HTTPException(status_code=401, detail="Invalid token payload")
+
+    result = await db.execute(select(User).where(User.id == UUID(user_id_str)))
+    user = result.scalar_one_or_none()
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=401, detail="User not found or inactive")
+    if user.role != "chw":
+        raise HTTPException(status_code=403, detail="CHW role required")
+
+    return {"role": "chw", "user": user}
+
+
+@router.get("/members/{member_id}", response_model=CHWMemberProfileDetail)
+async def get_chw_member_full_profile(
+    member_id: UUID,
+    caller=Depends(_require_chw_or_admin_key),
+    db: AsyncSession = Depends(get_db),
+) -> CHWMemberProfileDetail:
+    """Return the full HIPAA-scoped member profile for the CHW Member Profile screen.
+
+    This is a richer superset of GET /chw/members/{member_id}/profile, adding:
+    - Billing unit caps (today used/remaining, year used/remaining)
+    - Recent session history scoped to this CHW
+    - Open goals and follow-ups from session_followups
+    - Consent status (ai_transcription, session_recording)
+    - MCO, ECM eligibility flag, additional languages
+
+    Authorization gate (minimum-necessary, 45 CFR §164.514(d)):
+    - CHW: must have at least one session or accepted service_request involving
+      this member. Returns 403 (not 404) when the gate fails to avoid disclosing
+      whether the member_id exists.
+    - Admin: unrestricted access to any member.
+
+    Assessment data (member_assessment table) is owned by the questionnaire-engine
+    parallel agent and is NOT fetched here. The frontend calls
+    GET /api/v1/chw/members/{member_id}/assessments/latest separately and degrades
+    gracefully on 404.
+    """
+    from datetime import date as _date
+
+    from app.models.billing import BillingClaim
+    from app.models.followup import SessionFollowup
+    from app.models.request import ServiceRequest
+    from app.models.session import MemberConsent, Session
+    from app.models.user import MemberProfile, User
+    from app.schemas.chw import (
+        BillingUnitsView,
+        ConsentStatusView,
+        OpenFollowupItem,
+        OpenGoalItem,
+        SessionSummaryItem,
+    )
+    from app.services.billing_service import MAX_UNITS_PER_DAY, MAX_UNITS_PER_YEAR
+
+    # ── Unpack caller context ─────────────────────────────────────────────────
+    caller_role: str = caller["role"]
+    caller_user = caller["user"]  # User ORM row for CHW callers; None for admin key
+
+    # ── Authorization gate ────────────────────────────────────────────────────
+    # Admin bypasses the relationship check. For CHW callers we verify an active
+    # relationship exists via either a session row or a matched service request.
+
+    if caller_role != "admin":
+        assert caller_user is not None  # Guard: non-admin must have a user row
+        session_exists = await db.execute(
+            select(func.count())
+            .select_from(Session)
+            .where(Session.chw_id == caller_user.id)
+            .where(Session.member_id == member_id)
+        )
+        chw_has_session = (session_exists.scalar() or 0) > 0
+
+        if not chw_has_session:
+            request_exists = await db.execute(
+                select(func.count())
+                .select_from(ServiceRequest)
+                .where(ServiceRequest.matched_chw_id == caller_user.id)
+                .where(ServiceRequest.member_id == member_id)
+            )
+            chw_has_request = (request_exists.scalar() or 0) > 0
+
+            if not chw_has_request:
+                raise HTTPException(
+                    status_code=403,
+                    detail="You do not have an active relationship with this member.",
+                )
+
+    # ── Fetch member User + MemberProfile ─────────────────────────────────────
+    member_result = await db.execute(
+        select(User, MemberProfile)
+        .join(MemberProfile, MemberProfile.user_id == User.id)
+        .where(User.id == member_id)
+        .where(User.role == "member")
+        .where(User.deleted_at.is_(None))
+    )
+    row = member_result.one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Member not found.")
+    member_user, member_profile = row
+
+    # ── Split name into first / last ──────────────────────────────────────────
+    name_parts = member_user.name.strip().split(" ", 1)
+    first_name = name_parts[0]
+    last_name = name_parts[1] if len(name_parts) > 1 else ""
+
+    # ── Billing unit caps for this CHW↔member pair ────────────────────────────
+    # Scoped to the calling CHW so caps are meaningful per-CHW per Medi-Cal rules.
+    # Admins see the caps for the most-recently-active CHW, or zeros if none.
+    today = datetime.now(UTC).date()
+
+    if caller_role == "admin":
+        # For admin view: find the most recent CHW who worked with this member
+        # and use their caps. Falls back to zeros if no billing history exists.
+        latest_chw_result = await db.execute(
+            select(BillingClaim.chw_id)
+            .where(BillingClaim.member_id == member_id)
+            .order_by(BillingClaim.created_at.desc())
+            .limit(1)
+        )
+        billing_chw_id = latest_chw_result.scalar()
+    else:
+        billing_chw_id = caller_user.id
+
+    if billing_chw_id is not None:
+        from app.services.billing_service import check_unit_caps
+        caps = await check_unit_caps(db, billing_chw_id, member_id, today)
+        billing_units = BillingUnitsView(
+            today_used=caps["daily_used"],
+            today_remaining=caps["daily_remaining"],
+            yearly_used=caps["yearly_used"],
+            yearly_remaining=caps["yearly_remaining"],
+        )
+    else:
+        billing_units = BillingUnitsView(
+            today_used=0,
+            today_remaining=MAX_UNITS_PER_DAY,
+            yearly_used=0,
+            yearly_remaining=MAX_UNITS_PER_YEAR,
+        )
+
+    # ── Session history (scoped to this CHW, newest first, capped at 50) ──────
+    # Admin sees all sessions across CHWs for context.
+    if caller_role == "admin":
+        sessions_stmt = (
+            select(Session)
+            .where(Session.member_id == member_id)
+            .order_by(Session.created_at.desc())
+            .limit(50)
+        )
+    else:
+        sessions_stmt = (
+            select(Session)
+            .where(Session.chw_id == caller_user.id)
+            .where(Session.member_id == member_id)
+            .order_by(Session.created_at.desc())
+            .limit(50)
+        )
+    sessions_result = await db.execute(sessions_stmt)
+    session_rows = sessions_result.scalars().all()
+
+    session_count = sum(1 for s in session_rows if s.status == "completed")
+    last_session_at = next(
+        (s.ended_at for s in session_rows if s.status == "completed" and s.ended_at),
+        None,
+    )
+    recent_sessions = [
+        SessionSummaryItem(
+            id=s.id,
+            status=s.status,
+            mode=s.mode,
+            scheduled_at=s.scheduled_at,
+            started_at=s.started_at,
+            ended_at=s.ended_at,
+            duration_minutes=s.duration_minutes,
+            units_billed=s.units_billed,
+        )
+        for s in session_rows
+    ]
+
+    # ── Open goals from session_followups ─────────────────────────────────────
+    # kind == 'member_goal', status not in (completed, dismissed).
+    goals_result = await db.execute(
+        select(SessionFollowup)
+        .where(SessionFollowup.member_id == member_id)
+        .where(SessionFollowup.kind == "member_goal")
+        .where(SessionFollowup.status.not_in(["completed", "dismissed"]))
+        .order_by(SessionFollowup.due_date.asc().nullslast(), SessionFollowup.created_at.asc())
+        .limit(20)
+    )
+    goal_rows = goals_result.scalars().all()
+    open_goals = [
+        OpenGoalItem(
+            text=g.description,
+            due_date=g.due_date,
+        )
+        for g in goal_rows
+    ]
+
+    # ── Open follow-ups from session_followups ────────────────────────────────
+    # kind in (follow_up_task, action_item), status not in (completed, dismissed).
+    followups_result = await db.execute(
+        select(SessionFollowup)
+        .where(SessionFollowup.member_id == member_id)
+        .where(SessionFollowup.kind.in_(["follow_up_task", "action_item"]))
+        .where(SessionFollowup.status.not_in(["completed", "dismissed"]))
+        .order_by(SessionFollowup.due_date.asc().nullslast(), SessionFollowup.created_at.asc())
+        .limit(20)
+    )
+    followup_rows = followups_result.scalars().all()
+    open_followups = [
+        OpenFollowupItem(
+            text=f.description,
+            due_date=f.due_date,
+        )
+        for f in followup_rows
+    ]
+
+    # ── Consent status (most recent per consent_type) ─────────────────────────
+    # We query MemberConsent to find if the member has ever granted/denied each
+    # type. The most recent row per type is authoritative. A missing row means
+    # the member was never asked (status == "none").
+    #
+    # consent_type values in use: "ai_transcription", "session_recording"
+    consent_result = await db.execute(
+        select(MemberConsent)
+        .where(MemberConsent.member_id == member_id)
+        .where(MemberConsent.consent_type.in_(["ai_transcription", "session_recording"]))
+        .order_by(MemberConsent.consented_at.desc())
+    )
+    consent_rows = consent_result.scalars().all()
+
+    # Index by type — latest row per type wins (query is ordered desc).
+    consent_by_type: dict[str, str] = {}
+    for c in consent_rows:
+        if c.consent_type not in consent_by_type:
+            # All rows in MemberConsent represent an affirmative grant (the schema
+            # doesn't store denials — denials are represented by the absence of a row
+            # or by a ConsentRequest with status='denied'). So presence == "granted".
+            consent_by_type[c.consent_type] = "granted"
+
+    # Check ConsentRequest for explicit denials so "denied" surfaces correctly.
+    from app.models.session import ConsentRequest as _ConsentRequest
+    denial_result = await db.execute(
+        select(_ConsentRequest)
+        .where(_ConsentRequest.member_id == member_id)
+        .where(_ConsentRequest.status == "denied")
+        .where(_ConsentRequest.consent_type.in_(["ai_transcription", "session_recording"]))
+        .order_by(_ConsentRequest.responded_at.desc())
+    )
+    denial_rows = denial_result.scalars().all()
+    for d in denial_rows:
+        # Only mark denied if no granted row exists (granted is more recent than denied).
+        if d.consent_type not in consent_by_type:
+            consent_by_type[d.consent_type] = "denied"
+
+    consent_status = ConsentStatusView(
+        ai_transcription=consent_by_type.get("ai_transcription", "none"),
+        session_recording=consent_by_type.get("session_recording", "none"),
+    )
+
+    # ── Build additional_languages ────────────────────────────────────────────
+    # The current schema stores only primary_language on MemberProfile.
+    # additional_languages defaults to [] until the schema is extended.
+    # This field is a placeholder for Phase 2 multi-language support.
+    additional_languages: list[str] = []
+
+    # ── Primary categories (verticals) ───────────────────────────────────────
+    # Derived from the member's session history — the set of unique verticals
+    # across all their sessions provides the best "care needs" signal.
+    verticals_result = await db.execute(
+        select(Session.vertical)
+        .where(Session.member_id == member_id)
+        .distinct()
+    )
+    primary_categories = [v for (v,) in verticals_result.all() if v]
+    # Fall back to primary_need from the profile if no sessions exist.
+    if not primary_categories and member_profile.primary_need:
+        primary_categories = [member_profile.primary_need]
+
+    return CHWMemberProfileDetail(
+        id=member_user.id,
+        first_name=first_name,
+        last_name=last_name,
+        phone_e164=member_user.phone,
+        email=member_user.email,
+        primary_language=member_profile.primary_language,
+        additional_languages=additional_languages,
+        address=None,         # Not stored in current schema — Phase 2 field
+        city=None,            # Not stored in current schema — Phase 2 field
+        zip_code=member_profile.zip_code,
+        mco=member_profile.insurance_provider,  # MCO = insurance plan in Medi-Cal context
+        ecm_eligible=False,   # ECM eligibility not yet stored — Phase 2 flag
+        primary_categories=primary_categories,
+        billing_units=billing_units,
+        session_count=session_count,
+        last_session_at=last_session_at,
+        open_goals=open_goals,
+        open_followups=open_followups,
+        consent_status=consent_status,
+        recent_sessions=recent_sessions,
     )

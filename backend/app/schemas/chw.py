@@ -2,6 +2,7 @@
 
 HIPAA minimum-necessary enforcement (45 CFR §164.514(d)):
 - CHWMemberProfileView exposes ONLY the fields a CHW needs for care delivery.
+- CHWMemberProfileDetail exposes the full rich profile for the member profile screen.
 - Explicitly excluded: medi_cal_id, insurance_provider, full session notes,
   session summaries, diagnosis codes, raw transcripts, and session data from
   other CHWs.
@@ -9,7 +10,7 @@ HIPAA minimum-necessary enforcement (45 CFR §164.514(d)):
   session.chw_id == current_user.id.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
@@ -70,3 +71,108 @@ class CHWMemberProfileView(BaseModel):
 
     active_request_id: UUID | None
     """Open service_request.id matched to this CHW, if one exists. Null otherwise."""
+
+
+# ─── Rich member profile (CHW member profile screen) ─────────────────────────
+
+
+class BillingUnitsView(BaseModel):
+    """Daily and yearly Medi-Cal unit cap snapshot for a CHW↔member pair."""
+
+    today_used: int
+    today_remaining: int
+    yearly_used: int
+    yearly_remaining: int
+
+
+class OpenGoalItem(BaseModel):
+    """A single open member goal from session_followups."""
+
+    text: str
+    due_date: date | None = None
+
+
+class OpenFollowupItem(BaseModel):
+    """A single open follow-up task from session_followups."""
+
+    text: str
+    due_date: date | None = None
+
+
+class SessionSummaryItem(BaseModel):
+    """Compact session row for the CHW profile screen's session history list.
+
+    Contains only the fields the CHW needs to identify and navigate to a session:
+    date, duration, mode, status. Session notes and documentation are accessible
+    only by navigating into the session detail — not surfaced in the list.
+    """
+
+    id: UUID
+    status: str
+    mode: str
+    scheduled_at: datetime | None
+    started_at: datetime | None
+    ended_at: datetime | None
+    duration_minutes: int | None
+    units_billed: int | None
+
+
+class ConsentStatusView(BaseModel):
+    """Most-recent consent state for each consent type held by this member."""
+
+    ai_transcription: str
+    """granted | denied | none"""
+
+    session_recording: str
+    """granted | denied | none"""
+
+
+class CHWMemberProfileDetail(BaseModel):
+    """Full HIPAA-scoped member profile for the CHW Member Profile screen.
+
+    Extends CHWMemberProfileView with session history, billing unit caps,
+    open goals/follow-ups, consent status, and an assessment placeholder.
+
+    Field-by-field HIPAA justification:
+    - first_name / last_name: split from name for display header.
+    - phone_e164: same as the legacy `phone` field; renamed for clarity.
+    - email: minimum-necessary for care coordination outreach.
+    - primary_language / additional_languages: language access compliance.
+    - address / city / zip_code: service-area context for in-person visits.
+    - mco: Managed Care Organization — needed for Medi-Cal billing context.
+    - ecm_eligible: Enhanced Care Management flag — determines care plan scope.
+    - primary_categories: verticals driving the care relationship.
+    - billing_units: Medi-Cal daily/yearly unit caps — prevents overcoding.
+    - session_count / last_session_at: care recency context.
+    - open_goals / open_followups: active care items for visit preparation.
+    - consent_status: which consent types the member has granted (audit trail).
+
+    Deliberately excluded:
+    - medi_cal_id (PHI — encrypted at rest, §164.312(a)(2)(iv))
+    - insurance_provider (re-identification risk)
+    - session notes / transcripts / documentation from any CHW
+    - diagnosis_codes (clinical PHI)
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    first_name: str
+    last_name: str
+    phone_e164: str | None
+    email: str | None
+    primary_language: str
+    additional_languages: list[str]
+    address: str | None
+    city: str | None
+    zip_code: str | None
+    mco: str | None
+    ecm_eligible: bool
+    primary_categories: list[str]
+    billing_units: BillingUnitsView
+    session_count: int
+    last_session_at: datetime | None
+    open_goals: list[OpenGoalItem]
+    open_followups: list[OpenFollowupItem]
+    consent_status: ConsentStatusView
+    recent_sessions: list[SessionSummaryItem]

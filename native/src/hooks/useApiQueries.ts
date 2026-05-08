@@ -208,6 +208,8 @@ export const queryKeys = {
   conversations: ['conversations'] as const,
   messages: (conversationId: string) => ['conversations', conversationId, 'messages'] as const,
   chwMemberProfile: (memberId: string) => ['chw', 'members', memberId, 'profile'] as const,
+  /** Full rich member profile for the CHW Member Profile screen. */
+  chwMemberDetail: (memberId: string) => ['chw', 'members', memberId, 'detail'] as const,
 };
 
 /** Re-export so callers don't need a second import from api/sessions. */
