@@ -1,5 +1,5 @@
 from datetime import UTC, datetime
-from uuid import UUID
+from uuid import UUID, uuid5, NAMESPACE_URL
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import extract, func, select
@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.dependencies import require_role
 from app.schemas.billing import EarningsSummary
-from app.schemas.chw import CHWMemberProfileView
+from app.schemas.chw import CHWMapDataResponse, CHWMemberProfileView, MapMemberPin, MapResourcePin
 from app.schemas.user import CHWProfileResponse, CHWProfileUpdate
 
 router = APIRouter(prefix="/api/v1/chw", tags=["chw"])
@@ -188,6 +188,234 @@ async def get_earnings(current_user=Depends(require_role("chw")), db: AsyncSessi
         sessions_this_week=sessions_this_week,
         pending_payout=pending_payout,
     )
+
+
+# ─── Map Data ─────────────────────────────────────────────────────────────────
+
+# ZIP-centroid lookup — approximate centroids from US Census ZCTA5 boundary data.
+# Mirrors the frontend geocoding.ts table so both layers resolve identically.
+# Keys are 5-digit ZIP strings; values are (lat, lng) tuples.
+_ZIP_CENTROIDS: dict[str, tuple[float, float]] = {
+    # South LA / Central LA
+    "90001": (33.9731, -118.2479),
+    "90002": (33.9491, -118.2462),
+    "90003": (33.9641, -118.2732),
+    "90011": (34.0063, -118.2585),
+    "90015": (34.0368, -118.2711),
+    "90022": (34.0218, -118.1567),
+    "90033": (34.0471, -118.2095),
+    "90037": (34.0013, -118.2877),
+    "90044": (33.9566, -118.3038),
+    "90059": (33.9278, -118.2391),
+    # West LA / Westside
+    "90034": (34.0222, -118.4127),
+    "90066": (34.0008, -118.4256),
+    "90025": (34.0437, -118.4429),
+    "90064": (34.0348, -118.4179),
+    # San Fernando Valley
+    "91331": (34.2366, -118.3981),
+    "91406": (34.1936, -118.5261),
+    "91342": (34.2742, -118.4376),
+    "91401": (34.1685, -118.4541),
+    "91601": (34.1756, -118.3759),
+    # East LA / SGV
+    "90032": (34.0804, -118.1782),
+    "91754": (34.0508, -118.1321),
+    "91801": (34.0873, -118.1279),
+}
+
+# Stub resource data (LA-area community resources).
+# TODO(compass-wt-resources): replace with a real DB query once the Resources
+# table from the compass-wt-resources worktree is merged into main.
+_STUB_RESOURCES: list[dict] = [
+    {
+        "id": uuid5(NAMESPACE_URL, "skid-row-care-center"),
+        "name": "Skid Row Care Center",
+        "category": "housing",
+        "latitude": 34.0430,
+        "longitude": -118.2448,
+        "address": "526 San Pedro St, Los Angeles, CA 90013",
+    },
+    {
+        "id": uuid5(NAMESPACE_URL, "watts-health-center"),
+        "name": "Watts Health Center",
+        "category": "healthcare",
+        "latitude": 33.9425,
+        "longitude": -118.2460,
+        "address": "10300 Compton Ave, Los Angeles, CA 90002",
+    },
+    {
+        "id": uuid5(NAMESPACE_URL, "la-regional-food-bank"),
+        "name": "LA Regional Food Bank – Watts Distribution",
+        "category": "food",
+        "latitude": 33.9700,
+        "longitude": -118.2900,
+        "address": "1734 E 41st St, Los Angeles, CA 90011",
+    },
+    {
+        "id": uuid5(NAMESPACE_URL, "didi-hirsch-mental-health"),
+        "name": "Didi Hirsch Mental Health Services – South LA",
+        "category": "mental_health",
+        "latitude": 33.9950,
+        "longitude": -118.2830,
+        "address": "4760 S Sepulveda Blvd, Culver City, CA 90230",
+    },
+    {
+        "id": uuid5(NAMESPACE_URL, "inglewood-mental-health"),
+        "name": "Inglewood Mental Health Center",
+        "category": "mental_health",
+        "latitude": 33.9617,
+        "longitude": -118.3531,
+        "address": "333 E Manchester Blvd, Inglewood, CA 90301",
+    },
+    {
+        "id": uuid5(NAMESPACE_URL, "south-la-food-bank"),
+        "name": "South LA Food Bank",
+        "category": "food",
+        "latitude": 33.9700,
+        "longitude": -118.2900,
+        "address": "1234 Main St, Los Angeles, CA 90011",
+    },
+    {
+        "id": uuid5(NAMESPACE_URL, "harbor-ucla-rehab"),
+        "name": "Harbor-UCLA Rehabilitation Services",
+        "category": "rehab",
+        "latitude": 33.8956,
+        "longitude": -118.2484,
+        "address": "1000 W Carson St, Torrance, CA 90509",
+    },
+    {
+        "id": uuid5(NAMESPACE_URL, "pacoima-beautiful-housing"),
+        "name": "Pacoima Beautiful – Housing Navigation",
+        "category": "housing",
+        "latitude": 34.2725,
+        "longitude": -118.3953,
+        "address": "13520 Van Nuys Blvd, Pacoima, CA 91331",
+    },
+    {
+        "id": uuid5(NAMESPACE_URL, "east-la-health-center"),
+        "name": "East LA Health Center",
+        "category": "healthcare",
+        "latitude": 34.0296,
+        "longitude": -118.1612,
+        "address": "4801 E 3rd St, Los Angeles, CA 90022",
+    },
+    {
+        "id": uuid5(NAMESPACE_URL, "proyecto-pastoral-food"),
+        "name": "Proyecto Pastoral Food Pantry",
+        "category": "food",
+        "latitude": 34.0471,
+        "longitude": -118.2095,
+        "address": "2955 E Olympic Blvd, Los Angeles, CA 90023",
+    },
+]
+
+
+@router.get("/map-data", response_model=CHWMapDataResponse)
+async def get_map_data(
+    current_user=Depends(require_role("chw")),
+    db: AsyncSession = Depends(get_db),
+) -> CHWMapDataResponse:
+    """Return the CHW's member locations and community resource pins for the map view.
+
+    Member layer (PHI-minimised):
+    - Returns only members the calling CHW has had at least one session with.
+    - Display name is first initial + period only ("J.") — minimum necessary.
+    - Coordinates are ZIP-centroid, NOT precise address.
+    - Members whose ZIP is not in the centroid table are silently excluded
+      (unmappable until they update their profile ZIP).
+
+    Resource layer (not PHI):
+    - Returns a curated list of LA-area community resources.
+    - Precise coordinates are appropriate for public service locations.
+    - TODO(compass-wt-resources): replace stub with DB query post-merge.
+
+    Authorization: any authenticated CHW (require_role("chw")).
+    HIPAA: see MapMemberPin and CHWMemberProfileView docstrings for the
+    explicit minimum-necessary field exclusion list.
+    """
+    from app.models.session import Session
+    from app.models.user import MemberProfile, User
+
+    # ── Build member pins ────────────────────────────────────────────────────────
+    # One row per unique member the CHW has had at least one session with.
+    # We aggregate session_count in SQL so we don't fetch all sessions to memory.
+    sessions_stmt = (
+        select(
+            Session.member_id,
+            func.count(Session.id).label("session_count"),
+        )
+        .where(Session.chw_id == current_user.id)
+        .group_by(Session.member_id)
+    )
+    sessions_result = await db.execute(sessions_stmt)
+    session_rows = sessions_result.all()
+
+    member_pins: list[MapMemberPin] = []
+    for member_id, session_count in session_rows:
+        # Fetch User + MemberProfile for this member.
+        member_result = await db.execute(
+            select(User, MemberProfile)
+            .join(MemberProfile, MemberProfile.user_id == User.id)
+            .where(User.id == member_id)
+            .where(User.role == "member")
+        )
+        row = member_result.one_or_none()
+        if row is None:
+            # Defensive: session references a deleted / role-changed user.
+            continue
+
+        member_user, member_profile = row
+
+        # Resolve ZIP to centroid. Skip members whose ZIP is unknown.
+        zip_code: str | None = member_profile.zip_code
+        if not zip_code:
+            continue
+        centroid = _ZIP_CENTROIDS.get(zip_code.strip())
+        if centroid is None:
+            continue
+
+        lat, lng = centroid
+
+        # PHI-minimised display name: first initial + period only.
+        first_letter = (member_user.name or "?")[0].upper()
+        display_name = f"{first_letter}."
+
+        # Primary categories from the member's stated need + additional_needs.
+        categories: list[str] = []
+        if member_profile.primary_need:
+            categories.append(member_profile.primary_need)
+        if member_profile.additional_needs:
+            for need in member_profile.additional_needs:
+                if need not in categories:
+                    categories.append(need)
+
+        member_pins.append(
+            MapMemberPin(
+                id=member_user.id,
+                display_name=display_name,
+                zip_code=zip_code,
+                latitude=lat,
+                longitude=lng,
+                primary_categories=categories,
+                session_count=session_count,
+            )
+        )
+
+    # ── Build resource pins from stub ────────────────────────────────────────────
+    resource_pins = [
+        MapResourcePin(
+            id=r["id"],
+            name=r["name"],
+            category=r["category"],
+            latitude=r["latitude"],
+            longitude=r["longitude"],
+            address=r["address"],
+        )
+        for r in _STUB_RESOURCES
+    ]
+
+    return CHWMapDataResponse(members=member_pins, resources=resource_pins)
 
 
 # ─── Claims (per-CHW lifecycle) ──────────────────────────────────────────────
