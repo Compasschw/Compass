@@ -43,10 +43,7 @@ import {
   Award,
   Calendar,
   Globe,
-  MessageSquare,
-  Phone,
   ShieldOff,
-  Sparkles,
   Star,
 } from 'lucide-react-native';
 
@@ -55,6 +52,8 @@ import { fonts } from '../../theme/typography';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { useMemberFacingCHWProfile } from '../../hooks/useApiQueries';
 import type { MemberFindStackParamList } from '../../navigation/MemberTabNavigator';
+import { ProfileContactButtons } from '../../components/comms/ProfileContactButtons';
+import { TestimonialsList } from '../../components/testimonials/TestimonialsList';
 
 // ─── Navigation types ─────────────────────────────────────────────────────────
 
@@ -437,40 +436,13 @@ export function MemberFacingCHWProfileScreen(): React.JSX.Element {
             </View>
           </View>
 
-          {/* ── Call / Text — DISABLED "Soon" pills ── */}
-          {/* TODO(merge): swap for ProfileContactButtons component from feat/bidirectional-comms branch */}
-          <View
-            style={s.actionRow}
-            accessibilityRole="group"
-            accessibilityLabel="Contact CHW — coming soon"
-          >
-            <TouchableOpacity
-              style={[s.actionBtn, s.actionBtnDisabled]}
-              disabled
-              accessibilityRole="button"
-              accessibilityLabel="Call CHW — coming soon"
-              accessibilityHint="Direct calling is not yet available"
-            >
-              <Phone size={16} color="#94A3B8" />
-              <Text style={s.actionBtnDisabledText}>Call</Text>
-              <View style={s.comingSoonPill}>
-                <Text style={s.comingSoonText}>Soon</Text>
-              </View>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[s.actionBtn, s.actionBtnDisabled]}
-              disabled
-              accessibilityRole="button"
-              accessibilityLabel="Text CHW — coming soon"
-              accessibilityHint="Texting is not yet available"
-            >
-              <MessageSquare size={16} color="#94A3B8" />
-              <Text style={s.actionBtnDisabledText}>Text</Text>
-              <View style={s.comingSoonPill}>
-                <Text style={s.comingSoonText}>Soon</Text>
-              </View>
-            </TouchableOpacity>
-          </View>
+          {/* ── Call / Text — bidirectional masked Vonage call + in-app message ── */}
+          <ProfileContactButtons
+            targetUserId={profile.id}
+            targetUserRole="chw"
+            sharedSessionCount={profile.sharedSessionCount}
+            targetDisplayName={`${profile.firstName} ${profile.lastNameInitial}`}
+          />
 
           {/* ── About ── */}
           <SectionCard title="About">
@@ -562,27 +534,9 @@ export function MemberFacingCHWProfileScreen(): React.JSX.Element {
             )}
           </SectionCard>
 
-          {/* ── Testimonials — STUB ── */}
-          {/* TODO(merge): swap for TestimonialsList component from feat/testimonials branch */}
-          <SectionCard
-            title="Testimonials"
-            titleRight={
-              <View style={s.betaBadge}>
-                <Sparkles size={10} color={colors.secondary} />
-                <Text style={s.betaBadgeText}>Coming soon</Text>
-              </View>
-            }
-          >
-            <View style={s.testimonialStub}>
-              <ActivityIndicator
-                size="small"
-                color={colors.mutedForeground}
-                style={{ opacity: 0 }}
-              />
-              <Text style={s.testimonialStubText}>
-                Testimonials loading...
-              </Text>
-            </View>
+          {/* ── Testimonials — admin-moderated 1-5 star ratings ── */}
+          <SectionCard title="Testimonials">
+            <TestimonialsList chwId={profile.id} limit={3} />
           </SectionCard>
 
           <View style={{ height: 40 }} />
