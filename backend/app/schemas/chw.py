@@ -8,6 +8,10 @@ HIPAA minimum-necessary enforcement (45 CFR §164.514(d)):
   other CHWs.
 - Session history visible to the CHW is limited to sessions WHERE
   session.chw_id == current_user.id.
+
+- MapMemberPin: ZIP-centroid only (not precise address). Display name is first
+  initial + period only — minimum PHI for map clustering context.
+- MapResourcePin: precise coordinates from the resource record (not PHI).
 """
 
 from datetime import date, datetime
@@ -100,12 +104,7 @@ class OpenFollowupItem(BaseModel):
 
 
 class SessionSummaryItem(BaseModel):
-    """Compact session row for the CHW profile screen's session history list.
-
-    Contains only the fields the CHW needs to identify and navigate to a session:
-    date, duration, mode, status. Session notes and documentation are accessible
-    only by navigating into the session detail — not surfaced in the list.
-    """
+    """Compact session row for the CHW profile screen's session history list."""
 
     id: UUID
     status: str
@@ -128,31 +127,7 @@ class ConsentStatusView(BaseModel):
 
 
 class CHWMemberProfileDetail(BaseModel):
-    """Full HIPAA-scoped member profile for the CHW Member Profile screen.
-
-    Extends CHWMemberProfileView with session history, billing unit caps,
-    open goals/follow-ups, consent status, and an assessment placeholder.
-
-    Field-by-field HIPAA justification:
-    - first_name / last_name: split from name for display header.
-    - phone_e164: same as the legacy `phone` field; renamed for clarity.
-    - email: minimum-necessary for care coordination outreach.
-    - primary_language / additional_languages: language access compliance.
-    - address / city / zip_code: service-area context for in-person visits.
-    - mco: Managed Care Organization — needed for Medi-Cal billing context.
-    - ecm_eligible: Enhanced Care Management flag — determines care plan scope.
-    - primary_categories: verticals driving the care relationship.
-    - billing_units: Medi-Cal daily/yearly unit caps — prevents overcoding.
-    - session_count / last_session_at: care recency context.
-    - open_goals / open_followups: active care items for visit preparation.
-    - consent_status: which consent types the member has granted (audit trail).
-
-    Deliberately excluded:
-    - medi_cal_id (PHI — encrypted at rest, §164.312(a)(2)(iv))
-    - insurance_provider (re-identification risk)
-    - session notes / transcripts / documentation from any CHW
-    - diagnosis_codes (clinical PHI)
-    """
+    """Full HIPAA-scoped member profile for the CHW Member Profile screen."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -176,3 +151,46 @@ class CHWMemberProfileDetail(BaseModel):
     open_followups: list[OpenFollowupItem]
     consent_status: ConsentStatusView
     recent_sessions: list[SessionSummaryItem]
+
+
+# ─── CHW Map Data ─────────────────────────────────────────────────────────────
+
+
+class MapMemberPin(BaseModel):
+    """PHI-minimised member pin for the CHW map view (HIPAA §164.514(d)).
+
+    First-initial display name only, ZIP-centroid coordinates (NOT precise),
+    no surname / phone / insurance / session notes.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    display_name: str
+    zip_code: str
+    latitude: float
+    longitude: float
+    primary_categories: list[str]
+    session_count: int
+
+
+class MapResourcePin(BaseModel):
+    """Community resource pin for the CHW map view — public, non-PHI, precise."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+    category: str
+    latitude: float
+    longitude: float
+    address: str
+
+
+class CHWMapDataResponse(BaseModel):
+    """Aggregate response for GET /chw/map-data."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    members: list[MapMemberPin]
+    resources: list[MapResourcePin]

@@ -192,6 +192,52 @@ export interface ChwMemberProfileView {
 
 // ─── Query Keys ──────────────────────────────────────────────────────────────
 
+// ─── CHW Map Data ─────────────────────────────────────────────────────────────
+
+/**
+ * A single member pin on the CHW map.
+ *
+ * PHI-minimised: display_name is first-initial only ("J."), coordinates are
+ * ZIP-centroid (not precise address). Full member data must be fetched via
+ * useChwMemberProfile.
+ */
+export interface MapMemberPin {
+  id: string;
+  /** First initial + period only, e.g. "J." */
+  displayName: string;
+  zipCode: string;
+  /** ZIP-centroid latitude — NOT precise address. */
+  latitude: number;
+  /** ZIP-centroid longitude — NOT precise address. */
+  longitude: number;
+  /** Member's stated care need categories (e.g. ["housing", "food"]). */
+  primaryCategories: string[];
+  /** Count of completed sessions between this CHW and this member. */
+  sessionCount: number;
+}
+
+/**
+ * A single resource pin on the CHW map.
+ *
+ * Resources are public service locations — not PHI. Precise coordinates are
+ * appropriate here. Category drives pin colour.
+ */
+export interface MapResourcePin {
+  id: string;
+  name: string;
+  /** One of: housing | food | mental_health | rehab | healthcare */
+  category: string;
+  latitude: number;
+  longitude: number;
+  address: string;
+}
+
+/** Aggregate response from GET /chw/map-data. */
+export interface ChwMapData {
+  members: MapMemberPin[];
+  resources: MapResourcePin[];
+}
+
 export const queryKeys = {
   sessions: ['sessions'] as const,
   session: (id: string) => ['sessions', id] as const,
@@ -210,6 +256,7 @@ export const queryKeys = {
   chwMemberProfile: (memberId: string) => ['chw', 'members', memberId, 'profile'] as const,
   /** Full rich member profile for the CHW Member Profile screen. */
   chwMemberDetail: (memberId: string) => ['chw', 'members', memberId, 'detail'] as const,
+  chwMapData: ['chw', 'map-data'] as const,
 };
 
 /** Re-export so callers don't need a second import from api/sessions. */
@@ -392,6 +439,27 @@ export function useChwMemberProfile(memberId: string) {
       }
       return failureCount < 2;
     },
+  });
+}
+
+/**
+ * Fetch the CHW's map data: member ZIP-centroid pins + community resource pins.
+ *
+ * Members are filtered server-side to only those the calling CHW has had at
+ * least one session with. Coordinates are ZIP-centroid for members (PHI-safe)
+ * and precise for resources (public service locations — not PHI).
+ *
+ * Stale after 2 minutes — member/resource data changes slowly; this avoids
+ * hammering the backend on every re-render.
+ */
+export function useChwMapData() {
+  return useQuery({
+    queryKey: queryKeys.chwMapData,
+    queryFn: async () => {
+      const raw = await api<unknown>('/chw/map-data');
+      return transformKeys<ChwMapData>(raw);
+    },
+    staleTime: 120_000, // 2 min — map data changes slowly
   });
 }
 

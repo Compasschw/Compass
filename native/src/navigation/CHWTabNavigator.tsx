@@ -22,6 +22,7 @@ import {
   CalendarDays,
   ClipboardList,
   DollarSign,
+  Map,
   UserCircle,
 } from 'lucide-react-native';
 
@@ -39,6 +40,7 @@ import { CHWCalendarScreen } from '../screens/chw/CHWCalendarScreen';
 import { CHWEarningsScreen } from '../screens/chw/CHWEarningsScreen';
 import { CHWIntakeScreen } from '../screens/chw/CHWIntakeScreen';
 import { CHWReviewsScreen } from '../screens/chw/CHWReviewsScreen';
+import { CHWMapScreen } from '../screens/chw/CHWMapScreen';
 import { CHWProfileScreen } from '../screens/chw/CHWProfileScreen';
 import { PaymentsScreen } from '../screens/chw/PaymentsScreen';
 
@@ -50,6 +52,7 @@ export type CHWTabParamList = {
   SessionsStack: undefined;
   Calendar: undefined;
   EarningsStack: undefined;
+  Map: undefined;
   Profile: undefined;
   // Screens inside nested stacks — exposed here so deep links can address
   // them via the CHWTabParamList type without navigating through the stack
@@ -152,6 +155,7 @@ const SCREENS: ScreenSpec[] = [
   { name: 'SessionsStack',  title: 'Sessions',  component: SessionsStackNavigator,  icon: ClipboardList, rootScreen: 'Sessions' },
   { name: 'Calendar',       title: 'Calendar',  component: CHWCalendarScreen,       icon: CalendarDays },
   { name: 'EarningsStack',  title: 'Earnings',  component: EarningsStackNavigator,  icon: DollarSign,    rootScreen: 'Earnings' },
+  { name: 'Map',            title: 'Map',       component: CHWMapScreen,            icon: Map },
   { name: 'Profile',        title: 'Profile',   component: CHWProfileScreen,        icon: UserCircle },
 ];
 
