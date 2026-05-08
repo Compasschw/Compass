@@ -27,7 +27,7 @@
  *   transcripts are explicitly NOT rendered.
  */
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -50,14 +50,12 @@ import {
   Globe,
   Heart,
   MapPin,
-  MessageSquare,
   Phone,
   ShieldCheck,
   ShieldOff,
   ShieldX,
   Sparkles,
   User,
-  XCircle,
 } from 'lucide-react-native';
 import { useQuery } from '@tanstack/react-query';
 
@@ -66,6 +64,7 @@ import { fonts } from '../../theme/typography';
 import { api } from '../../api/client';
 import { transformKeys } from '../../utils/caseTransform';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
+import { ProfileContactButtons } from '../../components/comms/ProfileContactButtons';
 import type { CHWSessionsStackParamList } from '../../navigation/CHWTabNavigator';
 
 // ─── Navigation types ─────────────────────────────────────────────────────────
@@ -999,27 +998,36 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
     [navigation, profile, memberId],
   );
 
-  // ── Call / text button handlers (disabled — Call Center descoped) ────────────
-  const handleCallPress = useCallback((): void => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.alert(
-        'Direct calling is coming soon. Use the masked call button within an active session.',
-      );
-    } else {
-      Alert.alert(
-        'Coming Soon',
-        'Direct calling will be available when the Call Center feature launches.',
-      );
-    }
-  }, []);
-
-  const handleTextPress = useCallback((): void => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.alert('Texting is coming soon.');
-    } else {
-      Alert.alert('Coming Soon', 'Texting will be available in an upcoming release.');
-    }
-  }, []);
+  // ── Navigate to in-app conversation ─────────────────────────────────────────
+  // Called by ProfileContactButtons after find-or-create resolves a conversation id.
+  // SessionChat is the existing conversation screen registered in the sessions stack.
+  // For now we navigate to the session messages via the existing deeplink pattern;
+  // when the standalone DM screen lands, swap the navigation target here.
+  const handleNavigateToConversation = useCallback(
+    (conversationId: string): void => {
+      // Deep-link to the conversation — the member's profile screen is in the
+      // CHWSessionsStack so we can navigate within that stack. If a standalone
+      // DM/Conversation screen is added later, update this navigate call.
+      navigation.navigate('Sessions');
+      // Optionally: navigation.navigate('ConversationScreen', { conversationId })
+      // once the DM screen is registered in the stack.
+      // For now we surface a confirmation since the standalone screen is pending.
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.alert(
+          `Conversation opened (id: ${conversationId.slice(0, 8)}…). ` +
+            'Navigate to the Messages tab to view it.',
+        );
+      } else {
+        Alert.alert(
+          'Conversation Ready',
+          `Your message thread with ${profile ? `${profile.firstName}` : 'this member'} is ready. ` +
+            'Go to the Messages tab to view it.',
+          [{ text: 'OK' }],
+        );
+      }
+    },
+    [navigation, profile],
+  );
 
   // ── Loading skeleton ─────────────────────────────────────────────────────────
 
@@ -1156,35 +1164,14 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
             </View>
           </View>
 
-          {/* ── Quick actions (Call Center descoped — disabled with tooltip) ── */}
-          <View style={s.actionRow} accessibilityRole="group" accessibilityLabel="Quick actions">
-            <TouchableOpacity
-              style={[s.actionBtn, s.actionBtnDisabled]}
-              onPress={handleCallPress}
-              accessibilityRole="button"
-              accessibilityLabel="Call member — coming soon"
-              accessibilityHint="Direct calling is not yet available"
-            >
-              <Phone size={16} color="#94A3B8" />
-              <Text style={s.actionBtnDisabledText}>Call</Text>
-              <View style={s.comingSoonPill}>
-                <Text style={s.comingSoonText}>Soon</Text>
-              </View>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[s.actionBtn, s.actionBtnDisabled]}
-              onPress={handleTextPress}
-              accessibilityRole="button"
-              accessibilityLabel="Text member — coming soon"
-              accessibilityHint="Texting is not yet available"
-            >
-              <MessageSquare size={16} color="#94A3B8" />
-              <Text style={s.actionBtnDisabledText}>Text</Text>
-              <View style={s.comingSoonPill}>
-                <Text style={s.comingSoonText}>Soon</Text>
-              </View>
-            </TouchableOpacity>
-          </View>
+          {/* ── Quick actions — bidirectional masked call + in-app messaging ── */}
+          <ProfileContactButtons
+            targetUserId={memberId}
+            targetUserRole="member"
+            sharedSessionCount={profile.sessionCount}
+            targetDisplayName={`${profile.firstName} ${profile.lastName}`.trim()}
+            onNavigateToConversation={handleNavigateToConversation}
+          />
 
           {/* ── About ── */}
           <SectionCard title="About">
@@ -1531,44 +1518,6 @@ const s = StyleSheet.create({
     fontFamily: fonts.bodySemibold,
     fontSize: 12,
     color: '#1D4ED8',
-  },
-
-  // ── Quick action buttons
-  actionRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginBottom: 20,
-  },
-  actionBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 7,
-    paddingVertical: 13,
-    borderRadius: 13,
-  },
-  actionBtnDisabled: {
-    backgroundColor: '#F1F5F9',
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-  },
-  actionBtnDisabledText: {
-    fontFamily: fonts.bodySemibold,
-    fontSize: 14,
-    color: '#94A3B8',
-  },
-  comingSoonPill: {
-    backgroundColor: '#E2E8F0',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 100,
-  },
-  comingSoonText: {
-    fontFamily: fonts.bodySemibold,
-    fontSize: 9,
-    color: '#64748B',
-    letterSpacing: 0.3,
   },
 
   // ── Category chips

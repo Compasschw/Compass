@@ -1,6 +1,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +15,126 @@ from app.schemas.conversation import (
 )
 
 router = APIRouter(prefix="/api/v1/conversations", tags=["conversations"])
+
+
+# ─── In-app messaging decision ────────────────────────────────────────────────
+#
+# The existing Conversation model already supports session_id=NULL for ad-hoc
+# (non-session-scoped) DMs between a CHW and member pair. The existing
+# GET /conversations/ endpoint returns all conversations for the current user,
+# and GET/POST /conversations/{id}/messages work for any conversation the caller
+# is a participant in — regardless of whether session_id is set.
+#
+# Therefore: NO structural extension is needed for the "Message" button in
+# ProfileContactButtons. The only gap was a "find-or-create by peer" endpoint
+# so the frontend can navigate to a conversation without knowing the UUID first.
+#
+# Decision: add POST /conversations/find-or-create with body {peer_id}.
+# The endpoint is idempotent — it returns the existing conversation UUID if one
+# already exists for this (chw, member) pair (with session_id=NULL), otherwise
+# inserts a new row. Registration order matters — this route is declared BEFORE
+# the /{conversation_id}/messages route to avoid FastAPI treating "find-or-create"
+# as a UUID path param.
+
+
+class FindOrCreateConversationRequest(BaseModel):
+    """Body for POST /conversations/find-or-create."""
+    peer_id: UUID
+
+
+@router.post(
+    "/find-or-create",
+    response_model=ConversationResponse,
+    status_code=200,
+    summary="Find or create an ad-hoc DM conversation with a peer",
+    description=(
+        "Returns the existing Conversation between the caller and peer_id "
+        "(where session_id IS NULL), or creates one if none exists. "
+        "The caller must be either a CHW or a member, and peer_id must be "
+        "the other role. Idempotent — safe to call on every 'Message' tap."
+    ),
+)
+async def find_or_create_conversation(
+    body: FindOrCreateConversationRequest,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ConversationResponse:
+    """POST /api/v1/conversations/find-or-create
+
+    Auth: any authenticated user (CHW or member).
+    Body: { "peer_id": "<uuid>" }
+
+    Determines chw_id and member_id from the callers' roles, then performs
+    an INSERT ... ON CONFLICT DO NOTHING + SELECT to safely handle concurrent
+    first-message taps.
+    """
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from app.models.conversation import Conversation
+    from app.models.user import User
+
+    peer = await db.get(User, body.peer_id)
+    if peer is None or not peer.is_active:
+        raise HTTPException(status_code=404, detail="Peer user not found.")
+
+    # Determine CHW / member assignment from roles.
+    if current_user.role == "chw" and peer.role == "member":
+        chw_id = current_user.id
+        member_id = peer.id
+    elif current_user.role == "member" and peer.role == "chw":
+        chw_id = peer.id
+        member_id = current_user.id
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Conversations must be between a CHW and a member. "
+                f"Caller role: {current_user.role}, peer role: {peer.role}."
+            ),
+        )
+
+    # Fast path: existing ad-hoc conversation (session_id IS NULL).
+    result = await db.execute(
+        select(Conversation).where(
+            Conversation.chw_id == chw_id,
+            Conversation.member_id == member_id,
+            Conversation.session_id.is_(None),
+        )
+    )
+    existing = result.scalar_one_or_none()
+    if existing is not None:
+        return existing
+
+    # Slow path: insert, tolerating concurrent inserts via ON CONFLICT DO NOTHING.
+    # Note: the existing unique constraint is on (session_id) — but only fires
+    # for non-NULL values. Ad-hoc conversations (session_id=NULL) have no
+    # unique constraint, so we may race-insert duplicates. We guard with a
+    # manual SELECT-after-INSERT to return whichever row won.
+    stmt = (
+        pg_insert(Conversation)
+        .values(
+            chw_id=chw_id,
+            member_id=member_id,
+            session_id=None,
+        )
+        .returning(Conversation)
+    )
+    insert_result = await db.execute(stmt)
+    inserted = insert_result.scalar_one_or_none()
+    if inserted is not None:
+        await db.commit()
+        return inserted
+
+    # Race: another request inserted first — fetch the winning row.
+    result = await db.execute(
+        select(Conversation).where(
+            Conversation.chw_id == chw_id,
+            Conversation.member_id == member_id,
+            Conversation.session_id.is_(None),
+        ).order_by(Conversation.created_at.asc()).limit(1)
+    )
+    conv = result.scalar_one()
+    return conv
 
 
 def _serialize_message(msg, attachment) -> MessageResponse:

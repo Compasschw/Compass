@@ -20,6 +20,7 @@ from app.models.session import MemberConsent, Session, SessionDocumentation
 from app.models.twilio import TwilioProxySession
 from app.models.user import CHWProfile, MemberProfile, User
 from app.models.waitlist import WaitlistEntry
+from app.services.communication_touch_log import CommunicationTouch  # noqa: E402
 
 __all__ = [
     "User", "CHWProfile", "MemberProfile",
@@ -34,6 +35,7 @@ __all__ = [
     "RefreshToken",
     "TwilioProxySession",
     "CommunicationSession",
+    "CommunicationTouch",
     "DeviceToken",
     "MagicLinkToken",
     "WaitlistEntry",

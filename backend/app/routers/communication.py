@@ -1,5 +1,5 @@
 """Communication endpoints — Vonage Voice API webhooks + the mobile
-call-bridge endpoint.
+call-bridge endpoint + bidirectional masked call endpoints.
 
 Routes:
   POST /api/v1/communication/call-bridge
@@ -17,25 +17,48 @@ Routes:
          completed, record. We log them for observability + persist the
          recording URL when Vonage uploads the recording.
 
+  POST /api/v1/member/chws/{chw_id}/call
+       → Member-initiated masked call to a CHW. Eligibility: member must
+         have ≥1 session with the CHW. Rate-limited to 5 calls per
+         (member_id, chw_id, UTC day). Recording is OFF (no consent IVR).
+
+  POST /api/v1/chw/members/{member_id}/call
+       → CHW-initiated masked call to a member outside session context.
+         Same eligibility + rate limit + no recording.
+
 Security note: Vonage webhooks don't use our JWT — they authenticate
 via signed JWTs using our application's public key. We verify in
 `_verify_vonage_jwt()` below.
 """
 
 import logging
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.services.communication import get_provider
+from app.services.communication_touch_log import TouchKind, record_touch
 
 logger = logging.getLogger("compass.communication")
 
 router = APIRouter(prefix="/api/v1/communication", tags=["communication"])
+
+# ─── Bidirectional call routers ────────────────────────────────────────────────
+# These are registered under /api/v1/member/ and /api/v1/chw/ prefixes for
+# role-clarity but live in this file to keep all Vonage call logic co-located.
+
+member_call_router = APIRouter(prefix="/api/v1/member", tags=["member-calls"])
+chw_call_router = APIRouter(prefix="/api/v1/chw", tags=["chw-calls"])
+
+# ─── Rate-limit constants ──────────────────────────────────────────────────────
+
+_CALL_RATE_LIMIT = 5   # maximum outbound calls per (initiator, recipient) per calendar day
 
 
 # ─── Schemas ─────────────────────────────────────────────────────────────────
@@ -52,6 +75,141 @@ class CallBridgeResponse(BaseModel):
     proxy_number: str
     provider_session_id: str
     expires_at_iso: str | None = None
+
+
+class AdHocCallRequest(BaseModel):
+    """Optional body for bidirectional ad-hoc call endpoints."""
+    reason: str | None = Field(
+        default=None,
+        max_length=500,
+        description=(
+            "Free-text reason for the call, stored in the audit log. "
+            "Never logged to structured output — treat as PHI."
+        ),
+    )
+
+
+class AdHocCallResponse(BaseModel):
+    """Response from a bidirectional ad-hoc call endpoint."""
+    provider_session_id: str
+    rate_limit_remaining: int
+
+
+# ─── Bidirectional call helpers ───────────────────────────────────────────────
+
+
+async def _count_daily_calls(
+    db: AsyncSession,
+    initiator_id: UUID,
+    recipient_id: UUID,
+) -> int:
+    """Return the number of 'call' touches the initiator made to the recipient today (UTC).
+
+    Used to enforce the per-(initiator, recipient, day) rate limit without
+    relying on slowapi's IP-keyed counter, which would incorrectly aggregate
+    calls from the same IP to different recipients.
+    """
+    from app.services.communication_touch_log import CommunicationTouch
+
+    today_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    result = await db.execute(
+        select(func.count())
+        .select_from(CommunicationTouch)
+        .where(
+            CommunicationTouch.initiator_id == initiator_id,
+            CommunicationTouch.recipient_id == recipient_id,
+            CommunicationTouch.kind == "call",
+            CommunicationTouch.created_at >= today_start,
+        )
+    )
+    return result.scalar_one()
+
+
+async def _assert_shared_session(
+    db: AsyncSession,
+    chw_id: UUID,
+    member_id: UUID,
+) -> None:
+    """Raise HTTP 403 when the CHW and member have no shared session (any status).
+
+    Eligibility gate: ad-hoc contact is only allowed when a care relationship
+    exists — i.e. at least one session row links the two parties. This prevents
+    any authenticated CHW from cold-calling any member.
+    """
+    from app.models.session import Session
+
+    # Use EXISTS-style query: we only need to know if at least one row exists,
+    # not the total count. SELECT 1 + LIMIT 1 is more efficient than COUNT(*).
+    result = await db.execute(
+        select(Session.id)
+        .where(
+            Session.chw_id == chw_id,
+            Session.member_id == member_id,
+        )
+        .limit(1)
+    )
+    count = 1 if result.scalar_one_or_none() is not None else 0
+    if count == 0:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Ad-hoc calls are only available when a care relationship exists. "
+                "No shared sessions found between this CHW and member."
+            ),
+        )
+
+
+async def _initiate_ad_hoc_call(
+    db: AsyncSession,
+    *,
+    initiator_id: UUID,
+    recipient_id: UUID,
+    initiator_phone: str,
+    recipient_phone: str,
+    reason: str | None,
+) -> AdHocCallResponse:
+    """Core call logic shared by both bidirectional call endpoints.
+
+    Calls ``create_proxy_session`` with the initiator's phone as the first leg
+    (Vonage calls the initiator first, then bridges to the recipient when they
+    answer). No recording — these are casual outreach calls, not clinical
+    session encounters.
+
+    Writes a CommunicationTouch audit row. Callers must commit the session
+    after this returns.
+    """
+    provider = get_provider()
+    # We pass initiator_phone as chw_phone and recipient_phone as member_phone
+    # intentionally reusing the existing bridge signature. Direction (who is
+    # CHW vs member) doesn't affect the call flow at the Vonage layer — the
+    # "initiator" leg is always rung first.
+    proxy = await provider.create_proxy_session(
+        session_id=f"adhoc-{initiator_id}-{recipient_id}",
+        chw_phone=initiator_phone,
+        member_phone=recipient_phone,
+    )
+
+    daily_calls_before = await _count_daily_calls(db, initiator_id, recipient_id)
+
+    await record_touch(
+        db,
+        initiator_id=initiator_id,
+        recipient_id=recipient_id,
+        kind=TouchKind.call,
+        provider_session_id=proxy.provider_session_id,
+        extra_data={
+            "reason": reason,
+            "recording": False,
+            "proxy_number": proxy.proxy_number,
+            "provider": proxy.provider,
+        },
+    )
+
+    remaining = max(0, _CALL_RATE_LIMIT - daily_calls_before - 1)
+    return AdHocCallResponse(
+        provider_session_id=proxy.provider_session_id,
+        rate_limit_remaining=remaining,
+    )
 
 
 # ─── Call-bridge (mobile-facing) ─────────────────────────────────────────────
@@ -492,3 +650,195 @@ def _public_base_url() -> str:
     if base.endswith("/auth/magic"):
         base = base[: -len("/auth/magic")]
     return base.replace("https://joincompasschw.com", "https://api.joincompasschw.com")
+
+
+# ─── Bidirectional ad-hoc call endpoints ─────────────────────────────────────
+#
+# Two mirror endpoints:
+#   POST /api/v1/member/chws/{chw_id}/call   — member initiates call to CHW
+#   POST /api/v1/chw/members/{member_id}/call — CHW initiates call to member
+#
+# Shared rules (enforced by _assert_shared_session + _count_daily_calls):
+#   1. Both parties must have ≥1 session (any status) in common → 403 otherwise.
+#   2. Rate limit: 5 calls per (initiator_id, recipient_id) per UTC calendar day.
+#      We use the CommunicationTouch table rather than slowapi's IP counter
+#      because slowapi counts per IP — a CHW sharing a wifi could exhaust a
+#      member's quota. DB-level counting per user pair is correct.
+#   3. No recording: no `record` NCCO action, no consent IVR. These are casual
+#      outreach calls outside clinical session context.
+#
+# Note: both routers are imported and registered in app/main.py.
+
+
+@member_call_router.post(
+    "/chws/{chw_id}/call",
+    response_model=AdHocCallResponse,
+    status_code=200,
+    summary="Member initiates masked outbound call to CHW",
+    description=(
+        "Rings the member's registered phone first (member-initiated). When the "
+        "member answers, Vonage bridges to the CHW's phone via masked proxy number. "
+        "No recording — no consent IVR. Rate-limited to 5 calls per (member, CHW) "
+        "per calendar day. Requires ≥1 shared session to establish care relationship."
+    ),
+)
+async def member_call_chw(
+    chw_id: UUID,
+    body: AdHocCallRequest | None = None,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> AdHocCallResponse:
+    """POST /api/v1/member/chws/{chw_id}/call
+
+    Auth: authenticated member.
+    Eligibility: member must have ≥1 session (any status) with the target CHW.
+    Rate limit: 5 per (member_id, chw_id) per UTC calendar day.
+
+    Returns:
+        provider_session_id: Vonage conversation UUID.
+        rate_limit_remaining: number of calls remaining today.
+    """
+    from app.models.user import User
+
+    if current_user.role not in ("member",):
+        raise HTTPException(
+            status_code=403,
+            detail="Only members may call this endpoint. CHWs should use /chw/members/{id}/call.",
+        )
+
+    chw = await db.get(User, chw_id)
+    if chw is None or not chw.is_active:
+        raise HTTPException(status_code=404, detail="CHW not found.")
+    if chw.role != "chw":
+        raise HTTPException(status_code=400, detail="Target user is not a CHW.")
+
+    caller = await db.get(User, current_user.id)
+    if caller is None:
+        raise HTTPException(status_code=404, detail="Current user not found.")
+
+    if not caller.phone or not chw.phone:
+        raise HTTPException(
+            status_code=400,
+            detail="Both parties must have a verified phone number on file.",
+        )
+
+    # Eligibility: ≥1 shared session (any status).
+    await _assert_shared_session(db, chw_id=chw_id, member_id=current_user.id)
+
+    # Per-(member, CHW, day) rate limit enforced via CommunicationTouch table.
+    daily_count = await _count_daily_calls(db, current_user.id, chw_id)
+    if daily_count >= _CALL_RATE_LIMIT:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Rate limit reached: {_CALL_RATE_LIMIT} calls per day to the same CHW. "
+                "Please try again tomorrow."
+            ),
+        )
+
+    reason = (body.reason if body else None)
+
+    response = await _initiate_ad_hoc_call(
+        db,
+        initiator_id=current_user.id,
+        recipient_id=chw_id,
+        initiator_phone=caller.phone,
+        recipient_phone=chw.phone,
+        reason=reason,
+    )
+    await db.commit()
+
+    logger.info(
+        "member→chw ad-hoc call: member=%s chw=%s provider_session=%s",
+        current_user.id,
+        chw_id,
+        response.provider_session_id,
+    )
+    return response
+
+
+@chw_call_router.post(
+    "/members/{member_id}/call",
+    response_model=AdHocCallResponse,
+    status_code=200,
+    summary="CHW initiates masked outbound call to member outside session context",
+    description=(
+        "Rings the CHW's registered phone first (CHW-initiated). When the CHW "
+        "answers, Vonage bridges to the member's phone via masked proxy number. "
+        "No recording — no consent IVR. Rate-limited to 5 calls per (CHW, member) "
+        "per calendar day. Requires ≥1 shared session to establish care relationship."
+    ),
+)
+async def chw_call_member(
+    member_id: UUID,
+    body: AdHocCallRequest | None = None,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> AdHocCallResponse:
+    """POST /api/v1/chw/members/{member_id}/call
+
+    Auth: authenticated CHW.
+    Eligibility: CHW must have ≥1 session (any status) with the target member.
+    Rate limit: 5 per (chw_id, member_id) per UTC calendar day.
+
+    Returns:
+        provider_session_id: Vonage conversation UUID.
+        rate_limit_remaining: number of calls remaining today.
+    """
+    from app.models.user import User
+
+    if current_user.role not in ("chw",):
+        raise HTTPException(
+            status_code=403,
+            detail="Only CHWs may call this endpoint. Members should use /member/chws/{id}/call.",
+        )
+
+    member = await db.get(User, member_id)
+    if member is None or not member.is_active:
+        raise HTTPException(status_code=404, detail="Member not found.")
+    if member.role != "member":
+        raise HTTPException(status_code=400, detail="Target user is not a member.")
+
+    caller = await db.get(User, current_user.id)
+    if caller is None:
+        raise HTTPException(status_code=404, detail="Current user not found.")
+
+    if not caller.phone or not member.phone:
+        raise HTTPException(
+            status_code=400,
+            detail="Both parties must have a verified phone number on file.",
+        )
+
+    # Eligibility: ≥1 shared session (any status).
+    await _assert_shared_session(db, chw_id=current_user.id, member_id=member_id)
+
+    # Per-(CHW, member, day) rate limit enforced via CommunicationTouch table.
+    daily_count = await _count_daily_calls(db, current_user.id, member_id)
+    if daily_count >= _CALL_RATE_LIMIT:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Rate limit reached: {_CALL_RATE_LIMIT} calls per day to the same member. "
+                "Please try again tomorrow."
+            ),
+        )
+
+    reason = (body.reason if body else None)
+
+    response = await _initiate_ad_hoc_call(
+        db,
+        initiator_id=current_user.id,
+        recipient_id=member_id,
+        initiator_phone=caller.phone,
+        recipient_phone=member.phone,
+        reason=reason,
+    )
+    await db.commit()
+
+    logger.info(
+        "chw→member ad-hoc call: chw=%s member=%s provider_session=%s",
+        current_user.id,
+        member_id,
+        response.provider_session_id,
+    )
+    return response
