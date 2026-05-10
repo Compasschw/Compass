@@ -8,7 +8,7 @@ from app.models.enums import SessionMode
 
 # Consent types accepted by POST /sessions/{id}/consent.
 # Extend this union when new consent flows are introduced.
-ConsentType = Literal["medical_billing", "ai_transcription"]
+ConsentType = Literal["medical_billing", "ai_transcription", "device_audio_capture"]
 
 
 class SessionCreate(BaseModel):
