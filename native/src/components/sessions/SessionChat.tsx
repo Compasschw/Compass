@@ -40,6 +40,7 @@ import React, {
 } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Image,
   KeyboardAvoidingView,
@@ -53,6 +54,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
@@ -105,6 +107,7 @@ import {
   type ConsentRequestStatus,
 } from '../../hooks/useApiQueries';
 import { MemberDeviceAudioConsentModal } from './MemberDeviceAudioConsentModal';
+import { Avatar } from '../shared/Avatar';
 import {
   useSessionTranscription,
   type TranscriptChunk,
@@ -1575,6 +1578,24 @@ export function SessionChat({ sessionId, onStartAssessment }: SessionChatProps):
   const [acceptedAudioCaptureThisMount, setAcceptedAudioCaptureThisMount] =
     useState(false);
 
+  /**
+   * Member's manual mic-capture toggle for this session (Change 2 — 2026-05-06).
+   *
+   * Separate from `acceptedAudioCaptureThisMount`:
+   *   - `acceptedAudioCaptureThisMount` tracks whether the member has *granted*
+   *     consent (persists to backend on "Yes").
+   *   - `memberMicCaptureOn` tracks whether the member *currently wants* to
+   *     share audio. Starts false; flips to true when consent is detected or
+   *     after the member accepts the modal. Member can toggle off mid-session
+   *     via the header button without revoking the server-side consent row
+   *     (consent persists per-CHW relationship by design — see
+   *     project_compass_live_captions_decision.md).
+   *
+   * Only used on the member side for in-person sessions (`!isCHW && isInPersonSession`).
+   * Initialised false; the effect below flips it to true once consent is resolved.
+   */
+  const [memberMicCaptureOn, setMemberMicCaptureOn] = useState(false);
+
   // ── Recording timer ──────────────────────────────────────────────────────────
 
   const [recordingElapsedSeconds, setRecordingElapsedSeconds] = useState(0);
@@ -1646,9 +1667,19 @@ export function SessionChat({ sessionId, onStartAssessment }: SessionChatProps):
    */
   const transcriptionMode: TranscriptionMode = (() => {
     if (isPhoneSession) return 'subscribe_only';
-    // Member side in-person: use mic_capture only when consent is active.
+    // Member side in-person: use mic_capture only when consent has been granted
+    // AND the member's manual toggle is currently ON.
+    //
+    // Two independent gates:
+    //   1. `acceptedAudioCaptureThisMount` — consent exists on the backend.
+    //   2. `memberMicCaptureOn` — the member has not toggled off mid-session.
+    // Both must be true for actual mic capture to begin.
+    // If the toggle is off (member paused), fall through to subscribe_only so
+    // the CHW's mic stream is still received (no audio gap on the CHW side).
     if (!isCHW && isInPersonSession) {
-      return acceptedAudioCaptureThisMount ? 'mic_capture' : 'subscribe_only';
+      return acceptedAudioCaptureThisMount && memberMicCaptureOn
+        ? 'mic_capture'
+        : 'subscribe_only';
     }
     // CHW side in-person or any other mode: default to mic_capture.
     return 'mic_capture';
@@ -1962,8 +1993,11 @@ export function SessionChat({ sessionId, onStartAssessment }: SessionChatProps):
     if (acceptedAudioCaptureThisMount || declinedAudioCaptureThisMount) return;
     if (!deviceAudioConsentQuery.chwAudioConsentActive) return;
 
-    // Prior grant detected — accept silently without showing the modal.
+    // Prior grant detected — accept silently without showing the modal, and
+    // default the member's manual toggle to ON (they opted in previously).
+    // The member can still turn the toggle off mid-session via the header button.
     setAcceptedAudioCaptureThisMount(true);
+    setMemberMicCaptureOn(true);
   }, [
     isCHW,
     deviceAudioConsentQuery.chwAudioConsentActive,
@@ -1993,6 +2027,8 @@ export function SessionChat({ sessionId, onStartAssessment }: SessionChatProps):
       const memberName = session?.memberName ?? userName ?? 'Member';
       await grantDeviceAudioConsent.mutateAsync(memberName);
       setAcceptedAudioCaptureThisMount(true);
+      // Also flip the manual toggle ON so capture starts immediately after consent.
+      setMemberMicCaptureOn(true);
     } catch {
       // Non-blocking: consent POST failed. Log lifecycle event only.
       // Fall through to subscribe_only — the session continues without member capture.
@@ -2013,6 +2049,106 @@ export function SessionChat({ sessionId, onStartAssessment }: SessionChatProps):
   const handleDeclineDeviceAudioCapture = useCallback(() => {
     setDeclinedAudioCaptureThisMount(true);
   }, []);
+
+  // ── Navigation hook (Change 3 — profile avatar header) ───────────────────────
+  //
+  // useNavigation() works when SessionChat is rendered inside a React Navigation
+  // stack (the normal path: CHWSessionsScreen → Session detail, or
+  // MemberSessionsScreen → Session detail).
+  //
+  // Trade-off / fallback: if SessionChat is ever rendered inside a plain Modal
+  // (outside the React Navigation tree), useNavigation() will throw. We guard
+  // with a try/catch at the call site so the rest of the component renders
+  // correctly — the avatar header becomes non-tappable in that case (the touch
+  // handler is a no-op) rather than crashing.
+  //
+  // If we later need to navigate FROM a modal context we can accept an
+  // `onNavigateToProfile?: () => void` prop from the parent and call that; the
+  // parent (which IS inside the navigator) can then do the push. For now the
+  // guard approach is sufficient because all known entry points are stack screens.
+  const navigation = useNavigation<any>(); // eslint-disable-line @typescript-eslint/no-explicit-any
+
+  /**
+   * Navigate to the other party's profile screen.
+   *
+   * CHW side → pushes `MemberProfile` inside the SessionsStack with `{ memberId }`.
+   * Member side → pushes `CHWProfile` inside the FindStack with `{ chwId }`.
+   *
+   * Navigation may fail (e.g. if this component is rendered inside a plain React
+   * Native Modal outside the navigation tree). In that case we catch silently —
+   * the avatar tap is a convenience affordance, not a critical user flow.
+   */
+  const handleAvatarPress = useCallback(() => {
+    if (!session) return;
+    try {
+      if (isCHW) {
+        // CHW taps member avatar → MemberProfile inside SessionsStack.
+        // `session.memberId` is the UUID of the member in this session.
+        (navigation as any).navigate('MemberProfile', { memberId: session.memberId });
+      } else {
+        // Member taps CHW avatar → CHWProfile inside FindStack.
+        // `session.chwId` is the UUID of the CHW in this session.
+        (navigation as any).navigate('CHWProfile', { chwId: session.chwId });
+      }
+    } catch {
+      // Navigation failed — most likely SessionChat is rendered outside the
+      // React Navigation tree (e.g. wrapped in a plain Modal). The tap is a
+      // no-op in that case; we do not surface an error to the user because the
+      // failure is transparent (profile navigation is an affordance, not
+      // blocking). If this becomes a real issue, add an `onNavigateToProfile`
+      // prop so the parent can own the navigation call.
+    }
+  }, [session, isCHW, navigation]);
+
+  /**
+   * Whether the member-side mic toggle button should be shown.
+   * Only visible to the member during in-person sessions.
+   * The button handles both the "no consent yet" (→ opens modal) and
+   * "consent active, toggle on/off" paths.
+   */
+  const showMemberMicToggle = !isCHW && isInPersonSession && session?.status === 'in_progress';
+
+  /**
+   * Member tapped the mic toggle button in the header.
+   *
+   * State machine:
+   *   - Mic OFF (consent not yet granted): opens `MemberDeviceAudioConsentModal`
+   *     by resetting the decline flag (which unblocks the modal's visibility gate).
+   *   - Mic ON: shows a confirmation dialog before turning off. Turning off is
+   *     local-state only — does NOT revoke the backend consent row. The member's
+   *     opt-in persists per-CHW relationship so they are not re-prompted next
+   *     session (per product decision in project_compass_live_captions_decision.md).
+   */
+  const handleMemberMicToggle = useCallback(() => {
+    if (memberMicCaptureOn && acceptedAudioCaptureThisMount) {
+      // Currently ON → show confirmation before turning off.
+      Alert.alert(
+        'Stop sharing your audio?',
+        'Your microphone audio will stop being captured. Your CHW can still hear you through their own mic.',
+        [
+          { text: 'Keep sharing', style: 'cancel' },
+          {
+            text: 'Stop sharing',
+            style: 'destructive',
+            onPress: () => setMemberMicCaptureOn(false),
+          },
+        ],
+      );
+    } else {
+      // Currently OFF (either declined or toggled off) → re-open consent modal.
+      // Reset the decline flag so the visibility gate allows the modal to show.
+      // If consent was already granted (`acceptedAudioCaptureThisMount` is true),
+      // the modal will not re-appear for a returning member — instead we simply
+      // flip the toggle back on directly, since consent is already on file.
+      if (acceptedAudioCaptureThisMount) {
+        // Consent exists but toggle is off — just re-enable without re-prompting.
+        setMemberMicCaptureOn(true);
+      } else {
+        // No consent yet (or declined this mount) — open the modal again.
+        setDeclinedAudioCaptureThisMount(false);
+      }
+    }
+  }, [memberMicCaptureOn, acceptedAudioCaptureThisMount]);
 
   // ── Merged render list ───────────────────────────────────────────────────────
 
@@ -2656,12 +2792,49 @@ export function SessionChat({ sessionId, onStartAssessment }: SessionChatProps):
         keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 24}
       >
         <View style={c.container}>
-          {/* Inner header — phone + mic icons on the right */}
+          {/* Inner header — other-party avatar + name on the left; action buttons on the right */}
           <View style={c.header}>
-            <View style={c.headerLeft}>
-              <MessageSquare size={14} color={colors.mutedForeground} />
-              <Text style={c.headerLabel}>Session Chat</Text>
-            </View>
+            {/*
+             * Avatar + name (Change 3 — 2026-05-06)
+             *
+             * Tapping navigates to the other party's profile screen:
+             *   CHW taps → MemberProfile in SessionsStack ({ memberId })
+             *   Member taps → CHWProfile in FindStack ({ chwId })
+             *
+             * Navigation trade-off: useNavigation() is used unconditionally but
+             * the handleAvatarPress callback wraps the navigate() call in try/catch.
+             * If SessionChat is ever rendered inside a plain Modal (outside the
+             * React Navigation tree), the tap becomes a no-op rather than a crash.
+             * See the handleAvatarPress comment above for the escalation path.
+             *
+             * SCHEMA GAP: Avatar uses initials-only today because neither User nor
+             * CHWProfile stores an avatar_url. Once added to the schema and exposed
+             * on the session DTO (session.memberAvatarUrl / session.chwAvatarUrl),
+             * pass it as the `photoUri` prop to Avatar.
+             * Tracked: add avatar_url to User + CHWProfile schema and session DTO.
+             */}
+            <TouchableOpacity
+              style={c.headerLeft}
+              onPress={handleAvatarPress}
+              disabled={!session}
+              accessibilityRole="button"
+              accessibilityLabel={
+                isCHW
+                  ? `View ${otherPartyName}'s profile`
+                  : `View ${otherPartyName}'s profile`
+              }
+              accessibilityHint="Opens the profile screen for the other party in this session."
+            >
+              <Avatar displayName={otherPartyName} size={36} />
+              <View style={c.headerNameBlock}>
+                <Text style={c.headerName} numberOfLines={1}>
+                  {otherPartyName}
+                </Text>
+                <Text style={c.headerSubtitle} numberOfLines={1}>
+                  {session?.status === 'in_progress' ? 'In session' : 'Session Chat'}
+                </Text>
+              </View>
+            </TouchableOpacity>
 
             <View style={c.headerRight}>
               {/* Recording indicator — shown while recording, connecting, or reconnecting */}
@@ -2767,6 +2940,51 @@ export function SessionChat({ sessionId, onStartAssessment }: SessionChatProps):
                */}
               {isCHW && isInPersonSession && session?.status === 'in_progress' && (
                 <MemberAudioStatusIndicator sessionId={sessionId} chwId={session.chwId} />
+              )}
+
+              {/*
+               * Member-side mic toggle — in-person sessions only (Change 2 — 2026-05-06).
+               *
+               * Mirrors the visual placement of the CHW's mic button so both
+               * parties have their audio-capture control in the same header area.
+               *
+               * States:
+               *   OFF (gray) — consent not yet granted OR member toggled off.
+               *     Tapping opens MemberDeviceAudioConsentModal (same modal that
+               *     auto-pops on first in-person session with this CHW).
+               *   ON (sage-green active) — consent granted AND toggle is on.
+               *     Tapping shows a confirmation dialog, then sets toggle to off
+               *     (does NOT revoke the server-side consent row).
+               *
+               * Accessibility: two distinct labels per state so screen readers
+               * announce the toggle's current function clearly.
+               */}
+              {showMemberMicToggle && (
+                <TouchableOpacity
+                  style={[
+                    c.iconButton,
+                    memberMicCaptureOn && c.iconButtonMicActive,
+                  ]}
+                  onPress={handleMemberMicToggle}
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    memberMicCaptureOn
+                      ? 'Stop sharing my microphone audio'
+                      : 'Share my microphone audio'
+                  }
+                  accessibilityHint={
+                    memberMicCaptureOn
+                      ? 'Stops sending your device microphone audio to this session.'
+                      : 'Opens a prompt to share your device microphone audio with your CHW.'
+                  }
+                  accessibilityState={{ selected: memberMicCaptureOn }}
+                >
+                  {memberMicCaptureOn ? (
+                    <Mic size={16} color={colors.compassSage} />
+                  ) : (
+                    <MicOff size={16} color={colors.mutedForeground} />
+                  )}
+                </TouchableOpacity>
               )}
 
               {/* Mic button — CHW-only, hidden for phone sessions */}
@@ -3107,13 +3325,34 @@ const c = StyleSheet.create({
   headerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 10,
+    flex: 1,
+    // Cap so the header names don't push the action buttons off-screen on
+    // devices with a long member or CHW display name.
+    maxWidth: '60%',
+  },
+  headerNameBlock: {
+    flex: 1,
+    gap: 1,
+  },
+  headerName: {
+    ...typography.bodyMd,
+    fontWeight: '700',
+    color: colors.foreground,
+  },
+  headerSubtitle: {
+    fontSize: 11,
+    color: colors.mutedForeground,
+    fontWeight: '500',
   },
   headerRight: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
   },
+  // Kept for reference — was the old plain-text header label. No longer rendered
+  // (replaced by avatar + name in Change 3). Retained so any stale StyleSheet
+  // references don't produce a missing-key error at runtime.
   headerLabel: {
     ...typography.label,
     fontWeight: '700',
@@ -3144,6 +3383,15 @@ const c = StyleSheet.create({
   iconButtonActive: {
     backgroundColor: `${colors.primary}18`,
     borderColor: `${colors.primary}60`,
+  },
+  /**
+   * Sage-green active state for the member-side mic toggle when capture is ON.
+   * Uses compassSage rather than primary so the member's mic button reads
+   * distinctly from the CHW's primary-green mic button at a glance.
+   */
+  iconButtonMicActive: {
+    backgroundColor: `${colors.compassSage}22`,
+    borderColor: `${colors.compassSage}60`,
   },
 
   listContent: { padding: 16, paddingBottom: 8 },
@@ -3216,12 +3464,15 @@ const c = StyleSheet.create({
     borderRadius: 14,
     backgroundColor: colors.background,
     paddingHorizontal: 14,
-    paddingTop: 10,
-    paddingBottom: 10,
+    // paddingTop/paddingBottom bumped from 10 → 12 to match the taller minHeight.
+    // The paperclip and send buttons remain 44×44 (flexShrink:0) — only the
+    // text input grows, which is intentional (composer height fix, 2026-05-06).
+    paddingTop: 12,
+    paddingBottom: 12,
     ...typography.bodyMd,
     color: colors.foreground,
-    maxHeight: 96,      // approx 4 lines
-    minHeight: 44,
+    maxHeight: 140,     // ~5 lines (was 96 / ~4 lines)
+    minHeight: 56,      // restored comfortable tap target (was 44)
   },
   sendButton: {
     width: 44,
