@@ -1849,6 +1849,22 @@ export function SessionChat({ sessionId, onStartAssessment }: SessionChatProps):
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isCHW, isPhoneSession, session?.status]);
 
+  // Member-side auto-start: when the member has consented and toggled mic
+  // capture on, kick off transcription.start() (which opens the WS in
+  // mic_capture mode per the resolved transcriptionMode). Without this
+  // effect the mode flips to mic_capture but nothing actually opens the
+  // connection — the symptom is "toggle says on, nothing transcribes".
+  useEffect(() => {
+    if (isCHW) return;
+    if (session?.status !== 'in_progress') return;
+    if (transcriptionMode !== 'mic_capture') return;
+    if (transcriptionEnabled) return;
+
+    setTranscriptionEnabled(true);
+    void transcription.start();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCHW, session?.status, transcriptionMode]);
+
   // ── Toast helpers — declared early because effects below depend on it ─────────
 
   const showToast = useCallback((message: string, isError: boolean) => {
@@ -2130,18 +2146,28 @@ export function SessionChat({ sessionId, onStartAssessment }: SessionChatProps):
   const handleMemberMicToggle = useCallback(() => {
     if (memberMicCaptureOn && acceptedAudioCaptureThisMount) {
       // Currently ON → show confirmation before turning off.
-      Alert.alert(
-        'Stop sharing your audio?',
-        'Your microphone audio will stop being captured. Your CHW can still hear you through their own mic.',
-        [
-          { text: 'Keep sharing', style: 'cancel' },
-          {
-            text: 'Stop sharing',
-            style: 'destructive',
-            onPress: () => setMemberMicCaptureOn(false),
-          },
-        ],
-      );
+      // React Native's Alert.alert with multiple buttons is unsupported on
+      // web (the buttons are ignored). Branch on Platform so members on the
+      // Vercel-hosted PWA get a real confirm dialog.
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        const ok = window.confirm(
+          'Stop sharing your audio?\n\nYour microphone audio will stop being captured. Your CHW can still hear you through their own mic.',
+        );
+        if (ok) setMemberMicCaptureOn(false);
+      } else {
+        Alert.alert(
+          'Stop sharing your audio?',
+          'Your microphone audio will stop being captured. Your CHW can still hear you through their own mic.',
+          [
+            { text: 'Keep sharing', style: 'cancel' },
+            {
+              text: 'Stop sharing',
+              style: 'destructive',
+              onPress: () => setMemberMicCaptureOn(false),
+            },
+          ],
+        );
+      }
     } else {
       // Currently OFF (either declined or toggled off) → re-open consent modal.
       // Reset the decline flag so the visibility gate allows the modal to show.
@@ -3474,16 +3500,16 @@ const c = StyleSheet.create({
     // paddingTop/paddingBottom bumped from 10 → 12 to match the taller minHeight.
     // The paperclip and send buttons remain 44×44 (flexShrink:0) — only the
     // text input grows, which is intentional (composer height fix, 2026-05-06).
-    paddingTop: 12,
-    paddingBottom: 12,
+    paddingTop: 16,
+    paddingBottom: 16,
     ...typography.bodyMd,
     color: colors.foreground,
-    maxHeight: 140,     // ~5 lines (was 96 / ~4 lines)
-    minHeight: 56,      // restored comfortable tap target (was 44)
+    maxHeight: 180,     // ~6 lines (was 140)
+    minHeight: 72,      // chunky comfortable composer (was 56)
   },
   sendButton: {
-    width: 44,
-    height: 44,
+    width: 56,
+    height: 56,
     borderRadius: 14,
     backgroundColor: colors.primary,
     alignItems: 'center',
@@ -3494,9 +3520,9 @@ const c = StyleSheet.create({
 
   // ── Attach button (paperclip) ────────────────────────────────────────────────
   attachButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
+    width: 56,
+    height: 56,
+    borderRadius: 16,
     backgroundColor: `${colors.primary}10`,
     borderWidth: 1,
     borderColor: `${colors.primary}30`,
