@@ -831,6 +831,136 @@ async def cancel_consent_request(
     return ConsentRequestResponse.model_validate(consent_req)
 
 
+# ─── Device-audio-capture consent helper ─────────────────────────────────────
+#
+# `device_audio_capture` consent is per-CHW-relationship, not per-session.
+# The member grants it once; the grant persists across all future sessions with
+# the same CHW.  The helper looks at the most recent device_audio_capture
+# MemberConsent row for any session this member has ever had with this CHW.
+#
+# Why not per-session?  The UX spec says "once per CHW relationship" — the
+# member should never be asked twice for the same CHW.  A new session with a
+# different CHW would correctly surface the modal again because no prior grant
+# exists for that pairing.
+#
+# HIPAA: this helper performs a DB read of metadata only (no PHI) and is safe
+# to call from any participant-authenticated endpoint.
+
+
+async def member_has_device_audio_consent(
+    member_id: UUID,
+    chw_id: UUID,
+    db: AsyncSession,
+) -> bool:
+    """Return True when the member has granted device_audio_capture consent
+    for any past session with this CHW.
+
+    Implements the "once per CHW relationship" semantics: a single grant on
+    any historical session is sufficient to skip the opt-in modal for all
+    subsequent sessions with the same CHW.
+
+    The query joins MemberConsent → Session to scope the look-up by both
+    member_id (on the consent row) and chw_id (on the session row), so a
+    consent granted with a different CHW is never considered valid here.
+
+    Args:
+        member_id: UUID of the member whose consent state is being checked.
+        chw_id:    UUID of the CHW for whom we're checking this pairing.
+        db:        Active async database session.
+
+    Returns:
+        True if at least one matching device_audio_capture consent row exists.
+    """
+    from app.models.session import Session as _Session
+
+    result = await db.execute(
+        select(MemberConsent)
+        .join(_Session, MemberConsent.session_id == _Session.id)
+        .where(
+            MemberConsent.member_id == member_id,
+            MemberConsent.consent_type == "device_audio_capture",
+            _Session.chw_id == chw_id,
+        )
+        .limit(1)
+    )
+    return result.scalar_one_or_none() is not None
+
+
+@router.get(
+    "/{session_id}/consents",
+    summary="List all consent records for a session",
+    description=(
+        "Returns all MemberConsent rows recorded for this session.  "
+        "Accessible to either participant (CHW or member).  Used by the member "
+        "side to check whether device_audio_capture consent has already been "
+        "granted for the CHW on this session's relationship."
+    ),
+)
+async def list_session_consents(
+    session_id: UUID,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """GET /api/v1/sessions/{session_id}/consents
+
+    Returns the ordered list of all MemberConsent rows for this session.
+    Each entry exposes:
+      - consent_type  (e.g. "ai_transcription", "device_audio_capture")
+      - consented_at  (ISO-8601 UTC timestamp)
+      - member_id     (UUID of the member who consented)
+
+    Additionally, for device_audio_capture rows, the response includes:
+      - chw_audio_consent_active (bool) — whether the member has a
+        device_audio_capture grant for any session with this session's CHW.
+        This allows the frontend to skip the opt-in modal on subsequent sessions.
+
+    HIPAA: typed_signature, ip_address, and user_agent are intentionally
+    excluded from this response — they are HIPAA-sensitive audit fields that
+    should only be surfaced through the admin audit log, not the client API.
+    """
+    session = await db.get(Session, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    is_participant = (
+        current_user.id == session.chw_id
+        or current_user.id == session.member_id
+    )
+    if not is_participant and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Not a participant on this session")
+
+    result = await db.execute(
+        select(MemberConsent)
+        .where(MemberConsent.session_id == session_id)
+        .order_by(MemberConsent.consented_at.asc())
+    )
+    rows = result.scalars().all()
+
+    # Pre-compute CHW-relationship device-audio consent once (avoids N+1 for
+    # multi-consent sessions).  Only relevant when at least one
+    # device_audio_capture row exists.
+    chw_audio_consent_active = await member_has_device_audio_consent(
+        member_id=session.member_id,
+        chw_id=session.chw_id,
+        db=db,
+    )
+
+    return [
+        {
+            "id": str(row.id),
+            "session_id": str(row.session_id),
+            "member_id": str(row.member_id),
+            "consent_type": row.consent_type,
+            "consented_at": row.consented_at.isoformat(),
+            # Convenience field: did this member grant device audio consent for
+            # any session with this CHW?  Always populated; most relevant when
+            # consent_type == "device_audio_capture".
+            "chw_audio_consent_active": chw_audio_consent_active,
+        }
+        for row in rows
+    ]
+
+
 # ─── Transcript replay ───────────────────────────────────────────────────────
 #
 # GET /sessions/{id}/transcript returns all persisted final transcript chunks

@@ -98,10 +98,13 @@ import {
   useDenyConsentRequest,
   useCancelConsentRequest,
   useConsentRequestStatus,
+  useMemberDeviceAudioConsent,
+  useGrantDeviceAudioConsent,
   type SessionMessageLocal,
   type ConsentRequestData,
   type ConsentRequestStatus,
 } from '../../hooks/useApiQueries';
+import { MemberDeviceAudioConsentModal } from './MemberDeviceAudioConsentModal';
 import {
   useSessionTranscription,
   type TranscriptChunk,
@@ -1312,6 +1315,83 @@ export interface SessionChatProps {
   onStartAssessment?: () => void;
 }
 
+// ─── MemberAudioStatusIndicator ───────────────────────────────────────────────
+//
+// CHW-side passive indicator: is the member sharing their device microphone?
+// Rendered in the header for in-person sessions only.  Does NOT include any
+// interactive element — the CHW cannot control the member's mic from here.
+//
+// Green dot + label when the member has an active device_audio_capture grant
+// for this CHW relationship; gray otherwise (declined or no decision yet).
+
+interface MemberAudioStatusIndicatorProps {
+  /** UUID of the current session (used for the consent-list query). */
+  sessionId: string;
+  /** UUID of the CHW (passed to the consent query for namespacing). */
+  chwId: string;
+}
+
+function MemberAudioStatusIndicator({
+  sessionId,
+  chwId,
+}: MemberAudioStatusIndicatorProps): React.JSX.Element {
+  const { chwAudioConsentActive } = useMemberDeviceAudioConsent(
+    sessionId,
+    chwId,
+    { enabled: true },
+  );
+
+  return (
+    <View
+      style={memberAudioStyles.container}
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+    >
+      <View
+        style={[
+          memberAudioStyles.dot,
+          chwAudioConsentActive
+            ? memberAudioStyles.dotActive
+            : memberAudioStyles.dotInactive,
+        ]}
+      />
+      <Text style={memberAudioStyles.label}>
+        {chwAudioConsentActive ? 'Member mic on' : 'Member mic off'}
+      </Text>
+    </View>
+  );
+}
+
+const memberAudioStyles = StyleSheet.create({
+  container: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 8,
+    backgroundColor: colors.background,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  dot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  dotActive: {
+    backgroundColor: '#22c55e', // green-500 — matches "live" conventions in the product
+  },
+  dotInactive: {
+    backgroundColor: colors.mutedForeground,
+  },
+  label: {
+    fontSize: 11,
+    color: colors.mutedForeground,
+    fontWeight: '500',
+  },
+});
+
 /**
  * Session chat thread component.
  *
@@ -1388,6 +1468,35 @@ export function SessionChat({ sessionId, onStartAssessment }: SessionChatProps):
   const [pendingConsentForMember, setPendingConsentForMember] =
     useState<ConsentRequestData | null>(null);
 
+  // ── Member device-audio-capture consent state ─────────────────────────────────
+  //
+  // The MemberDeviceAudioConsentModal is a one-time opt-in for the member to
+  // share their device mic during in-person sessions. The modal appears on the
+  // first in-person session with a given CHW if no prior grant exists for that
+  // CHW relationship. Once granted (or declined for this session), the modal
+  // does not reappear for the lifetime of this component mount.
+  //
+  // `declinedAudioCaptureThisMount` tracks a transient "No thanks" tap — it
+  // resets on component unmount (e.g. next session) but is NOT persisted to the
+  // backend, so the member can change their mind on the next session. Only an
+  // explicit "Yes" results in a backend consent row (which the
+  // useMemberDeviceAudioConsent hook detects across sessions).
+
+  /**
+   * True once the member has declined device audio capture for this session mount.
+   * Resets to false when the component unmounts (new session = fresh prompt).
+   */
+  const [declinedAudioCaptureThisMount, setDeclinedAudioCaptureThisMount] =
+    useState(false);
+
+  /**
+   * True once the member has accepted device audio capture in this session mount
+   * (either via the modal or because a prior grant was detected).  Prevents the
+   * modal from re-appearing after accept.
+   */
+  const [acceptedAudioCaptureThisMount, setAcceptedAudioCaptureThisMount] =
+    useState(false);
+
   // ── Recording timer ──────────────────────────────────────────────────────────
 
   const [recordingElapsedSeconds, setRecordingElapsedSeconds] = useState(0);
@@ -1439,17 +1548,33 @@ export function SessionChat({ sessionId, onStartAssessment }: SessionChatProps):
   const isPhoneSession = session?.mode === 'phone';
 
   /**
+   * True when this session is an in-person session.
+   * In-person sessions are candidates for member-side mic capture.
+   */
+  const isInPersonSession = session?.mode === 'in_person';
+
+  /**
    * The transcription mode forwarded to the hook.
    *
-   * - Phone sessions → `'subscribe_only'`: WS receive-only, no mic.
-   * - All other sessions → `'mic_capture'` (default): full mic + WS pipeline.
+   * Decision table (from the member's perspective for in-person sessions):
+   *   - Phone sessions              → `'subscribe_only'`: WS receive-only, no mic.
+   *   - In-person + member accepted → `'mic_capture'`: member device sends audio.
+   *   - In-person + no decision yet → `'subscribe_only'`: modal is pending.
+   *   - In-person + declined        → `'subscribe_only'`: member opted out.
+   *   - CHW (any mode)              → determined by isPhoneSession (unchanged).
    *
-   * This is a derived constant (same value every render for the same session)
-   * so it does not cause additional re-renders.
+   * This is derived from stable booleans so it does not cause additional
+   * re-renders beyond what those booleans already drive.
    */
-  const transcriptionMode: TranscriptionMode = isPhoneSession
-    ? 'subscribe_only'
-    : 'mic_capture';
+  const transcriptionMode: TranscriptionMode = (() => {
+    if (isPhoneSession) return 'subscribe_only';
+    // Member side in-person: use mic_capture only when consent is active.
+    if (!isCHW && isInPersonSession) {
+      return acceptedAudioCaptureThisMount ? 'mic_capture' : 'subscribe_only';
+    }
+    // CHW side in-person or any other mode: default to mic_capture.
+    return 'mic_capture';
+  })();
 
   const messagesQuery = useSessionMessages(sessionId);
   const sendMessage = useSessionSendMessage();
@@ -1481,6 +1606,33 @@ export function SessionChat({ sessionId, onStartAssessment }: SessionChatProps):
   });
   const approveConsentRequest = useApproveConsentRequest();
   const denyConsentRequest = useDenyConsentRequest();
+
+  // ── Member device-audio-capture consent hooks ─────────────────────────────────
+  //
+  // Polls GET /sessions/{id}/consents to detect whether the member has already
+  // granted device_audio_capture consent for any session with this CHW.
+  // The `chwAudioConsentActive` boolean short-circuits the modal entirely for
+  // returning members — the query is disabled once capture is accepted to avoid
+  // unnecessary polling while audio is already streaming.
+
+  const deviceAudioConsentQuery = useMemberDeviceAudioConsent(
+    sessionId,
+    session?.chwId ?? '',
+    {
+      // Only poll when:
+      //   - we are on the member side
+      //   - the session is in-progress and in-person
+      //   - capture hasn't already been resolved for this mount
+      enabled:
+        !isCHW &&
+        session?.status === 'in_progress' &&
+        isInPersonSession &&
+        !acceptedAudioCaptureThisMount &&
+        !declinedAudioCaptureThisMount,
+    },
+  );
+
+  const grantDeviceAudioConsent = useGrantDeviceAudioConsent(sessionId);
 
   /**
    * Resolve the display name of the other party based on auth role and
@@ -1716,6 +1868,73 @@ export function SessionChat({ sessionId, onStartAssessment }: SessionChatProps):
     // Surface the first pending request (newest, by requested_at desc from backend).
     setPendingConsentForMember(rows.length > 0 ? (rows[0] ?? null) : null);
   }, [pendingConsentsQuery.data, isCHW]);
+
+  // ── Member device-audio-capture: auto-accept when prior grant detected ────────
+  //
+  // When the useMemberDeviceAudioConsent poll returns `chwAudioConsentActive=true`,
+  // the member has previously granted consent for this CHW — skip the modal and
+  // flip straight to `mic_capture` mode. This is the "per-CHW-relationship" fast
+  // path that avoids re-prompting a returning member.
+  //
+  // Guard: only flip once (acceptedAudioCaptureThisMount) to avoid a flip-flop
+  // if the query result briefly goes undefined during a refetch.
+
+  useEffect(() => {
+    if (isCHW) return;
+    if (acceptedAudioCaptureThisMount || declinedAudioCaptureThisMount) return;
+    if (!deviceAudioConsentQuery.chwAudioConsentActive) return;
+
+    // Prior grant detected — accept silently without showing the modal.
+    setAcceptedAudioCaptureThisMount(true);
+  }, [
+    isCHW,
+    deviceAudioConsentQuery.chwAudioConsentActive,
+    acceptedAudioCaptureThisMount,
+    declinedAudioCaptureThisMount,
+  ]);
+
+  // ── Member device-audio-capture handlers ──────────────────────────────────────
+
+  /**
+   * Member tapped "Yes, share my device's audio" in the opt-in modal.
+   *
+   * 1. POST device_audio_capture consent to the backend (persists the grant).
+   * 2. Mark accepted for this mount → `transcriptionMode` flips to `'mic_capture'`.
+   * 3. The existing transcription hook will pick up the mode change on its next
+   *    enabled → start() cycle (driven by transcriptionEnabled).
+   *
+   * On error: the modal closes and falls through to subscribe_only mode.
+   * The member is not shown an error toast — failure here is non-blocking; the
+   * session continues without member-side capture.
+   */
+  const handleAcceptDeviceAudioCapture = useCallback(async () => {
+    try {
+      // Use the member's name from session data as the typed_signature for the
+      // HIPAA "individual authorization" audit record. Falls back to a generic
+      // label if the name is not yet resolved.
+      const memberName = session?.memberName ?? userName ?? 'Member';
+      await grantDeviceAudioConsent.mutateAsync(memberName);
+      setAcceptedAudioCaptureThisMount(true);
+    } catch {
+      // Non-blocking: consent POST failed. Log lifecycle event only.
+      // Fall through to subscribe_only — the session continues without member capture.
+      console.warn(
+        '[DeviceAudioCapture] consent POST failed — falling through to subscribe_only',
+      );
+      setDeclinedAudioCaptureThisMount(true);
+    }
+  }, [session?.memberName, userName, grantDeviceAudioConsent]);
+
+  /**
+   * Member tapped "No thanks" in the opt-in modal.
+   *
+   * Marks a transient decline for this mount. The mode stays `'subscribe_only'`.
+   * No backend call is made — the absence of a consent row means the modal will
+   * reappear on the next session with this CHW.
+   */
+  const handleDeclineDeviceAudioCapture = useCallback(() => {
+    setDeclinedAudioCaptureThisMount(true);
+  }, []);
 
   // ── Merged render list ───────────────────────────────────────────────────────
 
@@ -2305,6 +2524,34 @@ export function SessionChat({ sessionId, onStartAssessment }: SessionChatProps):
       )}
 
       {/*
+       * Member device-audio-capture opt-in modal.
+       *
+       * Shown only to the member during in-person sessions when:
+       *   - the session is in_progress
+       *   - no prior device_audio_capture grant exists for this CHW relationship
+       *   - the member has not already decided (accept or decline) this mount
+       *
+       * The MemberConsentModal (above) takes priority when a CHW-initiated
+       * consent request is pending — we do not stack two modals. The device
+       * audio modal is blocked while pendingConsentForMember is non-null.
+       */}
+      {!isCHW &&
+        isInPersonSession &&
+        session?.status === 'in_progress' &&
+        !acceptedAudioCaptureThisMount &&
+        !declinedAudioCaptureThisMount &&
+        !deviceAudioConsentQuery.chwAudioConsentActive &&
+        pendingConsentForMember === null && (
+          <MemberDeviceAudioConsentModal
+            visible
+            chwName={session?.chwName ?? 'your CHW'}
+            onAccept={() => { void handleAcceptDeviceAudioCapture(); }}
+            onDecline={handleDeclineDeviceAudioCapture}
+            isGranting={grantDeviceAudioConsent.isPending}
+          />
+        )}
+
+      {/*
        * Member-side recording-possibility banner.
        * Shown only to the member, only when the session is in_progress.
        * The CHW *may* be recording at any moment of an in-progress session.
@@ -2422,6 +2669,26 @@ export function SessionChat({ sessionId, onStartAssessment }: SessionChatProps):
                   <View style={captionsActiveStyles.dot} />
                   <Text style={captionsActiveStyles.label}>Captions active</Text>
                 </View>
+              )}
+
+              {/*
+               * Member-audio status indicator — CHW-only, in-person sessions.
+               *
+               * Shows whether the member's device is sharing its mic during
+               * this in-person session.  Green = member opted in (mic_capture
+               * active); gray = member declined or no decision yet.
+               *
+               * Uses a separate query on the CHW side to check whether a
+               * device_audio_capture grant exists for this session's member.
+               * The query is lightweight (GET /sessions/{id}/consents) and
+               * polls only while the session is in_progress.
+               *
+               * Accessibility: the indicator is decorative (no action needed)
+               * so we suppress it from screen readers with accessibilityHidden.
+               * The mic button already announces the recording state.
+               */}
+              {isCHW && isInPersonSession && session?.status === 'in_progress' && (
+                <MemberAudioStatusIndicator sessionId={sessionId} chwId={session.chwId} />
               )}
 
               {/* Mic button — CHW-only, hidden for phone sessions */}

@@ -1576,6 +1576,131 @@ export function useTranscriptExport() {
   });
 }
 
+// ─── Device audio capture consent ────────────────────────────────────────────
+//
+// `device_audio_capture` consent is per-CHW-relationship, not per-session.
+// The member opts in once; the grant persists for all subsequent sessions with
+// the same CHW.  These hooks are the frontend surface for that contract:
+//
+//   useMemberDeviceAudioConsent  — GET /sessions/{id}/consents, extracts the
+//                                  CHW-relationship flag and the grant timestamp.
+//   useGrantDeviceAudioConsent   — POST /sessions/{id}/consent with
+//                                  consent_type="device_audio_capture".
+
+/**
+ * Wire shape for a single consent row returned by GET /sessions/{id}/consents.
+ */
+export interface SessionConsentRow {
+  id: string;
+  sessionId: string;
+  memberId: string;
+  /** e.g. "medical_billing" | "ai_transcription" | "device_audio_capture" */
+  consentType: string;
+  consentedAt: string;
+  /**
+   * True when the member has a device_audio_capture grant for ANY past session
+   * with this session's CHW.  The backend computes this cross-session lookup
+   * so the frontend can skip the opt-in modal without extra round trips.
+   */
+  chwAudioConsentActive: boolean;
+}
+
+/** Query-key namespace for session-level consent data. */
+export const sessionConsentQueryKeys = {
+  consents: (sessionId: string) =>
+    ['sessions', sessionId, 'consents'] as const,
+};
+
+/**
+ * Query hook — fetch all consent records for a session, polling every
+ * 10 seconds while the session is in progress.
+ *
+ * GET /api/v1/sessions/{sessionId}/consents
+ *
+ * The primary use case is checking `chwAudioConsentActive` on any returned row
+ * (or deriving it from an empty list — the backend always computes it regardless
+ * of whether this specific session has a device_audio_capture row).
+ *
+ * Because the endpoint includes `chw_audio_consent_active` on every row but
+ * may return an empty list for sessions where no consent has been recorded yet,
+ * this hook also exposes a `chwAudioConsentActive` boolean derived as:
+ *   - true  if any returned row has `chwAudioConsentActive === true`
+ *   - false otherwise (empty list or no row with the flag set)
+ *
+ * HIPAA: typed_signature, ip_address, and user_agent are intentionally excluded
+ * by the backend — only non-PHI metadata is transmitted.
+ *
+ * @param sessionId  - UUID string of the active session.
+ * @param chwId      - UUID string of the CHW (used only for query-key namespacing;
+ *                     the backend derives the CHW from the session row).
+ * @param opts.enabled  - Pass false to suspend polling (e.g. session not in_progress).
+ */
+export function useMemberDeviceAudioConsent(
+  sessionId: string,
+  chwId: string,
+  opts: { enabled: boolean },
+) {
+  const query = useQuery({
+    queryKey: [...sessionConsentQueryKeys.consents(sessionId), chwId],
+    queryFn: async (): Promise<SessionConsentRow[]> => {
+      const raw = await api<unknown[]>(`/sessions/${sessionId}/consents`);
+      return transformKeys<SessionConsentRow[]>(raw);
+    },
+    enabled: opts.enabled && sessionId.length > 0,
+    // Poll every 10 s while the session is active so that a freshly granted
+    // consent (from a previous session with the same CHW) is detected quickly.
+    // Once chwAudioConsentActive is true there is no need to keep polling —
+    // callers should disable the query after the first successful grant.
+    refetchInterval: 10_000,
+    staleTime: 5_000,
+  });
+
+  // Derive the cross-session boolean from the returned rows.
+  const chwAudioConsentActive: boolean =
+    (query.data ?? []).some((row) => row.chwAudioConsentActive);
+
+  return { ...query, chwAudioConsentActive };
+}
+
+/**
+ * Mutation hook — POST device_audio_capture consent for a session.
+ *
+ * POST /api/v1/sessions/{sessionId}/consent
+ *   { consent_type: "device_audio_capture", typed_signature: <memberName> }
+ *
+ * Called when the member taps "Yes, share my device's audio" in the
+ * MemberDeviceAudioConsentModal.  On success the consent row is persisted and
+ * the session consents cache is invalidated so polling picks up the change
+ * immediately.
+ *
+ * HIPAA: typed_signature is the member's name (non-PHI metadata used as the
+ * HIPAA "individual authorization" signature).  No audio or transcript content
+ * is transmitted in this call.
+ *
+ * @param sessionId - UUID string of the active session.
+ */
+export function useGrantDeviceAudioConsent(sessionId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (typedSignature: string): Promise<void> => {
+      await api(`/sessions/${sessionId}/consent`, {
+        method: 'POST',
+        body: JSON.stringify({
+          consent_type: 'device_audio_capture',
+          typed_signature: typedSignature,
+        }),
+      });
+    },
+    onSuccess: () => {
+      // Invalidate the consents cache so the membership polling immediately
+      // reflects the new grant — prevents the modal from re-showing.
+      void qc.invalidateQueries({
+        queryKey: sessionConsentQueryKeys.consents(sessionId),
+      });
+    },
+  });
+}
+
 /**
  * Attach an uploaded S3 document key (and optional expiry date) to an
  * existing credential validation record via
