@@ -81,12 +81,18 @@ def _make_vonage_token_with_secret(
     secret: str,
     ttl_seconds: int = 1800,
     sub: str = "vonage",
+    role: str = "chw",
 ) -> str:
-    """Mint a Vonage WS JWT signed with an arbitrary secret (for negative tests)."""
+    """Mint a Vonage WS JWT signed with an arbitrary secret (for negative tests).
+
+    Includes a ``role`` claim so the token matches the current schema.  Negative
+    tests that need to exercise a missing/bad role can pass an explicit value.
+    """
     now = datetime.now(UTC)
     payload = {
         "sub": sub,
         "session_id": str(session_id),
+        "role": role,
         "exp": int((now + timedelta(seconds=ttl_seconds)).timestamp()),
         "iat": int(now.timestamp()),
         "jti": uuid.uuid4().hex,
@@ -123,18 +129,63 @@ _sync_client = TestClient(app, raise_server_exceptions=False)
 class TestCreateVonageWsToken:
     """Unit tests for create_vonage_ws_token()."""
 
-    def test_roundtrip_returns_correct_session_id(self):
-        """A token created for session_id X must verify back to session_id X."""
+    def test_roundtrip_chw_role_returns_correct_claims(self):
+        """A token created for session_id X with role='chw' must verify back to
+        (session_id=X, role='chw').
+        """
         session_id = uuid.uuid4()
         with patch.object(
             __import__("app.config", fromlist=["settings"]).settings,
             "vonage_ws_jwt_secret",
             _TEST_SECRET,
         ):
-            token = create_vonage_ws_token(session_id, ttl_seconds=300)
+            token = create_vonage_ws_token(session_id, role="chw", ttl_seconds=300)
             result = verify_vonage_ws_token(token)
 
-        assert result == session_id
+        assert result is not None
+        returned_session_id, returned_role = result
+        assert returned_session_id == session_id
+        assert returned_role == "chw"
+
+    def test_roundtrip_member_role_returns_correct_claims(self):
+        """A token created with role='member' must verify back to (session_id, 'member')."""
+        session_id = uuid.uuid4()
+        with patch.object(
+            __import__("app.config", fromlist=["settings"]).settings,
+            "vonage_ws_jwt_secret",
+            _TEST_SECRET,
+        ):
+            token = create_vonage_ws_token(session_id, role="member", ttl_seconds=300)
+            result = verify_vonage_ws_token(token)
+
+        assert result is not None
+        returned_session_id, returned_role = result
+        assert returned_session_id == session_id
+        assert returned_role == "member"
+
+    def test_default_role_is_chw(self):
+        """create_vonage_ws_token with no role arg must default to 'chw'."""
+        session_id = uuid.uuid4()
+        with patch.object(
+            __import__("app.config", fromlist=["settings"]).settings,
+            "vonage_ws_jwt_secret",
+            _TEST_SECRET,
+        ):
+            token = create_vonage_ws_token(session_id)
+
+        decoded = jwt.get_unverified_claims(token)
+        assert decoded["role"] == "chw"
+
+    def test_invalid_role_raises_value_error(self):
+        """create_vonage_ws_token with an unknown role must raise ValueError."""
+        session_id = uuid.uuid4()
+        with patch.object(
+            __import__("app.config", fromlist=["settings"]).settings,
+            "vonage_ws_jwt_secret",
+            _TEST_SECRET,
+        ):
+            with pytest.raises(ValueError, match="Invalid role"):
+                create_vonage_ws_token(session_id, role="admin")
 
     def test_token_contains_vonage_sub(self):
         """The JWT sub claim must be the literal string 'vonage'."""
@@ -144,11 +195,25 @@ class TestCreateVonageWsToken:
             "vonage_ws_jwt_secret",
             _TEST_SECRET,
         ):
-            token = create_vonage_ws_token(session_id)
+            token = create_vonage_ws_token(session_id, role="chw")
 
         # Decode without verification to inspect the raw claims.
         decoded = jwt.get_unverified_claims(token)
         assert decoded["sub"] == "vonage"
+
+    def test_token_contains_role_claim(self):
+        """The JWT must embed the role claim for cryptographic binding."""
+        session_id = uuid.uuid4()
+        with patch.object(
+            __import__("app.config", fromlist=["settings"]).settings,
+            "vonage_ws_jwt_secret",
+            _TEST_SECRET,
+        ):
+            token_chw = create_vonage_ws_token(session_id, role="chw")
+            token_member = create_vonage_ws_token(session_id, role="member")
+
+        assert jwt.get_unverified_claims(token_chw)["role"] == "chw"
+        assert jwt.get_unverified_claims(token_member)["role"] == "member"
 
     def test_token_contains_jti_nonce(self):
         """Every issued token must carry a unique jti claim."""
@@ -158,8 +223,8 @@ class TestCreateVonageWsToken:
             "vonage_ws_jwt_secret",
             _TEST_SECRET,
         ):
-            token_a = create_vonage_ws_token(session_id)
-            token_b = create_vonage_ws_token(session_id)
+            token_a = create_vonage_ws_token(session_id, role="chw")
+            token_b = create_vonage_ws_token(session_id, role="chw")
 
         claims_a = jwt.get_unverified_claims(token_a)
         claims_b = jwt.get_unverified_claims(token_b)
@@ -174,11 +239,16 @@ class TestCreateVonageWsToken:
             "",
         ):
             with pytest.raises(RuntimeError, match="VONAGE_WS_JWT_SECRET"):
-                create_vonage_ws_token(session_id)
+                create_vonage_ws_token(session_id, role="chw")
 
 
 class TestVerifyVonageWsToken:
-    """Unit tests for verify_vonage_ws_token()."""
+    """Unit tests for verify_vonage_ws_token().
+
+    verify_vonage_ws_token now returns (session_id, role) on success, or None.
+    All negative paths still return None; callers destructure the tuple only
+    after confirming the result is not None.
+    """
 
     def test_wrong_secret_is_rejected(self):
         """A token signed with a different secret must not verify."""
@@ -260,6 +330,74 @@ class TestVerifyVonageWsToken:
             result = verify_vonage_ws_token("")
 
         assert result is None
+
+    def test_valid_token_returns_tuple_with_session_id_and_role(self):
+        """A fully valid token must return a (UUID, str) tuple — not a bare UUID."""
+        session_id = uuid.uuid4()
+        with patch.object(
+            __import__("app.config", fromlist=["settings"]).settings,
+            "vonage_ws_jwt_secret",
+            _TEST_SECRET,
+        ):
+            token = create_vonage_ws_token(session_id, role="member")
+            result = verify_vonage_ws_token(token)
+
+        assert result is not None
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        returned_session_id, returned_role = result
+        assert returned_session_id == session_id
+        assert returned_role == "member"
+
+    def test_legacy_token_without_role_defaults_to_chw(self):
+        """A token without a 'role' claim (pre-migration) must default to 'chw'."""
+        session_id = uuid.uuid4()
+        # Mint a legacy-style token without the role field.
+        now = datetime.now(UTC)
+        legacy_payload = {
+            "sub": "vonage",
+            "session_id": str(session_id),
+            "exp": int((now + timedelta(seconds=300)).timestamp()),
+            "iat": int(now.timestamp()),
+            "jti": uuid.uuid4().hex,
+            # Deliberately omit "role".
+        }
+        legacy_token = jwt.encode(legacy_payload, _TEST_SECRET, algorithm="HS256")
+
+        with patch.object(
+            __import__("app.config", fromlist=["settings"]).settings,
+            "vonage_ws_jwt_secret",
+            _TEST_SECRET,
+        ):
+            result = verify_vonage_ws_token(legacy_token)
+
+        assert result is not None
+        returned_session_id, returned_role = result
+        assert returned_session_id == session_id
+        assert returned_role == "chw", "Legacy tokens without role must default to 'chw'"
+
+    def test_unknown_role_in_token_is_rejected(self):
+        """A token with an unrecognised role claim must return None."""
+        session_id = uuid.uuid4()
+        now = datetime.now(UTC)
+        bad_role_payload = {
+            "sub": "vonage",
+            "session_id": str(session_id),
+            "role": "superuser",  # not a valid role
+            "exp": int((now + timedelta(seconds=300)).timestamp()),
+            "iat": int(now.timestamp()),
+            "jti": uuid.uuid4().hex,
+        }
+        bad_role_token = jwt.encode(bad_role_payload, _TEST_SECRET, algorithm="HS256")
+
+        with patch.object(
+            __import__("app.config", fromlist=["settings"]).settings,
+            "vonage_ws_jwt_secret",
+            _TEST_SECRET,
+        ):
+            result = verify_vonage_ws_token(bad_role_token)
+
+        assert result is None, "Tokens with unknown roles must be rejected"
 
 
 # ===========================================================================
@@ -379,14 +517,17 @@ class TestVonageWsAuthEnforcement:
 
 
 class TestVonageWsAudioForwarding:
-    """Functional tests for the audio pipeline path.
+    """Functional tests for the per-leg audio pipeline path.
 
     We patch ``transcript_hub.get_or_create_provider_stream`` to inject a
     mock provider so we never touch a real AssemblyAI connection in tests.
+
+    get_or_create_provider_stream now takes (session_id, role) — mocks must
+    accept and optionally inspect both arguments.
     """
 
-    def _make_valid_token(self, session_id: UUID) -> str:
-        return _make_vonage_token_with_secret(session_id, secret=_TEST_SECRET)
+    def _make_valid_token(self, session_id: UUID, role: str = "chw") -> str:
+        return _make_vonage_token_with_secret(session_id, secret=_TEST_SECRET, role=role)
 
     def test_valid_connection_is_accepted(self):
         """A valid token must result in a successful WebSocket handshake.
@@ -396,7 +537,7 @@ class TestVonageWsAudioForwarding:
         raise before we could send.
         """
         session_id = uuid.uuid4()
-        token = self._make_valid_token(session_id)
+        token = self._make_valid_token(session_id, role="chw")
         url = _ws_url(session_id, token=token)
 
         mock_provider = AsyncMock()
@@ -409,6 +550,7 @@ class TestVonageWsAudioForwarding:
             ),
             patch(
                 "app.routers.vonage_audio.transcript_hub.get_or_create_provider_stream",
+                new_callable=AsyncMock,
                 return_value=mock_provider,
             ),
         ):
@@ -416,10 +558,80 @@ class TestVonageWsAudioForwarding:
                 ws.send_text(_CONNECTED_ENVELOPE)
                 # Server accepted — connection is live.  Close cleanly.
 
+    def test_chw_role_token_routes_to_chw_provider_stream(self):
+        """A token with role='chw' must call get_or_create_provider_stream with role='chw'."""
+        session_id = uuid.uuid4()
+        token = self._make_valid_token(session_id, role="chw")
+        url = _ws_url(session_id, token=token)
+
+        received_roles: list[str] = []
+
+        class _RoleCapturingProvider:
+            async def send_audio(self, chunk: bytes) -> None:
+                pass
+
+        async def _mock_get_or_create(sid: UUID, role: str) -> _RoleCapturingProvider:
+            received_roles.append(role)
+            return _RoleCapturingProvider()
+
+        with (
+            patch.object(
+                __import__("app.config", fromlist=["settings"]).settings,
+                "vonage_ws_jwt_secret",
+                _TEST_SECRET,
+            ),
+            patch(
+                "app.routers.vonage_audio.transcript_hub.get_or_create_provider_stream",
+                side_effect=_mock_get_or_create,
+            ),
+        ):
+            with _sync_client.websocket_connect(url) as ws:
+                ws.send_text(_CONNECTED_ENVELOPE)
+                ws.send_bytes(bytes(100))
+
+        assert received_roles == ["chw"], (
+            f"Expected get_or_create_provider_stream called with role='chw', got: {received_roles}"
+        )
+
+    def test_member_role_token_routes_to_member_provider_stream(self):
+        """A token with role='member' must call get_or_create_provider_stream with role='member'."""
+        session_id = uuid.uuid4()
+        token = self._make_valid_token(session_id, role="member")
+        url = _ws_url(session_id, token=token)
+
+        received_roles: list[str] = []
+
+        class _RoleCapturingProvider:
+            async def send_audio(self, chunk: bytes) -> None:
+                pass
+
+        async def _mock_get_or_create(sid: UUID, role: str) -> _RoleCapturingProvider:
+            received_roles.append(role)
+            return _RoleCapturingProvider()
+
+        with (
+            patch.object(
+                __import__("app.config", fromlist=["settings"]).settings,
+                "vonage_ws_jwt_secret",
+                _TEST_SECRET,
+            ),
+            patch(
+                "app.routers.vonage_audio.transcript_hub.get_or_create_provider_stream",
+                side_effect=_mock_get_or_create,
+            ),
+        ):
+            with _sync_client.websocket_connect(url) as ws:
+                ws.send_text(_CONNECTED_ENVELOPE)
+                ws.send_bytes(bytes(100))
+
+        assert received_roles == ["member"], (
+            f"Expected get_or_create_provider_stream called with role='member', got: {received_roles}"
+        )
+
     def test_binary_frames_are_forwarded_to_provider(self):
         """Binary PCM frames sent by Vonage must be forwarded to provider.send_audio()."""
         session_id = uuid.uuid4()
-        token = self._make_valid_token(session_id)
+        token = self._make_valid_token(session_id, role="chw")
         url = _ws_url(session_id, token=token)
 
         # A realistic 250 ms chunk: 16000 Hz × 0.25 s × 2 bytes/sample = 8000 bytes.
@@ -457,7 +669,7 @@ class TestVonageWsAudioForwarding:
     def test_dtmf_text_event_is_ignored_without_crash(self, caplog):
         """Receiving a websocket:dtmf text event must not crash the WS loop."""
         session_id = uuid.uuid4()
-        token = self._make_valid_token(session_id)
+        token = self._make_valid_token(session_id, role="chw")
         url = _ws_url(session_id, token=token)
 
         dtmf_event = json.dumps({"event": "websocket:dtmf", "digit": "5", "duration": 150})
@@ -492,7 +704,7 @@ class TestVonageWsAudioForwarding:
     def test_unknown_text_event_is_silently_ignored(self):
         """An unknown text event type must not crash the loop."""
         session_id = uuid.uuid4()
-        token = self._make_valid_token(session_id)
+        token = self._make_valid_token(session_id, role="chw")
         url = _ws_url(session_id, token=token)
 
         unknown_event = json.dumps({"event": "websocket:unknown-future-event", "data": "x"})
@@ -527,7 +739,7 @@ class TestVonageWsAudioForwarding:
         The next audio frame must still be forwarded (proving the loop continues).
         """
         session_id = uuid.uuid4()
-        token = self._make_valid_token(session_id)
+        token = self._make_valid_token(session_id, role="chw")
         url = _ws_url(session_id, token=token)
 
         call_count = 0
@@ -574,7 +786,7 @@ class TestVonageWsHipaaLogging:
         from every log record emitted during the WebSocket session.
         """
         session_id = uuid.uuid4()
-        token = _make_vonage_token_with_secret(session_id, secret=_TEST_SECRET)
+        token = _make_vonage_token_with_secret(session_id, secret=_TEST_SECRET, role="chw")
         url = _ws_url(session_id, token=token)
 
         # Sentinel: a known bytes pattern that would stand out in logs if encoded.

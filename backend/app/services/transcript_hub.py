@@ -640,17 +640,46 @@ class TranscriptHub:
                 for ws in dead:
                     state.subscribers.remove(ws)
 
-    async def get_or_create_provider_stream(self, session_id: UUID) -> StreamingSession:
-        """Lazy-create the provider streaming session on first audio frame.
+    async def get_or_create_provider_stream(
+        self,
+        session_id: UUID,
+        role: str = "chw",
+    ) -> StreamingSession:
+        """Lazy-create the provider streaming session for a given session and speaker role.
 
-        The provider is started exactly once per session_id; subsequent calls
-        return the same instance. This is safe because _SessionState.lock
-        serialises creation.
+        The dual-stream backend (``compass-wt-dual-stream-backend``) will replace
+        this implementation with per-role keying so each role ("chw" | "member")
+        gets its own independent AssemblyAI streaming session.  Until that branch
+        is merged, this shim accepts the ``role`` parameter for API compatibility
+        but maps all audio to a single shared stream keyed only on ``session_id``
+        (Phase 2 behaviour, unchanged).
 
-        Provider selection:
+        When the dual-stream backend is merged, this method will:
+          - key provider streams on (session_id, role)
+          - tag every chunk payload with ``speaker_role=role``
+          - allow the hub's publish path to route transcripts with authoritative
+            speaker attribution
+
+        Args:
+            session_id: Compass session UUID the audio belongs to.
+            role:       Speaker role — "chw" or "member".  Validated by the WS
+                        auth layer; any value arriving here is already known-good.
+
+        Returns:
+            A ``StreamingSession`` that accepts ``send_audio(chunk)`` calls.
+
+        Provider selection (Phase 2 behaviour, pending dual-stream refactor):
         - ``AssemblyAIStreamingSession`` when the API key is available.
         - ``NoOpStreamingSession`` otherwise (graceful degrade for local dev).
         """
+        # Phase 2: log the role for observability so we can verify per-leg
+        # routing is working end-to-end before the dual-stream backend lands.
+        logger.debug(
+            "get_or_create_provider_stream session=%s role=%s (Phase 2: single shared stream)",
+            session_id,
+            role,
+        )
+
         state = await self._get_or_create_state(session_id)
         async with state.lock:
             if state.provider_stream is not None:
@@ -668,9 +697,10 @@ class TranscriptHub:
                     await session.start()
                 except Exception as exc:  # noqa: BLE001
                     logger.error(
-                        "assemblyai session start failed session=%s error_type=%s — "
+                        "assemblyai session start failed session=%s role=%s error_type=%s — "
                         "falling back to NoOpStreamingSession",
                         session_id,
+                        role,
                         type(exc).__name__,
                     )
                     # Fall back to no-op so the WebSocket stays open
@@ -678,15 +708,17 @@ class TranscriptHub:
                     session = NoOpStreamingSession()
                 state.provider_stream = session
                 logger.info(
-                    "assemblyai provider stream created session=%s",
+                    "assemblyai provider stream created session=%s role=%s",
                     session_id,
+                    role,
                 )
             else:
                 noop = NoOpStreamingSession()
                 state.provider_stream = noop
                 logger.info(
-                    "noop provider stream created (no API key) session=%s",
+                    "noop provider stream created (no API key) session=%s role=%s",
                     session_id,
+                    role,
                 )
 
             return state.provider_stream

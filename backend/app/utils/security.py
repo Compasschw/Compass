@@ -78,17 +78,34 @@ def decode_token(token: str) -> dict | None:
 
 _VONAGE_WS_SUB = "vonage"
 
+# Valid role values embedded in Vonage WS tokens.  Using a literal set rather
+# than an Enum keeps the security module dependency-free (no pydantic import)
+# and avoids import cycles with the communication router.
+_VONAGE_VALID_ROLES: frozenset[str] = frozenset({"chw", "member"})
 
-def create_vonage_ws_token(session_id: UUID, ttl_seconds: int = 1800) -> str:
-    """Issue an HS256 JWT bound to a session for Vonage WebSocket auth.
+
+def create_vonage_ws_token(
+    session_id: UUID,
+    role: str = "chw",
+    ttl_seconds: int = 1800,
+) -> str:
+    """Issue an HS256 JWT bound to a session and speaker role for Vonage WebSocket auth.
 
     Signs with ``settings.vonage_ws_jwt_secret`` — deliberately NOT the
     user-facing ``settings.secret_key``.
 
+    The ``role`` claim lets the receiving WebSocket endpoint route audio frames
+    to the correct per-role AssemblyAI streaming session without relying on an
+    untrusted query parameter (the role is cryptographically bound to the token
+    and cannot be tampered with in transit).
+
     Args:
-        session_id: The Compass session UUID the Vonage call belongs to.
-        ttl_seconds: Lifetime in seconds before the token expires.
-                     Default 1800 s (30 min) — long enough for a CHW visit.
+        session_id:   The Compass session UUID the Vonage call belongs to.
+        role:         Speaker role for this leg — "chw" or "member".
+                      Defaults to "chw" for backwards compatibility with
+                      existing callers that do not pass a role.
+        ttl_seconds:  Lifetime in seconds before the token expires.
+                      Default 1800 s (30 min) — long enough for a CHW visit.
 
     Returns:
         Encoded JWT string suitable for embedding in a Vonage NCCO websocket
@@ -98,7 +115,15 @@ def create_vonage_ws_token(session_id: UUID, ttl_seconds: int = 1800) -> str:
         RuntimeError: If ``settings.vonage_ws_jwt_secret`` is empty or not
                       configured.  Callers must configure this secret before
                       routing Vonage calls through this endpoint.
+        ValueError:   If ``role`` is not one of the allowed values ("chw" |
+                      "member").
     """
+    if role not in _VONAGE_VALID_ROLES:
+        raise ValueError(
+            f"Invalid role {role!r} for Vonage WS token. "
+            f"Must be one of: {sorted(_VONAGE_VALID_ROLES)}"
+        )
+
     secret = settings.vonage_ws_jwt_secret
     if not secret:
         raise RuntimeError(
@@ -110,6 +135,7 @@ def create_vonage_ws_token(session_id: UUID, ttl_seconds: int = 1800) -> str:
     payload: dict = {
         "sub": _VONAGE_WS_SUB,
         "session_id": str(session_id),
+        "role": role,
         "exp": int((now + timedelta(seconds=ttl_seconds)).timestamp()),
         "iat": int(now.timestamp()),
         "jti": uuid.uuid4().hex,
@@ -117,21 +143,25 @@ def create_vonage_ws_token(session_id: UUID, ttl_seconds: int = 1800) -> str:
     return jwt.encode(payload, secret, algorithm=_ALGORITHM)
 
 
-def verify_vonage_ws_token(token: str) -> UUID | None:
-    """Verify a Vonage WS JWT and return the session_id UUID, or None on any failure.
+def verify_vonage_ws_token(token: str) -> tuple[UUID, str] | None:
+    """Verify a Vonage WS JWT and return ``(session_id, role)`` on success.
 
     Validates signature (against ``settings.vonage_ws_jwt_secret``), expiry,
-    and that ``sub == "vonage"``.  Never raises — all error paths return None
-    so callers can safely close the WebSocket with code 4001 without wrapping
-    this in a try/except.
+    ``sub == "vonage"``, and that ``role`` is a known value.  Never raises —
+    all error paths return None so callers can safely close the WebSocket with
+    code 4001 without wrapping this in a try/except.
+
+    The returned ``role`` is always one of ``"chw"`` or ``"member"`` — it is
+    cryptographically bound to the token and cannot be tampered with by the
+    Vonage side or an attacker replaying a captured token.
 
     Args:
         token: The raw JWT string extracted from the ``?token=`` query parameter.
 
     Returns:
-        The ``session_id`` claim as a ``UUID`` if verification succeeds, or
-        ``None`` if the token is missing, malformed, expired, carries the wrong
-        subject, or the secret is not configured.
+        ``(session_id, role)`` tuple if verification succeeds, or ``None`` if
+        the token is missing, malformed, expired, carries the wrong subject,
+        contains an unknown role, or the secret is not configured.
     """
     secret = settings.vonage_ws_jwt_secret
     if not secret:
@@ -155,6 +185,22 @@ def verify_vonage_ws_token(token: str) -> UUID | None:
         return None
 
     try:
-        return UUID(session_id_str)
+        session_uuid = UUID(session_id_str)
     except ValueError:
         return None
+
+    role: str | None = payload.get("role")
+    # Tokens minted before the role field was added default to "chw" for
+    # backwards compatibility — a legacy token without a role claim routes
+    # to the CHW stream rather than failing entirely.
+    if role is None:
+        role = "chw"
+
+    if role not in _VONAGE_VALID_ROLES:
+        logger.warning(
+            "verify_vonage_ws_token: unknown role=%r in token — rejecting",
+            role,
+        )
+        return None
+
+    return (session_uuid, role)
