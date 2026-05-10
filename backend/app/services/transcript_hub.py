@@ -73,6 +73,15 @@ class AssemblyAIStreamingSession(StreamingSession):
 
     AssemblyAI SDK version target: assemblyai >= 0.64.0.
 
+    Args:
+        session_id: UUID of the Compass session this stream belongs to.
+        api_key: AssemblyAI API key.
+        on_transcript_chunk: Async callback invoked for every TurnEvent.
+        speaker_role: Authoritative role tag — ``"chw"`` or ``"member"``.
+            Every emitted payload will carry this value in the
+            ``speaker_role`` field, replacing the legacy ``"unknown"``
+            sentinel used when both participants shared a single stream.
+
     HIPAA:
     - Audio bytes passed to ``send_audio`` are NEVER logged.
     - Transcript text is NEVER logged — only metadata (session_id,
@@ -84,10 +93,15 @@ class AssemblyAIStreamingSession(StreamingSession):
         session_id: UUID,
         api_key: str,
         on_transcript_chunk: TranscriptChunkCallback,
+        speaker_role: str = "unknown",
     ) -> None:
         self._session_id = session_id
         self._api_key = api_key
         self._on_chunk = on_transcript_chunk
+        # Authoritative role tag — "chw" | "member" | "unknown".
+        # Set at construction time so every TurnEvent emitted by this stream
+        # carries the correct attribution without per-event resolution.
+        self._speaker_role: str = speaker_role
         self._client: object | None = None
         self._chunk_count: int = 0
         self._started_at: float = time.monotonic()
@@ -197,11 +211,14 @@ class AssemblyAIStreamingSession(StreamingSession):
                 confidence = float(getattr(event, "end_of_turn_confidence", 0.0) or 0.0)
 
             payload: dict = {
-                # Phase 2: single-mic — speaker diarization deferred to Phase 3.
                 # speaker_label arrives populated only when StreamingParameters
                 # has speaker_labels=True (which we leave off for cost + privacy).
                 "speaker_label": getattr(event, "speaker_label", None),
-                "speaker_role": "unknown",
+                # Authoritative role tag derived from the stream's known
+                # speaker_role — set at construction time from the connecting
+                # user's JWT role so CHW audio always resolves to "chw" and
+                # member audio always resolves to "member".
+                "speaker_role": self._speaker_role,
                 "text": text,
                 "is_final": is_final,
                 "confidence": round(confidence, 4),
@@ -436,21 +453,51 @@ class MockStreamingSession(StreamingSession):
 
 @dataclass
 class _SessionState:
-    """Mutable state bucket for one in-flight session."""
+    """Mutable state bucket for one in-flight session.
+
+    Dual-stream design (Phase 3+):
+    ``provider_streams`` is keyed by speaker_role — ``"chw"`` or ``"member"``.
+    Each value is an independent ``AssemblyAIStreamingSession`` (or fallback)
+    constructed with the matching ``speaker_role`` so every TurnEvent it emits
+    carries authoritative attribution.  The dict starts empty and is populated
+    lazily on the first audio frame from each role.
+
+    Concurrency: all mutations to ``subscribers`` and ``provider_streams``
+    must be performed under ``lock``.  The outer ``TranscriptHub._global_lock``
+    guards insertions/removals of ``_sessions`` entries; ``lock`` guards the
+    per-session fields.
+    """
 
     # WebSocket connections subscribed to this session's transcript stream.
     subscribers: list[WebSocket] = field(default_factory=list)
 
-    # Lazily created when the first subscriber joins.
-    provider_stream: StreamingSession | None = None
+    # Role-keyed provider streaming sessions.
+    # Keys are restricted to "chw" | "member"; both entries are created
+    # lazily on the first audio frame from the respective role.
+    provider_streams: dict[str, StreamingSession] = field(default_factory=dict)
 
     # The user_id of the CHW whose device is the audio source.
     # Used for speaker-role attribution (CHW = primary audio sender).
     # None until the CHW connects and sends audio.
     chw_user_id: UUID | None = None
 
-    # Protects mutations to subscribers + provider_stream.
+    # Protects mutations to subscribers + provider_streams.
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+    # ---------------------------------------------------------------------------
+    # Legacy compat shim — read-only property so existing code that reads
+    # state.provider_stream still works after the dict migration.
+    # Returns the CHW stream if present, falling back to member, else None.
+    # ---------------------------------------------------------------------------
+
+    @property
+    def provider_stream(self) -> StreamingSession | None:
+        """Backward-compat view: return any available stream, CHW preferred."""
+        return (
+            self.provider_streams.get("chw")
+            or self.provider_streams.get("member")
+            or None
+        )
 
 
 @dataclass
@@ -640,60 +687,94 @@ class TranscriptHub:
                 for ws in dead:
                     state.subscribers.remove(ws)
 
-    async def get_or_create_provider_stream(self, session_id: UUID) -> StreamingSession:
-        """Lazy-create the provider streaming session on first audio frame.
+    async def get_or_create_provider_stream(
+        self,
+        session_id: UUID,
+        role: str = "chw",
+    ) -> StreamingSession:
+        """Lazy-create the role-specific provider streaming session.
 
-        The provider is started exactly once per session_id; subsequent calls
-        return the same instance. This is safe because _SessionState.lock
-        serialises creation.
+        Each Compass session maintains up to two independent provider streams:
+        one keyed ``"chw"`` and one keyed ``"member"``.  Streams are created
+        on demand — the CHW stream is created on the CHW's first audio frame,
+        the member stream on the member's first audio frame.
+
+        The stream is constructed with ``speaker_role=role`` so every TurnEvent
+        it emits carries authoritative attribution without per-event resolution.
+
+        ``_SessionState.lock`` serialises creation to prevent double-starts when
+        both roles connect within the same asyncio tick.
+
+        Args:
+            session_id: UUID of the Compass session.
+            role: ``"chw"`` or ``"member"``.  Any other value is treated as
+                  ``"chw"`` with a warning — callers should always pass a known
+                  role.
+
+        Returns:
+            The existing or newly started ``StreamingSession`` for this role.
 
         Provider selection:
         - ``AssemblyAIStreamingSession`` when the API key is available.
         - ``NoOpStreamingSession`` otherwise (graceful degrade for local dev).
         """
+        canonical_role = role if role in ("chw", "member") else "chw"
+        if canonical_role != role:
+            logger.warning(
+                "get_or_create_provider_stream: unknown role=%r — treating as 'chw' session=%s",
+                role,
+                session_id,
+            )
+
         state = await self._get_or_create_state(session_id)
         async with state.lock:
-            if state.provider_stream is not None:
-                return state.provider_stream
+            existing = state.provider_streams.get(canonical_role)
+            if existing is not None:
+                return existing
 
             api_key = self._get_api_key()
 
             if api_key:
-                session = AssemblyAIStreamingSession(
+                stream: StreamingSession = AssemblyAIStreamingSession(
                     session_id=session_id,
                     api_key=api_key,
                     on_transcript_chunk=self._make_chunk_callback(session_id),
+                    speaker_role=canonical_role,
                 )
                 try:
-                    await session.start()
+                    await stream.start()  # type: ignore[attr-defined]
                 except Exception as exc:  # noqa: BLE001
                     logger.error(
-                        "assemblyai session start failed session=%s error_type=%s — "
+                        "assemblyai session start failed session=%s role=%s error_type=%s — "
                         "falling back to NoOpStreamingSession",
                         session_id,
+                        canonical_role,
                         type(exc).__name__,
                     )
                     # Fall back to no-op so the WebSocket stays open
                     # and the UI doesn't see a hard failure.
-                    session = NoOpStreamingSession()
-                state.provider_stream = session
+                    stream = NoOpStreamingSession()
                 logger.info(
-                    "assemblyai provider stream created session=%s",
+                    "assemblyai provider stream created session=%s role=%s",
                     session_id,
+                    canonical_role,
                 )
             else:
-                noop = NoOpStreamingSession()
-                state.provider_stream = noop
+                stream = NoOpStreamingSession()
                 logger.info(
-                    "noop provider stream created (no API key) session=%s",
+                    "noop provider stream created (no API key) session=%s role=%s",
                     session_id,
+                    canonical_role,
                 )
 
-            return state.provider_stream
+            state.provider_streams[canonical_role] = stream
+            return stream
 
     async def close_session(self, session_id: UUID) -> None:
-        """Tear down provider stream and disconnect all subscribers.
+        """Tear down both provider streams and disconnect all subscribers.
 
+        Closes the CHW stream and the member stream independently so a failure
+        in one does not prevent the other from being closed cleanly.
         Idempotent — calling on a session that no longer exists is a no-op.
         """
         async with self._global_lock:
@@ -703,13 +784,15 @@ class TranscriptHub:
             return
 
         async with state.lock:
-            if state.provider_stream is not None:
+            # Close all role-keyed provider streams (CHW + member, order not significant).
+            for role, stream in list(state.provider_streams.items()):
                 try:
-                    await state.provider_stream.close()
+                    await stream.close()
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(
-                        "provider stream close error session=%s: %s",
+                        "provider stream close error session=%s role=%s: %s",
                         session_id,
+                        role,
                         type(exc).__name__,
                     )
 
