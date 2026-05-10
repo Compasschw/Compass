@@ -1676,12 +1676,15 @@ export function SessionChat({ sessionId, onStartAssessment }: SessionChatProps):
     // Both must be true for actual mic capture to begin.
     // If the toggle is off (member paused), fall through to subscribe_only so
     // the CHW's mic stream is still received (no audio gap on the CHW side).
-    if (!isCHW && isInPersonSession) {
+    if (!isCHW) {
+      // Member side (any mode): mic_capture only when consent + toggle both on.
+      // Phone sessions can also benefit from a member-device mic (e.g. when
+      // speakerphone audio quality is poor), so we no longer gate on mode.
       return acceptedAudioCaptureThisMount && memberMicCaptureOn
         ? 'mic_capture'
         : 'subscribe_only';
     }
-    // CHW side in-person or any other mode: default to mic_capture.
+    // CHW side: default to mic_capture in all modes.
     return 'mic_capture';
   })();
 
@@ -1735,7 +1738,6 @@ export function SessionChat({ sessionId, onStartAssessment }: SessionChatProps):
       enabled:
         !isCHW &&
         session?.status === 'in_progress' &&
-        isInPersonSession &&
         !acceptedAudioCaptureThisMount &&
         !declinedAudioCaptureThisMount,
     },
@@ -2756,7 +2758,6 @@ export function SessionChat({ sessionId, onStartAssessment }: SessionChatProps):
        * audio modal is blocked while pendingConsentForMember is non-null.
        */}
       {!isCHW &&
-        isInPersonSession &&
         session?.status === 'in_progress' &&
         !acceptedAudioCaptureThisMount &&
         !declinedAudioCaptureThisMount &&
