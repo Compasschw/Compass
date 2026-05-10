@@ -652,6 +652,62 @@ interface TranscriptBubbleProps {
  * uncertainty. On web (no hover) the long-press tooltip is the accessible
  * equivalent; on native a Pressable triggers an onLongPress alert/tooltip.
  */
+/**
+ * Role-specific bubble colour tokens.
+ *
+ * CHW    — sage green (#8DA07E at 20% opacity background, full sage border)
+ *          Matches the compass brand's primary CHW colour.
+ * Member — amber/cream (#D4A030 at 18% opacity background, gold border)
+ *          Warm, distinct from the CHW colour so the two streams read apart
+ *          at a glance even in low-light clinical environments.
+ * Unknown — neutral muted grey (legacy single-stream fallback).
+ */
+const TRANSCRIPT_BG_CHW = `${colors.compassSage}33`;     // sage green ~20% opacity
+const TRANSCRIPT_BORDER_CHW = `${colors.compassSage}80`; // sage green 50% opacity
+const TRANSCRIPT_LABEL_CHW = colors.compassSage;
+
+const TRANSCRIPT_BG_MEMBER = `${colors.compassGold}2E`;     // amber ~18% opacity
+const TRANSCRIPT_BORDER_MEMBER = `${colors.compassGold}80`; // amber 50% opacity
+const TRANSCRIPT_LABEL_MEMBER = colors.compassGold;
+
+const TRANSCRIPT_BG_UNKNOWN = `${colors.muted}99`; // grey ~60% opacity (legacy)
+const TRANSCRIPT_BORDER_UNKNOWN = `${colors.border}80`;
+const TRANSCRIPT_LABEL_UNKNOWN = colors.compassSage; // unchanged from prior default
+
+/**
+ * Resolve role-specific style tokens for a transcript bubble.
+ * Returns background colour, border colour, and label colour.
+ */
+function resolveRoleStyles(speakerRole: string): {
+  bubbleBg: string;
+  bubbleBorder: string;
+  labelColor: string;
+  rolePrefix: string;
+} {
+  if (speakerRole === 'chw') {
+    return {
+      bubbleBg: TRANSCRIPT_BG_CHW,
+      bubbleBorder: TRANSCRIPT_BORDER_CHW,
+      labelColor: TRANSCRIPT_LABEL_CHW,
+      rolePrefix: 'CHW',
+    };
+  }
+  if (speakerRole === 'member') {
+    return {
+      bubbleBg: TRANSCRIPT_BG_MEMBER,
+      bubbleBorder: TRANSCRIPT_BORDER_MEMBER,
+      labelColor: TRANSCRIPT_LABEL_MEMBER,
+      rolePrefix: 'Member',
+    };
+  }
+  return {
+    bubbleBg: TRANSCRIPT_BG_UNKNOWN,
+    bubbleBorder: TRANSCRIPT_BORDER_UNKNOWN,
+    labelColor: TRANSCRIPT_LABEL_UNKNOWN,
+    rolePrefix: '',
+  };
+}
+
 function TranscriptBubble({
   chunk,
   chwLabel,
@@ -660,6 +716,19 @@ function TranscriptBubble({
 }: TranscriptBubbleProps): React.JSX.Element {
   const [showConfidenceNote, setShowConfidenceNote] = useState(false);
 
+  const { bubbleBg, bubbleBorder, labelColor, rolePrefix } = resolveRoleStyles(
+    chunk.speakerRole,
+  );
+
+  /**
+   * Human-readable speaker label shown above the bubble.
+   * - CHW role: resolves to the CHW's display name (e.g. "You" or their name).
+   * - Member role: resolves to the member's display name.
+   * - Unknown: falls back to the diarization label ("Speaker A" / "Speaker B").
+   *
+   * The rolePrefix ("CHW" / "Member") is prepended inline inside the bubble
+   * text as an accessibility and scan aid — it matches the label above.
+   */
   const speakerLabel: string = (() => {
     if (chunk.speakerRole === 'chw') return chwLabel;
     if (chunk.speakerRole === 'member') return memberLabel;
@@ -668,10 +737,16 @@ function TranscriptBubble({
 
   const isLowConfidence = chunk.confidence < 0.7;
 
+  // Body text shown inside the bubble: "CHW: <text>" or "Member: <text>".
+  // The inline prefix doubles as an accessible scan cue for screen readers
+  // that read the bubble without the label above it.
+  const bodyContent = rolePrefix ? `${rolePrefix}: ${chunk.text}` : chunk.text;
+  const displayText = isLowConfidence ? `[${bodyContent}]` : bodyContent;
+
   // HIPAA: we do not include any transcript text in accessibility descriptions.
   return (
     <View style={tr.wrapper}>
-      <Text style={tr.speakerLabel}>{speakerLabel}</Text>
+      <Text style={[tr.speakerLabel, { color: labelColor }]}>{speakerLabel}</Text>
       <Pressable
         onLongPress={() => {
           if (isLowConfidence) {
@@ -685,10 +760,16 @@ function TranscriptBubble({
             : 'Transcript segment'
         }
       >
-        <View style={[tr.bubble, !chunk.isFinal && tr.bubblePartial]}>
+        <View
+          style={[
+            tr.bubble,
+            { backgroundColor: bubbleBg, borderColor: bubbleBorder },
+            !chunk.isFinal && tr.bubblePartial,
+          ]}
+        >
           <Text style={[tr.bodyText, isLowConfidence && tr.bodyTextLowConf]}>
             {/* HIPAA: text is rendered but never logged or passed to analytics */}
-            {isLowConfidence ? `[${chunk.text}]` : chunk.text}
+            {displayText}
           </Text>
         </View>
       </Pressable>
@@ -701,8 +782,6 @@ function TranscriptBubble({
   );
 }
 
-const TRANSCRIPT_BG = `${colors.muted}99`; // colors.muted at ~60% opacity
-
 const tr = StyleSheet.create({
   wrapper: {
     alignSelf: 'stretch',
@@ -712,16 +791,15 @@ const tr = StyleSheet.create({
   speakerLabel: {
     fontSize: 11,
     fontWeight: '600',
-    color: colors.compassSage,
+    // color is applied inline via resolveRoleStyles — no static default needed.
     paddingHorizontal: 4,
     marginBottom: 2,
     textTransform: 'capitalize',
   },
   bubble: {
-    backgroundColor: TRANSCRIPT_BG,
+    // backgroundColor and borderColor are applied inline via resolveRoleStyles.
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: `${colors.border}80`,
     paddingHorizontal: 12,
     paddingVertical: 8,
   },

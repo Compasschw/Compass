@@ -28,7 +28,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import lru_cache
-from typing import Protocol
+from typing import Protocol, Sequence
 
 logger = logging.getLogger("compass.summarizer")
 
@@ -39,6 +39,14 @@ logger = logging.getLogger("compass.summarizer")
 _MIN_TRANSCRIPT_CHARS = 50
 """Transcripts shorter than this threshold produce an empty SummaryResult.
 The UI hides the AI-summary section when ``text`` is empty."""
+
+# Role → human-readable prefix used in the labeled transcript sent to Claude.
+# Unknown / untagged chunks use no prefix so the prompt instruction about
+# "absent" labels still applies cleanly.
+_ROLE_PREFIX: dict[str, str] = {
+    "chw": "CHW",
+    "member": "Member",
+}
 
 _MAX_OUTPUT_TOKENS = 500
 """Generous ceiling for the 3-5 sentence summary — roughly 375 words."""
@@ -52,10 +60,19 @@ _SYSTEM_PROMPT = (
     "Workers (CHWs) in a Medi-Cal case management programme.  Your role is "
     "to produce concise, factual summaries of CHW–member conversations that "
     "can appear verbatim in a case management note.\n\n"
+    "The transcript you receive may contain speaker labels: lines prefixed with "
+    "\"CHW:\" are spoken by the Community Health Worker; lines prefixed with "
+    "\"Member:\" are spoken by the patient/member.  Use this attribution to "
+    "accurately represent who disclosed what, who asked which questions, and "
+    "who committed to which follow-up actions.  When speaker labels are absent "
+    "(legacy single-stream sessions), treat the transcript as undifferentiated "
+    "conversation.\n\n"
     "Rules:\n"
     "- Write 3-5 sentences in plain, clinical-but-accessible language.\n"
     "- Focus on: what the member discussed or disclosed, their stated needs, "
     "and any action items or next steps that were mentioned.\n"
+    "- When speaker labels are present, correctly attribute statements to CHW "
+    "or Member (e.g. 'The CHW asked about…', 'The member reported…').\n"
     "- Do NOT invent facts absent from the transcript.\n"
     "- Do NOT use markdown headings, bullet points, or bold text — plain prose only.\n"
     "- Do NOT include diagnostic conclusions or clinical judgments beyond what "
@@ -87,6 +104,41 @@ class SummaryResult:
 # ---------------------------------------------------------------------------
 
 
+def build_labeled_transcript(
+    chunks: Sequence[dict],
+) -> str:
+    """Assemble a speaker-labeled transcript string from a sequence of chunk dicts.
+
+    Each chunk dict is expected to carry ``"text"`` and ``"speaker_role"``
+    fields (the same shape stored in ``session_transcripts``).  Only final
+    chunks (``is_final=True`` or key absent — legacy rows) are included.
+
+    Output format (one utterance per line)::
+
+        CHW: Can you tell me more about your housing situation?
+        Member: I've been staying at a shelter for the past two weeks.
+        CHW: I'm going to connect you with our housing specialist.
+
+    When ``speaker_role`` is absent or ``"unknown"``, the line is emitted
+    without a prefix so Claude treats it as undifferentiated speech per the
+    system-prompt instructions.
+
+    PHI contract: this function never logs chunk text.
+    """
+    lines: list[str] = []
+    for chunk in chunks:
+        text: str = (chunk.get("text") or "").strip()
+        if not text:
+            continue
+        # Skip partial (in-flight) chunks if the key is present and False.
+        if chunk.get("is_final") is False:
+            continue
+        role: str = chunk.get("speaker_role") or "unknown"
+        prefix = _ROLE_PREFIX.get(role, "")
+        lines.append(f"{prefix}: {text}" if prefix else text)
+    return "\n".join(lines)
+
+
 class SummarizerProvider(Protocol):
     """Duck-typed interface for LLM summary providers.
 
@@ -105,6 +157,9 @@ class SummarizerProvider(Protocol):
 
         Args:
             transcript: The assembled session transcript text.  PHI — do not log.
+                        May contain speaker-labeled lines (``CHW: …`` / ``Member: …``)
+                        built via ``build_labeled_transcript`` for dual-stream sessions,
+                        or plain concatenated text for legacy single-stream sessions.
             vertical:   Optional service vertical hint (e.g. "housing", "food").
                         Used to tailor context in the prompt.
 
@@ -112,6 +167,25 @@ class SummarizerProvider(Protocol):
             SummaryResult with ``text`` populated on success, or
             ``SummaryResult.empty()`` when the transcript is too short, the
             provider key is absent, or any network/API error occurs.
+        """
+        ...
+
+    async def summarize_chunks(
+        self,
+        chunks: Sequence[dict],
+        *,
+        vertical: str | None = None,
+    ) -> SummaryResult:
+        """Build a speaker-labeled transcript from chunk dicts and summarize it.
+
+        Convenience entry-point for callers that have the raw ``session_transcripts``
+        rows (or equivalent dicts) rather than a pre-assembled string.  Each dict
+        must contain at minimum ``"text"`` and ``"speaker_role"``.
+
+        The chunks are assembled into a labeled string via ``build_labeled_transcript``
+        and then forwarded to ``summarize``.  The same length gate applies.
+
+        PHI contract: chunk text is never logged.
         """
         ...
 
@@ -131,6 +205,15 @@ class NoopSummarizer:
     async def summarize(
         self,
         transcript: str,
+        *,
+        vertical: str | None = None,
+    ) -> SummaryResult:
+        """Always returns an empty result — no network call made."""
+        return SummaryResult.empty()
+
+    async def summarize_chunks(
+        self,
+        chunks: Sequence[dict],
         *,
         vertical: str | None = None,
     ) -> SummaryResult:
@@ -191,8 +274,14 @@ class AnthropicSummarizer:
             return SummaryResult.empty()
 
         vertical_clause = f" The session vertical is: {vertical}." if vertical else ""
+        # Note to prompt: lines prefixed "CHW:" / "Member:" enable attribution.
+        # Plain transcripts (legacy single-stream) have no prefixes — the model
+        # falls back to generic attribution per the system prompt instructions.
         user_message = (
-            f"Please summarise the following CHW session transcript.{vertical_clause}\n\n"
+            f"Please summarise the following CHW session transcript.{vertical_clause} "
+            f"Speaker-labeled lines (\"CHW: …\", \"Member: …\") indicate who spoke "
+            f"each utterance; unlabeled lines come from a session where speaker "
+            f"attribution was not available.\n\n"
             f"Transcript:\n{transcript}\n\nSummary:"
         )
 
@@ -229,6 +318,24 @@ class AnthropicSummarizer:
             return SummaryResult.empty()
 
         return SummaryResult(text=summary, generated_at=datetime.now(UTC))
+
+    async def summarize_chunks(
+        self,
+        chunks: Sequence[dict],
+        *,
+        vertical: str | None = None,
+    ) -> SummaryResult:
+        """Build a speaker-labeled transcript from chunk dicts and summarize it.
+
+        Assembles a ``CHW: … / Member: …`` labeled string via
+        ``build_labeled_transcript`` then delegates to ``summarize``.
+        The same length gate (``_MIN_TRANSCRIPT_CHARS``) applies to the
+        assembled string.
+
+        PHI contract: chunk text is never logged.
+        """
+        labeled = build_labeled_transcript(chunks)
+        return await self.summarize(labeled, vertical=vertical)
 
 
 # ---------------------------------------------------------------------------

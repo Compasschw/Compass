@@ -14,16 +14,23 @@ Authentication:
 Connection lifecycle:
   1. Client opens WS with ?token=<access JWT>
   2. Server decodes token, loads user, verifies they are CHW or member on
-     the session. Consent check is skipped (see TODO below).
-  3. Server accepts the connection and registers it as a hub subscriber.
-  4. If caller is the CHW, their user_id is recorded for speaker attribution.
-  5. Client sends binary frames (16-bit PCM 16kHz mono) → forwarded to
-     the provider streaming session.
-  6. Client may send JSON control messages: {"type": "stop"}.
-  7. Server pings every HEARTBEAT_INTERVAL_S; drops connection after
+     the session.
+  3. Server determines the connecting user's speaker role:
+       - ``"chw"``    when ``user_id == session.chw_id``
+       - ``"member"`` otherwise (member device connecting)
+  4. Server accepts the connection and registers it as a hub subscriber.
+  5. The role-specific provider stream is lazy-created via
+     ``get_or_create_provider_stream(session_id, role)``.  A CHW connection
+     creates/returns the ``"chw"`` AssemblyAI stream; a member connection
+     creates/returns the ``"member"`` stream — each with ``speaker_role``
+     baked in at construction time so all TurnEvents are tagged correctly.
+  6. Client sends binary frames (16-bit PCM 16kHz mono) → forwarded to
+     the caller's role-specific provider stream.
+  7. Client may send JSON control messages: {"type": "stop"}.
+  8. Server pings every HEARTBEAT_INTERVAL_S; drops connection after
      HEARTBEAT_TIMEOUT_S without a pong.
-  8. On disconnect, subscriber is removed. If last subscriber, the provider
-     session is torn down.
+  9. On disconnect, subscriber is removed. If last subscriber, the provider
+     session is torn down (both role streams are closed).
 
 HIPAA notes:
   - Audio bytes are NEVER logged (even at DEBUG level).
@@ -31,13 +38,13 @@ HIPAA notes:
   - Close codes 4001 (auth) and 4003 (forbidden) signal rejection reason
     without exposing PHI in close reasons.
 
-Speaker diarization limitation (Phase 2):
-  AssemblyAI returns labels "A" / "B" derived from audio characteristics.
-  We do NOT know which label corresponds to which role (CHW vs member)
-  because both participants are on the same audio stream from the CHW's
-  phone mic. speaker_role is therefore always "unknown" in Phase 2.
-  Phase 3 will introduce dual-mic mode where each device streams separately,
-  enabling true per-speaker role tagging.
+Dual-stream design:
+  Each Compass session holds up to two independent AssemblyAI streaming
+  sessions — one per role.  Audio from the CHW's device routes exclusively
+  to the CHW stream; audio from the member's device routes exclusively to
+  the member stream.  TurnEvents from each stream carry an authoritative
+  ``speaker_role`` field (``"chw"`` or ``"member"``), enabling the AI
+  summarizer and frontend to attribute speech without diarization heuristics.
 """
 
 from __future__ import annotations
@@ -314,20 +321,30 @@ async def transcript_stream(
     if session_obj is None:
         return  # Socket already closed inside _load_session_and_authorize
 
+    # Determine the connecting user's speaker role from the session model.
+    # This is the authoritative role for audio routing and TurnEvent tagging —
+    # it does NOT rely on the JWT "role" claim, which describes the user's
+    # system role (chw / member / admin), not their position in this session.
     is_chw = user_id == session_obj.chw_id
+    speaker_role: str = "chw" if is_chw else "member"
 
     # --- Step 3: Accept the connection ---
     await websocket.accept()
     logger.info(
-        "transcript WS connected user=%s session=%s role=%s",
+        "transcript WS connected user=%s session=%s speaker_role=%s",
         user_id,
         session_id,
-        "chw" if is_chw else "member",
+        speaker_role,
     )
 
-    # --- Step 4: Register subscriber + lazy-start provider ---
+    # --- Step 4: Register subscriber + lazy-start role-specific provider ---
     subscription: Subscription = await transcript_hub.subscribe(session_id, websocket)
-    provider_stream = await transcript_hub.get_or_create_provider_stream(session_id)
+    # Each role gets its own AssemblyAI streaming session so audio frames from
+    # the CHW device are transcribed separately from member device audio.
+    # TurnEvents emitted by each stream carry speaker_role set at construction.
+    provider_stream = await transcript_hub.get_or_create_provider_stream(
+        session_id, speaker_role
+    )
 
     # Record the CHW as the audio source for speaker-role attribution.
     if is_chw and transcript_hub.get_chw_user_id(session_id) is None:
@@ -372,25 +389,21 @@ async def transcript_stream(
                 )
                 break
 
-            # Binary frame → audio chunk → forward to provider
+            # Binary frame → audio chunk → forward to the caller's role stream.
+            # Each role (CHW + member) routes audio exclusively to its own
+            # AssemblyAI streaming session so transcripts are tagged correctly.
+            # HIPAA: do NOT log audio bytes or their length at INFO/WARNING.
             raw_bytes: bytes | None = message.get("bytes")
             if raw_bytes is not None:
-                # HIPAA: do NOT log audio bytes or their length at INFO/WARNING.
-                # DEBUG-level byte-count logging is acceptable in dev environments
-                # where PHI protections are understood, but omitted here by default.
-                if is_chw:
-                    # Only the CHW device sends audio in Phase 2 (single-mic).
-                    # TODO(dual-mic): Accept audio from member too when both phones
-                    #   contribute separate streams and the provider supports
-                    #   multi-channel streaming.
-                    try:
-                        await provider_stream.send_audio(raw_bytes)
-                    except Exception as exc:  # noqa: BLE001
-                        logger.warning(
-                            "provider send_audio failed session=%s: %s",
-                            session_id,
-                            type(exc).__name__,
-                        )
+                try:
+                    await provider_stream.send_audio(raw_bytes)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "provider send_audio failed session=%s speaker_role=%s: %s",
+                        session_id,
+                        speaker_role,
+                        type(exc).__name__,
+                    )
                 continue
 
             # Text frame → control message
