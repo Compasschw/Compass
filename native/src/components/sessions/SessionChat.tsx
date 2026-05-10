@@ -2106,7 +2106,13 @@ export function SessionChat({ sessionId, onStartAssessment }: SessionChatProps):
    * The button handles both the "no consent yet" (→ opens modal) and
    * "consent active, toggle on/off" paths.
    */
-  const showMemberMicToggle = !isCHW && isInPersonSession && session?.status === 'in_progress';
+  // Originally gated on `isInPersonSession` so the toggle wouldn't appear on
+  // phone sessions (where the member's audio is captured via Vonage's per-leg
+  // WS, not the device mic). Relaxed to show the toggle on any in-progress
+  // session: it lets the member opt into device-mic capture even on phone
+  // sessions (extra audio source — useful when speakerphone audio quality
+  // is poor) and unblocks testers who create video/other-mode sessions.
+  const showMemberMicToggle = !isCHW && session?.status === 'in_progress';
 
   /**
    * Member tapped the mic toggle button in the header.
