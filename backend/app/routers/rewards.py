@@ -65,6 +65,22 @@ from app.schemas.rewards import (
     WellnessPointsBalanceResponse,
 )
 
+# WellnessPointsLedger is owned by the Journeys agent (app.models.journeys).
+# Import at module level so SQLAlchemy's Base.metadata discovers the table for
+# schema creation (test setup calls Base.metadata.create_all which scans all
+# imported subclasses of Base). The try/except guard below is belt-and-suspenders
+# for the rare case where the module is missing in a stripped environment.
+#
+# TODO(journeys-integration): remove the guard once Journeys is confirmed
+# deployed in all environments. Link: compass#TBD
+try:
+    from app.models.journeys import WellnessPointsLedger as _WellnessPointsLedger
+
+    _LEDGER_AVAILABLE = True
+except (ImportError, AttributeError):
+    _WellnessPointsLedger = None  # type: ignore[assignment,misc]
+    _LEDGER_AVAILABLE = False
+
 logger = logging.getLogger("compass.rewards")
 
 router = APIRouter(prefix="/api/v1", tags=["rewards"])
@@ -371,22 +387,21 @@ async def create_redemption(
     profile.rewards_balance -= catalog_item.cost_points
 
     # Attempt WellnessPointsLedger write (Journeys-owned model).
-    # TODO(journeys-integration): remove this guard once Journeys lands
-    # WellnessPointsLedger in app.models.journeys.
-    # Link: compass#TBD
-    ledger_available = True
-    try:
-        from app.models.journeys import WellnessPointsLedger  # type: ignore[import]
-
-        ledger_entry = WellnessPointsLedger(
+    # _LEDGER_AVAILABLE is set at module import time — True when the Journeys
+    # model is present in the environment.
+    #
+    # TODO(journeys-integration): remove the _LEDGER_AVAILABLE guard once
+    # Journeys is confirmed deployed in all environments. Link: compass#TBD
+    ledger_available = _LEDGER_AVAILABLE
+    if ledger_available and _WellnessPointsLedger is not None:
+        ledger_entry = _WellnessPointsLedger(
             member_id=member_id,
             points=-catalog_item.cost_points,
             reason="redemption",
             related_id=redemption.id,
         )
         db.add(ledger_entry)
-    except (ImportError, AttributeError):
-        ledger_available = False
+    else:
         logger.warning(
             "rewards: WellnessPointsLedger not available — skipping ledger entry "
             "(member_id=%s, item_sku=%s). "
