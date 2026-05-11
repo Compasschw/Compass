@@ -20,6 +20,7 @@ import {
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
 import { useAuth } from '../context/AuthContext';
+import { withErrorBoundary } from '../components/shared/ErrorBoundary';
 import { useRegisterPushNotifications } from '../hooks/usePushNotifications';
 import { useDeepLinks } from '../hooks/useDeepLinks';
 import { colors } from '../theme/colors';
@@ -91,18 +92,18 @@ function AuthNavigator({ initialRoute = 'Landing' }: AuthNavigatorProps): React.
       {/* Landing is the default initial route — unauthenticated users see the
           marketing page first before proceeding to Login/Register. After
           sign-out the initial route is overridden to Login. */}
-      <AuthStack.Screen name="Landing" component={LandingScreen} />
-      <AuthStack.Screen name="Waitlist" component={WaitlistScreen} />
+      <AuthStack.Screen name="Landing" component={withErrorBoundary(LandingScreen)} />
+      <AuthStack.Screen name="Waitlist" component={withErrorBoundary(WaitlistScreen)} />
       {/* MagicLink is always registered so deep links from email can route to it
           even pre-launch. The screen itself shows "Coming soon" if verification
           fails because the user isn't provisioned. */}
-      <AuthStack.Screen name="MagicLink" component={MagicLinkScreen} />
+      <AuthStack.Screen name="MagicLink" component={withErrorBoundary(MagicLinkScreen)} />
       {/* Login is sign-in. RegisterScreen is the new self-service signup —
           launched 2026-05 alongside the Golden Path go-live so Jemal/JT and
           subsequent users can onboard themselves without waitlist intervention.
           Waitlist remains available for pre-launch leads. */}
-      <AuthStack.Screen name="Login" component={LoginScreen} />
-      <AuthStack.Screen name="Register" component={RegisterScreen} />
+      <AuthStack.Screen name="Login" component={withErrorBoundary(LoginScreen)} />
+      <AuthStack.Screen name="Register" component={withErrorBoundary(RegisterScreen)} />
       {/* LegalScreen reads `page` from route params so a single registration
           serves Privacy / Terms / HIPAA / Contact via navigation.navigate(
           'Legal', { page: 'privacy' | 'terms' | 'hipaa' | 'contact' }). */}

@@ -901,9 +901,16 @@ interface ChatModalProps {
   visible: boolean;
   sessionId: string;
   onClose: () => void;
+  /**
+   * Forwarded to SessionChatWithFollowup → SessionChat so tapping the member
+   * avatar navigates to MemberProfile. The ChatModal renders inside a React
+   * Native Modal (outside the navigator tree), so navigation must originate
+   * from the parent CHWSessionsScreen that owns the navigation prop.
+   */
+  onNavigateToMemberProfile?: (memberId: string) => void;
 }
 
-function ChatModal({ visible, sessionId, onClose }: ChatModalProps): React.JSX.Element {
+function ChatModal({ visible, sessionId, onClose, onNavigateToMemberProfile }: ChatModalProps): React.JSX.Element {
   return (
     <Modal
       visible={visible}
@@ -926,7 +933,10 @@ function ChatModal({ visible, sessionId, onClose }: ChatModalProps): React.JSX.E
             <X size={20} color={colors.foreground} />
           </TouchableOpacity>
         </View>
-        <SessionChatWithFollowup sessionId={sessionId} />
+        <SessionChatWithFollowup
+          sessionId={sessionId}
+          onNavigateToMemberProfile={onNavigateToMemberProfile}
+        />
       </SafeAreaView>
     </Modal>
   );
@@ -1274,10 +1284,23 @@ export function CHWSessionsScreen(): React.JSX.Element {
     [startSession, showToast],
   );
 
-  const handleComplete = useCallback((id: string): void => {
-    void completeSession.mutateAsync(id);
-    setActiveTab('completed');
-  }, [completeSession]);
+  const handleComplete = useCallback(async (id: string): Promise<void> => {
+    try {
+      await completeSession.mutateAsync(id);
+      // Only switch to the completed tab after the mutation succeeds.
+      // Switching on fire-and-forget means the CHW sees a completed tab with a
+      // ghost-incomplete session when the network request actually failed.
+      setActiveTab('completed');
+    } catch (err) {
+      const reason =
+        err instanceof Error && err.message
+          ? err.message
+          : 'Could not complete session. Please try again.';
+      showToast(reason);
+      // Do NOT close any modal or switch tabs — the CHW stays in the active view
+      // so they can see the session is still open and retry.
+    }
+  }, [completeSession, showToast]);
 
   const handleDocumentSession = useCallback((id: string): void => {
     setDocumentingSessionId(id);
@@ -1547,6 +1570,12 @@ export function CHWSessionsScreen(): React.JSX.Element {
           visible={chatSessionId != null}
           sessionId={chatSessionId}
           onClose={() => setChatSessionId(null)}
+          onNavigateToMemberProfile={(memberId) => {
+            // Close the chat modal first, then navigate. The modal is outside the
+            // navigator tree; navigation must go through the parent screen's prop.
+            setChatSessionId(null);
+            navigation.navigate('MemberProfile', { memberId });
+          }}
         />
       )}
     </SafeAreaView>
