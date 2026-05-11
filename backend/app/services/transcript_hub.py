@@ -119,7 +119,27 @@ class AssemblyAIStreamingSession(StreamingSession):
         Raises:
             RuntimeError: If the SDK or its v3 streaming module is not
                           installed or the handshake fails.
+            RuntimeError: (Finding #3, CRITICAL) If the AssemblyAI BAA is not
+                          confirmed in a production environment.  PHI audio must
+                          not flow to AssemblyAI before the BAA is countersigned.
         """
+        # Finding #3 BAA gate — refuse to open a streaming session in production
+        # unless ASSEMBLYAI_BAA_CONFIRMED=true is explicitly set in the environment.
+        # This is a fail-safe: the flag defaults to False so a misconfigured
+        # deployment cannot silently stream PHI to an uncovered vendor.
+        try:
+            from app.config import settings as _settings
+            if _settings.environment == "production" and not _settings.assemblyai_baa_confirmed:
+                raise RuntimeError(
+                    "AssemblyAI BAA not confirmed; refusing to stream PHI. "
+                    "Set ASSEMBLYAI_BAA_CONFIRMED=true in production .env after "
+                    "the BAA is countersigned by legal."
+                )
+        except ImportError:
+            # Settings import failure is non-fatal outside production; let the
+            # existing ImportError path below handle SDK availability.
+            pass
+
         try:
             from assemblyai.streaming.v3 import (  # type: ignore[import-untyped]
                 SpeechModel,

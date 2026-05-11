@@ -241,6 +241,21 @@ class AnthropicSummarizer:
     """
 
     def __init__(self, api_key: str) -> None:
+        # Finding #4 BAA gate (CRITICAL) — refuse to construct an Anthropic
+        # client in production unless ANTHROPIC_BAA_CONFIRMED=true is set.
+        # Transcript text passed to ``summarize`` is PHI; it must not reach
+        # Anthropic's servers before the BAA is countersigned.
+        try:
+            from app.config import settings as _settings
+            if _settings.environment == "production" and not _settings.anthropic_baa_confirmed:
+                raise RuntimeError(
+                    "Anthropic BAA not confirmed; refusing to send PHI to Claude. "
+                    "Set ANTHROPIC_BAA_CONFIRMED=true in production .env after "
+                    "the BAA is countersigned by legal."
+                )
+        except ImportError:
+            pass  # Outside of the main app context; let caller handle.
+
         try:
             import anthropic  # type: ignore[import-untyped]
         except ImportError as exc:

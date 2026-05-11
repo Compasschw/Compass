@@ -93,6 +93,14 @@ async def find_or_create_conversation(
             ),
         )
 
+    # Finding #20: enforce CHW ↔ member relationship gate.
+    # Any CHW could otherwise start a conversation with any member — this gate
+    # requires at least one shared session before a DM channel is created.
+    # Admins bypass the check.
+    if current_user.role != "admin":
+        from app.services.relationship_guards import assert_shared_session
+        await assert_shared_session(db, chw_id=chw_id, member_id=member_id)
+
     # Fast path: existing ad-hoc conversation (session_id IS NULL).
     result = await db.execute(
         select(Conversation).where(

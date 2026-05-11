@@ -31,7 +31,10 @@ via signed JWTs using our application's public key. We verify in
 `_verify_vonage_jwt()` below.
 """
 
+import hashlib
+import hmac
 import logging
+import time
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -40,12 +43,201 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.config as _app_config_module  # lazy settings access for testability
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.services.communication import get_provider
 from app.services.communication_touch_log import TouchKind, record_touch
 
 logger = logging.getLogger("compass.communication")
+
+
+# ─── Vonage webhook signature verification (Finding #1, CRITICAL) ─────────────
+#
+# Vonage signs webhook requests using HMAC-SHA256 with your account-level
+# signature secret (configured in the Vonage API dashboard under
+# API Settings → Signature method: SHA-256 HMAC).
+#
+# Signature scheme:
+#   1. Vonage sends the signature as an `Authorization: Bearer <sig>` header
+#      OR as a `sig` parameter appended to the query string / body.
+#   2. The HMAC input is the concatenation of all query/body parameters sorted
+#      alphabetically (key=value pairs) plus the shared secret appended.
+#
+# Because the exact scheme varies by Vonage SDK version and webhook type, we
+# support two patterns:
+#   A. JWT-style: `Authorization: Bearer <token>` — where <token> is a
+#      Vonage-issued JWT.  We verify the HMAC signature embedded in it.
+#   B. X-Vonage-Signature header — raw HMAC-SHA256 hex digest of the sorted
+#      payload params, keyed with vonage_signature_secret.
+#
+# Design decision: use HMAC-SHA256 with vonage_signature_secret (account-level)
+# rather than RS256 JWT (application-level JWKS) for two reasons:
+#   1. HMAC verification is synchronous and requires no external network call.
+#   2. The Vonage API dashboard's "Signature method" setting covers ALL
+#      account-level webhooks regardless of Application configuration, making
+#      it the single control plane that ops teams understand.
+#
+# References:
+#   https://developer.vonage.com/en/getting-started/concepts/webhooks#validating-signed-webhooks
+#   https://developer.vonage.com/en/voice/voice-api/webhook-reference#answer-webhook
+
+
+_VONAGE_SIG_MAX_AGE_SECONDS = 300  # 5 minutes — reject replayed webhooks
+
+
+def _compute_vonage_hmac(
+    params: dict,
+    secret: str,
+) -> str:
+    """Compute the expected HMAC-SHA256 hex digest for a Vonage webhook payload.
+
+    Vonage sorts all payload parameters alphabetically by key, concatenates
+    them as ``&key=value`` pairs (no leading ``&``), then appends the shared
+    secret with an ``&`` separator and digests the whole string.
+
+    Args:
+        params: Dict of query-string or body parameters from the webhook.
+                Must NOT include the ``sig`` key itself.
+        secret: The account-level Vonage signature secret.
+
+    Returns:
+        Lowercase hex digest of the HMAC-SHA256 hash.
+    """
+    sorted_params = sorted(
+        (k, v) for k, v in params.items() if k != "sig"
+    )
+    message = "&".join(f"{k}={v}" for k, v in sorted_params)
+    message += f"&{secret}"
+    return hmac.new(
+        key=secret.encode(),
+        msg=message.encode(),
+        digestmod=hashlib.sha256,
+    ).hexdigest()  # hmac.new() is the stdlib HMAC constructor (Python 3.x)
+
+
+async def _verify_vonage_signature(request: Request) -> None:
+    """FastAPI dependency that verifies the Vonage webhook HMAC-SHA256 signature.
+
+    Behaviour by environment:
+    - ``production``: always verify; return 401 on failure.
+      The server refuses to start without ``vonage_signature_secret`` (guarded
+      in config.py), so an empty secret here is impossible in production.
+    - Other environments (development, staging): skip verification when
+      ``vonage_signature_secret`` is empty, log a warning, and continue.
+      This allows local development without a Vonage account while still
+      exercising the real code path when the secret IS set.
+
+    Raises:
+        HTTPException(401): Signature absent, invalid, or replayed (outside window).
+    """
+    # Access through the module reference so tests that patch `app.config.settings`
+    # see the patched object rather than a stale module-level import snapshot.
+    _s = _app_config_module.settings
+    vonage_secret = getattr(_s, "vonage_signature_secret", "")
+    is_production = getattr(_s, "environment", "development") == "production"
+
+    if not vonage_secret:
+        if is_production:
+            # config.py sys.exit(1) guard should have prevented reaching here,
+            # but be defensive in case the object was hot-patched in tests.
+            logger.error(
+                "vonage signature verification skipped — secret not set in production; "
+                "this is a critical security misconfiguration"
+            )
+            raise HTTPException(
+                status_code=401,
+                detail="Webhook signature verification is not configured.",
+            )
+        logger.warning(
+            "vonage_signature_secret not set — skipping Vonage webhook signature "
+            "verification (non-production environment). Set VONAGE_SIGNATURE_SECRET "
+            "to enable verification."
+        )
+        return
+
+    # Collect all params: merge query string + body (both GET and POST supported).
+    params: dict[str, str] = dict(request.query_params)
+
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        try:
+            body_json = await request.json()
+            if isinstance(body_json, dict):
+                params.update({k: str(v) for k, v in body_json.items()})
+        except Exception:  # noqa: BLE001
+            pass
+    elif "application/x-www-form-urlencoded" in content_type:
+        try:
+            form = await request.form()
+            params.update(dict(form))
+        except Exception:  # noqa: BLE001
+            pass
+
+    # Try to get the signature from the Authorization header (Bearer <sig>)
+    # or from the X-Vonage-Signature header, or from the sig query/body param.
+    received_sig: str = ""
+
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.lower().startswith("bearer "):
+        received_sig = auth_header[7:].strip()
+
+    if not received_sig:
+        received_sig = request.headers.get("x-vonage-signature", "").strip()
+
+    if not received_sig:
+        received_sig = params.get("sig", "").strip()
+
+    if not received_sig:
+        logger.warning(
+            "vonage webhook rejected — no signature present "
+            "path=%s method=%s",
+            request.url.path,
+            request.method,
+        )
+        raise HTTPException(status_code=401, detail="Missing Vonage webhook signature.")
+
+    # Replay-window check: Vonage embeds a `timestamp` param (Unix seconds).
+    # Reject webhooks older than _VONAGE_SIG_MAX_AGE_SECONDS.
+    timestamp_str = params.get("timestamp", "")
+    if timestamp_str:
+        try:
+            webhook_ts = int(timestamp_str)
+            age_seconds = abs(int(time.time()) - webhook_ts)
+            if age_seconds > _VONAGE_SIG_MAX_AGE_SECONDS:
+                logger.warning(
+                    "vonage webhook rejected — timestamp outside replay window "
+                    "age_s=%d max_age_s=%d path=%s",
+                    age_seconds,
+                    _VONAGE_SIG_MAX_AGE_SECONDS,
+                    request.url.path,
+                )
+                raise HTTPException(
+                    status_code=401,
+                    detail="Vonage webhook timestamp outside acceptable window.",
+                )
+        except ValueError:
+            # Non-integer timestamp — do not block but log.
+            logger.warning(
+                "vonage webhook timestamp is non-integer: %r — skipping age check",
+                timestamp_str,
+            )
+
+    expected_sig = _compute_vonage_hmac(params, vonage_secret)
+
+    if not hmac.compare_digest(expected_sig.lower(), received_sig.lower()):
+        logger.warning(
+            "vonage webhook rejected — HMAC mismatch path=%s method=%s",
+            request.url.path,
+            request.method,
+        )
+        raise HTTPException(status_code=401, detail="Invalid Vonage webhook signature.")
+
+    logger.debug(
+        "vonage webhook signature verified path=%s method=%s",
+        request.url.path,
+        request.method,
+    )
 
 router = APIRouter(prefix="/api/v1/communication", tags=["communication"])
 
@@ -241,6 +433,29 @@ async def call_bridge(
             detail="Both parties must have a verified phone number on file.",
         )
 
+    # Finding #8 (HIGH): enforce CHW ↔ member relationship gate on call-bridge.
+    # Determine which party is CHW and which is member to use assert_shared_session.
+    # If the caller is a CHW and recipient is a member, verify the relationship.
+    # Admins are exempt from the relationship check.
+    if current_user.role != "admin":
+        chw_id_for_gate: UUID | None = None
+        member_id_for_gate: UUID | None = None
+
+        if caller.role == "chw" and recipient.role == "member":
+            chw_id_for_gate = caller.id
+            member_id_for_gate = recipient.id
+        elif caller.role == "member" and recipient.role == "chw":
+            chw_id_for_gate = recipient.id
+            member_id_for_gate = caller.id
+
+        if chw_id_for_gate is not None and member_id_for_gate is not None:
+            from app.services.relationship_guards import assert_shared_session
+            await assert_shared_session(
+                db,
+                chw_id=chw_id_for_gate,
+                member_id=member_id_for_gate,
+            )
+
     provider = get_provider()
     proxy = await provider.create_proxy_session(
         session_id=str(body.session_id or body.recipient_id),
@@ -280,6 +495,7 @@ async def voice_answer(
     request: Request,
     session: str | None = Query(default=None, description="Internal session id."),
     member: str | None = Query(default=None, description="Member phone number (digits only)."),
+    _sig: None = Depends(_verify_vonage_signature),
 ):
     """Vonage calls this when the CHW answers — returns an NCCO that:
 
@@ -437,6 +653,7 @@ async def voice_answer(
 async def voice_consent_prompt(
     request: Request,
     session: str | None = Query(default=None, description="Internal session id."),
+    _sig: None = Depends(_verify_vonage_signature),
 ):
     """Played to the member's leg the moment they answer the call.
 
@@ -485,6 +702,7 @@ async def voice_consent_result(
     request: Request,
     session: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
+    _sig: None = Depends(_verify_vonage_signature),
 ):
     """Receives the DTMF digit collected by /voice/consent-prompt.
 
@@ -687,6 +905,7 @@ async def voice_events(
     request: Request,
     session: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
+    _sig: None = Depends(_verify_vonage_signature),
 ):
     """Vonage posts call lifecycle events here.
 

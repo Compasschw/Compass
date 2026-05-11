@@ -272,6 +272,9 @@ async def test_digit_1_no_ws_fork_when_url_base_empty() -> None:
         mock_settings.vonage_from_number = "18127224291"
         # magic_link_base_url is consumed by _public_base_url() for the record eventUrl.
         mock_settings.magic_link_base_url = "https://api.joincompasschw.com/auth/magic"
+        # Empty signature secret → signature verification is skipped in non-production.
+        mock_settings.vonage_signature_secret = ""
+        mock_settings.environment = "development"
 
         _app_config.settings = mock_settings
         try:
@@ -326,6 +329,9 @@ async def test_digit_1_no_ws_fork_when_token_generation_raises() -> None:
     mock_settings.vonage_ws_audio_url_base = "wss://api.joincompasschw.com"
     mock_settings.vonage_from_number = "18127224291"
     mock_settings.magic_link_base_url = "https://api.joincompasschw.com/auth/magic"
+    # Empty signature secret → signature verification is skipped in non-production.
+    mock_settings.vonage_signature_secret = ""
+    mock_settings.environment = "development"
 
     def _raise_runtime(*_args: Any, **_kwargs: Any) -> str:
         raise RuntimeError("vonage_ws_jwt_secret is not configured")
