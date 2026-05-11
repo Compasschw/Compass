@@ -26,7 +26,6 @@
 
 import React, { useCallback } from 'react';
 import {
-  ActivityIndicator,
   Platform,
   ScrollView,
   StatusBar,
@@ -35,7 +34,6 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
@@ -54,6 +52,8 @@ import { useMemberFacingCHWProfile } from '../../hooks/useApiQueries';
 import type { MemberFindStackParamList } from '../../navigation/MemberTabNavigator';
 import { ProfileContactButtons } from '../../components/comms/ProfileContactButtons';
 import { TestimonialsList } from '../../components/testimonials/TestimonialsList';
+import { AppShell, Card, Pill, StickyActionBar } from '../../components/ui';
+import { useAuth } from '../../context/AuthContext';
 
 // ─── Navigation types ─────────────────────────────────────────────────────────
 
@@ -263,8 +263,16 @@ export function MemberFacingCHWProfileScreen(): React.JSX.Element {
   const route = useRoute<CHWProfileRouteProp>();
   const navigation = useNavigation<CHWProfileNavProp>();
   const { chwId } = route.params;
+  const { userName } = useAuth();
 
   const { data: profile, isLoading, error } = useMemberFacingCHWProfile(chwId);
+
+  const memberInitials = (userName ?? 'M')
+    .split(' ')
+    .slice(0, 2)
+    .map((p) => p[0] ?? '')
+    .join('')
+    .toUpperCase();
 
   // ── Back navigation ─────────────────────────────────────────────────────────
   const handleGoBack = useCallback(() => {
@@ -283,11 +291,17 @@ export function MemberFacingCHWProfileScreen(): React.JSX.Element {
 
   // ── Loading skeleton ────────────────────────────────────────────────────────
 
+  const shellProps = {
+    role: 'member' as const,
+    activeKey: 'myChw',
+    userBlock: { initials: memberInitials, name: userName ?? 'Member', role: 'Member' as const },
+  };
+
   if (isLoading) {
     return (
-      <SafeAreaView style={s.safeArea} edges={['top']}>
+      <AppShell {...shellProps}>
         <StatusBar barStyle="dark-content" backgroundColor="#F4F1ED" />
-        <View style={s.header}>
+        <View style={s.pageWrap}>
           <TouchableOpacity
             style={s.backBtn}
             onPress={handleGoBack}
@@ -296,14 +310,10 @@ export function MemberFacingCHWProfileScreen(): React.JSX.Element {
           >
             <ArrowLeft size={20} color={colors.foreground} />
           </TouchableOpacity>
-          <Text style={s.headerTitle}>CHW Profile</Text>
-          <View style={{ width: 40 }} />
-        </View>
-        <View style={s.pageWrap}>
           <LoadingSkeleton variant="card" />
           <LoadingSkeleton variant="rows" rows={4} />
         </View>
-      </SafeAreaView>
+      </AppShell>
     );
   }
 
@@ -311,20 +321,8 @@ export function MemberFacingCHWProfileScreen(): React.JSX.Element {
 
   if (error != null || !profile) {
     return (
-      <SafeAreaView style={s.safeArea} edges={['top']}>
+      <AppShell {...shellProps}>
         <StatusBar barStyle="dark-content" backgroundColor="#F4F1ED" />
-        <View style={s.header}>
-          <TouchableOpacity
-            style={s.backBtn}
-            onPress={handleGoBack}
-            accessibilityRole="button"
-            accessibilityLabel="Go back"
-          >
-            <ArrowLeft size={20} color={colors.foreground} />
-          </TouchableOpacity>
-          <Text style={s.headerTitle}>CHW Profile</Text>
-          <View style={{ width: 40 }} />
-        </View>
         <View style={s.emptyState}>
           <View style={s.emptyIconCircle}>
             <ShieldOff size={28} color={colors.mutedForeground} />
@@ -342,7 +340,7 @@ export function MemberFacingCHWProfileScreen(): React.JSX.Element {
             <Text style={s.backButtonText}>Go Back</Text>
           </TouchableOpacity>
         </View>
-      </SafeAreaView>
+      </AppShell>
     );
   }
 
@@ -357,24 +355,8 @@ export function MemberFacingCHWProfileScreen(): React.JSX.Element {
   ].filter(Boolean);
 
   return (
-    <SafeAreaView style={s.safeArea} edges={['top']}>
+    <AppShell {...shellProps}>
       <StatusBar barStyle="dark-content" backgroundColor="#F4F1ED" />
-
-      {/* ── Screen header ── */}
-      <View style={s.header}>
-        <TouchableOpacity
-          style={s.backBtn}
-          onPress={handleGoBack}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-        >
-          <ArrowLeft size={20} color={colors.foreground} />
-        </TouchableOpacity>
-        <Text style={s.headerTitle} numberOfLines={1}>
-          CHW Profile
-        </Text>
-        <View style={{ width: 40 }} />
-      </View>
 
       <ScrollView
         style={s.scroll}
@@ -382,6 +364,16 @@ export function MemberFacingCHWProfileScreen(): React.JSX.Element {
         showsVerticalScrollIndicator={false}
       >
         <View style={s.pageWrap}>
+          {/* Back button — visible on native; on web the sidebar handles nav */}
+          <TouchableOpacity
+            style={[s.backBtn, s.backBtnInline]}
+            onPress={handleGoBack}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+          >
+            <ArrowLeft size={18} color={colors.foreground} />
+            <Text style={s.backBtnLabel}>My CHW</Text>
+          </TouchableOpacity>
 
           {/* ── Hero — green banner, avatar, name, language + cert chips ── */}
           <View style={s.bannerContainer}>
@@ -539,10 +531,28 @@ export function MemberFacingCHWProfileScreen(): React.JSX.Element {
             <TestimonialsList chwId={profile.id} limit={3} />
           </SectionCard>
 
-          <View style={{ height: 40 }} />
+          <View style={{ height: 80 }} />
         </View>
       </ScrollView>
-    </SafeAreaView>
+
+      {/* ── Sticky action bar ── */}
+      <StickyActionBar
+        primary={{
+          label: 'Schedule Session',
+          onPress: () => {
+            // Navigate to find/book flow — parent navigator wires this route.
+            navigation.goBack();
+          },
+        }}
+        actions={[
+          {
+            icon: <ArrowLeft size={18} color={colors.foreground} />,
+            label: 'Back',
+            onPress: handleGoBack,
+          },
+        ]}
+      />
+    </AppShell>
   );
 }
 
@@ -554,24 +564,6 @@ const s = StyleSheet.create({
     backgroundColor: '#F4F1ED',
   },
 
-  // ── Header
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    backgroundColor: '#F4F1ED',
-    borderBottomWidth: 1,
-    borderBottomColor: '#DDD6CC',
-  },
-  headerTitle: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 18,
-    color: '#1E3320',
-    flex: 1,
-    textAlign: 'center',
-  },
   backBtn: {
     width: 40,
     height: 40,
@@ -581,6 +573,19 @@ const s = StyleSheet.create({
     borderColor: '#DDD6CC',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  /** Inline back button used inside the scroll area instead of a fixed header. */
+  backBtnInline: {
+    flexDirection: 'row',
+    width: 'auto' as unknown as number,
+    paddingHorizontal: 12,
+    gap: 6,
+    marginBottom: 16,
+  },
+  backBtnLabel: {
+    fontFamily: fonts.bodySemibold,
+    fontSize: 13,
+    color: '#1E3320',
   },
 
   // ── Scroll

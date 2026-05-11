@@ -309,6 +309,8 @@ export const queryKeys = {
   chwMapData: ['chw', 'map-data'] as const,
   /** Public-style CHW profile for the member-facing CHW Profile screen. */
   memberFacingCHWProfile: (chwId: string) => ['member', 'chws', chwId] as const,
+  /** CHW caseload journey list from GET /chw/journeys. */
+  chwJourneys: ['chw', 'journeys'] as const,
 };
 
 /** Re-export so callers don't need a second import from api/sessions. */
@@ -1697,6 +1699,275 @@ export function useGrantDeviceAudioConsent(sessionId: string) {
       void qc.invalidateQueries({
         queryKey: sessionConsentQueryKeys.consents(sessionId),
       });
+    },
+  });
+}
+
+// ─── Journeys ────────────────────────────────────────────────────────────────
+
+/**
+ * A single step within a JourneyTemplate (camelCase mirror of JourneyStepResponse).
+ */
+export interface JourneyStepResponse {
+  id: string;
+  templateId: string;
+  order: number;
+  name: string;
+  description: string;
+  pointsOnCompletion: number;
+  requiredDocuments: string[];
+  createdAt: string;
+}
+
+/** Template metadata returned inside MemberJourneyResponse. */
+export interface JourneyTemplateResponse {
+  id: string;
+  slug: string;
+  name: string;
+  category: string;
+  icon: string;
+  isActive: boolean;
+  steps: JourneyStepResponse[];
+  createdAt: string;
+}
+
+/**
+ * Per-member per-step state merged with template step fields.
+ * Mirrors backend MemberJourneyStepResponse (snake_case → camelCase).
+ */
+export interface MemberJourneyStepResponse {
+  id: string;
+  memberJourneyId: string;
+  templateStepId: string;
+  stepOrder: number;
+  stepName: string;
+  stepDescription: string;
+  pointsOnCompletion: number;
+  requiredDocuments: string[];
+  /** "upcoming" | "in_progress" | "completed" | "missed" */
+  status: 'upcoming' | 'in_progress' | 'completed' | 'missed';
+  startedAt: string | null;
+  completedAt: string | null;
+  dueDate: string | null;
+  pointsAwarded: number;
+  createdAt: string;
+}
+
+/**
+ * Full member-journey view returned by GET /chw/journeys.
+ *
+ * Mirrors backend MemberJourneyResponse (snake_case → camelCase).
+ * progressPercent is computed server-side: completed_steps / total_steps * 100.
+ */
+export interface MemberJourneyResponse {
+  id: string;
+  memberId: string;
+  chwId: string;
+  template: JourneyTemplateResponse;
+  steps: MemberJourneyStepResponse[];
+  /** "active" | "paused" | "completed" | "abandoned" */
+  status: 'active' | 'paused' | 'completed' | 'abandoned';
+  progressPercent: number;
+  currentStep: MemberJourneyStepResponse | null;
+  wellnessPointsEarned: number;
+  startedAt: string;
+  completedAt: string | null;
+  createdAt: string;
+}
+
+/**
+ * Fetch all member journeys assigned to the authenticated CHW.
+ *
+ * GET /chw/journeys — returns MemberJourneyResponse[].
+ * Stale after 60 s; journey progress changes slowly between CHW interactions.
+ */
+export function useChwJourneys() {
+  return useQuery({
+    queryKey: queryKeys.chwJourneys,
+    queryFn: async (): Promise<MemberJourneyResponse[]> => {
+      const raw = await api<unknown[]>('/chw/journeys');
+      return transformKeys<MemberJourneyResponse[]>(raw);
+    },
+    staleTime: 60_000,
+  });
+}
+
+// ─── Member-facing rewards (new /rewards backend) ────────────────────────────
+
+/**
+ * Catalog item returned by GET /rewards/catalog.
+ * Mirrors backend RewardCatalogItemResponse (snake_case → camelCase).
+ */
+export interface RewardCatalogItem {
+  id: string;
+  sku: string;
+  name: string;
+  description: string;
+  imageEmoji: string;
+  costPoints: number;
+  fulfillmentType: string;
+  /** null = unlimited stock */
+  inventoryRemaining: number | null;
+  isActive: boolean;
+  createdAt: string;
+}
+
+/**
+ * Wellness-points balance summary returned by
+ * GET /members/{member_id}/rewards/balance.
+ * Mirrors backend WellnessPointsBalanceResponse.
+ */
+export interface WellnessPointsBalance {
+  memberId: string;
+  currentBalance: number;
+  earnedLifetime: number;
+  redeemedLifetime: number;
+  nextUnlockItem: RewardCatalogItem | null;
+  pointsToNext: number;
+}
+
+/**
+ * A single redemption record returned by
+ * GET /members/{member_id}/rewards/redemptions.
+ * Mirrors backend RewardRedemptionResponse (snake_case → camelCase).
+ */
+export interface RewardRedemption {
+  id: string;
+  memberId: string;
+  catalogItemId: string;
+  costPointsAtRedemption: number;
+  /** "pending" | "fulfilled" | "cancelled" | "failed" */
+  status: string;
+  fulfillmentReference: string | null;
+  requestedAt: string;
+  fulfilledAt: string | null;
+  failureReason: string | null;
+  createdAt: string;
+}
+
+// ─── Member journey response (member-facing, identical shape to CHW-facing) ──
+
+// Re-exports for member screens — the types are already defined above the CHW
+// hooks section; no duplication needed.
+
+// ─── Extended query keys ──────────────────────────────────────────────────────
+
+// Append member-scoped keys to the existing queryKeys object via module
+// augmentation is not possible after const assertion; use direct property
+// access at call sites and add the key functions here as named exports.
+
+/** Query key for GET /rewards/catalog (public, role-independent). */
+export const rewardsCatalogKey = ['rewards', 'catalog'] as const;
+
+/** Query key for GET /members/{id}/rewards/balance. */
+export const memberRewardsBalanceKey = (memberId: string) =>
+  ['member', memberId, 'rewards', 'balance'] as const;
+
+/** Query key for GET /members/{id}/rewards/redemptions. */
+export const memberRedemptionsKey = (memberId: string) =>
+  ['member', memberId, 'rewards', 'redemptions'] as const;
+
+/** Query key for GET /members/{id}/journeys (member-facing). */
+export const memberJourneysKey = (memberId: string) =>
+  ['member', memberId, 'journeys'] as const;
+
+/**
+ * Fetch the rewards catalog (all active items).
+ *
+ * GET /rewards/catalog — public endpoint, any authenticated user may call.
+ * Stale after 5 minutes; catalog changes rarely.
+ */
+export function useRewardsCatalog() {
+  return useQuery({
+    queryKey: rewardsCatalogKey,
+    queryFn: async (): Promise<RewardCatalogItem[]> => {
+      const raw = await api<unknown[]>('/rewards/catalog');
+      return transformKeys<RewardCatalogItem[]>(raw);
+    },
+    staleTime: 300_000, // 5 min
+  });
+}
+
+/**
+ * Fetch the computed wellness-points balance for the given member.
+ *
+ * GET /members/{member_id}/rewards/balance
+ * Includes next-unlock item and lifetime earned/redeemed totals.
+ */
+export function useMemberRewardsBalance(memberId: string) {
+  return useQuery({
+    queryKey: memberRewardsBalanceKey(memberId),
+    queryFn: async (): Promise<WellnessPointsBalance> => {
+      const raw = await api<unknown>(`/members/${memberId}/rewards/balance`);
+      return transformKeys<WellnessPointsBalance>(raw);
+    },
+    enabled: !!memberId,
+    staleTime: 30_000, // 30 s — balance changes on session completion
+  });
+}
+
+/**
+ * Fetch all redemption records for the given member (newest first).
+ *
+ * GET /members/{member_id}/rewards/redemptions
+ */
+export function useMemberRedemptions(memberId: string) {
+  return useQuery({
+    queryKey: memberRedemptionsKey(memberId),
+    queryFn: async (): Promise<RewardRedemption[]> => {
+      const raw = await api<unknown[]>(`/members/${memberId}/rewards/redemptions`);
+      return transformKeys<RewardRedemption[]>(raw);
+    },
+    enabled: !!memberId,
+    staleTime: 60_000,
+  });
+}
+
+/**
+ * Fetch all journeys for the given member (member-facing).
+ *
+ * GET /members/{member_id}/journeys — returns MemberJourneyResponse[].
+ * The active journey is the first non-completed, non-abandoned entry.
+ */
+export function useMemberJourneys(memberId: string) {
+  return useQuery({
+    queryKey: memberJourneysKey(memberId),
+    queryFn: async (): Promise<MemberJourneyResponse[]> => {
+      const raw = await api<unknown[]>(`/members/${memberId}/journeys`);
+      return transformKeys<MemberJourneyResponse[]>(raw);
+    },
+    enabled: !!memberId,
+    staleTime: 60_000,
+  });
+}
+
+// ─── Rewards redemption mutation (member-facing) ──────────────────────────────
+
+/**
+ * POST /members/{member_id}/rewards/redemptions
+ *
+ * Creates a new redemption request for the given catalog item.
+ * On success invalidates both the balance and redemptions caches.
+ */
+export function useCreateRedemption(memberId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (catalogItemId: string): Promise<RewardRedemption> => {
+      const raw = await api<unknown>(
+        `/members/${memberId}/rewards/redemptions`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ catalog_item_id: catalogItemId }),
+        },
+      );
+      return transformKeys<RewardRedemption>(raw);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: memberRewardsBalanceKey(memberId) });
+      void qc.invalidateQueries({ queryKey: memberRedemptionsKey(memberId) });
+    },
+    onError: (_error: unknown) => {
+      // Caller handles the error — no silent failures.
     },
   });
 }

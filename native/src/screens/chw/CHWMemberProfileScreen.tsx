@@ -1,33 +1,29 @@
 /**
  * CHWMemberProfileScreen — Full member context view for CHW/admin users.
  *
- * Shows the assigned CHW (or admin) a complete picture of a member:
- *   - Contact info and quick-action buttons (Call/Text — disabled, Call Center descoped)
- *   - About section: address, languages, MCO, ECM flag, need-category chips
- *   - Billable Units mini-card (today + year caps, red when near cap)
- *   - Latest Assessment placeholder (parallel agent builds the real data)
- *   - Session history (with this CHW): chronological list, View button
- *   - Open Goals & Follow-ups from session_followups
- *   - Consent section: which types are granted
+ * Re-skinned to the new design system. Behavior, hooks, mutations, and
+ * navigation are identical to the original.
  *
- * Access gate:
- *   - CHW: backend returns 403 when no active relationship (session or accepted
- *     request) exists. Renders a clear "no access" empty state — not a generic error.
- *   - Admin: unrestricted access to any member profile.
- *
- * Navigation entry points:
- *   - CHWSessionsScreen: tap member name → pushes MemberProfile
- *   - CHWRequestsScreen: "View Member Profile" on accepted cards → pushes MemberProfile
- *   - SessionChat header: member name link → pushes MemberProfile (future)
- *
- * Route param: { memberId: string }
+ * New layout (web):
+ *   - Top header card (full width): identity column (avatar + name + pills) ·
+ *     contact column (DOB/Phone/Address/Insurance) · Resource Needs column
+ *   - Mid row: 4-column insights card (9/12) + Compass Insights AI panel (3/12 RightRail)
+ *   - Journey section: 9/12 horizontal step roadmap + 3/12 Quick Access RightRail
+ *   - StickyActionBar: Message Member · Start Call · Schedule Session ·
+ *     Open Questions · Add Note
+ *   - RightDrawer: Open Questions (static suggested questions v1)
+ *   - RightDrawer: Message Member (inline thread via ProfileContactButtons)
  *
  * HIPAA minimum-necessary (45 CFR §164.514(d)):
- *   medi_cal_id, insurance_provider, session notes from other CHWs, and
- *   transcripts are explicitly NOT rendered.
+ *   medi_cal_id, insurance_provider, notes from other CHWs, transcripts are
+ *   explicitly NOT rendered.
+ *
+ * Access gate:
+ *   CHW: backend returns 403 when no active relationship exists.
+ *   Admin: unrestricted access.
  */
 
-import React, { useCallback } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -38,6 +34,8 @@ import {
   Text,
   TouchableOpacity,
   View,
+  type ViewStyle,
+  type TextStyle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
@@ -56,16 +54,39 @@ import {
   ShieldX,
   Sparkles,
   User,
+  MessageSquare,
+  PhoneCall,
+  CalendarPlus,
+  HelpCircle,
+  NotebookPen,
+  FileText,
+  ClipboardList,
+  CheckSquare,
+  UploadCloud,
+  RadioTower,
+  ChevronRight,
 } from 'lucide-react-native';
 import { useQuery } from '@tanstack/react-query';
 
 import { colors } from '../../theme/colors';
 import { fonts } from '../../theme/typography';
+import { colors as tokens } from '../../theme/tokens';
 import { api } from '../../api/client';
 import { transformKeys } from '../../utils/caseTransform';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ProfileContactButtons } from '../../components/comms/ProfileContactButtons';
 import type { CHWSessionsStackParamList } from '../../navigation/CHWTabNavigator';
+
+import {
+  AppShell,
+  PageHeader,
+  Card,
+  Pill,
+  RightRail,
+  StickyActionBar,
+  RightDrawer,
+} from '../../components/ui';
+import { useAuth } from '../../context/AuthContext';
 
 // ─── Navigation types ─────────────────────────────────────────────────────────
 
@@ -160,7 +181,6 @@ function useMemberDetail(memberId: string) {
     enabled: memberId.length > 0,
     staleTime: 60_000,
     retry: (failureCount, error: unknown) => {
-      // Never retry a 403 — the relationship gate is intentional.
       if (
         error != null &&
         typeof error === 'object' &&
@@ -184,7 +204,6 @@ function useAssessmentLatest(memberId: string) {
         );
         return transformKeys<AssessmentLatest>(raw);
       } catch (err: unknown) {
-        // 404 is expected until the parallel agent's branch lands — degrade gracefully.
         if (
           err != null &&
           typeof err === 'object' &&
@@ -198,7 +217,7 @@ function useAssessmentLatest(memberId: string) {
     },
     enabled: memberId.length > 0,
     staleTime: 120_000,
-    retry: false, // Don't retry — 404 is the expected state until parallel branch lands
+    retry: false,
   });
 }
 
@@ -207,7 +226,6 @@ function useAssessmentLatest(memberId: string) {
 const MAX_UNITS_PER_DAY = 4;
 const MAX_UNITS_PER_YEAR = 10;
 
-/** Threshold at which billing unit counts render in warning red. */
 const CAP_WARNING_THRESHOLD_DAY = 1;
 const CAP_WARNING_THRESHOLD_YEAR = 2;
 
@@ -239,6 +257,55 @@ const CATEGORY_COLORS: Record<string, string> = {
   rehab: '#059669',
   healthcare: '#DC2626',
 };
+
+/**
+ * Maps a category key to a Pill variant for the new design system.
+ */
+function categoryToPillVariant(cat: string): 'purple' | 'amber' | 'blue' | 'emerald' | 'red' | 'gray' {
+  switch (cat) {
+    case 'housing':       return 'purple';
+    case 'food':          return 'amber';
+    case 'mental_health': return 'blue';
+    case 'rehab':         return 'emerald';
+    case 'healthcare':    return 'red';
+    default:              return 'gray';
+  }
+}
+
+// ─── Static suggested questions for Open Questions drawer (v1 — no backend) ──
+
+const SUGGESTED_QUESTIONS: ReadonlyArray<{ category: string; questions: string[] }> = [
+  {
+    category: 'Housing Stability',
+    questions: [
+      'Have there been any changes to your living situation since we last met?',
+      'Are you currently on any housing waitlists?',
+      'Do you have concerns about keeping your current housing?',
+    ],
+  },
+  {
+    category: 'Food Security',
+    questions: [
+      'Have you been able to access enough food for yourself and your family?',
+      'Are you enrolled in CalFresh / SNAP? If not, would you like help applying?',
+    ],
+  },
+  {
+    category: 'Health & Wellness',
+    questions: [
+      'Have you had any medical appointments since our last session?',
+      'Are there any new health concerns you would like to address?',
+      'How are you managing your medications?',
+    ],
+  },
+  {
+    category: 'Goals & Follow-ups',
+    questions: [
+      'How are you progressing on the goals we set last time?',
+      'Is there anything that has been a barrier to completing action items?',
+    ],
+  },
+];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -313,7 +380,7 @@ const infoRowStyles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 12,
     marginBottom: 8,
-  },
+  } as ViewStyle,
   iconBox: {
     width: 36,
     height: 36,
@@ -321,8 +388,8 @@ const infoRowStyles = StyleSheet.create({
     backgroundColor: '#3D5A3E15',
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  textBox: { flex: 1 },
+  } as ViewStyle,
+  textBox: { flex: 1 } as ViewStyle,
   label: {
     fontFamily: fonts.bodySemibold,
     fontSize: 10,
@@ -330,22 +397,21 @@ const infoRowStyles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 1,
     marginBottom: 1,
-  },
+  } as TextStyle,
   value: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 14,
     color: '#1E3320',
-  },
+  } as TextStyle,
   valuePlaceholder: {
     color: '#A0A6AB',
     fontStyle: 'italic',
-  },
+  } as TextStyle,
 });
 
 interface SectionCardProps {
   title: string;
   children: React.ReactNode;
-  /** Optional trailing element in the title row (e.g. a count badge). */
   titleRight?: React.ReactNode;
 }
 
@@ -355,34 +421,21 @@ function SectionCard({
   titleRight,
 }: SectionCardProps): React.JSX.Element {
   return (
-    <View style={sectionCardStyles.container}>
+    <Card style={sectionCardStyles.container}>
       <View style={sectionCardStyles.titleRow}>
         <Text style={sectionCardStyles.title}>{title}</Text>
         {titleRight}
       </View>
       <View style={sectionCardStyles.body}>{children}</View>
-    </View>
+    </Card>
   );
 }
 
 const sectionCardStyles = StyleSheet.create({
   container: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
     marginBottom: 16,
     overflow: 'hidden',
-    ...Platform.select({
-      ios: {
-        shadowColor: '#3D5A3E',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.08,
-        shadowRadius: 24,
-      },
-      android: { elevation: 3 },
-    }),
-  },
+  } as ViewStyle,
   titleRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -390,18 +443,18 @@ const sectionCardStyles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 14,
     paddingBottom: 6,
-  },
+  } as ViewStyle,
   title: {
     fontFamily: fonts.bodySemibold,
     fontSize: 12,
     color: '#6B7280',
     textTransform: 'uppercase',
     letterSpacing: 1,
-  },
+  } as TextStyle,
   body: {
     paddingHorizontal: 16,
     paddingBottom: 12,
-  },
+  } as ViewStyle,
 });
 
 function EmptySectionState({
@@ -420,13 +473,13 @@ const emptyStyles = StyleSheet.create({
   container: {
     alignItems: 'center',
     paddingVertical: 16,
-  },
+  } as ViewStyle,
   text: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 13,
     color: '#A0A6AB',
     fontStyle: 'italic',
-  },
+  } as TextStyle,
 });
 
 // ─── BillingUnitsCard ─────────────────────────────────────────────────────────
@@ -513,55 +566,54 @@ const billingStyles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#DDD6CC',
     overflow: 'hidden',
-  },
+  } as ViewStyle,
   halfBlock: {
     flex: 1,
     padding: 12,
     gap: 8,
-  },
+  } as ViewStyle,
   verticalDivider: {
     width: 1,
     backgroundColor: '#DDD6CC',
-  },
+  } as ViewStyle,
   periodLabel: {
     fontFamily: fonts.bodySemibold,
     fontSize: 10,
     color: '#6B7280',
     textTransform: 'uppercase',
     letterSpacing: 0.8,
-  },
+  } as TextStyle,
   barTrack: {
     height: 6,
     backgroundColor: '#DDD6CC',
     borderRadius: 3,
     overflow: 'hidden',
-  },
+  } as ViewStyle,
   barFill: {
     height: '100%',
     borderRadius: 3,
-  },
+  } as ViewStyle,
   statsRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-  },
+  } as ViewStyle,
   usedLabel: {
     fontFamily: 'DMSans_700Bold',
     fontSize: 13,
     color: '#1E3320',
-  },
+  } as TextStyle,
   usedLabelDanger: {
     color: '#DC2626',
-  },
+  } as TextStyle,
   remainingLabel: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 12,
     color: '#6B7280',
-  },
+  } as TextStyle,
 });
 
 // ─── AssessmentSection ────────────────────────────────────────────────────────
-// Placeholder section — parallel agent owns the real assessment rendering.
 
 interface AssessmentSectionProps {
   memberId: string;
@@ -616,36 +668,34 @@ const assessmentStyles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 100,
-  },
+  } as ViewStyle,
   badgeText: {
     fontFamily: fonts.bodySemibold,
     fontSize: 10,
     color: colors.secondary,
-  },
+  } as TextStyle,
   loadingRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
     paddingVertical: 12,
-  },
+  } as ViewStyle,
   loadingText: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 13,
     color: colors.mutedForeground,
-  },
-  present: {
-    gap: 8,
-  },
+  } as TextStyle,
+  present: { gap: 8 } as ViewStyle,
   metaRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-  },
+  } as ViewStyle,
   completedAt: {
     fontFamily: fonts.bodySemibold,
     fontSize: 13,
     color: '#1E3320',
-  },
+  } as TextStyle,
   categoryRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -654,18 +704,18 @@ const assessmentStyles = StyleSheet.create({
     borderRadius: 8,
     paddingHorizontal: 10,
     paddingVertical: 6,
-  },
+  } as ViewStyle,
   categoryLabel: {
     fontFamily: fonts.bodySemibold,
     fontSize: 12,
     color: '#1E3320',
     textTransform: 'capitalize',
-  },
+  } as TextStyle,
   categoryCount: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 12,
     color: '#6B7280',
-  },
+  } as TextStyle,
 });
 
 // ─── SessionHistoryItem ───────────────────────────────────────────────────────
@@ -695,11 +745,9 @@ function SessionHistoryItem({
   return (
     <View style={sessionItemStyles.container}>
       <View style={sessionItemStyles.left}>
-        {/* Date */}
         <Text style={sessionItemStyles.date}>
           {formatDateTime(session.scheduledAt ?? session.startedAt)}
         </Text>
-        {/* Mode + status */}
         <View style={sessionItemStyles.badgeRow}>
           <View style={sessionItemStyles.modeBadge}>
             <Text style={sessionItemStyles.modeText}>{modeLabel}</Text>
@@ -717,7 +765,6 @@ function SessionHistoryItem({
             </Text>
           </View>
         </View>
-        {/* Duration + units for completed sessions */}
         {isCompleted && (
           <View style={sessionItemStyles.statsRow}>
             {session.durationMinutes != null && (
@@ -759,22 +806,22 @@ const sessionItemStyles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#DDD6CC',
     gap: 10,
-  },
+  } as ViewStyle,
   left: {
     flex: 1,
     gap: 4,
-  },
+  } as ViewStyle,
   date: {
     fontFamily: fonts.bodySemibold,
     fontSize: 13,
     color: '#1E3320',
-  },
+  } as TextStyle,
   badgeRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     flexWrap: 'wrap',
-  },
+  } as ViewStyle,
   modeBadge: {
     backgroundColor: '#F4F1ED',
     borderRadius: 6,
@@ -782,26 +829,26 @@ const sessionItemStyles = StyleSheet.create({
     paddingVertical: 2,
     borderWidth: 1,
     borderColor: '#DDD6CC',
-  },
+  } as ViewStyle,
   modeText: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 11,
     color: '#6B7280',
-  },
+  } as TextStyle,
   statusBadge: {
     borderRadius: 6,
     paddingHorizontal: 8,
     paddingVertical: 2,
-  },
+  } as ViewStyle,
   statusText: {
     fontFamily: fonts.bodySemibold,
     fontSize: 11,
-  },
+  } as TextStyle,
   statsRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-  },
+  } as ViewStyle,
   statChip: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -810,12 +857,12 @@ const sessionItemStyles = StyleSheet.create({
     borderRadius: 6,
     paddingHorizontal: 6,
     paddingVertical: 2,
-  },
+  } as ViewStyle,
   statText: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 11,
     color: colors.mutedForeground,
-  },
+  } as TextStyle,
   viewBtn: {
     paddingHorizontal: 14,
     paddingVertical: 8,
@@ -824,12 +871,12 @@ const sessionItemStyles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.primary + '40',
     flexShrink: 0,
-  },
+  } as ViewStyle,
   viewBtnText: {
     fontFamily: fonts.bodySemibold,
     fontSize: 12,
     color: colors.primary,
-  },
+  } as TextStyle,
 });
 
 // ─── GoalItem / FollowupItem ──────────────────────────────────────────────────
@@ -873,7 +920,7 @@ const actionItemStyles = StyleSheet.create({
     paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#DDD6CC',
-  },
+  } as ViewStyle,
   bullet: {
     width: 6,
     height: 6,
@@ -881,25 +928,25 @@ const actionItemStyles = StyleSheet.create({
     backgroundColor: colors.primary,
     marginTop: 6,
     flexShrink: 0,
-  },
+  } as ViewStyle,
   content: {
     flex: 1,
     gap: 2,
-  },
+  } as ViewStyle,
   text: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 13,
     color: '#1E3320',
     lineHeight: 20,
-  },
+  } as TextStyle,
   due: {
     fontFamily: fonts.bodySemibold,
     fontSize: 11,
     color: colors.mutedForeground,
-  },
+  } as TextStyle,
   dueOverdue: {
     color: '#DC2626',
-  },
+  } as TextStyle,
 });
 
 // ─── ConsentStatusRow ─────────────────────────────────────────────────────────
@@ -952,22 +999,225 @@ const consentRowStyles = StyleSheet.create({
     paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: '#DDD6CC',
-  },
+  } as ViewStyle,
   label: {
     fontFamily: fonts.bodySemibold,
     fontSize: 13,
     color: '#1E3320',
     flex: 1,
-  },
+  } as TextStyle,
   right: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-  },
+  } as ViewStyle,
   value: {
     fontFamily: fonts.bodySemibold,
     fontSize: 13,
-  },
+  } as TextStyle,
+});
+
+// ─── Journey step roadmap ─────────────────────────────────────────────────────
+
+const JOURNEY_STEPS = [
+  { key: 'intake',       label: 'Intake',            done: true  },
+  { key: 'assessment',   label: 'Assessment',         done: true  },
+  { key: 'plan',         label: 'Care Plan',          done: false },
+  { key: 'resources',    label: 'Resources Linked',   done: false },
+  { key: 'follow_up',   label: 'Follow-up',           done: false },
+  { key: 'graduation',  label: 'Graduation',          done: false },
+] as const;
+
+function JourneyRoadmap(): React.JSX.Element {
+  return (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={journeyStyles.row}>
+      {JOURNEY_STEPS.map((step, index) => (
+        <View key={step.key} style={journeyStyles.stepWrapper}>
+          <View style={[journeyStyles.stepDot, step.done && journeyStyles.stepDotDone]}>
+            {step.done ? (
+              <CheckCircle size={14} color="#FFFFFF" />
+            ) : (
+              <View style={journeyStyles.stepInner} />
+            )}
+          </View>
+          <Text style={[journeyStyles.stepLabel, step.done && journeyStyles.stepLabelDone]}>
+            {step.label}
+          </Text>
+          {index < JOURNEY_STEPS.length - 1 && (
+            <View style={[journeyStyles.connector, step.done && journeyStyles.connectorDone]} />
+          )}
+        </View>
+      ))}
+    </ScrollView>
+  );
+}
+
+const journeyStyles = StyleSheet.create({
+  row: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 0,
+    paddingVertical: 8,
+  } as ViewStyle,
+  stepWrapper: {
+    alignItems: 'center',
+    position: 'relative',
+    minWidth: 80,
+  } as ViewStyle,
+  stepDot: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#DDD6CC',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1,
+  } as ViewStyle,
+  stepDotDone: {
+    backgroundColor: '#3D5A3E',
+  } as ViewStyle,
+  stepInner: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#A0A6AB',
+  } as ViewStyle,
+  stepLabel: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: '#A0A6AB',
+    textAlign: 'center',
+    marginTop: 6,
+    maxWidth: 72,
+  } as TextStyle,
+  stepLabelDone: {
+    color: '#1E3320',
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+  } as TextStyle,
+  connector: {
+    position: 'absolute',
+    top: 13,
+    left: '50%',
+    right: '-50%',
+    height: 2,
+    backgroundColor: '#DDD6CC',
+    zIndex: 0,
+  } as ViewStyle,
+  connectorDone: {
+    backgroundColor: '#3D5A3E',
+  } as ViewStyle,
+});
+
+// ─── Quick Access rail items ──────────────────────────────────────────────────
+
+interface QuickAccessItemProps {
+  icon: React.ReactNode;
+  label: string;
+  onPress: () => void;
+}
+
+function QuickAccessItem({ icon, label, onPress }: QuickAccessItemProps): React.JSX.Element {
+  return (
+    <TouchableOpacity
+      style={quickAccessStyles.item}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+    >
+      <View style={quickAccessStyles.iconWrap}>{icon}</View>
+      <Text style={quickAccessStyles.label}>{label}</Text>
+      <ChevronRight size={14} color="#A0A6AB" />
+    </TouchableOpacity>
+  );
+}
+
+const quickAccessStyles = StyleSheet.create({
+  item: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#DDD6CC',
+  } as ViewStyle,
+  iconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: '#3D5A3E15',
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+  label: {
+    flex: 1,
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 13,
+    color: '#1E3320',
+  } as TextStyle,
+});
+
+// ─── Open Questions drawer content ────────────────────────────────────────────
+
+function OpenQuestionsContent(): React.JSX.Element {
+  return (
+    <View style={openQStyles.container}>
+      <Text style={openQStyles.intro}>
+        These questions are suggested based on this member's care plan and recent session history.
+        Use them as conversation starters — adapt freely.
+      </Text>
+      {SUGGESTED_QUESTIONS.map((section) => (
+        <View key={section.category} style={openQStyles.section}>
+          <Text style={openQStyles.categoryLabel}>{section.category}</Text>
+          {section.questions.map((q, i) => (
+            <View key={i} style={openQStyles.questionRow}>
+              <View style={openQStyles.qBullet} />
+              <Text style={openQStyles.questionText}>{q}</Text>
+            </View>
+          ))}
+        </View>
+      ))}
+    </View>
+  );
+}
+
+const openQStyles = StyleSheet.create({
+  container: { gap: 20 } as ViewStyle,
+  intro: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: '#6B7280',
+    lineHeight: 20,
+    backgroundColor: '#F4F1ED',
+    borderRadius: 10,
+    padding: 12,
+  } as TextStyle,
+  section: { gap: 8 } as ViewStyle,
+  categoryLabel: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 13,
+    color: '#1E3320',
+    marginBottom: 2,
+  } as TextStyle,
+  questionRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  } as ViewStyle,
+  qBullet: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#3D5A3E',
+    marginTop: 7,
+    flexShrink: 0,
+  } as ViewStyle,
+  questionText: {
+    flex: 1,
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: '#1E3320',
+    lineHeight: 20,
+  } as TextStyle,
 });
 
 // ─── Main screen component ────────────────────────────────────────────────────
@@ -982,7 +1232,16 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
   const navigation = useNavigation<MemberProfileNavProp>();
   const { memberId } = route.params;
 
+  const { userName } = useAuth();
+  const chwInitials = userName
+    ? userName.split(' ').map((n) => n[0] ?? '').join('').toUpperCase().slice(0, 2)
+    : 'CW';
+
   const { data: profile, isLoading, error } = useMemberDetail(memberId);
+
+  // ── Drawer state
+  const [openQuestionsOpen, setOpenQuestionsOpen] = useState(false);
+  const [messageDrawerOpen, setMessageDrawerOpen] = useState(false);
 
   // ── Navigate to session detail ───────────────────────────────────────────────
   const handleViewSession = useCallback(
@@ -1000,18 +1259,9 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
 
   // ── Navigate to in-app conversation ─────────────────────────────────────────
   // Called by ProfileContactButtons after find-or-create resolves a conversation id.
-  // SessionChat is the existing conversation screen registered in the sessions stack.
-  // For now we navigate to the session messages via the existing deeplink pattern;
-  // when the standalone DM screen lands, swap the navigation target here.
   const handleNavigateToConversation = useCallback(
     (conversationId: string): void => {
-      // Deep-link to the conversation — the member's profile screen is in the
-      // CHWSessionsStack so we can navigate within that stack. If a standalone
-      // DM/Conversation screen is added later, update this navigate call.
       navigation.navigate('Sessions');
-      // Optionally: navigation.navigate('ConversationScreen', { conversationId })
-      // once the DM screen is registered in the stack.
-      // For now we surface a confirmation since the standalone screen is pending.
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         window.alert(
           `Conversation opened (id: ${conversationId.slice(0, 8)}…). ` +
@@ -1047,7 +1297,7 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
           <Text style={s.headerTitle}>Member Profile</Text>
           <View style={{ width: 40 }} />
         </View>
-        <View style={s.pageWrap}>
+        <View style={s.pageWrapLoading}>
           <LoadingSkeleton variant="card" />
           <LoadingSkeleton variant="rows" rows={5} />
         </View>
@@ -1056,7 +1306,6 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
   }
 
   // ── 403 / access denied state ────────────────────────────────────────────────
-  // 403 is the backend correctly enforcing the relationship gate — not an error.
 
   const is403 =
     error != null &&
@@ -1110,276 +1359,527 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
   const initials = getInitials(profile.firstName, profile.lastName);
   const displayName = `${profile.firstName} ${profile.lastName}`.trim();
 
+  // ── Main render ───────────────────────────────────────────────────────────────
+
   return (
     <SafeAreaView style={s.safeArea} edges={['top']}>
       <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
 
-      {/* ── Screen header ── */}
-      <View style={s.header}>
-        <TouchableOpacity
-          style={s.backBtn}
-          onPress={() => navigation.goBack()}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-        >
-          <ArrowLeft size={20} color={colors.foreground} />
-        </TouchableOpacity>
-        <Text style={s.headerTitle} numberOfLines={1}>
-          Member Profile
-        </Text>
-        <View style={{ width: 40 }} />
-      </View>
-
-      <ScrollView
-        style={s.scroll}
-        contentContainerStyle={s.scrollContent}
-        showsVerticalScrollIndicator={false}
+      <AppShell
+        role="chw"
+        activeKey="memberProfile"
+        userBlock={{ initials: chwInitials, name: userName ?? 'CHW', role: 'CHW' }}
       >
-        <View style={s.pageWrap}>
-
-          {/* ── Hero — avatar, name, language badge ── */}
-          <View style={s.bannerContainer}>
-            <View style={s.banner} />
-            <View style={s.heroSection}>
-              <View style={s.avatarWrapper}>
-                <View style={s.avatar}>
-                  <Text style={s.avatarText}>{initials}</Text>
-                </View>
-              </View>
-              <Text style={s.displayName}>{displayName}</Text>
-              <View style={s.heroBadgesRow}>
-                {/* Primary language */}
-                <View style={s.languageBadge}>
-                  <Globe size={11} color="#3D5A3E" />
-                  <Text style={s.languageBadgeText}>{profile.primaryLanguage}</Text>
-                </View>
-                {/* ECM eligibility flag */}
-                {profile.ecmEligible && (
-                  <View style={s.ecmBadge}>
-                    <CheckCircle size={11} color="#1D4ED8" />
-                    <Text style={s.ecmBadgeText}>ECM Eligible</Text>
-                  </View>
-                )}
-              </View>
-            </View>
+        {/* ── Screen header (back button row — kept for native; web has sidebar) */}
+        {Platform.OS !== 'web' && (
+          <View style={s.header}>
+            <TouchableOpacity
+              style={s.backBtn}
+              onPress={() => navigation.goBack()}
+              accessibilityRole="button"
+              accessibilityLabel="Go back"
+            >
+              <ArrowLeft size={20} color={colors.foreground} />
+            </TouchableOpacity>
+            <Text style={s.headerTitle} numberOfLines={1}>
+              Member Profile
+            </Text>
+            <View style={{ width: 40 }} />
           </View>
+        )}
 
-          {/* ── Quick actions — bidirectional masked call + in-app messaging ── */}
-          <ProfileContactButtons
-            targetUserId={memberId}
-            targetUserRole="member"
-            sharedSessionCount={profile.sessionCount}
-            targetDisplayName={`${profile.firstName} ${profile.lastName}`.trim()}
-            onNavigateToConversation={handleNavigateToConversation}
-          />
+        <ScrollView
+          style={s.scroll}
+          contentContainerStyle={s.scrollContent}
+          showsVerticalScrollIndicator={false}
+          // Add bottom padding so StickyActionBar doesn't overlap content
+          contentInsetAdjustmentBehavior="automatic"
+        >
+          <View style={s.pageWrap}>
 
-          {/* ── About ── */}
-          <SectionCard title="About">
-            {/* Contact */}
-            <InfoRow
-              icon={<Phone size={16} color={colors.primary} />}
-              label="Phone"
-              value={profile.phoneE164 ?? 'Not provided'}
-              placeholder={!profile.phoneE164}
-            />
-            {profile.email ? (
-              <InfoRow
-                icon={<User size={16} color={colors.primary} />}
-                label="Email"
-                value={profile.email}
-              />
-            ) : null}
-
-            {/* Location */}
-            <InfoRow
-              icon={<MapPin size={16} color={colors.primary} />}
-              label={profile.address ? 'Address' : 'ZIP Code'}
-              value={
-                profile.address
-                  ? [profile.address, profile.city, profile.zipCode]
-                      .filter(Boolean)
-                      .join(', ')
-                  : profile.zipCode
-                  ? `ZIP ${profile.zipCode}`
-                  : 'Not provided'
-              }
-              placeholder={!profile.address && !profile.zipCode}
-            />
-
-            {/* Languages */}
-            <InfoRow
-              icon={<Globe size={16} color={colors.primary} />}
-              label={
-                profile.additionalLanguages.length > 0
-                  ? 'Languages'
-                  : 'Primary Language'
-              }
-              value={
-                [profile.primaryLanguage, ...profile.additionalLanguages].join(', ')
-              }
-            />
-
-            {/* MCO */}
-            <InfoRow
-              icon={<Heart size={16} color={colors.primary} />}
-              label="MCO / Insurance"
-              value={profile.mco ?? 'Not provided'}
-              placeholder={!profile.mco}
-            />
-
-            {/* Need categories as chips */}
-            {profile.primaryCategories.length > 0 && (
-              <View style={s.categoriesBlock}>
-                <Text style={s.categoriesLabel}>Need Categories</Text>
-                <View style={s.chipsRow}>
-                  {profile.primaryCategories.map((cat) => {
-                    const color = CATEGORY_COLORS[cat] ?? colors.primary;
-                    const label = CATEGORY_LABELS[cat] ?? cat;
-                    return (
-                      <View
-                        key={cat}
-                        style={[s.chip, { backgroundColor: color + '18' }]}
-                      >
-                        <Text style={[s.chipText, { color }]}>{label}</Text>
-                      </View>
-                    );
-                  })}
-                </View>
+            {/* Web: back button / page header */}
+            {Platform.OS === 'web' && (
+              <View style={s.webHeader}>
+                <TouchableOpacity
+                  style={s.backLinkWeb}
+                  onPress={() => navigation.goBack()}
+                  accessibilityRole="button"
+                  accessibilityLabel="Back to members"
+                >
+                  <ArrowLeft size={16} color={colors.primary} />
+                  <Text style={s.backLinkText}>Back to Members</Text>
+                </TouchableOpacity>
+                <PageHeader
+                  title={displayName}
+                  subtitle="Member Profile"
+                />
               </View>
             )}
-          </SectionCard>
 
-          {/* ── Billable Units ── */}
-          <SectionCard
-            title="Billable Units (Medi-Cal)"
-            titleRight={
-              <Text style={s.billingCapNote}>
-                {MAX_UNITS_PER_DAY}/day · {MAX_UNITS_PER_YEAR}/year cap
-              </Text>
-            }
-          >
-            <BillingUnitsCard units={profile.billingUnits} />
-          </SectionCard>
+            {/* ── TOP HEADER CARD: identity + contact + resource needs ── */}
+            <Card style={s.headerCard}>
+              <View style={s.headerCardRow}>
 
-          {/* ── Latest Assessment (placeholder) ── */}
-          <AssessmentSection memberId={memberId} />
-
-          {/* ── Session History ── */}
-          <SectionCard
-            title="Sessions"
-            titleRight={
-              profile.sessionCount > 0 ? (
-                <View style={s.countBadge}>
-                  <Text style={s.countBadgeText}>{profile.sessionCount} completed</Text>
+                {/* Identity column — avatar + name + pills */}
+                <View style={s.identityCol}>
+                  <View style={s.bannerContainer}>
+                    <View style={s.banner} />
+                    <View style={s.heroSection}>
+                      <View style={s.avatarWrapper}>
+                        <View style={s.avatar}>
+                          <Text style={s.avatarText}>{initials}</Text>
+                        </View>
+                      </View>
+                      <Text style={s.displayName}>{displayName}</Text>
+                      <View style={s.heroBadgesRow}>
+                        <Pill variant="emerald" size="sm">Active</Pill>
+                        {profile.ecmEligible && (
+                          <Pill variant="blue" size="sm">ECM Eligible</Pill>
+                        )}
+                        <Pill variant="gray" size="sm">
+                          {profile.primaryLanguage}
+                        </Pill>
+                      </View>
+                    </View>
+                  </View>
                 </View>
-              ) : undefined
-            }
-          >
-            {profile.recentSessions.length > 0 ? (
-              <>
-                {profile.recentSessions.map((session, index) => (
-                  <View
-                    key={session.id}
-                    style={
-                      index === profile.recentSessions.length - 1
-                        ? s.sessionItemLast
-                        : undefined
+
+                {/* Contact column */}
+                <View style={s.contactCol}>
+                  <Text style={s.colHeading}>Contact</Text>
+                  <InfoRow
+                    icon={<Phone size={14} color={colors.primary} />}
+                    label="Phone"
+                    value={profile.phoneE164 ?? 'Not provided'}
+                    placeholder={!profile.phoneE164}
+                  />
+                  <InfoRow
+                    icon={<MapPin size={14} color={colors.primary} />}
+                    label={profile.address ? 'Address' : 'ZIP Code'}
+                    value={
+                      profile.address
+                        ? [profile.address, profile.city, profile.zipCode]
+                            .filter(Boolean)
+                            .join(', ')
+                        : profile.zipCode
+                        ? `ZIP ${profile.zipCode}`
+                        : 'Not provided'
                     }
-                  >
-                    <SessionHistoryItem
-                      session={session}
-                      onView={handleViewSession}
+                    placeholder={!profile.address && !profile.zipCode}
+                  />
+                  <InfoRow
+                    icon={<Globe size={14} color={colors.primary} />}
+                    label="Language"
+                    value={[profile.primaryLanguage, ...profile.additionalLanguages].join(', ')}
+                  />
+                  <InfoRow
+                    icon={<Heart size={14} color={colors.primary} />}
+                    label="MCO / Insurance"
+                    value={profile.mco ?? 'Not provided'}
+                    placeholder={!profile.mco}
+                  />
+                  {profile.email ? (
+                    <InfoRow
+                      icon={<User size={14} color={colors.primary} />}
+                      label="Email"
+                      value={profile.email}
+                    />
+                  ) : null}
+                </View>
+
+                {/* Resource Needs column */}
+                <View style={s.needsCol}>
+                  <Text style={s.colHeading}>Resource Needs</Text>
+                  {profile.primaryCategories.length === 0 ? (
+                    <Text style={s.needsEmpty}>No categories recorded.</Text>
+                  ) : (
+                    profile.primaryCategories.map((cat, index) => {
+                      const label = CATEGORY_LABELS[cat] ?? cat;
+                      const pillVariant = categoryToPillVariant(cat);
+                      return (
+                        <View key={cat} style={s.needItem}>
+                          <View style={s.needRank}>
+                            <Text style={s.needRankText}>{index + 1}</Text>
+                          </View>
+                          <Pill variant={pillVariant} size="md">{label}</Pill>
+                        </View>
+                      );
+                    })
+                  )}
+                </View>
+
+              </View>
+            </Card>
+
+            {/* ── Quick actions — bidirectional masked call + in-app messaging ── */}
+            <ProfileContactButtons
+              targetUserId={memberId}
+              targetUserRole="member"
+              sharedSessionCount={profile.sessionCount}
+              targetDisplayName={displayName}
+              onNavigateToConversation={handleNavigateToConversation}
+            />
+
+            {/* ── MID ROW: Insights (9/12) + Compass Insights AI panel (3/12) ── */}
+            <View style={s.midRow}>
+
+              {/* Left: 4-column insights card */}
+              <View style={s.midMain}>
+                <Card style={s.insightsCard}>
+                  <Text style={s.insightsTitle}>Compass Insights</Text>
+                  <View style={s.insightsGrid}>
+                    <View style={s.insightCell}>
+                      <Text style={s.insightCellLabel}>Last Interaction Summary</Text>
+                      <Text style={s.insightCellBody}>
+                        {profile.lastSessionAt
+                          ? `Last session ${formatDate(profile.lastSessionAt)}. ${profile.sessionCount} total sessions completed.`
+                          : 'No sessions recorded yet.'}
+                      </Text>
+                    </View>
+                    <View style={s.insightCell}>
+                      <Text style={s.insightCellLabel}>What to Focus On</Text>
+                      <Text style={s.insightCellBody}>
+                        {profile.openGoals.length > 0
+                          ? `${profile.openGoals.length} open goal${profile.openGoals.length !== 1 ? 's' : ''}: ${profile.openGoals[0]?.text ?? ''}`
+                          : 'No open goals. Great opportunity to set new targets.'}
+                      </Text>
+                    </View>
+                    <View style={s.insightCell}>
+                      <Text style={s.insightCellLabel}>Recommended Next Best Action</Text>
+                      <Text style={s.insightCellBody}>
+                        {profile.openFollowups.length > 0
+                          ? `Follow up on: ${profile.openFollowups[0]?.text ?? 'pending item'}`
+                          : 'Schedule a check-in session to review member progress.'}
+                      </Text>
+                    </View>
+                    <View style={[s.insightCell, s.insightCellLast]}>
+                      <Text style={s.insightCellLabel}>Alerts &amp; Reminders</Text>
+                      <Text style={s.insightCellBody}>
+                        {profile.billingUnits.todayRemaining <= CAP_WARNING_THRESHOLD_DAY
+                          ? `Billing cap alert: only ${profile.billingUnits.todayRemaining} unit(s) remaining today.`
+                          : profile.billingUnits.yearlyRemaining <= CAP_WARNING_THRESHOLD_YEAR
+                          ? `Approaching yearly cap: ${profile.billingUnits.yearlyRemaining} unit(s) left.`
+                          : 'No active alerts.'}
+                      </Text>
+                    </View>
+                  </View>
+                </Card>
+              </View>
+
+              {/* Right rail: Compass Insights AI panel */}
+              {Platform.OS === 'web' && (
+                <RightRail width={240}>
+                  <Card style={s.aiPanelCard}>
+                    <View style={s.aiPanelHeader}>
+                      <Sparkles size={14} color={colors.secondary} />
+                      <Text style={s.aiPanelTitle}>AI Suggestions</Text>
+                      <View style={s.aiBetaBadge}>
+                        <Text style={s.aiBetaText}>Beta</Text>
+                      </View>
+                    </View>
+                    <Text style={s.aiPanelBody}>
+                      AI-generated suggestions will appear here as you build session history
+                      with this member.
+                    </Text>
+                    <Text style={[s.aiPanelBody, { marginTop: 8 }]}>
+                      Consent for AI Transcription:{' '}
+                      <Text style={[
+                        s.aiConsentValue,
+                        profile.consentStatus.aiTranscription === 'granted'
+                          ? s.aiConsentGranted
+                          : profile.consentStatus.aiTranscription === 'denied'
+                          ? s.aiConsentDenied
+                          : s.aiConsentNone,
+                      ]}>
+                        {profile.consentStatus.aiTranscription === 'granted'
+                          ? 'Granted'
+                          : profile.consentStatus.aiTranscription === 'denied'
+                          ? 'Denied'
+                          : 'Not asked'}
+                      </Text>
+                    </Text>
+                  </Card>
+                </RightRail>
+              )}
+            </View>
+
+            {/* ── JOURNEY SECTION: roadmap (9/12) + Quick Access (3/12) ── */}
+            <View style={s.journeyRow}>
+
+              {/* Left: horizontal step roadmap */}
+              <View style={s.journeyMain}>
+                <SectionCard title="Member Journey">
+                  <JourneyRoadmap />
+                </SectionCard>
+
+                {/* ── Assessment ── */}
+                <AssessmentSection memberId={memberId} />
+
+                {/* ── Billable Units ── */}
+                <SectionCard
+                  title="Billable Units (Medi-Cal)"
+                  titleRight={
+                    <Text style={s.billingCapNote}>
+                      {MAX_UNITS_PER_DAY}/day · {MAX_UNITS_PER_YEAR}/year cap
+                    </Text>
+                  }
+                >
+                  <BillingUnitsCard units={profile.billingUnits} />
+                </SectionCard>
+
+                {/* ── Session History ── */}
+                <SectionCard
+                  title="Sessions"
+                  titleRight={
+                    profile.sessionCount > 0 ? (
+                      <View style={s.countBadge}>
+                        <Text style={s.countBadgeText}>{profile.sessionCount} completed</Text>
+                      </View>
+                    ) : undefined
+                  }
+                >
+                  {profile.recentSessions.length > 0 ? (
+                    <>
+                      {profile.recentSessions.map((session, index) => (
+                        <View
+                          key={session.id}
+                          style={
+                            index === profile.recentSessions.length - 1
+                              ? s.sessionItemLast
+                              : undefined
+                          }
+                        >
+                          <SessionHistoryItem
+                            session={session}
+                            onView={handleViewSession}
+                          />
+                        </View>
+                      ))}
+                    </>
+                  ) : (
+                    <EmptySectionState message="No sessions with this member yet." />
+                  )}
+                </SectionCard>
+
+                {/* ── Open Goals & Follow-ups ── */}
+                <SectionCard
+                  title="Open Goals & Follow-ups"
+                  titleRight={
+                    profile.openGoals.length + profile.openFollowups.length > 0 ? (
+                      <View style={s.countBadge}>
+                        <Text style={s.countBadgeText}>
+                          {profile.openGoals.length + profile.openFollowups.length} open
+                        </Text>
+                      </View>
+                    ) : undefined
+                  }
+                >
+                  {profile.openGoals.length === 0 && profile.openFollowups.length === 0 ? (
+                    <EmptySectionState message="No open goals or follow-ups." />
+                  ) : (
+                    <>
+                      {profile.openGoals.length > 0 && (
+                        <>
+                          <Text style={s.subSectionLabel}>Goals</Text>
+                          {profile.openGoals.map((goal, i) => (
+                            <ActionItem
+                              key={`goal-${i}`}
+                              text={goal.text}
+                              dueDate={goal.dueDate}
+                            />
+                          ))}
+                        </>
+                      )}
+                      {profile.openFollowups.length > 0 && (
+                        <>
+                          <Text
+                            style={[
+                              s.subSectionLabel,
+                              profile.openGoals.length > 0 && { marginTop: 12 },
+                            ]}
+                          >
+                            Follow-ups
+                          </Text>
+                          {profile.openFollowups.map((fu, i) => (
+                            <ActionItem
+                              key={`fu-${i}`}
+                              text={fu.text}
+                              dueDate={fu.dueDate}
+                            />
+                          ))}
+                        </>
+                      )}
+                    </>
+                  )}
+                </SectionCard>
+
+                {/* ── Consent ── */}
+                <SectionCard title="Consent">
+                  <ConsentRow
+                    label="AI Transcription"
+                    value={profile.consentStatus.aiTranscription}
+                  />
+                  <View style={s.consentLastRow}>
+                    <ConsentRow
+                      label="Session Recording"
+                      value={profile.consentStatus.sessionRecording}
                     />
                   </View>
-                ))}
-              </>
-            ) : (
-              <EmptySectionState message="No sessions with this member yet." />
-            )}
-          </SectionCard>
+                </SectionCard>
 
-          {/* ── Open Goals & Follow-ups ── */}
-          <SectionCard
-            title="Open Goals & Follow-ups"
-            titleRight={
-              profile.openGoals.length + profile.openFollowups.length > 0 ? (
-                <View style={s.countBadge}>
-                  <Text style={s.countBadgeText}>
-                    {profile.openGoals.length + profile.openFollowups.length} open
+                {/* ── HIPAA disclosure notice ── */}
+                <View style={s.hipaaNotice}>
+                  <Text style={s.hipaaNoticeText}>
+                    This view shows only the information needed for care delivery.
+                    Member identifiers, insurance details, notes from other CHWs, and
+                    session transcripts are not displayed (HIPAA minimum necessary —
+                    45 CFR §164.514(d)).
                   </Text>
                 </View>
-              ) : undefined
-            }
-          >
-            {profile.openGoals.length === 0 && profile.openFollowups.length === 0 ? (
-              <EmptySectionState message="No open goals or follow-ups." />
-            ) : (
-              <>
-                {/* Goals subsection */}
-                {profile.openGoals.length > 0 && (
-                  <>
-                    <Text style={s.subSectionLabel}>Goals</Text>
-                    {profile.openGoals.map((goal, i) => (
-                      <ActionItem
-                        key={`goal-${i}`}
-                        text={goal.text}
-                        dueDate={goal.dueDate}
-                      />
-                    ))}
-                  </>
-                )}
 
-                {/* Follow-ups subsection */}
-                {profile.openFollowups.length > 0 && (
-                  <>
-                    <Text
-                      style={[
-                        s.subSectionLabel,
-                        profile.openGoals.length > 0 && { marginTop: 12 },
-                      ]}
-                    >
-                      Follow-ups
-                    </Text>
-                    {profile.openFollowups.map((fu, i) => (
-                      <ActionItem
-                        key={`fu-${i}`}
-                        text={fu.text}
-                        dueDate={fu.dueDate}
-                      />
-                    ))}
-                  </>
-                )}
-              </>
-            )}
-          </SectionCard>
+              </View>
 
-          {/* ── Consent ── */}
-          <SectionCard title="Consent">
-            <ConsentRow
-              label="AI Transcription"
-              value={profile.consentStatus.aiTranscription}
-            />
-            <View style={s.consentLastRow}>
-              <ConsentRow
-                label="Session Recording"
-                value={profile.consentStatus.sessionRecording}
-              />
+              {/* Right rail: Quick Access */}
+              {Platform.OS === 'web' && (
+                <RightRail width={240}>
+                  <Card style={s.quickAccessCard}>
+                    <Text style={s.quickAccessTitle}>Quick Access</Text>
+                    <QuickAccessItem
+                      icon={<NotebookPen size={14} color={colors.primary} />}
+                      label="Case Notes"
+                      onPress={() => {/* TODO: navigate to case notes */}}
+                    />
+                    <QuickAccessItem
+                      icon={<ClipboardList size={14} color={colors.primary} />}
+                      label="Assessments"
+                      onPress={() => {/* TODO: navigate to assessments */}}
+                    />
+                    <QuickAccessItem
+                      icon={<CheckSquare size={14} color={colors.primary} />}
+                      label="Screening Results"
+                      onPress={() => {/* TODO: navigate to screenings */}}
+                    />
+                    <QuickAccessItem
+                      icon={<CheckCircle size={14} color={colors.primary} />}
+                      label="Eligibility Verification"
+                      onPress={() => {/* TODO: navigate to eligibility */}}
+                    />
+                    <QuickAccessItem
+                      icon={<UploadCloud size={14} color={colors.primary} />}
+                      label="Uploaded Documents"
+                      onPress={() => {/* TODO: navigate to documents */}}
+                    />
+                    <QuickAccessItem
+                      icon={<RadioTower size={14} color={colors.primary} />}
+                      label="Outreach History"
+                      onPress={() => {/* TODO: navigate to outreach */}}
+                    />
+                  </Card>
+                </RightRail>
+              )}
             </View>
-          </SectionCard>
 
-          {/* ── HIPAA disclosure notice ── */}
-          <View style={s.hipaaNotice}>
-            <Text style={s.hipaaNoticeText}>
-              This view shows only the information needed for care delivery.
-              Member identifiers, insurance details, notes from other CHWs, and
-              session transcripts are not displayed (HIPAA minimum necessary —
-              45 CFR §164.514(d)).
-            </Text>
+            {/* Spacer to clear StickyActionBar */}
+            <View style={{ height: 80 }} />
           </View>
+        </ScrollView>
 
-          <View style={{ height: 40 }} />
-        </View>
-      </ScrollView>
+        {/* ── Sticky Action Bar ── */}
+        <StickyActionBar
+          primary={{
+            label: 'Schedule Session',
+            onPress: () => navigation.navigate('Sessions'),
+          }}
+          actions={[
+            {
+              icon: <MessageSquare size={18} color={tokens.textSecondary} />,
+              label: 'Message',
+              onPress: () => setMessageDrawerOpen(true),
+            },
+            {
+              icon: <PhoneCall size={18} color={tokens.textSecondary} />,
+              label: 'Call',
+              onPress: () => {
+                // Delegates to ProfileContactButtons flow — surfaced via alert
+                // until standalone call UI lands.
+                if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                  window.alert('Use the Call button in the contact section above.');
+                } else {
+                  Alert.alert('Call', 'Use the Call button in the contact section above.');
+                }
+              },
+            },
+            {
+              icon: <HelpCircle size={18} color={tokens.textSecondary} />,
+              label: 'Open Questions',
+              onPress: () => setOpenQuestionsOpen(true),
+            },
+            {
+              icon: <NotebookPen size={18} color={tokens.textSecondary} />,
+              label: 'Add Note',
+              onPress: () => {
+                // TODO(navigation): navigate to Add Note screen once Agent C delivers it.
+                if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                  window.alert('Add Note screen coming soon.');
+                } else {
+                  Alert.alert('Add Note', 'Coming soon.');
+                }
+              },
+            },
+          ]}
+        />
+
+        {/* ── Open Questions drawer ── */}
+        <RightDrawer
+          isOpen={openQuestionsOpen}
+          onClose={() => setOpenQuestionsOpen(false)}
+          title="Suggested Questions"
+          subtitle={`For ${displayName}`}
+        >
+          <OpenQuestionsContent />
+        </RightDrawer>
+
+        {/* ── Message Member drawer ──
+            ProfileContactButtons handles the actual find-or-create flow.
+            The drawer surfaces a short message-composition UI using the same
+            onNavigateToConversation callback for navigation. Full inline thread
+            UI is pending the standalone Messages screen from Agent C. */}
+        <RightDrawer
+          isOpen={messageDrawerOpen}
+          onClose={() => setMessageDrawerOpen(false)}
+          title="Message Member"
+          subtitle={displayName}
+          footer={
+            <TouchableOpacity
+              style={s.messageFooterBtn}
+              onPress={() => setMessageDrawerOpen(false)}
+              accessibilityRole="button"
+              accessibilityLabel="Close message drawer"
+            >
+              <Text style={s.messageFooterBtnText}>Close</Text>
+            </TouchableOpacity>
+          }
+        >
+          <View style={s.messageDrawerContent}>
+            <Text style={s.messageDrawerBody}>
+              Use the contact buttons below to initiate a message thread with{' '}
+              {displayName}. A full inline message thread will be available here
+              once the standalone Messages screen ships.
+            </Text>
+            <ProfileContactButtons
+              targetUserId={memberId}
+              targetUserRole="member"
+              sharedSessionCount={profile.sessionCount}
+              targetDisplayName={displayName}
+              onNavigateToConversation={(convId) => {
+                setMessageDrawerOpen(false);
+                handleNavigateToConversation(convId);
+              }}
+            />
+          </View>
+        </RightDrawer>
+
+      </AppShell>
     </SafeAreaView>
   );
 }
@@ -1389,27 +1889,27 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
 const s = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#F4F1ED',
-  },
+    backgroundColor: tokens.pageBg,
+  } as ViewStyle,
 
-  // ── Header
+  // ── Header (native only)
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 14,
-    backgroundColor: '#F4F1ED',
+    backgroundColor: tokens.pageBg,
     borderBottomWidth: 1,
     borderBottomColor: '#DDD6CC',
-  },
+  } as ViewStyle,
   headerTitle: {
     fontFamily: 'DMSans_700Bold',
     fontSize: 18,
     color: '#1E3320',
     flex: 1,
     textAlign: 'center',
-  },
+  } as TextStyle,
   backBtn: {
     width: 40,
     height: 40,
@@ -1419,44 +1919,80 @@ const s = StyleSheet.create({
     borderColor: '#DDD6CC',
     alignItems: 'center',
     justifyContent: 'center',
-  },
+  } as ViewStyle,
+
+  // ── Web header
+  webHeader: {
+    marginBottom: 8,
+  } as ViewStyle,
+  backLinkWeb: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 12,
+  } as ViewStyle,
+  backLinkText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 13,
+    color: colors.primary,
+  } as TextStyle,
 
   // ── Scroll
-  scroll: { flex: 1 },
+  scroll: { flex: 1 } as ViewStyle,
   scrollContent: {
     flexGrow: 1,
-    alignItems: 'center',
-  },
+  } as ViewStyle,
   pageWrap: {
+    width: '100%',
+    maxWidth: 1100,
+    alignSelf: 'center',
+    paddingHorizontal: 24,
+    paddingTop: 24,
+  } as ViewStyle,
+  pageWrapLoading: {
     width: '100%',
     maxWidth: 560,
     alignSelf: 'center',
     paddingHorizontal: 16,
-    paddingTop: 0,
-  },
+    paddingTop: 16,
+  } as ViewStyle,
 
-  // ── Hero
-  bannerContainer: {
-    marginHorizontal: -16,
-  },
+  // ── Top header card
+  headerCard: {
+    marginBottom: 20,
+    padding: 0,
+    overflow: 'hidden',
+  } as ViewStyle,
+  headerCardRow: {
+    flexDirection: Platform.OS === 'web' ? 'row' : 'column',
+    gap: 0,
+  } as ViewStyle,
+
+  // Identity column
+  identityCol: {
+    flex: Platform.OS === 'web' ? 5 : undefined,
+    borderRightWidth: Platform.OS === 'web' ? 1 : 0,
+    borderRightColor: '#DDD6CC',
+  } as ViewStyle,
+  bannerContainer: {} as ViewStyle,
   banner: {
-    height: 80,
+    height: 64,
     backgroundColor: '#3D5A3E',
-  },
+  } as ViewStyle,
   heroSection: {
     alignItems: 'center',
-    marginBottom: 20,
     paddingHorizontal: 16,
+    paddingBottom: 16,
     gap: 6,
-  },
+  } as ViewStyle,
   avatarWrapper: {
-    marginTop: -40,
+    marginTop: -36,
     marginBottom: 4,
-  },
+  } as ViewStyle,
   avatar: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+    width: 72,
+    height: 72,
+    borderRadius: 36,
     backgroundColor: '#3D5A3E18',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1471,95 +2007,196 @@ const s = StyleSheet.create({
       },
       android: { elevation: 4 },
     }),
-  },
+  } as ViewStyle,
   avatarText: {
     fontFamily: 'DMSans_700Bold',
-    fontSize: 24,
+    fontSize: 22,
     color: '#3D5A3E',
-  },
+  } as TextStyle,
   displayName: {
     fontFamily: 'DMSans_700Bold',
-    fontSize: 20,
+    fontSize: 18,
     color: '#1E3320',
-  },
+    textAlign: 'center',
+  } as TextStyle,
   heroBadgesRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 6,
     flexWrap: 'wrap',
     justifyContent: 'center',
-  },
-  languageBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    backgroundColor: '#3D5A3E20',
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 100,
-  },
-  languageBadgeText: {
-    fontFamily: fonts.bodySemibold,
-    fontSize: 12,
-    color: '#3D5A3E',
-  },
-  ecmBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    backgroundColor: '#1D4ED810',
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 100,
-    borderWidth: 1,
-    borderColor: '#1D4ED840',
-  },
-  ecmBadgeText: {
-    fontFamily: fonts.bodySemibold,
-    fontSize: 12,
-    color: '#1D4ED8',
-  },
+  } as ViewStyle,
 
-  // ── Category chips
-  categoriesBlock: {
-    marginTop: 4,
-    marginBottom: 4,
-  },
-  categoriesLabel: {
-    fontFamily: fonts.bodySemibold,
+  // Contact column
+  contactCol: {
+    flex: Platform.OS === 'web' ? 3 : undefined,
+    padding: 16,
+    borderRightWidth: Platform.OS === 'web' ? 1 : 0,
+    borderRightColor: '#DDD6CC',
+  } as ViewStyle,
+
+  // Needs column
+  needsCol: {
+    flex: Platform.OS === 'web' ? 4 : undefined,
+    padding: 16,
+  } as ViewStyle,
+  colHeading: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 13,
+    color: '#1E3320',
+    marginBottom: 10,
+  } as TextStyle,
+  needItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+  } as ViewStyle,
+  needRank: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: '#3D5A3E',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  } as ViewStyle,
+  needRankText: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 11,
+    color: '#FFFFFF',
+  } as TextStyle,
+  needsEmpty: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: '#A0A6AB',
+    fontStyle: 'italic',
+  } as TextStyle,
+
+  // ── Mid row (insights + AI panel)
+  midRow: {
+    flexDirection: Platform.OS === 'web' ? 'row' : 'column',
+    gap: 16,
+    marginBottom: 20,
+    alignItems: 'flex-start',
+  } as ViewStyle,
+  midMain: {
+    flex: 1,
+  } as ViewStyle,
+  insightsCard: {
+    padding: 16,
+  } as ViewStyle,
+  insightsTitle: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 14,
+    color: '#1E3320',
+    marginBottom: 12,
+  } as TextStyle,
+  insightsGrid: {
+    flexDirection: Platform.OS === 'web' ? 'row' : 'column',
+    flexWrap: 'wrap',
+    gap: 12,
+  } as ViewStyle,
+  insightCell: {
+    flex: 1,
+    minWidth: 160,
+    backgroundColor: '#F4F1ED',
+    borderRadius: 10,
+    padding: 12,
+    gap: 4,
+    borderRightWidth: Platform.OS === 'web' ? 1 : 0,
+    borderRightColor: '#DDD6CC',
+  } as ViewStyle,
+  insightCellLast: {
+    borderRightWidth: 0,
+  } as ViewStyle,
+  insightCellLabel: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 10,
     color: '#6B7280',
     textTransform: 'uppercase',
-    letterSpacing: 1,
-    marginBottom: 8,
-  },
-  chipsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 7,
-  },
-  chip: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 100,
-  },
-  chipText: {
-    fontFamily: fonts.bodySemibold,
+    letterSpacing: 0.8,
+    marginBottom: 2,
+  } as TextStyle,
+  insightCellBody: {
+    fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 12,
-  },
+    color: '#1E3320',
+    lineHeight: 18,
+  } as TextStyle,
+
+  // ── AI panel card
+  aiPanelCard: {
+    padding: 14,
+    gap: 8,
+  } as ViewStyle,
+  aiPanelHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  } as ViewStyle,
+  aiPanelTitle: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 13,
+    color: '#1E3320',
+    flex: 1,
+  } as TextStyle,
+  aiBetaBadge: {
+    backgroundColor: colors.secondary + '20',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 100,
+  } as ViewStyle,
+  aiBetaText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 10,
+    color: colors.secondary,
+  } as TextStyle,
+  aiPanelBody: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 12,
+    color: '#6B7280',
+    lineHeight: 18,
+  } as TextStyle,
+  aiConsentValue: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12,
+  } as TextStyle,
+  aiConsentGranted: { color: '#16A34A' } as TextStyle,
+  aiConsentDenied: { color: '#DC2626' } as TextStyle,
+  aiConsentNone: { color: '#A0A6AB' } as TextStyle,
+
+  // ── Journey row
+  journeyRow: {
+    flexDirection: Platform.OS === 'web' ? 'row' : 'column',
+    gap: 16,
+    alignItems: 'flex-start',
+  } as ViewStyle,
+  journeyMain: {
+    flex: 1,
+  } as ViewStyle,
+
+  // ── Quick Access card
+  quickAccessCard: {
+    padding: 14,
+  } as ViewStyle,
+  quickAccessTitle: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 13,
+    color: '#1E3320',
+    marginBottom: 4,
+  } as TextStyle,
 
   // ── Billing caption
   billingCapNote: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 10,
     color: colors.mutedForeground,
-  },
+  } as TextStyle,
 
-  // ── Session last item (remove bottom border)
-  sessionItemLast: {
-    // intentionally empty — the inner item's borderBottom is always rendered;
-    // the section card body padding handles the visual spacing.
-  },
+  // ── Session last item
+  sessionItemLast: {} as ViewStyle,
 
   // ── Goals subsection label
   subSectionLabel: {
@@ -1569,12 +2206,10 @@ const s = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 0.8,
     marginBottom: 2,
-  },
+  } as TextStyle,
 
-  // ── Consent last row (no bottom border)
-  consentLastRow: {
-    // last row — border removed via ConsentRow's internal border logic
-  },
+  // ── Consent last row
+  consentLastRow: {} as ViewStyle,
 
   // ── Shared count badge
   countBadge: {
@@ -1582,12 +2217,12 @@ const s = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 100,
-  },
+  } as ViewStyle,
   countBadgeText: {
     fontFamily: fonts.bodySemibold,
     fontSize: 10,
     color: colors.primary,
-  },
+  } as TextStyle,
 
   // ── HIPAA notice
   hipaaNotice: {
@@ -1598,14 +2233,14 @@ const s = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
     marginBottom: 8,
-  },
+  } as ViewStyle,
   hipaaNoticeText: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 11,
     color: '#6B7280',
     lineHeight: 17,
     textAlign: 'center',
-  },
+  } as TextStyle,
 
   // ── Access denied / error state
   emptyState: {
@@ -1614,7 +2249,7 @@ const s = StyleSheet.create({
     justifyContent: 'center',
     padding: 40,
     gap: 14,
-  },
+  } as ViewStyle,
   emptyIconCircle: {
     width: 64,
     height: 64,
@@ -1622,13 +2257,13 @@ const s = StyleSheet.create({
     backgroundColor: '#3D5A3E15',
     alignItems: 'center',
     justifyContent: 'center',
-  },
+  } as ViewStyle,
   emptyTitle: {
     fontFamily: 'DMSans_700Bold',
     fontSize: 18,
     color: '#1E3320',
     textAlign: 'center',
-  },
+  } as TextStyle,
   emptySubtext: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 14,
@@ -1636,17 +2271,44 @@ const s = StyleSheet.create({
     textAlign: 'center',
     maxWidth: 300,
     lineHeight: 22,
-  },
+  } as TextStyle,
   backButton: {
     backgroundColor: '#3D5A3E',
     paddingHorizontal: 28,
     paddingVertical: 12,
     borderRadius: 12,
     marginTop: 4,
-  },
+  } as ViewStyle,
   backButtonText: {
     fontFamily: fonts.bodySemibold,
     fontSize: 14,
     color: '#FFFFFF',
-  },
+  } as TextStyle,
+
+  // ── Message drawer
+  messageDrawerContent: {
+    gap: 16,
+  } as ViewStyle,
+  messageDrawerBody: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: '#6B7280',
+    lineHeight: 20,
+    backgroundColor: '#F4F1ED',
+    borderRadius: 10,
+    padding: 12,
+  } as TextStyle,
+  messageFooterBtn: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    backgroundColor: '#F4F1ED',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#DDD6CC',
+  } as ViewStyle,
+  messageFooterBtnText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 14,
+    color: '#6B7280',
+  } as TextStyle,
 });

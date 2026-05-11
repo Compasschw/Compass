@@ -1,18 +1,15 @@
 /**
- * MemberRewardsScreen — dedicated rewards / redemption catalog.
+ * MemberRewardsScreen — rewards catalog and wellness points hub (feat/ui-revamp).
  *
- * Reached from the Member Home "Rewards" stat tile (per JT Figma feedback:
- * "Redeem Reward option. Will open a new screen for which rewards are
- * available to them to select. Think Chase rewards.").
+ * Re-skinned to AppShell layout. Original data hooks (useMemberProfile,
+ * useMemberRewards) are preserved. New hooks (useRewardsCatalog,
+ * useMemberRewardsBalance, useMemberRedemptions) augment with real backend data.
  *
  * Shows:
- *   - Hero card with current points balance + recent earning trend
- *   - Filterable catalog of redeemable rewards
- *   - Recent reward-history list at the bottom
- *
- * The redemption catalog also still appears at the bottom of MemberProfile
- * for back-compat. We can deprecate that copy once members get used to the
- * Home → Rewards entry point.
+ *   - Progress ring / hero balance card (AppShell page)
+ *   - 3 featured reward cards from the catalog
+ *   - Earn-more list (static tips)
+ *   - Redemption history
  */
 
 import React, { useCallback, useMemo, useState } from 'react';
@@ -26,8 +23,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { ArrowLeft, Gift, Sparkles } from 'lucide-react-native';
+import { Gift, Sparkles } from 'lucide-react-native';
 
 import { colors } from '../../theme/colors';
 import {
@@ -37,9 +33,15 @@ import {
 import {
   useMemberProfile,
   useMemberRewards,
+  useRewardsCatalog,
+  useMemberRewardsBalance,
+  useMemberRedemptions,
+  useCreateRedemption,
   type RewardTransaction,
 } from '../../hooks/useApiQueries';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
+import { AppShell, PageHeader, Card, Pill } from '../../components/ui';
+import { useAuth } from '../../context/AuthContext';
 
 interface Props {
   navigation: { goBack: () => void };
@@ -59,14 +61,29 @@ function formatDate(dateStr: string): string {
 }
 
 export function MemberRewardsScreen({ navigation }: Props): React.JSX.Element {
+  const { userName } = useAuth();
+  const memberInitials = (userName ?? 'M')
+    .split(' ')
+    .slice(0, 2)
+    .map((p) => p[0] ?? '')
+    .join('')
+    .toUpperCase();
+
   const profileQuery = useMemberProfile();
   const rewardsQuery = useMemberRewards();
+  const catalogQuery = useRewardsCatalog();
+  const memberId = profileQuery.data?.id ?? '';
+  const balanceQuery = useMemberRewardsBalance(memberId);
+  const redemptionsQuery = useMemberRedemptions(memberId);
+  const createRedemption = useCreateRedemption(memberId);
 
   const [localBalance, setLocalBalance] = useState<number | null>(null);
-  const apiBalance = profileQuery.data?.rewardsBalance ?? 0;
+  // Prefer the new /rewards/balance endpoint; fall back to profile.rewardsBalance.
+  const apiBalance =
+    balanceQuery.data?.currentBalance ?? profileQuery.data?.rewardsBalance ?? 0;
   const balance = localBalance ?? apiBalance;
 
-  // Group catalog items by category so the list reads more like a store.
+  // Group legacy mock catalog items by category.
   const grouped = useMemo(() => {
     const map = new Map<string, RedemptionItem[]>();
     for (const item of redemptionCatalog) {
@@ -75,6 +92,12 @@ export function MemberRewardsScreen({ navigation }: Props): React.JSX.Element {
     }
     return [...map.entries()];
   }, []);
+
+  // Up to 3 featured items from the live catalog.
+  const featuredCatalog = useMemo(
+    () => (catalogQuery.data ?? []).filter((i) => i.isActive).slice(0, 3),
+    [catalogQuery.data],
+  );
 
   const handleRedeem = useCallback(
     (item: RedemptionItem) => {
@@ -103,35 +126,24 @@ export function MemberRewardsScreen({ navigation }: Props): React.JSX.Element {
     [balance],
   );
 
+  const shellUserBlock = {
+    initials: memberInitials,
+    name: userName ?? 'Member',
+    role: 'Member' as const,
+  };
+
   if (profileQuery.isLoading) {
     return (
-      <SafeAreaView style={styles.safe} edges={['top']}>
-        <View style={{ padding: 20 }}>
-          <LoadingSkeleton variant="card" />
-          <LoadingSkeleton variant="rows" rows={4} />
-        </View>
-      </SafeAreaView>
+      <AppShell role="member" activeKey="rewards" userBlock={shellUserBlock}>
+        <LoadingSkeleton variant="card" />
+        <LoadingSkeleton variant="rows" rows={4} />
+      </AppShell>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
+    <AppShell role="member" activeKey="rewards" userBlock={shellUserBlock} badges={{ wellnessPoints: balance }}>
       <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
-
-      {/* Header */}
-      <View style={styles.header}>
-        <Pressable
-          style={styles.backBtn}
-          onPress={navigation.goBack}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-          hitSlop={6}
-        >
-          <ArrowLeft size={20} color={colors.foreground} />
-        </Pressable>
-        <Text style={styles.headerTitle}>Rewards</Text>
-        <View style={{ width: 32 }} />
-      </View>
 
       <ScrollView
         style={styles.scroll}
@@ -139,21 +151,97 @@ export function MemberRewardsScreen({ navigation }: Props): React.JSX.Element {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.pageWrap}>
+
+        <PageHeader
+          title="Rewards"
+          subtitle="Earn wellness points and redeem rewards"
+        />
+
         {/* Hero balance card */}
-        <View style={styles.heroCard}>
+        <Card style={styles.heroCard}>
           <View style={styles.heroHeader}>
             <Sparkles color="#FFFFFF" size={16} />
             <Text style={styles.heroLabel}>YOUR BALANCE</Text>
             <Sparkles color="#FFFFFF" size={16} />
           </View>
-          <Text style={styles.heroValue}>{balance}</Text>
+          <Text style={styles.heroValue}>{balance.toLocaleString()}</Text>
           <Text style={styles.heroUnit}>points</Text>
-          <Text style={styles.heroSub}>
-            Earn points for completing sessions and reaching goal milestones.
-          </Text>
-        </View>
+          {balanceQuery.data?.nextUnlockItem != null && (
+            <Text style={styles.heroSub}>
+              {balanceQuery.data.pointsToNext} more points to unlock{' '}
+              {balanceQuery.data.nextUnlockItem.imageEmoji}{' '}
+              {balanceQuery.data.nextUnlockItem.name}
+            </Text>
+          )}
+          {balanceQuery.data?.nextUnlockItem == null && (
+            <Text style={styles.heroSub}>
+              Earn points for completing sessions and reaching goal milestones.
+            </Text>
+          )}
+        </Card>
 
-        {/* Redemption catalog grouped by category */}
+        {/* Featured live-catalog items (from /rewards/catalog) */}
+        {featuredCatalog.length > 0 && (
+          <View style={styles.categorySection}>
+            <Text style={styles.categoryLabel}>FEATURED REWARDS</Text>
+            {featuredCatalog.map((item) => {
+              const canAfford = balance >= item.costPoints;
+              return (
+                <Card key={item.id} style={styles.catalogCard}>
+                  <Text style={styles.catalogEmoji}>{item.imageEmoji}</Text>
+                  <View style={styles.catalogInfo}>
+                    <Text style={styles.catalogName}>{item.name}</Text>
+                    <Text style={styles.catalogDesc} numberOfLines={2}>
+                      {item.description}
+                    </Text>
+                    <Text style={styles.catalogCost}>{item.costPoints.toLocaleString()} pts</Text>
+                  </View>
+                  <Pressable
+                    onPress={async () => {
+                      if (!canAfford) {
+                        Alert.alert(
+                          'Insufficient points',
+                          `You need ${item.costPoints - balance} more points to redeem ${item.name}.`,
+                        );
+                        return;
+                      }
+                      Alert.alert(
+                        `Redeem ${item.name}?`,
+                        `This will use ${item.costPoints} points. Current balance: ${balance} pts.`,
+                        [
+                          { text: 'Cancel', style: 'cancel' },
+                          {
+                            text: 'Confirm',
+                            onPress: async () => {
+                              try {
+                                await createRedemption.mutateAsync(item.id);
+                                setLocalBalance(balance - item.costPoints);
+                                Alert.alert('Redemption submitted', `Your ${item.name} request has been submitted.`);
+                              } catch {
+                                Alert.alert('Error', 'Could not submit redemption. Please try again.');
+                              }
+                            },
+                          },
+                        ],
+                      );
+                    }}
+                    disabled={!canAfford}
+                    style={[styles.redeemBtn, !canAfford && styles.redeemBtnDisabled]}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Redeem ${item.name} for ${item.costPoints} points`}
+                    accessibilityState={{ disabled: !canAfford }}
+                  >
+                    <Text style={[styles.redeemBtnText, !canAfford && styles.redeemBtnTextDisabled]}>
+                      Redeem
+                    </Text>
+                  </Pressable>
+                </Card>
+              );
+            })}
+          </View>
+        )}
+
+        {/* Legacy mock catalog grouped by category */}
         {grouped.map(([category, items]) => (
           <View key={category} style={styles.categorySection}>
             <Text style={styles.categoryLabel}>
@@ -162,7 +250,7 @@ export function MemberRewardsScreen({ navigation }: Props): React.JSX.Element {
             {items.map((item) => {
               const canAfford = balance >= item.pointsCost;
               return (
-                <View key={item.id} style={styles.catalogCard}>
+                <Card key={item.id} style={styles.catalogCard}>
                   <Text style={styles.catalogEmoji}>{item.emoji}</Text>
                   <View style={styles.catalogInfo}>
                     <Text style={styles.catalogName}>{item.name}</Text>
@@ -188,14 +276,32 @@ export function MemberRewardsScreen({ navigation }: Props): React.JSX.Element {
                       Redeem
                     </Text>
                   </Pressable>
-                </View>
+                </Card>
               );
             })}
           </View>
         ))}
 
-        {/* Recent activity */}
-        <View style={styles.historyCard}>
+        {/* Earn-more tips */}
+        <Card style={styles.historyCard}>
+          <View style={styles.historyHeader}>
+            <Sparkles size={16} color={colors.compassGold} />
+            <Text style={styles.historyTitle}>How to earn more points</Text>
+          </View>
+          {[
+            { emoji: '✅', text: 'Complete a session with your CHW (+50 pts)' },
+            { emoji: '⭐', text: 'Follow through on a goal milestone (+25 pts)' },
+            { emoji: '📋', text: 'Complete your member profile (+10 pts)' },
+          ].map((tip) => (
+            <View key={tip.text} style={styles.tipRow}>
+              <Text style={styles.tipEmoji}>{tip.emoji}</Text>
+              <Text style={styles.tipText}>{tip.text}</Text>
+            </View>
+          ))}
+        </Card>
+
+        {/* Redemption history */}
+        <Card style={styles.historyCard}>
           <View style={styles.historyHeader}>
             <Gift size={16} color={colors.compassGold} />
             <Text style={styles.historyTitle}>Recent activity</Text>
@@ -213,12 +319,12 @@ export function MemberRewardsScreen({ navigation }: Props): React.JSX.Element {
               </Text>
             }
           />
-        </View>
+        </Card>
 
         <View style={{ height: 24 }} />
         </View>
       </ScrollView>
-    </SafeAreaView>
+    </AppShell>
   );
 }
 
@@ -446,5 +552,25 @@ const styles = StyleSheet.create({
   divider: {
     height: 1,
     backgroundColor: '#DDD6CC',
+  },
+  tipRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 7,
+    borderTopWidth: 1,
+    borderTopColor: '#F4F1ED',
+  },
+  tipEmoji: {
+    fontSize: 16,
+    width: 24,
+    textAlign: 'center',
+  },
+  tipText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: '#1E3320',
+    flex: 1,
+    lineHeight: 18,
   },
 });

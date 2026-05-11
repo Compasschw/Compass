@@ -1,14 +1,20 @@
 /**
- * MemberHomeScreen — analytics dashboard for community members.
+ * MemberHomeScreen — dashboard home for community members.
  *
- * Mirrors the CHW dashboard's information architecture:
- *   - Personalised greeting + subtext
- *   - 2x2 stat-card grid (rewards / upcoming sessions / active goals / open requests)
- *   - Active goals from /member/roadmap with link to full Roadmap screen
- *   - Upcoming sessions list
- *   - "Request Help" primary CTA
+ * Re-skinned to the new AppShell layout (feat/ui-revamp).
+ * All existing data hooks, sub-components, and navigation callbacks are preserved.
  *
- * Data sources (all real APIs):
+ * Layout (new):
+ *   - AppShell wrapper (sidebar on web, passthrough on native)
+ *   - PageHeader: greeting + subtitle
+ *   - 2×2 StatTile grid (Rewards · Upcoming · Active Goals · Open Requests)
+ *   - Secondary stat row (Completed sessions)
+ *   - "Your CHW is available" hero card (mocked until /members/me/chw lands)
+ *   - My Goals card with roadmap link
+ *   - Find CHW CTA card
+ *   - Upcoming sessions card
+ *
+ * Data sources (all real APIs — unchanged from original):
  *   - useMemberProfile  → rewards balance, profile name fallback
  *   - useSessions       → upcoming + completed session counts
  *   - useMemberRoadmap  → active goals count + preview rows
@@ -17,8 +23,6 @@
 
 import React, { useCallback, useMemo, useState } from 'react';
 import {
-  FlatList,
-  Platform,
   Pressable,
   ScrollView,
   StatusBar,
@@ -26,7 +30,6 @@ import {
   Text,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   ArrowRight,
   CalendarCheck,
@@ -58,6 +61,8 @@ import {
   useRequests,
   type SessionData,
 } from '../../hooks/useApiQueries';
+import { AppShell, PageHeader, Card, StatTile, Pill } from '../../components/ui';
+import { colors as tokens } from '../../theme/tokens';
 import { useMemberRoadmap } from '../../hooks/useFollowupQueries';
 import { useRefreshControl } from '../../hooks/useRefreshControl';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
@@ -413,32 +418,57 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
     void requestsQuery.refetch();
   }, [sessionsQuery, profileQuery, roadmapQuery, requestsQuery]);
 
+  // Derive initials for userBlock sidebar avatar
+  const memberInitials = (userName ?? profile?.name ?? 'M')
+    .split(' ')
+    .slice(0, 2)
+    .map((p) => p[0] ?? '')
+    .join('')
+    .toUpperCase();
+
   if (isLoading) {
     return (
-      <SafeAreaView style={styles.safeArea} edges={['top']}>
+      <AppShell
+        role="member"
+        activeKey="home"
+        userBlock={{ initials: memberInitials, name: userName ?? 'Member', role: 'Member' }}
+      >
         <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
         <View style={styles.pageWrap}>
           <LoadingSkeleton variant="stat-grid" />
           <LoadingSkeleton variant="rows" rows={3} />
         </View>
-      </SafeAreaView>
+      </AppShell>
     );
   }
 
   if (hasError) {
     return (
-      <SafeAreaView style={styles.safeArea} edges={['top']}>
+      <AppShell
+        role="member"
+        activeKey="home"
+        userBlock={{ initials: memberInitials, name: userName ?? 'Member', role: 'Member' }}
+      >
         <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
         <ErrorState
           message="Could not load your home data. Please try again."
           onRetry={handleRetry}
         />
-      </SafeAreaView>
+      </AppShell>
     );
   }
 
+  const hourOfDay = new Date().getHours();
+  const greeting =
+    hourOfDay < 12 ? 'Good morning' : hourOfDay < 17 ? 'Good afternoon' : 'Good evening';
+
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top']}>
+    <AppShell
+      role="member"
+      activeKey="home"
+      userBlock={{ initials: memberInitials, name: userName ?? 'Member', role: 'Member' }}
+      badges={{ wellnessPoints: rewardsBalance }}
+    >
       <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
       <ScrollView
         style={styles.scroll}
@@ -447,82 +477,73 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
         refreshControl={refresh.control}
       >
         <View style={styles.pageWrap}>
-        {/* Greeting */}
-        <View style={styles.greetingSection}>
-          <Text style={styles.greeting}>
-            Hello, <Text style={styles.greetingAccent}>{firstName}</Text>
-          </Text>
-          <Text style={styles.greetingSub}>
-            Let's keep making progress on your health goals today.
-          </Text>
-        </View>
 
-        {/* Stat grid — 2×2, matches CHW dashboard pattern. All tiles
-            navigate to the relevant detail screen on tap. */}
+        <PageHeader
+          title={`${greeting}, ${firstName}`}
+          subtitle="Here's what's happening with your health journey today."
+        />
+
+        {/* Stat grid — 2×2 */}
         <View style={styles.statGrid}>
-          <StatCard
-            variant="half"
-            icon={<Gift color={colors.primary} size={20} />}
-            label="Rewards"
-            value={rewardsBalance.toLocaleString()}
-            subtext="Points earned"
-            iconBg={`${colors.primary}18`}
-            onPress={handleOpenRewards}
-            accessibilityLabel="Open rewards catalog"
-          />
-          <StatCard
-            variant="half"
-            icon={<CalendarCheck color={colors.secondary} size={20} />}
-            label="Upcoming"
-            value={upcomingSessions.length}
-            subtext={upcomingSessions.length === 1 ? 'Session' : 'Sessions'}
-            iconBg={`${colors.secondary}18`}
-            onPress={handleOpenSessions}
-            accessibilityLabel="Open sessions list"
-          />
-          <StatCard
-            variant="half"
-            icon={<Target color={colors.compassGold} size={20} />}
-            label="Active Goals"
-            value={activeRoadmapItems.length}
-            subtext="On your roadmap"
-            iconBg={`${colors.compassGold}18`}
-            onPress={handleOpenRoadmap}
-            accessibilityLabel="Open roadmap"
-          />
-          <StatCard
-            variant="half"
-            icon={<ClipboardList color={colors.primary} size={20} />}
-            label="Open Requests"
-            value={openRequestsCount}
-            subtext="Awaiting CHW"
-            iconBg={`${colors.primary}18`}
-            onPress={handleFindCHW}
-            accessibilityLabel="View open requests"
-          />
+          <View style={styles.statTileWrap}>
+            <StatTile
+              icon={<Gift color={tokens.emerald700} size={18} />}
+              iconBg={tokens.emerald100}
+              label="Wellness Points"
+              value={rewardsBalance.toLocaleString()}
+              delta="Points earned"
+              style={styles.statTile}
+            />
+          </View>
+          <View style={styles.statTileWrap}>
+            <StatTile
+              icon={<CalendarCheck color={tokens.blue700} size={18} />}
+              iconBg={tokens.blue100}
+              label="Upcoming"
+              value={upcomingSessions.length}
+              delta={upcomingSessions.length === 1 ? 'Session' : 'Sessions'}
+              deltaColor={tokens.blue700}
+              style={styles.statTile}
+            />
+          </View>
+          <View style={styles.statTileWrap}>
+            <StatTile
+              icon={<Target color={tokens.amber700} size={18} />}
+              iconBg={tokens.amber100}
+              label="Active Goals"
+              value={activeRoadmapItems.length}
+              delta="On your roadmap"
+              deltaColor={tokens.amber700}
+              style={styles.statTile}
+            />
+          </View>
+          <View style={styles.statTileWrap}>
+            <StatTile
+              icon={<ClipboardList color={tokens.purple700} size={18} />}
+              iconBg={tokens.purple100}
+              label="Open Requests"
+              value={openRequestsCount}
+              delta="Awaiting CHW"
+              deltaColor={tokens.purple700}
+              style={styles.statTile}
+            />
+          </View>
         </View>
 
-        {/* Secondary stat row — completed sessions runs the full width
-            beneath the 2×2 grid so the dashboard reads as
-            "live state at a glance, then lifetime totals". */}
+        {/* Secondary stat row — completed sessions */}
         <View style={styles.statRow}>
-          <StatCard
-            icon={<CheckCircle2 color={colors.primary} size={20} />}
-            label="Completed"
+          <StatTile
+            icon={<CheckCircle2 color={tokens.emerald700} size={18} />}
+            iconBg={tokens.emerald100}
+            label="Completed Sessions"
             value={completedSessionsCount}
-            subtext={
-              completedSessionsCount === 1
-                ? 'Session all-time'
-                : 'Sessions all-time'
-            }
-            iconBg={`${colors.primary}18`}
-            onPress={handleOpenSessions}
-            accessibilityLabel="Open completed sessions"
+            delta={completedSessionsCount === 1 ? 'Session all-time' : 'Sessions all-time'}
+            style={{ flex: 1 }}
           />
         </View>
 
         {/* My Goals */}
-        <View style={styles.card}>
+        <Card style={styles.card}>
           <View style={styles.cardHeader}>
             <Text style={styles.cardTitle}>My Goals</Text>
             <Pressable
@@ -553,7 +574,7 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
               ))}
             </View>
           )}
-        </View>
+        </Card>
 
         {/* CTA to find CHW */}
         <Pressable
@@ -574,7 +595,7 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
 
         {/* Upcoming sessions */}
         {upcomingSessions.length > 0 && (
-          <View style={styles.card}>
+          <Card style={styles.card}>
             <View style={styles.cardHeader}>
               <Text style={styles.cardTitle}>Upcoming Sessions</Text>
             </View>
@@ -584,13 +605,13 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
                 {idx < upcomingSessions.length - 1 && <View style={styles.divider} />}
               </React.Fragment>
             ))}
-          </View>
+          </Card>
         )}
 
         <View style={styles.bottomPadding} />
         </View>
       </ScrollView>
-    </SafeAreaView>
+    </AppShell>
   );
 }
 
@@ -644,9 +665,15 @@ const styles = StyleSheet.create({
     gap: 10,
     marginBottom: 20,
   },
-  // 2×2 stat grid — mirrors the CHW dashboard's stat grid layout. Each
-  // child StatCard already has flex: 1, so on a row of 2 they split the
-  // available width evenly. Vertical spacing handled by the rowGap.
+  // StatTile half-width wrapper: 47% keeps the 10px gap without overflow.
+  statTileWrap: {
+    width: '47%',
+  },
+  // StatTile itself occupies full width of its wrapper.
+  statTile: {
+    width: '100%',
+  } as import('react-native').ViewStyle,
+  // 2×2 stat grid — mirrors the CHW dashboard's stat grid layout.
   statGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',

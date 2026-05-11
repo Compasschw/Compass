@@ -2,10 +2,12 @@
  * CHWEarningsScreen — Money dashboard for CHW users.
  *
  * Sections:
- *  1. Three stat cards: This Week, This Month, All Time
- *  2. View-based weekly bar chart (no charting library dependency)
- *  3. Recent payouts list with payout status badges
- *  4. Medi-Cal rate / payout schedule note
+ *  1. 4 KPI stat tiles (Earnings This Month, Pending Payout, Paid Out This Month, Claims Pending)
+ *  2. 8/12 Earnings trend chart + 4/12 Bank & payout setup card
+ *  3. Sessions billed table card
+ *  4. Recent payouts card
+ *  5. Earnings scenarios table
+ *  6. Payout schedule note
  */
 
 import React, { useMemo, useState } from 'react';
@@ -32,6 +34,8 @@ import {
   Brain,
   Stethoscope,
   TableProperties,
+  CheckCircle,
+  Clock,
 } from 'lucide-react-native';
 
 import { colors } from '../../theme/colors';
@@ -53,6 +57,13 @@ import {
 } from '../../hooks/useApiQueries';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
+import {
+  AppShell,
+  PageHeader,
+  Card,
+  StatTile,
+} from '../../components/ui';
+import { colors as tokens } from '../../theme/tokens';
 
 // ─── Earnings scenario constants ─────────────────────────────────────────────
 //
@@ -60,8 +71,6 @@ import { ErrorState } from '../../components/shared/ErrorState';
 //   - Platform fee (Compass operating costs)            → 15%
 //   - Member rewards pool (engagement / redemption)     → 25%
 //   - CHW net payout                                    → 60%
-// (Was previously framed as Phase 1 72% / Phase 2 82.6%, which Jemal
-// flagged as misleading since the math summed to >100% of gross.)
 
 const PLATFORM_FEE_RATE = 0.15;
 const REWARDS_POOL_RATE = 0.25;
@@ -91,9 +100,7 @@ const VERTICAL_COLORS: Record<Vertical, string> = {
 
 /**
  * Maps the four backend BillingClaim statuses to the visual buckets the
- * payout-status pill renders. `paid` is what eventually moves money to the
- * CHW; until then we show finer-grained progress (`pending` while the claim
- * is created locally, `submitted` once it's been sent to PearSuite).
+ * payout-status pill renders.
  */
 type PayoutStatus = 'pending' | 'submitted' | 'approved' | 'rejected';
 
@@ -105,7 +112,7 @@ const PAYOUT_STATUS_COLORS: Record<PayoutStatus, string> = {
 };
 
 const PAYOUT_STATUS_LABELS: Record<PayoutStatus, string> = {
-  pending: 'Pending Payout', // per Jemal's Earnings Figma feedback
+  pending: 'Pending Payout',
   submitted: 'Submitted',
   approved: 'Paid',
   rejected: 'Rejected',
@@ -150,13 +157,8 @@ function dayOfWeekIndex(date: Date): number {
 
 /**
  * CHW net for a session, computed at the current 60% rate from the stored
- * gross amount. Older rows have `net_amount` stored at the legacy 75% rate
- * (back when the split was 15% / 10% / 75%); deriving from gross at render
- * time keeps the displayed numbers consistent with the new math without
- * needing a destructive backfill on historical billing rows.
- *
- * Falls back to `unitsBilled × MEDI_CAL_RATE × 0.60` when grossAmount is
- * absent, then to the stored netAmount as a last resort.
+ * gross amount. Falls back to `unitsBilled × MEDI_CAL_RATE × 0.60`, then
+ * to the stored netAmount as a last resort.
  */
 function chwNetFromSession(s: SessionData): number {
   if (s.grossAmount != null) return s.grossAmount * NET_PAYOUT_RATE;
@@ -166,9 +168,7 @@ function chwNetFromSession(s: SessionData): number {
 
 /**
  * Look up a real payout status for a given session by inspecting the
- * /chw/claims response. Falls back to 'pending' when no claim has been
- * filed yet — common for sessions that just completed and whose CHW hasn't
- * submitted documentation.
+ * /chw/claims response.
  */
 function lookupPayoutStatus(
   sessionId: string,
@@ -239,11 +239,7 @@ export function CHWEarningsScreen(): React.JSX.Element {
   const allSessions = sessionsQuery.data ?? [];
   const allClaims: ChwClaim[] = claimsQuery.data ?? [];
 
-  // Index claims by sessionId once so the per-row payout-status lookup is
-  // O(1) inside the (possibly long) Recent Payouts loop. Multiple claims
-  // per session would be unusual (one BillingClaim per documentation
-  // submit) but if it ever happens, the most recent wins because the
-  // backend returns claims newest-first.
+  // Index claims by sessionId once so the per-row payout-status lookup is O(1).
   const claimsBySession = useMemo<Map<string, ChwClaim>>(() => {
     const map = new Map<string, ChwClaim>();
     for (const claim of allClaims) {
@@ -259,11 +255,32 @@ export function CHWEarningsScreen(): React.JSX.Element {
     [allSessions],
   );
 
-  // Bucket completed sessions by day-of-week so the Weekly Breakdown chart
-  // reflects real data (was previously a hard-coded mock).
-  // TODO(scope): currently aggregates ALL completed sessions across all
-  // weeks into Mon–Sun buckets. When a /chw/earnings/weekly endpoint
-  // ships with per-ISO-week buckets, swap this in.
+  // KPI: Paid out this month — sum of approved claims for sessions in current calendar month
+  const paidOutThisMonth = useMemo<number>(() => {
+    const now = new Date();
+    return completedSessions.reduce((acc, s) => {
+      const status = lookupPayoutStatus(s.id, claimsBySession);
+      if (status !== 'approved') return acc;
+      const sessionDate = new Date(s.scheduledAt);
+      if (
+        sessionDate.getFullYear() === now.getFullYear() &&
+        sessionDate.getMonth() === now.getMonth()
+      ) {
+        return acc + chwNetFromSession(s);
+      }
+      return acc;
+    }, 0);
+  }, [completedSessions, claimsBySession]);
+
+  // KPI: Claims pending — count of sessions with 'pending' or 'submitted' status
+  const claimsPendingCount = useMemo<number>(() => {
+    return completedSessions.filter((s) => {
+      const status = lookupPayoutStatus(s.id, claimsBySession);
+      return status === 'pending' || status === 'submitted';
+    }).length;
+  }, [completedSessions, claimsBySession]);
+
+  // Bucket completed sessions by day-of-week for the Weekly Breakdown chart.
   const weeklyData = useMemo<DayBucket[]>(() => {
     const buckets: DayBucket[] = WEEK_DAYS.map((day) => ({
       day,
@@ -275,7 +292,6 @@ export function CHWEarningsScreen(): React.JSX.Element {
       buckets[idx].sessions.push(session);
       buckets[idx].amount += chwNetFromSession(session);
     }
-    // Sort sessions inside each bucket by date desc so newest is first.
     for (const b of buckets) {
       b.sessions.sort(
         (a, c) => new Date(c.scheduledAt).getTime() - new Date(a.scheduledAt).getTime(),
@@ -289,7 +305,6 @@ export function CHWEarningsScreen(): React.JSX.Element {
     [weeklyData],
   );
 
-  // Avg earning per member-payout for the All-Time stat tile (Jemal feedback).
   const avgEarningPerMember = useMemo(() => {
     if (completedSessions.length === 0) return 0;
     const total = completedSessions.reduce((acc, s) => acc + chwNetFromSession(s), 0);
@@ -302,361 +317,457 @@ export function CHWEarningsScreen(): React.JSX.Element {
 
   if (isLoading) {
     return (
-      <SafeAreaView style={styles.safe} edges={['top']}>
-        <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
-          <View style={styles.pageWrap}>
-            <LoadingSkeleton variant="stat-grid" />
-            <LoadingSkeleton variant="rows" rows={3} />
-          </View>
-        </ScrollView>
-      </SafeAreaView>
+      <AppShell role="chw" activeKey="earnings" userBlock={{ initials: '...', name: '...', role: 'CHW' }}>
+        <SafeAreaView style={styles.safe} edges={['top']}>
+          <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
+            <View style={styles.pageWrap}>
+              <LoadingSkeleton variant="stat-grid" />
+              <LoadingSkeleton variant="rows" rows={3} />
+            </View>
+          </ScrollView>
+        </SafeAreaView>
+      </AppShell>
     );
   }
 
   if (queryError) {
     return (
-      <SafeAreaView style={styles.safe} edges={['top']}>
-        <ErrorState message="Failed to load earnings" onRetry={handleRetry} />
-      </SafeAreaView>
+      <AppShell role="chw" activeKey="earnings" userBlock={{ initials: '...', name: '...', role: 'CHW' }}>
+        <SafeAreaView style={styles.safe} edges={['top']}>
+          <ErrorState message="Failed to load earnings" onRetry={handleRetry} />
+        </SafeAreaView>
+      </AppShell>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.pageWrap}>
-        {/* Page header */}
-        <View style={styles.pageHeader}>
-          <Text style={styles.pageTitle}>Earnings & Payouts</Text>
-          <Text style={styles.pageSubtitle}>
-            Track your Medi-Cal reimbursements and payout history.
-          </Text>
-        </View>
+    <AppShell role="chw" activeKey="earnings" userBlock={{ initials: 'C', name: 'CHW', role: 'CHW' }}>
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={styles.content}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.pageWrap}>
+            {/* Page header */}
+            <PageHeader
+              title="Earnings & Payouts"
+              subtitle="Track your Medi-Cal reimbursements and payout history."
+            />
 
-        {/* ── Payout setup banner (only shown until payouts are enabled) ── */}
-        {!payoutsEnabled && (
-          <Pressable
-            style={[
-              styles.payoutBanner,
-              payoutsInProgress && styles.payoutBannerPending,
-            ]}
-            onPress={() => {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              (navigation as any).navigate('Payments');
-            }}
-            accessibilityRole="button"
-            accessibilityLabel={
-              payoutsInProgress
-                ? 'Continue payout setup'
-                : 'Set up direct deposit'
-            }
-          >
-            <View style={styles.payoutBannerIcon}>
-              <CreditCard size={20} color="#FFFFFF" />
-            </View>
-            <View style={styles.payoutBannerContent}>
-              <Text style={styles.payoutBannerTitle}>
-                {payoutsInProgress
-                  ? 'Finish setting up direct deposit'
-                  : 'Set up direct deposit'}
-              </Text>
-              <Text style={styles.payoutBannerSubtitle}>
-                {payoutsInProgress
-                  ? 'Stripe needs a few more details before you can get paid'
-                  : 'Connect your bank to start receiving Medi-Cal payouts'}
-              </Text>
-            </View>
-            <ArrowRight size={20} color="#FFFFFF" />
-          </Pressable>
-        )}
-
-        {/* ── Stat cards ── */}
-        <View style={styles.statRow}>
-          <View style={styles.statCard}>
-            <View style={[styles.statIconCircle, { backgroundColor: colors.primary + '18' }]}>
-              <DollarSign size={18} color={colors.primary} />
-            </View>
-            <Text style={styles.statValue}>{formatCurrency(earnings?.pendingPayout ?? 0)}</Text>
-            <Text style={styles.statLabel}>Payout Pending</Text>
-            <Text style={styles.statSubtext}>
-              {earnings?.sessionsThisWeek ?? 0} sessions this week
-            </Text>
-          </View>
-
-          <View style={styles.statCard}>
-            <View style={[styles.statIconCircle, { backgroundColor: colors.secondary + '18' }]}>
-              <TrendingUp size={18} color={colors.secondary} />
-            </View>
-            <Text style={styles.statValue}>{formatCurrency(earnings?.thisMonth ?? 0)}</Text>
-            <Text style={styles.statLabel}>This Month</Text>
-            <Text style={styles.statSubtext}>+8% vs last month</Text>
-          </View>
-
-          <View style={styles.statCard}>
-            <View style={[styles.statIconCircle, { backgroundColor: colors.compassGold + '18' }]}>
-              <CalendarCheck size={18} color={colors.compassGold} />
-            </View>
-            <Text style={styles.statValue}>{formatCurrency(earnings?.allTime ?? 0)}</Text>
-            <Text style={styles.statLabel}>All Time</Text>
-            <Text style={styles.statSubtext}>
-              {formatCurrency(avgEarningPerMember)} avg / member
-            </Text>
-          </View>
-        </View>
-
-        {/* ── Weekly bar chart — bars are tappable per Jemal's feedback ── */}
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Weekly Breakdown</Text>
-          <View style={styles.barChartContainer}>
-            {weeklyData.map((d, idx) => {
-              const heightPct = d.amount > 0 ? Math.max((d.amount / maxBarAmount) * 100, 6) : 6;
-              const hasAmount = d.amount > 0;
-              const isSelected = selectedBarIdx === idx;
-              return (
-                <TouchableOpacity
-                  key={d.day}
-                  style={styles.barColumn}
-                  onPress={() => setSelectedBarIdx(isSelected ? null : idx)}
-                  accessibilityRole="button"
-                  accessibilityLabel={`${d.day}: ${hasAmount ? formatCurrency(d.amount) : 'no earnings'}`}
-                  accessibilityState={{ selected: isSelected }}
-                  activeOpacity={0.7}
-                >
-                  <Text style={styles.barAmountLabel}>
-                    {hasAmount ? formatCurrency(d.amount) : ''}
+            {/* ── Payout setup banner (only shown until payouts are enabled) ── */}
+            {!payoutsEnabled && (
+              <Pressable
+                style={[
+                  styles.payoutBanner,
+                  payoutsInProgress && styles.payoutBannerPending,
+                ]}
+                onPress={() => {
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  (navigation as any).navigate('Payments');
+                }}
+                accessibilityRole="button"
+                accessibilityLabel={
+                  payoutsInProgress
+                    ? 'Continue payout setup'
+                    : 'Set up direct deposit'
+                }
+              >
+                <View style={styles.payoutBannerIcon}>
+                  <CreditCard size={20} color="#FFFFFF" />
+                </View>
+                <View style={styles.payoutBannerContent}>
+                  <Text style={styles.payoutBannerTitle}>
+                    {payoutsInProgress
+                      ? 'Finish setting up direct deposit'
+                      : 'Set up direct deposit'}
                   </Text>
-                  <View style={styles.barTrack}>
-                    <View
-                      style={[
-                        styles.barFill,
-                        {
-                          height: `${heightPct}%` as `${number}%`,
-                          backgroundColor: hasAmount
-                            ? (isSelected ? colors.secondary : colors.primary)
-                            : colors.primary + '28',
-                        },
-                      ]}
-                    />
-                  </View>
-                  <Text style={[styles.barDayLabel, isSelected && styles.barDayLabelSelected]}>
-                    {d.day}
+                  <Text style={styles.payoutBannerSubtitle}>
+                    {payoutsInProgress
+                      ? 'Stripe needs a few more details before you can get paid'
+                      : 'Connect your bank to start receiving Medi-Cal payouts'}
                   </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
+                </View>
+                <ArrowRight size={20} color="#FFFFFF" />
+              </Pressable>
+            )}
 
-          {/* Detail card for the selected day — lists each session that
-              contributed to that day's bar (member, date, units, amount). */}
-          {selectedBar && (
-            <View style={styles.barDetailCard}>
-              <View style={styles.barDetailHeader}>
-                <Text style={styles.barDetailDay}>{selectedBar.day}</Text>
-                <Text style={styles.barDetailAmount}>
-                  {selectedBar.amount > 0 ? formatCurrency(selectedBar.amount) : 'No earnings'}
-                </Text>
-              </View>
-              {selectedBar.sessions.length === 0 ? (
-                <Text style={styles.barDetailMeta}>
-                  No completed sessions on {selectedBar.day}.
-                </Text>
-              ) : (
-                <View style={styles.barDetailSessionList}>
-                  {selectedBar.sessions.map((s, i) => {
-                    const verticalColor = VERTICAL_COLORS[s.vertical as Vertical] ?? '#6B7A6B';
+            {/* ── 4 KPI stat tiles ── */}
+            <View style={styles.statGrid}>
+              <StatTile
+                icon={<TrendingUp color={tokens.emerald700} size={18} />}
+                iconBg={tokens.emerald100}
+                label="Earnings This Month"
+                value={formatCurrency(earnings?.thisMonth ?? 0)}
+                delta={`${earnings?.sessionsThisWeek ?? 0} sessions this week`}
+                style={styles.statTile}
+              />
+              <StatTile
+                icon={<DollarSign color={tokens.amber700} size={18} />}
+                iconBg={tokens.amber100}
+                label="Pending Payout"
+                value={formatCurrency(earnings?.pendingPayout ?? 0)}
+                delta="Awaiting approval"
+                deltaColor={tokens.amber700}
+                style={styles.statTile}
+              />
+              <StatTile
+                icon={<CheckCircle color={tokens.blue700} size={18} />}
+                iconBg={tokens.blue100}
+                label="Paid Out This Month"
+                value={formatCurrency(paidOutThisMonth)}
+                delta="+8% vs last month"
+                deltaColor={tokens.emerald700}
+                style={styles.statTile}
+              />
+              <StatTile
+                icon={<Clock color={tokens.purple700} size={18} />}
+                iconBg={tokens.purple100}
+                label="Claims Pending"
+                value={claimsPendingCount}
+                delta={claimsPendingCount === 1 ? '1 session' : `${claimsPendingCount} sessions`}
+                deltaColor={claimsPendingCount > 0 ? tokens.amber700 : tokens.gray700}
+                style={styles.statTile}
+              />
+            </View>
+
+            {/* ── Trend + Bank row (8/12 chart + 4/12 bank card) ── */}
+            <View style={styles.chartBankRow}>
+              {/* Earnings trend chart (8/12) */}
+              <Card style={styles.chartCard}>
+                <Text style={styles.sectionTitle}>Weekly Breakdown</Text>
+                <View style={styles.barChartContainer}>
+                  {weeklyData.map((d, idx) => {
+                    const heightPct = d.amount > 0 ? Math.max((d.amount / maxBarAmount) * 100, 6) : 6;
+                    const hasAmount = d.amount > 0;
+                    const isSelected = selectedBarIdx === idx;
                     return (
-                      <View key={s.id}>
-                        {i > 0 ? <View style={styles.barDetailSessionDivider} /> : null}
-                        <View style={styles.barDetailSessionRow}>
+                      <TouchableOpacity
+                        key={d.day}
+                        style={styles.barColumn}
+                        onPress={() => setSelectedBarIdx(isSelected ? null : idx)}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${d.day}: ${hasAmount ? formatCurrency(d.amount) : 'no earnings'}`}
+                        accessibilityState={{ selected: isSelected }}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.barAmountLabel}>
+                          {hasAmount ? formatCurrency(d.amount) : ''}
+                        </Text>
+                        <View style={styles.barTrack}>
                           <View
                             style={[
-                              styles.barDetailVerticalIcon,
+                              styles.barFill,
+                              {
+                                height: `${heightPct}%` as `${number}%`,
+                                backgroundColor: hasAmount
+                                  ? (isSelected ? colors.secondary : colors.primary)
+                                  : colors.primary + '28',
+                              },
+                            ]}
+                          />
+                        </View>
+                        <Text style={[styles.barDayLabel, isSelected && styles.barDayLabelSelected]}>
+                          {d.day}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                {/* Detail card for the selected day */}
+                {selectedBar && (
+                  <View style={styles.barDetailCard}>
+                    <View style={styles.barDetailHeader}>
+                      <Text style={styles.barDetailDay}>{selectedBar.day}</Text>
+                      <Text style={styles.barDetailAmount}>
+                        {selectedBar.amount > 0 ? formatCurrency(selectedBar.amount) : 'No earnings'}
+                      </Text>
+                    </View>
+                    {selectedBar.sessions.length === 0 ? (
+                      <Text style={styles.barDetailMeta}>
+                        No completed sessions on {selectedBar.day}.
+                      </Text>
+                    ) : (
+                      <View style={styles.barDetailSessionList}>
+                        {selectedBar.sessions.map((s, i) => {
+                          const verticalColor = VERTICAL_COLORS[s.vertical as Vertical] ?? '#6B7A6B';
+                          return (
+                            <View key={s.id}>
+                              {i > 0 ? <View style={styles.barDetailSessionDivider} /> : null}
+                              <View style={styles.barDetailSessionRow}>
+                                <View
+                                  style={[
+                                    styles.barDetailVerticalIcon,
+                                    { backgroundColor: verticalColor + '18' },
+                                  ]}
+                                >
+                                  <VerticalIconComponent vertical={s.vertical as Vertical} size={14} />
+                                </View>
+                                <View style={styles.barDetailSessionInfo}>
+                                  <Text style={styles.barDetailSessionMember} numberOfLines={1}>
+                                    {s.memberName ?? 'Member'}
+                                  </Text>
+                                  <Text style={styles.barDetailSessionMeta}>
+                                    {formatShortDate(s.scheduledAt)}
+                                    {s.unitsBilled != null
+                                      ? ` · ${s.unitsBilled} ${s.unitsBilled === 1 ? 'unit' : 'units'}`
+                                      : ''}
+                                  </Text>
+                                </View>
+                                <Text style={styles.barDetailSessionAmount}>
+                                  {formatCurrency(chwNetFromSession(s))}
+                                </Text>
+                              </View>
+                            </View>
+                          );
+                        })}
+                      </View>
+                    )}
+                  </View>
+                )}
+              </Card>
+
+              {/* Bank & payout setup card (4/12) */}
+              <Card style={styles.bankCard}>
+                <View style={styles.bankCardIconRow}>
+                  <View style={[styles.bankIconCircle, { backgroundColor: payoutsEnabled ? colors.primary + '18' : colors.compassGold + '18' }]}>
+                    {payoutsEnabled
+                      ? <CheckCircle size={22} color={colors.primary} />
+                      : <CreditCard size={22} color={colors.compassGold} />
+                    }
+                  </View>
+                </View>
+                <Text style={styles.bankCardTitle}>
+                  {payoutsEnabled ? 'Payouts Active' : payoutsInProgress ? 'Setup in Progress' : 'Connect Your Bank'}
+                </Text>
+                <Text style={styles.bankCardDesc}>
+                  {payoutsEnabled
+                    ? 'Direct deposit is active. Paid every Friday for the prior week.'
+                    : payoutsInProgress
+                    ? 'Stripe is reviewing your information. Usually takes a few minutes.'
+                    : 'Connect your bank account to receive Medi-Cal payouts.'}
+                </Text>
+                {!payoutsEnabled && (
+                  <Pressable
+                    style={styles.bankCardCTA}
+                    onPress={() => {
+                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                      (navigation as any).navigate('Payments');
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel={payoutsInProgress ? 'Continue setup' : 'Set up direct deposit'}
+                  >
+                    <Text style={styles.bankCardCTAText}>
+                      {payoutsInProgress ? 'Continue Setup' : 'Set Up Payouts'}
+                    </Text>
+                    <ArrowRight size={14} color="#FFFFFF" />
+                  </Pressable>
+                )}
+                <Text style={styles.bankCardNote}>
+                  Avg per session: {formatCurrency(avgEarningPerMember)}
+                </Text>
+              </Card>
+            </View>
+
+            {/* ── Sessions billed table card ── */}
+            <Card style={styles.card}>
+              <Text style={styles.sectionTitle}>Sessions Billed</Text>
+              {completedSessions.length === 0 ? (
+                <View style={styles.emptyPayouts}>
+                  <DollarSign size={22} color={colors.mutedForeground} />
+                  <Text style={styles.emptyTitle}>No billed sessions yet</Text>
+                  <Text style={styles.emptySubtext}>Complete sessions to start earning.</Text>
+                </View>
+              ) : (
+                completedSessions.slice(0, 10).map((session, index) => {
+                  const payoutStatus = lookupPayoutStatus(session.id, claimsBySession);
+                  const statusColor = PAYOUT_STATUS_COLORS[payoutStatus];
+                  const verticalColor = VERTICAL_COLORS[session.vertical as Vertical] ?? '#6B7A6B';
+                  return (
+                    <View key={session.id}>
+                      {index > 0 ? <View style={styles.divider} /> : null}
+                      <View style={styles.payoutRow}>
+                        <View
+                          style={[
+                            styles.payoutIconCircle,
+                            { backgroundColor: verticalColor + '18' },
+                          ]}
+                        >
+                          <VerticalIconComponent vertical={session.vertical as Vertical} size={16} />
+                        </View>
+                        <View style={styles.payoutInfo}>
+                          <Text style={styles.payoutMemberName} numberOfLines={1}>
+                            {session.memberName}
+                          </Text>
+                          <Text style={styles.payoutMeta}>
+                            {formatShortDate(session.scheduledAt)}
+                            {session.unitsBilled != null
+                              ? ` · ${session.unitsBilled} ${session.unitsBilled === 1 ? 'unit' : 'units'}`
+                              : ''}
+                            {' · '}
+                            {sessionModeLabels[session.mode as keyof typeof sessionModeLabels] ?? session.mode}
+                          </Text>
+                        </View>
+                        <View style={styles.payoutRight}>
+                          <Text style={styles.payoutAmount}>
+                            {formatCurrency(chwNetFromSession(session))}
+                          </Text>
+                          <View style={[styles.badge, { backgroundColor: statusColor + '18' }]}>
+                            <Text style={[styles.badgeText, { color: statusColor }]}>
+                              {PAYOUT_STATUS_LABELS[payoutStatus]}
+                            </Text>
+                          </View>
+                        </View>
+                      </View>
+                    </View>
+                  );
+                })
+              )}
+            </Card>
+
+            {/* ── Recent payouts card (mirrors sessions billed, kept separate for clarity) ── */}
+            <Card style={styles.card}>
+              <Text style={styles.sectionTitle}>Recent Payouts</Text>
+              {completedSessions.filter((s) => lookupPayoutStatus(s.id, claimsBySession) === 'approved').length === 0 ? (
+                <View style={styles.emptyPayouts}>
+                  <DollarSign size={22} color={colors.mutedForeground} />
+                  <Text style={styles.emptyTitle}>No payouts yet</Text>
+                  <Text style={styles.emptySubtext}>Complete sessions to start earning.</Text>
+                </View>
+              ) : (
+                completedSessions
+                  .filter((s) => lookupPayoutStatus(s.id, claimsBySession) === 'approved')
+                  .map((session, index) => {
+                    const verticalColor = VERTICAL_COLORS[session.vertical as Vertical] ?? '#6B7A6B';
+                    return (
+                      <View key={session.id}>
+                        {index > 0 ? <View style={styles.divider} /> : null}
+                        <View style={styles.payoutRow}>
+                          <View
+                            style={[
+                              styles.payoutIconCircle,
                               { backgroundColor: verticalColor + '18' },
                             ]}
                           >
-                            <VerticalIconComponent vertical={s.vertical as Vertical} size={14} />
+                            <VerticalIconComponent vertical={session.vertical as Vertical} size={16} />
                           </View>
-                          <View style={styles.barDetailSessionInfo}>
-                            <Text style={styles.barDetailSessionMember} numberOfLines={1}>
-                              {s.memberName ?? 'Member'}
+                          <View style={styles.payoutInfo}>
+                            <Text style={styles.payoutMemberName} numberOfLines={1}>
+                              {session.memberName}
                             </Text>
-                            <Text style={styles.barDetailSessionMeta}>
-                              {formatShortDate(s.scheduledAt)}
-                              {s.unitsBilled != null
-                                ? ` · ${s.unitsBilled} ${s.unitsBilled === 1 ? 'unit' : 'units'}`
-                                : ''}
+                            <Text style={styles.payoutMeta}>
+                              {formatShortDate(session.scheduledAt)}
                             </Text>
                           </View>
-                          <Text style={styles.barDetailSessionAmount}>
-                            {formatCurrency(chwNetFromSession(s))}
+                          <View style={styles.payoutRight}>
+                            <Text style={[styles.payoutAmount, { color: colors.primary }]}>
+                              {formatCurrency(chwNetFromSession(session))}
+                            </Text>
+                            <View style={[styles.badge, { backgroundColor: colors.primary + '18' }]}>
+                              <Text style={[styles.badgeText, { color: colors.primary }]}>Paid</Text>
+                            </View>
+                          </View>
+                        </View>
+                      </View>
+                    );
+                  })
+              )}
+            </Card>
+
+            {/* ── Earnings scenarios table ── */}
+            <Card style={styles.card}>
+              <View style={styles.scenarioHeaderRow}>
+                <TableProperties size={16} color={colors.primary} />
+                <Text style={styles.sectionTitle}>Earnings Scenarios</Text>
+              </View>
+              <Text style={styles.scenarioSubtitle}>
+                Estimated daily earnings at various billing volumes (Medi-Cal rate: {formatCurrency(MEDI_CAL_RATE)}/unit).
+              </Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={styles.tableScroll}
+                contentContainerStyle={styles.tableScrollContent}
+              >
+                <View>
+                  <View style={styles.tableRow}>
+                    <View style={[styles.tableCell, styles.tableCellHeader, styles.tableCellFirst]}>
+                      <Text style={styles.tableHeaderText}>Scenario</Text>
+                    </View>
+                    <View style={[styles.tableCell, styles.tableCellHeader]}>
+                      <Text style={styles.tableHeaderText}>Units/Day</Text>
+                    </View>
+                    <View style={[styles.tableCell, styles.tableCellHeader]}>
+                      <Text style={styles.tableHeaderText}>Gross/Day</Text>
+                    </View>
+                    <View style={[styles.tableCell, styles.tableCellHeader]}>
+                      <Text style={styles.tableHeaderText}>Platform (15%)</Text>
+                    </View>
+                    <View style={[styles.tableCell, styles.tableCellHeader]}>
+                      <Text style={styles.tableHeaderText}>Rewards (25%)</Text>
+                    </View>
+                    <View style={[styles.tableCell, styles.tableCellHeader]}>
+                      <Text style={styles.tableHeaderText}>CHW Net (60%)</Text>
+                    </View>
+                  </View>
+                  {EARNINGS_SCENARIOS.map((scenario, index) => {
+                    const gross = scenario.unitsPerDay * MEDI_CAL_RATE;
+                    const platformFee = gross * PLATFORM_FEE_RATE;
+                    const rewardsPool = gross * REWARDS_POOL_RATE;
+                    const chwNet = gross * CHW_NET_RATE;
+                    const isEven = index % 2 === 0;
+                    return (
+                      <View
+                        key={scenario.label}
+                        style={[styles.tableRow, isEven && styles.tableRowShaded]}
+                      >
+                        <View style={[styles.tableCell, styles.tableCellFirst]}>
+                          <Text style={styles.tableCellLabelText}>{scenario.label}</Text>
+                        </View>
+                        <View style={styles.tableCell}>
+                          <Text style={styles.tableCellText}>{scenario.unitsPerDay}</Text>
+                        </View>
+                        <View style={styles.tableCell}>
+                          <Text style={styles.tableCellText}>{formatCurrency(gross)}</Text>
+                        </View>
+                        <View style={styles.tableCell}>
+                          <Text style={[styles.tableCellText, styles.tableCellMuted]}>
+                            −{formatCurrency(platformFee)}
+                          </Text>
+                        </View>
+                        <View style={styles.tableCell}>
+                          <Text style={[styles.tableCellText, styles.tableCellRewards]}>
+                            −{formatCurrency(rewardsPool)}
+                          </Text>
+                        </View>
+                        <View style={styles.tableCell}>
+                          <Text style={[styles.tableCellText, styles.tableCellChwNet]}>
+                            {formatCurrency(chwNet)}
                           </Text>
                         </View>
                       </View>
                     );
                   })}
                 </View>
-              )}
-            </View>
-          )}
-        </View>
+              </ScrollView>
+            </Card>
 
-        {/* ── Recent payouts ── */}
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Recent Payouts</Text>
-          {completedSessions.length === 0 ? (
-            <View style={styles.emptyPayouts}>
-              <DollarSign size={22} color={colors.mutedForeground} />
-              <Text style={styles.emptyTitle}>No payouts yet</Text>
-              <Text style={styles.emptySubtext}>Complete sessions to start earning.</Text>
-            </View>
-          ) : (
-            completedSessions.map((session, index) => {
-              const payoutStatus = lookupPayoutStatus(session.id, claimsBySession);
-              const statusColor = PAYOUT_STATUS_COLORS[payoutStatus];
-              const verticalColor = VERTICAL_COLORS[session.vertical as Vertical] ?? '#6B7A6B';
-              return (
-                <View key={session.id}>
-                  {index > 0 ? <View style={styles.divider} /> : null}
-                  <View style={styles.payoutRow}>
-                    <View
-                      style={[
-                        styles.payoutIconCircle,
-                        { backgroundColor: verticalColor + '18' },
-                      ]}
-                    >
-                      <VerticalIconComponent vertical={session.vertical as Vertical} size={16} />
-                    </View>
-                    <View style={styles.payoutInfo}>
-                      <Text style={styles.payoutMemberName} numberOfLines={1}>
-                        {session.memberName}
-                      </Text>
-                      <Text style={styles.payoutMeta}>
-                        {formatShortDate(session.scheduledAt)}
-                        {session.unitsBilled != null
-                          ? ` · ${session.unitsBilled} ${session.unitsBilled === 1 ? 'unit' : 'units'}`
-                          : ''}
-                        {' · '}
-                        {sessionModeLabels[session.mode as keyof typeof sessionModeLabels] ?? session.mode}
-                      </Text>
-                    </View>
-                    <View style={styles.payoutRight}>
-                      <Text style={styles.payoutAmount}>
-                        {formatCurrency(chwNetFromSession(session))}
-                      </Text>
-                      <View style={[styles.badge, { backgroundColor: statusColor + '18' }]}>
-                        <Text style={[styles.badgeText, { color: statusColor }]}>
-                          {PAYOUT_STATUS_LABELS[payoutStatus]}
-                        </Text>
-                      </View>
-                    </View>
-                  </View>
-                </View>
-              );
-            })
-          )}
-        </View>
-
-        {/* ── Earnings scenarios table ── */}
-        <View style={styles.card}>
-          <View style={styles.scenarioHeaderRow}>
-            <TableProperties size={16} color={colors.primary} />
-            <Text style={styles.sectionTitle}>Earnings Scenarios</Text>
-          </View>
-          <Text style={styles.scenarioSubtitle}>
-            Estimated daily earnings at various billing volumes (Medi-Cal rate: {formatCurrency(MEDI_CAL_RATE)}/unit).
-          </Text>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={styles.tableScroll}
-            contentContainerStyle={styles.tableScrollContent}
-          >
-            {/* Table header */}
-            <View>
-              <View style={styles.tableRow}>
-                <View style={[styles.tableCell, styles.tableCellHeader, styles.tableCellFirst]}>
-                  <Text style={styles.tableHeaderText}>Scenario</Text>
-                </View>
-                <View style={[styles.tableCell, styles.tableCellHeader]}>
-                  <Text style={styles.tableHeaderText}>Units/Day</Text>
-                </View>
-                <View style={[styles.tableCell, styles.tableCellHeader]}>
-                  <Text style={styles.tableHeaderText}>Gross/Day</Text>
-                </View>
-                <View style={[styles.tableCell, styles.tableCellHeader]}>
-                  <Text style={styles.tableHeaderText}>Platform (15%)</Text>
-                </View>
-                <View style={[styles.tableCell, styles.tableCellHeader]}>
-                  <Text style={styles.tableHeaderText}>Rewards (25%)</Text>
-                </View>
-                <View style={[styles.tableCell, styles.tableCellHeader]}>
-                  <Text style={styles.tableHeaderText}>CHW Net (60%)</Text>
-                </View>
+            {/* ── Payout schedule note ── */}
+            <Card style={styles.noteCard}>
+              <View style={[styles.noteIconCircle, { backgroundColor: colors.primary + '18' }]}>
+                <Banknote size={18} color={colors.primary} />
               </View>
-              {/* Table body */}
-              {EARNINGS_SCENARIOS.map((scenario, index) => {
-                const gross = scenario.unitsPerDay * MEDI_CAL_RATE;
-                const platformFee = gross * PLATFORM_FEE_RATE;
-                const rewardsPool = gross * REWARDS_POOL_RATE;
-                const chwNet = gross * CHW_NET_RATE;
-                const isEven = index % 2 === 0;
-                return (
-                  <View
-                    key={scenario.label}
-                    style={[styles.tableRow, isEven && styles.tableRowShaded]}
-                  >
-                    <View style={[styles.tableCell, styles.tableCellFirst]}>
-                      <Text style={styles.tableCellLabelText}>{scenario.label}</Text>
-                    </View>
-                    <View style={styles.tableCell}>
-                      <Text style={styles.tableCellText}>{scenario.unitsPerDay}</Text>
-                    </View>
-                    <View style={styles.tableCell}>
-                      <Text style={styles.tableCellText}>{formatCurrency(gross)}</Text>
-                    </View>
-                    <View style={styles.tableCell}>
-                      <Text style={[styles.tableCellText, styles.tableCellMuted]}>
-                        −{formatCurrency(platformFee)}
-                      </Text>
-                    </View>
-                    <View style={styles.tableCell}>
-                      <Text style={[styles.tableCellText, styles.tableCellRewards]}>
-                        −{formatCurrency(rewardsPool)}
-                      </Text>
-                    </View>
-                    <View style={styles.tableCell}>
-                      <Text style={[styles.tableCellText, styles.tableCellChwNet]}>
-                        {formatCurrency(chwNet)}
-                      </Text>
-                    </View>
-                  </View>
-                );
-              })}
-            </View>
-          </ScrollView>
-        </View>
-
-        {/* ── Payout schedule note ── */}
-        <View style={styles.noteCard}>
-          <View style={[styles.noteIconCircle, { backgroundColor: colors.primary + '18' }]}>
-            <Banknote size={18} color={colors.primary} />
+              <Text style={styles.noteText}>
+                <Text style={styles.noteBold}>Payout schedule: </Text>
+                Payouts are processed weekly via direct deposit, every Friday for the prior week's
+                approved sessions.
+              </Text>
+            </Card>
           </View>
-          <Text style={styles.noteText}>
-            <Text style={styles.noteBold}>Payout schedule: </Text>
-            Payouts are processed weekly via direct deposit, every Friday for the prior week's
-            approved sessions.
-          </Text>
-        </View>
-
-        {/* Bottom rate sentence removed per Jemal's feedback (was misleading;
-            true split is shown in the Earnings Scenarios table above). */}
-        </View>
-      </ScrollView>
-    </SafeAreaView>
+        </ScrollView>
+      </SafeAreaView>
+    </AppShell>
   );
 }
 
@@ -674,8 +785,6 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     alignItems: 'center',
   },
-  // 960 px lets the stat cards and payout table breathe on wide viewports
-  // while keeping the horizontal-scroll table still scrollable inside it.
   pageWrap: {
     width: '100%',
     maxWidth: 960,
@@ -683,22 +792,85 @@ const styles = StyleSheet.create({
     padding: 20,
     paddingBottom: 40,
   },
-  pageHeader: {
+
+  // ── 4-tile stat grid ────────────────────────────────────────────────────────
+  statGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
     marginBottom: 20,
   },
-  pageTitle: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 24,
-    lineHeight: 30,
-    color: '#1E3320',
+  statTile: {
+    flex: 1,
+    minWidth: 160,
   },
-  pageSubtitle: {
+
+  // ── Chart + bank row ────────────────────────────────────────────────────────
+  chartBankRow: {
+    flexDirection: 'row',
+    gap: 16,
+    marginBottom: 20,
+    flexWrap: 'wrap',
+  },
+  chartCard: {
+    flex: 2,
+    padding: 16,
+    minWidth: 260,
+  },
+  bankCard: {
+    flex: 1,
+    padding: 16,
+    minWidth: 180,
+    gap: 10,
+    justifyContent: 'center',
+  },
+  bankCardIconRow: {
+    marginBottom: 4,
+  },
+  bankIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bankCardTitle: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 15,
+    color: '#1E3320',
+    lineHeight: 20,
+  },
+  bankCardDesc: {
     fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 16,
-    lineHeight: 24,
+    fontSize: 12,
     color: '#6B7A6B',
+    lineHeight: 17,
+  },
+  bankCardCTA: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: colors.primary,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
     marginTop: 4,
   },
+  bankCardCTAText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 13,
+    color: '#FFFFFF',
+  },
+  bankCardNote: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: '#9CA3AF',
+    textAlign: 'center',
+    marginTop: 4,
+  },
+
+  // ── Payout banner ────────────────────────────────────────────────────────────
   payoutBanner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -735,64 +907,11 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.9)',
     lineHeight: 16,
   },
-  statRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginBottom: 20,
-  },
-  statCard: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-    padding: 14,
-    shadowColor: '#3D5A3E',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 24,
-    elevation: 3,
-  },
-  statIconCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 10,
-    backgroundColor: '#3D5A3E15',
-  },
-  statValue: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 24,
-    lineHeight: 30,
-    color: '#1E3320',
-  },
-  statLabel: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 14,
-    color: '#6B7A6B',
-    marginTop: 2,
-  },
-  statSubtext: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 12,
-    letterSpacing: 1,
-    color: '#7A9F5A',
-    marginTop: 2,
-  },
+
+  // ── Generic card shell ────────────────────────────────────────────────────────
   card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
     padding: 16,
     marginBottom: 20,
-    shadowColor: '#3D5A3E',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 24,
-    elevation: 3,
   },
   sectionTitle: {
     fontFamily: 'DMSans_700Bold',
@@ -801,6 +920,8 @@ const styles = StyleSheet.create({
     color: '#1E3320',
     marginBottom: 16,
   },
+
+  // ── Bar chart ────────────────────────────────────────────────────────────────
   barChartContainer: {
     flexDirection: 'row',
     alignItems: 'flex-end',
@@ -916,6 +1037,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.border,
     marginVertical: 2,
   },
+
+  // ── Payout rows ───────────────────────────────────────────────────────────────
   divider: {
     height: 1,
     backgroundColor: '#DDD6CC',
@@ -988,51 +1111,8 @@ const styles = StyleSheet.create({
     color: '#6B7A6B',
     textAlign: 'center',
   },
-  noteCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-    padding: 16,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-    marginBottom: 16,
-    shadowColor: '#3D5A3E',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 24,
-    elevation: 3,
-  },
-  noteIconCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-    backgroundColor: '#3D5A3E15',
-  },
-  noteText: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 14,
-    color: '#6B7A6B',
-    flex: 1,
-    lineHeight: 20,
-  },
-  noteBold: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    color: '#1E3320',
-  },
-  footnote: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 12,
-    letterSpacing: 1,
-    color: '#6B7A6B',
-    textAlign: 'center',
-  },
 
-  // ── Earnings scenario table ─────────────────────────────────────────────────
+  // ── Scenarios table ────────────────────────────────────────────────────────────
   scenarioHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1100,19 +1180,33 @@ const styles = StyleSheet.create({
     color: colors.primary,
     fontWeight: '700',
   },
-  phaseFootnote: {
-    marginTop: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
+
+  // ── Note card ─────────────────────────────────────────────────────────────────
+  noteCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    marginBottom: 16,
+    padding: 16,
   },
-  phaseFootnoteText: {
-    ...typography.label,
-    color: colors.mutedForeground,
-    lineHeight: 18,
+  noteIconCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+    backgroundColor: '#3D5A3E15',
   },
-  phaseFootnoteBold: {
-    fontWeight: '700',
-    color: colors.foreground,
+  noteText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 14,
+    color: '#6B7A6B',
+    flex: 1,
+    lineHeight: 20,
+  },
+  noteBold: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    color: '#1E3320',
   },
 });
