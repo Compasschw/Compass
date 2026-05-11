@@ -236,7 +236,7 @@ const ratingStyles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: colors.amber700,
-  } as TextStyle,
+  } as unknown as TextStyle,
 });
 
 // ─── Partner card ─────────────────────────────────────────────────────────────
@@ -346,7 +346,7 @@ const cardStyles = StyleSheet.create({
     fontWeight: '600',
     color: colors.textPrimary,
     lineHeight: 20,
-  } as TextStyle,
+  } as unknown as TextStyle,
 
   capacityBadge: {
     flexDirection: 'row',
@@ -364,7 +364,7 @@ const cardStyles = StyleSheet.create({
     fontSize: 12,
     color: colors.textSecondary,
     lineHeight: 18,
-  } as TextStyle,
+  } as unknown as TextStyle,
 
   contactBlock: {
     gap: 4,
@@ -384,7 +384,7 @@ const cardStyles = StyleSheet.create({
     fontSize: 11,
     color: colors.textSecondary,
     lineHeight: 16,
-  } as TextStyle,
+  } as unknown as TextStyle,
 
   footerRow: {
     flexDirection: 'row',
@@ -406,7 +406,7 @@ const cardStyles = StyleSheet.create({
   referralCount: {
     fontSize: 11,
     color: colors.textMuted,
-  } as TextStyle,
+  } as unknown as TextStyle,
 
   languagePills: {
     flexDirection: 'row',
@@ -426,7 +426,7 @@ const cardStyles = StyleSheet.create({
     fontSize: 9,
     color: colors.gray700,
     fontWeight: '500',
-  } as TextStyle,
+  } as unknown as TextStyle,
 });
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
@@ -624,7 +624,7 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     height: '100%',
     outlineStyle: 'none',
-  } as TextStyle,
+  } as unknown as TextStyle,
 
   chipRow: {
     marginBottom: spacing.lg,
@@ -653,11 +653,11 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '500',
     color: colors.textSecondary,
-  } as TextStyle,
+  } as unknown as TextStyle,
 
   filterChipTextActive: {
     color: colors.cardBg,
-  } as TextStyle,
+  } as unknown as TextStyle,
 
   bodyRow: {
     flexDirection: 'row',
@@ -683,7 +683,7 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 14,
     color: colors.textSecondary,
-  } as TextStyle,
+  } as unknown as TextStyle,
 
   railCard: {
     padding: spacing.lg,
@@ -695,7 +695,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: colors.textPrimary,
     marginBottom: spacing.xs,
-  } as TextStyle,
+  } as unknown as TextStyle,
 
   statTile: {
     padding: spacing.md,
@@ -720,5 +720,5 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '500',
     color: colors.textPrimary,
-  } as TextStyle,
+  } as unknown as TextStyle,
 });

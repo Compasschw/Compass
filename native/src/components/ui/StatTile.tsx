@@ -12,6 +12,7 @@ import {
   View,
   Text,
   StyleSheet,
+  type StyleProp,
   type ViewStyle,
   type TextStyle,
 } from 'react-native';
@@ -43,7 +44,7 @@ export interface StatTileProps {
    */
   deltaColor?: string;
   /** Additional styles forwarded to the outer Card. */
-  style?: ViewStyle;
+  style?: StyleProp<ViewStyle>;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────

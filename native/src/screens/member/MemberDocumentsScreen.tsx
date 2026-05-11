@@ -284,7 +284,7 @@ export function MemberDocumentsScreen(): React.JSX.Element {
   const handleUpload = useCallback((doc: MemberDocument) => {
     Alert.alert(
       `Upload ${doc.name}`,
-      'Choose how you'd like to upload this document.',
+      "Choose how you'd like to upload this document.",
       [
         { text: 'Cancel', style: 'cancel' },
         {

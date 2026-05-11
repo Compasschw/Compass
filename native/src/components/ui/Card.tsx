@@ -7,15 +7,15 @@
  */
 
 import React from 'react';
-import { View, StyleSheet, type ViewStyle } from 'react-native';
+import { View, StyleSheet, type StyleProp, type ViewStyle } from 'react-native';
 
 import { colors, radius, shadows } from '../../theme/tokens';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface CardProps {
-  /** Additional styles merged onto the outer View. */
-  style?: ViewStyle;
+  /** Additional styles merged onto the outer View. Accepts an array or a single style. */
+  style?: StyleProp<ViewStyle>;
   children?: React.ReactNode;
 }
 

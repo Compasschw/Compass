@@ -434,6 +434,11 @@ export function MemberFacingCHWProfileScreen(): React.JSX.Element {
             targetUserRole="chw"
             sharedSessionCount={profile.sharedSessionCount}
             targetDisplayName={`${profile.firstName} ${profile.lastNameInitial}`}
+            onNavigateToConversation={() => {
+              // Navigate the member to their Sessions/Messages tab — the
+              // screen resolves the active conversation from route state.
+              navigation.navigate('Sessions' as never);
+            }}
           />
 
           {/* ── About ── */}

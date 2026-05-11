@@ -454,7 +454,7 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     height: '100%',
     outlineStyle: 'none',
-  } as TextStyle,
+  } as unknown as TextStyle,
 
   chipRow: {
     marginBottom: spacing.lg,
@@ -486,11 +486,11 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '500',
     color: colors.textSecondary,
-  } as TextStyle,
+  } as unknown as TextStyle,
 
   filterChipTextActive: {
     color: colors.cardBg,
-  } as TextStyle,
+  } as unknown as TextStyle,
 
   bodyRow: {
     flexDirection: 'row',
@@ -529,7 +529,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: colors.textSecondary,
     textTransform: 'uppercase',
-  } as TextStyle,
+  } as unknown as TextStyle,
 
   colFile:   { flex: 2.5 } as ViewStyle,
   colMember: { flex: 1.5 } as ViewStyle,
@@ -551,13 +551,13 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     fontWeight: '500',
     lineHeight: 16,
-  } as TextStyle,
+  } as unknown as TextStyle,
 
   cellText: {
     fontSize: 12,
     color: colors.textSecondary,
     lineHeight: 16,
-  } as TextStyle,
+  } as unknown as TextStyle,
 
   emptyCard: {
     padding: spacing.xl,
@@ -567,7 +567,7 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 14,
     color: colors.textSecondary,
-  } as TextStyle,
+  } as unknown as TextStyle,
 
   railCard: {
     padding: spacing.lg,
@@ -579,7 +579,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: colors.textPrimary,
     marginBottom: spacing.xs,
-  } as TextStyle,
+  } as unknown as TextStyle,
 
   statTile: {
     padding: spacing.md,
@@ -604,10 +604,10 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: colors.textPrimary,
     fontWeight: '500',
-  } as TextStyle,
+  } as unknown as TextStyle,
 
   activityMember: {
     fontSize: 10,
     color: colors.textSecondary,
-  } as TextStyle,
+  } as unknown as TextStyle,
 });

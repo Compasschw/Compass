@@ -484,7 +484,7 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     height: '100%',
     outlineStyle: 'none',
-  } as TextStyle,
+  } as unknown as TextStyle,
 
   chipRow: {
     marginBottom: spacing.lg,

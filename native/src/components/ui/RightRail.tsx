@@ -7,7 +7,7 @@
  */
 
 import React from 'react';
-import { View, StyleSheet, type ViewStyle } from 'react-native';
+import { View, StyleSheet, type StyleProp, type ViewStyle } from 'react-native';
 
 import { spacing } from '../../theme/tokens';
 
@@ -20,7 +20,7 @@ export interface RightRailProps {
    */
   width?: number;
   /** Additional styles forwarded to the outer View. */
-  style?: ViewStyle;
+  style?: StyleProp<ViewStyle>;
   children?: React.ReactNode;
 }
 
