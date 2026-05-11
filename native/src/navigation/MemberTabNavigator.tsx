@@ -22,6 +22,10 @@ import {
   CalendarDays,
   Map,
   UserCircle,
+  Route,
+  FolderOpen,
+  FileText,
+  Settings as SettingsIcon,
 } from 'lucide-react-native';
 
 import { SidebarProvider, useSidebar } from './SidebarContext';
@@ -37,6 +41,10 @@ import { MemberCalendarScreen } from '../screens/member/MemberCalendarScreen';
 import { MemberRoadmapScreen } from '../screens/member/MemberRoadmapScreen';
 import { MemberProfileScreen } from '../screens/member/MemberProfileScreen';
 import { MemberRewardsScreen } from '../screens/member/MemberRewardsScreen';
+import { MemberJourneyScreen } from '../screens/member/MemberJourneyScreen';
+import { MemberResourcesScreen } from '../screens/member/MemberResourcesScreen';
+import { MemberDocumentsScreen } from '../screens/member/MemberDocumentsScreen';
+import { MemberSettingsScreen } from '../screens/member/MemberSettingsScreen';
 
 // ─── Navigator param lists ────────────────────────────────────────────────────
 
@@ -63,6 +71,11 @@ export type MemberTabParamList = {
   Calendar: undefined;
   Roadmap: undefined;
   Profile: undefined;
+  // New (Wave 2) sidebar destinations.
+  MemberJourney: undefined;
+  MemberResources: undefined;
+  MemberDocuments: undefined;
+  MemberSettings: undefined;
 };
 
 const Tab = createBottomTabNavigator<MemberTabParamList>();
@@ -117,15 +130,19 @@ interface ScreenSpec {
 }
 
 const SCREENS: ScreenSpec[] = [
-  { name: 'Home',     title: 'Home',     component: HomeStackNavigator,    icon: Home, rootScreen: 'HomeMain' },
+  { name: 'Home',            title: 'Home',         component: HomeStackNavigator,    icon: Home,         rootScreen: 'HomeMain' },
   // FindCHW mounts a nested stack so tapping a CHW card pushes CHWProfile
   // without affecting the tab bar. rootScreen resets the stack to FindMain
   // when the user taps the active tab.
-  { name: 'FindCHW',  title: 'Find CHW', component: FindStackNavigator,    icon: Search, rootScreen: 'FindMain' },
-  { name: 'Sessions', title: 'Sessions', component: MemberSessionsScreen,  icon: ClipboardList },
-  { name: 'Calendar', title: 'Calendar', component: MemberCalendarScreen,  icon: CalendarDays },
-  { name: 'Roadmap',  title: 'Roadmap',  component: MemberRoadmapScreen,   icon: Map },
-  { name: 'Profile',  title: 'Profile',  component: MemberProfileScreen,   icon: UserCircle },
+  { name: 'FindCHW',         title: 'My CHW',       component: FindStackNavigator,    icon: Search,       rootScreen: 'FindMain' },
+  { name: 'MemberJourney',   title: 'My Journey',   component: MemberJourneyScreen,   icon: Route },
+  { name: 'Sessions',        title: 'Messages',     component: MemberSessionsScreen,  icon: ClipboardList },
+  { name: 'Calendar',        title: 'Appointments', component: MemberCalendarScreen,  icon: CalendarDays },
+  { name: 'MemberResources', title: 'Resources',    component: MemberResourcesScreen, icon: FolderOpen },
+  { name: 'MemberDocuments', title: 'My Documents', component: MemberDocumentsScreen, icon: FileText },
+  { name: 'Roadmap',         title: 'Roadmap',      component: MemberRoadmapScreen,   icon: Map },
+  { name: 'Profile',         title: 'Profile',      component: MemberProfileScreen,   icon: UserCircle },
+  { name: 'MemberSettings',  title: 'Settings',     component: MemberSettingsScreen,  icon: SettingsIcon },
 ];
 
 // ─── Native variant: bottom tab bar ───────────────────────────────────────────

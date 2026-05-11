@@ -24,6 +24,11 @@ import {
   DollarSign,
   Map,
   UserCircle,
+  Route,
+  FolderOpen,
+  FileText,
+  BarChart3,
+  Building2,
 } from 'lucide-react-native';
 
 import { SidebarProvider, useSidebar } from './SidebarContext';
@@ -43,6 +48,11 @@ import { CHWReviewsScreen } from '../screens/chw/CHWReviewsScreen';
 import { CHWMapScreen } from '../screens/chw/CHWMapScreen';
 import { CHWProfileScreen } from '../screens/chw/CHWProfileScreen';
 import { PaymentsScreen } from '../screens/chw/PaymentsScreen';
+import { CHWJourneysScreen } from '../screens/chw/CHWJourneysScreen';
+import { CHWResourcesScreen } from '../screens/chw/CHWResourcesScreen';
+import { CHWDocumentsScreen } from '../screens/chw/CHWDocumentsScreen';
+import { CHWReportsScreen } from '../screens/chw/CHWReportsScreen';
+import { CHWCommunityPartnersScreen } from '../screens/chw/CHWCommunityPartnersScreen';
 
 // ─── Navigator param lists ────────────────────────────────────────────────────
 
@@ -54,6 +64,12 @@ export type CHWTabParamList = {
   EarningsStack: undefined;
   Map: undefined;
   Profile: undefined;
+  // New (Wave 2) sidebar destinations.
+  CHWJourneys: undefined;
+  CHWResources: undefined;
+  CHWDocuments: undefined;
+  CHWReports: undefined;
+  CHWCommunityPartners: undefined;
   // Screens inside nested stacks — exposed here so deep links can address
   // them via the CHWTabParamList type without navigating through the stack
   // manually.
@@ -150,13 +166,18 @@ interface ScreenSpec {
 }
 
 const SCREENS: ScreenSpec[] = [
-  { name: 'DashboardStack', title: 'Dashboard', component: DashboardStackNavigator, icon: LayoutDashboard, rootScreen: 'Dashboard' },
-  { name: 'Requests',       title: 'Requests',  component: CHWRequestsScreen,       icon: Inbox },
-  { name: 'SessionsStack',  title: 'Sessions',  component: SessionsStackNavigator,  icon: ClipboardList, rootScreen: 'Sessions' },
-  { name: 'Calendar',       title: 'Calendar',  component: CHWCalendarScreen,       icon: CalendarDays },
-  { name: 'EarningsStack',  title: 'Earnings',  component: EarningsStackNavigator,  icon: DollarSign,    rootScreen: 'Earnings' },
-  { name: 'Map',            title: 'Map',       component: CHWMapScreen,            icon: Map },
-  { name: 'Profile',        title: 'Profile',   component: CHWProfileScreen,        icon: UserCircle },
+  { name: 'DashboardStack',       title: 'Dashboard',          component: DashboardStackNavigator,    icon: LayoutDashboard, rootScreen: 'Dashboard' },
+  { name: 'Requests',             title: 'Members',            component: CHWRequestsScreen,          icon: Inbox },
+  { name: 'CHWJourneys',          title: 'Journeys',           component: CHWJourneysScreen,          icon: Route },
+  { name: 'SessionsStack',        title: 'Messages',           component: SessionsStackNavigator,     icon: ClipboardList,   rootScreen: 'Sessions' },
+  { name: 'Calendar',             title: 'Appointments',       component: CHWCalendarScreen,          icon: CalendarDays },
+  { name: 'CHWResources',         title: 'Resources',          component: CHWResourcesScreen,         icon: FolderOpen },
+  { name: 'CHWDocuments',         title: 'Documents',          component: CHWDocumentsScreen,         icon: FileText },
+  { name: 'EarningsStack',        title: 'Earnings',           component: EarningsStackNavigator,     icon: DollarSign,      rootScreen: 'Earnings' },
+  { name: 'CHWReports',           title: 'Reports',            component: CHWReportsScreen,           icon: BarChart3 },
+  { name: 'CHWCommunityPartners', title: 'Community Partners', component: CHWCommunityPartnersScreen, icon: Building2 },
+  { name: 'Map',                  title: 'Map',                component: CHWMapScreen,               icon: Map },
+  { name: 'Profile',              title: 'Settings',           component: CHWProfileScreen,           icon: UserCircle },
 ];
 
 // ─── Native variant: bottom tab bar ───────────────────────────────────────────
