@@ -1,0 +1,36 @@
+/**
+ * Barrel export for the ui/ design-system component library.
+ *
+ * Import from this path rather than individual files:
+ *   import { Card, Pill, StatTile } from '../components/ui';
+ */
+
+export { Card } from './Card';
+export type { CardProps } from './Card';
+
+export { Pill } from './Pill';
+export type { PillProps, PillVariant, PillSize } from './Pill';
+
+export { PageHeader } from './PageHeader';
+export type { PageHeaderProps } from './PageHeader';
+
+export { StatTile } from './StatTile';
+export type { StatTileProps } from './StatTile';
+
+export { RightRail } from './RightRail';
+export type { RightRailProps } from './RightRail';
+
+export { StickyActionBar } from './StickyActionBar';
+export type { StickyActionBarProps, ActionItem, PrimaryAction } from './StickyActionBar';
+
+export { RightDrawer } from './RightDrawer';
+export type { RightDrawerProps } from './RightDrawer';
+
+export { chwSidebarItems, memberSidebarItems } from './sidebarItems';
+export type { SidebarItem, CHWSidebarItem, MemberSidebarItem } from './sidebarItems';
+
+export { DashboardSidebar } from './DashboardSidebar';
+export type { DashboardSidebarProps, UserBlock } from './DashboardSidebar';
+
+export { AppShell } from './AppShell';
+export type { AppShellProps, AppShellRole } from './AppShell';
