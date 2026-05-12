@@ -40,6 +40,7 @@ import { MemberFindScreen } from '../screens/member/MemberFindScreen';
 import { MyCHWScreen } from '../screens/member/MyCHWScreen';
 import { MemberFacingCHWProfileScreen } from '../screens/member/MemberFacingCHWProfileScreen';
 import { MemberSessionsScreen } from '../screens/member/MemberSessionsScreen';
+import { MemberMessagesScreen } from '../screens/member/MemberMessagesScreen';
 import { MemberCalendarScreen } from '../screens/member/MemberCalendarScreen';
 import { MemberRoadmapScreen } from '../screens/member/MemberRoadmapScreen';
 import { MemberProfileScreen } from '../screens/member/MemberProfileScreen';
@@ -142,7 +143,13 @@ const SCREENS: ScreenSpec[] = [
   // when the user taps the active tab.
   { name: 'FindCHW',         title: 'My CHW',       component: FindStackNavigator,    icon: Search,       rootScreen: 'FindMain' },
   { name: 'MemberJourney',   title: 'My Journey',   component: MemberJourneyScreen,   icon: Route },
-  { name: 'Sessions',        title: 'Messages',     component: MemberSessionsScreen,  icon: ClipboardList },
+  {
+    name: 'Sessions',
+    title: 'Messages',
+    // Web: new single-thread MemberMessagesScreen; Native: existing sessions list.
+    component: Platform.OS === 'web' ? MemberMessagesScreen : MemberSessionsScreen,
+    icon: ClipboardList,
+  },
   { name: 'Calendar',        title: 'Appointments', component: MemberCalendarScreen,  icon: CalendarDays },
   { name: 'MemberResources', title: 'Resources',    component: MemberResourcesScreen, icon: FolderOpen },
   { name: 'MemberRewards',   title: 'Rewards',      component: MemberRewardsScreen,   icon: Gift },
