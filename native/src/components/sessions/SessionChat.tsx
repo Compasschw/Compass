@@ -54,7 +54,6 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
@@ -1394,6 +1393,21 @@ export interface SessionChatProps {
    * Omitting this prop hides the assessment button.
    */
   onStartAssessment?: () => void;
+  /**
+   * Optional callback invoked when the CHW taps the member's avatar in the header.
+   * The parent (which lives inside the navigation tree) calls navigation.navigate
+   * with the memberId. Omitting makes the avatar tap a no-op.
+   *
+   * Replaces the previous unconditional useNavigation() call, which threw when
+   * SessionChat was rendered inside a React Native Modal portal that hoists
+   * children outside the navigator tree (e.g. MemberSessionsScreen.ChatModal).
+   */
+  onNavigateToMemberProfile?: (memberId: string) => void;
+  /**
+   * Optional callback invoked when the member taps the CHW's avatar in the header.
+   * The parent calls navigation.navigate with the chwId. Omitting is a safe no-op.
+   */
+  onNavigateToChwProfile?: (chwId: string) => void;
 }
 
 // ─── MemberAudioStatusIndicator ───────────────────────────────────────────────
@@ -1415,12 +1429,20 @@ interface MemberAudioStatusIndicatorProps {
 function MemberAudioStatusIndicator({
   sessionId,
   chwId,
-}: MemberAudioStatusIndicatorProps): React.JSX.Element {
+}: MemberAudioStatusIndicatorProps): React.JSX.Element | null {
+  // Guard: session data may not yet be loaded when this component mounts,
+  // leaving chwId (or sessionId) as an empty string / undefined. An absent key
+  // fires a malformed request (400) and may crash downstream access. The
+  // `enabled` flag prevents the query from running, and the early return (placed
+  // AFTER the hook call per Rules of Hooks) renders nothing until data arrives.
   const { chwAudioConsentActive } = useMemberDeviceAudioConsent(
     sessionId,
     chwId,
-    { enabled: true },
+    { enabled: !!sessionId && !!chwId },
   );
+
+  // Placed after the hook to comply with Rules of Hooks (no conditional hooks).
+  if (!sessionId || !chwId) return null;
 
   return (
     <View
@@ -1495,7 +1517,12 @@ const memberAudioStyles = StyleSheet.create({
  *      the render list by startedAtMs timestamp alongside text messages.
  *   6. CHW taps MicOff (active state) → transcription stops → followup banner appears.
  */
-export function SessionChat({ sessionId, onStartAssessment }: SessionChatProps): React.JSX.Element {
+export function SessionChat({
+  sessionId,
+  onStartAssessment,
+  onNavigateToMemberProfile,
+  onNavigateToChwProfile,
+}: SessionChatProps): React.JSX.Element {
   const { userRole, userName } = useAuth();
 
   const [inputValue, setInputValue] = useState('');
@@ -2068,55 +2095,38 @@ export function SessionChat({ sessionId, onStartAssessment }: SessionChatProps):
     setDeclinedAudioCaptureThisMount(true);
   }, []);
 
-  // ── Navigation hook (Change 3 — profile avatar header) ───────────────────────
+  // ── Avatar press handler (profile navigation) ────────────────────────────────
   //
-  // useNavigation() works when SessionChat is rendered inside a React Navigation
-  // stack (the normal path: CHWSessionsScreen → Session detail, or
-  // MemberSessionsScreen → Session detail).
+  // Navigation is delegated to the parent via optional callback props rather than
+  // calling useNavigation() directly. useNavigation() throws when SessionChat is
+  // rendered inside a React Native Modal that hoists its children outside the
+  // navigator tree (e.g. the ChatModal in MemberSessionsScreen). The hook throws
+  // BEFORE any try/catch can run — the only safe fix is the callback-prop pattern.
   //
-  // Trade-off / fallback: if SessionChat is ever rendered inside a plain Modal
-  // (outside the React Navigation tree), useNavigation() will throw. We guard
-  // with a try/catch at the call site so the rest of the component renders
-  // correctly — the avatar header becomes non-tappable in that case (the touch
-  // handler is a no-op) rather than crashing.
-  //
-  // If we later need to navigate FROM a modal context we can accept an
-  // `onNavigateToProfile?: () => void` prop from the parent and call that; the
-  // parent (which IS inside the navigator) can then do the push. For now the
-  // guard approach is sufficient because all known entry points are stack screens.
-  const navigation = useNavigation<any>(); // eslint-disable-line @typescript-eslint/no-explicit-any
+  // Parents inside the navigation tree call useNavigation() themselves and pass
+  // the appropriate callback down. If no callback is provided the tap is a no-op.
 
   /**
    * Navigate to the other party's profile screen.
    *
-   * CHW side → pushes `MemberProfile` inside the SessionsStack with `{ memberId }`.
-   * Member side → pushes `CHWProfile` inside the FindStack with `{ chwId }`.
+   * CHW side  → invokes onNavigateToMemberProfile(memberId) if provided.
+   * Member side → invokes onNavigateToChwProfile(chwId) if provided.
    *
-   * Navigation may fail (e.g. if this component is rendered inside a plain React
-   * Native Modal outside the navigation tree). In that case we catch silently —
-   * the avatar tap is a convenience affordance, not a critical user flow.
+   * Optional chaining means missing callbacks are silent no-ops; the avatar
+   * remains tappable (accessibility role = button) but does nothing — which is
+   * correct for contexts like modals where the parent cannot or does not supply
+   * a callback.
    */
   const handleAvatarPress = useCallback(() => {
     if (!session) return;
-    try {
-      if (isCHW) {
-        // CHW taps member avatar → MemberProfile inside SessionsStack.
-        // `session.memberId` is the UUID of the member in this session.
-        (navigation as any).navigate('MemberProfile', { memberId: session.memberId });
-      } else {
-        // Member taps CHW avatar → CHWProfile inside FindStack.
-        // `session.chwId` is the UUID of the CHW in this session.
-        (navigation as any).navigate('CHWProfile', { chwId: session.chwId });
-      }
-    } catch {
-      // Navigation failed — most likely SessionChat is rendered outside the
-      // React Navigation tree (e.g. wrapped in a plain Modal). The tap is a
-      // no-op in that case; we do not surface an error to the user because the
-      // failure is transparent (profile navigation is an affordance, not
-      // blocking). If this becomes a real issue, add an `onNavigateToProfile`
-      // prop so the parent can own the navigation call.
+    if (isCHW) {
+      // CHW taps member avatar → parent navigates to MemberProfile.
+      onNavigateToMemberProfile?.(session.memberId);
+    } else {
+      // Member taps CHW avatar → parent navigates to CHWProfile.
+      onNavigateToChwProfile?.(session.chwId);
     }
-  }, [session, isCHW, navigation]);
+  }, [session, isCHW, onNavigateToMemberProfile, onNavigateToChwProfile]);
 
   /**
    * Whether the member-side mic toggle button should be shown.

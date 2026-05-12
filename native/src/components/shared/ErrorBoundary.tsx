@@ -12,7 +12,7 @@
  *   </ErrorBoundary>
  */
 
-import React, { Component, type ReactNode, type ErrorInfo } from 'react';
+import React, { Component, type ComponentType, type ReactNode, type ErrorInfo } from 'react';
 import {
   View,
   Text,
@@ -107,6 +107,41 @@ export class ErrorBoundary extends Component<Props, State> {
       </View>
     );
   }
+}
+
+// ─── withErrorBoundary HOC ────────────────────────────────────────────────────
+
+/**
+ * Higher-order component that wraps a screen component in an ErrorBoundary.
+ *
+ * Usage at the navigator registration site:
+ *   <Stack.Screen name="MyScreen" component={withErrorBoundary(MyScreen)} />
+ *
+ * This limits the blast radius of a render crash to a single screen: the rest
+ * of the navigator stays alive and the user can navigate away. Without this,
+ * one screen crash takes down the entire navigator tree.
+ *
+ * DisplayName convention: `withErrorBoundary(MyScreen)` — visible in DevTools.
+ * hoist-non-react-statics is NOT needed here because this HOC is only ever
+ * applied at navigator registration time (not composed with other HOCs that
+ * carry static methods like navigationOptions).
+ */
+export function withErrorBoundary<P extends object>(
+  Component: ComponentType<P>,
+): ComponentType<P> {
+  const displayName = Component.displayName ?? Component.name ?? 'Component';
+
+  function WithErrorBoundaryWrapper(props: P): React.JSX.Element {
+    return (
+      <ErrorBoundary>
+        <Component {...props} />
+      </ErrorBoundary>
+    );
+  }
+
+  WithErrorBoundaryWrapper.displayName = `withErrorBoundary(${displayName})`;
+
+  return WithErrorBoundaryWrapper;
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────

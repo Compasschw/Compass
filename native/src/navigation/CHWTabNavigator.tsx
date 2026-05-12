@@ -28,6 +28,7 @@ import {
 
 import { SidebarProvider, useSidebar } from './SidebarContext';
 import { CollapsibleDrawerContent } from './CollapsibleDrawerContent';
+import { withErrorBoundary } from '../components/shared/ErrorBoundary';
 
 import { colors } from '../theme/colors';
 import { fonts } from '../theme/typography';
@@ -103,9 +104,9 @@ const SessionsStack = createNativeStackNavigator<CHWSessionsStackParamList>();
 function DashboardStackNavigator(): React.JSX.Element {
   return (
     <DashboardStack.Navigator screenOptions={{ headerShown: false }}>
-      <DashboardStack.Screen name="Dashboard" component={CHWDashboardScreen} />
-      <DashboardStack.Screen name="Intake" component={CHWIntakeScreen} />
-      <DashboardStack.Screen name="Reviews" component={CHWReviewsScreen} />
+      <DashboardStack.Screen name="Dashboard" component={withErrorBoundary(CHWDashboardScreen)} />
+      <DashboardStack.Screen name="Intake" component={withErrorBoundary(CHWIntakeScreen)} />
+      <DashboardStack.Screen name="Reviews" component={withErrorBoundary(CHWReviewsScreen)} />
     </DashboardStack.Navigator>
   );
 }
@@ -113,8 +114,8 @@ function DashboardStackNavigator(): React.JSX.Element {
 function EarningsStackNavigator(): React.JSX.Element {
   return (
     <EarningsStack.Navigator screenOptions={{ headerShown: false }}>
-      <EarningsStack.Screen name="Earnings" component={CHWEarningsScreen} />
-      <EarningsStack.Screen name="Payments" component={PaymentsScreen} />
+      <EarningsStack.Screen name="Earnings" component={withErrorBoundary(CHWEarningsScreen)} />
+      <EarningsStack.Screen name="Payments" component={withErrorBoundary(PaymentsScreen)} />
     </EarningsStack.Navigator>
   );
 }
@@ -122,9 +123,9 @@ function EarningsStackNavigator(): React.JSX.Element {
 function SessionsStackNavigator(): React.JSX.Element {
   return (
     <SessionsStack.Navigator screenOptions={{ headerShown: false }}>
-      <SessionsStack.Screen name="Sessions" component={CHWSessionsScreen} />
-      <SessionsStack.Screen name="SessionReview" component={CHWSessionReviewScreen} />
-      <SessionsStack.Screen name="MemberProfile" component={CHWMemberProfileScreen} />
+      <SessionsStack.Screen name="Sessions" component={withErrorBoundary(CHWSessionsScreen)} />
+      <SessionsStack.Screen name="SessionReview" component={withErrorBoundary(CHWSessionReviewScreen)} />
+      <SessionsStack.Screen name="MemberProfile" component={withErrorBoundary(CHWMemberProfileScreen)} />
     </SessionsStack.Navigator>
   );
 }
@@ -193,7 +194,7 @@ function CHWBottomTabNavigator(): React.JSX.Element {
         <Tab.Screen
           key={name}
           name={name}
-          component={component}
+          component={withErrorBoundary(component)}
           options={{
             title,
             tabBarIcon: ({ color, size }) => <Icon color={color} size={size} />,
@@ -269,7 +270,7 @@ function CHWWebDrawerNavigatorInner(): React.JSX.Element {
         <Drawer.Screen
           key={name}
           name={name}
-          component={component}
+          component={withErrorBoundary(component)}
           options={{
             title,
             drawerIcon: ({ color, size }) => <Icon color={color} size={size} />,

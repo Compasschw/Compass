@@ -34,6 +34,12 @@ import type { CHWSessionsStackParamList } from '../../navigation/CHWTabNavigator
 
 export interface SessionChatWithFollowupProps {
   sessionId: string;
+  /**
+   * Optional callback forwarded to SessionChat so the CHW can tap the member
+   * avatar to navigate to MemberProfile. The parent screen (CHWSessionsScreen)
+   * is inside the SessionsStack and can call useNavigation() itself.
+   */
+  onNavigateToMemberProfile?: (memberId: string) => void;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -44,6 +50,7 @@ export interface SessionChatWithFollowupProps {
  */
 export function SessionChatWithFollowup({
   sessionId,
+  onNavigateToMemberProfile,
 }: SessionChatWithFollowupProps): React.JSX.Element {
   const { userRole } = useAuth();
   const isCHW = userRole === 'chw';
@@ -78,7 +85,10 @@ export function SessionChatWithFollowup({
   return (
     <View style={s.flex}>
       {/* Chat fills remaining space */}
-      <SessionChat sessionId={sessionId} />
+      <SessionChat
+        sessionId={sessionId}
+        onNavigateToMemberProfile={onNavigateToMemberProfile}
+      />
 
       {/* CTA — only visible to CHW when session is complete */}
       {isCHW && isCompleted ? (

@@ -26,6 +26,7 @@ import {
 
 import { SidebarProvider, useSidebar } from './SidebarContext';
 import { CollapsibleDrawerContent } from './CollapsibleDrawerContent';
+import { withErrorBoundary } from '../components/shared/ErrorBoundary';
 
 import { colors } from '../theme/colors';
 import { fonts } from '../theme/typography';
@@ -77,8 +78,8 @@ const FindStack = createNativeStackNavigator<MemberFindStackParamList>();
 function HomeStackNavigator(): React.JSX.Element {
   return (
     <HomeStack.Navigator screenOptions={{ headerShown: false }}>
-      <HomeStack.Screen name="HomeMain" component={MemberHomeScreen} />
-      <HomeStack.Screen name="Rewards" component={MemberRewardsScreen} />
+      <HomeStack.Screen name="HomeMain" component={withErrorBoundary(MemberHomeScreen)} />
+      <HomeStack.Screen name="Rewards" component={withErrorBoundary(MemberRewardsScreen)} />
     </HomeStack.Navigator>
   );
 }
@@ -95,8 +96,8 @@ function HomeStackNavigator(): React.JSX.Element {
 function FindStackNavigator(): React.JSX.Element {
   return (
     <FindStack.Navigator screenOptions={{ headerShown: false }}>
-      <FindStack.Screen name="FindMain" component={MemberFindScreen} />
-      <FindStack.Screen name="CHWProfile" component={MemberFacingCHWProfileScreen} />
+      <FindStack.Screen name="FindMain" component={withErrorBoundary(MemberFindScreen)} />
+      <FindStack.Screen name="CHWProfile" component={withErrorBoundary(MemberFacingCHWProfileScreen)} />
     </FindStack.Navigator>
   );
 }
@@ -162,7 +163,7 @@ function MemberBottomTabNavigator(): React.JSX.Element {
         <Tab.Screen
           key={name}
           name={name}
-          component={component}
+          component={withErrorBoundary(component)}
           options={{
             title,
             tabBarIcon: ({ color, size }) => <Icon color={color} size={size} />,
@@ -236,7 +237,7 @@ function MemberWebDrawerNavigatorInner(): React.JSX.Element {
         <Drawer.Screen
           key={name}
           name={name}
-          component={component}
+          component={withErrorBoundary(component)}
           options={{
             title,
             drawerIcon: ({ color, size }) => <Icon color={color} size={size} />,
