@@ -42,6 +42,7 @@ import { CHWDashboardScreen } from '../screens/chw/CHWDashboardScreen';
 import { CHWMemberProfileScreen } from '../screens/chw/CHWMemberProfileScreen';
 import { CHWRequestsScreen } from '../screens/chw/CHWRequestsScreen';
 import { CHWSessionsScreen } from '../screens/chw/CHWSessionsScreen';
+import { CHWMessagesScreen } from '../screens/chw/CHWMessagesScreen';
 import { CHWSessionReviewScreen } from '../screens/chw/CHWSessionReviewScreen';
 import { CHWCalendarScreen } from '../screens/chw/CHWCalendarScreen';
 import { CHWEarningsScreen } from '../screens/chw/CHWEarningsScreen';
@@ -100,12 +101,20 @@ type EarningsStackParamList = {
 };
 
 /**
- * Sessions stack — Sessions list + full-screen post-session review + member profile.
- * Exported so CHWSessionReviewScreen and CHWMemberProfileScreen can type their
- * navigation props. MemberProfile is part of this stack so it can be pushed from
- * any session surface without leaving the tab context.
+ * Sessions stack — 3-pane Messages inbox (root) + legacy session list +
+ * full-screen post-session review + member profile.
+ *
+ * Root on web: CHWMessagesScreen (new 3-pane inbox).
+ * Root on native: CHWSessionsScreen (existing session-detail list).
+ *
+ * Both roots are registered in the stack so CHWSessionReviewScreen and
+ * CHWMemberProfileScreen can push on top from either surface without leaving
+ * the tab context.
  */
 export type CHWSessionsStackParamList = {
+  /** New 3-pane Messages inbox — web root. */
+  Messages: undefined;
+  /** Legacy per-session list — native root; reachable from web via push. */
   Sessions: undefined;
   /**
    * Post-session follow-up review. `memberId` is optional — when present the
@@ -141,10 +150,29 @@ function EarningsStackNavigator(): React.JSX.Element {
   );
 }
 
+/**
+ * SessionsStackNavigator — Platform-adaptive root:
+ *   - Web:    CHWMessagesScreen (new 3-pane inbox) as the tab landing page.
+ *   - Native: CHWSessionsScreen (existing session-detail list) unchanged.
+ *
+ * Both platforms register all screen routes so navigation.navigate(...)
+ * calls work regardless of which root is mounted.
+ */
 function SessionsStackNavigator(): React.JSX.Element {
+  if (Platform.OS === 'web') {
+    return (
+      <SessionsStack.Navigator screenOptions={{ headerShown: false }}>
+        <SessionsStack.Screen name="Messages" component={withErrorBoundary(CHWMessagesScreen)} />
+        <SessionsStack.Screen name="Sessions" component={withErrorBoundary(CHWSessionsScreen)} />
+        <SessionsStack.Screen name="SessionReview" component={withErrorBoundary(CHWSessionReviewScreen)} />
+        <SessionsStack.Screen name="MemberProfile" component={withErrorBoundary(CHWMemberProfileScreen)} />
+      </SessionsStack.Navigator>
+    );
+  }
   return (
     <SessionsStack.Navigator screenOptions={{ headerShown: false }}>
       <SessionsStack.Screen name="Sessions" component={withErrorBoundary(CHWSessionsScreen)} />
+      <SessionsStack.Screen name="Messages" component={withErrorBoundary(CHWMessagesScreen)} />
       <SessionsStack.Screen name="SessionReview" component={withErrorBoundary(CHWSessionReviewScreen)} />
       <SessionsStack.Screen name="MemberProfile" component={withErrorBoundary(CHWMemberProfileScreen)} />
     </SessionsStack.Navigator>
@@ -176,7 +204,7 @@ const SCREENS: ScreenSpec[] = [
   { name: 'CHWMembers',           title: 'Members',            component: CHWMembersScreen,           icon: Users },
   { name: 'Requests',             title: 'Inbox',              component: CHWRequestsScreen,          icon: Inbox },
   { name: 'CHWJourneys',          title: 'Journeys',           component: CHWJourneysScreen,          icon: Route },
-  { name: 'SessionsStack',        title: 'Messages',           component: SessionsStackNavigator,     icon: ClipboardList,   rootScreen: 'Sessions' },
+  { name: 'SessionsStack',        title: 'Messages',           component: SessionsStackNavigator,     icon: ClipboardList,   rootScreen: Platform.OS === 'web' ? 'Messages' : 'Sessions' },
   { name: 'Calendar',             title: 'Appointments',       component: CHWCalendarScreen,          icon: CalendarDays },
   { name: 'CHWResources',         title: 'Resources',          component: CHWResourcesScreen,         icon: FolderOpen },
   { name: 'CHWDocuments',         title: 'Documents',          component: CHWDocumentsScreen,         icon: FileText },
