@@ -48,9 +48,13 @@ import {
   Home,
   Gift,
   ArrowRightLeft,
+  ChevronUp,
+  ChevronDown,
+  LogOut,
 } from 'lucide-react-native';
 
 import { colors as tokens } from '../../theme/tokens';
+import { useAuth } from '../../context/AuthContext';
 import { chwSidebarItems, memberSidebarItems } from './sidebarItems';
 import type { CHWSidebarItem, MemberSidebarItem } from './sidebarItems';
 
@@ -324,26 +328,102 @@ function SwitchViewLink({
   );
 }
 
-// ─── User avatar block ────────────────────────────────────────────────────────
+// ─── User avatar block (with account menu popover) ────────────────────────────
 
 interface UserAvatarBlockProps {
   userBlock: UserBlock;
 }
 
+/**
+ * Bottom-of-sidebar account chip. Tapping it opens a small popover with
+ * a Sign Out action so users don't have to dig through Settings to log out.
+ *
+ * Popover renders above the chip with a transparent backdrop covering the
+ * rest of the viewport so any outside tap closes the menu. Esc key also
+ * closes on web.
+ */
 function UserAvatarBlock({ userBlock }: UserAvatarBlockProps): React.JSX.Element {
+  const [open, setOpen] = useState(false);
+  const { logout } = useAuth();
+
+  const handleSignOut = async (): Promise<void> => {
+    setOpen(false);
+    try {
+      await logout();
+    } catch {
+      // logout swallows network errors; AuthContext clears local state
+      // regardless so the user lands on the sign-in screen either way.
+    }
+  };
+
+  // Esc key dismiss on web.
+  React.useEffect(() => {
+    if (Platform.OS !== 'web' || !open) return;
+    const handler = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    (globalThis as { document?: { addEventListener: (t: string, h: (e: KeyboardEvent) => void) => void; removeEventListener: (t: string, h: (e: KeyboardEvent) => void) => void } }).document?.addEventListener('keydown', handler);
+    return () => {
+      (globalThis as { document?: { addEventListener: (t: string, h: (e: KeyboardEvent) => void) => void; removeEventListener: (t: string, h: (e: KeyboardEvent) => void) => void } }).document?.removeEventListener('keydown', handler);
+    };
+  }, [open]);
+
+  const Chevron = open ? ChevronDown : ChevronUp;
+
   return (
-    <View style={styles.userBlock}>
-      <View style={styles.avatar}>
-        <Text style={styles.avatarInitials}>{userBlock.initials}</Text>
-      </View>
-      <View style={styles.userMeta}>
-        <Text style={styles.userName} numberOfLines={1}>
-          {userBlock.name}
-        </Text>
-        <Text style={styles.userRole} numberOfLines={1}>
-          {userBlock.role}
-        </Text>
-      </View>
+    <View style={styles.userBlockWrap}>
+      {/* Backdrop — closes menu on outside tap. Only mounted when open. */}
+      {open && (
+        <Pressable
+          style={styles.menuBackdrop}
+          onPress={() => setOpen(false)}
+          accessibilityRole="button"
+          accessibilityLabel="Close account menu"
+        />
+      )}
+
+      {/* Popover menu — anchored above the chip. */}
+      {open && (
+        <View style={styles.menuPopover} accessibilityRole="menu">
+          <Pressable
+            onPress={handleSignOut}
+            accessibilityRole="menuitem"
+            accessibilityLabel="Sign out"
+            style={({ pressed, hovered }: { pressed: boolean; hovered?: boolean }) => [
+              styles.menuItem,
+              (pressed || hovered) && styles.menuItemHover,
+            ]}
+          >
+            <LogOut color="#dc2626" size={16} strokeWidth={2} />
+            <Text style={styles.menuItemTextDanger}>Sign Out</Text>
+          </Pressable>
+        </View>
+      )}
+
+      {/* The chip itself — tap to toggle the menu. */}
+      <Pressable
+        onPress={() => setOpen((prev) => !prev)}
+        accessibilityRole="button"
+        accessibilityLabel={`Account menu for ${userBlock.name}`}
+        accessibilityState={{ expanded: open }}
+        style={({ pressed, hovered }: { pressed: boolean; hovered?: boolean }) => [
+          styles.userBlock,
+          (pressed || hovered) && styles.userBlockHover,
+        ]}
+      >
+        <View style={styles.avatar}>
+          <Text style={styles.avatarInitials}>{userBlock.initials}</Text>
+        </View>
+        <View style={styles.userMeta}>
+          <Text style={styles.userName} numberOfLines={1}>
+            {userBlock.name}
+          </Text>
+          <Text style={styles.userRole} numberOfLines={1}>
+            {userBlock.role}
+          </Text>
+        </View>
+        <Chevron color={tokens.sidebarText} size={14} strokeWidth={2} />
+      </Pressable>
     </View>
   );
 }
@@ -571,5 +651,75 @@ const styles = StyleSheet.create({
     fontWeight: '400',
     color:      tokens.emerald300,
     lineHeight: 16,
+  } as TextStyle,
+
+  // ── Account menu (sign-out popover) ──
+
+  // Wraps the user chip + the popover so the popover can position relative to it.
+  userBlockWrap: {
+    position: 'relative',
+  } as ViewStyle,
+
+  // Highlight the chip on hover/press to signal it's clickable.
+  userBlockHover: {
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius:    8,
+  } as ViewStyle,
+
+  // Full-viewport invisible layer behind the menu so any outside tap closes it.
+  // On web the sidebar is position:fixed at left:0; the backdrop is a sibling of
+  // the popover positioned relative to that fixed parent — which doesn't cover
+  // the whole viewport. Use a very large negative offset so it covers anyway.
+  menuBackdrop: {
+    position: 'absolute',
+    top:      -2000,
+    left:     -2000,
+    right:    -2000,
+    bottom:   -2000,
+    // backgroundColor stays transparent — no dim.
+  } as ViewStyle,
+
+  // Popover anchored above the chip. paddingHorizontal mirrors the sidebar's
+  // outer padding so the menu spans the same width as the chip.
+  menuPopover: {
+    position:        'absolute',
+    bottom:          '100%' as unknown as number,
+    left:            8,
+    right:           8,
+    marginBottom:    8,
+    backgroundColor: '#ffffff',
+    borderRadius:    10,
+    paddingVertical: 6,
+    // Same drop shadow as the active sidebar item.
+    ...(Platform.OS === 'web'
+      ? { boxShadow: '0 4px 12px rgba(0,0,0,0.18)' as unknown as string }
+      : {
+          shadowColor:   '#000',
+          shadowOffset:  { width: 0, height: 4 },
+          shadowOpacity: 0.18,
+          shadowRadius:  12,
+          elevation:     8,
+        }),
+  } as ViewStyle,
+
+  menuItem: {
+    flexDirection:     'row',
+    alignItems:        'center',
+    gap:               10,
+    paddingHorizontal: 12,
+    paddingVertical:   10,
+    borderRadius:      6,
+    marginHorizontal:  4,
+  } as ViewStyle,
+
+  menuItemHover: {
+    backgroundColor: '#fef2f2',
+  } as ViewStyle,
+
+  menuItemTextDanger: {
+    fontSize:   13,
+    fontWeight: '600',
+    color:      '#dc2626',
+    lineHeight: 18,
   } as TextStyle,
 });
