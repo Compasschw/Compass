@@ -489,18 +489,46 @@ export function CHWRequestsScreen(): React.JSX.Element {
   }, []);
 
   const handleAccept = useCallback(async (id: string): Promise<void> => {
-    await acceptRequest.mutateAsync(id);
-    setAcceptedCount((prev) => prev + 1);
+    try {
+      await acceptRequest.mutateAsync(id);
+      setAcceptedCount((prev) => prev + 1);
+    } catch (err) {
+      // Surface the failure to the CHW so they can retry. Without this the
+      // optimistic UI would leave them thinking the request was accepted
+      // while the row stays Pending in the backend (HIPAA + ops risk).
+      Alert.alert(
+        'Could not accept request',
+        err instanceof Error ? err.message : 'Please check your connection and try again.',
+      );
+    }
   }, [acceptRequest]);
 
   const handlePass = useCallback(async (id: string): Promise<void> => {
+    // Optimistic UI — hide the request immediately so the CHW's queue
+    // updates without waiting for the server.
     setPassedIds((prev) => {
       const next = new Set(prev);
       next.add(id);
       return next;
     });
     setPassedCount((prev) => prev + 1);
-    await passRequest.mutateAsync(id);
+    try {
+      await passRequest.mutateAsync(id);
+    } catch (err) {
+      // Roll back the optimistic hide and show an error toast — without this
+      // a failed pass silently disappears from the list while the server
+      // still has it Pending, leading to ghost requests.
+      setPassedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      setPassedCount((prev) => Math.max(0, prev - 1));
+      Alert.alert(
+        'Could not pass request',
+        err instanceof Error ? err.message : 'Please check your connection and try again.',
+      );
+    }
   }, [passRequest]);
 
   const handleViewMemberProfile = useCallback((memberId: string): void => {

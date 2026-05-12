@@ -67,6 +67,12 @@ export interface UserBlock {
 export interface DashboardSidebarProps {
   /** Navigation items array — pass `chwSidebarItems` or `memberSidebarItems`. */
   items: typeof chwSidebarItems | typeof memberSidebarItems;
+  /**
+   * Role of the currently signed-in user. Drives the brand tagline below
+   * the wordmark ("Medi-Cal Member" vs. "Member"). Inferred from the items
+   * array if not passed (chwSidebarItems → 'chw'; memberSidebarItems → 'member').
+   */
+  role?: 'chw' | 'member';
   /** Key of the currently active screen. */
   activeKey: string;
   /**
@@ -121,6 +127,7 @@ function resolveIcon(
  */
 export function DashboardSidebar({
   items,
+  role,
   activeKey,
   badges = {},
   userBlock,
@@ -135,6 +142,7 @@ export function DashboardSidebar({
   return (
     <SidebarContent
       items={items}
+      role={role}
       activeKey={activeKey}
       badges={badges}
       userBlock={userBlock}
@@ -148,6 +156,7 @@ export function DashboardSidebar({
 
 function SidebarContent({
   items,
+  role,
   activeKey,
   badges,
   userBlock,
@@ -156,10 +165,12 @@ function SidebarContent({
 }: DashboardSidebarProps): React.JSX.Element {
   const navigation = useNavigation<NavigationProp<ParamListBase>>();
 
-  const roleTagline =
-    (items as readonly { route: string }[])[0]?.route.startsWith('CHW')
-      ? 'CHW Portal'
-      : 'Member Portal';
+  // Detect role from explicit prop first, then by reference equality with the
+  // shared item arrays. Reference equality is reliable here because every
+  // call site passes one of the two `as const` exports — not a derived array.
+  const detectedRole: 'chw' | 'member' =
+    role ?? (items === chwSidebarItems ? 'chw' : 'member');
+  const roleTagline = detectedRole === 'chw' ? 'CHW Portal' : 'Member Portal';
 
   return (
     <View style={styles.sidebar}>

@@ -16,6 +16,7 @@ import React, { useCallback, useMemo, useState } from 'react';
 import {
   Alert,
   FlatList,
+  Platform,
   Pressable,
   ScrollView,
   StatusBar,
@@ -23,7 +24,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { Gift, Sparkles } from 'lucide-react-native';
+import { ArrowLeft, Gift, Sparkles } from 'lucide-react-native';
 
 import { colors } from '../../theme/colors';
 import {
@@ -151,6 +152,22 @@ export function MemberRewardsScreen({ navigation }: Props): React.JSX.Element {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.pageWrap}>
+
+        {/* Native-only inline back button. AppShell renders the sidebar on
+            web (which provides chrome to navigate elsewhere); on native there
+            is no sidebar, so without this back button members had no way to
+            leave the Rewards screen. */}
+        {Platform.OS !== 'web' && (
+          <Pressable
+            onPress={() => navigation.goBack()}
+            accessibilityRole="button"
+            accessibilityLabel="Back"
+            style={styles.backBtnInline}
+          >
+            <ArrowLeft size={20} color="#1F2937" />
+            <Text style={styles.backBtnInlineLabel}>Back</Text>
+          </Pressable>
+        )}
 
         <PageHeader
           title="Rewards"
@@ -364,6 +381,22 @@ const styles = StyleSheet.create({
     maxWidth: 560,
     alignSelf: 'center',
     padding: 16,
+  },
+
+  // Native-only inline back button (web users navigate via the sidebar).
+  backBtnInline: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    marginBottom: 8,
+    alignSelf: 'flex-start',
+  },
+  backBtnInlineLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1F2937',
   },
 
   header: {

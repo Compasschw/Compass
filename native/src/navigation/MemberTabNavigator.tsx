@@ -25,6 +25,7 @@ import {
   Route,
   FolderOpen,
   FileText,
+  Gift,
   Settings as SettingsIcon,
 } from 'lucide-react-native';
 
@@ -74,6 +75,7 @@ export type MemberTabParamList = {
   // New (Wave 2) sidebar destinations.
   MemberJourney: undefined;
   MemberResources: undefined;
+  MemberRewards: undefined;
   MemberDocuments: undefined;
   MemberSettings: undefined;
 };
@@ -139,6 +141,7 @@ const SCREENS: ScreenSpec[] = [
   { name: 'Sessions',        title: 'Messages',     component: MemberSessionsScreen,  icon: ClipboardList },
   { name: 'Calendar',        title: 'Appointments', component: MemberCalendarScreen,  icon: CalendarDays },
   { name: 'MemberResources', title: 'Resources',    component: MemberResourcesScreen, icon: FolderOpen },
+  { name: 'MemberRewards',   title: 'Rewards',      component: MemberRewardsScreen,   icon: Gift },
   { name: 'MemberDocuments', title: 'My Documents', component: MemberDocumentsScreen, icon: FileText },
   { name: 'Roadmap',         title: 'Roadmap',      component: MemberRoadmapScreen,   icon: Map },
   { name: 'Profile',         title: 'Profile',      component: MemberProfileScreen,   icon: UserCircle },

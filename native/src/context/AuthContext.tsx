@@ -14,6 +14,7 @@ import React, {
   useState,
 } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useQueryClient } from '@tanstack/react-query';
 import { clearTokens, getTokens, setTokens } from '../api/client';
 import { loginUser, logoutUser, registerUser } from '../api/auth';
 import type { UserRole } from '../data/mock';
@@ -66,6 +67,7 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 // ─── Provider ─────────────────────────────────────────────────────────────────
 
 export function AuthProvider({ children }: { children: React.ReactNode }): React.JSX.Element {
+  const queryClient = useQueryClient();
   const [authState, setAuthState] = useState<AuthState>({
     isAuthenticated: false,
     userRole: null,
@@ -178,7 +180,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
     setAuthState({ isAuthenticated: false, userRole: null, userName: null });
     setHasJustSignedOut(true);
 
-    // 2. Best-effort cleanup — wrapped so a failure here cannot leave the user
+    // 2. Drop ALL React Query cache entries for the departing user. Without
+    //    this, a member logging in on the same device sees the prior CHW's
+    //    cached PHI for a beat (or vice-versa) — HIPAA minimum-necessary
+    //    violation. Synchronous, must complete before any new query mounts.
+    queryClient.clear();
+
+    // 3. Best-effort cleanup — wrapped so a failure here cannot leave the user
     //    stranded mid-sign-out.
     try {
       const tokens = await getTokens();
@@ -199,7 +207,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       // If storage clear fails, the in-memory state is already cleared which
       // is what the user sees. Stale storage will be overwritten on next login.
     }
-  }, []);
+  }, [queryClient]);
 
   // ── Context value ──────────────────────────────────────────────────────────
   const value = useMemo<AuthContextValue>(

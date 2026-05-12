@@ -493,6 +493,7 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
               value={rewardsBalance.toLocaleString()}
               delta="Points earned"
               style={styles.statTile}
+              onPress={handleOpenRewards}
             />
           </View>
           <View style={styles.statTileWrap}>
@@ -504,6 +505,7 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
               delta={upcomingSessions.length === 1 ? 'Session' : 'Sessions'}
               deltaColor={tokens.blue700}
               style={styles.statTile}
+              onPress={handleOpenSessions}
             />
           </View>
           <View style={styles.statTileWrap}>
@@ -515,6 +517,7 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
               delta="On your roadmap"
               deltaColor={tokens.amber700}
               style={styles.statTile}
+              onPress={handleOpenRoadmap}
             />
           </View>
           <View style={styles.statTileWrap}>
@@ -526,6 +529,7 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
               delta="Awaiting CHW"
               deltaColor={tokens.purple700}
               style={styles.statTile}
+              onPress={handleFindCHW}
             />
           </View>
         </View>

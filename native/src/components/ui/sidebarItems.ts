@@ -37,7 +37,7 @@ export const memberSidebarItems = [
   { key: 'messages',     label: 'Messages',      icon: 'message-square', route: 'Sessions',           badgeKey: 'unreadMessages' },
   { key: 'appointments', label: 'Appointments',  icon: 'calendar',       route: 'Calendar'           },
   { key: 'resources',    label: 'Resources',     icon: 'folder-open',    route: 'MemberResources'    },
-  { key: 'rewards',      label: 'Rewards',       icon: 'gift',           route: 'Rewards',            badgeKey: 'wellnessPoints' },
+  { key: 'rewards',      label: 'Rewards',       icon: 'gift',           route: 'MemberRewards',      badgeKey: 'wellnessPoints' },
   { key: 'documents',    label: 'My Documents',  icon: 'file-text',      route: 'MemberDocuments'    },
   { key: 'settings',     label: 'Settings',      icon: 'settings',       route: 'MemberSettings'     },
 ] as const;

@@ -311,6 +311,7 @@ export function CHWDashboardScreen(): React.JSX.Element {
             value={todaySessions}
             delta={`${allSessions.filter((s) => s.status === 'scheduled').length} this week`}
             style={styles.statTile}
+            onPress={() => navigation.navigate('SessionsStack' as never)}
           />
           <StatTile
             icon={<AlertCircle size={18} color={tokens.red700} />}
@@ -320,6 +321,7 @@ export function CHWDashboardScreen(): React.JSX.Element {
             delta={overdueFollowups > 0 ? 'Needs attention' : 'All clear'}
             deltaColor={overdueFollowups > 0 ? tokens.red700 : tokens.emerald700}
             style={styles.statTile}
+            onPress={() => navigation.navigate('Reviews' as never)}
           />
           <StatTile
             icon={<MessageSquare size={18} color={tokens.blue700} />}
@@ -329,6 +331,7 @@ export function CHWDashboardScreen(): React.JSX.Element {
             delta="Awaiting match"
             deltaColor={tokens.blue700}
             style={styles.statTile}
+            onPress={() => navigation.navigate('Requests' as never)}
           />
           <StatTile
             icon={<DollarSign size={18} color={tokens.emerald700} />}
@@ -337,6 +340,7 @@ export function CHWDashboardScreen(): React.JSX.Element {
             value={earnings ? formatCurrency(earnings.thisMonth) : '$0.00'}
             delta={earnings ? `${formatCurrency(earnings.pendingPayout)} pending` : ''}
             style={styles.statTile}
+            onPress={() => navigation.navigate('EarningsStack' as never)}
           />
         </View>
 

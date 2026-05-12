@@ -9,6 +9,7 @@
 
 import React from 'react';
 import {
+  Pressable,
   View,
   Text,
   StyleSheet,
@@ -45,6 +46,14 @@ export interface StatTileProps {
   deltaColor?: string;
   /** Additional styles forwarded to the outer Card. */
   style?: StyleProp<ViewStyle>;
+  /**
+   * Optional press handler. When supplied, the tile becomes a tappable surface
+   * (Pressable wrapper). Used to restore the pre-revamp pattern where stat
+   * cards on Dashboard/Home navigated to their details screen.
+   */
+  onPress?: () => void;
+  /** Optional accessibility label override (defaults to the visible label). */
+  accessibilityLabel?: string;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -70,9 +79,11 @@ export function StatTile({
   delta,
   deltaColor = colors.emerald700,
   style,
+  onPress,
+  accessibilityLabel,
 }: StatTileProps): React.JSX.Element {
-  return (
-    <Card style={[styles.card, style]}>
+  const body = (
+    <>
       {/* Icon badge */}
       <View style={[styles.iconBadge, { backgroundColor: iconBg }]}>
         {icon}
@@ -88,8 +99,28 @@ export function StatTile({
       {delta !== undefined && delta.length > 0 && (
         <Text style={[styles.delta, { color: deltaColor }]}>{delta}</Text>
       )}
-    </Card>
+    </>
   );
+
+  // When onPress is supplied, wrap in Pressable so the whole card becomes a
+  // tap target. This restores the pre-revamp pattern (CHWDashboard /
+  // MemberHome stat cards navigated on tap).
+  if (onPress) {
+    return (
+      <Pressable
+        onPress={onPress}
+        accessibilityRole="button"
+        accessibilityLabel={accessibilityLabel ?? `${label}, ${String(value)}`}
+        style={({ pressed }) => [pressed && styles.pressed]}
+      >
+        <Card style={[styles.card, style]}>
+          {body}
+        </Card>
+      </Pressable>
+    );
+  }
+
+  return <Card style={[styles.card, style]}>{body}</Card>;
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
@@ -129,4 +160,8 @@ const styles = StyleSheet.create({
     lineHeight: 14,
     marginTop:  2,
   } as TextStyle,
+
+  pressed: {
+    opacity: 0.7,
+  } as ViewStyle,
 });
