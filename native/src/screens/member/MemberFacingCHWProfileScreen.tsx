@@ -71,6 +71,17 @@ type CHWProfileNavProp = NativeStackNavigationProp<
   'CHWProfile'
 >;
 
+// ─── Component props ──────────────────────────────────────────────────────────
+
+interface MemberFacingCHWProfileScreenProps {
+  /** When provided, overrides the route param. Used by MyCHWScreen to render
+   *  the member's *assigned* CHW inline without a stack push. */
+  chwId?: string;
+  /** Hide the inline back button (used when this screen is the entry point,
+   *  not a detail pushed from the find list). */
+  hideBack?: boolean;
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const MODALITY_LABELS: Record<string, string> = {
@@ -267,10 +278,15 @@ const infoRowStyles = StyleSheet.create({
  *
  * Route params: { chwId: string }
  */
-export function MemberFacingCHWProfileScreen(): React.JSX.Element {
-  const route = useRoute<CHWProfileRouteProp>();
+export function MemberFacingCHWProfileScreen(
+  { chwId: chwIdProp, hideBack = false }: MemberFacingCHWProfileScreenProps = {},
+): React.JSX.Element {
   const navigation = useNavigation<CHWProfileNavProp>();
-  const { chwId } = route.params;
+  // useRoute is safe when this screen is mounted as a stack screen; when
+  // rendered inline (e.g. by MyCHWScreen) the active route is FindMain and
+  // params is undefined, so we coalesce against the prop.
+  const route = useRoute<CHWProfileRouteProp>();
+  const chwId = chwIdProp ?? (route.params as { chwId?: string } | undefined)?.chwId ?? '';
   const { userName } = useAuth();
 
   const { data: profile, isLoading, error } = useMemberFacingCHWProfile(chwId);
@@ -310,14 +326,16 @@ export function MemberFacingCHWProfileScreen(): React.JSX.Element {
       <AppShell {...shellProps}>
         <StatusBar barStyle="dark-content" backgroundColor="#F4F1ED" />
         <View style={s.pageWrap}>
-          <TouchableOpacity
-            style={s.backBtn}
-            onPress={handleGoBack}
-            accessibilityRole="button"
-            accessibilityLabel="Go back"
-          >
-            <ArrowLeft size={20} color={colors.foreground} />
-          </TouchableOpacity>
+          {!hideBack && (
+            <TouchableOpacity
+              style={s.backBtn}
+              onPress={handleGoBack}
+              accessibilityRole="button"
+              accessibilityLabel="Go back"
+            >
+              <ArrowLeft size={20} color={colors.foreground} />
+            </TouchableOpacity>
+          )}
           <LoadingSkeleton variant="card" />
           <LoadingSkeleton variant="rows" rows={4} />
         </View>
@@ -372,16 +390,18 @@ export function MemberFacingCHWProfileScreen(): React.JSX.Element {
         showsVerticalScrollIndicator={false}
       >
         <View style={s.pageWrap}>
-          {/* Back button — visible on native; on web the sidebar handles nav */}
-          <TouchableOpacity
-            style={[s.backBtn, s.backBtnInline]}
-            onPress={handleGoBack}
-            accessibilityRole="button"
-            accessibilityLabel="Go back"
-          >
-            <ArrowLeft size={18} color={colors.foreground} />
-            <Text style={s.backBtnLabel}>My CHW</Text>
-          </TouchableOpacity>
+          {/* Back button — hidden when this is the My CHW landing page itself. */}
+          {!hideBack && (
+            <TouchableOpacity
+              style={[s.backBtn, s.backBtnInline]}
+              onPress={handleGoBack}
+              accessibilityRole="button"
+              accessibilityLabel="Go back"
+            >
+              <ArrowLeft size={18} color={colors.foreground} />
+              <Text style={s.backBtnLabel}>My CHW</Text>
+            </TouchableOpacity>
+          )}
 
           {/* ── Hero card — avatar, name, Verified pill, star rating, stats ── */}
           <View style={s.heroCard}>

@@ -383,7 +383,10 @@ const pb = StyleSheet.create({
 export function MemberJourneyScreen(): React.JSX.Element {
   const { userName } = useAuth();
   const profileQuery = useMemberProfile();
-  const memberId = profileQuery.data?.id ?? '';
+  // MemberJourney.member_id is FK to users.id, not members.id.
+  // Pass the User UUID (profile.userId), not the Members table PK (profile.id),
+  // or the API call returns 403 (member auth check) and zero rows.
+  const memberId = profileQuery.data?.userId ?? '';
 
   const memberInitials = (userName ?? 'M')
     .split(' ')

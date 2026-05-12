@@ -65,6 +65,12 @@ export interface AppShellProps {
   switchViewLabel?: string;
   /** Route name to navigate when the switch link is pressed. */
   switchViewRoute?: string;
+  /**
+   * Skip the outer ScrollView wrapper around `children`. Use when the screen
+   * owns its own scroll surface (e.g. has a FlatList or 3-pane internal layout)
+   * so we don't end up with nested scroll areas.
+   */
+  disableMainScroll?: boolean;
   /** Screen content. */
   children: React.ReactNode;
 }
@@ -85,6 +91,7 @@ export function AppShell({
   userBlock,
   switchViewLabel,
   switchViewRoute,
+  disableMainScroll = false,
   children,
 }: AppShellProps): React.JSX.Element {
   const items = role === 'chw' ? chwSidebarItems : memberSidebarItems;
@@ -106,14 +113,20 @@ export function AppShell({
         switchViewRoute={switchViewRoute}
       />
 
-      {/* Main content column */}
-      <ScrollView
-        style={styles.main}
-        contentContainerStyle={styles.mainContent}
-        showsVerticalScrollIndicator={false}
-      >
-        {children}
-      </ScrollView>
+      {/* Main content column. Either a vertical scroll wrapper (default —
+       *  good for static screens) or a passthrough View (for screens whose
+       *  internal layout owns scrolling, e.g. FlatList-based or 3-pane). */}
+      {disableMainScroll ? (
+        <View style={[styles.main, styles.mainContent]}>{children}</View>
+      ) : (
+        <ScrollView
+          style={styles.main}
+          contentContainerStyle={styles.mainContent}
+          showsVerticalScrollIndicator={false}
+        >
+          {children}
+        </ScrollView>
+      )}
     </View>
   );
 }

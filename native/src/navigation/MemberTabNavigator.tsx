@@ -37,6 +37,7 @@ import { colors } from '../theme/colors';
 import { fonts } from '../theme/typography';
 import { MemberHomeScreen } from '../screens/member/MemberHomeScreen';
 import { MemberFindScreen } from '../screens/member/MemberFindScreen';
+import { MyCHWScreen } from '../screens/member/MyCHWScreen';
 import { MemberFacingCHWProfileScreen } from '../screens/member/MemberFacingCHWProfileScreen';
 import { MemberSessionsScreen } from '../screens/member/MemberSessionsScreen';
 import { MemberCalendarScreen } from '../screens/member/MemberCalendarScreen';
@@ -102,16 +103,18 @@ function HomeStackNavigator(): React.JSX.Element {
 /**
  * Nested stack inside the Find CHW tab.
  *
- * FindMain is the root (MemberFindScreen — the CHW list + map).
- * CHWProfile is a stack screen pushed on top when a member taps "View Profile"
- * on any CHW card. It is NOT a tab — it belongs here so it can be pushed from
- * MemberFindScreen and from future entry points (session card, chat header)
- * inside the same stack without touching the tab bar.
+ * FindMain is the root (MyCHWScreen — renders the assigned CHW's profile if
+ * the member has had a session, else falls back to MemberFindScreen for the
+ * find/match flow). CHWProfile is a stack screen pushed on top when a member
+ * taps "View Profile" on a different CHW card from inside the find list.
+ * Registering both here keeps `navigation.navigate('CHWProfile', { chwId })`
+ * working from any deep entry point inside the stack (find list, session
+ * card, chat header) without touching the tab bar.
  */
 function FindStackNavigator(): React.JSX.Element {
   return (
     <FindStack.Navigator screenOptions={{ headerShown: false }}>
-      <FindStack.Screen name="FindMain" component={withErrorBoundary(MemberFindScreen)} />
+      <FindStack.Screen name="FindMain" component={withErrorBoundary(MyCHWScreen)} />
       <FindStack.Screen name="CHWProfile" component={withErrorBoundary(MemberFacingCHWProfileScreen)} />
     </FindStack.Navigator>
   );

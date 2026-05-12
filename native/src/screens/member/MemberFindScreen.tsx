@@ -36,6 +36,8 @@ import {
 } from 'lucide-react-native';
 import type { MemberFindStackParamList } from '../../navigation/MemberTabNavigator';
 
+import { AppShell } from '../../components/ui';
+import { useAuth } from '../../context/AuthContext';
 import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
 import {
@@ -1090,6 +1092,20 @@ const mapStyles = StyleSheet.create({
 
 export function MemberFindScreen(): React.JSX.Element {
   const navigation = useNavigation<NativeStackNavigationProp<MemberFindStackParamList>>();
+  const { userName } = useAuth();
+
+  const memberInitials = (userName ?? 'M')
+    .split(' ')
+    .slice(0, 2)
+    .map((p) => p[0] ?? '')
+    .join('')
+    .toUpperCase();
+
+  const shellUserBlock = {
+    initials: memberInitials,
+    name: userName ?? 'Member',
+    role: 'Member' as const,
+  };
 
   const [searchQuery, setSearchQuery] = useState('');
   // Multi-select category filter (per JT Figma feedback: "select CHW with
@@ -1241,6 +1257,7 @@ export function MemberFindScreen(): React.JSX.Element {
   );
 
   return (
+    <AppShell role="member" activeKey="myChw" userBlock={shellUserBlock} disableMainScroll>
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
 
@@ -1376,6 +1393,7 @@ export function MemberFindScreen(): React.JSX.Element {
       )}
       </View>
     </SafeAreaView>
+    </AppShell>
   );
 }
 
