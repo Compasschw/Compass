@@ -1,0 +1,98 @@
+name: Deploy to EC2
+
+# Triggers:
+#   - Auto-deploy on every push to main (after CI runs in parallel)
+#   - Manual deploy via the "Run workflow" button in the Actions tab —
+#     useful for redeploying without a code change (e.g. rotating env vars
+#     and restarting, or recovering from a failed prior deploy).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      skip_migrations:
+        description: 'Skip alembic upgrade head (use only if you ran migrations manually)'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+
+# Avoid stacking deploys: if a new push lands while one is mid-deploy,
+# the older run is cancelled in favour of the latest commit.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy backend to production EC2
+    runs-on: ubuntu-latest
+    # Skip deploy commits to avoid loops if anything ever auto-commits.
+    if: "!contains(github.event.head_commit.message, '[skip deploy]')"
+
+    steps:
+      - name: SSH to EC2 and run deploy script
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host:       ${{ secrets.EC2_HOST }}
+          username:   ${{ secrets.EC2_USERNAME }}
+          key:        ${{ secrets.EC2_SSH_KEY }}
+          port:       22
+          # 15 min cap — covers a slow `docker compose build` on a t3.medium.
+          command_timeout: 15m
+          # Fail loudly: any non-zero exit from the script aborts the action.
+          script_stop: true
+          # Pass the manual-dispatch input through to the remote shell.
+          envs: SKIP_MIGRATIONS
+          script: |
+            set -euo pipefail
+
+            PROJECT_DIR="${{ secrets.EC2_PROJECT_PATH }}"
+            cd "$PROJECT_DIR"
+
+            echo "::group::Step 1/5 — git pull origin main"
+            git fetch origin main
+            git reset --hard origin/main
+            git --no-pager log -1 --oneline
+            echo "::endgroup::"
+
+            echo "::group::Step 2/5 — docker compose build + up"
+            # --build rebuilds any image whose layer inputs changed.
+            # --no-deps keeps unaffected services running for fewer seconds of downtime.
+            docker compose up -d --build
+            echo "::endgroup::"
+
+            echo "::group::Step 3/5 — wait for backend health"
+            # Give the backend container ~30s to come up before health-checking.
+            # `curl --retry` covers slow DB connects on cold start.
+            sleep 8
+            curl --retry 6 --retry-delay 4 --retry-connrefused -fsS http://localhost:8000/api/v1/health \
+              || (echo "Backend health check failed — dumping last 60 lines of backend logs:" \
+                  && docker compose logs --tail=60 backend && exit 1)
+            echo "::endgroup::"
+
+            if [ "${SKIP_MIGRATIONS:-false}" = "true" ]; then
+              echo "::group::Step 4/5 — alembic upgrade head (SKIPPED via workflow input)"
+              echo "Skipped per workflow_dispatch input."
+              echo "::endgroup::"
+            else
+              echo "::group::Step 4/5 — alembic upgrade head"
+              docker compose exec -T backend alembic upgrade head
+              echo "::endgroup::"
+            fi
+
+            echo "::group::Step 5/5 — final smoke check"
+            curl -fsS http://localhost:8000/api/v1/health
+            echo
+            echo "Deployed commit:"
+            git --no-pager log -1 --oneline
+            echo "::endgroup::"
+
+            echo "Deploy succeeded."
+
+        env:
+          SKIP_MIGRATIONS: ${{ github.event.inputs.skip_migrations || 'false' }}
+
+      - name: Mark deploy step
+        if: success()
+        run: echo "Production backend updated to ${{ github.sha }}"
