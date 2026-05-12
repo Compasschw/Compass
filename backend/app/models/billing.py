@@ -2,11 +2,37 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import ARRAY, Date, DateTime, ForeignKey, Integer, Numeric, String, func
+from sqlalchemy import ARRAY, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
+
+
+class PearSuiteTemplateMap(Base):
+    """Mapping from CPT/HCPCS procedure code to Pear Suite activity template ID.
+
+    Rows are populated at migration time (T1016 seed) and may be supplemented
+    via the Pear Suite dashboard as additional procedure codes are contracted.
+    The template_id must be obtained from the Pear Suite dashboard and is
+    stored here so the API layer never needs to hard-code Pear internals.
+
+    There is one row per procedure code billed through Pear Suite. Additional
+    columns (modifier, description) are informational only — Pear Suite's own
+    template carries the authoritative billing configuration.
+    """
+
+    __tablename__ = "pear_suite_template_map"
+
+    # CPT or HCPCS procedure code — e.g. "T1016", "G0511"
+    cpt_code: Mapped[str] = mapped_column(String(20), primary_key=True)
+    # Activity template ID from Pear Suite dashboard — required before claims can be submitted.
+    # Stored as empty string if not yet configured; the claim orchestrator will 400 if blank.
+    template_id: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    # Billing modifier — e.g. "U2" for CHW services under Medi-Cal
+    modifier: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    # Human-readable label for admin tooling — not sent to Pear Suite
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class BillingClaim(Base):

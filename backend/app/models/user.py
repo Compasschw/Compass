@@ -74,6 +74,11 @@ class CHWProfile(Base):
     stripe_payouts_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     stripe_details_submitted: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # Pear Suite user ID provisioned via their dashboard (no Create User API).
+    # Must be set manually by Jemal before demo claims can be submitted.
+    # Indexed for fast lookup during claim orchestration.
+    pear_suite_user_id: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -90,6 +95,11 @@ class MemberProfile(Base):
     insurance_provider: Mapped[str | None] = mapped_column(String(255))
     # Encrypted at rest (AES-256-GCM). PHI per HIPAA 45 CFR §164.312(a)(2)(iv).
     medi_cal_id: Mapped[str | None] = mapped_column(EncryptedString)
+
+    # Pear Suite member ID returned by POST /api/beta/members. Null until the
+    # member has been synced. Indexed for fast existence check in ensure_member_synced.
+    pear_suite_member_id: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+
     rewards_balance: Mapped[int] = mapped_column(Integer, default=0)
     preferred_mode: Mapped[str | None] = mapped_column(String(20))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

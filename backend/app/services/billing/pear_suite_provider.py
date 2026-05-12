@@ -6,37 +6,39 @@ Authentication: `api-key` HTTP header.
 Rate limiting: X-Rate-Limit-Limit / X-Rate-Limit-Remaining / X-Rate-Limit-Reset.
 On 429: provider returns rate-limit-exceeded; we surface a typed error.
 
-CURRENT STATE: STUB
+CLAIM ORCHESTRATION FLOW
 ─────────────────────────────────────────────────────────────────────────────
-The real Pear Suite Beta API is much more model-driven than our internal
-billing schema. Submitting a claim requires that the following already exist
-inside Pear Suite:
+Submitting a claim through Pear Suite's Beta API is NOT a single POST call.
+It requires the following objects to exist in Pear Suite's system first:
 
-  1. The member  → POST /api/beta/members (CreateMember)
-  2. A PearSuite user account for the CHW  → no Create User API exists,
-     accounts must be provisioned via Pear Suite's dashboard
-  3. An activity template per procedure code (T1016, G0511, etc.) → also
-     dashboard-only, returns an activityTemplateId we must store
-  4. A scheduled activity for the session  → POST /api/beta/activities
-     (Schedule Activities) referencing the template, member, and CHW user
+  1. Member           → POST /api/beta/members (synced via ensure_member_synced)
+  2. CHW user account → provisioned via Pear Suite dashboard only (no API)
+  3. Activity template per CPT code → Pear Suite dashboard; stored in pear_suite_template_map
+  4. Scheduled activity → POST /api/beta/activities
+  5. Complete the activity → PUT /api/beta/activities/:id (status=Complete + billingDetails)
+  6. Generate claim → POST /api/beta/claims { memberId, billId? }
 
-Then, and only then, can we call:
+This module implements steps 4-6 in submit_claim(), assuming steps 1-3 are
+already satisfied. The demo-claim admin endpoint orchestrates the full chain.
 
-  POST /api/beta/claims  with  { memberId, billId? }
+BILL ID AMBIGUITY
+─────────────────────────────────────────────────────────────────────────────
+The Pear rep has not confirmed whether marking an activity Complete auto-
+creates a Bill that can be referenced as `billId` in POST /api/beta/claims.
+The code is defensive: it first tries POST /claims with just { memberId }.
+If that 4xx-errors, it logs clearly and retries with { memberId, billId: <activityId> }.
+If both fail, it logs the activityId so a human can resolve manually.
 
-…which generates a claim from the unbilled activities Pear Suite already
-knows about. See `submit_claim` for the full TODO checklist.
-
-In the meantime, this provider operates in STUB MODE: `submit_claim`
-returns a deterministic local mock claim ID so the rest of the workflow
-(claim row marked `submitted`, Stripe payout pipeline, CHW earnings UI,
-admin status advance) works end-to-end. To switch to real submission once
-the dependencies above exist, set PEAR_SUITE_STUB_MODE=false in the env
-and finish the TODOs in `submit_claim`.
+IDEMPOTENCY
+─────────────────────────────────────────────────────────────────────────────
+Every _request call includes an X-Idempotency-Key header derived from the
+local claim/session ID. Pear's docs don't confirm server-side idempotency
+enforcement — the key is logged regardless so retries are traceable.
 """
 
 import logging
-import os
+import uuid
+from datetime import date, datetime, timezone
 from typing import Any
 
 import httpx
@@ -50,15 +52,30 @@ from app.services.billing.base import (
 
 logger = logging.getLogger("compass.billing.pearsuite")
 
+# Place of service code 12 = Home/Community (used for CHW in-home visits).
+# Pear Suite expects a numeric string in billingDetails.
+_PLACE_OF_SERVICE_COMMUNITY = "12"
 
-def _stub_mode_enabled() -> bool:
-    """Stub mode is the safe default until member/activity sync is built.
+# Pear Suite activity status enum values (as of Beta API, 2026-05).
+_ACTIVITY_STATUS_SCHEDULED = "Scheduled"
+_ACTIVITY_STATUS_COMPLETE = "Complete"
 
-    Flip PEAR_SUITE_STUB_MODE=false in the env once the prerequisites in the
-    module docstring are satisfied (member sync, CHW user provisioning,
-    activity template mapping, schedule-activity-on-session-complete).
-    """
-    return os.getenv("PEAR_SUITE_STUB_MODE", "true").strip().lower() != "false"
+# Pear Suite claim status → our internal status mapping.
+# Pear's enum values are not fully documented; defensive fallback to "submitted".
+_PEAR_STATUS_MAP: dict[str, str] = {
+    "Submitted": "submitted",
+    "Pending": "submitted",
+    "Paid": "paid",
+    "Approved": "paid",
+    "Denied": "denied",
+    "Rejected": "denied",
+    "NeedsCorrection": "needs_correction",
+    "NeedsCorrectionManual": "needs_correction",
+}
+
+
+class PearSuiteRateLimitError(Exception):
+    """Raised when Pear Suite returns 429 Too Many Requests."""
 
 
 class PearSuiteProvider(BillingProvider):
@@ -73,150 +90,457 @@ class PearSuiteProvider(BillingProvider):
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
 
-    def _headers(self) -> dict[str, str]:
-        return {
+    def _headers(self, idempotency_key: str | None = None) -> dict[str, str]:
+        headers = {
             "api-key": self._api_key,
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
+        if idempotency_key:
+            # Pear Suite docs don't confirm server-side idempotency enforcement,
+            # but we send the key on every mutating call so retries are traceable
+            # in our structured logs and potentially honored by Pear's infra.
+            headers["X-Idempotency-Key"] = idempotency_key
+        return headers
 
     async def _request(
         self,
         method: str,
         path: str,
         json: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        """Shared HTTP wrapper — handles auth, rate-limit headers, and error shapes."""
+        """Shared HTTP wrapper — handles auth, rate-limit headers, and error shapes.
+
+        Args:
+            method: HTTP verb (GET, POST, PUT, DELETE).
+            path: URL path relative to base_url, e.g. "/api/beta/members".
+            json: Request body for POST/PUT; None for GET/DELETE.
+            idempotency_key: Optional idempotency key included as X-Idempotency-Key header.
+
+        Returns:
+            Parsed JSON response body as a dict.
+
+        Raises:
+            PearSuiteRateLimitError: when Pear Suite returns 429.
+            httpx.HTTPStatusError: for all other 4xx/5xx responses.
+        """
         if not self._api_key:
-            logger.warning("Pear Suite API key not configured — returning placeholder response")
+            logger.warning(
+                "pear_suite._request: API key not configured — "
+                "returning placeholder response for %s %s",
+                method,
+                path,
+            )
             return {"_placeholder": True}
 
         url = f"{self._base_url}{path}"
+        logger.info(
+            "pear_suite.request: method=%s path=%s idempotency_key=%s body_keys=%s",
+            method,
+            path,
+            idempotency_key,
+            list(json.keys()) if json else None,
+        )
+
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.request(method, url, json=json, headers=self._headers())
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.request(
+                    method,
+                    url,
+                    json=json,
+                    headers=self._headers(idempotency_key=idempotency_key),
+                )
 
             # Surface rate limit state in logs so we can see pressure early
             remaining = resp.headers.get("X-Rate-Limit-Remaining")
+            limit = resp.headers.get("X-Rate-Limit-Limit")
             if remaining is not None:
-                logger.debug("Pear Suite rate limit remaining: %s", remaining)
+                logger.info(
+                    "pear_suite.rate_limit: path=%s remaining=%s limit=%s",
+                    path,
+                    remaining,
+                    limit,
+                )
 
             if resp.status_code == 429:
                 reset = resp.headers.get("X-Rate-Limit-Reset")
+                logger.error(
+                    "pear_suite.rate_limit_exceeded: path=%s resets_at=%s",
+                    path,
+                    reset,
+                )
                 raise PearSuiteRateLimitError(f"Rate limit exceeded. Resets at {reset}.")
+
+            logger.info(
+                "pear_suite.response: method=%s path=%s status=%d",
+                method,
+                path,
+                resp.status_code,
+            )
 
             resp.raise_for_status()
             return resp.json()
-        except httpx.HTTPStatusError as e:
-            logger.error("Pear Suite HTTP %d on %s: %s", e.response.status_code, path, e.response.text[:500])
+
+        except httpx.HTTPStatusError as exc:
+            logger.error(
+                "pear_suite.http_error: method=%s path=%s status=%d body=%s",
+                method,
+                path,
+                exc.response.status_code,
+                exc.response.text[:500],
+            )
             raise
 
-    async def verify_eligibility(self, member_medi_cal_id: str) -> EligibilityResult:
-        """Verify Medi-Cal eligibility via Pear Suite.
+    # ─────────────────────────────────────────────────────────────────────────
+    # BillingProvider interface implementation
+    # ─────────────────────────────────────────────────────────────────────────
 
-        STUB: Pear Suite's Beta API surface does not expose a public eligibility
-        endpoint. Real eligibility verification will live in a separate Medi-Cal
-        clearinghouse integration. For now we return optimistic eligibility so
-        the demo flow does not block on this.
+    async def verify_eligibility(self, member_medi_cal_id: str) -> EligibilityResult:
+        """Return eligibility for a Medi-Cal member.
+
+        Pear Suite's Beta API does not expose a public eligibility endpoint —
+        eligibility verification happens server-side within Pear Suite when a
+        claim is generated. We return an optimistic stub so the claim flow is
+        not blocked on this pre-check. Real eligibility verification will be
+        added as a separate Medi-Cal clearinghouse integration.
+
+        Args:
+            member_medi_cal_id: The member's Medi-Cal CIN (Client Index Number).
+
+        Returns:
+            EligibilityResult with is_eligible=True and plan_name="Medi-Cal".
         """
-        if _stub_mode_enabled():
-            logger.info(
-                "[STUB] Pear Suite eligibility check for medi_cal_id=%s — returning optimistic eligible",
-                member_medi_cal_id,
-            )
-            return EligibilityResult(
-                is_eligible=True,
-                plan_name="Medi-Cal (stubbed)",
-                cin=member_medi_cal_id,
-                message="Pear Suite eligibility is stubbed pending real clearinghouse integration",
-            )
+        logger.info(
+            "pear_suite.verify_eligibility: medi_cal_id=[REDACTED] "
+            "(stub — Pear Beta has no public eligibility endpoint)",
+        )
+        return EligibilityResult(
+            is_eligible=True,
+            plan_name="Medi-Cal",
+            cin=member_medi_cal_id,
+            coverage_status="active",
+            message=(
+                "Eligibility check is stubbed — Pear Suite Beta API has no public "
+                "eligibility endpoint. Real verification occurs server-side at Pear "
+                "during claim generation."
+            ),
+        )
+
+    async def create_member(self, member_payload: dict[str, Any]) -> dict[str, Any]:
+        """Create a member in Pear Suite via POST /api/beta/members.
+
+        Called by ensure_member_synced. This method is not part of the
+        BillingProvider abstract interface — it is a Pear-specific helper.
+
+        Args:
+            member_payload: Dict with keys: firstName, lastName, dateOfBirth,
+                gender (optional), language (optional), address (optional),
+                phone (optional), email (optional), mediCalId (optional).
+
+        Returns:
+            Parsed Pear Suite response body. Contains at minimum {"id": str}.
+
+        Raises:
+            httpx.HTTPStatusError: on Pear API errors.
+        """
+        # Derive idempotency key from mediCalId if present, otherwise random.
+        # This prevents duplicate member creation on retries.
+        medi_cal_id = member_payload.get("mediCalId", "")
+        idempotency_key = (
+            f"create-member-{medi_cal_id}"
+            if medi_cal_id
+            else f"create-member-{uuid.uuid4()}"
+        )
+
+        logger.info(
+            "pear_suite.create_member: firstName=%s lastName=%s "
+            "mediCalId=[REDACTED] idempotency_key=%s",
+            member_payload.get("firstName"),
+            member_payload.get("lastName"),
+            idempotency_key,
+        )
+
+        data = await self._request(
+            "POST",
+            "/api/beta/members",
+            json=member_payload,
+            idempotency_key=idempotency_key,
+        )
+
+        pear_member_id = data.get("id") or data.get("memberId")
+        logger.info(
+            "pear_suite.create_member.success: pear_member_id=%s",
+            pear_member_id,
+        )
+        return data
+
+    async def schedule_activity(
+        self,
+        *,
+        activity_template_id: str,
+        member_ids: list[str],
+        chw_user_id: str,
+        service_date: date,
+        session_id: uuid.UUID,
+        notes: str | None = None,
+    ) -> dict[str, Any]:
+        """Schedule an activity in Pear Suite via POST /api/beta/activities.
+
+        Args:
+            activity_template_id: Pear Suite template ID for the procedure (e.g. T1016).
+            member_ids: List of Pear Suite member IDs participating in the activity.
+            chw_user_id: Pear Suite userId for the CHW performing the service.
+            service_date: Calendar date the CHW session occurred.
+            session_id: Local Compass session UUID — used to derive idempotency key.
+            notes: Optional CHW notes attached to the activity.
+
+        Returns:
+            Pear Suite activity object dict. Contains at minimum {"id": str}.
+        """
+        # scheduledEndAt: Pear Suite requires a datetime for the end of the
+        # scheduled window. We default to end-of-day ISO8601 since we only
+        # have the calendar date from billing documentation.
+        scheduled_date_iso = service_date.isoformat()
+        scheduled_end_iso = f"{scheduled_date_iso}T23:59:00Z"
+
+        payload: dict[str, Any] = {
+            "activityTemplateId": activity_template_id,
+            "memberIds": member_ids,
+            "userId": chw_user_id,
+            "date": scheduled_date_iso,
+            "scheduledEndAt": scheduled_end_iso,
+        }
+        if notes:
+            payload["notes"] = notes
+
+        idempotency_key = f"schedule-activity-session-{session_id}"
+        logger.info(
+            "pear_suite.schedule_activity: template_id=%s member_count=%d "
+            "chw_user_id=%s service_date=%s session_id=%s",
+            activity_template_id,
+            len(member_ids),
+            chw_user_id,
+            scheduled_date_iso,
+            session_id,
+        )
+
+        data = await self._request(
+            "POST",
+            "/api/beta/activities",
+            json=payload,
+            idempotency_key=idempotency_key,
+        )
+
+        pear_activity_id = data.get("id") or data.get("activityId")
+        logger.info(
+            "pear_suite.schedule_activity.success: pear_activity_id=%s session_id=%s",
+            pear_activity_id,
+            session_id,
+        )
+        return data
+
+    async def complete_activity(
+        self,
+        *,
+        pear_activity_id: str,
+        pear_member_id: str,
+        chw_user_id: str,
+        service_date: date,
+        diagnosis_codes: list[str],
+        session_id: uuid.UUID,
+    ) -> dict[str, Any]:
+        """Mark an activity Complete with billing details via PUT /api/beta/activities/:id.
+
+        Sets status=Complete, billable=True, and attaches billingDetails for
+        the member. Uses place of service 12 (Home/Community).
+
+        Args:
+            pear_activity_id: The activity ID returned by schedule_activity.
+            pear_member_id: Pear Suite member ID.
+            chw_user_id: Pear Suite user ID for the CHW.
+            service_date: Calendar date of the session.
+            diagnosis_codes: ICD-10 codes; first element is the primary diagnosis.
+            session_id: Local Compass session UUID — for idempotency key + logging.
+
+        Returns:
+            Pear Suite updated activity object dict.
+        """
+        scheduled_date_iso = service_date.isoformat()
+        scheduled_end_iso = f"{scheduled_date_iso}T23:59:00Z"
+
+        primary_dx = diagnosis_codes[0] if diagnosis_codes else "Z71.89"
+
+        billing_detail: dict[str, Any] = {
+            "memberId": pear_member_id,
+            "placeOfService": _PLACE_OF_SERVICE_COMMUNITY,
+            "primaryDiagnosisCode": primary_dx,
+            "diagnosisCodes": diagnosis_codes,
+            # Let Pear Suite use the template's configured charge amount.
+            # Set to None rather than omitting — some Pear endpoints reject missing keys.
+            "customClaimChargeAmount": None,
+            # Prior auth not required for T1016 under standard Medi-Cal CHW billing.
+            "priorAuthorizationNumber": None,
+            # dateOfCurrentIllness: Pear requires this field; we use the service date
+            # as a safe default since CHW services are episodic, not illness-indexed.
+            "dateOfCurrentIllness": scheduled_date_iso,
+        }
+
+        payload: dict[str, Any] = {
+            "status": _ACTIVITY_STATUS_COMPLETE,
+            "date": scheduled_date_iso,
+            "scheduledEndAt": scheduled_end_iso,
+            "userId": chw_user_id,
+            "billable": True,
+            "billingDetails": [billing_detail],
+        }
+
+        idempotency_key = f"complete-activity-{pear_activity_id}-session-{session_id}"
+        logger.info(
+            "pear_suite.complete_activity: pear_activity_id=%s pear_member_id=%s "
+            "primary_dx=%s session_id=%s",
+            pear_activity_id,
+            pear_member_id,
+            primary_dx,
+            session_id,
+        )
+
+        data = await self._request(
+            "PUT",
+            f"/api/beta/activities/{pear_activity_id}",
+            json=payload,
+            idempotency_key=idempotency_key,
+        )
+
+        logger.info(
+            "pear_suite.complete_activity.success: pear_activity_id=%s "
+            "response_status=%s session_id=%s",
+            pear_activity_id,
+            data.get("status"),
+            session_id,
+        )
+        return data
+
+    async def generate_claim(
+        self,
+        *,
+        pear_member_id: str,
+        pear_activity_id: str,
+        session_id: uuid.UUID,
+    ) -> dict[str, Any]:
+        """Generate a claim via POST /api/beta/claims.
+
+        BILL ID AMBIGUITY: Pear rep has not confirmed whether marking an
+        activity Complete auto-creates a Bill that can be referenced as billId.
+        Strategy:
+          1. Try POST /claims with { memberId } only.
+          2. If 4xx, log clearly and retry with { memberId, billId: activityId }.
+          3. If both fail, raise the second error — human must resolve manually.
+
+        Args:
+            pear_member_id: Pear Suite member ID.
+            pear_activity_id: The activity ID to reference (used as billId fallback).
+            session_id: Local Compass session UUID — for idempotency key + logging.
+
+        Returns:
+            Pear Suite response dict. Expected shape: { success: bool, data: { id, ... } }.
+
+        Raises:
+            httpx.HTTPStatusError: if both claim-generation attempts fail.
+        """
+        idempotency_key = f"generate-claim-session-{session_id}"
+
+        # Attempt 1: memberId only
+        logger.info(
+            "pear_suite.generate_claim.attempt1: "
+            "pear_member_id=%s session_id=%s idempotency_key=%s",
+            pear_member_id,
+            session_id,
+            idempotency_key,
+        )
         try:
             data = await self._request(
-                "GET",
-                f"/api/beta/members/{member_medi_cal_id}/eligibility",
+                "POST",
+                "/api/beta/claims",
+                json={"memberId": pear_member_id},
+                idempotency_key=idempotency_key,
             )
-            if data.get("_placeholder"):
-                return EligibilityResult(
-                    is_eligible=False,
-                    message="Pear Suite not configured",
-                )
-            return EligibilityResult(
-                is_eligible=bool(data.get("eligible", False)),
-                plan_name=data.get("plan_name"),
-                cin=data.get("cin"),
+            pear_claim_id = (data.get("data") or {}).get("id") if isinstance(data.get("data"), dict) else None
+            logger.info(
+                "pear_suite.generate_claim.attempt1.success: "
+                "pear_claim_id=%s session_id=%s",
+                pear_claim_id,
+                session_id,
             )
-        except Exception as e:  # noqa: BLE001
-            logger.error("Eligibility check failed: %s", e)
-            return EligibilityResult(is_eligible=False, message=str(e))
+            return data
+
+        except httpx.HTTPStatusError as exc:
+            logger.warning(
+                "pear_suite.generate_claim.attempt1.failed: "
+                "status=%d body=%s — retrying with billId=%s session_id=%s. "
+                "NOTE: Pear rep must confirm whether billId should be the activityId "
+                "or a separate Bill object ID. If this retry also fails, the claim "
+                "must be created manually in the Pear Suite dashboard. "
+                "pear_activity_id=%s",
+                exc.response.status_code,
+                exc.response.text[:300],
+                pear_activity_id,
+                session_id,
+                pear_activity_id,
+            )
+
+        # Attempt 2: memberId + billId (using activityId as the bill reference)
+        idempotency_key_2 = f"generate-claim-session-{session_id}-v2"
+        logger.info(
+            "pear_suite.generate_claim.attempt2: "
+            "pear_member_id=%s bill_id=%s session_id=%s",
+            pear_member_id,
+            pear_activity_id,
+            session_id,
+        )
+        data = await self._request(
+            "POST",
+            "/api/beta/claims",
+            json={"memberId": pear_member_id, "billId": pear_activity_id},
+            idempotency_key=idempotency_key_2,
+        )
+        pear_claim_id = (data.get("data") or {}).get("id") if isinstance(data.get("data"), dict) else None
+        logger.info(
+            "pear_suite.generate_claim.attempt2.success: "
+            "pear_claim_id=%s session_id=%s",
+            pear_claim_id,
+            session_id,
+        )
+        return data
 
     async def submit_claim(self, claim: ClaimSubmission) -> ClaimResult:
         """Submit a CHW service claim to Pear Suite.
 
-        STUB MODE (current default):
-        Returns a deterministic mock provider claim ID derived from the local
-        session_id so the rest of the pipeline (claim row marked `submitted`,
-        Stripe payout flow, CHW earnings UI, admin status advance) works
-        end-to-end. The mock ID is prefixed with `pearsuite-stub-` so it is
-        trivially distinguishable from real Pear Suite claim IDs in the DB
-        and in admin tooling.
+        This method is the scheduler-facing interface (called by billing_service
+        on session documentation submit). It requires that the member has already
+        been synced (member.pear_suite_member_id is set) and the CHW user ID is
+        available in claim.extra["pear_suite_chw_user_id"].
 
-        REAL MODE (PEAR_SUITE_STUB_MODE=false):
-        Pear Suite's Beta API generates claims from existing activities, not
-        from raw payloads. To switch on real submission we need to first:
+        For the full orchestrated demo flow (member sync + schedule + complete +
+        generate), use the admin demo-claim endpoint which calls the helpers above.
 
-          1. Sync the member to Pear Suite      → POST /api/beta/members
-             Store returned id on members.pear_suite_member_id.
-          2. Provision the CHW as a Pear Suite user (manual, dashboard-only)
-             Store id on chw_profiles.pear_suite_user_id.
-          3. Create activity template per procedure_code in Pear Suite
-             dashboard. Store mapping in pear_suite_template_map table.
-          4. On session completion, schedule the activity:
-             POST /api/beta/activities { activityTemplateId, memberIds,
-             userId, date, scheduledEndAt }. Store activity id on
-             sessions.pear_suite_activity_id.
+        Args:
+            claim: ClaimSubmission with pear_suite context in claim.extra:
+                - pear_suite_member_id: str
+                - pear_suite_chw_user_id: str
+                - pear_suite_activity_template_id: str
 
-        Once those exist, this method becomes:
-
-          data = await self._request(
-              "POST",
-              "/api/beta/claims",
-              json={"memberId": claim.pear_suite_member_id},
-          )
-          return ClaimResult(
-              success=data.get("success", False),
-              provider_claim_id=data["data"]["id"],
-              status="submitted",
-              raw_response=data,
-          )
+        Returns:
+            ClaimResult with provider_claim_id populated on success.
         """
-        if _stub_mode_enabled():
-            stub_id = f"pearsuite-stub-{claim.session_id}"
-            logger.info(
-                "[STUB] Pear Suite submit_claim session=%s chw=%s member=%s "
-                "procedure=%s units=%d gross=$%s → returning mock id %s",
-                claim.session_id,
-                claim.chw_id,
-                claim.member_id,
-                claim.procedure_code,
-                claim.units,
-                claim.gross_amount,
-                stub_id,
-            )
-            return ClaimResult(
-                success=True,
-                provider_claim_id=stub_id,
-                status="submitted",
-                message="Pear Suite stub: claim recorded locally, awaiting real integration",
-            )
+        pear_member_id = claim.extra.get("pear_suite_member_id")
+        chw_user_id = claim.extra.get("pear_suite_chw_user_id")
+        template_id = claim.extra.get("pear_suite_activity_template_id")
 
-        # Real submission path — currently unreachable until prerequisites
-        # above are satisfied. Left in place so future flip is one env change
-        # plus filling in the memberId lookup.
-        member_pear_suite_id = claim.extra.get("pear_suite_member_id")
-        if not member_pear_suite_id:
+        if not pear_member_id:
             logger.error(
-                "Cannot submit real Pear Suite claim — no pear_suite_member_id "
-                "on session=%s. Run member sync first.",
+                "pear_suite.submit_claim.missing_member_id: session=%s "
+                "Run member sync (ensure_member_synced) first.",
                 claim.session_id,
             )
             return ClaimResult(
@@ -224,81 +548,235 @@ class PearSuiteProvider(BillingProvider):
                 status="error",
                 message="Member not synced to Pear Suite — run member sync first",
             )
-        try:
-            data = await self._request(
-                "POST",
-                "/api/beta/claims",
-                json={"memberId": member_pear_suite_id},
+
+        if not chw_user_id:
+            logger.error(
+                "pear_suite.submit_claim.missing_chw_user_id: session=%s "
+                "Set pear_suite_user_id on CHWProfile via admin tooling.",
+                claim.session_id,
             )
-            if data.get("_placeholder"):
+            return ClaimResult(
+                success=False,
+                status="error",
+                message="CHW has no pear_suite_user_id — set via admin tooling",
+            )
+
+        if not template_id:
+            logger.error(
+                "pear_suite.submit_claim.missing_template_id: session=%s "
+                "Set PEAR_SUITE_T1016_TEMPLATE_ID in env or update pear_suite_template_map.",
+                claim.session_id,
+            )
+            return ClaimResult(
+                success=False,
+                status="error",
+                message="Activity template ID for T1016 not configured",
+            )
+
+        try:
+            # Step 1: Schedule the activity
+            activity_data = await self.schedule_activity(
+                activity_template_id=template_id,
+                member_ids=[pear_member_id],
+                chw_user_id=chw_user_id,
+                service_date=claim.service_date,
+                session_id=claim.session_id,
+                notes=claim.notes,
+            )
+            pear_activity_id = activity_data.get("id") or activity_data.get("activityId")
+            if not pear_activity_id:
+                logger.error(
+                    "pear_suite.submit_claim.no_activity_id: session=%s response=%s",
+                    claim.session_id,
+                    activity_data,
+                )
                 return ClaimResult(
                     success=False,
-                    status="pending",
-                    message="Pear Suite not configured — claim queued locally",
+                    status="error",
+                    message="Pear Suite did not return an activity ID",
                 )
-            claim_data = data.get("data", {}) if isinstance(data.get("data"), dict) else {}
-            return ClaimResult(
-                success=bool(data.get("success", True)),
-                provider_claim_id=claim_data.get("id") or claim_data.get("claimId"),
-                status=claim_data.get("status", "submitted"),
-                message=data.get("message"),
-                raw_response=data,
+
+            # Step 2: Mark Complete with billing details
+            dx_codes = claim.diagnosis_codes or ["Z71.89"]
+            await self.complete_activity(
+                pear_activity_id=pear_activity_id,
+                pear_member_id=pear_member_id,
+                chw_user_id=chw_user_id,
+                service_date=claim.service_date,
+                diagnosis_codes=dx_codes,
+                session_id=claim.session_id,
             )
-        except Exception as e:  # noqa: BLE001
-            logger.error("Claim submission failed: %s", e)
-            return ClaimResult(success=False, status="error", message=str(e))
+
+            # Step 3: Generate the claim
+            claim_data_raw = await self.generate_claim(
+                pear_member_id=pear_member_id,
+                pear_activity_id=pear_activity_id,
+                session_id=claim.session_id,
+            )
+            claim_data = claim_data_raw.get("data", {}) if isinstance(claim_data_raw.get("data"), dict) else {}
+            pear_claim_id = claim_data.get("id") or claim_data.get("claimId")
+
+            if not pear_claim_id:
+                logger.error(
+                    "pear_suite.submit_claim.no_claim_id: session=%s raw=%s",
+                    claim.session_id,
+                    claim_data_raw,
+                )
+                return ClaimResult(
+                    success=False,
+                    status="error",
+                    message=(
+                        f"Pear Suite did not return a claim ID. "
+                        f"Activity ID={pear_activity_id} — check Pear dashboard manually."
+                    ),
+                )
+
+            logger.info(
+                "pear_suite.submit_claim.success: session=%s pear_claim_id=%s pear_activity_id=%s",
+                claim.session_id,
+                pear_claim_id,
+                pear_activity_id,
+            )
+            return ClaimResult(
+                success=True,
+                provider_claim_id=pear_claim_id,
+                status="submitted",
+                raw_response=claim_data_raw,
+            )
+
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "pear_suite.submit_claim.error: session=%s error=%s",
+                claim.session_id,
+                exc,
+                exc_info=True,
+            )
+            return ClaimResult(success=False, status="error", message=str(exc))
 
     async def get_claim_status(self, provider_claim_id: str) -> ClaimResult:
-        """Poll claim status from Pear Suite.
+        """Poll claim status from Pear Suite via GET /api/beta/claims.
 
-        STUB: Mock-prefixed IDs always report `submitted` so the UI doesn't
-        churn when polling local claims that never made it to Pear Suite.
+        Attempts GET /api/beta/claims?id=<id> first. If Pear's API uses a
+        different filter parameter name, falls back to GET /api/beta/claims/:id
+        (path-param style). Logs the response shape so we can identify the
+        correct param during the demo.
+
+        Args:
+            provider_claim_id: The Pear Suite claim ID returned by generate_claim.
+
+        Returns:
+            ClaimResult with status mapped to our internal enum:
+            submitted | paid | denied | needs_correction.
         """
-        if _stub_mode_enabled() or provider_claim_id.startswith("pearsuite-stub-"):
+        if provider_claim_id.startswith("pearsuite-stub-"):
             return ClaimResult(
                 success=True,
                 provider_claim_id=provider_claim_id,
                 status="submitted",
-                message="Pear Suite stub status",
+                message="Stub claim — not a real Pear Suite claim ID",
             )
+
+        logger.info(
+            "pear_suite.get_claim_status: pear_claim_id=%s",
+            provider_claim_id,
+        )
+
         try:
-            data = await self._request("GET", f"/api/beta/claims/{provider_claim_id}")
-            if data.get("_placeholder"):
-                return ClaimResult(success=False, status="unknown", message="Pear Suite not configured")
-            return ClaimResult(
-                success=True,
-                provider_claim_id=provider_claim_id,
-                status=data.get("status", "unknown"),
-                raw_response=data,
+            # Attempt query-param style first (most REST APIs use this pattern)
+            data = await self._request(
+                "GET",
+                f"/api/beta/claims?id={provider_claim_id}",
             )
-        except Exception as e:  # noqa: BLE001
-            logger.error("Claim status fetch failed: %s", e)
-            return ClaimResult(success=False, status="error", message=str(e))
+        except httpx.HTTPStatusError:
+            # Fallback to path-param style
+            logger.info(
+                "pear_suite.get_claim_status.fallback_path_param: pear_claim_id=%s",
+                provider_claim_id,
+            )
+            try:
+                data = await self._request(
+                    "GET",
+                    f"/api/beta/claims/{provider_claim_id}",
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "pear_suite.get_claim_status.error: pear_claim_id=%s error=%s",
+                    provider_claim_id,
+                    exc,
+                )
+                return ClaimResult(success=False, status="error", message=str(exc))
+
+        if data.get("_placeholder"):
+            return ClaimResult(success=False, status="unknown", message="Pear Suite not configured")
+
+        # Normalize nested data envelope if present
+        claim_obj = data.get("data", data) if isinstance(data.get("data"), dict) else data
+        raw_status = claim_obj.get("status") or data.get("status")
+
+        internal_status = _PEAR_STATUS_MAP.get(str(raw_status), "submitted")
+        logger.info(
+            "pear_suite.get_claim_status.result: pear_claim_id=%s raw_status=%s internal_status=%s",
+            provider_claim_id,
+            raw_status,
+            internal_status,
+        )
+
+        return ClaimResult(
+            success=True,
+            provider_claim_id=provider_claim_id,
+            status=internal_status,
+            raw_response=data,
+        )
 
     async def void_claim(self, provider_claim_id: str) -> ClaimResult:
-        """Void/delete a claim (Beta endpoint per Pear Suite docs)."""
-        if _stub_mode_enabled() or provider_claim_id.startswith("pearsuite-stub-"):
-            logger.info("[STUB] Pear Suite void_claim %s — no-op", provider_claim_id)
+        """Void/delete a claim via DELETE /api/beta/claims/:id.
+
+        Args:
+            provider_claim_id: The Pear Suite claim ID to void.
+
+        Returns:
+            ClaimResult with status="voided" on success.
+        """
+        if provider_claim_id.startswith("pearsuite-stub-"):
+            logger.info("pear_suite.void_claim: stub id=%s — no-op", provider_claim_id)
             return ClaimResult(
                 success=True,
                 provider_claim_id=provider_claim_id,
                 status="voided",
-                message="Pear Suite stub void",
+                message="Stub claim — void is a no-op",
             )
+
+        idempotency_key = f"void-claim-{provider_claim_id}"
+        logger.info(
+            "pear_suite.void_claim: pear_claim_id=%s idempotency_key=%s",
+            provider_claim_id,
+            idempotency_key,
+        )
+
         try:
-            data = await self._request("DELETE", f"/api/beta/claims/{provider_claim_id}")
+            data = await self._request(
+                "DELETE",
+                f"/api/beta/claims/{provider_claim_id}",
+                idempotency_key=idempotency_key,
+            )
             if data.get("_placeholder"):
                 return ClaimResult(success=False, status="unknown", message="Pear Suite not configured")
+
+            logger.info(
+                "pear_suite.void_claim.success: pear_claim_id=%s",
+                provider_claim_id,
+            )
             return ClaimResult(
                 success=True,
                 provider_claim_id=provider_claim_id,
                 status="voided",
                 raw_response=data,
             )
-        except Exception as e:  # noqa: BLE001
-            logger.error("Claim void failed: %s", e)
-            return ClaimResult(success=False, status="error", message=str(e))
-
-
-class PearSuiteRateLimitError(Exception):
-    """Raised when Pear Suite returns 429 Too Many Requests."""
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "pear_suite.void_claim.error: pear_claim_id=%s error=%s",
+                provider_claim_id,
+                exc,
+                exc_info=True,
+            )
+            return ClaimResult(success=False, status="error", message=str(exc))

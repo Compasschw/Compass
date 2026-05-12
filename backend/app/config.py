@@ -58,6 +58,18 @@ class Settings(BaseSettings):
     pear_suite_api_key: str = ""
     pear_suite_base_url: str = "https://api.pearsuite.com"
 
+    # ── Pear Suite demo / real-submission config ──────────────────────────────
+    # Jemal's userId in Pear Suite — obtained from Pear dashboard → Users.
+    # Must be set before the demo-claim endpoint can submit a real claim.
+    # Empty string degrades to a clear 400 at claim time, not at startup.
+    pear_suite_demo_chw_user_id: str = ""
+    # Activity template ID for T1016 CHW service, created in Pear Suite dashboard.
+    # Must match the template in Pear Suite exactly; no fallback.
+    pear_suite_t1016_template_id: str = ""
+    # Default ICD-10 diagnosis codes applied to CHW service claims when the
+    # session documentation does not supply specific codes.
+    pear_suite_default_dx_codes: list[str] = ["Z71.89"]
+
     # Admin dashboard access
     admin_key: str = ""
 

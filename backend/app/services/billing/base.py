@@ -18,6 +18,7 @@ class EligibilityResult:
     is_eligible: bool
     plan_name: str | None = None
     cin: str | None = None  # Client Index Number (Medi-Cal identifier)
+    coverage_status: str | None = None  # e.g. "active", "inactive", "terminated"
     message: str | None = None
 
 

@@ -107,6 +107,7 @@ app.add_middleware(
 app.add_middleware(AuditMiddleware)
 
 from app.routers.admin import router as admin_router
+from app.routers.admin_demo import router as admin_demo_router
 from app.routers.assessments import router as assessments_router
 from app.routers.auth import router as auth_router
 from app.routers.chw import router as chw_router
@@ -161,6 +162,7 @@ app.include_router(upload_router)
 app.include_router(health_router)
 app.include_router(waitlist_router)
 app.include_router(admin_router)
+app.include_router(admin_demo_router)
 app.include_router(devices_router)
 app.include_router(payments_router)
 app.include_router(journeys_router)
@@ -170,7 +172,6 @@ app.include_router(member_call_router)
 app.include_router(chw_call_router)
 app.include_router(vonage_audio_router)
 app.include_router(assessments_router)
-app.include_router(rewards_router)
 
 # ─── Testimonials routes ──────────────────────────────────────────────────────
 # Registration order: summary (/testimonials/summary) must come BEFORE the
