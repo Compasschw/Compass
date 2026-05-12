@@ -58,6 +58,7 @@ import {
   ArrowLeft,
   AlertCircle,
 } from 'lucide-react-native';
+import { OpenQuestionsDrawer } from '../../components/chw/OpenQuestionsDrawer';
 
 import { AppShell, Card, Pill } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
@@ -475,9 +476,10 @@ function ConversationPane({
 
 interface ContextRailProps {
   session: SessionData;
+  onOpenSuggestedQuestions: () => void;
 }
 
-function ContextRail({ session }: ContextRailProps): React.JSX.Element {
+function ContextRail({ session, onOpenSuggestedQuestions }: ContextRailProps): React.JSX.Element {
   return (
     <ScrollView
       style={styles.contextRailOuter}
@@ -530,6 +532,7 @@ function ContextRail({ session }: ContextRailProps): React.JSX.Element {
         <QuickActionBtn
           icon={<List size={16} color="#6B7280" />}
           label="Open Suggested Questions"
+          onPress={onOpenSuggestedQuestions}
         />
         <QuickActionBtn
           icon={<NotebookPen size={16} color="#6B7280" />}
@@ -565,11 +568,17 @@ function NeedRow({ icon, label, level, levelVariant }: NeedRowProps): React.JSX.
 interface QuickActionBtnProps {
   icon: React.ReactNode;
   label: string;
+  onPress?: () => void;
 }
 
-function QuickActionBtn({ icon, label }: QuickActionBtnProps): React.JSX.Element {
+function QuickActionBtn({ icon, label, onPress }: QuickActionBtnProps): React.JSX.Element {
   return (
-    <TouchableOpacity style={styles.quickActionBtn} accessibilityRole="button" accessibilityLabel={label}>
+    <TouchableOpacity
+      style={styles.quickActionBtn}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+    >
       {icon}
       <Text style={styles.quickActionText}>{label}</Text>
     </TouchableOpacity>
@@ -593,6 +602,8 @@ export function CHWMessagesScreen(): React.JSX.Element {
   const [filterTab, setFilterTab] = useState<'all' | 'unread' | 'flagged'>('all');
   // On narrow viewports the thread list can be toggled
   const [showThreadList, setShowThreadList] = useState(true);
+  // Open Questions drawer — only shown when a member thread is active
+  const [questionsDrawerOpen, setQuestionsDrawerOpen] = useState(false);
 
   const hideRail = width < BP_HIDE_RAIL;
   const hideList = width < BP_HIDE_LIST;
@@ -633,6 +644,8 @@ export function CHWMessagesScreen(): React.JSX.Element {
 
   const handleSelectSession = useCallback((session: SessionData) => {
     setSelectedSession(session);
+    // Close the questions drawer when switching threads — context has changed.
+    setQuestionsDrawerOpen(false);
     // On narrow viewport, switch to conversation view
     if (hideList) {
       setShowThreadList(false);
@@ -752,9 +765,35 @@ export function CHWMessagesScreen(): React.JSX.Element {
 
         {/* Right context rail — hidden below BP_HIDE_RAIL */}
         {!hideRail && selectedSession ? (
-          <ContextRail session={selectedSession} />
+          <ContextRail
+            session={selectedSession}
+            onOpenSuggestedQuestions={() => setQuestionsDrawerOpen(true)}
+          />
         ) : null}
       </View>
+
+      {/* Open Questions drawer — renders over the whole screen as a right overlay */}
+      {selectedSession != null && (
+        <OpenQuestionsDrawer
+          visible={questionsDrawerOpen}
+          onClose={() => setQuestionsDrawerOpen(false)}
+          member={{
+            name:                 selectedSession.memberName ?? 'Member',
+            age:                  null,
+            initials:             getInitials(selectedSession.memberName),
+            engagementLabel:      'Active Member',
+          }}
+          journey={
+            selectedSession.vertical
+              ? {
+                  templateName:    `${selectedSession.vertical.replace('_', ' ')} Journey`,
+                  currentStepName: 'Current Step',
+                  vertical:        selectedSession.vertical,
+                }
+              : undefined
+          }
+        />
+      )}
     </AppShell>
   );
 }
