@@ -14,7 +14,8 @@ import React, {
   useState,
 } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { clearTokens, getTokens, setTokens } from '../api/client';
+import { useQueryClient } from '@tanstack/react-query';
+import { clearTokens, getTokens, setTokens, setSessionExpiredHandler } from '../api/client';
 import { loginUser, logoutUser, registerUser } from '../api/auth';
 import type { UserRole } from '../data/mock';
 
@@ -66,6 +67,8 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 // ─── Provider ─────────────────────────────────────────────────────────────────
 
 export function AuthProvider({ children }: { children: React.ReactNode }): React.JSX.Element {
+  const queryClient = useQueryClient();
+
   const [authState, setAuthState] = useState<AuthState>({
     isAuthenticated: false,
     userRole: null,
@@ -105,6 +108,46 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
     void hydrate();
     return () => { cancelled = true; };
   }, []);
+
+  // ── Session-expiry bridge ──────────────────────────────────────────────────
+  //
+  // Register a callback with the API client so that when a token refresh fails
+  // (refresh token revoked / expired), the client can drive the auth state flip
+  // directly. Without this bridge the client can only call clearTokens() and
+  // throw — leaving isAuthenticated = true and every subsequent query 401-ing
+  // forever (Audit Finding #4, CRITICAL).
+  //
+  // The dependency array is intentionally empty: we register once on mount and
+  // deregister on unmount. `logout` is stable (useCallback with no changing
+  // deps that affect the session-expiry path), so capturing it at registration
+  // time is safe. If logout's identity changes we'd re-register anyway via the
+  // effect below — but structuring the effect with [logout] as a dep would
+  // cause an unnecessary deregister/re-register on every render where logout
+  // gets a new reference, so we accept the stable-capture pattern here.
+  useEffect(() => {
+    setSessionExpiredHandler(() => {
+      // This fires from inside the API client's async refresh path. It runs
+      // outside React's batch, so each setter schedules its own render — that
+      // is fine; both converge synchronously before the next paint.
+      setAuthState({ isAuthenticated: false, userRole: null, userName: null });
+      setHasJustSignedOut(true);
+
+      // Drop all cached PHI immediately — same as the full logout path.
+      queryClient.clear();
+
+      // Best-effort storage cleanup (fire-and-forget; failure is non-fatal
+      // because the in-memory state flip is what drives the navigator).
+      void Promise.all([
+        clearTokens(),
+        AsyncStorage.removeItem(AUTH_STATE_KEY),
+      ]).catch(() => undefined);
+    });
+
+    return () => {
+      setSessionExpiredHandler(null);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queryClient]);
 
   // ── Persist helper ─────────────────────────────────────────────────────────
   const persistAuthState = useCallback(async (state: AuthState): Promise<void> => {
@@ -178,7 +221,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
     setAuthState({ isAuthenticated: false, userRole: null, userName: null });
     setHasJustSignedOut(true);
 
-    // 2. Best-effort cleanup — wrapped so a failure here cannot leave the user
+    // 2. Purge ALL React Query cache entries for the departing user.
+    //    This prevents stale CHW data from being briefly visible to a member
+    //    (or vice-versa) when the same device logs in under a different role.
+    //    (Audit Finding #8, HIGH/CRITICAL — cross-role cache pollution.)
+    queryClient.clear();
+
+    // 3. Best-effort cleanup — wrapped so a failure here cannot leave the user
     //    stranded mid-sign-out.
     try {
       const tokens = await getTokens();
@@ -199,7 +248,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       // If storage clear fails, the in-memory state is already cleared which
       // is what the user sees. Stale storage will be overwritten on next login.
     }
-  }, []);
+  }, [queryClient]);
 
   // ── Context value ──────────────────────────────────────────────────────────
   const value = useMemo<AuthContextValue>(

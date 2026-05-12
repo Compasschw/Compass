@@ -47,6 +47,34 @@ const storage = {
   },
 };
 
+// ─── Session-expiry callback ──────────────────────────────────────────────────
+//
+// Allows AuthContext to register a callback so that when a token refresh fails
+// (refresh token expired or revoked), the auth state flips to unauthenticated
+// in the same render cycle rather than silently leaving the user stuck on
+// authenticated screens with every subsequent query returning 401.
+//
+// Lifecycle:
+//   AuthContext mounts → calls setSessionExpiredHandler(() => logout())
+//   Token refresh fails inside `api()` → _onSessionExpired?.() fires → logout()
+//     runs → setAuthState({ isAuthenticated: false }) → AppNavigator switches
+//     to LoginStack.
+//   AuthContext unmounts (app fully torn down) → setSessionExpiredHandler(null)
+
+let _onSessionExpired: (() => void) | null = null;
+
+/**
+ * Register (or clear) the callback that `api()` fires when a token refresh
+ * fails definitively. Pass `null` on cleanup.
+ *
+ * This is intentionally a module-level setter rather than a React context hook
+ * so that the API client (which lives outside the React tree) can call it
+ * without being tangled into the component hierarchy.
+ */
+export function setSessionExpiredHandler(cb: (() => void) | null): void {
+  _onSessionExpired = cb;
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface StoredTokens {
@@ -188,7 +216,15 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
     try {
       newAccessToken = await refreshAccessToken(tokens.refresh);
     } catch {
+      // Tokens are cleared first so that any subsequent code (including the
+      // _onSessionExpired callback) cannot accidentally reuse them.
       await clearTokens();
+
+      // Notify AuthContext so it can flip isAuthenticated → false and drive the
+      // navigator to the LoginStack. This is fire-and-forget from our
+      // perspective; the throw below still fails the in-flight request fast.
+      _onSessionExpired?.();
+
       throw new ApiError(401, 'Session expired. Please log in again.');
     }
 
