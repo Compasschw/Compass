@@ -3,7 +3,8 @@
 HIPAA minimum-necessary enforcement (45 CFR §164.514(d)):
 - CHWMemberProfileView exposes ONLY the fields a CHW needs for care delivery.
 - CHWMemberProfileDetail exposes the full rich profile for the member profile screen.
-- Explicitly excluded: medi_cal_id, insurance_provider, full session notes,
+- MembersRosterItem exposes the minimum set needed for the roster table.
+- Explicitly excluded: medi_cal_id (raw), insurance_provider, full session notes,
   session summaries, diagnosis codes, raw transcripts, and session data from
   other CHWs.
 - Session history visible to the CHW is limited to sessions WHERE
@@ -15,6 +16,7 @@ HIPAA minimum-necessary enforcement (45 CFR §164.514(d)):
 """
 
 from datetime import date, datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
@@ -151,6 +153,73 @@ class CHWMemberProfileDetail(BaseModel):
     open_followups: list[OpenFollowupItem]
     consent_status: ConsentStatusView
     recent_sessions: list[SessionSummaryItem]
+
+
+# ─── Members Roster ───────────────────────────────────────────────────────────
+
+
+class ActiveJourneyInfo(BaseModel):
+    """Lightweight journey info for the roster table cell."""
+
+    name: str
+    """Journey template name, e.g. 'Food Assistance'."""
+
+    current_step: str | None
+    """Name of the current in-progress step. Null if journey has no active step."""
+
+    percent: float
+    """Completion percentage 0–100."""
+
+
+class MembersRosterItem(BaseModel):
+    """One row in the CHW Members roster table.
+
+    HIPAA minimum-necessary (45 CFR §164.514(d)):
+    - display_name: decrypted first + last name — required for identification.
+    - age: derived from DOB; not DOB itself (avoids precise birth date disclosure).
+    - masked_id: last 4 chars of medi_cal_id only — enough for verbal verification.
+    - avatar_initials: derived from display_name; no additional PHI.
+    - risk: always null in v1 (no clinical model yet).
+    - top_need: primary vertical of the most recent active ServiceRequest.
+
+    Excluded: raw medi_cal_id, DOB, phone, insurance_provider, notes, transcripts.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    """Member's User.id — canonical identifier for navigation."""
+
+    display_name: str
+    """Decrypted full name for display."""
+
+    age: int | None
+    """Age in whole years, derived from DOB. Null when DOB is not recorded."""
+
+    masked_id: str
+    """Last 4 characters of medi_cal_id, formatted '...XXXX'. '—' when absent."""
+
+    avatar_initials: str
+    """Up to 2 uppercase initials derived from display_name."""
+
+    status: Literal["active", "inactive"]
+    """'active' = session in last 30 days OR open/accepted ServiceRequest.
+    'inactive' otherwise."""
+
+    risk: None
+    """Always null in v1 — no clinical risk model yet. UI hides the chip when null."""
+
+    engagement: Literal["highly", "moderately", "disengaged"]
+    """'highly' ≥3 sessions last 60 days; 'moderately' 1–2; 'disengaged' 0."""
+
+    active_journey: ActiveJourneyInfo | None
+    """Most recent active MemberJourney for this member, or null if none."""
+
+    last_contact_at: datetime | None
+    """Most recent session.ended_at or session.scheduled_at; null if no sessions."""
+
+    top_need: str | None
+    """Primary vertical of the most recent active ServiceRequest. Null if none."""
 
 
 # ─── CHW Map Data ─────────────────────────────────────────────────────────────

@@ -3,18 +3,20 @@ from uuid import UUID, uuid5, NAMESPACE_URL
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import HTTPBearer
-from sqlalchemy import extract, func, select
+from sqlalchemy import case, extract, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies import require_role
 from app.schemas.billing import EarningsSummary
 from app.schemas.chw import (
+    ActiveJourneyInfo,
     CHWMapDataResponse,
     CHWMemberProfileDetail,
     CHWMemberProfileView,
     MapMemberPin,
     MapResourcePin,
+    MembersRosterItem,
 )
 from app.schemas.user import CHWProfileResponse, CHWProfileUpdate
 
@@ -197,6 +199,287 @@ async def get_earnings(current_user=Depends(require_role("chw")), db: AsyncSessi
         sessions_this_week=sessions_this_week,
         pending_payout=pending_payout,
     )
+
+
+# ─── Members Roster ───────────────────────────────────────────────────────────
+
+
+@router.get("/members", response_model=list[MembersRosterItem])
+async def list_chw_members(
+    current_user=Depends(require_role("chw")),
+    db: AsyncSession = Depends(get_db),
+) -> list[MembersRosterItem]:
+    """Return all members this CHW has a relationship with, ordered by last contact desc.
+
+    Relationship gate: a member is included when at least ONE of the following
+    is true (mirrors _assert_chw_member_relationship in journeys.py):
+      1. Any Session row where chw_id == current_user.id AND member_id == member.
+      2. Any matched ServiceRequest where matched_chw_id == current_user.id AND
+         member_id == member.
+
+    For each member the endpoint computes:
+      - status: 'active' when session in last 30 days OR open/accepted ServiceRequest.
+      - engagement: 'highly' ≥3 sessions last 60 days, 'moderately' 1–2, 'disengaged' 0.
+      - risk: always null (v1 — no clinical risk model).
+      - active_journey: most recent active MemberJourney.
+      - last_contact_at: most recent session.ended_at or scheduled_at.
+      - top_need: primary vertical of the most recent active ServiceRequest.
+
+    All queries are N+1-aware: member IDs are collected in a single pass, then
+    supporting data (journeys, requests, session counts) are fetched in batches.
+
+    HIPAA: medi_cal_id is decrypted only to produce the last-4 masked_id. The raw
+    value is never written to any response field or log line.
+    """
+    from datetime import timedelta
+
+    from app.models.journeys import (
+        JourneyTemplate,
+        JourneyTemplateStep,
+        MemberJourney,
+        MemberJourneyStepState,
+    )
+    from app.models.request import ServiceRequest
+    from app.models.session import Session
+    from app.models.user import MemberProfile, User
+
+    now = datetime.now(UTC)
+    thirty_days_ago = now - timedelta(days=30)
+    sixty_days_ago = now - timedelta(days=60)
+
+    # ── Step 1: collect unique member IDs via session + service_request join ──────
+    # Sessions: any status counts toward the relationship gate.
+    session_member_result = await db.execute(
+        select(Session.member_id).where(Session.chw_id == current_user.id).distinct()
+    )
+    session_member_ids: set[UUID] = {r for (r,) in session_member_result.all()}
+
+    # ServiceRequests: matched_chw_id relationship gate.
+    request_member_result = await db.execute(
+        select(ServiceRequest.member_id)
+        .where(ServiceRequest.matched_chw_id == current_user.id)
+        .distinct()
+    )
+    request_member_ids: set[UUID] = {r for (r,) in request_member_result.all()}
+
+    all_member_ids: list[UUID] = list(session_member_ids | request_member_ids)
+
+    if not all_member_ids:
+        return []
+
+    # ── Step 2: batch-load User + MemberProfile for all members ──────────────────
+    members_result = await db.execute(
+        select(User, MemberProfile)
+        .join(MemberProfile, MemberProfile.user_id == User.id)
+        .where(User.id.in_(all_member_ids))
+        .where(User.role == "member")
+        .where(User.deleted_at.is_(None))
+    )
+    member_rows = members_result.all()
+
+    # ── Step 3: batch-load session counts for status + engagement bucketing ───────
+    # recent_30: count per member for sessions in the last 30 days (status signal).
+    recent_30_result = await db.execute(
+        select(Session.member_id, func.count(Session.id).label("cnt"))
+        .where(Session.chw_id == current_user.id)
+        .where(Session.member_id.in_(all_member_ids))
+        .where(
+            # Use ended_at when available (completed sessions), else scheduled_at
+            func.coalesce(Session.ended_at, Session.scheduled_at) >= thirty_days_ago
+        )
+        .group_by(Session.member_id)
+    )
+    recent_30_by_member: dict[UUID, int] = {
+        row.member_id: row.cnt for row in recent_30_result.all()
+    }
+
+    # recent_60: count per member for sessions in the last 60 days (engagement).
+    recent_60_result = await db.execute(
+        select(Session.member_id, func.count(Session.id).label("cnt"))
+        .where(Session.chw_id == current_user.id)
+        .where(Session.member_id.in_(all_member_ids))
+        .where(
+            func.coalesce(Session.ended_at, Session.scheduled_at) >= sixty_days_ago
+        )
+        .group_by(Session.member_id)
+    )
+    recent_60_by_member: dict[UUID, int] = {
+        row.member_id: row.cnt for row in recent_60_result.all()
+    }
+
+    # last_contact: most recent session timestamp per member (ended_at preferred).
+    last_contact_result = await db.execute(
+        select(
+            Session.member_id,
+            func.max(func.coalesce(Session.ended_at, Session.scheduled_at)).label("last_ts"),
+        )
+        .where(Session.chw_id == current_user.id)
+        .where(Session.member_id.in_(all_member_ids))
+        .group_by(Session.member_id)
+    )
+    last_contact_by_member: dict[UUID, datetime | None] = {
+        row.member_id: row.last_ts for row in last_contact_result.all()
+    }
+
+    # ── Step 4: batch-load open/accepted ServiceRequests for status + top_need ───
+    active_requests_result = await db.execute(
+        select(ServiceRequest)
+        .where(ServiceRequest.matched_chw_id == current_user.id)
+        .where(ServiceRequest.member_id.in_(all_member_ids))
+        .where(ServiceRequest.status.in_(["open", "accepted"]))
+        .order_by(ServiceRequest.created_at.desc())
+    )
+    # Keep only the most recent active request per member.
+    active_request_by_member: dict[UUID, ServiceRequest] = {}
+    for req in active_requests_result.scalars().all():
+        if req.member_id not in active_request_by_member:
+            active_request_by_member[req.member_id] = req
+
+    # ── Step 5: batch-load active MemberJourneys for this CHW's members ──────────
+    journeys_result = await db.execute(
+        select(MemberJourney)
+        .where(MemberJourney.chw_id == current_user.id)
+        .where(MemberJourney.member_id.in_(all_member_ids))
+        .where(MemberJourney.status == "active")
+        .order_by(MemberJourney.created_at.desc())
+    )
+    # Keep only the most recent active journey per member.
+    journey_by_member: dict[UUID, MemberJourney] = {}
+    for journey in journeys_result.scalars().all():
+        if journey.member_id not in journey_by_member:
+            journey_by_member[journey.member_id] = journey
+
+    # Batch-load templates for those journeys.
+    template_ids = list({j.template_id for j in journey_by_member.values()})
+    templates_by_id: dict[UUID, JourneyTemplate] = {}
+    if template_ids:
+        templates_result = await db.execute(
+            select(JourneyTemplate).where(JourneyTemplate.id.in_(template_ids))
+        )
+        templates_by_id = {t.id: t for t in templates_result.scalars().all()}
+
+    # Batch-load current step names for active journeys.
+    current_step_ids = [
+        j.current_step_id for j in journey_by_member.values() if j.current_step_id
+    ]
+    steps_by_id: dict[UUID, JourneyTemplateStep] = {}
+    if current_step_ids:
+        steps_result = await db.execute(
+            select(JourneyTemplateStep).where(JourneyTemplateStep.id.in_(current_step_ids))
+        )
+        steps_by_id = {s.id: s for s in steps_result.scalars().all()}
+
+    # Batch-load progress percents (completed / total step states per journey).
+    journey_obj_ids = [j.id for j in journey_by_member.values()]
+    progress_by_journey: dict[UUID, float] = {}
+    if journey_obj_ids:
+        total_steps_result = await db.execute(
+            select(
+                MemberJourneyStepState.member_journey_id,
+                func.count(MemberJourneyStepState.id).label("total"),
+                func.sum(
+                    case(
+                        (MemberJourneyStepState.status == "completed", 1),
+                        else_=0,
+                    )
+                ).label("done"),
+            )
+            .where(MemberJourneyStepState.member_journey_id.in_(journey_obj_ids))
+            .group_by(MemberJourneyStepState.member_journey_id)
+        )
+        for row in total_steps_result.all():
+            total = row.total or 0
+            done = row.done or 0
+            progress_by_journey[row.member_journey_id] = (
+                round(done / total * 100, 1) if total else 0.0
+            )
+
+    # ── Step 6: assemble roster items ────────────────────────────────────────────
+    roster: list[MembersRosterItem] = []
+
+    for member_user, member_profile in member_rows:
+        member_id = member_user.id
+
+        # Age from DOB — MemberProfile currently stores no dob field so we
+        # return null. This is a v1 stub; the field is wired when the
+        # demographics schema extension ships.
+        # TODO(demographics-ext): replace with real DOB from member_profiles.dob
+        age: int | None = None
+
+        # masked_id: last 4 chars of decrypted medi_cal_id.
+        masked_id: str = "—"
+        if member_profile.medi_cal_id:
+            raw_id: str = member_profile.medi_cal_id  # EncryptedString decrypts on access
+            if len(raw_id) >= 4:
+                masked_id = f"...{raw_id[-4:]}"
+            elif raw_id:
+                masked_id = raw_id
+
+        # avatar_initials from User.name.
+        name_parts = (member_user.name or "").strip().split()
+        initials = "".join(p[0].upper() for p in name_parts if p)[:2] or "?"
+
+        # Status: active if session in last 30 days OR open/accepted request.
+        has_recent_session = (recent_30_by_member.get(member_id) or 0) > 0
+        has_active_request = member_id in active_request_by_member
+        status: str = "active" if (has_recent_session or has_active_request) else "inactive"
+
+        # Engagement bucket from 60-day session count.
+        session_60_count = recent_60_by_member.get(member_id) or 0
+        if session_60_count >= 3:
+            engagement = "highly"
+        elif session_60_count >= 1:
+            engagement = "moderately"
+        else:
+            engagement = "disengaged"
+
+        # Active journey.
+        active_journey_info: ActiveJourneyInfo | None = None
+        journey = journey_by_member.get(member_id)
+        if journey is not None:
+            template = templates_by_id.get(journey.template_id)
+            current_step = steps_by_id.get(journey.current_step_id) if journey.current_step_id else None
+            progress_pct = progress_by_journey.get(journey.id, 0.0)
+            if template is not None:
+                active_journey_info = ActiveJourneyInfo(
+                    name=template.name,
+                    current_step=current_step.name if current_step else None,
+                    percent=progress_pct,
+                )
+
+        # Last contact.
+        last_contact_at = last_contact_by_member.get(member_id)
+
+        # Top need: primary vertical of most recent active ServiceRequest.
+        top_need: str | None = None
+        active_req = active_request_by_member.get(member_id)
+        if active_req is not None:
+            # Use verticals[0] (authoritative) or fall back to legacy vertical field.
+            if active_req.verticals:
+                top_need = active_req.verticals[0]
+            elif active_req.vertical:
+                top_need = active_req.vertical
+
+        roster.append(
+            MembersRosterItem(
+                id=member_id,
+                display_name=member_user.name,
+                age=age,
+                masked_id=masked_id,
+                avatar_initials=initials,
+                status=status,
+                risk=None,
+                engagement=engagement,
+                active_journey=active_journey_info,
+                last_contact_at=last_contact_at,
+                top_need=top_need,
+            )
+        )
+
+    # Sort by last_contact_at descending (null → end of list).
+    roster.sort(key=lambda item: item.last_contact_at or datetime.min.replace(tzinfo=UTC), reverse=True)
+
+    return roster
 
 
 # ─── Map Data ─────────────────────────────────────────────────────────────────

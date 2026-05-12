@@ -29,6 +29,7 @@ import {
   FileText,
   BarChart3,
   Building2,
+  Users,
 } from 'lucide-react-native';
 
 import { SidebarProvider, useSidebar } from './SidebarContext';
@@ -54,11 +55,15 @@ import { CHWResourcesScreen } from '../screens/chw/CHWResourcesScreen';
 import { CHWDocumentsScreen } from '../screens/chw/CHWDocumentsScreen';
 import { CHWReportsScreen } from '../screens/chw/CHWReportsScreen';
 import { CHWCommunityPartnersScreen } from '../screens/chw/CHWCommunityPartnersScreen';
+import { CHWMembersScreen } from '../screens/chw/CHWMembersScreen';
 
 // ─── Navigator param lists ────────────────────────────────────────────────────
 
 export type CHWTabParamList = {
   DashboardStack: undefined;
+  /** Members roster — replaced the old "Requests" label in the sidebar. */
+  CHWMembers: undefined;
+  /** Inbox / open service requests — new dedicated route. */
   Requests: undefined;
   SessionsStack: undefined;
   Calendar: undefined;
@@ -168,7 +173,8 @@ interface ScreenSpec {
 
 const SCREENS: ScreenSpec[] = [
   { name: 'DashboardStack',       title: 'Dashboard',          component: DashboardStackNavigator,    icon: LayoutDashboard, rootScreen: 'Dashboard' },
-  { name: 'Requests',             title: 'Members',            component: CHWRequestsScreen,          icon: Inbox },
+  { name: 'CHWMembers',           title: 'Members',            component: CHWMembersScreen,           icon: Users },
+  { name: 'Requests',             title: 'Inbox',              component: CHWRequestsScreen,          icon: Inbox },
   { name: 'CHWJourneys',          title: 'Journeys',           component: CHWJourneysScreen,          icon: Route },
   { name: 'SessionsStack',        title: 'Messages',           component: SessionsStackNavigator,     icon: ClipboardList,   rootScreen: 'Sessions' },
   { name: 'Calendar',             title: 'Appointments',       component: CHWCalendarScreen,          icon: CalendarDays },
