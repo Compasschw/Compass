@@ -15,7 +15,7 @@
  * All mutations use optimistic UI with Alert-based error rollback.
  */
 
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   Alert,
   Pressable,
@@ -30,17 +30,14 @@ import {
   type TextStyle,
 } from 'react-native';
 import {
-  Bell,
   Globe,
   HelpCircle,
-  Lock,
   LogOut,
   Mail,
   MessageSquare,
   Phone,
   Save,
   Shield,
-  User,
 } from 'lucide-react-native';
 
 import { useAuth } from '../../context/AuthContext';
@@ -350,65 +347,85 @@ function ProfileTab({
   onSave,
   isSaving,
 }: ProfileTabProps): React.JSX.Element {
+  const initials = name
+    .split(' ')
+    .slice(0, 2)
+    .map((p) => p[0] ?? '')
+    .join('')
+    .toUpperCase() || 'ME';
+
   return (
     <Card style={pt.card}>
-      <Text style={pt.sectionLabel}>PERSONAL INFORMATION</Text>
-      <FormField
-        label="Full Name"
-        value={name}
-        onChangeText={onChangeName}
-        placeholder="Your full name"
-      />
-      <FormField
-        label="Phone Number"
-        value={phone}
-        onChangeText={onChangePhone}
-        placeholder="+1 (555) 000-0000"
-        keyboardType="phone-pad"
-      />
-      <FormField
-        label="ZIP Code"
-        value={zipCode}
-        onChangeText={onChangeZip}
-        placeholder="e.g. 90210"
-        keyboardType="numeric"
-      />
-      <FormField
-        label="Insurance Provider"
-        value={insurance}
-        onChangeText={onChangeInsurance}
-        placeholder="e.g. Medi-Cal, Blue Shield"
-      />
+      <View style={pt.twoCol}>
+        {/* Avatar column */}
+        <View style={pt.avatarCol}>
+          <View style={pt.avatarCircle}>
+            <Text style={pt.avatarInitials}>{initials}</Text>
+          </View>
+          <Text style={pt.avatarHint}>JPEG/PNG · max 5MB</Text>
+        </View>
 
-      <Text style={[pt.sectionLabel, { marginTop: 8 }]}>PREFERRED SESSION MODE</Text>
-      <View style={pt.modeRow}>
-        {PREFERRED_MODE_OPTIONS.map((opt) => (
+        {/* Form column */}
+        <View style={pt.formCol}>
+          <Text style={pt.sectionLabel}>PROFILE INFORMATION</Text>
+          <FormField
+            label="Full Name"
+            value={name}
+            onChangeText={onChangeName}
+            placeholder="Your full name"
+          />
+          <FormField
+            label="Phone Number"
+            value={phone}
+            onChangeText={onChangePhone}
+            placeholder="+1 (555) 000-0000"
+            keyboardType="phone-pad"
+          />
+          <FormField
+            label="ZIP Code"
+            value={zipCode}
+            onChangeText={onChangeZip}
+            placeholder="e.g. 90210"
+            keyboardType="numeric"
+          />
+          <FormField
+            label="Insurance Provider"
+            value={insurance}
+            onChangeText={onChangeInsurance}
+            placeholder="e.g. Medi-Cal, Blue Shield"
+          />
+
+          <Text style={[pt.sectionLabel, { marginTop: 8 }]}>PREFERRED SESSION MODE</Text>
+          <View style={pt.modeRow}>
+            {PREFERRED_MODE_OPTIONS.map((opt) => (
+              <Pressable
+                key={opt.value}
+                onPress={() => onChangeMode(opt.value)}
+                style={[pt.modeBtn, preferredMode === opt.value && pt.modeBtnActive]}
+                accessibilityRole="radio"
+                accessibilityState={{ checked: preferredMode === opt.value }}
+                accessibilityLabel={opt.label}
+              >
+                <Text style={[pt.modeBtnText, preferredMode === opt.value && pt.modeBtnTextActive]}>
+                  {opt.label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+
           <Pressable
-            key={opt.value}
-            onPress={() => onChangeMode(opt.value)}
-            style={[pt.modeBtn, preferredMode === opt.value && pt.modeBtnActive]}
-            accessibilityRole="radio"
-            accessibilityState={{ checked: preferredMode === opt.value }}
-            accessibilityLabel={opt.label}
+            onPress={onSave}
+            disabled={isSaving}
+            style={({ pressed }) => [pt.saveBtn, (pressed || isSaving) && { opacity: 0.7 }]}
+            accessibilityRole="button"
+            accessibilityLabel="Save profile changes"
+            accessibilityState={{ disabled: isSaving }}
           >
-            <Text style={[pt.modeBtnText, preferredMode === opt.value && pt.modeBtnTextActive]}>
-              {opt.label}
-            </Text>
+            <Save size={16} color="#FFFFFF" />
+            <Text style={pt.saveBtnText}>{isSaving ? 'Saving…' : 'Save Changes'}</Text>
           </Pressable>
-        ))}
+        </View>
       </View>
-
-      <Pressable
-        onPress={onSave}
-        disabled={isSaving}
-        style={({ pressed }) => [pt.saveBtn, (pressed || isSaving) && { opacity: 0.7 }]}
-        accessibilityRole="button"
-        accessibilityLabel="Save profile changes"
-        accessibilityState={{ disabled: isSaving }}
-      >
-        <Save size={16} color="#FFFFFF" />
-        <Text style={pt.saveBtnText}>{isSaving ? 'Saving…' : 'Save Changes'}</Text>
-      </Pressable>
     </Card>
   );
 }
@@ -416,6 +433,38 @@ function ProfileTab({
 const pt = StyleSheet.create({
   card: {
     padding: 20,
+  } as ViewStyle,
+  twoCol: {
+    flexDirection: 'row',
+    gap: 24,
+    alignItems: 'flex-start',
+  } as ViewStyle,
+  avatarCol: {
+    width: 96,
+    alignItems: 'center',
+    gap: 8,
+  } as ViewStyle,
+  avatarCircle: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: '#94A3B8',
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+  avatarInitials: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 28,
+    color: '#FFFFFF',
+  } as TextStyle,
+  avatarHint: {
+    fontSize: 10,
+    color: tokens.textMuted,
+    textAlign: 'center',
+    lineHeight: 14,
+  } as TextStyle,
+  formCol: {
+    flex: 1,
   } as ViewStyle,
   sectionLabel: {
     fontSize: 11,
@@ -709,6 +758,55 @@ export function MemberSettingsScreen(): React.JSX.Element {
               </View>
             )}
           </View>
+
+          {/* Privacy + Help below-cards — always visible regardless of tab */}
+          <View style={styles.belowCards}>
+            <Card style={styles.belowCard}>
+              <Text style={styles.belowCardTitle}>Privacy &amp; Security</Text>
+              <Text style={styles.belowCardSub}>Your data is protected. You're in control.</Text>
+              <ToggleRow
+                label="AI Session Transcription"
+                description="Allow AI to transcribe your sessions for CHW notes."
+                value={aiTranscription}
+                onValueChange={setAiTranscription}
+              />
+              <ToggleRow
+                label="Analytics &amp; Usage Data"
+                description="Help us improve Compass by sharing anonymized usage data."
+                value={analytics}
+                onValueChange={setAnalytics}
+              />
+              <View style={styles.privacyNote}>
+                <Shield size={13} color={tokens.textSecondary} />
+                <Text style={styles.privacyNoteText}>
+                  Your health information is protected under HIPAA and California CMIA.
+                </Text>
+              </View>
+            </Card>
+
+            <Card style={[styles.belowCard, { backgroundColor: '#F0FDF4' }]}>
+              <Text style={styles.belowCardTitle}>Need help?</Text>
+              <Text style={styles.belowCardSub}>We're here for you 24/7</Text>
+              <SupportCard
+                icon={<Phone size={18} color="#2563EB" />}
+                title="Call support"
+                description="Mon–Sun 7 AM – 9 PM PT"
+                onPress={() => Alert.alert('Support', 'Call (800) 555-COMPASS')}
+              />
+              <SupportCard
+                icon={<MessageSquare size={18} color={tokens.primary} />}
+                title="Text us"
+                description="(800) 555-COMPASS · usually replies in 10 min"
+                onPress={() => Alert.alert('Support', 'Text (800) 555-COMPASS')}
+              />
+              <SupportCard
+                icon={<Mail size={18} color="#7C3AED" />}
+                title="Email us"
+                description="help@joincompasschw.com"
+                onPress={() => Alert.alert('Support', 'Email help@joincompasschw.com')}
+              />
+            </Card>
+          </View>
         </View>
       </ScrollView>
     </AppShell>
@@ -781,5 +879,29 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: tokens.textPrimary,
     flex: 1,
+  } as TextStyle,
+
+  belowCards: {
+    flexDirection: 'row',
+    gap: 16,
+    marginTop: 20,
+    flexWrap: 'wrap',
+  } as ViewStyle,
+  belowCard: {
+    flex: 1,
+    minWidth: 280,
+    padding: 20,
+    gap: 4,
+  } as ViewStyle,
+  belowCardTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: tokens.textPrimary,
+    marginBottom: 2,
+  } as TextStyle,
+  belowCardSub: {
+    fontSize: 12,
+    color: tokens.textSecondary,
+    marginBottom: 10,
   } as TextStyle,
 });

@@ -373,35 +373,30 @@ function InfoRow({
 const infoRowStyles = StyleSheet.create({
   container: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-    backgroundColor: '#E5DFD6',
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    marginBottom: 8,
+    alignItems: 'flex-start',
+    gap: 12,
+    paddingVertical: 6,
+    marginBottom: 4,
   } as ViewStyle,
   iconBox: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: '#3D5A3E15',
+    width: 16,
+    height: 16,
+    marginTop: 2,
     alignItems: 'center',
     justifyContent: 'center',
+    flexShrink: 0,
   } as ViewStyle,
   textBox: { flex: 1 } as ViewStyle,
   label: {
-    fontFamily: fonts.bodySemibold,
-    fontSize: 10,
-    color: '#6B7280',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 12,
+    color: '#9CA3AF',
     marginBottom: 1,
   } as TextStyle,
   value: {
-    fontFamily: 'PlusJakartaSans_400Regular',
+    fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 14,
-    color: '#1E3320',
+    color: '#111827',
   } as TextStyle,
   valuePlaceholder: {
     color: '#A0A6AB',
@@ -433,27 +428,25 @@ function SectionCard({
 
 const sectionCardStyles = StyleSheet.create({
   container: {
-    marginBottom: 16,
+    marginBottom: 20,
     overflow: 'hidden',
   } as ViewStyle,
   titleRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingTop: 14,
-    paddingBottom: 6,
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 8,
   } as ViewStyle,
   title: {
-    fontFamily: fonts.bodySemibold,
-    fontSize: 12,
-    color: '#6B7280',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 14,
+    color: '#111827',
   } as TextStyle,
   body: {
-    paddingHorizontal: 16,
-    paddingBottom: 12,
+    paddingHorizontal: 20,
+    paddingBottom: 16,
   } as ViewStyle,
 });
 
@@ -1018,93 +1011,191 @@ const consentRowStyles = StyleSheet.create({
 });
 
 // ─── Journey step roadmap ─────────────────────────────────────────────────────
+//
+// 6-step horizontal roadmap matching the mockup:
+//   Step 1+2: completed (emerald bg, check icon)
+//   Step 3:   in-progress (emerald bg + amber ring outer)
+//   Step 4:   missed (amber bg, clock icon, red ring)
+//   Step 5+6: upcoming (gray bg, grey icon)
 
-const JOURNEY_STEPS = [
-  { key: 'intake',       label: 'Intake',            done: true  },
-  { key: 'assessment',   label: 'Assessment',         done: true  },
-  { key: 'plan',         label: 'Care Plan',          done: false },
-  { key: 'resources',    label: 'Resources Linked',   done: false },
-  { key: 'follow_up',   label: 'Follow-up',           done: false },
-  { key: 'graduation',  label: 'Graduation',          done: false },
+type StepState = 'completed' | 'in_progress' | 'missed' | 'upcoming';
+
+const JOURNEY_STEPS_V2: ReadonlyArray<{
+  key: string;
+  label: string;
+  subLabel: string;
+  state: StepState;
+  points: string;
+}> = [
+  { key: 'identified',  label: 'Need Identified',     subLabel: 'Completed',   state: 'completed',   points: '+10 pts' },
+  { key: 'screening',   label: 'Eligibility Screening', subLabel: 'Completed',  state: 'completed',   points: '+25 pts' },
+  { key: 'documents',   label: 'Upload Documents',     subLabel: 'In Progress', state: 'in_progress', points: '+30 pts' },
+  { key: 'followup',    label: 'Follow Up',            subLabel: 'Missed',      state: 'missed',      points: '+0 pts'  },
+  { key: 'resource',    label: 'Resource Connection',  subLabel: 'Upcoming',    state: 'upcoming',    points: '+25 pts' },
+  { key: 'complete',    label: 'Journey Complete',     subLabel: '',            state: 'upcoming',    points: '+50 pts' },
 ] as const;
 
 function JourneyRoadmap(): React.JSX.Element {
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={journeyStyles.row}>
-      {JOURNEY_STEPS.map((step, index) => (
-        <View key={step.key} style={journeyStyles.stepWrapper}>
-          <View style={[journeyStyles.stepDot, step.done && journeyStyles.stepDotDone]}>
-            {step.done ? (
-              <CheckCircle size={14} color="#FFFFFF" />
-            ) : (
-              <View style={journeyStyles.stepInner} />
-            )}
-          </View>
-          <Text style={[journeyStyles.stepLabel, step.done && journeyStyles.stepLabelDone]}>
-            {step.label}
-          </Text>
-          {index < JOURNEY_STEPS.length - 1 && (
-            <View style={[journeyStyles.connector, step.done && journeyStyles.connectorDone]} />
-          )}
-        </View>
-      ))}
-    </ScrollView>
+    <View style={journeyStyles.container}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={journeyStyles.row}
+      >
+        {JOURNEY_STEPS_V2.map((step, index) => {
+          const isLast = index === JOURNEY_STEPS_V2.length - 1;
+          const isCompleted = step.state === 'completed';
+          const isInProgress = step.state === 'in_progress';
+          const isMissed = step.state === 'missed';
+          const isUpcoming = step.state === 'upcoming';
+
+          const dotBg = isCompleted || isInProgress ? '#16A34A'
+            : isMissed ? '#F59E0B'
+            : '#E5E7EB';
+
+          const lineBg = isCompleted ? '#16A34A' : '#E5E7EB';
+
+          const subLabelColor = isCompleted ? '#6B7280'
+            : isInProgress ? '#16A34A'
+            : isMissed ? '#EF4444'
+            : '#9CA3AF';
+
+          return (
+            <View key={step.key} style={journeyStyles.stepWrapper}>
+              {/* Circle */}
+              <View style={[
+                journeyStyles.stepCircleOuter,
+                isInProgress && journeyStyles.stepCircleInProgress,
+                isMissed && journeyStyles.stepCircleMissed,
+              ]}>
+                <View style={[journeyStyles.stepDot, { backgroundColor: dotBg }]}>
+                  {isCompleted || isInProgress ? (
+                    <CheckCircle size={22} color="#FFFFFF" />
+                  ) : isMissed ? (
+                    <Clock size={22} color="#FFFFFF" />
+                  ) : (
+                    <View style={journeyStyles.stepInner} />
+                  )}
+                </View>
+              </View>
+
+              {/* Connector line to next step */}
+              {!isLast && (
+                <View style={[journeyStyles.connector, { backgroundColor: lineBg }]} />
+              )}
+
+              {/* Labels */}
+              <Text style={[journeyStyles.stepLabel, !isUpcoming && journeyStyles.stepLabelActive]}>
+                {step.label}
+              </Text>
+              {step.subLabel ? (
+                <Text style={[journeyStyles.stepSubLabel, { color: subLabelColor }]}>
+                  {step.subLabel}
+                </Text>
+              ) : null}
+              <Text style={[journeyStyles.stepPoints, isUpcoming && journeyStyles.stepPointsMuted]}>
+                {step.points}
+              </Text>
+            </View>
+          );
+        })}
+      </ScrollView>
+    </View>
   );
 }
 
 const journeyStyles = StyleSheet.create({
+  container: {
+    paddingHorizontal: 8,
+  } as ViewStyle,
   row: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 0,
     paddingVertical: 8,
   } as ViewStyle,
   stepWrapper: {
     alignItems: 'center',
     position: 'relative',
-    minWidth: 80,
+    width: 112,
+    flexShrink: 0,
   } as ViewStyle,
-  stepDot: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: '#DDD6CC',
+  // Outer ring for in-progress (amber) and missed (red) states
+  stepCircleOuter: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: 'transparent',
+    marginBottom: 8,
     zIndex: 1,
   } as ViewStyle,
-  stepDotDone: {
-    backgroundColor: '#3D5A3E',
+  stepCircleInProgress: {
+    borderWidth: 4,
+    borderColor: '#FCD34D',
+  } as ViewStyle,
+  stepCircleMissed: {
+    borderWidth: 4,
+    borderColor: '#FCA5A5',
+  } as ViewStyle,
+  stepDot: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
   } as ViewStyle,
   stepInner: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: '#A0A6AB',
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#9CA3AF',
   } as ViewStyle,
   stepLabel: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 11,
-    color: '#A0A6AB',
+    color: '#9CA3AF',
     textAlign: 'center',
-    marginTop: 6,
-    maxWidth: 72,
+    maxWidth: 96,
   } as TextStyle,
-  stepLabelDone: {
-    color: '#1E3320',
+  stepLabelActive: {
+    color: '#111827',
     fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 11,
+  } as TextStyle,
+  stepSubLabel: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    textAlign: 'center',
+    marginTop: 2,
+  } as TextStyle,
+  stepPoints: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 11,
+    color: '#047857',
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 999,
+    marginTop: 4,
+    textAlign: 'center',
+    overflow: 'hidden',
+  } as TextStyle,
+  stepPointsMuted: {
+    color: '#6B7280',
+    backgroundColor: '#F3F4F6',
   } as TextStyle,
   connector: {
     position: 'absolute',
-    top: 13,
+    top: 27,    // half of stepDot height (56/2=28) minus half connector height
     left: '50%',
     right: '-50%',
-    height: 2,
-    backgroundColor: '#DDD6CC',
+    height: 3,
     zIndex: 0,
   } as ViewStyle,
   connectorDone: {
-    backgroundColor: '#3D5A3E',
+    backgroundColor: '#16A34A',
   } as ViewStyle,
 });
 
@@ -1113,10 +1204,12 @@ const journeyStyles = StyleSheet.create({
 interface QuickAccessItemProps {
   icon: React.ReactNode;
   label: string;
+  sublabel?: string;
+  iconBg?: string;
   onPress: () => void;
 }
 
-function QuickAccessItem({ icon, label, onPress }: QuickAccessItemProps): React.JSX.Element {
+function QuickAccessItem({ icon, label, sublabel, iconBg = '#EFF6FF', onPress }: QuickAccessItemProps): React.JSX.Element {
   return (
     <TouchableOpacity
       style={quickAccessStyles.item}
@@ -1124,9 +1217,12 @@ function QuickAccessItem({ icon, label, onPress }: QuickAccessItemProps): React.
       accessibilityRole="button"
       accessibilityLabel={label}
     >
-      <View style={quickAccessStyles.iconWrap}>{icon}</View>
-      <Text style={quickAccessStyles.label}>{label}</Text>
-      <ChevronRight size={14} color="#A0A6AB" />
+      <View style={[quickAccessStyles.iconWrap, { backgroundColor: iconBg }]}>{icon}</View>
+      <View style={quickAccessStyles.labelWrap}>
+        <Text style={quickAccessStyles.label}>{label}</Text>
+        {sublabel ? <Text style={quickAccessStyles.sublabel}>{sublabel}</Text> : null}
+      </View>
+      <ChevronRight size={14} color="#D1D5DB" />
     </TouchableOpacity>
   );
 }
@@ -1136,23 +1232,31 @@ const quickAccessStyles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#DDD6CC',
+    paddingVertical: 11,
+    paddingHorizontal: 12,
+    borderRadius: 10,
   } as ViewStyle,
   iconWrap: {
-    width: 32,
-    height: 32,
+    width: 36,
+    height: 36,
     borderRadius: 8,
-    backgroundColor: '#3D5A3E15',
     alignItems: 'center',
     justifyContent: 'center',
+    flexShrink: 0,
+  } as ViewStyle,
+  labelWrap: {
+    flex: 1,
+    gap: 1,
   } as ViewStyle,
   label: {
-    flex: 1,
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 13,
-    color: '#1E3320',
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 14,
+    color: '#111827',
+  } as TextStyle,
+  sublabel: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 12,
+    color: '#6B7280',
   } as TextStyle,
 });
 
@@ -1487,21 +1591,30 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                   ) : null}
                 </View>
 
-                {/* Resource Needs column */}
+                {/* Resource Needs column — priority-ranked: 1-2 red, 3-4 amber, 5+ emerald */}
                 <View style={s.needsCol}>
-                  <Text style={s.colHeading}>Resource Needs</Text>
+                  <View style={s.needsColHeader}>
+                    <Text style={s.colHeading}>Resource Needs <Text style={s.colHeadingSub}>(Priority)</Text></Text>
+                  </View>
                   {profile.primaryCategories.length === 0 ? (
                     <Text style={s.needsEmpty}>No categories recorded.</Text>
                   ) : (
                     profile.primaryCategories.map((cat, index) => {
+                      const rank = index + 1;
+                      const isHigh = rank <= 2;
+                      const isMed = rank === 3 || rank === 4;
+                      const rankBg = isHigh ? '#FEE2E2' : isMed ? '#FEF3C7' : '#DCFCE7';
+                      const rankColor = isHigh ? '#B91C1C' : isMed ? '#B45309' : '#15803D';
+                      const badgeLabel = isHigh ? 'High' : isMed ? 'Medium' : 'Low';
+                      const badgeVariant: 'red' | 'amber' | 'emerald' = isHigh ? 'red' : isMed ? 'amber' : 'emerald';
                       const label = CATEGORY_LABELS[cat] ?? cat;
-                      const pillVariant = categoryToPillVariant(cat);
                       return (
                         <View key={cat} style={s.needItem}>
-                          <View style={s.needRank}>
-                            <Text style={s.needRankText}>{index + 1}</Text>
+                          <View style={[s.needRank, { backgroundColor: rankBg }]}>
+                            <Text style={[s.needRankText, { color: rankColor }]}>{rank}</Text>
                           </View>
-                          <Pill variant={pillVariant} size="md">{label}</Pill>
+                          <Text style={s.needItemLabel}>{label}</Text>
+                          <Pill variant={badgeVariant} size="sm">{badgeLabel}</Pill>
                         </View>
                       );
                     })
@@ -1745,33 +1858,45 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                   <Card style={s.quickAccessCard}>
                     <Text style={s.quickAccessTitle}>Quick Access</Text>
                     <QuickAccessItem
-                      icon={<NotebookPen size={14} color={colors.primary} />}
+                      icon={<NotebookPen size={16} color="#2563EB" />}
+                      iconBg="#EFF6FF"
                       label="Case Notes"
+                      sublabel="View all notes"
                       onPress={() => {/* TODO: navigate to case notes */}}
                     />
                     <QuickAccessItem
-                      icon={<ClipboardList size={14} color={colors.primary} />}
+                      icon={<ClipboardList size={16} color="#7C3AED" />}
+                      iconBg="#F5F3FF"
                       label="Assessments"
+                      sublabel="Latest: view history"
                       onPress={() => {/* TODO: navigate to assessments */}}
                     />
                     <QuickAccessItem
-                      icon={<CheckSquare size={14} color={colors.primary} />}
+                      icon={<CheckSquare size={16} color="#EA580C" />}
+                      iconBg="#FFF7ED"
                       label="Screening Results"
+                      sublabel="View history"
                       onPress={() => {/* TODO: navigate to screenings */}}
                     />
                     <QuickAccessItem
-                      icon={<CheckCircle size={14} color={colors.primary} />}
+                      icon={<CheckCircle size={16} color="#16A34A" />}
+                      iconBg="#F0FDF4"
                       label="Eligibility Verification"
+                      sublabel="CalFresh pending"
                       onPress={() => {/* TODO: navigate to eligibility */}}
                     />
                     <QuickAccessItem
-                      icon={<UploadCloud size={14} color={colors.primary} />}
+                      icon={<UploadCloud size={16} color="#64748B" />}
+                      iconBg="#F8FAFC"
                       label="Uploaded Documents"
+                      sublabel="3 documents"
                       onPress={() => {/* TODO: navigate to documents */}}
                     />
                     <QuickAccessItem
-                      icon={<RadioTower size={14} color={colors.primary} />}
+                      icon={<RadioTower size={16} color="#D97706" />}
+                      iconBg="#FFFBEB"
                       label="Outreach History"
+                      sublabel="View all interactions"
                       onPress={() => {/* TODO: navigate to outreach */}}
                     />
                   </Card>
@@ -1946,8 +2071,8 @@ const s = StyleSheet.create({
     width: '100%',
     maxWidth: 1100,
     alignSelf: 'center',
-    paddingHorizontal: 24,
-    paddingTop: 24,
+    padding: 24,
+    paddingBottom: 100,
   } as ViewStyle,
   pageWrapLoading: {
     width: '100%',
@@ -1957,9 +2082,9 @@ const s = StyleSheet.create({
     paddingTop: 16,
   } as ViewStyle,
 
-  // ── Top header card
+  // ── Top header card — mockup: p-6 (24px), 12-col grid, identity 5/contact 3/needs 4
   headerCard: {
-    marginBottom: 20,
+    marginBottom: 24,
     padding: 0,
     overflow: 'hidden',
   } as ViewStyle,
@@ -1968,41 +2093,41 @@ const s = StyleSheet.create({
     gap: 0,
   } as ViewStyle,
 
-  // Identity column
+  // Identity column — col-span-5
   identityCol: {
     flex: Platform.OS === 'web' ? 5 : undefined,
     borderRightWidth: Platform.OS === 'web' ? 1 : 0,
-    borderRightColor: '#DDD6CC',
+    borderRightColor: '#F3F4F6',
   } as ViewStyle,
   bannerContainer: {} as ViewStyle,
   banner: {
-    height: 64,
+    height: 80,
     backgroundColor: '#3D5A3E',
   } as ViewStyle,
   heroSection: {
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingBottom: 16,
-    gap: 6,
+    paddingHorizontal: 20,
+    paddingBottom: 20,
+    gap: 8,
   } as ViewStyle,
   avatarWrapper: {
-    marginTop: -36,
-    marginBottom: 4,
+    marginTop: -56,
+    marginBottom: 8,
   } as ViewStyle,
   avatar: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: '#3D5A3E18',
+    width: 112,
+    height: 112,
+    borderRadius: 56,
+    backgroundColor: '#CBD5E1',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 4,
     borderColor: '#FFFFFF',
     ...Platform.select({
       ios: {
-        shadowColor: '#3D5A3E',
+        shadowColor: '#000',
         shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.18,
+        shadowOpacity: 0.15,
         shadowRadius: 12,
       },
       android: { elevation: 4 },
@@ -2010,13 +2135,13 @@ const s = StyleSheet.create({
   } as ViewStyle,
   avatarText: {
     fontFamily: 'DMSans_700Bold',
-    fontSize: 22,
-    color: '#3D5A3E',
+    fontSize: 30,
+    color: '#FFFFFF',
   } as TextStyle,
   displayName: {
     fontFamily: 'DMSans_700Bold',
-    fontSize: 18,
-    color: '#1E3320',
+    fontSize: 22,
+    color: '#111827',
     textAlign: 'center',
   } as TextStyle,
   heroBadgesRow: {
@@ -2027,36 +2152,50 @@ const s = StyleSheet.create({
     justifyContent: 'center',
   } as ViewStyle,
 
-  // Contact column
+  // Contact column — col-span-3, mockup: border-l border-gray-100 pl-6 space-y-2.5
   contactCol: {
     flex: Platform.OS === 'web' ? 3 : undefined,
-    padding: 16,
+    padding: 24,
+    borderLeftWidth: Platform.OS === 'web' ? 1 : 0,
+    borderLeftColor: '#F3F4F6',
     borderRightWidth: Platform.OS === 'web' ? 1 : 0,
-    borderRightColor: '#DDD6CC',
+    borderRightColor: '#F3F4F6',
   } as ViewStyle,
 
-  // Needs column
+  // Needs column — col-span-4
   needsCol: {
     flex: Platform.OS === 'web' ? 4 : undefined,
-    padding: 16,
+    padding: 24,
+  } as ViewStyle,
+  needsColHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
   } as ViewStyle,
   colHeading: {
     fontFamily: 'DMSans_700Bold',
-    fontSize: 13,
-    color: '#1E3320',
-    marginBottom: 10,
+    fontSize: 14,
+    color: '#111827',
   } as TextStyle,
+  colHeadingSub: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 14,
+    color: '#9CA3AF',
+  } as TextStyle,
+  // Resource need row: rank circle + label + priority badge
   needItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    marginBottom: 8,
+    gap: 10,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    borderRadius: 10,
   } as ViewStyle,
   needRank: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: '#3D5A3E',
+    width: 24,
+    height: 24,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
@@ -2064,7 +2203,12 @@ const s = StyleSheet.create({
   needRankText: {
     fontFamily: 'DMSans_700Bold',
     fontSize: 11,
-    color: '#FFFFFF',
+  } as TextStyle,
+  needItemLabel: {
+    flex: 1,
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 13,
+    color: '#111827',
   } as TextStyle,
   needsEmpty: {
     fontFamily: 'PlusJakartaSans_400Regular',
@@ -2073,73 +2217,66 @@ const s = StyleSheet.create({
     fontStyle: 'italic',
   } as TextStyle,
 
-  // ── Mid row (insights + AI panel)
+  // ── Mid row (insights + AI panel) — mockup: grid-cols-12 gap-6 mt-6, 9/3 split
   midRow: {
     flexDirection: Platform.OS === 'web' ? 'row' : 'column',
-    gap: 16,
-    marginBottom: 20,
+    gap: 24,
+    marginBottom: 24,
     alignItems: 'flex-start',
   } as ViewStyle,
   midMain: {
     flex: 1,
   } as ViewStyle,
+  // Insights card — mockup: p-5 (20px), 4-col grid gap-5 (20px)
   insightsCard: {
-    padding: 16,
+    padding: 20,
   } as ViewStyle,
   insightsTitle: {
     fontFamily: 'DMSans_700Bold',
     fontSize: 14,
-    color: '#1E3320',
-    marginBottom: 12,
+    color: '#111827',
+    marginBottom: 16,
   } as TextStyle,
   insightsGrid: {
     flexDirection: Platform.OS === 'web' ? 'row' : 'column',
     flexWrap: 'wrap',
-    gap: 12,
+    gap: 20,
   } as ViewStyle,
   insightCell: {
     flex: 1,
     minWidth: 160,
-    backgroundColor: '#F4F1ED',
-    borderRadius: 10,
-    padding: 12,
-    gap: 4,
-    borderRightWidth: Platform.OS === 'web' ? 1 : 0,
-    borderRightColor: '#DDD6CC',
+    gap: 6,
   } as ViewStyle,
-  insightCellLast: {
-    borderRightWidth: 0,
-  } as ViewStyle,
+  insightCellLast: {} as ViewStyle,
   insightCellLabel: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 10,
-    color: '#6B7280',
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    marginBottom: 2,
+    fontSize: 12,
+    color: '#111827',
+    marginBottom: 6,
   } as TextStyle,
   insightCellBody: {
     fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 12,
-    color: '#1E3320',
-    lineHeight: 18,
+    fontSize: 14,
+    color: '#374151',
+    lineHeight: 20,
   } as TextStyle,
 
-  // ── AI panel card
+  // ── AI panel card — mockup: p-5, gradient from-emerald-50/50 to-white
   aiPanelCard: {
-    padding: 14,
-    gap: 8,
+    padding: 20,
+    gap: 10,
+    backgroundColor: '#F0FDF4',
   } as ViewStyle,
   aiPanelHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    marginBottom: 4,
+    marginBottom: 8,
   } as ViewStyle,
   aiPanelTitle: {
     fontFamily: 'DMSans_700Bold',
-    fontSize: 13,
-    color: '#1E3320',
+    fontSize: 14,
+    color: '#111827',
     flex: 1,
   } as TextStyle,
   aiBetaBadge: {
@@ -2167,25 +2304,25 @@ const s = StyleSheet.create({
   aiConsentDenied: { color: '#DC2626' } as TextStyle,
   aiConsentNone: { color: '#A0A6AB' } as TextStyle,
 
-  // ── Journey row
+  // ── Journey row — mockup: grid-cols-12 gap-6 mt-6, 9/3 split
   journeyRow: {
     flexDirection: Platform.OS === 'web' ? 'row' : 'column',
-    gap: 16,
+    gap: 24,
     alignItems: 'flex-start',
   } as ViewStyle,
   journeyMain: {
     flex: 1,
   } as ViewStyle,
 
-  // ── Quick Access card
+  // ── Quick Access card — mockup: p-5 (20px), title font-semibold text-sm
   quickAccessCard: {
-    padding: 14,
+    padding: 20,
   } as ViewStyle,
   quickAccessTitle: {
     fontFamily: 'DMSans_700Bold',
-    fontSize: 13,
-    color: '#1E3320',
-    marginBottom: 4,
+    fontSize: 14,
+    color: '#111827',
+    marginBottom: 8,
   } as TextStyle,
 
   // ── Billing caption

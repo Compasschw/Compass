@@ -245,74 +245,108 @@ interface PartnerCardProps {
   partner: CommunityPartner;
 }
 
+/** Derive short initials from partner name (up to 4 chars, like mockup's FJV/SDFB) */
+function getPartnerInitials(name: string): string {
+  return name
+    .split(/[\s&-]+/)
+    .filter(Boolean)
+    .map((w) => w[0])
+    .join('')
+    .toUpperCase()
+    .slice(0, 4);
+}
+
+/** Deterministic color from name for the logo circle */
+const LOGO_COLORS = ['#dc2626', '#f97316', '#8b5cf6', '#7c3aed', '#ec4899', '#0891b2', '#16a34a', '#1e40af'];
+function getLogoColor(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) { hash = (hash * 31 + name.charCodeAt(i)) >>> 0; }
+  return LOGO_COLORS[hash % LOGO_COLORS.length];
+}
+
 function PartnerCard({ partner }: PartnerCardProps): React.JSX.Element {
   const cap = CAPACITY_CONFIG[partner.capacityStatus];
   const CapIcon = cap.Icon;
+  const logoInitials = getPartnerInitials(partner.name);
+  const logoColor = getLogoColor(partner.name);
 
   return (
     <Card style={cardStyles.card}>
-      {/* Header row */}
+      {/* Header row: logo-circle + name/pills + capacity badge */}
       <View style={cardStyles.headerRow}>
+        <View style={[cardStyles.logoCircle, { backgroundColor: logoColor }]}>
+          <Text style={cardStyles.logoText}>{logoInitials}</Text>
+        </View>
         <View style={cardStyles.nameBlock}>
-          <Building2 size={14} color={colors.primary} />
           <Text style={cardStyles.name} numberOfLines={2}>{partner.name}</Text>
-          {partner.isPriority && (
-            <Star size={12} color={colors.amber700} fill={colors.amber700} />
-          )}
+          <View style={cardStyles.serviceRow}>
+            {partner.serviceTypes.map((st) => (
+              <Pill key={st} variant={SERVICE_PILL[st]} size="sm">
+                {SERVICE_TYPE_LABELS[st]}
+              </Pill>
+            ))}
+          </View>
         </View>
-        <View style={cardStyles.capacityBadge}>
-          <CapIcon size={11} color={partner.capacityStatus === 'accepting' ? colors.emerald700 : partner.capacityStatus === 'waitlist' ? colors.amber700 : colors.red700} />
-          <Pill variant={cap.pillVariant} size="sm">{cap.label}</Pill>
-        </View>
+        <Pill variant={cap.pillVariant} size="sm">{cap.label}</Pill>
       </View>
 
-      {/* Service types */}
-      <View style={cardStyles.serviceRow}>
-        {partner.serviceTypes.map((st) => (
-          <Pill key={st} variant={SERVICE_PILL[st]} size="sm">
-            {SERVICE_TYPE_LABELS[st]}
-          </Pill>
-        ))}
-      </View>
-
-      {/* Description */}
-      <Text style={cardStyles.description} numberOfLines={3}>
-        {partner.description}
-      </Text>
-
-      {/* Contact info */}
+      {/* Contact meta */}
       <View style={cardStyles.contactBlock}>
+        <View style={cardStyles.contactRow}>
+          <MapPin size={12} color={colors.textSecondary} />
+          <Text style={cardStyles.contactText} numberOfLines={1}>{partner.address}</Text>
+        </View>
         <View style={cardStyles.contactRow}>
           <Phone size={12} color={colors.textSecondary} />
           <Text style={cardStyles.contactText}>{partner.phone}</Text>
         </View>
-        <View style={cardStyles.contactRow}>
-          <Mail size={12} color={colors.textSecondary} />
-          <Text style={cardStyles.contactText} numberOfLines={1}>{partner.email}</Text>
-        </View>
-        <View style={cardStyles.contactRow}>
-          <MapPin size={12} color={colors.textSecondary} />
-          <Text style={cardStyles.contactText} numberOfLines={2}>{partner.address}</Text>
+      </View>
+
+      {/* Referral stats + rating */}
+      <View style={cardStyles.statsRow}>
+        <Text style={cardStyles.statsText}>
+          {partner.totalReferrals} referrals sent
+        </Text>
+        <View style={cardStyles.footerRight}>
+          <StarRating rating={partner.rating} />
+          {partner.isPriority && (
+            <Star size={11} color={colors.amber700} fill={colors.amber700} />
+          )}
         </View>
       </View>
 
-      {/* Footer row */}
-      <View style={cardStyles.footerRow}>
-        <StarRating rating={partner.rating} />
-        <View style={cardStyles.footerRight}>
-          <Users size={11} color={colors.textMuted} />
-          <Text style={cardStyles.referralCount}>{partner.totalReferrals} referrals</Text>
-        </View>
-        <View style={cardStyles.languagePills}>
-          {partner.languages.slice(0, 3).map((lang) => (
-            <View key={lang} style={cardStyles.langTag}>
-              <Text style={cardStyles.langText}>{lang}</Text>
-            </View>
-          ))}
-          {partner.languages.length > 3 && (
+      {/* Languages */}
+      <View style={cardStyles.languagePills}>
+        {partner.languages.slice(0, 3).map((lang) => (
+          <View key={lang} style={cardStyles.langTag}>
+            <Text style={cardStyles.langText}>{lang}</Text>
+          </View>
+        ))}
+        {partner.languages.length > 3 && (
+          <View style={cardStyles.langTag}>
             <Text style={cardStyles.langText}>+{partner.languages.length - 3}</Text>
-          )}
-        </View>
+          </View>
+        )}
+      </View>
+
+      {/* Action button row */}
+      <View style={cardStyles.buttonRow}>
+        <TouchableOpacity
+          style={cardStyles.btnPrimary}
+          accessible
+          accessibilityRole="button"
+          accessibilityLabel={`Refer a member to ${partner.name}`}
+        >
+          <Text style={cardStyles.btnPrimaryText}>Refer a member</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={cardStyles.btnSecondary}
+          accessible
+          accessibilityRole="button"
+          accessibilityLabel={`Send a message to ${partner.name}`}
+        >
+          <Text style={cardStyles.btnSecondaryText}>Send a message</Text>
+        </TouchableOpacity>
       </View>
     </Card>
   );
@@ -320,7 +354,7 @@ function PartnerCard({ partner }: PartnerCardProps): React.JSX.Element {
 
 const cardStyles = StyleSheet.create({
   card: {
-    padding: spacing.lg,
+    padding: spacing.xl,
     gap: spacing.sm,
     width: Platform.OS === 'web' ? 'calc(50% - 8px)' as unknown as number : '100%',
   } as ViewStyle,
@@ -328,31 +362,36 @@ const cardStyles = StyleSheet.create({
   headerRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: spacing.sm,
+    gap: spacing.md,
   } as ViewStyle,
+
+  logoCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: radius.lg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  } as ViewStyle,
+
+  logoText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#ffffff',
+    letterSpacing: 0.5,
+  } as TextStyle,
 
   nameBlock: {
     flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
     gap: spacing.xs,
-    flexWrap: 'wrap',
   } as ViewStyle,
 
   name: {
-    flex: 1,
     fontSize: 14,
     fontWeight: '600',
     color: colors.textPrimary,
     lineHeight: 20,
   } as unknown as TextStyle,
-
-  capacityBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  } as ViewStyle,
 
   serviceRow: {
     flexDirection: 'row',
@@ -360,17 +399,8 @@ const cardStyles = StyleSheet.create({
     gap: spacing.xs,
   } as ViewStyle,
 
-  description: {
-    fontSize: 12,
-    color: colors.textSecondary,
-    lineHeight: 18,
-  } as unknown as TextStyle,
-
   contactBlock: {
     gap: 4,
-    borderTopWidth: 1,
-    borderTopColor: colors.cardBorder,
-    paddingTop: spacing.sm,
   } as ViewStyle,
 
   contactRow: {
@@ -381,37 +411,36 @@ const cardStyles = StyleSheet.create({
 
   contactText: {
     flex: 1,
-    fontSize: 11,
+    fontSize: 12,
     color: colors.textSecondary,
-    lineHeight: 16,
+    lineHeight: 18,
   } as unknown as TextStyle,
 
-  footerRow: {
+  statsRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
     borderTopWidth: 1,
     borderTopColor: colors.cardBorder,
     paddingTop: spacing.sm,
-    flexWrap: 'wrap',
   } as ViewStyle,
+
+  statsText: {
+    flex: 1,
+    fontSize: 11,
+    color: colors.textSecondary,
+  } as unknown as TextStyle,
 
   footerRight: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 3,
-    flex: 1,
+    gap: 4,
   } as ViewStyle,
-
-  referralCount: {
-    fontSize: 11,
-    color: colors.textMuted,
-  } as unknown as TextStyle,
 
   languagePills: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 3,
+    gap: spacing.xs,
     flexWrap: 'wrap',
   } as ViewStyle,
 
@@ -419,14 +448,49 @@ const cardStyles = StyleSheet.create({
     backgroundColor: colors.gray100,
     borderRadius: radius.sm,
     paddingHorizontal: 5,
-    paddingVertical: 1,
+    paddingVertical: 2,
   } as ViewStyle,
 
   langText: {
-    fontSize: 9,
+    fontSize: 10,
     color: colors.gray700,
     fontWeight: '500',
   } as unknown as TextStyle,
+
+  buttonRow: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+    marginTop: spacing.xs,
+  } as ViewStyle,
+
+  btnPrimary: {
+    flex: 1,
+    backgroundColor: colors.primary,
+    borderRadius: radius.md,
+    paddingVertical: 7,
+    alignItems: 'center',
+  } as ViewStyle,
+
+  btnPrimaryText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#ffffff',
+  } as TextStyle,
+
+  btnSecondary: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    borderRadius: radius.md,
+    paddingVertical: 7,
+    alignItems: 'center',
+  } as ViewStyle,
+
+  btnSecondaryText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.textPrimary,
+  } as TextStyle,
 });
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
@@ -645,8 +709,8 @@ const styles = StyleSheet.create({
   } as ViewStyle,
 
   filterChipActive: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
+    backgroundColor: '#ecfdf5',
+    borderColor: '#a7f3d0',
   } as ViewStyle,
 
   filterChipText: {
@@ -656,7 +720,7 @@ const styles = StyleSheet.create({
   } as unknown as TextStyle,
 
   filterChipTextActive: {
-    color: colors.cardBg,
+    color: '#065f46',
   } as unknown as TextStyle,
 
   bodyRow: {

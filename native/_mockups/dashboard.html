@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Compass CHW — Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    body { font-family: 'Inter', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+    .sidebar-bg { background: linear-gradient(180deg, #134e36 0%, #0f3d2a 100%); }
+    .sidebar-item { display:flex; align-items:center; gap:12px; padding:10px 14px; border-radius:10px; color:#a7d4be; font-size:14px; font-weight:500; transition:all .15s; cursor:pointer; text-decoration:none; }
+    .sidebar-item:hover { background: rgba(255,255,255,0.06); color:#fff; }
+    .sidebar-item.active { background:#fff; color:#0f3d2a; font-weight:600; box-shadow:0 1px 3px rgba(0,0,0,.06); }
+    .sidebar-item.active .icon { color:#16a34a; }
+    .icon { width:18px; height:18px; flex-shrink:0; }
+    .pill { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; font-size:12px; font-weight:500; }
+    .card { background:#fff; border-radius:16px; box-shadow:0 1px 3px rgba(0,0,0,.04), 0 1px 2px rgba(0,0,0,.03); border:1px solid #f1f5f4; }
+    .stat-tile { padding:18px 20px; border-radius:14px; }
+    .row { display:flex; align-items:center; gap:12px; padding:12px 14px; border-radius:10px; transition:background .15s; cursor:pointer; }
+    .row:hover { background:#f9fafb; }
+    .row + .row { border-top:1px solid #f3f4f6; }
+  </style>
+</head>
+<body class="bg-[#f5f7f6] min-h-screen">
+  <div class="flex min-h-screen">
+    <!-- Sidebar (shared shell) -->
+    <aside class="sidebar-bg w-64 flex-shrink-0 flex flex-col py-6 px-4">
+      <div class="px-2 mb-8">
+        <div class="flex items-center gap-2.5">
+          <div class="w-9 h-9 rounded-xl bg-emerald-500 grid place-items-center"><i data-lucide="compass" class="w-5 h-5 text-white"></i></div>
+          <div>
+            <div class="text-white font-bold text-lg leading-tight">compasschw</div>
+            <div class="text-emerald-300 text-xs font-medium">Medi-Cal Member</div>
+          </div>
+        </div>
+      </div>
+      <nav class="flex-1 space-y-1">
+        <a href="member-profile.html" class="sidebar-item"><i data-lucide="user-round" class="icon"></i><span>Member Profile</span></a>
+        <a href="dashboard.html" class="sidebar-item active"><i data-lucide="layout-dashboard" class="icon"></i><span>Dashboard</span></a>
+        <a href="members.html" class="sidebar-item"><i data-lucide="users" class="icon"></i><span>Members</span></a>
+        <a href="journeys.html" class="sidebar-item"><i data-lucide="route" class="icon"></i><span>Journeys</span></a>
+        <a href="messages.html" class="sidebar-item"><i data-lucide="message-square" class="icon"></i><span class="flex-1">Messages</span><span class="bg-emerald-500 text-white text-xs font-semibold px-2 py-0.5 rounded-full">12</span></a>
+        <a href="#" class="sidebar-item"><i data-lucide="calendar" class="icon"></i><span>Appointments</span></a>
+        <a href="#" class="sidebar-item"><i data-lucide="folder-open" class="icon"></i><span>Resources</span></a>
+        <a href="#" class="sidebar-item"><i data-lucide="file-text" class="icon"></i><span>Documents</span></a>
+        <a href="#" class="sidebar-item"><i data-lucide="bar-chart-3" class="icon"></i><span>Reports</span></a>
+        <a href="#" class="sidebar-item"><i data-lucide="building-2" class="icon"></i><span>Community Partners</span></a>
+        <a href="#" class="sidebar-item"><i data-lucide="settings" class="icon"></i><span>Settings</span></a>
+      </nav>
+      <div class="mt-6 pt-4 border-t border-emerald-900/40">
+        <div class="flex items-center gap-3 px-2 py-2">
+          <div class="w-9 h-9 rounded-full bg-emerald-300 grid place-items-center text-emerald-900 font-bold text-sm">MS</div>
+          <div class="flex-1 min-w-0">
+            <div class="text-white text-sm font-semibold truncate">Maria Sanchez</div>
+            <div class="text-emerald-300 text-xs">Community Health Worker</div>
+          </div>
+          <i data-lucide="chevron-down" class="icon text-emerald-300"></i>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <main class="flex-1 p-8 overflow-y-auto">
+      <!-- Header -->
+      <div class="flex items-end justify-between mb-6">
+        <div>
+          <h1 class="text-2xl font-bold text-gray-900">Good morning, Maria 👋</h1>
+          <p class="text-sm text-gray-600 mt-1">Sunday, May 10 · 23 active members · 4 sessions today</p>
+        </div>
+        <div class="flex items-center gap-3">
+          <div class="relative">
+            <input class="pl-10 pr-4 py-2 w-72 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-200" placeholder="Search members, journeys, resources..." />
+            <i data-lucide="search" class="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2"></i>
+          </div>
+          <button class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-xl flex items-center gap-2"><i data-lucide="plus" class="w-4 h-4"></i>New Session</button>
+        </div>
+      </div>
+
+      <!-- Stat tiles -->
+      <div class="grid grid-cols-4 gap-4 mb-6">
+        <div class="card stat-tile">
+          <div class="flex items-center justify-between mb-3">
+            <div class="w-10 h-10 rounded-xl bg-emerald-100 grid place-items-center"><i data-lucide="calendar-check" class="w-5 h-5 text-emerald-600"></i></div>
+            <span class="pill bg-emerald-50 text-emerald-700">+2 today</span>
+          </div>
+          <div class="text-3xl font-extrabold text-gray-900">4</div>
+          <div class="text-sm text-gray-500 mt-1">Sessions today</div>
+        </div>
+        <div class="card stat-tile">
+          <div class="flex items-center justify-between mb-3">
+            <div class="w-10 h-10 rounded-xl bg-amber-100 grid place-items-center"><i data-lucide="alert-triangle" class="w-5 h-5 text-amber-600"></i></div>
+            <span class="pill bg-amber-50 text-amber-700">action needed</span>
+          </div>
+          <div class="text-3xl font-extrabold text-gray-900">7</div>
+          <div class="text-sm text-gray-500 mt-1">Overdue follow-ups</div>
+        </div>
+        <div class="card stat-tile">
+          <div class="flex items-center justify-between mb-3">
+            <div class="w-10 h-10 rounded-xl bg-blue-100 grid place-items-center"><i data-lucide="message-square" class="w-5 h-5 text-blue-600"></i></div>
+            <span class="pill bg-blue-50 text-blue-700">12 unread</span>
+          </div>
+          <div class="text-3xl font-extrabold text-gray-900">12</div>
+          <div class="text-sm text-gray-500 mt-1">Messages awaiting reply</div>
+        </div>
+        <div class="card stat-tile">
+          <div class="flex items-center justify-between mb-3">
+            <div class="w-10 h-10 rounded-xl bg-purple-100 grid place-items-center"><i data-lucide="dollar-sign" class="w-5 h-5 text-purple-600"></i></div>
+            <span class="pill bg-emerald-50 text-emerald-700">+18% MoM</span>
+          </div>
+          <div class="text-3xl font-extrabold text-gray-900">$2,340</div>
+          <div class="text-sm text-gray-500 mt-1">Earnings this week</div>
+        </div>
+      </div>
+
+      <!-- Two-column body -->
+      <div class="grid grid-cols-12 gap-6">
+        <!-- Today's schedule -->
+        <div class="col-span-7 card p-5">
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="font-semibold text-gray-900">Today's Schedule</h2>
+            <a class="text-emerald-600 text-sm font-medium hover:underline">View all →</a>
+          </div>
+          <div class="space-y-1">
+            <div class="row">
+              <div class="w-12 text-center">
+                <div class="text-xs text-gray-500">10:00</div>
+                <div class="text-xs text-gray-400">AM</div>
+              </div>
+              <div class="w-9 h-9 rounded-full bg-emerald-100 grid place-items-center text-emerald-700 font-bold text-sm">AG</div>
+              <div class="flex-1">
+                <div class="font-semibold text-gray-900 text-sm">Ana Garcia</div>
+                <div class="text-xs text-gray-500">CalFresh document upload · in person</div>
+              </div>
+              <span class="pill bg-emerald-100 text-emerald-700">In 1h</span>
+              <button class="px-3 py-1.5 border border-gray-200 rounded-lg text-xs font-semibold text-gray-700 hover:bg-gray-50">Start →</button>
+            </div>
+            <div class="row">
+              <div class="w-12 text-center">
+                <div class="text-xs text-gray-500">12:30</div>
+                <div class="text-xs text-gray-400">PM</div>
+              </div>
+              <div class="w-9 h-9 rounded-full bg-blue-100 grid place-items-center text-blue-700 font-bold text-sm">JR</div>
+              <div class="flex-1">
+                <div class="font-semibold text-gray-900 text-sm">Juana Ramirez</div>
+                <div class="text-xs text-gray-500">Housing waitlist check-in · phone</div>
+              </div>
+              <span class="pill bg-gray-100 text-gray-700">3h 30m</span>
+              <button class="px-3 py-1.5 border border-gray-200 rounded-lg text-xs font-semibold text-gray-700 hover:bg-gray-50">Prep →</button>
+            </div>
+            <div class="row">
+              <div class="w-12 text-center">
+                <div class="text-xs text-gray-500">2:00</div>
+                <div class="text-xs text-gray-400">PM</div>
+              </div>
+              <div class="w-9 h-9 rounded-full bg-purple-100 grid place-items-center text-purple-700 font-bold text-sm">DL</div>
+              <div class="flex-1">
+                <div class="font-semibold text-gray-900 text-sm">David Lopez</div>
+                <div class="text-xs text-gray-500">Behavioral health referral follow-up · video</div>
+              </div>
+              <span class="pill bg-gray-100 text-gray-700">5h</span>
+              <button class="px-3 py-1.5 border border-gray-200 rounded-lg text-xs font-semibold text-gray-700 hover:bg-gray-50">Prep →</button>
+            </div>
+            <div class="row">
+              <div class="w-12 text-center">
+                <div class="text-xs text-gray-500">4:30</div>
+                <div class="text-xs text-gray-400">PM</div>
+              </div>
+              <div class="w-9 h-9 rounded-full bg-amber-100 grid place-items-center text-amber-700 font-bold text-sm">SC</div>
+              <div class="flex-1">
+                <div class="font-semibold text-gray-900 text-sm">Sandra Chavez</div>
+                <div class="text-xs text-gray-500">Medi-Cal renewal questions · phone</div>
+              </div>
+              <span class="pill bg-gray-100 text-gray-700">7h 30m</span>
+              <button class="px-3 py-1.5 border border-gray-200 rounded-lg text-xs font-semibold text-gray-700 hover:bg-gray-50">Prep →</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Priority queue -->
+        <div class="col-span-5 card p-5">
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="font-semibold text-gray-900 flex items-center gap-2"><i data-lucide="alert-circle" class="w-4 h-4 text-amber-500"></i>Needs your attention</h2>
+          </div>
+          <div class="space-y-3">
+            <div class="p-3 rounded-xl border border-red-100 bg-red-50/50">
+              <div class="flex items-start gap-3">
+                <i data-lucide="alert-triangle" class="w-4 h-4 text-red-600 mt-0.5"></i>
+                <div class="flex-1">
+                  <div class="text-sm font-semibold text-gray-900">Ana Garcia · CalFresh docs due in 2 days</div>
+                  <div class="text-xs text-gray-600 mt-0.5">Member hasn't uploaded ID or proof of address.</div>
+                </div>
+                <button class="text-emerald-600 text-xs font-semibold whitespace-nowrap">Open →</button>
+              </div>
+            </div>
+            <div class="p-3 rounded-xl border border-amber-100 bg-amber-50/50">
+              <div class="flex items-start gap-3">
+                <i data-lucide="phone-missed" class="w-4 h-4 text-amber-700 mt-0.5"></i>
+                <div class="flex-1">
+                  <div class="text-sm font-semibold text-gray-900">3 follow-up calls overdue</div>
+                  <div class="text-xs text-gray-600 mt-0.5">Juana R. (5d), Sandra C. (3d), Marcus B. (2d)</div>
+                </div>
+                <button class="text-emerald-600 text-xs font-semibold whitespace-nowrap">Review →</button>
+              </div>
+            </div>
+            <div class="p-3 rounded-xl border border-blue-100 bg-blue-50/50">
+              <div class="flex items-start gap-3">
+                <i data-lucide="clipboard-check" class="w-4 h-4 text-blue-700 mt-0.5"></i>
+                <div class="flex-1">
+                  <div class="text-sm font-semibold text-gray-900">2 sessions awaiting documentation</div>
+                  <div class="text-xs text-gray-600 mt-0.5">Submit notes within 24h to bill.</div>
+                </div>
+                <button class="text-emerald-600 text-xs font-semibold whitespace-nowrap">Document →</button>
+              </div>
+            </div>
+            <div class="p-3 rounded-xl border border-emerald-100 bg-emerald-50/50">
+              <div class="flex items-start gap-3">
+                <i data-lucide="sparkles" class="w-4 h-4 text-emerald-700 mt-0.5"></i>
+                <div class="flex-1">
+                  <div class="text-sm font-semibold text-gray-900">Compass Insight</div>
+                  <div class="text-xs text-gray-600 mt-0.5">3 of your members typically respond best to evening outreach.</div>
+                </div>
+                <button class="text-emerald-600 text-xs font-semibold whitespace-nowrap">View →</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bottom row: weekly snapshot + recent activity -->
+      <div class="grid grid-cols-12 gap-6 mt-6">
+        <div class="col-span-5 card p-5">
+          <h2 class="font-semibold text-gray-900 mb-3">Weekly snapshot</h2>
+          <div class="grid grid-cols-2 gap-3">
+            <div class="p-3 rounded-xl bg-gray-50">
+              <div class="text-xs text-gray-500">Sessions completed</div>
+              <div class="text-2xl font-bold text-gray-900 mt-1">18</div>
+              <div class="text-xs text-emerald-600 mt-1">+4 vs last week</div>
+            </div>
+            <div class="p-3 rounded-xl bg-gray-50">
+              <div class="text-xs text-gray-500">Units billed</div>
+              <div class="text-2xl font-bold text-gray-900 mt-1">42</div>
+              <div class="text-xs text-emerald-600 mt-1">+9 vs last week</div>
+            </div>
+            <div class="p-3 rounded-xl bg-gray-50">
+              <div class="text-xs text-gray-500">Avg response time</div>
+              <div class="text-2xl font-bold text-gray-900 mt-1">1h 42m</div>
+              <div class="text-xs text-emerald-600 mt-1">-12m vs last week</div>
+            </div>
+            <div class="p-3 rounded-xl bg-gray-50">
+              <div class="text-xs text-gray-500">Member satisfaction</div>
+              <div class="text-2xl font-bold text-gray-900 mt-1">4.9 ★</div>
+              <div class="text-xs text-emerald-600 mt-1">stable</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="col-span-7 card p-5">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="font-semibold text-gray-900">Recent activity</h2>
+            <a class="text-emerald-600 text-sm font-medium hover:underline">Open feed →</a>
+          </div>
+          <div class="space-y-1 text-sm">
+            <div class="flex items-center gap-3 py-2 border-b border-gray-100"><i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-600"></i><span class="text-gray-700"><b class="text-gray-900">Ana Garcia</b> completed Eligibility Screening · <span class="text-gray-500">Food Assistance Journey</span></span><span class="text-xs text-gray-400 ml-auto">14m ago</span></div>
+            <div class="flex items-center gap-3 py-2 border-b border-gray-100"><i data-lucide="message-square" class="w-4 h-4 text-blue-600"></i><span class="text-gray-700"><b class="text-gray-900">Juana Ramirez</b> sent a new message</span><span class="text-xs text-gray-400 ml-auto">1h ago</span></div>
+            <div class="flex items-center gap-3 py-2 border-b border-gray-100"><i data-lucide="upload" class="w-4 h-4 text-purple-600"></i><span class="text-gray-700"><b class="text-gray-900">Marcus Brown</b> uploaded a new document · <span class="text-gray-500">CalFresh ID</span></span><span class="text-xs text-gray-400 ml-auto">3h ago</span></div>
+            <div class="flex items-center gap-3 py-2 border-b border-gray-100"><i data-lucide="dollar-sign" class="w-4 h-4 text-emerald-600"></i><span class="text-gray-700">Payout of <b class="text-gray-900">$840</b> deposited to your account</span><span class="text-xs text-gray-400 ml-auto">yesterday</span></div>
+            <div class="flex items-center gap-3 py-2"><i data-lucide="clipboard-list" class="w-4 h-4 text-amber-600"></i><span class="text-gray-700"><b class="text-gray-900">Sandra Chavez</b> completed her SDOH screening</span><span class="text-xs text-gray-400 ml-auto">yesterday</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="mt-8 text-center"><a href="index.html" class="text-emerald-600 hover:underline text-sm">← Back to mockups index</a></div>
+    </main>
+  </div>
+  <script>lucide.createIcons();</script>
+</body>
+</html>

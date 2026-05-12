@@ -573,7 +573,8 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 1100,
     alignSelf: 'center',
-    paddingBottom: 40,
+    padding: 32,
+    paddingBottom: 48,
   } as ViewStyle,
 
   // ── Intake banner
@@ -610,24 +611,23 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   } as TextStyle,
 
-  // ── KPI grid
+  // ── KPI grid — mockup: grid-cols-4 gap-4 (16px gap), stat-tile p-5 (20px)
   statGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 12,
+    gap: 16,
     marginBottom: 24,
   } as ViewStyle,
   statTile: {
-    // Each tile takes ~47% width — same as original StatCard sizing.
-    // On web AppShell provides wider canvas so 4 can fit in a row.
     minWidth: 160,
     flex: 1,
   } as ViewStyle,
 
   // ── Mid row (two-column on web, stacked on native)
+  // Mockup: grid-cols-12 gap-6 (24px), schedule col-span-7, attention col-span-5
   midRow: {
     flexDirection: Platform.OS === 'web' ? 'row' : 'column',
-    gap: 16,
+    gap: 24,
     marginBottom: 24,
   } as ViewStyle,
   midLeft: {
@@ -637,37 +637,37 @@ const styles = StyleSheet.create({
     flex: Platform.OS === 'web' ? 5 : undefined,
   } as ViewStyle,
 
-  // ── Bottom row
+  // ── Bottom row — mockup: grid-cols-12 gap-6 mt-6, snapshot col-span-5, activity col-span-7
   bottomRow: {
     flexDirection: Platform.OS === 'web' ? 'row' : 'column',
-    gap: 16,
+    gap: 24,
   } as ViewStyle,
   bottomCard: {
     flex: 1,
-    padding: 16,
+    padding: 20,
   } as ViewStyle,
 
-  // ── Section headings
+  // ── Section headings — mockup: font-semibold text-gray-900 mb-4
   sectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginBottom: 12,
+    marginBottom: 16,
   } as ViewStyle,
   sectionTitle: {
     fontFamily: 'DMSans_700Bold',
-    fontSize: 16,
-    lineHeight: 22,
-    color: '#1E3320',
-    marginBottom: 12,
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#111827',
+    marginBottom: 16,
   } as TextStyle,
 
-  // ── Card surface
+  // ── Card surface — mockup: p-5 (20px) for schedule/attention cards
   card: {
-    padding: 16,
+    padding: 20,
   } as ViewStyle,
 
-  // ── Card inner header row
+  // ── Card inner header row — mockup: flex items-center justify-between mb-4
   cardHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -677,7 +677,7 @@ const styles = StyleSheet.create({
   cardTitle: {
     fontFamily: 'DMSans_700Bold',
     fontSize: 14,
-    color: '#1E3320',
+    color: '#111827',
   } as TextStyle,
 
   // ── Session row
@@ -708,15 +708,14 @@ const styles = StyleSheet.create({
   } as ViewStyle,
   memberName: {
     fontFamily: 'DMSans_700Bold',
-    fontSize: 16,
-    lineHeight: 22,
-    color: '#1E3320',
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#111827',
   } as TextStyle,
   sessionMeta: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 12,
-    letterSpacing: 1,
-    color: '#6B7A6B',
+    color: '#6B7280',
     marginTop: 2,
   } as TextStyle,
   metaIconRow: {
@@ -763,50 +762,58 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   } as TextStyle,
 
-  // ── Snapshot grid
+  // ── Snapshot grid — mockup: grid-cols-2 gap-3, each cell p-3 rounded-xl bg-gray-50
   snapshotGrid: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 12,
   } as ViewStyle,
   snapshotItem: {
-    flex: 1,
-    alignItems: 'center',
+    width: '48%',
+    backgroundColor: '#F9FAFB',
+    borderRadius: 12,
+    padding: 12,
     gap: 4,
   } as ViewStyle,
   snapshotValue: {
     fontFamily: 'DMSans_700Bold',
     fontSize: 22,
-    color: '#1E3320',
+    color: '#111827',
+    marginTop: 4,
   } as TextStyle,
   snapshotLabel: {
     fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 11,
-    color: '#6B7A6B',
+    fontSize: 12,
+    color: '#6B7280',
   } as TextStyle,
 
-  // ── Activity feed
+  // ── Activity feed — mockup: py-2 border-b, 14px text, 12px meta muted
   activityRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 12,
     paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
   } as ViewStyle,
   activityDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: themeColors.primary,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: themeColors.primary + '18',
+    alignItems: 'center',
+    justifyContent: 'center',
     flexShrink: 0,
   } as ViewStyle,
   activityText: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 13,
-    color: '#1E3320',
+    fontSize: 14,
+    color: '#111827',
   } as TextStyle,
   activityMeta: {
     fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 11,
-    color: '#6B7A6B',
+    fontSize: 12,
+    color: '#6B7280',
   } as TextStyle,
 
   // ── Shared

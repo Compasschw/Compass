@@ -375,7 +375,7 @@ const s = StyleSheet.create({
     alignSelf: 'center',
     paddingHorizontal: spacing.lg,
     paddingBottom: spacing.xxl,
-    gap: spacing.md,
+    gap: spacing.lg,
   },
 
   // Header

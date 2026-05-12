@@ -1189,15 +1189,15 @@ const threadStyles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 14,
     borderBottomWidth: 1,
     borderBottomColor: '#F0EDE9',
     cursor: 'pointer' as unknown as undefined,
   },
   rowSelected: {
-    backgroundColor: '#3D5A3E12',
+    backgroundColor: '#ecfdf5',
     borderLeftWidth: 3,
-    borderLeftColor: '#3D5A3E',
+    borderLeftColor: '#10b981',
   },
   avatar: {
     width: 40,
@@ -1243,7 +1243,7 @@ const threadStyles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: colors.compassGold,
+    backgroundColor: '#10b981',
     flexShrink: 0,
   },
 });
@@ -1343,8 +1343,8 @@ const railStyles = StyleSheet.create({
     textAlign: 'center',
   },
   card: {
-    padding: 14,
-    marginBottom: 12,
+    padding: 16,
+    marginBottom: 16,
     gap: 8,
   },
   cardHeader: {
@@ -2094,7 +2094,7 @@ const webStyles = StyleSheet.create({
   // Middle active-session pane (flex)
   middlePane: {
     flex: 1,
-    backgroundColor: '#F7F5F2',
+    backgroundColor: '#f9fafb',
     borderRightWidth: 1,
     borderRightColor: '#DDD6CC',
     flexDirection: 'column',

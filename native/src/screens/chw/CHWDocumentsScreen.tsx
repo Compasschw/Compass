@@ -26,12 +26,13 @@ import {
   FileText,
   Download,
   Search,
-  ChevronDown,
   ClipboardList,
   FileBadge,
   FileSignature,
   FileScan,
   Filter,
+  Eye,
+  Trash2,
 } from 'lucide-react-native';
 
 import { AppShell, PageHeader, Card, Pill, RightRail, StatTile } from '../../components/ui';
@@ -275,17 +276,15 @@ export function CHWDocumentsScreen(): React.JSX.Element {
       <View style={styles.bodyRow}>
         <View style={styles.tableWrap}>
           {/* Table header */}
-          <Card style={styles.tableHeaderCard}>
-            <View style={styles.tableRow}>
-              <Text style={[styles.colHeader, styles.colFile]}>File</Text>
-              <Text style={[styles.colHeader, styles.colMember]}>Member</Text>
-              <Text style={[styles.colHeader, styles.colType]}>Type</Text>
-              <Text style={[styles.colHeader, styles.colDate]}>Uploaded</Text>
-              <Text style={[styles.colHeader, styles.colSize]}>Size</Text>
-              <Text style={[styles.colHeader, styles.colStatus]}>Status</Text>
-              <Text style={[styles.colHeader, styles.colAction]}>{' '}</Text>
-            </View>
-          </Card>
+          <View style={styles.tableHeaderRow}>
+            <Text style={[styles.colHeader, styles.colFile]}>File</Text>
+            <Text style={[styles.colHeader, styles.colMember]}>Member</Text>
+            <Text style={[styles.colHeader, styles.colType]}>Type</Text>
+            <Text style={[styles.colHeader, styles.colDate]}>Uploaded</Text>
+            <Text style={[styles.colHeader, styles.colSize]}>Size</Text>
+            <Text style={[styles.colHeader, styles.colStatus]}>Status</Text>
+            <Text style={[styles.colHeader, styles.colAction]}>{' '}</Text>
+          </View>
 
           {/* Table body */}
           {filtered.length === 0 ? (
@@ -301,10 +300,17 @@ export function CHWDocumentsScreen(): React.JSX.Element {
                 <View style={styles.tableRow}>
                   {/* File */}
                   <View style={[styles.colFile, styles.fileCell]}>
-                    <DocTypeIcon docType={doc.docType} size={14} />
-                    <Text style={styles.filename} numberOfLines={2}>
-                      {doc.filename}
-                    </Text>
+                    <View style={[styles.fileTypeBadge, { backgroundColor: doc.filename.endsWith('.pdf') ? '#7c3aed' : '#dc2626' }]}>
+                      <Text style={styles.fileTypeBadgeText}>{doc.filename.endsWith('.pdf') ? 'PDF' : 'IMG'}</Text>
+                    </View>
+                    <View style={styles.fileCellText}>
+                      <Text style={styles.filename} numberOfLines={1}>
+                        {doc.filename}
+                      </Text>
+                      <Text style={styles.fileSubtitle} numberOfLines={1}>
+                        {doc.docType.replace('_', ' ')} · {doc.memberId}
+                      </Text>
+                    </View>
                   </View>
 
                   {/* Member */}
@@ -336,15 +342,30 @@ export function CHWDocumentsScreen(): React.JSX.Element {
                     </Pill>
                   </View>
 
-                  {/* Action */}
-                  <TouchableOpacity
-                    style={styles.colAction}
-                    accessible
-                    accessibilityLabel={`Download ${doc.filename}`}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <Download size={14} color={colors.primary} />
-                  </TouchableOpacity>
+                  {/* Actions */}
+                  <View style={styles.colAction}>
+                    <TouchableOpacity
+                      accessible
+                      accessibilityLabel={`Preview ${doc.filename}`}
+                      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                    >
+                      <Eye size={14} color={colors.textSecondary} />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      accessible
+                      accessibilityLabel={`Download ${doc.filename}`}
+                      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                    >
+                      <Download size={14} color={colors.textSecondary} />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      accessible
+                      accessibilityLabel={`Delete ${doc.filename}`}
+                      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                    >
+                      <Trash2 size={14} color={colors.textSecondary} />
+                    </TouchableOpacity>
+                  </View>
                 </View>
               </Card>
             ))
@@ -478,8 +499,8 @@ const styles = StyleSheet.create({
   } as ViewStyle,
 
   filterChipActive: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
+    backgroundColor: '#ecfdf5',
+    borderColor: '#a7f3d0',
   } as ViewStyle,
 
   filterChipText: {
@@ -489,7 +510,7 @@ const styles = StyleSheet.create({
   } as unknown as TextStyle,
 
   filterChipTextActive: {
-    color: colors.cardBg,
+    color: '#065f46',
   } as unknown as TextStyle,
 
   bodyRow: {
@@ -503,10 +524,15 @@ const styles = StyleSheet.create({
     gap: 2,
   } as ViewStyle,
 
-  tableHeaderCard: {
+  tableHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
     backgroundColor: colors.gray100,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
   } as ViewStyle,
 
   tableRowCard: {
@@ -529,6 +555,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: colors.textSecondary,
     textTransform: 'uppercase',
+    letterSpacing: 0.4,
   } as unknown as TextStyle,
 
   colFile:   { flex: 2.5 } as ViewStyle,
@@ -537,20 +564,44 @@ const styles = StyleSheet.create({
   colDate:   { flex: 1   } as ViewStyle,
   colSize:   { width: 60 } as ViewStyle,
   colStatus: { flex: 1.2 } as ViewStyle,
-  colAction: { width: 32, alignItems: 'center' as const } as ViewStyle,
+  colAction: { width: 72, flexDirection: 'row' as const, alignItems: 'center' as const, gap: 10 } as ViewStyle,
 
   fileCell: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.xs,
+    gap: spacing.sm,
+  } as ViewStyle,
+
+  fileTypeBadge: {
+    width: 34,
+    height: 42,
+    borderRadius: radius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  } as ViewStyle,
+
+  fileTypeBadgeText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#ffffff',
+  } as TextStyle,
+
+  fileCellText: {
+    flex: 1,
+    gap: 2,
   } as ViewStyle,
 
   filename: {
-    flex: 1,
-    fontSize: 12,
+    fontSize: 13,
     color: colors.textPrimary,
-    fontWeight: '500',
-    lineHeight: 16,
+    fontWeight: '600',
+    lineHeight: 18,
+  } as unknown as TextStyle,
+
+  fileSubtitle: {
+    fontSize: 11,
+    color: colors.textSecondary,
   } as unknown as TextStyle,
 
   cellText: {

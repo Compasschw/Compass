@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Compass CHW — Appointments</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    body { font-family: 'Inter', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+    .sidebar-bg { background: linear-gradient(180deg, #134e36 0%, #0f3d2a 100%); }
+    .sidebar-item { display:flex; align-items:center; gap:12px; padding:10px 14px; border-radius:10px; color:#a7d4be; font-size:14px; font-weight:500; transition:all .15s; cursor:pointer; text-decoration:none; }
+    .sidebar-item:hover { background: rgba(255,255,255,0.06); color:#fff; }
+    .sidebar-item.active { background:#fff; color:#0f3d2a; font-weight:600; box-shadow:0 1px 3px rgba(0,0,0,.06); }
+    .sidebar-item.active .icon { color:#16a34a; }
+    .icon { width:18px; height:18px; flex-shrink:0; }
+    .pill { display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:999px; font-size:11px; font-weight:600; }
+    .card { background:#fff; border-radius:16px; box-shadow:0 1px 3px rgba(0,0,0,.04), 0 1px 2px rgba(0,0,0,.03); border:1px solid #f1f5f4; }
+    .cal-cell { border-right:1px solid #f3f4f6; border-bottom:1px solid #f3f4f6; min-height:54px; padding:4px; position:relative; }
+    .cal-today { background:#ecfdf5; }
+    .appt { padding:6px 8px; border-radius:6px; font-size:11px; font-weight:600; line-height:1.25; cursor:pointer; }
+    .appt-em { background:#d1fae5; color:#065f46; border-left:3px solid #10b981; }
+    .appt-bl { background:#dbeafe; color:#1e40af; border-left:3px solid #3b82f6; }
+    .appt-pu { background:#ede9fe; color:#5b21b6; border-left:3px solid #8b5cf6; }
+    .appt-am { background:#fef3c7; color:#92400e; border-left:3px solid #f59e0b; }
+    .appt-rs { background:#ffe4e6; color:#9f1239; border-left:3px solid #f43f5e; }
+    .appt-pi { background:#fce7f3; color:#9d174d; border-left:3px solid #ec4899; }
+    .appt-gy { background:#f3f4f6; color:#374151; border-left:3px dashed #9ca3af; }
+    .toggle-btn { padding:6px 14px; border-radius:8px; font-size:13px; font-weight:600; color:#6b7280; cursor:pointer; }
+    .toggle-btn.active { background:#fff; color:#16a34a; box-shadow:0 1px 3px rgba(0,0,0,.06); }
+  </style>
+</head>
+<body class="bg-[#f5f7f6] min-h-screen">
+  <div class="flex min-h-screen">
+    <aside class="sidebar-bg w-64 flex-shrink-0 flex flex-col py-6 px-4">
+      <div class="px-2 mb-8"><div class="flex items-center gap-2.5"><div class="w-9 h-9 rounded-xl bg-emerald-500 grid place-items-center"><i data-lucide="compass" class="w-5 h-5 text-white"></i></div><div><div class="text-white font-bold text-lg leading-tight">compasschw</div><div class="text-emerald-300 text-xs font-medium">Medi-Cal Member</div></div></div></div>
+      <nav class="flex-1 space-y-1">
+        <a href="member-profile.html" class="sidebar-item"><i data-lucide="user-round" class="icon"></i><span>Member Profile</span></a>
+        <a href="dashboard.html" class="sidebar-item"><i data-lucide="layout-dashboard" class="icon"></i><span>Dashboard</span></a>
+        <a href="members.html" class="sidebar-item"><i data-lucide="users" class="icon"></i><span>Members</span></a>
+        <a href="journeys.html" class="sidebar-item"><i data-lucide="route" class="icon"></i><span>Journeys</span></a>
+        <a href="messages.html" class="sidebar-item"><i data-lucide="message-square" class="icon"></i><span class="flex-1">Messages</span><span class="bg-emerald-500 text-white text-xs font-semibold px-2 py-0.5 rounded-full">12</span></a>
+        <a href="appointments.html" class="sidebar-item active"><i data-lucide="calendar" class="icon"></i><span>Appointments</span></a>
+        <a href="resources.html" class="sidebar-item"><i data-lucide="folder-open" class="icon"></i><span>Resources</span></a>
+        <a href="documents.html" class="sidebar-item"><i data-lucide="file-text" class="icon"></i><span>Documents</span></a>
+        <a href="reports.html" class="sidebar-item"><i data-lucide="bar-chart-3" class="icon"></i><span>Reports</span></a>
+        <a href="community-partners.html" class="sidebar-item"><i data-lucide="building-2" class="icon"></i><span>Community Partners</span></a>
+        <a href="#" class="sidebar-item"><i data-lucide="settings" class="icon"></i><span>Settings</span></a>
+      </nav>
+      <div class="mt-6 pt-4 border-t border-emerald-900/40">
+        <a href="member-home.html" class="text-emerald-300 text-xs hover:text-white px-2 py-1 block">Switch to Member view →</a>
+        <div class="flex items-center gap-3 px-2 py-2 mt-1"><div class="w-9 h-9 rounded-full bg-emerald-300 grid place-items-center text-emerald-900 font-bold text-sm">MS</div><div class="flex-1 min-w-0"><div class="text-white text-sm font-semibold truncate">Maria Sanchez</div><div class="text-emerald-300 text-xs">Community Health Worker</div></div></div>
+      </div>
+    </aside>
+
+    <main class="flex-1 p-8 overflow-y-auto">
+      <div class="flex items-end justify-between mb-6">
+        <div>
+          <h1 class="text-2xl font-bold text-gray-900">Appointments</h1>
+          <p class="text-sm text-gray-600 mt-1">4 today · 12 this week · 2 unconfirmed</p>
+        </div>
+        <div class="flex items-center gap-3">
+          <div class="bg-gray-100 rounded-lg p-1 flex"><button class="toggle-btn">Day</button><button class="toggle-btn active">Week</button><button class="toggle-btn">Month</button></div>
+          <button class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-xl flex items-center gap-2"><i data-lucide="calendar-plus" class="w-4 h-4"></i>Schedule Session</button>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-12 gap-6">
+        <!-- Calendar week view -->
+        <div class="col-span-9 card overflow-hidden">
+          <div class="px-5 py-3 flex items-center justify-between border-b border-gray-100">
+            <div class="flex items-center gap-3">
+              <button class="w-8 h-8 grid place-items-center rounded-lg hover:bg-gray-100 text-gray-500"><i data-lucide="chevron-left" class="w-4 h-4"></i></button>
+              <h2 class="font-semibold text-gray-900">May 11–17, 2026</h2>
+              <button class="w-8 h-8 grid place-items-center rounded-lg hover:bg-gray-100 text-gray-500"><i data-lucide="chevron-right" class="w-4 h-4"></i></button>
+            </div>
+            <button class="text-emerald-600 text-sm font-medium">Today</button>
+          </div>
+          <div class="grid grid-cols-8 text-xs text-gray-500 font-semibold border-b border-gray-100">
+            <div class="p-2 border-r border-gray-100"></div>
+            <div class="p-2 border-r border-gray-100 cal-today text-emerald-700">MON 11<div class="text-[10px] font-normal">today</div></div>
+            <div class="p-2 border-r border-gray-100">TUE 12</div>
+            <div class="p-2 border-r border-gray-100">WED 13</div>
+            <div class="p-2 border-r border-gray-100">THU 14</div>
+            <div class="p-2 border-r border-gray-100">FRI 15</div>
+            <div class="p-2 border-r border-gray-100">SAT 16</div>
+            <div class="p-2">SUN 17</div>
+          </div>
+
+          <!-- Time rows -->
+          <div class="grid grid-cols-8 text-xs">
+            <!-- 8 AM -->
+            <div class="p-2 text-right text-gray-400 border-r border-b border-gray-100">8 AM</div>
+            <div class="cal-cell cal-today"></div><div class="cal-cell"></div><div class="cal-cell"></div><div class="cal-cell"><div class="appt appt-rs"><div>9:30 — Marcus B.</div><div class="font-normal opacity-80">In-person</div></div></div><div class="cal-cell"></div><div class="cal-cell"></div><div class="cal-cell"></div>
+            <!-- 9 AM -->
+            <div class="p-2 text-right text-gray-400 border-r border-b border-gray-100">9 AM</div>
+            <div class="cal-cell cal-today"></div><div class="cal-cell"></div><div class="cal-cell"></div><div class="cal-cell"></div><div class="cal-cell"></div><div class="cal-cell"></div><div class="cal-cell"></div>
+            <!-- 10 AM -->
+            <div class="p-2 text-right text-gray-400 border-r border-b border-gray-100">10 AM</div>
+            <div class="cal-cell cal-today"><div class="appt appt-em"><div>10:00 — Ana Garcia</div><div class="font-normal opacity-80">CalFresh · in-person</div></div></div>
+            <div class="cal-cell"></div><div class="cal-cell"><div class="appt appt-am"><div>11:00 — Sandra C.</div><div class="font-normal opacity-80">Renewal · phone</div></div></div><div class="cal-cell"></div><div class="cal-cell"></div><div class="cal-cell"><div class="appt appt-gy"><div>10:00 — Outreach</div><div class="font-normal opacity-80">Open hours</div></div></div><div class="cal-cell"></div>
+            <!-- 11 AM -->
+            <div class="p-2 text-right text-gray-400 border-r border-b border-gray-100">11 AM</div>
+            <div class="cal-cell cal-today"></div><div class="cal-cell"></div><div class="cal-cell"></div><div class="cal-cell"></div><div class="cal-cell"></div><div class="cal-cell"></div><div class="cal-cell"></div>
+            <!-- 12 PM -->
+            <div class="p-2 text-right text-gray-400 border-r border-b border-gray-100">12 PM</div>
+            <div class="cal-cell cal-today"><div class="appt appt-bl"><div>12:30 — Juana R.</div><div class="font-normal opacity-80">Housing · phone</div></div></div>
+            <div class="cal-cell"></div><div class="cal-cell"></div><div class="cal-cell"></div><div class="cal-cell"></div><div class="cal-cell"></div><div class="cal-cell"></div>
+            <!-- 1 PM -->
+            <div class="p-2 text-right text-gray-400 border-r border-b border-gray-100">1 PM</div>
+            <div class="cal-cell cal-today"></div><div class="cal-cell"></div><div class="cal-cell"></div><div class="cal-cell"></div><div class="cal-cell"></div><div class="cal-cell"></div><div class="cal-cell"></div>
+            <!-- 2 PM -->
+            <div class="p-2 text-right text-gray-400 border-r border-b border-gray-100">2 PM</div>
+            <div class="cal-cell cal-today"></div>
+            <div class="cal-cell"><div class="appt appt-pu"><div>2:00 — David L.</div><div class="font-normal opacity-80">BH · video</div></div></div>
+            <div class="cal-cell"></div><div class="cal-cell"></div><div class="cal-cell"></div><div class="cal-cell"></div><div class="cal-cell"></div>
+            <!-- 3 PM -->
+            <div class="p-2 text-right text-gray-400 border-r border-b border-gray-100">3 PM</div>
+            <div class="cal-cell cal-today"></div><div class="cal-cell"></div><div class="cal-cell"></div><div class="cal-cell"></div><div class="cal-cell"><div class="appt appt-pi"><div>3:00 — Elena C.</div><div class="font-normal opacity-80">Maternal · home</div></div></div><div class="cal-cell"></div><div class="cal-cell"></div>
+            <!-- 4 PM -->
+            <div class="p-2 text-right text-gray-400 border-r border-b border-gray-100">4 PM</div>
+            <div class="cal-cell cal-today"><div class="appt appt-am"><div>4:30 — Sandra C.</div><div class="font-normal opacity-80">Phone</div></div></div>
+            <div class="cal-cell"></div><div class="cal-cell"></div><div class="cal-cell"></div><div class="cal-cell"></div><div class="cal-cell"></div><div class="cal-cell"></div>
+            <!-- 5 PM -->
+            <div class="p-2 text-right text-gray-400 border-r border-b border-gray-100">5 PM</div>
+            <div class="cal-cell cal-today"></div><div class="cal-cell"></div><div class="cal-cell"></div><div class="cal-cell"></div><div class="cal-cell"></div><div class="cal-cell"></div><div class="cal-cell"></div>
+          </div>
+        </div>
+
+        <!-- Right rail -->
+        <div class="col-span-3 space-y-4">
+          <div class="card p-5">
+            <h3 class="font-semibold text-gray-900 text-sm mb-3">Today's schedule</h3>
+            <div class="space-y-2 text-sm">
+              <div class="flex items-center gap-2 p-2 rounded-lg hover:bg-gray-50"><div class="text-xs text-gray-500 w-12">10:00</div><div class="flex-1"><div class="font-semibold text-gray-900">Ana Garcia</div><div class="text-xs text-gray-500">In-person</div></div><button class="text-emerald-600 text-xs font-semibold">Start →</button></div>
+              <div class="flex items-center gap-2 p-2 rounded-lg hover:bg-gray-50"><div class="text-xs text-gray-500 w-12">12:30</div><div class="flex-1"><div class="font-semibold text-gray-900">Juana Ramirez</div><div class="text-xs text-gray-500">Phone</div></div><button class="text-gray-400 text-xs">Prep →</button></div>
+              <div class="flex items-center gap-2 p-2 rounded-lg hover:bg-gray-50"><div class="text-xs text-gray-500 w-12">2:00</div><div class="flex-1"><div class="font-semibold text-gray-900">David Lopez</div><div class="text-xs text-gray-500">Video</div></div><button class="text-gray-400 text-xs">Prep →</button></div>
+              <div class="flex items-center gap-2 p-2 rounded-lg hover:bg-gray-50"><div class="text-xs text-gray-500 w-12">4:30</div><div class="flex-1"><div class="font-semibold text-gray-900">Sandra Chavez</div><div class="text-xs text-gray-500">Phone</div></div><button class="text-gray-400 text-xs">Prep →</button></div>
+            </div>
+          </div>
+
+          <div class="card p-5 border border-amber-200 bg-amber-50/30">
+            <h3 class="font-semibold text-gray-900 text-sm mb-3 flex items-center gap-2"><i data-lucide="alert-triangle" class="w-4 h-4 text-amber-600"></i>Unconfirmed (2)</h3>
+            <div class="space-y-3 text-sm">
+              <div class="bg-white rounded-lg p-3">
+                <div class="font-semibold text-gray-900 text-xs">Marcus Brown · Thu 9:30 AM</div>
+                <div class="text-xs text-gray-500 mt-0.5">Hasn't replied to confirmation request (sent 2d ago)</div>
+                <div class="flex gap-1.5 mt-2"><button class="flex-1 px-2 py-1 bg-emerald-600 text-white text-[11px] font-semibold rounded">Confirm</button><button class="flex-1 px-2 py-1 border border-gray-200 text-[11px] font-semibold rounded">Reschedule</button></div>
+              </div>
+              <div class="bg-white rounded-lg p-3">
+                <div class="font-semibold text-gray-900 text-xs">Roberto Perez · Fri 11:00 AM</div>
+                <div class="text-xs text-gray-500 mt-0.5">Phone number on file may be outdated</div>
+                <div class="flex gap-1.5 mt-2"><button class="flex-1 px-2 py-1 bg-emerald-600 text-white text-[11px] font-semibold rounded">Confirm</button><button class="flex-1 px-2 py-1 border border-gray-200 text-[11px] font-semibold rounded">Reschedule</button></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card p-5">
+            <h3 class="font-semibold text-gray-900 text-sm mb-3">This week summary</h3>
+            <div class="space-y-2 text-sm">
+              <div class="flex justify-between"><span class="text-gray-600">In-person</span><span class="font-semibold text-gray-900">5</span></div>
+              <div class="flex justify-between"><span class="text-gray-600">Phone</span><span class="font-semibold text-gray-900">4</span></div>
+              <div class="flex justify-between"><span class="text-gray-600">Video</span><span class="font-semibold text-gray-900">2</span></div>
+              <div class="flex justify-between"><span class="text-gray-600">Outreach hours</span><span class="font-semibold text-gray-900">1</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="mt-8 text-center"><a href="index.html" class="text-emerald-600 hover:underline text-sm">← Back to mockups index</a></div>
+    </main>
+  </div>
+  <script>lucide.createIcons();</script>
+</body>
+</html>

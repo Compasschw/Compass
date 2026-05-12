@@ -36,11 +36,31 @@ import {
   HeartHandshake,
   FileText,
   TrendingUp,
+  MapPin,
+  Phone,
 } from 'lucide-react-native';
 
 import { AppShell, PageHeader, Card, Pill, RightRail, StatTile } from '../../components/ui';
 import { colors, spacing, radius } from '../../theme/tokens';
 import { useAuth } from '../../context/AuthContext';
+
+// ─── Icon-circle bg colours per category (matches mockup) ────────────────────
+
+const CATEGORY_ICON_BG: Record<Exclude<ResourceCategory, 'all'>, string> = {
+  housing:       colors.red100,
+  food:          colors.orange100,
+  mental_health: colors.purple100,
+  healthcare:    colors.emerald100,
+  benefits:      colors.emerald100,
+};
+
+const CATEGORY_ICON_COLOR: Record<Exclude<ResourceCategory, 'all'>, string> = {
+  housing:       colors.red700,
+  food:          colors.orange700,
+  mental_health: colors.purple700,
+  healthcare:    colors.emerald700,
+  benefits:      colors.emerald700,
+};
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -194,18 +214,19 @@ const CATEGORY_PILL: Record<Exclude<ResourceCategory, 'all'>, 'blue' | 'amber' |
   benefits:      'orange',
 };
 
-const CategoryIcon: React.FC<{ category: Exclude<ResourceCategory, 'all'>; size?: number }> = ({
+const CategoryIcon: React.FC<{ category: Exclude<ResourceCategory, 'all'>; size?: number; iconColor?: string }> = ({
   category,
   size = 16,
+  iconColor,
 }) => {
-  const iconColor = colors.textSecondary;
+  const color = iconColor ?? colors.textSecondary;
   switch (category) {
-    case 'housing':       return <Home size={size} color={iconColor} />;
-    case 'food':          return <Utensils size={size} color={iconColor} />;
-    case 'mental_health': return <Brain size={size} color={iconColor} />;
-    case 'healthcare':    return <Stethoscope size={size} color={iconColor} />;
-    case 'benefits':      return <HeartHandshake size={size} color={iconColor} />;
-    default:              return <FileText size={size} color={iconColor} />;
+    case 'housing':       return <Home size={size} color={color} />;
+    case 'food':          return <Utensils size={size} color={color} />;
+    case 'mental_health': return <Brain size={size} color={color} />;
+    case 'healthcare':    return <Stethoscope size={size} color={color} />;
+    case 'benefits':      return <HeartHandshake size={size} color={color} />;
+    default:              return <FileText size={size} color={color} />;
   }
 };
 
@@ -217,55 +238,73 @@ interface ResourceCardProps {
 
 function ResourceCard({ resource }: ResourceCardProps): React.JSX.Element {
   const pillVariant = CATEGORY_PILL[resource.category];
+  const iconBg = CATEGORY_ICON_BG[resource.category];
+  const iconColor = CATEGORY_ICON_COLOR[resource.category];
 
   return (
     <Card style={styles.resourceCard}>
+      {/* Icon-circle + title + category pill */}
       <View style={styles.resourceCardHeader}>
+        <View style={[styles.iconCircle, { backgroundColor: iconBg }]}>
+          <CategoryIcon category={resource.category} size={22} iconColor={iconColor} />
+        </View>
         <View style={styles.resourceMeta}>
-          <CategoryIcon category={resource.category} size={14} />
+          <Text style={styles.resourceTitle} numberOfLines={2}>
+            {resource.title}
+          </Text>
           <Pill variant={pillVariant} size="sm">
             {CATEGORY_LABELS[resource.category]}
           </Pill>
         </View>
-        <View style={styles.resourceActions}>
-          {resource.isPinned && (
-            <Bookmark size={14} color={colors.primary} fill={colors.primary} />
-          )}
-          <TouchableOpacity
-            accessible
-            accessibilityLabel={`Share ${resource.title}`}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <Share2 size={14} color={colors.textSecondary} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            accessible
-            accessibilityLabel={`Open ${resource.title}`}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <ExternalLink size={14} color={colors.textSecondary} />
-          </TouchableOpacity>
+        {resource.isPinned && (
+          <Bookmark size={14} color={colors.primary} fill={colors.primary} />
+        )}
+      </View>
+
+      {/* Meta rows: address, phone, org */}
+      <View style={styles.metaBlock}>
+        {resource.address !== undefined && (
+          <View style={styles.metaRow}>
+            <MapPin size={13} color={colors.textMuted} />
+            <Text style={styles.metaText} numberOfLines={1}>{resource.address}</Text>
+          </View>
+        )}
+        {resource.phone !== undefined && (
+          <View style={styles.metaRow}>
+            <Phone size={13} color={colors.textMuted} />
+            <Text style={styles.metaText}>{resource.phone}</Text>
+          </View>
+        )}
+        <View style={styles.metaRow}>
+          <ExternalLink size={13} color={colors.textMuted} />
+          <Text style={styles.metaText}>{resource.organization}</Text>
         </View>
       </View>
 
-      <Text style={styles.resourceTitle} numberOfLines={2}>
-        {resource.title}
-      </Text>
-      <Text style={styles.resourceOrg}>{resource.organization}</Text>
-      <Text style={styles.resourceDescription} numberOfLines={3}>
-        {resource.description}
-      </Text>
+      {/* Verified badge */}
+      <View style={styles.verifiedRow}>
+        <Share2 size={11} color={colors.emerald700} />
+        <Text style={styles.verifiedText}>Verified · updated {resource.updatedAt}</Text>
+      </View>
 
-      {resource.phone !== undefined && (
-        <Text style={styles.resourcePhone}>{resource.phone}</Text>
-      )}
-
-      <View style={styles.resourceTags}>
-        {resource.tags.map((tag) => (
-          <View key={tag} style={styles.tag}>
-            <Text style={styles.tagText}>{tag}</Text>
-          </View>
-        ))}
+      {/* Action button row */}
+      <View style={styles.buttonRow}>
+        <TouchableOpacity
+          style={styles.btnPrimary}
+          accessible
+          accessibilityRole="button"
+          accessibilityLabel={`Refer a member to ${resource.title}`}
+        >
+          <Text style={styles.btnPrimaryText}>Refer a member</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.btnSecondary}
+          accessible
+          accessibilityRole="button"
+          accessibilityLabel={`Copy SMS link for ${resource.title}`}
+        >
+          <Text style={styles.btnSecondaryText}>Copy SMS link</Text>
+        </TouchableOpacity>
       </View>
     </Card>
   );
@@ -505,8 +544,8 @@ const styles = StyleSheet.create({
   } as ViewStyle,
 
   filterChipActive: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
+    backgroundColor: '#ecfdf5',
+    borderColor: '#a7f3d0',
   } as ViewStyle,
 
   filterChipText: {
@@ -516,7 +555,7 @@ const styles = StyleSheet.create({
   } as TextStyle,
 
   filterChipTextActive: {
-    color: colors.cardBg,
+    color: '#065f46',
   } as TextStyle,
 
   bodyRow: {
@@ -536,27 +575,30 @@ const styles = StyleSheet.create({
   } as ViewStyle,
 
   resourceCard: {
-    padding: spacing.lg,
-    width: Platform.OS === 'web' ? 'calc(50% - 8px)' as unknown as number : '100%',
+    padding: spacing.xl,
+    // 3-col grid on web (matches mockup's grid-cols-3)
+    width: Platform.OS === 'web' ? 'calc(33.333% - 11px)' as unknown as number : '100%',
     gap: spacing.sm,
   } as ViewStyle,
 
   resourceCardHeader: {
     flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.md,
+  } as ViewStyle,
+
+  iconCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: radius.lg,
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
+    flexShrink: 0,
   } as ViewStyle,
 
   resourceMeta: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-  } as ViewStyle,
-
-  resourceActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
+    flex: 1,
+    gap: 4,
   } as ViewStyle,
 
   resourceTitle: {
@@ -566,43 +608,74 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   } as TextStyle,
 
-  resourceOrg: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: colors.primary,
-    lineHeight: 16,
-  } as TextStyle,
+  metaBlock: {
+    gap: 4,
+  } as ViewStyle,
 
-  resourceDescription: {
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.xs,
+  } as ViewStyle,
+
+  metaText: {
+    flex: 1,
     fontSize: 12,
     color: colors.textSecondary,
     lineHeight: 18,
   } as TextStyle,
 
-  resourcePhone: {
-    fontSize: 12,
+  verifiedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  } as ViewStyle,
+
+  verifiedText: {
+    fontSize: 11,
     color: colors.textSecondary,
-    fontWeight: '500',
   } as TextStyle,
 
-  resourceTags: {
+  buttonRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
     gap: spacing.xs,
     marginTop: spacing.xs,
   } as ViewStyle,
 
-  tag: {
-    backgroundColor: colors.gray100,
-    borderRadius: radius.sm,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
+  btnPrimary: {
+    flex: 1,
+    backgroundColor: colors.primary,
+    borderRadius: radius.md,
+    paddingVertical: 7,
+    alignItems: 'center',
   } as ViewStyle,
 
-  tagText: {
-    fontSize: 10,
-    color: colors.gray700,
+  btnPrimaryText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#ffffff',
+  } as TextStyle,
+
+  btnSecondary: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    borderRadius: radius.md,
+    paddingVertical: 7,
+    alignItems: 'center',
+  } as ViewStyle,
+
+  btnSecondaryText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.textPrimary,
+  } as TextStyle,
+
+  resourceOrg: {
+    fontSize: 12,
     fontWeight: '500',
+    color: colors.primary,
+    lineHeight: 16,
   } as TextStyle,
 
   emptyCard: {

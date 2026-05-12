@@ -9,7 +9,7 @@
  * /chw/reports endpoint ships.
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -22,17 +22,15 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
-  BarChart3,
   Star,
   DollarSign,
   Users,
   CalendarCheck,
   TrendingUp,
-  TrendingDown,
   Activity,
 } from 'lucide-react-native';
 
-import { AppShell, PageHeader, Card, Pill, RightRail, StatTile } from '../../components/ui';
+import { AppShell, PageHeader, Card, StatTile } from '../../components/ui';
 import { colors, spacing, radius } from '../../theme/tokens';
 import { useAuth } from '../../context/AuthContext';
 
@@ -271,123 +269,170 @@ export function CHWReportsScreen(): React.JSX.Element {
         />
       </View>
 
-      {/* Body row */}
-      <View style={styles.bodyRow}>
-        <View style={styles.mainCol}>
-          {/* Session volume chart */}
-          <Card style={styles.chartCard}>
-            <View style={styles.cardTitleRow}>
-              <BarChart3 size={16} color={colors.textSecondary} />
-              <Text style={styles.cardTitle}>Session Volume</Text>
-              <Text style={styles.cardSubtitle}>{DATE_RANGE_LABELS[activeRange]}</Text>
-            </View>
+      {/* 2x2 chart grid — matches mockup exactly */}
+      <View style={styles.chartGrid}>
+        {/* Q1: Session volume bar chart */}
+        <Card style={styles.chartCard}>
+          <View style={styles.cardTitleRow}>
+            <Text style={styles.cardTitle}>Sessions per week</Text>
+            <Text style={styles.cardSubtitle}>Bar chart · 8-week trend</Text>
+          </View>
+          <View style={styles.chartPlaceholder}>
             <BarChart bars={MOCK_WEEKLY_BARS} />
-          </Card>
+          </View>
+        </Card>
 
-          {/* Vertical breakdown table */}
-          <Card style={styles.tableCard}>
-            <View style={styles.cardTitleRow}>
-              <Activity size={16} color={colors.textSecondary} />
-              <Text style={styles.cardTitle}>Care Vertical Breakdown</Text>
-            </View>
+        {/* Q2: Earnings trend — inline SVG line chart */}
+        <Card style={styles.chartCard}>
+          <View style={styles.cardTitleRow}>
+            <Text style={styles.cardTitle}>Earnings trend</Text>
+            <Text style={styles.cardSubtitle}>Line chart · since start</Text>
+          </View>
+          <View style={[styles.chartPlaceholder, styles.gradientBg]}>
+            {Platform.OS === 'web' ? (
+              // @ts-ignore — SVG renders on RN web
+              <svg viewBox="0 0 300 100" style={{ width: '100%', height: 120 }}>
+                {/* @ts-ignore */}
+                <defs>
+                  {/* @ts-ignore */}
+                  <linearGradient id="earnGrad" x1="0" x2="0" y1="0" y2="1">
+                    {/* @ts-ignore */}
+                    <stop offset="0%" stopColor="#10b981" />
+                    {/* @ts-ignore */}
+                    <stop offset="100%" stopColor="#10b981" stopOpacity="0" />
+                  </linearGradient>
+                </defs>
+                {/* @ts-ignore */}
+                <polyline points="10,80 50,70 90,72 130,55 170,50 210,40 250,28 290,15" stroke="#10b981" strokeWidth="3" fill="none" />
+                {/* @ts-ignore */}
+                <polyline points="10,80 50,70 90,72 130,55 170,50 210,40 250,28 290,15 290,100 10,100" fill="url(#earnGrad)" opacity="0.25" />
+              </svg>
+            ) : (
+              <View style={styles.nativeSvgFallback}>
+                <TrendingUp size={32} color={colors.primary} />
+                <Text style={styles.fallbackLabel}>Earnings trending up</Text>
+              </View>
+            )}
+          </View>
+        </Card>
 
-            {/* Table header */}
-            <View style={[styles.tableRow, styles.tableHeaderRow]}>
-              <Text style={[styles.colHeader, styles.colVertical]}>Vertical</Text>
-              <Text style={[styles.colHeader, styles.colSessions]}>Sessions</Text>
-              <Text style={[styles.colHeader, styles.colPct]}>% of Total</Text>
-              <Text style={[styles.colHeader, styles.colDuration]}>Avg Duration</Text>
-            </View>
-
-            {MOCK_VERTICALS.map((row, idx) => (
-              <View
-                key={row.vertical}
-                style={[styles.tableRow, idx < MOCK_VERTICALS.length - 1 && styles.tableRowDivider]}
-              >
-                <View style={styles.colVertical}>
-                  <Pill variant={row.pillVariant} size="sm">{row.label}</Pill>
+        {/* Q3: Donut pie — top resource needs */}
+        <Card style={styles.chartCard}>
+          <View style={styles.cardTitleRow}>
+            <Text style={styles.cardTitle}>Top resource needs served</Text>
+            <Text style={styles.cardSubtitle}>Pie · this month</Text>
+          </View>
+          <View style={[styles.chartPlaceholder, styles.gradientBg]}>
+            {Platform.OS === 'web' ? (
+              <View style={styles.pieWrap}>
+                {/* @ts-ignore */}
+                <svg viewBox="0 0 100 100" style={{ width: 100, height: 100, flexShrink: 0 }}>
+                  {/* conic-gradient approximated via SVG arcs */}
+                  {/* @ts-ignore */}
+                  <circle r="50" cx="50" cy="50" fill="conic-gradient(#10b981 0% 32%, #f97316 32% 56%, #f59e0b 56% 70%, #8b5cf6 70% 84%, #ef4444 84% 100%)" />
+                  {/* Donut hole */}
+                  {/* @ts-ignore */}
+                  <circle r="30" cx="50" cy="50" fill="white" />
+                </svg>
+                <View style={styles.pieLegend}>
+                  {[
+                    { label: 'Food (32%)',          color: '#10b981' },
+                    { label: 'Housing (24%)',        color: '#f97316' },
+                    { label: 'Benefits (14%)',       color: '#f59e0b' },
+                    { label: 'Mental Health (14%)',  color: '#8b5cf6' },
+                    { label: 'Other (16%)',          color: '#ef4444' },
+                  ].map((item) => (
+                    <View key={item.label} style={styles.legendItem}>
+                      <View style={[styles.legendDot, { backgroundColor: item.color }]} />
+                      <Text style={styles.legendText}>{item.label}</Text>
+                    </View>
+                  ))}
                 </View>
-                <Text style={[styles.cellText, styles.colSessions]}>{row.sessions}</Text>
-                <View style={[styles.colPct]}>
-                  <View style={styles.pctBar}>
-                    <View
-                      style={[
-                        styles.pctFill,
-                        { width: `${row.percentOfTotal}%` as unknown as number },
-                      ]}
-                    />
-                  </View>
-                  <Text style={styles.pctText}>{row.percentOfTotal}%</Text>
-                </View>
-                <Text style={[styles.cellText, styles.colDuration]}>{row.avgDuration} min</Text>
+              </View>
+            ) : (
+              <View style={styles.nativeSvgFallback}>
+                <Activity size={32} color={colors.primary} />
+                <Text style={styles.fallbackLabel}>Food 32% · Housing 24%</Text>
+              </View>
+            )}
+          </View>
+        </Card>
+
+        {/* Q4: Time-to-first-contact table */}
+        <Card style={styles.chartCard}>
+          <View style={styles.cardTitleRow}>
+            <Text style={styles.cardTitle}>Time-to-first-contact</Text>
+            <Text style={styles.cardSubtitle}>Per new member</Text>
+          </View>
+          <View style={styles.contactTable}>
+            <View style={styles.contactTableHeader}>
+              <Text style={[styles.contactCol, styles.contactColHeader]}>Member</Text>
+              <Text style={[styles.contactColRight, styles.contactColHeader]}>Hours</Text>
+            </View>
+            {[
+              { member: 'Ana Garcia',    hours: '2.1 h',  color: colors.emerald700 },
+              { member: 'Juana Ramirez', hours: '1.4 h',  color: colors.emerald700 },
+              { member: 'David Lopez',   hours: '3.2 h',  color: colors.emerald700 },
+              { member: 'Sandra Chavez', hours: '8.7 h',  color: colors.amber700   },
+              { member: 'Marcus Brown',  hours: '26.4 h', color: colors.red700     },
+            ].map((row) => (
+              <View key={row.member} style={styles.contactTableRow}>
+                <Text style={styles.contactCol}>{row.member}</Text>
+                <Text style={[styles.contactColRight, { color: row.color, fontWeight: '600' }]}>{row.hours}</Text>
               </View>
             ))}
-          </Card>
-        </View>
+          </View>
+        </Card>
+      </View>
 
-        {Platform.OS === 'web' && (
-          <RightRail>
-            <Card style={styles.railCard}>
-              <Text style={styles.railTitle}>Performance Highlights</Text>
-              <View style={styles.highlightList}>
-                <View style={styles.highlightItem}>
-                  <TrendingUp size={14} color={colors.primary} />
-                  <Text style={styles.highlightText}>
-                    42 sessions completed — top 15% of CHW cohort
-                  </Text>
-                </View>
-                <View style={styles.highlightItem}>
-                  <Star size={14} color={colors.amber700} />
-                  <Text style={styles.highlightText}>
-                    4.8 average rating across 38 rated sessions
-                  </Text>
-                </View>
-                <View style={styles.highlightItem}>
-                  <Users size={14} color={colors.blue700} />
-                  <Text style={styles.highlightText}>
-                    14 active member relationships maintained
-                  </Text>
-                </View>
-                <View style={styles.highlightItem}>
-                  <TrendingDown size={14} color={colors.amber700} />
-                  <Text style={styles.highlightText}>
-                    No-show rate: 5% (below 8% platform avg)
-                  </Text>
-                </View>
-              </View>
-            </Card>
+      {/* Insights + members served row */}
+      <View style={styles.insightsRow}>
+        {/* AI Insights panel */}
+        <Card style={[styles.insightsCard, styles.gradientBgSubtle]}>
+          <View style={styles.insightsTitleRow}>
+            <TrendingUp size={15} color={colors.primary} />
+            <Text style={styles.insightsTitle}>Compass Insights</Text>
+            <View style={styles.betaBadge}><Text style={styles.betaText}>BETA</Text></View>
+          </View>
+          {[
+            { title: 'You respond fastest on Tuesdays', body: 'Avg response on Tue is 42 min vs 1h 56m other days. Block 2h outreach time then.' },
+            { title: '92% of your housing journey members complete eligibility', body: 'Well above the 67% platform avg — your intake script is working.' },
+            { title: 'Marcus B. is at risk of disengagement', body: '26h time-to-first-contact + missed last 2 follow-ups. Suggest evening text outreach.' },
+          ].map((insight) => (
+            <View key={insight.title} style={styles.insightItem}>
+              <Text style={styles.insightItemTitle}>{insight.title}</Text>
+              <Text style={styles.insightItemBody}>{insight.body}</Text>
+            </View>
+          ))}
+        </Card>
 
-            <Card style={styles.railCard}>
-              <Text style={styles.railTitle}>Goals This Month</Text>
-              <View style={styles.goalList}>
-                {[
-                  { label: 'Sessions target',  current: 42, goal: 50 },
-                  { label: 'New members',       current: 3,  goal: 5  },
-                  { label: 'Documentation rate',current: 95, goal: 100, suffix: '%' },
-                ].map((g) => (
-                  <View key={g.label} style={styles.goalItem}>
-                    <View style={styles.goalLabelRow}>
-                      <Text style={styles.goalLabel}>{g.label}</Text>
-                      <Text style={styles.goalValue}>
-                        {g.current}{g.suffix ?? ''} / {g.goal}{g.suffix ?? ''}
-                      </Text>
-                    </View>
-                    <View style={styles.goalTrack}>
-                      <View
-                        style={[
-                          styles.goalFill,
-                          {
-                            width: `${Math.min(100, Math.round((g.current / g.goal) * 100))}%` as unknown as number,
-                          },
-                        ]}
-                      />
-                    </View>
-                  </View>
-                ))}
+        {/* Members served grid */}
+        <Card style={styles.membersCard}>
+          <Text style={styles.membersTitle}>Members served this month (12)</Text>
+          <View style={styles.membersGrid}>
+            {[
+              { initials: 'AG', color: colors.emerald100, text: colors.emerald700, name: 'Ana'    },
+              { initials: 'JR', color: colors.blue100,    text: colors.blue700,    name: 'Juana'  },
+              { initials: 'DL', color: colors.purple100,  text: colors.purple700,  name: 'David'  },
+              { initials: 'SC', color: colors.amber100,   text: colors.amber700,   name: 'Sandra' },
+              { initials: 'MB', color: colors.red100,     text: colors.red700,     name: 'Marcus' },
+              { initials: 'EC', color: colors.cyan100,    text: colors.cyan700,    name: 'Elena'  },
+              { initials: 'RP', color: colors.indigo100,  text: colors.indigo700,  name: 'Roberto'},
+              { initials: 'LM', color: colors.pink100,    text: colors.pink700,    name: 'Linda'  },
+              { initials: 'JN', color: colors.teal100,    text: colors.teal700,    name: 'Jose'   },
+              { initials: 'CM', color: colors.slate100,   text: colors.slate700,   name: 'Carmen' },
+              { initials: 'RV', color: colors.amber100,   text: colors.amber700,   name: 'Rosa'   },
+              { initials: '+1', color: colors.gray100,    text: colors.gray700,    name: 'more'   },
+            ].map((m) => (
+              <View key={m.initials} style={styles.memberAvatar}>
+                <View style={[styles.avatarCircle, { backgroundColor: m.color }]}>
+                  <Text style={[styles.avatarInitials, { color: m.text }]}>{m.initials}</Text>
+                </View>
+                <Text style={styles.avatarName}>{m.name}</Text>
               </View>
-            </Card>
-          </RightRail>
-        )}
+            ))}
+          </View>
+        </Card>
       </View>
     </>
   );
@@ -467,25 +512,23 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
   } as ViewStyle,
 
-  bodyRow: {
+  chartGrid: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: spacing.xl,
-    alignItems: 'flex-start',
-  } as ViewStyle,
-
-  mainCol: {
-    flex: 1,
-    gap: spacing.lg,
+    marginBottom: spacing.xl,
   } as ViewStyle,
 
   chartCard: {
-    padding: spacing.lg,
+    padding: spacing.xl,
     gap: spacing.md,
+    width: Platform.OS === 'web' ? 'calc(50% - 10px)' as unknown as number : '100%',
   } as ViewStyle,
 
   cardTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     gap: spacing.sm,
   } as ViewStyle,
 
@@ -493,139 +536,213 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: colors.textPrimary,
-    flex: 1,
   } as TextStyle,
 
   cardSubtitle: {
-    fontSize: 12,
+    fontSize: 11,
     color: colors.textSecondary,
   } as TextStyle,
 
-  tableCard: {
-    padding: spacing.lg,
-    gap: 2,
+  chartPlaceholder: {
+    borderRadius: radius.lg,
+    minHeight: 160,
+    overflow: 'hidden',
+    justifyContent: 'center',
   } as ViewStyle,
 
-  tableRow: {
+  gradientBg: {
+    // linear-gradient approximated with a solid tint on native
+    backgroundColor: '#ecfdf5',
+    padding: spacing.md,
+  } as ViewStyle,
+
+  gradientBgSubtle: {
+    backgroundColor: '#f8fdfb',
+  } as ViewStyle,
+
+  nativeSvgFallback: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    padding: spacing.xl,
+  } as ViewStyle,
+
+  fallbackLabel: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    textAlign: 'center',
+  } as TextStyle,
+
+  pieWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.md,
+    gap: spacing.xl,
+    justifyContent: 'center',
+  } as ViewStyle,
+
+  pieLegend: {
+    gap: 6,
+  } as ViewStyle,
+
+  legendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  } as ViewStyle,
+
+  legendDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 2,
+  } as ViewStyle,
+
+  legendText: {
+    fontSize: 11,
+    color: colors.textSecondary,
+  } as TextStyle,
+
+  contactTable: {
+    gap: 0,
+  } as ViewStyle,
+
+  contactTableHeader: {
+    flexDirection: 'row',
+    paddingVertical: spacing.xs,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.cardBorder,
+    marginBottom: 2,
+  } as ViewStyle,
+
+  contactTableRow: {
+    flexDirection: 'row',
     paddingVertical: spacing.sm,
-  } as ViewStyle,
-
-  tableHeaderRow: {
-    borderBottomWidth: 1,
-    borderBottomColor: colors.cardBorder,
-    paddingBottom: spacing.sm,
-    marginBottom: spacing.xs,
-  } as ViewStyle,
-
-  tableRowDivider: {
     borderBottomWidth: 1,
     borderBottomColor: colors.cardBorder,
   } as ViewStyle,
 
-  colHeader: {
+  contactColHeader: {
     fontSize: 11,
     fontWeight: '600',
     color: colors.textSecondary,
     textTransform: 'uppercase',
   } as TextStyle,
 
-  colVertical: { flex: 1.5 } as ViewStyle,
-  colSessions: { flex: 1,   textAlign: 'center' as const } as TextStyle,
-  colPct:      { flex: 2,   flexDirection: 'row' as const, alignItems: 'center' as const, gap: 6 } as ViewStyle,
-  colDuration: { flex: 1.5, textAlign: 'right' as const } as TextStyle,
-
-  cellText: {
+  contactCol: {
+    flex: 1,
     fontSize: 13,
     color: colors.textPrimary,
   } as TextStyle,
 
-  pctBar: {
-    flex: 1,
-    height: 6,
-    backgroundColor: colors.gray100,
-    borderRadius: radius.pill,
-    overflow: 'hidden',
-  } as ViewStyle,
-
-  pctFill: {
-    height: '100%',
-    backgroundColor: colors.primary,
-    borderRadius: radius.pill,
-  } as ViewStyle,
-
-  pctText: {
-    fontSize: 12,
-    color: colors.textSecondary,
-    width: 34,
+  contactColRight: {
+    width: 60,
     textAlign: 'right',
-  } as TextStyle,
-
-  railCard: {
-    padding: spacing.lg,
-    gap: spacing.md,
-  } as ViewStyle,
-
-  railTitle: {
     fontSize: 13,
-    fontWeight: '700',
-    color: colors.textPrimary,
-    marginBottom: spacing.xs,
+    color: colors.textSecondary,
   } as TextStyle,
 
-  highlightList: {
-    gap: spacing.sm,
-  } as ViewStyle,
-
-  highlightItem: {
+  insightsRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: spacing.sm,
+    gap: spacing.xl,
+    marginBottom: spacing.xl,
+    flexWrap: 'wrap',
   } as ViewStyle,
 
-  highlightText: {
+  insightsCard: {
+    padding: spacing.xl,
+    gap: spacing.md,
     flex: 1,
+    minWidth: Platform.OS === 'web' ? 340 : '100%',
+  } as ViewStyle,
+
+  insightsTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  } as ViewStyle,
+
+  insightsTitle: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.textPrimary,
+  } as TextStyle,
+
+  betaBadge: {
+    backgroundColor: colors.emerald100,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+  } as ViewStyle,
+
+  betaText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: colors.emerald700,
+    letterSpacing: 0.6,
+  } as TextStyle,
+
+  insightItem: {
+    backgroundColor: colors.cardBg,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    gap: 3,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+  } as ViewStyle,
+
+  insightItemTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.textPrimary,
+  } as TextStyle,
+
+  insightItemBody: {
     fontSize: 12,
     color: colors.textSecondary,
     lineHeight: 18,
   } as TextStyle,
 
-  goalList: {
+  membersCard: {
+    padding: spacing.xl,
     gap: spacing.md,
+    flex: 1.4,
+    minWidth: Platform.OS === 'web' ? 400 : '100%',
   } as ViewStyle,
 
-  goalItem: {
-    gap: spacing.xs,
-  } as ViewStyle,
-
-  goalLabelRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  } as ViewStyle,
-
-  goalLabel: {
-    fontSize: 12,
-    color: colors.textSecondary,
-  } as TextStyle,
-
-  goalValue: {
-    fontSize: 12,
+  membersTitle: {
+    fontSize: 14,
     fontWeight: '600',
     color: colors.textPrimary,
   } as TextStyle,
 
-  goalTrack: {
-    height: 6,
-    backgroundColor: colors.gray100,
-    borderRadius: radius.pill,
-    overflow: 'hidden',
+  membersGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.md,
   } as ViewStyle,
 
-  goalFill: {
-    height: '100%',
-    backgroundColor: colors.primary,
-    borderRadius: radius.pill,
+  memberAvatar: {
+    alignItems: 'center',
+    gap: 4,
+    width: 56,
   } as ViewStyle,
+
+  avatarCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+
+  avatarInitials: {
+    fontSize: 13,
+    fontWeight: '700',
+  } as TextStyle,
+
+  avatarName: {
+    fontSize: 11,
+    color: colors.textSecondary,
+    textAlign: 'center',
+  } as TextStyle,
 });

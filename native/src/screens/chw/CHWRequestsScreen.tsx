@@ -14,6 +14,7 @@
 
 import React, { useState, useCallback, useMemo } from 'react';
 import {
+  Alert,
   View,
   Text,
   ScrollView,
@@ -265,7 +266,7 @@ function RequestCard({
 
 const cardStyles = StyleSheet.create({
   card: {
-    padding: 16,
+    padding: 20,
     marginBottom: 12,
   } as ViewStyle,
   headerRow: {
@@ -327,9 +328,9 @@ const cardStyles = StyleSheet.create({
   } as ViewStyle,
   cardTitle: {
     fontFamily: 'DMSans_700Bold',
-    fontSize: 16,
-    lineHeight: 22,
-    color: '#1E3320',
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#111827',
     marginBottom: 4,
   } as TextStyle,
   badgeRow: {
@@ -740,7 +741,7 @@ export function CHWRequestsScreen(): React.JSX.Element {
             accessibilityRole="tab"
             accessibilityState={{ selected: activeTab === 'my_members' }}
           >
-            <Users size={14} color={activeTab === 'my_members' ? '#FFFFFF' : '#6B7A6B'} />
+            <Users size={14} color={activeTab === 'my_members' ? '#065F46' : '#6B7280'} />
             <Text style={[styles.tabText, activeTab === 'my_members' && styles.tabTextActive]}>
               My Members
             </Text>
@@ -759,7 +760,7 @@ export function CHWRequestsScreen(): React.JSX.Element {
             accessibilityRole="tab"
             accessibilityState={{ selected: activeTab === 'pending_requests' }}
           >
-            <Inbox size={14} color={activeTab === 'pending_requests' ? '#FFFFFF' : '#6B7A6B'} />
+            <Inbox size={14} color={activeTab === 'pending_requests' ? '#065F46' : '#6B7280'} />
             <Text style={[styles.tabText, activeTab === 'pending_requests' && styles.tabTextActive]}>
               Pending Requests
             </Text>
@@ -778,7 +779,7 @@ export function CHWRequestsScreen(): React.JSX.Element {
             accessibilityRole="tab"
             accessibilityState={{ selected: activeTab === 'inactive' }}
           >
-            <UserX size={14} color={activeTab === 'inactive' ? '#FFFFFF' : '#6B7A6B'} />
+            <UserX size={14} color={activeTab === 'inactive' ? '#065F46' : '#6B7280'} />
             <Text style={[styles.tabText, activeTab === 'inactive' && styles.tabTextActive]}>
               Inactive
             </Text>
@@ -823,12 +824,12 @@ const styles = StyleSheet.create({
   pageWrap: {
     flex: 1,
     width: '100%',
-    maxWidth: 960,
+    maxWidth: 1100,
     alignSelf: 'center',
   } as ViewStyle,
   headerBlock: {
-    paddingHorizontal: 20,
-    paddingTop: 16,
+    paddingHorizontal: 32,
+    paddingTop: 32,
     paddingBottom: 0,
     backgroundColor: tokens.pageBg,
   } as ViewStyle,
@@ -839,11 +840,11 @@ const styles = StyleSheet.create({
     color: '#1E3320',
   } as TextStyle,
 
-  // ── Primary tab strip
+  // ── Primary tab strip — mockup filter-btn: py-7px px-14px, radius 10, border, 13px 500
   tabStrip: {
     flexDirection: 'row',
     gap: 8,
-    marginBottom: 16,
+    marginBottom: 20,
     flexWrap: 'wrap',
   } as ViewStyle,
   tabItem: {
@@ -851,80 +852,80 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingVertical: 7,
     borderRadius: 10,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#DDD6CC',
+    borderColor: '#E5E7EB',
   } as ViewStyle,
   tabItemActive: {
-    backgroundColor: '#3D5A3E',
-    borderColor: '#3D5A3E',
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
   } as ViewStyle,
   tabText: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 14,
-    color: '#6B7A6B',
+    fontSize: 13,
+    color: '#6B7280',
   } as TextStyle,
   tabTextActive: {
-    color: '#FFFFFF',
+    color: '#065F46',
   } as TextStyle,
   tabBadge: {
     minWidth: 20,
     height: 20,
     borderRadius: 10,
-    backgroundColor: '#DDD6CC',
+    backgroundColor: '#E5E7EB',
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 4,
   } as ViewStyle,
   tabBadgeActive: {
-    backgroundColor: 'rgba(255,255,255,0.25)',
+    backgroundColor: '#6EE7B7',
   } as ViewStyle,
   tabBadgeText: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 11,
-    color: '#6B7A6B',
+    color: '#6B7280',
   } as TextStyle,
   tabBadgeTextActive: {
-    color: '#FFFFFF',
+    color: '#065F46',
   } as TextStyle,
 
-  // ── Vertical filter chips (Pending tab only)
+  // ── Vertical filter chips (Pending tab only) — matches mockup filter-btn style
   filterChipsRow: {
     flexDirection: 'row',
     gap: 8,
-    paddingBottom: 12,
-    paddingHorizontal: 20,
+    paddingBottom: 16,
+    paddingHorizontal: 32,
   } as ViewStyle,
   filterChip: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
     borderRadius: 10,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#DDD6CC',
+    borderColor: '#E5E7EB',
   } as ViewStyle,
   filterChipActive: {
-    backgroundColor: '#3D5A3E',
-    borderColor: '#3D5A3E',
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
   } as ViewStyle,
   filterChipText: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 14,
-    color: '#6B7A6B',
+    fontSize: 13,
+    color: '#6B7280',
   } as TextStyle,
   filterChipTextActive: {
-    color: '#FFFFFF',
+    color: '#065F46',
   } as TextStyle,
 
   // ── Summary stat row (Pending tab)
   statSummaryRow: {
     flexDirection: 'row',
-    gap: 10,
-    marginBottom: 14,
-    paddingHorizontal: 20,
-    paddingTop: 4,
+    gap: 16,
+    marginBottom: 16,
+    paddingHorizontal: 32,
+    paddingTop: 8,
   } as ViewStyle,
   statSummaryCard: {
     flex: 1,
@@ -952,10 +953,11 @@ const styles = StyleSheet.create({
     color: '#6B7A6B',
   } as TextStyle,
 
-  // ── List
+  // ── List — outer padding matches mockup's main p-8
   listContent: {
-    padding: 20,
-    paddingBottom: 40,
+    paddingHorizontal: 32,
+    paddingTop: 0,
+    paddingBottom: 48,
   } as ViewStyle,
 
   // ── Empty state

@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Compass CHW — Earnings</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    body { font-family: 'Inter', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+    .sidebar-bg { background: linear-gradient(180deg, #134e36 0%, #0f3d2a 100%); }
+    .sidebar-item { display:flex; align-items:center; gap:12px; padding:10px 14px; border-radius:10px; color:#a7d4be; font-size:14px; font-weight:500; transition:all .15s; cursor:pointer; text-decoration:none; }
+    .sidebar-item:hover { background: rgba(255,255,255,0.06); color:#fff; }
+    .sidebar-item.active { background:#fff; color:#0f3d2a; font-weight:600; box-shadow:0 1px 3px rgba(0,0,0,.06); }
+    .sidebar-item.active .icon { color:#16a34a; }
+    .icon { width:18px; height:18px; flex-shrink:0; }
+    .pill { display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:999px; font-size:11px; font-weight:600; }
+    .card { background:#fff; border-radius:16px; box-shadow:0 1px 3px rgba(0,0,0,.04), 0 1px 2px rgba(0,0,0,.03); border:1px solid #f1f5f4; }
+    th { text-align:left; font-size:11px; font-weight:600; color:#6b7280; text-transform:uppercase; letter-spacing:.04em; padding:10px 16px; background:#f9fafb; border-bottom:1px solid #f3f4f6; }
+    td { padding:13px 16px; border-bottom:1px solid #f3f4f6; font-size:13.5px; vertical-align:middle; }
+  </style>
+</head>
+<body class="bg-[#f5f7f6] min-h-screen">
+  <div class="flex min-h-screen">
+    <aside class="sidebar-bg w-64 flex-shrink-0 flex flex-col py-6 px-4">
+      <div class="px-2 mb-8"><div class="flex items-center gap-2.5"><div class="w-9 h-9 rounded-xl bg-emerald-500 grid place-items-center"><i data-lucide="compass" class="w-5 h-5 text-white"></i></div><div><div class="text-white font-bold text-lg leading-tight">compasschw</div><div class="text-emerald-300 text-xs font-medium">Medi-Cal Member</div></div></div></div>
+      <nav class="flex-1 space-y-1">
+        <a href="member-profile.html" class="sidebar-item"><i data-lucide="user-round" class="icon"></i><span>Member Profile</span></a>
+        <a href="dashboard.html" class="sidebar-item"><i data-lucide="layout-dashboard" class="icon"></i><span>Dashboard</span></a>
+        <a href="members.html" class="sidebar-item"><i data-lucide="users" class="icon"></i><span>Members</span></a>
+        <a href="journeys.html" class="sidebar-item"><i data-lucide="route" class="icon"></i><span>Journeys</span></a>
+        <a href="messages.html" class="sidebar-item"><i data-lucide="message-square" class="icon"></i><span class="flex-1">Messages</span><span class="bg-emerald-500 text-white text-xs font-semibold px-2 py-0.5 rounded-full">12</span></a>
+        <a href="appointments.html" class="sidebar-item"><i data-lucide="calendar" class="icon"></i><span>Appointments</span></a>
+        <a href="resources.html" class="sidebar-item"><i data-lucide="folder-open" class="icon"></i><span>Resources</span></a>
+        <a href="documents.html" class="sidebar-item"><i data-lucide="file-text" class="icon"></i><span>Documents</span></a>
+        <a href="earnings.html" class="sidebar-item active"><i data-lucide="dollar-sign" class="icon"></i><span>Earnings</span></a>
+        <a href="reports.html" class="sidebar-item"><i data-lucide="bar-chart-3" class="icon"></i><span>Reports</span></a>
+        <a href="community-partners.html" class="sidebar-item"><i data-lucide="building-2" class="icon"></i><span>Community Partners</span></a>
+        <a href="#" class="sidebar-item"><i data-lucide="settings" class="icon"></i><span>Settings</span></a>
+      </nav>
+      <div class="mt-6 pt-4 border-t border-emerald-900/40">
+        <a href="member-home.html" class="text-emerald-300 text-xs hover:text-white px-2 py-1 block">Switch to Member view →</a>
+        <div class="flex items-center gap-3 px-2 py-2 mt-1"><div class="w-9 h-9 rounded-full bg-emerald-300 grid place-items-center text-emerald-900 font-bold text-sm">MS</div><div class="flex-1 min-w-0"><div class="text-white text-sm font-semibold truncate">Maria Sanchez</div><div class="text-emerald-300 text-xs">Community Health Worker</div></div></div>
+      </div>
+    </aside>
+
+    <main class="flex-1 p-8 overflow-y-auto">
+      <div class="flex items-end justify-between mb-6">
+        <div>
+          <h1 class="text-2xl font-bold text-gray-900">Earnings</h1>
+          <p class="text-sm text-gray-600 mt-1">Stripe Connect · Express account · ID acct_1ABC...x9 · <span class="pill bg-emerald-100 text-emerald-700"><i data-lucide="badge-check" class="w-3 h-3"></i>Payouts enabled</span></p>
+        </div>
+        <div class="flex items-center gap-3">
+          <select class="px-3 py-2 rounded-xl border border-gray-200 text-sm bg-white"><option>This month (May 2026)</option><option>Last month</option><option>Year to date</option></select>
+          <button class="px-4 py-2 border border-gray-200 text-gray-700 text-sm font-semibold rounded-xl flex items-center gap-2"><i data-lucide="download" class="w-4 h-4"></i>Export 1099 data</button>
+          <button class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-xl flex items-center gap-2"><i data-lucide="external-link" class="w-4 h-4"></i>Open Stripe Dashboard</button>
+        </div>
+      </div>
+
+      <!-- Top stat cards -->
+      <div class="grid grid-cols-4 gap-4 mb-6">
+        <div class="card p-5">
+          <div class="flex items-center justify-between mb-3"><div class="w-10 h-10 rounded-xl bg-emerald-100 grid place-items-center"><i data-lucide="dollar-sign" class="w-5 h-5 text-emerald-600"></i></div><span class="pill bg-emerald-50 text-emerald-700">↑ 18% MoM</span></div>
+          <div class="text-3xl font-extrabold text-gray-900">$4,920</div>
+          <div class="text-sm text-gray-500 mt-1">Earnings this month</div>
+        </div>
+        <div class="card p-5">
+          <div class="flex items-center justify-between mb-3"><div class="w-10 h-10 rounded-xl bg-blue-100 grid place-items-center"><i data-lucide="banknote" class="w-5 h-5 text-blue-600"></i></div><span class="pill bg-blue-50 text-blue-700">in transit</span></div>
+          <div class="text-3xl font-extrabold text-gray-900">$840</div>
+          <div class="text-sm text-gray-500 mt-1">Pending payout (Fri May 16)</div>
+        </div>
+        <div class="card p-5">
+          <div class="flex items-center justify-between mb-3"><div class="w-10 h-10 rounded-xl bg-purple-100 grid place-items-center"><i data-lucide="check-circle-2" class="w-5 h-5 text-purple-600"></i></div><span class="pill bg-emerald-50 text-emerald-700">paid</span></div>
+          <div class="text-3xl font-extrabold text-gray-900">$3,240</div>
+          <div class="text-sm text-gray-500 mt-1">Paid out this month</div>
+        </div>
+        <div class="card p-5">
+          <div class="flex items-center justify-between mb-3"><div class="w-10 h-10 rounded-xl bg-amber-100 grid place-items-center"><i data-lucide="clock" class="w-5 h-5 text-amber-600"></i></div><span class="pill bg-amber-50 text-amber-700">awaiting Pear</span></div>
+          <div class="text-3xl font-extrabold text-gray-900">$840</div>
+          <div class="text-sm text-gray-500 mt-1">Claims pending adjudication</div>
+        </div>
+      </div>
+
+      <!-- Earnings trend + Stripe account status -->
+      <div class="grid grid-cols-12 gap-5 mb-6">
+        <div class="col-span-8 card p-5">
+          <div class="flex items-center justify-between mb-3"><h2 class="font-semibold text-gray-900">Earnings trend</h2><span class="text-xs text-gray-500">Weekly · last 8 weeks</span></div>
+          <div class="rounded-xl bg-gradient-to-br from-emerald-50 to-blue-50 p-5">
+            <svg viewBox="0 0 600 180" class="w-full h-44">
+              <polyline points="20,150 90,135 160,128 230,108 300,98 370,80 440,55 510,30" stroke="#10b981" stroke-width="4" fill="none" stroke-linecap="round"/>
+              <polyline points="20,150 90,135 160,128 230,108 300,98 370,80 440,55 510,30 510,180 20,180" fill="url(#g1)" opacity=".22"/>
+              <defs><linearGradient id="g1" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="#10b981"/><stop offset="100%" stop-color="#10b981" stop-opacity="0"/></linearGradient></defs>
+              <g font-family="Inter" font-size="10" fill="#9ca3af">
+                <text x="20" y="175" text-anchor="middle">Mar 17</text>
+                <text x="160" y="175" text-anchor="middle">Mar 31</text>
+                <text x="300" y="175" text-anchor="middle">Apr 14</text>
+                <text x="440" y="175" text-anchor="middle">Apr 28</text>
+                <text x="510" y="175" text-anchor="middle">May 5</text>
+              </g>
+            </svg>
+          </div>
+        </div>
+
+        <div class="col-span-4 card p-5">
+          <h2 class="font-semibold text-gray-900 mb-3">Bank &amp; payout setup</h2>
+          <div class="space-y-2 text-sm">
+            <div class="flex items-center gap-2"><i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-600"></i><span class="text-gray-700">Identity verified</span></div>
+            <div class="flex items-center gap-2"><i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-600"></i><span class="text-gray-700">Bank account on file <span class="text-gray-400 ml-1">···4421</span></span></div>
+            <div class="flex items-center gap-2"><i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-600"></i><span class="text-gray-700">Tax info submitted (W-9)</span></div>
+            <div class="flex items-center gap-2"><i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-600"></i><span class="text-gray-700">Payout schedule: weekly (Fri)</span></div>
+          </div>
+          <div class="mt-4 px-3 py-2 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center gap-2 text-xs">
+            <i data-lucide="shield-check" class="w-4 h-4 text-emerald-600"></i><span class="text-emerald-800 font-semibold">Payouts enabled · next on Fri May 16</span>
+          </div>
+          <button class="mt-3 w-full px-3 py-2 border border-gray-200 text-sm font-semibold rounded-lg">Update bank account</button>
+        </div>
+      </div>
+
+      <!-- Sessions billed table -->
+      <div class="card overflow-hidden mb-6">
+        <div class="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+          <h2 class="font-semibold text-gray-900">Sessions billed this month</h2>
+          <a class="text-emerald-600 text-sm font-medium">View all →</a>
+        </div>
+        <table class="w-full">
+          <thead><tr><th>Member</th><th>Date</th><th>CPT</th><th>Units</th><th>Gross</th><th>Net</th><th>Pear Suite</th><th>Stripe</th></tr></thead>
+          <tbody>
+            <tr><td><div class="font-semibold text-gray-900">Ana Garcia</div></td><td>May 7</td><td><span class="pill bg-blue-100 text-blue-700">T1016</span></td><td>2</td><td>$120.00</td><td class="font-semibold">$96.00</td><td><span class="pill bg-emerald-100 text-emerald-700">paid</span></td><td><span class="pill bg-emerald-100 text-emerald-700">transferred</span></td></tr>
+            <tr><td><div class="font-semibold text-gray-900">David Lopez</div></td><td>May 6</td><td><span class="pill bg-blue-100 text-blue-700">G0511</span></td><td>3</td><td>$180.00</td><td class="font-semibold">$144.00</td><td><span class="pill bg-emerald-100 text-emerald-700">paid</span></td><td><span class="pill bg-emerald-100 text-emerald-700">transferred</span></td></tr>
+            <tr><td><div class="font-semibold text-gray-900">Juana Ramirez</div></td><td>May 5</td><td><span class="pill bg-blue-100 text-blue-700">98961</span></td><td>2</td><td>$120.00</td><td class="font-semibold">$96.00</td><td><span class="pill bg-amber-100 text-amber-700">submitted</span></td><td><span class="pill bg-gray-100 text-gray-600">awaiting claim</span></td></tr>
+            <tr><td><div class="font-semibold text-gray-900">Sandra Chavez</div></td><td>May 4</td><td><span class="pill bg-blue-100 text-blue-700">T1016</span></td><td>1</td><td>$60.00</td><td class="font-semibold">$48.00</td><td><span class="pill bg-amber-100 text-amber-700">submitted</span></td><td><span class="pill bg-gray-100 text-gray-600">awaiting claim</span></td></tr>
+            <tr><td><div class="font-semibold text-gray-900">Elena Castro</div></td><td>May 3</td><td><span class="pill bg-blue-100 text-blue-700">98962</span></td><td>4</td><td>$240.00</td><td class="font-semibold">$192.00</td><td><span class="pill bg-emerald-100 text-emerald-700">paid</span></td><td><span class="pill bg-emerald-100 text-emerald-700">transferred</span></td></tr>
+            <tr><td><div class="font-semibold text-gray-900">Marcus Brown</div></td><td>May 1</td><td><span class="pill bg-blue-100 text-blue-700">T1016</span></td><td>2</td><td>$120.00</td><td class="font-semibold">$96.00</td><td><span class="pill bg-red-100 text-red-700">denied</span></td><td><span class="pill bg-gray-100 text-gray-600">—</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Recent payouts -->
+      <div class="card overflow-hidden">
+        <div class="px-5 py-3 border-b border-gray-100"><h2 class="font-semibold text-gray-900">Recent payouts</h2></div>
+        <div class="p-2">
+          <div class="flex items-center gap-3 px-3 py-3 rounded-lg hover:bg-gray-50">
+            <div class="w-9 h-9 rounded-lg bg-emerald-100 grid place-items-center"><i data-lucide="check-circle-2" class="w-5 h-5 text-emerald-600"></i></div>
+            <div class="flex-1"><div class="font-semibold text-gray-900 text-sm">$840.00</div><div class="text-xs text-gray-500">Paid Fri May 9 · ACH · ···4421</div></div>
+            <span class="pill bg-emerald-100 text-emerald-700">Completed</span>
+          </div>
+          <div class="flex items-center gap-3 px-3 py-3 rounded-lg hover:bg-gray-50">
+            <div class="w-9 h-9 rounded-lg bg-emerald-100 grid place-items-center"><i data-lucide="check-circle-2" class="w-5 h-5 text-emerald-600"></i></div>
+            <div class="flex-1"><div class="font-semibold text-gray-900 text-sm">$1,200.00</div><div class="text-xs text-gray-500">Paid Fri May 2 · ACH · ···4421</div></div>
+            <span class="pill bg-emerald-100 text-emerald-700">Completed</span>
+          </div>
+          <div class="flex items-center gap-3 px-3 py-3 rounded-lg hover:bg-gray-50">
+            <div class="w-9 h-9 rounded-lg bg-emerald-100 grid place-items-center"><i data-lucide="check-circle-2" class="w-5 h-5 text-emerald-600"></i></div>
+            <div class="flex-1"><div class="font-semibold text-gray-900 text-sm">$1,200.00</div><div class="text-xs text-gray-500">Paid Fri Apr 25 · ACH · ···4421</div></div>
+            <span class="pill bg-emerald-100 text-emerald-700">Completed</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="mt-8 text-center"><a href="index.html" class="text-emerald-600 hover:underline text-sm">← Back to mockups index</a></div>
+    </main>
+  </div>
+  <script>lucide.createIcons();</script>
+</body>
+</html>

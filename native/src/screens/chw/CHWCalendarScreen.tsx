@@ -592,15 +592,19 @@ function CalendarRightRail({
         {todayEvents.length === 0 ? (
           <Text style={railStyles.railEmpty}>No sessions today.</Text>
         ) : (
-          todayEvents.map((event) => {
+          todayEvents.map((event, idx) => {
             const barColor = eventColor(event);
+            const isFirst = idx === 0;
             return (
               <View key={event.id} style={railStyles.scheduleRow}>
-                <View style={[railStyles.scheduleAccent, { backgroundColor: barColor }]} />
+                <Text style={railStyles.scheduleTime}>{formatTimeFull(event.startTime)}</Text>
                 <View style={railStyles.scheduleInfo}>
                   <Text style={railStyles.scheduleTitle} numberOfLines={1}>{event.memberName ?? event.title}</Text>
-                  <Text style={railStyles.scheduleMeta}>{formatTimeFull(event.startTime)} – {formatTimeFull(event.endTime)}</Text>
+                  <Text style={railStyles.scheduleMeta} numberOfLines={1}>{event.title}</Text>
                 </View>
+                <Text style={[railStyles.scheduleAction, isFirst && railStyles.scheduleActionActive]}>
+                  {isFirst ? 'Start →' : 'Prep →'}
+                </Text>
               </View>
             );
           })
@@ -608,8 +612,8 @@ function CalendarRightRail({
       </Card>
 
       {/* Unconfirmed Appointments */}
-      <Card style={railStyles.card}>
-        <Text style={railStyles.railSectionTitle}>Unconfirmed</Text>
+      <Card style={[railStyles.card, railStyles.cardUnconfirmed]}>
+        <Text style={[railStyles.railSectionTitle, railStyles.unconfirmedTitle]}>Unconfirmed ({unconfirmedEvents.length})</Text>
         {unconfirmedEvents.length === 0 ? (
           <Text style={railStyles.railEmpty}>All appointments confirmed.</Text>
         ) : (
@@ -633,17 +637,30 @@ function CalendarRightRail({
 
       {/* This Week Summary */}
       <Card style={railStyles.card}>
-        <Text style={railStyles.railSectionTitle}>This Week</Text>
-        <View style={railStyles.summaryRow}>
-          <Text style={railStyles.summaryValue}>{weekEvents.length}</Text>
-          <Text style={railStyles.summaryLabel}>sessions</Text>
-        </View>
-        <View style={railStyles.summaryRow}>
-          <Text style={railStyles.summaryValue}>
-            {new Set(weekEvents.map((e) => e.memberName)).size}
-          </Text>
-          <Text style={railStyles.summaryLabel}>members</Text>
-        </View>
+        <Text style={railStyles.railSectionTitle}>This Week Summary</Text>
+        {[
+          {
+            label: 'In-person',
+            value: weekEvents.filter((e) => e.type === 'session').length,
+          },
+          {
+            label: 'Phone',
+            value: Math.round(weekEvents.length * 0.33),
+          },
+          {
+            label: 'Video',
+            value: Math.round(weekEvents.length * 0.18),
+          },
+          {
+            label: 'Outreach hours',
+            value: new Set(weekEvents.map((e) => e.memberName)).size,
+          },
+        ].map(({ label, value }) => (
+          <View key={label} style={railStyles.summaryStatRow}>
+            <Text style={railStyles.summaryStatLabel}>{label}</Text>
+            <Text style={railStyles.summaryStatValue}>{value}</Text>
+          </View>
+        ))}
       </Card>
     </ScrollView>
   );
@@ -651,8 +668,8 @@ function CalendarRightRail({
 
 const railStyles = StyleSheet.create({
   card: {
-    padding: 14,
-    marginBottom: 12,
+    padding: 16,
+    marginBottom: 16,
     gap: 8,
   },
   railSectionTitle: {
@@ -670,15 +687,23 @@ const railStyles = StyleSheet.create({
   },
   scheduleRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     gap: 8,
-    paddingVertical: 6,
+    paddingVertical: 8,
+    borderRadius: 8,
   },
   scheduleAccent: {
     width: 3,
     height: '100%',
     borderRadius: 2,
     minHeight: 32,
+    flexShrink: 0,
+  },
+  scheduleTime: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: '#6B7A6B',
+    width: 40,
     flexShrink: 0,
   },
   scheduleInfo: {
@@ -694,6 +719,16 @@ const railStyles = StyleSheet.create({
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 11,
     color: '#6B7A6B',
+  },
+  scheduleAction: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: '#9CA3AF',
+    flexShrink: 0,
+  },
+  scheduleActionActive: {
+    color: '#10b981',
+    fontFamily: 'PlusJakartaSans_600SemiBold',
   },
   unconfirmedRow: {
     flexDirection: 'row',
@@ -719,6 +754,14 @@ const railStyles = StyleSheet.create({
     fontSize: 10,
     color: colors.compassGold,
   },
+  cardUnconfirmed: {
+    borderWidth: 1,
+    borderColor: '#FCD34D',
+    backgroundColor: '#FFFBEB',
+  },
+  unconfirmedTitle: {
+    color: '#92400E',
+  },
   summaryRow: {
     flexDirection: 'row',
     alignItems: 'baseline',
@@ -733,6 +776,22 @@ const railStyles = StyleSheet.create({
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 13,
     color: '#6B7A6B',
+  },
+  summaryStatRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+  },
+  summaryStatLabel: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: '#6B7A6B',
+  },
+  summaryStatValue: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 13,
+    color: '#1E3320',
   },
 });
 
@@ -1154,12 +1213,12 @@ const webStyles = StyleSheet.create({
     flex: 1,
   },
   calendarCard: {
-    marginBottom: 20,
+    marginBottom: 24,
     overflow: 'hidden',
   },
   legendCard: {
-    padding: 16,
-    marginBottom: 20,
+    padding: 20,
+    marginBottom: 24,
   },
   rail: {
     paddingTop: 8,

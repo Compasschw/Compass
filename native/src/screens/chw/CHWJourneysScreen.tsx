@@ -27,7 +27,6 @@ import {
   Users,
   CheckCircle2,
   CircleDot,
-  Clock,
   XCircle,
   Pause,
   Trophy,
@@ -181,12 +180,6 @@ const STATUS_CONFIG: Record<JourneyStatus, {
   abandoned: { label: 'Abandoned', pillVariant: 'red',     Icon: XCircle     },
 };
 
-const STEP_STATUS_CONFIG: Record<StepStatus, { color: string; Icon: React.FC<{ size: number; color: string }> }> = {
-  upcoming:    { color: colors.textMuted,   Icon: Clock        },
-  in_progress: { color: colors.blue700,     Icon: CircleDot    },
-  completed:   { color: colors.emerald700,  Icon: CheckCircle2 },
-  missed:      { color: colors.red700,      Icon: XCircle      },
-};
 
 const STATUS_FILTER_LABELS: Record<StatusFilter, string> = {
   all:       'All',
@@ -237,55 +230,77 @@ interface JourneyCardProps {
   memberName: string;
 }
 
-function JourneyCard({ journey, memberName }: JourneyCardProps): React.JSX.Element {
-  const statusCfg = STATUS_CONFIG[journey.status];
-  const StatusIcon = statusCfg.Icon;
-  const [expanded, setExpanded] = useState(false);
+/** Returns the label character for a step pill: ✓ completed, ● in_progress, ⚠ missed, blank for upcoming */
+function stepPillLabel(status: StepStatus): string {
+  switch (status) {
+    case 'completed':   return '✓ ';
+    case 'in_progress': return '● ';
+    case 'missed':      return '⚠ ';
+    default:            return '';
+  }
+}
 
-  const currentStep = journey.steps.find((s) => s.status === 'in_progress') ?? null;
-  const completedCount = journey.steps.filter((s) => s.status === 'completed').length;
+function stepPillColors(status: StepStatus): { bg: string; text: string } {
+  switch (status) {
+    case 'completed':   return { bg: colors.emerald100, text: colors.emerald700 };
+    case 'in_progress': return { bg: colors.amber100,   text: colors.amber700   };
+    case 'missed':      return { bg: colors.red100,     text: colors.red700     };
+    default:            return { bg: colors.gray100,    text: colors.textSecondary };
+  }
+}
+
+interface JourneyCardProps {
+  journey: MemberJourneyResponse;
+  memberName: string;
+  /** When true, renders with amber border/bg to indicate stalled status */
+  stalled?: boolean;
+}
+
+function JourneyCard({ journey, memberName, stalled = false }: JourneyCardProps): React.JSX.Element {
+  const hasMissedStep = journey.steps.some((s) => s.status === 'missed');
 
   return (
-    <Card style={journeyCardStyles.card}>
-      {/* Header */}
+    <Card style={[journeyCardStyles.card, stalled && journeyCardStyles.stalledCard]}>
+      {/* Header: icon-circle + member/template + progress % pill */}
       <View style={journeyCardStyles.headerRow}>
+        <View style={[journeyCardStyles.iconCircle, journeyCardStyles[`iconBg_${journey.template.category}` as keyof typeof journeyCardStyles] ?? journeyCardStyles.iconBg_default]}>
+          <Route size={18} color={colors.emerald700} />
+        </View>
         <View style={journeyCardStyles.nameBlock}>
-          <Text style={journeyCardStyles.memberName}>{memberName}</Text>
-          <Text style={journeyCardStyles.templateName}>{journey.template.name}</Text>
-        </View>
-        <View style={journeyCardStyles.statusBadge}>
-          <StatusIcon
-            size={12}
-            color={statusCfg.pillVariant === 'emerald' ? colors.emerald700 : statusCfg.pillVariant === 'amber' ? colors.amber700 : statusCfg.pillVariant === 'red' ? colors.red700 : colors.gray700}
-          />
-          <Pill variant={statusCfg.pillVariant} size="sm">{statusCfg.label}</Pill>
-        </View>
-      </View>
-
-      {/* Progress row */}
-      <View style={journeyCardStyles.progressRow}>
-        <ProgressBar percent={journey.progressPercent} />
-        <Text style={journeyCardStyles.progressLabel}>
-          {Math.round(journey.progressPercent)}% · {completedCount}/{journey.steps.length} steps
-        </Text>
-      </View>
-
-      {/* Current step */}
-      {currentStep !== null && (
-        <View style={journeyCardStyles.currentStepRow}>
-          <CircleDot size={12} color={colors.blue700} />
-          <Text style={journeyCardStyles.currentStepText} numberOfLines={1}>
-            Current: {currentStep.stepName}
+          <Text style={journeyCardStyles.memberName}>
+            {memberName} · {journey.template.name}
           </Text>
-          {currentStep.dueDate !== null && (
-            <Text style={journeyCardStyles.dueDateText}>
-              Due {formatDate(currentStep.dueDate)}
+          {stalled && (
+            <Text style={journeyCardStyles.stalledSubtitle}>
+              {hasMissedStep ? 'Missed step — needs attention' : 'Paused · no movement'}
             </Text>
           )}
         </View>
-      )}
+        <View style={[journeyCardStyles.pctBadge, { backgroundColor: colors.emerald100 }]}>
+          <Text style={journeyCardStyles.pctBadgeText}>
+            {Math.round(journey.progressPercent)}%
+          </Text>
+        </View>
+      </View>
 
-      {/* Wellness points */}
+      {/* Horizontal progress bar */}
+      <ProgressBar percent={journey.progressPercent} />
+
+      {/* Step pills row */}
+      <View style={journeyCardStyles.stepPills}>
+        {journey.steps.map((step) => {
+          const { bg, text } = stepPillColors(step.status);
+          return (
+            <View key={step.id} style={[journeyCardStyles.stepPill, { backgroundColor: bg }]}>
+              <Text style={[journeyCardStyles.stepPillText, { color: text }]}>
+                {stepPillLabel(step.status)}{step.stepName}
+              </Text>
+            </View>
+          );
+        })}
+      </View>
+
+      {/* Points + started date */}
       <View style={journeyCardStyles.pointsRow}>
         <Trophy size={12} color={colors.amber700} />
         <Text style={journeyCardStyles.pointsText}>
@@ -295,57 +310,43 @@ function JourneyCard({ journey, memberName }: JourneyCardProps): React.JSX.Eleme
           Started {formatDate(journey.startedAt)}
         </Text>
       </View>
-
-      {/* Expand/collapse step list */}
-      <TouchableOpacity
-        style={journeyCardStyles.expandButton}
-        onPress={() => setExpanded((prev) => !prev)}
-        accessible
-        accessibilityRole="button"
-        accessibilityLabel={expanded ? 'Collapse steps' : 'Expand steps'}
-        accessibilityState={{ expanded }}
-      >
-        <Text style={journeyCardStyles.expandText}>
-          {expanded ? 'Hide steps' : `Show all steps (${journey.steps.length})`}
-        </Text>
-      </TouchableOpacity>
-
-      {expanded && journey.steps.length > 0 && (
-        <View style={journeyCardStyles.stepList}>
-          {journey.steps.map((step) => {
-            const stepCfg = STEP_STATUS_CONFIG[step.status];
-            const StepIcon = stepCfg.Icon;
-            return (
-              <View key={step.id} style={journeyCardStyles.stepRow}>
-                <StepIcon size={12} color={stepCfg.color} />
-                <Text style={[journeyCardStyles.stepName, { color: step.status === 'missed' ? colors.red700 : colors.textPrimary }]}>
-                  {step.stepOrder}. {step.stepName}
-                </Text>
-                {step.pointsAwarded > 0 && (
-                  <Text style={journeyCardStyles.stepPoints}>+{step.pointsAwarded}pts</Text>
-                )}
-              </View>
-            );
-          })}
-        </View>
-      )}
     </Card>
   );
 }
 
 const journeyCardStyles = StyleSheet.create({
   card: {
-    padding: spacing.lg,
+    padding: spacing.xl,
     gap: spacing.sm,
     width: Platform.OS === 'web' ? 'calc(50% - 8px)' as unknown as number : '100%',
+  } as ViewStyle,
+
+  stalledCard: {
+    borderColor: '#fcd34d',
+    backgroundColor: 'rgba(254,243,199,0.2)',
   } as ViewStyle,
 
   headerRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: spacing.sm,
+    gap: spacing.md,
   } as ViewStyle,
+
+  iconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: radius.lg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  } as ViewStyle,
+
+  iconBg_housing:      { backgroundColor: colors.red100     } as ViewStyle,
+  iconBg_food:         { backgroundColor: colors.orange100   } as ViewStyle,
+  iconBg_mental_health:{ backgroundColor: colors.purple100   } as ViewStyle,
+  iconBg_healthcare:   { backgroundColor: colors.emerald100  } as ViewStyle,
+  iconBg_benefits:     { backgroundColor: colors.emerald100  } as ViewStyle,
+  iconBg_default:      { backgroundColor: colors.emerald100  } as ViewStyle,
 
   nameBlock: {
     flex: 1,
@@ -354,61 +355,55 @@ const journeyCardStyles = StyleSheet.create({
 
   memberName: {
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: '600',
     color: colors.textPrimary,
+    lineHeight: 20,
   } as TextStyle,
 
-  templateName: {
-    fontSize: 12,
-    color: colors.primary,
+  stalledSubtitle: {
+    fontSize: 11,
+    color: colors.amber700,
     fontWeight: '500',
   } as TextStyle,
 
-  statusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
+  pctBadge: {
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 3,
   } as ViewStyle,
 
-  progressRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-  } as ViewStyle,
-
-  progressLabel: {
+  pctBadgeText: {
     fontSize: 11,
-    color: colors.textSecondary,
-    whiteSpace: 'nowrap',
-    flexShrink: 0,
+    fontWeight: '600',
+    color: colors.emerald700,
   } as TextStyle,
 
-  currentStepRow: {
+  stepPills: {
     flexDirection: 'row',
-    alignItems: 'center',
+    flexWrap: 'wrap',
     gap: spacing.xs,
-    backgroundColor: colors.blue100,
-    borderRadius: radius.md,
-    padding: spacing.sm,
+    marginTop: spacing.xs,
   } as ViewStyle,
 
-  currentStepText: {
-    flex: 1,
-    fontSize: 12,
-    color: colors.blue700,
-    fontWeight: '500',
-  } as TextStyle,
+  stepPill: {
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 3,
+  } as ViewStyle,
 
-  dueDateText: {
+  stepPillText: {
     fontSize: 11,
-    color: colors.blue700,
-    flexShrink: 0,
+    fontWeight: '500',
   } as TextStyle,
 
   pointsRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.xs,
+    borderTopWidth: 1,
+    borderTopColor: colors.cardBorder,
+    paddingTop: spacing.sm,
+    marginTop: spacing.xs,
   } as ViewStyle,
 
   pointsText: {
@@ -422,41 +417,6 @@ const journeyCardStyles = StyleSheet.create({
     color: colors.textMuted,
     flex: 1,
     textAlign: 'right',
-  } as TextStyle,
-
-  expandButton: {
-    borderTopWidth: 1,
-    borderTopColor: colors.cardBorder,
-    paddingTop: spacing.sm,
-    marginTop: spacing.xs,
-  } as ViewStyle,
-
-  expandText: {
-    fontSize: 12,
-    color: colors.primary,
-    fontWeight: '500',
-  } as TextStyle,
-
-  stepList: {
-    gap: spacing.xs,
-  } as ViewStyle,
-
-  stepRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-  } as ViewStyle,
-
-  stepName: {
-    flex: 1,
-    fontSize: 12,
-    lineHeight: 16,
-  } as TextStyle,
-
-  stepPoints: {
-    fontSize: 10,
-    color: colors.amber700,
-    fontWeight: '600',
   } as TextStyle,
 });
 
@@ -578,22 +538,51 @@ export function CHWJourneysScreen(): React.JSX.Element {
             <Card style={styles.emptyCard}>
               <Text style={styles.emptyText}>No journeys match this filter.</Text>
             </Card>
-          ) : (
-            <View style={styles.gridInner}>
-              {filtered.map((journey) => {
-                const memberName =
-                  MOCK_MEMBER_NAMES[journey.memberId] ??
-                  `Member ${journey.memberId.slice(-4)}`;
-                return (
-                  <JourneyCard
-                    key={journey.id}
-                    journey={journey}
-                    memberName={memberName}
-                  />
-                );
-              })}
-            </View>
-          )}
+          ) : (() => {
+            const activeJourneys  = filtered.filter((j) => j.status === 'active' && !j.steps.some((s) => s.status === 'missed'));
+            const stalledJourneys = filtered.filter((j) => j.status === 'paused' || (j.status === 'active' && j.steps.some((s) => s.status === 'missed')));
+            const otherJourneys   = filtered.filter((j) => j.status === 'completed' || j.status === 'abandoned');
+
+            return (
+              <View style={styles.sectionsWrap}>
+                {activeJourneys.length > 0 && (
+                  <>
+                    <Text style={styles.sectionHead}>In Progress</Text>
+                    <View style={styles.gridInner}>
+                      {activeJourneys.map((journey) => {
+                        const memberName = MOCK_MEMBER_NAMES[journey.memberId] ?? `Member ${journey.memberId.slice(-4)}`;
+                        return <JourneyCard key={journey.id} journey={journey} memberName={memberName} />;
+                      })}
+                    </View>
+                  </>
+                )}
+
+                {stalledJourneys.length > 0 && (
+                  <>
+                    <Text style={[styles.sectionHead, styles.stalledHead]}>Stalled — need your attention</Text>
+                    <View style={styles.gridInner}>
+                      {stalledJourneys.map((journey) => {
+                        const memberName = MOCK_MEMBER_NAMES[journey.memberId] ?? `Member ${journey.memberId.slice(-4)}`;
+                        return <JourneyCard key={journey.id} journey={journey} memberName={memberName} stalled />;
+                      })}
+                    </View>
+                  </>
+                )}
+
+                {otherJourneys.length > 0 && (
+                  <>
+                    <Text style={styles.sectionHead}>Completed / Abandoned</Text>
+                    <View style={styles.gridInner}>
+                      {otherJourneys.map((journey) => {
+                        const memberName = MOCK_MEMBER_NAMES[journey.memberId] ?? `Member ${journey.memberId.slice(-4)}`;
+                        return <JourneyCard key={journey.id} journey={journey} memberName={memberName} />;
+                      })}
+                    </View>
+                  </>
+                )}
+              </View>
+            );
+          })()}
         </View>
 
         {Platform.OS === 'web' && (
@@ -737,8 +726,8 @@ const styles = StyleSheet.create({
   } as ViewStyle,
 
   filterChipActive: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
+    backgroundColor: '#ecfdf5',
+    borderColor: '#a7f3d0',
   } as ViewStyle,
 
   filterChipText: {
@@ -748,7 +737,7 @@ const styles = StyleSheet.create({
   } as TextStyle,
 
   filterChipTextActive: {
-    color: colors.cardBg,
+    color: '#065f46',
   } as TextStyle,
 
   bodyRow: {
@@ -777,6 +766,24 @@ const styles = StyleSheet.create({
   loadingText: {
     fontSize: 14,
     color: colors.textSecondary,
+  } as TextStyle,
+
+  sectionsWrap: {
+    gap: spacing.md,
+  } as ViewStyle,
+
+  sectionHead: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: spacing.xs,
+    marginTop: spacing.sm,
+  } as TextStyle,
+
+  stalledHead: {
+    color: colors.amber700,
   } as TextStyle,
 
   emptyCard: {

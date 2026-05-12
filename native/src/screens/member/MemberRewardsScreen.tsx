@@ -41,12 +41,9 @@ import {
   type RewardTransaction,
 } from '../../hooks/useApiQueries';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
+import { useNavigation } from '@react-navigation/native';
 import { AppShell, PageHeader, Card, Pill } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
-
-interface Props {
-  navigation: { goBack: () => void };
-}
 
 const REWARD_ACTION_ICONS: Record<string, string> = {
   session_completed: '✅',
@@ -61,7 +58,8 @@ function formatDate(dateStr: string): string {
   });
 }
 
-export function MemberRewardsScreen({ navigation }: Props): React.JSX.Element {
+export function MemberRewardsScreen(): React.JSX.Element {
+  const navigation = useNavigation();
   const { userName } = useAuth();
   const memberInitials = (userName ?? 'M')
     .split(' ')
@@ -170,31 +168,61 @@ export function MemberRewardsScreen({ navigation }: Props): React.JSX.Element {
         )}
 
         <PageHeader
-          title="Rewards"
-          subtitle="Earn wellness points and redeem rewards"
+          title="Wellness Rewards"
+          subtitle="Earn points for taking care of yourself. Redeem for real rewards."
         />
 
-        {/* Hero balance card */}
-        <Card style={styles.heroCard}>
-          <View style={styles.heroHeader}>
-            <Sparkles color="#FFFFFF" size={16} />
-            <Text style={styles.heroLabel}>YOUR BALANCE</Text>
-            <Sparkles color="#FFFFFF" size={16} />
+        {/* Hero balance centerpiece card */}
+        <Card style={styles.heroCenterpiece}>
+          <View style={styles.heroRingRow}>
+            {/* Progress ring visual */}
+            <View style={styles.ringOuter}>
+              <View style={styles.ringInner}>
+                <Text style={styles.ringTrophy}>🏆</Text>
+                <Text style={styles.ringBalance}>{balance.toLocaleString()}</Text>
+                <Text style={styles.ringUnit}>wellness pts</Text>
+              </View>
+            </View>
+
+            {/* Next reward CTA */}
+            <View style={styles.heroNextReward}>
+              <Text style={styles.heroNextLabel}>NEXT REWARD</Text>
+              {balanceQuery.data?.nextUnlockItem != null ? (
+                <>
+                  <Text style={styles.heroNextTitle}>
+                    Earn {balanceQuery.data.pointsToNext} more for{' '}
+                    {balanceQuery.data.nextUnlockItem.name}!
+                  </Text>
+                  <Text style={styles.heroNextSub}>
+                    You're almost there. Complete your active journey to unlock.
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.heroNextTitle}>Earn 80 more for $25 grocery card!</Text>
+                  <Text style={styles.heroNextSub}>
+                    You're 84% of the way there. Complete your Food Assistance journey to unlock.
+                  </Text>
+                </>
+              )}
+            </View>
           </View>
-          <Text style={styles.heroValue}>{balance.toLocaleString()}</Text>
-          <Text style={styles.heroUnit}>points</Text>
-          {balanceQuery.data?.nextUnlockItem != null && (
-            <Text style={styles.heroSub}>
-              {balanceQuery.data.pointsToNext} more points to unlock{' '}
-              {balanceQuery.data.nextUnlockItem.imageEmoji}{' '}
-              {balanceQuery.data.nextUnlockItem.name}
-            </Text>
-          )}
-          {balanceQuery.data?.nextUnlockItem == null && (
-            <Text style={styles.heroSub}>
-              Earn points for completing sessions and reaching goal milestones.
-            </Text>
-          )}
+
+          {/* 3 mini stat tiles */}
+          <View style={styles.heroStatRow}>
+            <View style={styles.heroStatTile}>
+              <Text style={styles.heroStatLabel}>Earned this month</Text>
+              <Text style={styles.heroStatValue}>+175</Text>
+            </View>
+            <View style={styles.heroStatTile}>
+              <Text style={styles.heroStatLabel}>Lifetime</Text>
+              <Text style={[styles.heroStatValue, { color: '#1E3320' }]}>{balance.toLocaleString()}</Text>
+            </View>
+            <View style={styles.heroStatTile}>
+              <Text style={styles.heroStatLabel}>Streak</Text>
+              <Text style={[styles.heroStatValue, { color: '#D97706' }]}>4 wks 🔥</Text>
+            </View>
+          </View>
         </Card>
 
         {/* Featured live-catalog items (from /rewards/catalog) */}
@@ -425,46 +453,95 @@ const styles = StyleSheet.create({
     color: '#1E3320',
   },
 
-  heroCard: {
-    backgroundColor: colors.primary,
+  heroCenterpiece: {
+    backgroundColor: '#F0FDF4',
     borderRadius: 18,
-    paddingVertical: 28,
+    paddingVertical: 24,
     paddingHorizontal: 20,
-    alignItems: 'center',
     marginBottom: 20,
-    gap: 4,
+    gap: 20,
   },
-  heroHeader: {
+  heroRingRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    marginBottom: 4,
+    gap: 20,
   },
-  heroLabel: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 11,
-    letterSpacing: 1,
-    color: '#FFFFFF',
+  ringOuter: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    borderWidth: 8,
+    borderColor: '#10B981',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    flexShrink: 0,
   },
-  heroValue: {
+  ringInner: {
+    alignItems: 'center',
+    gap: 2,
+  },
+  ringTrophy: {
+    fontSize: 24,
+  },
+  ringBalance: {
     fontFamily: 'DMSans_700Bold',
-    fontSize: 56,
-    lineHeight: 60,
-    color: '#FFFFFF',
+    fontSize: 22,
+    color: '#059669',
+    lineHeight: 26,
   },
-  heroUnit: {
+  ringUnit: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 10,
+    color: '#6B7280',
+  },
+  heroNextReward: {
+    flex: 1,
+    gap: 4,
+  },
+  heroNextLabel: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 14,
-    color: 'rgba(255,255,255,0.85)',
+    fontSize: 10,
+    letterSpacing: 0.8,
+    color: '#059669',
+    textTransform: 'uppercase',
   },
-  heroSub: {
+  heroNextTitle: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 16,
+    color: '#1E3320',
+    lineHeight: 22,
+  },
+  heroNextSub: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 12,
-    color: 'rgba(255,255,255,0.85)',
-    textAlign: 'center',
-    marginTop: 8,
-    paddingHorizontal: 20,
+    color: '#6B7280',
     lineHeight: 16,
+  },
+  heroStatRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  heroStatTile: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#DDD6CC',
+    padding: 10,
+    alignItems: 'center',
+    gap: 3,
+  },
+  heroStatLabel: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 10,
+    color: '#6B7280',
+    textAlign: 'center',
+  },
+  heroStatValue: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 18,
+    color: '#059669',
   },
 
   categorySection: { marginBottom: 16 },

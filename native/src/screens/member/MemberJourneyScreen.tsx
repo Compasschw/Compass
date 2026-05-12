@@ -30,6 +30,7 @@ import {
   Clock,
   FileText,
   Gift,
+  Lightbulb,
   Route,
 } from 'lucide-react-native';
 
@@ -519,6 +520,15 @@ export function MemberJourneyScreen(): React.JSX.Element {
                     </React.Fragment>
                   ))}
                 </ScrollView>
+
+                {/* Encouragement banner */}
+                <View style={styles.encouragementBanner}>
+                  <Lightbulb size={16} color="#D97706" />
+                  <Text style={styles.encouragementText}>
+                    <Text style={{ fontWeight: '700' }}>You're making real progress!</Text>
+                    {' '}Keep going — your next step unlocks more wellness points.
+                  </Text>
+                </View>
               </Card>
 
               {/* Current step detail */}
@@ -527,9 +537,9 @@ export function MemberJourneyScreen(): React.JSX.Element {
               )}
             </View>
 
-            {/* Right rail — other journeys */}
-            {otherJourneys.length > 0 && (
-              <RightRail width={260}>
+            {/* Right rail — other journeys + journey rewards */}
+            <RightRail width={260}>
+              {otherJourneys.length > 0 && (
                 <Card style={styles.railCard}>
                   <Text style={styles.sectionLabel}>OTHER JOURNEYS</Text>
                   {otherJourneys.map((j) => (
@@ -544,8 +554,21 @@ export function MemberJourneyScreen(): React.JSX.Element {
                     />
                   ))}
                 </Card>
-              </RightRail>
-            )}
+              )}
+
+              {/* Journey Rewards */}
+              <Card style={styles.rewardsRailCard}>
+                <View style={styles.rewardsRailHeader}>
+                  <Gift size={16} color={tokens.emerald700} />
+                  <Text style={styles.rewardsRailTitle}>Journey rewards</Text>
+                </View>
+                <Text style={styles.rewardsRailBody}>
+                  Finish this journey to unlock{' '}
+                  <Text style={{ fontWeight: '700' }}>+50 wellness points</Text>
+                  {' '}→ $25 grocery gift card.
+                </Text>
+              </Card>
+            </RightRail>
           </View>
         </View>
       </ScrollView>
@@ -625,7 +648,48 @@ const styles = StyleSheet.create({
   } as ViewStyle,
   railCard: {
     padding: 16,
+    marginBottom: 12,
   } as ViewStyle,
+
+  rewardsRailCard: {
+    padding: 16,
+    backgroundColor: '#F0FDF4',
+    gap: 8,
+  } as ViewStyle,
+  rewardsRailHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+  } as ViewStyle,
+  rewardsRailTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: tokens.textPrimary,
+  } as TextStyle,
+  rewardsRailBody: {
+    fontSize: 13,
+    color: tokens.textSecondary,
+    lineHeight: 18,
+  } as TextStyle,
+
+  encouragementBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 12,
+    backgroundColor: '#FFFBEB',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  } as ViewStyle,
+  encouragementText: {
+    fontSize: 13,
+    color: '#78350F',
+    flex: 1,
+    lineHeight: 18,
+  } as TextStyle,
   emptyCard: {
     padding: 32,
     alignItems: 'center',

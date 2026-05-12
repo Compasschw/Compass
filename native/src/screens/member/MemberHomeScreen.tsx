@@ -40,9 +40,12 @@ import {
   Gift,
   ListChecks,
   Map,
+  MessageSquare,
+  Phone,
   Square,
   CheckSquare,
   Target,
+  Trophy,
 } from 'lucide-react-native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
@@ -479,9 +482,46 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
         <View style={styles.pageWrap}>
 
         <PageHeader
-          title={`${greeting}, ${firstName}`}
-          subtitle="Here's what's happening with your health journey today."
+          title={`${greeting}, ${firstName} 👋`}
+          subtitle="Here's what's happening today"
         />
+
+        {/* Hero CHW card */}
+        <Card style={styles.heroCard}>
+          <View style={styles.heroRow}>
+            <View style={styles.heroAvatarWrap}>
+              <View style={styles.heroAvatar}>
+                <Text style={styles.heroAvatarText}>MS</Text>
+              </View>
+              <View style={styles.heroOnlineDot} />
+            </View>
+            <View style={styles.heroInfo}>
+              <Text style={styles.heroChwLabel}>Your CHW</Text>
+              <Text style={styles.heroChwTitle}>Maria is available now</Text>
+              <Text style={styles.heroChwSub}>Usually responds in under 2 hours · English &amp; Spanish</Text>
+            </View>
+          </View>
+          <View style={styles.heroActions}>
+            <Pressable
+              onPress={handleOpenSessions}
+              style={styles.heroPrimaryBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Send a message to Maria"
+            >
+              <MessageSquare size={16} color="#FFFFFF" />
+              <Text style={styles.heroPrimaryBtnText}>Send a message</Text>
+            </Pressable>
+            <Pressable
+              onPress={handleOpenSessions}
+              style={styles.heroSecondaryBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Schedule a call with Maria"
+            >
+              <Phone size={16} color="#3D5A3E" />
+              <Text style={styles.heroSecondaryBtnText}>Schedule a call</Text>
+            </Pressable>
+          </View>
+        </Card>
 
         {/* Stat grid — 2×2 */}
         <View style={styles.statGrid}>
@@ -546,38 +586,73 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
           />
         </View>
 
-        {/* My Goals */}
-        <Card style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>My Goals</Text>
-            <Pressable
-              onPress={() => navigation.navigate('Roadmap')}
-              accessibilityRole="button"
-              accessibilityLabel="View full roadmap"
-              hitSlop={8}
-            >
-              <View style={styles.linkRow}>
-                <Text style={styles.linkText}>Full roadmap</Text>
-                <ArrowRight color={colors.primary} size={13} />
+        {/* Your Journeys */}
+        <Text style={styles.sectionHeading}>Your Journeys</Text>
+        <View style={styles.journeyRow}>
+          <Pressable
+            onPress={handleOpenRoadmap}
+            style={({ pressed }) => [styles.journeyCard, pressed && { opacity: 0.85 }]}
+            accessibilityRole="button"
+            accessibilityLabel="Food Assistance journey, 60% complete"
+          >
+            <View style={styles.journeyCardHeader}>
+              <View style={[styles.journeyIconCircle, { backgroundColor: '#FED7AA' }]}>
+                <Text style={styles.journeyIconEmoji}>🍽️</Text>
               </View>
-            </Pressable>
-          </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.journeyCardTitle}>Food Assistance</Text>
+                <Text style={styles.journeyCardSub}>CalFresh enrollment</Text>
+              </View>
+              <View style={styles.journeyPill}>
+                <Text style={styles.journeyPillText}>60%</Text>
+              </View>
+            </View>
+            <View style={styles.journeyProgressTrack}>
+              <View style={[styles.journeyProgressFill, { width: '60%' }]} />
+            </View>
+          </Pressable>
 
-          {activeGoals.length === 0 ? (
-            <View style={styles.emptyState}>
-              <Map color={colors.mutedForeground} size={24} />
-              <Text style={styles.emptyStateTitle}>No goals yet</Text>
-              <Text style={styles.emptyStateSub}>
-                Work with a CHW to set personalized health goals.
-              </Text>
+          <Pressable
+            onPress={handleOpenRoadmap}
+            style={({ pressed }) => [styles.journeyCard, pressed && { opacity: 0.85 }]}
+            accessibilityRole="button"
+            accessibilityLabel="Mental Health journey, 80% complete"
+          >
+            <View style={styles.journeyCardHeader}>
+              <View style={[styles.journeyIconCircle, { backgroundColor: '#E9D5FF' }]}>
+                <Text style={styles.journeyIconEmoji}>🧠</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.journeyCardTitle}>Mental Health</Text>
+                <Text style={styles.journeyCardSub}>Behavioral health referral</Text>
+              </View>
+              <View style={styles.journeyPill}>
+                <Text style={styles.journeyPillText}>80%</Text>
+              </View>
             </View>
-          ) : (
-            <View style={styles.goalList}>
-              {activeGoals.map((goal) => (
-                <GoalCard key={goal.id} goal={goal} />
-              ))}
+            <View style={styles.journeyProgressTrack}>
+              <View style={[styles.journeyProgressFill, { width: '80%' }]} />
             </View>
-          )}
+          </Pressable>
+        </View>
+
+        {/* Recent activity */}
+        <Text style={styles.sectionHeading}>Recent activity</Text>
+        <Card style={styles.activityCard}>
+          {[
+            { icon: <MessageSquare size={16} color="#2563EB" />, text: 'Maria sent you a message', time: '1h ago' },
+            { icon: <Trophy size={16} color="#D97706" />, text: 'You earned +25 pts for Eligibility Screening', time: '2d ago' },
+            { icon: <CalendarCheck size={16} color="#059669" />, text: 'Your appointment Mon was confirmed', time: '3d ago' },
+          ].map((item, idx) => (
+            <View
+              key={idx}
+              style={[styles.activityRow, idx > 0 && { borderTopWidth: 1, borderTopColor: '#F3F4F6' }]}
+            >
+              {item.icon}
+              <Text style={styles.activityText}>{item.text}</Text>
+              <Text style={styles.activityTime}>{item.time}</Text>
+            </View>
+          ))}
         </Card>
 
         {/* CTA to find CHW */}
@@ -1036,5 +1111,209 @@ const styles = StyleSheet.create({
 
   bottomPadding: {
     height: 24,
+  },
+
+  // ── Hero CHW card ────────────────────────────────────────────────────────────
+  heroCard: {
+    backgroundColor: '#F0FDF4',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    padding: 20,
+    marginBottom: 20,
+    gap: 14,
+  },
+  heroRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  heroAvatarWrap: {
+    position: 'relative',
+  },
+  heroAvatar: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#059669',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  heroAvatarText: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 20,
+    color: '#FFFFFF',
+  },
+  heroOnlineDot: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: '#10B981',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+  },
+  heroInfo: {
+    flex: 1,
+    gap: 2,
+  },
+  heroChwLabel: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 11,
+    color: '#059669',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  heroChwTitle: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 18,
+    color: '#1E3320',
+    lineHeight: 24,
+  },
+  heroChwSub: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 12,
+    color: '#6B7280',
+    lineHeight: 16,
+  },
+  heroActions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  heroPrimaryBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    backgroundColor: '#3D5A3E',
+    borderRadius: 12,
+    paddingVertical: 11,
+  },
+  heroPrimaryBtnText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 14,
+    color: '#FFFFFF',
+  },
+  heroSecondaryBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    borderRadius: 12,
+    paddingVertical: 11,
+    backgroundColor: '#FFFFFF',
+  },
+  heroSecondaryBtnText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 14,
+    color: '#3D5A3E',
+  },
+
+  // ── Section heading ──────────────────────────────────────────────────────────
+  sectionHeading: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12,
+    color: '#6B7280',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginBottom: 10,
+    marginTop: 4,
+  },
+
+  // ── Journey cards row ────────────────────────────────────────────────────────
+  journeyRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 20,
+  },
+  journeyCard: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#DDD6CC',
+    padding: 16,
+    gap: 10,
+  },
+  journeyCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  journeyIconCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  journeyIconEmoji: {
+    fontSize: 18,
+  },
+  journeyCardTitle: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 14,
+    color: '#1E3320',
+  },
+  journeyCardSub: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: '#6B7280',
+  },
+  journeyPill: {
+    backgroundColor: '#D1FAE5',
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  journeyPillText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 11,
+    color: '#059669',
+  },
+  journeyProgressTrack: {
+    height: 6,
+    backgroundColor: '#F3F4F6',
+    borderRadius: 999,
+    overflow: 'hidden',
+  },
+  journeyProgressFill: {
+    height: '100%',
+    backgroundColor: '#3D5A3E',
+    borderRadius: 999,
+  },
+
+  // ── Recent activity ──────────────────────────────────────────────────────────
+  activityCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#DDD6CC',
+    marginBottom: 16,
+    overflow: 'hidden',
+  },
+  activityRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+  },
+  activityText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: '#374151',
+    flex: 1,
+  },
+  activityTime: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: '#9CA3AF',
   },
 });

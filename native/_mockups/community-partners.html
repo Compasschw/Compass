@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Compass CHW — Community Partners</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    body { font-family: 'Inter', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+    .sidebar-bg { background: linear-gradient(180deg, #134e36 0%, #0f3d2a 100%); }
+    .sidebar-item { display:flex; align-items:center; gap:12px; padding:10px 14px; border-radius:10px; color:#a7d4be; font-size:14px; font-weight:500; transition:all .15s; cursor:pointer; text-decoration:none; }
+    .sidebar-item:hover { background: rgba(255,255,255,0.06); color:#fff; }
+    .sidebar-item.active { background:#fff; color:#0f3d2a; font-weight:600; box-shadow:0 1px 3px rgba(0,0,0,.06); }
+    .sidebar-item.active .icon { color:#16a34a; }
+    .icon { width:18px; height:18px; flex-shrink:0; }
+    .pill { display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:999px; font-size:11px; font-weight:600; }
+    .card { background:#fff; border-radius:16px; box-shadow:0 1px 3px rgba(0,0,0,.04), 0 1px 2px rgba(0,0,0,.03); border:1px solid #f1f5f4; }
+    .partner-card { transition:all .2s; }
+    .partner-card:hover { transform:translateY(-2px); box-shadow:0 6px 20px rgba(0,0,0,.06); border-color:#a7f3d0; }
+    .filter-btn { padding:7px 14px; border-radius:10px; font-size:13px; font-weight:500; color:#6b7280; border:1px solid #e5e7eb; background:#fff; cursor:pointer; }
+    .filter-btn.active { background:#ecfdf5; color:#065f46; border-color:#a7f3d0; }
+    .logo { width:48px; height:48px; border-radius:12px; display:grid; place-items:center; font-weight:bold; color:#fff; flex-shrink:0; font-size:14px; }
+  </style>
+</head>
+<body class="bg-[#f5f7f6] min-h-screen">
+  <div class="flex min-h-screen">
+    <aside class="sidebar-bg w-64 flex-shrink-0 flex flex-col py-6 px-4">
+      <div class="px-2 mb-8"><div class="flex items-center gap-2.5"><div class="w-9 h-9 rounded-xl bg-emerald-500 grid place-items-center"><i data-lucide="compass" class="w-5 h-5 text-white"></i></div><div><div class="text-white font-bold text-lg leading-tight">compasschw</div><div class="text-emerald-300 text-xs font-medium">Medi-Cal Member</div></div></div></div>
+      <nav class="flex-1 space-y-1">
+        <a href="member-profile.html" class="sidebar-item"><i data-lucide="user-round" class="icon"></i><span>Member Profile</span></a>
+        <a href="dashboard.html" class="sidebar-item"><i data-lucide="layout-dashboard" class="icon"></i><span>Dashboard</span></a>
+        <a href="members.html" class="sidebar-item"><i data-lucide="users" class="icon"></i><span>Members</span></a>
+        <a href="journeys.html" class="sidebar-item"><i data-lucide="route" class="icon"></i><span>Journeys</span></a>
+        <a href="messages.html" class="sidebar-item"><i data-lucide="message-square" class="icon"></i><span class="flex-1">Messages</span><span class="bg-emerald-500 text-white text-xs font-semibold px-2 py-0.5 rounded-full">12</span></a>
+        <a href="appointments.html" class="sidebar-item"><i data-lucide="calendar" class="icon"></i><span>Appointments</span></a>
+        <a href="resources.html" class="sidebar-item"><i data-lucide="folder-open" class="icon"></i><span>Resources</span></a>
+        <a href="documents.html" class="sidebar-item"><i data-lucide="file-text" class="icon"></i><span>Documents</span></a>
+        <a href="reports.html" class="sidebar-item"><i data-lucide="bar-chart-3" class="icon"></i><span>Reports</span></a>
+        <a href="community-partners.html" class="sidebar-item active"><i data-lucide="building-2" class="icon"></i><span>Community Partners</span></a>
+        <a href="#" class="sidebar-item"><i data-lucide="settings" class="icon"></i><span>Settings</span></a>
+      </nav>
+      <div class="mt-6 pt-4 border-t border-emerald-900/40">
+        <a href="member-home.html" class="text-emerald-300 text-xs hover:text-white px-2 py-1 block">Switch to Member view →</a>
+        <div class="flex items-center gap-3 px-2 py-2 mt-1"><div class="w-9 h-9 rounded-full bg-emerald-300 grid place-items-center text-emerald-900 font-bold text-sm">MS</div><div class="flex-1 min-w-0"><div class="text-white text-sm font-semibold truncate">Maria Sanchez</div><div class="text-emerald-300 text-xs">Community Health Worker</div></div></div>
+      </div>
+    </aside>
+
+    <main class="flex-1 p-8 overflow-y-auto">
+      <div class="flex items-end justify-between mb-6">
+        <div>
+          <h1 class="text-2xl font-bold text-gray-900">Community Partners</h1>
+          <p class="text-sm text-gray-600 mt-1">37 partner organizations · 12 with active referral relationships</p>
+        </div>
+        <div class="flex items-center gap-3">
+          <div class="relative">
+            <input class="pl-10 pr-4 py-2 w-64 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-200" placeholder="Search partners..." />
+            <i data-lucide="search" class="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2"></i>
+          </div>
+          <button class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-xl flex items-center gap-2"><i data-lucide="plus" class="w-4 h-4"></i>Suggest a Partner</button>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-2 mb-5 flex-wrap">
+        <button class="filter-btn active">All (37)</button>
+        <button class="filter-btn">Active Partners (12)</button>
+        <button class="filter-btn">Food Banks (5)</button>
+        <button class="filter-btn">Shelters (8)</button>
+        <button class="filter-btn">Mental Health (6)</button>
+        <button class="filter-btn">Legal Aid (4)</button>
+        <button class="filter-btn">Workforce Dev (3)</button>
+        <button class="filter-btn">Maternal Health (5)</button>
+        <button class="filter-btn">Other (6)</button>
+      </div>
+
+      <div class="grid grid-cols-12 gap-6">
+        <div class="col-span-9 grid grid-cols-2 gap-4">
+          <!-- 8 partner cards -->
+          <div class="card partner-card p-5">
+            <div class="flex items-start gap-3 mb-3">
+              <div class="logo" style="background:#dc2626">FJV</div>
+              <div class="flex-1"><div class="font-semibold text-gray-900">Father Joe's Villages</div><div class="flex flex-wrap gap-1 mt-1"><span class="pill bg-red-100 text-red-700">Shelter</span><span class="pill bg-orange-100 text-orange-700">Food</span></div></div>
+              <span class="pill bg-emerald-100 text-emerald-700"><i data-lucide="badge-check" class="w-3 h-3"></i>Verified</span>
+            </div>
+            <div class="text-sm text-gray-600 space-y-0.5 mb-3">
+              <div>📍 1501 Imperial Ave, San Diego</div>
+              <div>👤 Tanya Ortiz · Intake Coordinator · (619) 446-2100</div>
+            </div>
+            <div class="flex items-center gap-2 text-xs text-gray-500 mb-3">
+              <span>23 referrals sent · 19 accepted (83%)</span>
+              <span class="ml-auto">avg 2.4h response</span>
+            </div>
+            <div class="text-[11px] text-amber-600 mb-3">★★★★★ from 12 CHWs</div>
+            <div class="grid grid-cols-2 gap-1.5">
+              <button class="px-2 py-1.5 bg-emerald-600 text-white text-xs font-semibold rounded-lg">Refer a member</button>
+              <button class="px-2 py-1.5 border border-gray-200 text-xs font-semibold rounded-lg hover:bg-gray-50">Send a message</button>
+            </div>
+          </div>
+
+          <div class="card partner-card p-5">
+            <div class="flex items-start gap-3 mb-3">
+              <div class="logo" style="background:#f97316">SDFB</div>
+              <div class="flex-1"><div class="font-semibold text-gray-900">San Diego Food Bank</div><div class="flex flex-wrap gap-1 mt-1"><span class="pill bg-orange-100 text-orange-700">Food</span></div></div>
+              <span class="pill bg-emerald-100 text-emerald-700"><i data-lucide="badge-check" class="w-3 h-3"></i>Verified</span>
+            </div>
+            <div class="text-sm text-gray-600 space-y-0.5 mb-3">
+              <div>📍 9850 Distribution Ave, San Diego</div>
+              <div>👤 James Chen · Partner Liaison · (858) 527-1419</div>
+            </div>
+            <div class="flex items-center gap-2 text-xs text-gray-500 mb-3"><span>41 referrals sent · 40 accepted (98%)</span><span class="ml-auto">same-day</span></div>
+            <div class="text-[11px] text-amber-600 mb-3">★★★★★ from 24 CHWs</div>
+            <div class="grid grid-cols-2 gap-1.5">
+              <button class="px-2 py-1.5 bg-emerald-600 text-white text-xs font-semibold rounded-lg">Refer a member</button>
+              <button class="px-2 py-1.5 border border-gray-200 text-xs font-semibold rounded-lg hover:bg-gray-50">Send a message</button>
+            </div>
+          </div>
+
+          <div class="card partner-card p-5">
+            <div class="flex items-start gap-3 mb-3">
+              <div class="logo" style="background:#8b5cf6">MAAC</div>
+              <div class="flex-1"><div class="font-semibold text-gray-900">MAAC Project</div><div class="flex flex-wrap gap-1 mt-1"><span class="pill bg-purple-100 text-purple-700">Mental Health</span></div></div>
+              <span class="pill bg-emerald-100 text-emerald-700"><i data-lucide="badge-check" class="w-3 h-3"></i>Verified</span>
+            </div>
+            <div class="text-sm text-gray-600 space-y-0.5 mb-3">
+              <div>📍 1355 3rd Ave, Chula Vista</div>
+              <div>👤 Dr. Lupe Rivera · Clinical Director · (619) 426-3595</div>
+            </div>
+            <div class="flex items-center gap-2 text-xs text-gray-500 mb-3"><span>14 referrals · 12 accepted (86%)</span><span class="ml-auto">avg 4.1h</span></div>
+            <div class="text-[11px] text-amber-600 mb-3">★★★★★ from 9 CHWs</div>
+            <div class="grid grid-cols-2 gap-1.5">
+              <button class="px-2 py-1.5 bg-emerald-600 text-white text-xs font-semibold rounded-lg">Refer a member</button>
+              <button class="px-2 py-1.5 border border-gray-200 text-xs font-semibold rounded-lg hover:bg-gray-50">Send a message</button>
+            </div>
+          </div>
+
+          <div class="card partner-card p-5">
+            <div class="flex items-start gap-3 mb-3">
+              <div class="logo" style="background:#7c3aed">VH</div>
+              <div class="flex-1"><div class="font-semibold text-gray-900">Vista Hill</div><div class="flex flex-wrap gap-1 mt-1"><span class="pill bg-purple-100 text-purple-700">Mental Health</span></div></div>
+              <span class="pill bg-emerald-100 text-emerald-700"><i data-lucide="badge-check" class="w-3 h-3"></i>Verified</span>
+            </div>
+            <div class="text-sm text-gray-600 space-y-0.5 mb-3">
+              <div>📍 8910 Clairemont Mesa Blvd, San Diego</div>
+              <div>👤 Sara Mehta · Referral Coordinator · (858) 514-5100</div>
+            </div>
+            <div class="flex items-center gap-2 text-xs text-gray-500 mb-3"><span>8 referrals · 7 accepted (88%)</span><span class="ml-auto">avg 6h</span></div>
+            <div class="text-[11px] text-amber-600 mb-3">★★★★★ from 11 CHWs</div>
+            <div class="grid grid-cols-2 gap-1.5">
+              <button class="px-2 py-1.5 bg-emerald-600 text-white text-xs font-semibold rounded-lg">Refer a member</button>
+              <button class="px-2 py-1.5 border border-gray-200 text-xs font-semibold rounded-lg hover:bg-gray-50">Send a message</button>
+            </div>
+          </div>
+
+          <div class="card partner-card p-5">
+            <div class="flex items-start gap-3 mb-3">
+              <div class="logo" style="background:#ec4899">WIC</div>
+              <div class="flex-1"><div class="font-semibold text-gray-900">SD County WIC</div><div class="flex flex-wrap gap-1 mt-1"><span class="pill bg-pink-100 text-pink-700">Maternal</span></div></div>
+              <span class="pill bg-emerald-100 text-emerald-700"><i data-lucide="badge-check" class="w-3 h-3"></i>Verified</span>
+            </div>
+            <div class="text-sm text-gray-600 space-y-0.5 mb-3">
+              <div>📍 3851 Rosecrans St, San Diego</div>
+              <div>👤 Maritza Lopez · Outreach Lead · (800) 500-6411</div>
+            </div>
+            <div class="flex items-center gap-2 text-xs text-gray-500 mb-3"><span>9 referrals · 9 accepted (100%)</span><span class="ml-auto">same-day</span></div>
+            <div class="text-[11px] text-amber-600 mb-3">★★★★★ from 19 CHWs</div>
+            <div class="grid grid-cols-2 gap-1.5">
+              <button class="px-2 py-1.5 bg-emerald-600 text-white text-xs font-semibold rounded-lg">Refer a member</button>
+              <button class="px-2 py-1.5 border border-gray-200 text-xs font-semibold rounded-lg hover:bg-gray-50">Send a message</button>
+            </div>
+          </div>
+
+          <div class="card partner-card p-5">
+            <div class="flex items-start gap-3 mb-3">
+              <div class="logo" style="background:#0891b2">FHC</div>
+              <div class="flex-1"><div class="font-semibold text-gray-900">Family Health Centers</div><div class="flex flex-wrap gap-1 mt-1"><span class="pill bg-cyan-100 text-cyan-700">Primary Care</span></div></div>
+              <span class="pill bg-emerald-100 text-emerald-700"><i data-lucide="badge-check" class="w-3 h-3"></i>Verified</span>
+            </div>
+            <div class="text-sm text-gray-600 space-y-0.5 mb-3">
+              <div>📍 23 clinics countywide</div>
+              <div>👤 Rosa Cardenas · Care Navigator · (619) 515-2300</div>
+            </div>
+            <div class="flex items-center gap-2 text-xs text-gray-500 mb-3"><span>17 referrals · 14 accepted (82%)</span><span class="ml-auto">avg 1.2 days</span></div>
+            <div class="text-[11px] text-amber-600 mb-3">★★★★☆ from 16 CHWs</div>
+            <div class="grid grid-cols-2 gap-1.5">
+              <button class="px-2 py-1.5 bg-emerald-600 text-white text-xs font-semibold rounded-lg">Refer a member</button>
+              <button class="px-2 py-1.5 border border-gray-200 text-xs font-semibold rounded-lg hover:bg-gray-50">Send a message</button>
+            </div>
+          </div>
+
+          <div class="card partner-card p-5">
+            <div class="flex items-start gap-3 mb-3">
+              <div class="logo" style="background:#16a34a">SDWP</div>
+              <div class="flex-1"><div class="font-semibold text-gray-900">SD Workforce Partnership</div><div class="flex flex-wrap gap-1 mt-1"><span class="pill bg-emerald-100 text-emerald-700">Workforce</span></div></div>
+              <span class="pill bg-gray-100 text-gray-600">Pending</span>
+            </div>
+            <div class="text-sm text-gray-600 space-y-0.5 mb-3">
+              <div>📍 3910 University Ave, San Diego</div>
+              <div>👤 Marcus Hu · Program Manager · (619) 228-2900</div>
+            </div>
+            <div class="flex items-center gap-2 text-xs text-gray-500 mb-3"><span>3 referrals · 2 accepted (67%)</span><span class="ml-auto">avg 2.5 days</span></div>
+            <div class="text-[11px] text-amber-600 mb-3">★★★★☆ from 4 CHWs</div>
+            <div class="grid grid-cols-2 gap-1.5">
+              <button class="px-2 py-1.5 bg-emerald-600 text-white text-xs font-semibold rounded-lg">Refer a member</button>
+              <button class="px-2 py-1.5 border border-gray-200 text-xs font-semibold rounded-lg hover:bg-gray-50">Send a message</button>
+            </div>
+          </div>
+
+          <div class="card partner-card p-5">
+            <div class="flex items-start gap-3 mb-3">
+              <div class="logo" style="background:#1e40af">LAS</div>
+              <div class="flex-1"><div class="font-semibold text-gray-900">Legal Aid Society</div><div class="flex flex-wrap gap-1 mt-1"><span class="pill bg-blue-100 text-blue-700">Legal</span></div></div>
+              <span class="pill bg-emerald-100 text-emerald-700"><i data-lucide="badge-check" class="w-3 h-3"></i>Verified</span>
+            </div>
+            <div class="text-sm text-gray-600 space-y-0.5 mb-3">
+              <div>📍 110 S Euclid Ave, San Diego</div>
+              <div>👤 Atty. David Park · Senior Counsel · (877) 534-2524</div>
+            </div>
+            <div class="flex items-center gap-2 text-xs text-gray-500 mb-3"><span>5 referrals · 4 accepted (80%)</span><span class="ml-auto">avg 3 days</span></div>
+            <div class="text-[11px] text-amber-600 mb-3">★★★★★ from 7 CHWs</div>
+            <div class="grid grid-cols-2 gap-1.5">
+              <button class="px-2 py-1.5 bg-emerald-600 text-white text-xs font-semibold rounded-lg">Refer a member</button>
+              <button class="px-2 py-1.5 border border-gray-200 text-xs font-semibold rounded-lg hover:bg-gray-50">Send a message</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="col-span-3 space-y-4">
+          <div class="card p-5">
+            <h3 class="font-semibold text-gray-900 text-sm mb-3">Top referral sources (this month)</h3>
+            <div class="space-y-2 text-sm">
+              <div class="flex items-center justify-between"><span class="text-gray-700">SD Food Bank</span><span class="text-gray-500 text-xs">12×</span></div>
+              <div class="flex items-center justify-between"><span class="text-gray-700">211 San Diego</span><span class="text-gray-500 text-xs">8×</span></div>
+              <div class="flex items-center justify-between"><span class="text-gray-700">Father Joe's</span><span class="text-gray-500 text-xs">6×</span></div>
+              <div class="flex items-center justify-between"><span class="text-gray-700">SD County WIC</span><span class="text-gray-500 text-xs">5×</span></div>
+              <div class="flex items-center justify-between"><span class="text-gray-700">Family Health Centers</span><span class="text-gray-500 text-xs">4×</span></div>
+            </div>
+          </div>
+          <div class="card p-5">
+            <h3 class="font-semibold text-gray-900 text-sm mb-3">Recently added</h3>
+            <div class="space-y-2 text-sm">
+              <div><div class="text-gray-900 font-medium">SD Workforce Partnership</div><div class="text-xs text-gray-500">Added by Maria · 2 weeks ago</div></div>
+              <div><div class="text-gray-900 font-medium">Casa Familiar</div><div class="text-xs text-gray-500">Added by Jemal · 3 weeks ago</div></div>
+              <div><div class="text-gray-900 font-medium">CARE Project</div><div class="text-xs text-gray-500">Added by Maria · 1 month ago</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="mt-8 text-center"><a href="index.html" class="text-emerald-600 hover:underline text-sm">← Back to mockups index</a></div>
+    </main>
+  </div>
+  <script>lucide.createIcons();</script>
+</body>
+</html>

@@ -62,6 +62,8 @@ import {
   PageHeader,
   Card,
   StatTile,
+  Pill,
+  type PillVariant,
 } from '../../components/ui';
 import { colors as tokens } from '../../theme/tokens';
 
@@ -177,6 +179,14 @@ function lookupPayoutStatus(
   const claim = claimsBySession.get(sessionId);
   return mapClaimStatus(claim?.status);
 }
+
+/** Maps a PayoutStatus to the design-system Pill variant. */
+const PAYOUT_STATUS_PILL: Record<PayoutStatus, PillVariant> = {
+  pending: 'amber',
+  submitted: 'blue',
+  approved: 'emerald',
+  rejected: 'red',
+};
 
 function formatShortDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-US', {
@@ -582,7 +592,6 @@ export function CHWEarningsScreen(): React.JSX.Element {
               ) : (
                 completedSessions.slice(0, 10).map((session, index) => {
                   const payoutStatus = lookupPayoutStatus(session.id, claimsBySession);
-                  const statusColor = PAYOUT_STATUS_COLORS[payoutStatus];
                   const verticalColor = VERTICAL_COLORS[session.vertical as Vertical] ?? '#6B7A6B';
                   return (
                     <View key={session.id}>
@@ -613,11 +622,9 @@ export function CHWEarningsScreen(): React.JSX.Element {
                           <Text style={styles.payoutAmount}>
                             {formatCurrency(chwNetFromSession(session))}
                           </Text>
-                          <View style={[styles.badge, { backgroundColor: statusColor + '18' }]}>
-                            <Text style={[styles.badgeText, { color: statusColor }]}>
-                              {PAYOUT_STATUS_LABELS[payoutStatus]}
-                            </Text>
-                          </View>
+                          <Pill variant={PAYOUT_STATUS_PILL[payoutStatus]} size="sm">
+                            {PAYOUT_STATUS_LABELS[payoutStatus]}
+                          </Pill>
                         </View>
                       </View>
                     </View>
@@ -664,9 +671,7 @@ export function CHWEarningsScreen(): React.JSX.Element {
                             <Text style={[styles.payoutAmount, { color: colors.primary }]}>
                               {formatCurrency(chwNetFromSession(session))}
                             </Text>
-                            <View style={[styles.badge, { backgroundColor: colors.primary + '18' }]}>
-                              <Text style={[styles.badgeText, { color: colors.primary }]}>Paid</Text>
-                            </View>
+                            <Pill variant="emerald" size="sm">Paid</Pill>
                           </View>
                         </View>
                       </View>
@@ -797,8 +802,8 @@ const styles = StyleSheet.create({
   statGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 12,
-    marginBottom: 20,
+    gap: 16,
+    marginBottom: 24,
   },
   statTile: {
     flex: 1,
@@ -808,18 +813,18 @@ const styles = StyleSheet.create({
   // ── Chart + bank row ────────────────────────────────────────────────────────
   chartBankRow: {
     flexDirection: 'row',
-    gap: 16,
-    marginBottom: 20,
+    gap: 20,
+    marginBottom: 24,
     flexWrap: 'wrap',
   },
   chartCard: {
     flex: 2,
-    padding: 16,
+    padding: 20,
     minWidth: 260,
   },
   bankCard: {
     flex: 1,
-    padding: 16,
+    padding: 20,
     minWidth: 180,
     gap: 10,
     justifyContent: 'center',
@@ -910,8 +915,8 @@ const styles = StyleSheet.create({
 
   // ── Generic card shell ────────────────────────────────────────────────────────
   card: {
-    padding: 16,
-    marginBottom: 20,
+    padding: 20,
+    marginBottom: 24,
   },
   sectionTitle: {
     fontFamily: 'DMSans_700Bold',
