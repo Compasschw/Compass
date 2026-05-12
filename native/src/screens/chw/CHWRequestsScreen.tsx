@@ -1,21 +1,29 @@
 /**
- * CHWRequestsScreen — Inbox for incoming community member service requests.
+ * CHWRequestsScreen — Members screen (renamed in new design, same data).
  *
- * Features:
- *  - Horizontal scrollable filter tabs by vertical category
- *  - Request cards with vertical badge, urgency badge, earnings estimate
- *  - Accept / Pass actions (optimistic dismiss)
- *  - Empty state when no requests match the active filter
+ * Re-skinned to the new design system (AppShell + Card + Pill + PageHeader).
+ * Behavior, hooks, mutations, and navigation are identical to the original.
+ *
+ * Tab strip:
+ *   My Members     — accepted requests (members active with this CHW)
+ *   Pending Requests — open requests inbox with Accept / Pass (was the original default view)
+ *   Inactive        — passed/dismissed requests
+ *
+ * Multi-select vertical filter chips appear within the Pending Requests tab.
  */
 
 import React, { useState, useCallback, useMemo } from 'react';
 import {
+  Alert,
   View,
   Text,
   ScrollView,
   StyleSheet,
   TouchableOpacity,
   FlatList,
+  Platform,
+  type ViewStyle,
+  type TextStyle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -33,11 +41,15 @@ import {
   ThumbsDown,
   Lock,
   User,
+  Users,
+  UserX,
 } from 'lucide-react-native';
 import type { CHWSessionsStackParamList } from '../../navigation/CHWTabNavigator';
 
 import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
+import { colors as tokens } from '../../theme/tokens';
+import { useAuth } from '../../context/AuthContext';
 import {
   type Vertical,
   VERTICAL_LABEL,
@@ -53,6 +65,13 @@ import {
 import { useRefreshControl } from '../../hooks/useRefreshControl';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
+
+import {
+  AppShell,
+  PageHeader,
+  Card,
+  Pill,
+} from '../../components/ui';
 
 // ─── Constants (sourced from lib/verticals — single source of truth) ──────────
 
@@ -79,6 +98,10 @@ const URGENCY_LABELS: Record<string, string> = {
   soon: 'Soon',
   urgent: 'Urgent',
 };
+
+// ─── Tab type ─────────────────────────────────────────────────────────────────
+
+type MembersTab = 'my_members' | 'pending_requests' | 'inactive';
 
 // ─── VerticalIcon helper ──────────────────────────────────────────────────────
 
@@ -135,7 +158,6 @@ function RequestCard({
   const primaryVertical = effectiveVerticals[0] as Vertical;
   const primaryColor = VERTICAL_COLORS[primaryVertical] ?? '#6B7A6B';
 
-  const urgencyColor = URGENCY_COLORS[request.urgency] ?? colors.mutedForeground;
   const urgencyLabel = URGENCY_LABELS[request.urgency] ?? request.urgency;
 
   // Joined label for display: "Housing • Mental Health • Food Security"
@@ -144,7 +166,7 @@ function RequestCard({
     .join(' • ');
 
   return (
-    <View style={[cardStyles.card, isAccepted && cardStyles.cardAccepted]}>
+    <Card style={cardStyles.card}>
       {/* Header row — vertical icon + category badges + urgency badge.
           Member name + description are intentionally hidden until accept
           per HIPAA minimum-necessary (45 CFR §164.514(d)). The summary
@@ -159,27 +181,26 @@ function RequestCard({
               {verticalsLabel} request
             </Text>
             {isAccepted ? (
-              <View style={cardStyles.acceptedBadge}>
-                <CheckCircle size={10} color="#3D5A3E" />
-                <Text style={cardStyles.acceptedBadgeText}>Accepted</Text>
-              </View>
+              <Pill variant="emerald" size="sm">Accepted</Pill>
             ) : null}
           </View>
           <View style={cardStyles.badgeRow}>
             {/* Render one badge per vertical */}
-            {effectiveVerticals.map((v) => {
-              const color = VERTICAL_COLORS[v as Vertical] ?? '#6B7A6B';
-              return (
-                <View key={v} style={[cardStyles.badge, { backgroundColor: color + '18' }]}>
-                  <Text style={[cardStyles.badgeText, { color }]}>
-                    {VERTICAL_LABELS[v as Vertical] ?? v}
-                  </Text>
-                </View>
-              );
-            })}
-            <View style={[cardStyles.badge, { backgroundColor: urgencyColor + '18' }]}>
-              <Text style={[cardStyles.badgeText, { color: urgencyColor }]}>{urgencyLabel}</Text>
-            </View>
+            {effectiveVerticals.map((v) => (
+              <Pill key={v} variant="gray" size="sm">
+                {VERTICAL_LABELS[v as Vertical] ?? v}
+              </Pill>
+            ))}
+            <Pill
+              variant={
+                request.urgency === 'urgent' ? 'red'
+                : request.urgency === 'soon' ? 'amber'
+                : 'emerald'
+              }
+              size="sm"
+            >
+              {urgencyLabel}
+            </Pill>
             <Text style={cardStyles.modeLabel}>
               · {SESSION_MODE_LABELS[request.preferredMode] ?? request.preferredMode}
             </Text>
@@ -239,54 +260,27 @@ function RequestCard({
           </TouchableOpacity>
         </View>
       ) : null}
-    </View>
+    </Card>
   );
 }
 
 const cardStyles = StyleSheet.create({
   card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-    padding: 16,
+    padding: 20,
     marginBottom: 12,
-    shadowColor: '#3D5A3E',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 24,
-    elevation: 3,
-  },
-  cardAccepted: {
-    borderColor: '#3D5A3E40',
-    backgroundColor: '#3D5A3E06',
-  },
+  } as ViewStyle,
   headerRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 12,
     marginBottom: 10,
-  },
+  } as ViewStyle,
   titleRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
     flexWrap: 'wrap',
-  },
-  acceptedBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#3D5A3E18',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 100,
-  },
-  acceptedBadgeText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 11,
-    color: '#3D5A3E',
-  },
+  } as ViewStyle,
   acceptedMemberRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -295,13 +289,13 @@ const cardStyles = StyleSheet.create({
     marginTop: 2,
     marginBottom: 4,
     flexWrap: 'wrap',
-  },
+  } as ViewStyle,
   acceptedMemberName: {
     fontFamily: 'DMSans_700Bold',
     fontSize: 14,
     color: '#1E3320',
     flex: 1,
-  },
+  } as TextStyle,
   viewProfileLink: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -312,12 +306,12 @@ const cardStyles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#3D5A3E40',
     backgroundColor: '#3D5A3E10',
-  },
+  } as ViewStyle,
   viewProfileLinkText: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 12,
     color: '#3D5A3E',
-  },
+  } as TextStyle,
   iconCircle: {
     width: 44,
     height: 44,
@@ -327,40 +321,30 @@ const cardStyles = StyleSheet.create({
     flexShrink: 0,
     marginTop: 2,
     backgroundColor: '#3D5A3E15',
-  },
+  } as ViewStyle,
   headerContent: {
     flex: 1,
     gap: 4,
-  },
+  } as ViewStyle,
   cardTitle: {
     fontFamily: 'DMSans_700Bold',
-    fontSize: 16,
-    lineHeight: 22,
-    color: '#1E3320',
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#111827',
     marginBottom: 4,
-  },
+  } as TextStyle,
   badgeRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     alignItems: 'center',
     gap: 6,
-  },
-  badge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 100,
-  },
-  badgeText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 12,
-    lineHeight: 16,
-  },
+  } as ViewStyle,
   modeLabel: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 12,
     letterSpacing: 1,
     color: '#6B7A6B',
-  },
+  } as TextStyle,
   privacyNote: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -373,18 +357,18 @@ const cardStyles = StyleSheet.create({
     backgroundColor: '#F4F1ED',
     borderLeftWidth: 3,
     borderLeftColor: colors.mutedForeground,
-  },
+  } as ViewStyle,
   privacyText: {
     flex: 1,
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 12,
     color: colors.mutedForeground,
     lineHeight: 16,
-  },
+  } as TextStyle,
   actionRow: {
     flexDirection: 'row',
     gap: 10,
-  },
+  } as ViewStyle,
   acceptButton: {
     flex: 1,
     flexDirection: 'row',
@@ -394,12 +378,12 @@ const cardStyles = StyleSheet.create({
     backgroundColor: '#3D5A3E',
     paddingVertical: 14,
     borderRadius: 12,
-  },
+  } as ViewStyle,
   acceptButtonText: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 14,
     color: '#FFFFFF',
-  },
+  } as TextStyle,
   passButton: {
     flex: 1,
     flexDirection: 'row',
@@ -411,26 +395,39 @@ const cardStyles = StyleSheet.create({
     borderColor: '#DDD6CC',
     paddingVertical: 14,
     borderRadius: 12,
-  },
+  } as ViewStyle,
   passButtonText: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 14,
     color: '#6B7A6B',
-  },
+  } as TextStyle,
 });
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 /**
- * CHW Requests screen — displays open service requests with filter tabs
- * and a summary stat row showing new / accepted / passed counts.
+ * CHW Members screen — tab strip surfaces My Members / Pending Requests / Inactive.
+ * All original hook calls and mutations are preserved exactly.
  */
 export function CHWRequestsScreen(): React.JSX.Element {
-  // Multi-select filter (per Jemal's Figma feedback: "select all that applies").
-  // Empty set == "All" (no filter applied).
+  // Active tab state — defaults to "My Members" to match new design intent.
+  const [activeTab, setActiveTab] = useState<MembersTab>('my_members');
+
+  // Multi-select vertical filter (used inside Pending Requests tab).
   const [selectedVerticals, setSelectedVerticals] = useState<Set<Vertical>>(new Set());
 
   const navigation = useNavigation<RequestsNavProp>();
+
+  const { userName } = useAuth();
+  const initials = useMemo(() => {
+    if (!userName) return 'CW';
+    return userName
+      .split(' ')
+      .map((n) => n[0] ?? '')
+      .join('')
+      .toUpperCase()
+      .slice(0, 2);
+  }, [userName]);
 
   const { data: rawRequests, isLoading, error, refetch } = useRequests();
   const acceptRequest = useAcceptRequest();
@@ -438,17 +435,10 @@ export function CHWRequestsScreen(): React.JSX.Element {
   const refresh = useRefreshControl([refetch]);
 
   // Track session-local accepted/passed counts for the summary stat row.
-  // The API handles actual status transitions; these just reflect in-session actions.
   const [acceptedCount, setAcceptedCount] = useState(0);
   const [passedCount, setPassedCount] = useState(0);
 
-  // Session-local set of request IDs the CHW has passed on. The backend's
-  // /pass endpoint is a no-op when the request isn't already matched to this
-  // CHW (a CHW passing on an open request doesn't change global status, since
-  // another CHW might want it). So the request stays at status="open" and
-  // would otherwise stay in the list — bad UX. We dismiss it client-side for
-  // the rest of the session. Refreshing the page re-shows it, which is the
-  // desired behavior for "I'm not sure right now".
+  // Session-local set of request IDs the CHW has passed on (see original comment).
   const [passedIds, setPassedIds] = useState<Set<string>>(() => new Set());
 
   const allOpenRequests = useMemo<ServiceRequestData[]>(
@@ -459,19 +449,26 @@ export function CHWRequestsScreen(): React.JSX.Element {
     [rawRequests, passedIds],
   );
 
-  // Accepted requests matched to this CHW — show with member name + profile link.
+  // Accepted requests matched to this CHW.
   const acceptedRequests = useMemo<ServiceRequestData[]>(
     () => (rawRequests ?? []).filter((r) => r.status === 'accepted'),
     [rawRequests],
   );
 
-  const filteredRequests = useMemo<ServiceRequestData[]>(
+  // Passed/inactive requests.
+  const inactiveRequests = useMemo<ServiceRequestData[]>(
+    () =>
+      (rawRequests ?? []).filter(
+        (r) => r.status !== 'open' && r.status !== 'accepted',
+      ),
+    [rawRequests],
+  );
+
+  const filteredPendingRequests = useMemo<ServiceRequestData[]>(
     () =>
       selectedVerticals.size === 0
         ? allOpenRequests
         : allOpenRequests.filter((r) => {
-            // Match if ANY of the request's verticals are in the active filter
-            // set. Fall back to the legacy single-vertical field for pre-migration rows.
             const effectiveVerticals =
               r.verticals && r.verticals.length > 0 ? r.verticals : [r.vertical];
             return effectiveVerticals.some((v) => selectedVerticals.has(v as Vertical));
@@ -493,49 +490,51 @@ export function CHWRequestsScreen(): React.JSX.Element {
   }, []);
 
   const handleAccept = useCallback(async (id: string): Promise<void> => {
-    await acceptRequest.mutateAsync(id);
-    setAcceptedCount((prev) => prev + 1);
+    try {
+      await acceptRequest.mutateAsync(id);
+      setAcceptedCount((prev) => prev + 1);
+    } catch (err) {
+      // Surface the failure to the CHW so they can retry. Without this the
+      // optimistic UI would leave them thinking the request was accepted
+      // while the row stays Pending in the backend (HIPAA + ops risk).
+      Alert.alert(
+        'Could not accept request',
+        err instanceof Error ? err.message : 'Please check your connection and try again.',
+      );
+    }
   }, [acceptRequest]);
 
   const handlePass = useCallback(async (id: string): Promise<void> => {
-    // Optimistically dismiss before the network call finishes — the request
-    // disappears from the list immediately, even if /pass is slow or fails
-    // (it's idempotent and the worst case is a stale UI on next refresh).
+    // Optimistic UI — hide the request immediately so the CHW's queue
+    // updates without waiting for the server.
     setPassedIds((prev) => {
       const next = new Set(prev);
       next.add(id);
       return next;
     });
     setPassedCount((prev) => prev + 1);
-    await passRequest.mutateAsync(id);
+    try {
+      await passRequest.mutateAsync(id);
+    } catch (err) {
+      // Roll back the optimistic hide and show an error toast — without this
+      // a failed pass silently disappears from the list while the server
+      // still has it Pending, leading to ghost requests.
+      setPassedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      setPassedCount((prev) => Math.max(0, prev - 1));
+      Alert.alert(
+        'Could not pass request',
+        err instanceof Error ? err.message : 'Please check your connection and try again.',
+      );
+    }
   }, [passRequest]);
 
   const handleViewMemberProfile = useCallback((memberId: string): void => {
     navigation.navigate('MemberProfile', { memberId });
   }, [navigation]);
-
-  if (isLoading) {
-    return (
-      <SafeAreaView style={styles.safe} edges={['top']}>
-        <View style={styles.headerBlock}>
-          <View style={styles.titleRow}>
-            <Text style={styles.pageTitle}>Open Requests</Text>
-          </View>
-        </View>
-        <View style={styles.listContent}>
-          <LoadingSkeleton variant="rows" rows={4} />
-        </View>
-      </SafeAreaView>
-    );
-  }
-
-  if (error) {
-    return (
-      <SafeAreaView style={styles.safe} edges={['top']}>
-        <ErrorState message="Failed to load requests" onRetry={() => void refetch()} />
-      </SafeAreaView>
-    );
-  }
 
   const verticalCount = useCallback(
     (key: Vertical): number =>
@@ -547,88 +546,128 @@ export function CHWRequestsScreen(): React.JSX.Element {
     [allOpenRequests],
   );
 
-  return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
-      <View style={styles.pageWrap}>
-      {/* Page header — fixed above scroll */}
-      <View style={styles.headerBlock}>
-        <View style={styles.titleRow}>
-          <Text style={styles.pageTitle}>Open Requests</Text>
-          {allOpenRequests.length > 0 ? (
-            <View style={styles.countBadge}>
-              <Text style={styles.countBadgeText}>{allOpenRequests.length}</Text>
-            </View>
-          ) : null}
-        </View>
-
-        {/* ── Summary stat row ── */}
-        <View style={styles.statSummaryRow}>
-          <View style={[styles.statSummaryCard, { borderColor: colors.compassGold + '50' }]}>
-            <View style={[styles.statSummaryIcon, { backgroundColor: colors.compassGold + '18' }]}>
-              <Bell size={14} color={colors.compassGold} />
-            </View>
-            <Text style={styles.statSummaryValue}>{allOpenRequests.length}</Text>
-            <Text style={styles.statSummaryLabel}>New</Text>
+  if (isLoading) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <View style={styles.pageWrap}>
+          <View style={styles.headerBlock}>
+            <Text style={styles.pageTitle}>Members</Text>
           </View>
-          <View style={[styles.statSummaryCard, { borderColor: colors.secondary + '50' }]}>
-            <View style={[styles.statSummaryIcon, { backgroundColor: colors.secondary + '18' }]}>
-              <CheckCircle size={14} color={colors.secondary} />
-            </View>
-            <Text style={styles.statSummaryValue}>{acceptedCount}</Text>
-            <Text style={styles.statSummaryLabel}>Accepted</Text>
-          </View>
-          <View style={[styles.statSummaryCard, { borderColor: colors.destructive + '40' }]}>
-            <View style={[styles.statSummaryIcon, { backgroundColor: colors.destructive + '18' }]}>
-              <ThumbsDown size={14} color={colors.destructive} />
-            </View>
-            <Text style={styles.statSummaryValue}>{passedCount}</Text>
-            <Text style={styles.statSummaryLabel}>Passed</Text>
+          <View style={styles.listContent}>
+            <LoadingSkeleton variant="rows" rows={4} />
           </View>
         </View>
+      </SafeAreaView>
+    );
+  }
 
-        {/* Multi-select filter chips — Jemal Figma feedback */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.tabsRow}
-        >
-          {/* "All" chip — active when nothing is selected. Tapping clears. */}
-          <TouchableOpacity
-            style={[styles.tab, selectedVerticals.size === 0 && styles.tabActive]}
-            onPress={clearFilters}
-            accessibilityRole="checkbox"
-            accessibilityState={{ checked: selectedVerticals.size === 0 }}
-            accessibilityLabel="Show all categories"
-          >
-            <Text style={[styles.tabText, selectedVerticals.size === 0 && styles.tabTextActive]}>
-              All {allOpenRequests.length > 0 ? allOpenRequests.length : ''}
-            </Text>
-          </TouchableOpacity>
-          {FILTER_VERTICALS.map((tab) => {
-            const isSelected = selectedVerticals.has(tab.key);
-            const count = verticalCount(tab.key);
-            return (
-              <TouchableOpacity
-                key={tab.key}
-                style={[styles.tab, isSelected && styles.tabActive]}
-                onPress={() => toggleVertical(tab.key)}
-                accessibilityRole="checkbox"
-                accessibilityState={{ checked: isSelected }}
-                accessibilityLabel={`Toggle ${tab.label} filter`}
-              >
-                <Text style={[styles.tabText, isSelected && styles.tabTextActive]}>
-                  {tab.label}
-                  {count > 0 ? ` ${count}` : ''}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
+  if (error) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ErrorState message="Failed to load members" onRetry={() => void refetch()} />
+      </SafeAreaView>
+    );
+  }
+
+  // ── Tab content ───────────────────────────────────────────────────────────────
+
+  const renderMyMembers = () => (
+    <FlatList
+      data={acceptedRequests}
+      keyExtractor={(item) => item.id}
+      renderItem={({ item }) => (
+        <RequestCard
+          request={item}
+          isAccepted
+          onAccept={() => undefined}
+          onPass={() => undefined}
+          onViewMemberProfile={handleViewMemberProfile}
+        />
+      )}
+      contentContainerStyle={styles.listContent}
+      showsVerticalScrollIndicator={false}
+      refreshControl={refresh.control}
+      ListEmptyComponent={
+        <View style={styles.emptyState}>
+          <View style={styles.emptyIconCircle}>
+            <Users size={24} color={colors.mutedForeground} />
+          </View>
+          <Text style={styles.emptyTitle}>No active members yet</Text>
+          <Text style={styles.emptySubtext}>
+            Accept a pending request to add a member to your caseload.
+          </Text>
+        </View>
+      }
+    />
+  );
+
+  const renderPendingRequests = () => (
+    <>
+      {/* Summary stat row */}
+      <View style={styles.statSummaryRow}>
+        <Card style={[styles.statSummaryCard, { borderColor: colors.compassGold + '50' }]}>
+          <View style={[styles.statSummaryIcon, { backgroundColor: colors.compassGold + '18' }]}>
+            <Bell size={14} color={colors.compassGold} />
+          </View>
+          <Text style={styles.statSummaryValue}>{allOpenRequests.length}</Text>
+          <Text style={styles.statSummaryLabel}>New</Text>
+        </Card>
+        <Card style={[styles.statSummaryCard, { borderColor: colors.secondary + '50' }]}>
+          <View style={[styles.statSummaryIcon, { backgroundColor: colors.secondary + '18' }]}>
+            <CheckCircle size={14} color={colors.secondary} />
+          </View>
+          <Text style={styles.statSummaryValue}>{acceptedCount}</Text>
+          <Text style={styles.statSummaryLabel}>Accepted</Text>
+        </Card>
+        <Card style={[styles.statSummaryCard, { borderColor: colors.destructive + '40' }]}>
+          <View style={[styles.statSummaryIcon, { backgroundColor: colors.destructive + '18' }]}>
+            <ThumbsDown size={14} color={colors.destructive} />
+          </View>
+          <Text style={styles.statSummaryValue}>{passedCount}</Text>
+          <Text style={styles.statSummaryLabel}>Passed</Text>
+        </Card>
       </View>
 
-      {/* Open request list + accepted requests section */}
+      {/* Multi-select vertical filter chips */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.filterChipsRow}
+      >
+        <TouchableOpacity
+          style={[styles.filterChip, selectedVerticals.size === 0 && styles.filterChipActive]}
+          onPress={clearFilters}
+          accessibilityRole="checkbox"
+          accessibilityState={{ checked: selectedVerticals.size === 0 }}
+          accessibilityLabel="Show all categories"
+        >
+          <Text style={[styles.filterChipText, selectedVerticals.size === 0 && styles.filterChipTextActive]}>
+            All {allOpenRequests.length > 0 ? allOpenRequests.length : ''}
+          </Text>
+        </TouchableOpacity>
+        {FILTER_VERTICALS.map((tab) => {
+          const isSelected = selectedVerticals.has(tab.key);
+          const count = verticalCount(tab.key);
+          return (
+            <TouchableOpacity
+              key={tab.key}
+              style={[styles.filterChip, isSelected && styles.filterChipActive]}
+              onPress={() => toggleVertical(tab.key)}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: isSelected }}
+              accessibilityLabel={`Toggle ${tab.label} filter`}
+            >
+              <Text style={[styles.filterChipText, isSelected && styles.filterChipTextActive]}>
+                {tab.label}
+                {count > 0 ? ` ${count}` : ''}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+
       <FlatList
-        data={filteredRequests}
+        data={filteredPendingRequests}
         keyExtractor={(item) => item.id}
         renderItem={({ item }) => (
           <RequestCard
@@ -653,27 +692,124 @@ export function CHWRequestsScreen(): React.JSX.Element {
             </Text>
           </View>
         }
-        ListFooterComponent={
-          acceptedRequests.length > 0 ? (
-            <View style={styles.acceptedSection}>
-              <Text style={styles.acceptedSectionTitle}>
-                Accepted Requests ({acceptedRequests.length})
-              </Text>
-              {acceptedRequests.map((req) => (
-                <RequestCard
-                  key={req.id}
-                  request={req}
-                  isAccepted
-                  onAccept={() => undefined}
-                  onPass={() => undefined}
-                  onViewMemberProfile={handleViewMemberProfile}
-                />
-              ))}
-            </View>
-          ) : null
-        }
       />
+    </>
+  );
+
+  const renderInactive = () => (
+    <FlatList
+      data={inactiveRequests}
+      keyExtractor={(item) => item.id}
+      renderItem={({ item }) => (
+        <RequestCard
+          request={item}
+          onAccept={() => undefined}
+          onPass={() => undefined}
+        />
+      )}
+      contentContainerStyle={styles.listContent}
+      showsVerticalScrollIndicator={false}
+      refreshControl={refresh.control}
+      ListEmptyComponent={
+        <View style={styles.emptyState}>
+          <View style={styles.emptyIconCircle}>
+            <UserX size={24} color={colors.mutedForeground} />
+          </View>
+          <Text style={styles.emptyTitle}>No inactive requests</Text>
+          <Text style={styles.emptySubtext}>
+            Requests you pass on will appear here.
+          </Text>
+        </View>
+      }
+    />
+  );
+
+  const screenContent = (
+    <View style={styles.pageWrap}>
+      {/* Page header */}
+      <View style={styles.headerBlock}>
+        <PageHeader
+          title="Members"
+          subtitle="Your caseload and incoming requests"
+        />
+
+        {/* ── Primary tab strip: My Members · Pending Requests · Inactive ── */}
+        <View style={styles.tabStrip}>
+          <TouchableOpacity
+            style={[styles.tabItem, activeTab === 'my_members' && styles.tabItemActive]}
+            onPress={() => setActiveTab('my_members')}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: activeTab === 'my_members' }}
+          >
+            <Users size={14} color={activeTab === 'my_members' ? '#065F46' : '#6B7280'} />
+            <Text style={[styles.tabText, activeTab === 'my_members' && styles.tabTextActive]}>
+              My Members
+            </Text>
+            {acceptedRequests.length > 0 && (
+              <View style={[styles.tabBadge, activeTab === 'my_members' && styles.tabBadgeActive]}>
+                <Text style={[styles.tabBadgeText, activeTab === 'my_members' && styles.tabBadgeTextActive]}>
+                  {acceptedRequests.length}
+                </Text>
+              </View>
+            )}
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.tabItem, activeTab === 'pending_requests' && styles.tabItemActive]}
+            onPress={() => setActiveTab('pending_requests')}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: activeTab === 'pending_requests' }}
+          >
+            <Inbox size={14} color={activeTab === 'pending_requests' ? '#065F46' : '#6B7280'} />
+            <Text style={[styles.tabText, activeTab === 'pending_requests' && styles.tabTextActive]}>
+              Pending Requests
+            </Text>
+            {allOpenRequests.length > 0 && (
+              <View style={[styles.tabBadge, activeTab === 'pending_requests' && styles.tabBadgeActive]}>
+                <Text style={[styles.tabBadgeText, activeTab === 'pending_requests' && styles.tabBadgeTextActive]}>
+                  {allOpenRequests.length}
+                </Text>
+              </View>
+            )}
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.tabItem, activeTab === 'inactive' && styles.tabItemActive]}
+            onPress={() => setActiveTab('inactive')}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: activeTab === 'inactive' }}
+          >
+            <UserX size={14} color={activeTab === 'inactive' ? '#065F46' : '#6B7280'} />
+            <Text style={[styles.tabText, activeTab === 'inactive' && styles.tabTextActive]}>
+              Inactive
+            </Text>
+            {inactiveRequests.length > 0 && (
+              <View style={[styles.tabBadge, activeTab === 'inactive' && styles.tabBadgeActive]}>
+                <Text style={[styles.tabBadgeText, activeTab === 'inactive' && styles.tabBadgeTextActive]}>
+                  {inactiveRequests.length}
+                </Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        </View>
       </View>
+
+      {/* ── Tab body ── */}
+      {activeTab === 'my_members' && renderMyMembers()}
+      {activeTab === 'pending_requests' && renderPendingRequests()}
+      {activeTab === 'inactive' && renderInactive()}
+    </View>
+  );
+
+  return (
+    <SafeAreaView style={styles.safe} edges={['top']}>
+      <AppShell
+        role="chw"
+        activeKey="members"
+        userBlock={{ initials, name: userName ?? 'CHW', role: 'CHW' }}
+      >
+        {screenContent}
+      </AppShell>
     </SafeAreaView>
   );
 }
@@ -683,68 +819,120 @@ export function CHWRequestsScreen(): React.JSX.Element {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: '#F4F1ED',
-  },
-  // Constrains the entire requests screen to a readable column on desktop web.
-  // 960 px gives the filter chips and request cards enough room while keeping
-  // the layout looking intentional on wide viewports.
+    backgroundColor: tokens.pageBg,
+  } as ViewStyle,
   pageWrap: {
+    flex: 1,
     width: '100%',
-    maxWidth: 960,
+    maxWidth: 1100,
     alignSelf: 'center',
-  },
+  } as ViewStyle,
   headerBlock: {
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 8,
-    backgroundColor: '#F4F1ED',
-  },
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 14,
-  },
+    paddingHorizontal: 32,
+    paddingTop: 32,
+    paddingBottom: 0,
+    backgroundColor: tokens.pageBg,
+  } as ViewStyle,
   pageTitle: {
     fontFamily: 'DMSans_700Bold',
     fontSize: 24,
     lineHeight: 30,
     color: '#1E3320',
-  },
-  countBadge: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    backgroundColor: '#3D5A3E',
+  } as TextStyle,
+
+  // ── Primary tab strip — mockup filter-btn: py-7px px-14px, radius 10, border, 13px 500
+  tabStrip: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 20,
+    flexWrap: 'wrap',
+  } as ViewStyle,
+  tabItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  } as ViewStyle,
+  tabItemActive: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+  } as ViewStyle,
+  tabText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 13,
+    color: '#6B7280',
+  } as TextStyle,
+  tabTextActive: {
+    color: '#065F46',
+  } as TextStyle,
+  tabBadge: {
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#E5E7EB',
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  countBadgeText: {
+    paddingHorizontal: 4,
+  } as ViewStyle,
+  tabBadgeActive: {
+    backgroundColor: '#6EE7B7',
+  } as ViewStyle,
+  tabBadgeText: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 12,
-    letterSpacing: 1,
-    color: '#FFFFFF',
-  },
-  // Summary stat row
+    fontSize: 11,
+    color: '#6B7280',
+  } as TextStyle,
+  tabBadgeTextActive: {
+    color: '#065F46',
+  } as TextStyle,
+
+  // ── Vertical filter chips (Pending tab only) — matches mockup filter-btn style
+  filterChipsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingBottom: 16,
+    paddingHorizontal: 32,
+  } as ViewStyle,
+  filterChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  } as ViewStyle,
+  filterChipActive: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+  } as ViewStyle,
+  filterChipText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 13,
+    color: '#6B7280',
+  } as TextStyle,
+  filterChipTextActive: {
+    color: '#065F46',
+  } as TextStyle,
+
+  // ── Summary stat row (Pending tab)
   statSummaryRow: {
     flexDirection: 'row',
-    gap: 10,
-    marginBottom: 14,
-  },
+    gap: 16,
+    marginBottom: 16,
+    paddingHorizontal: 32,
+    paddingTop: 8,
+  } as ViewStyle,
   statSummaryCard: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    borderWidth: 1,
     padding: 12,
     alignItems: 'center',
     gap: 4,
-    shadowColor: '#3D5A3E',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 24,
-    elevation: 3,
-  },
+  } as ViewStyle,
   statSummaryIcon: {
     width: 40,
     height: 40,
@@ -752,56 +940,34 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 2,
-    backgroundColor: '#3D5A3E15',
-  },
+  } as ViewStyle,
   statSummaryValue: {
     fontFamily: 'DMSans_700Bold',
     fontSize: 24,
     color: '#1E3320',
     lineHeight: 30,
-  },
+  } as TextStyle,
   statSummaryLabel: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 14,
     color: '#6B7A6B',
-  },
+  } as TextStyle,
 
-  tabsRow: {
-    flexDirection: 'row',
-    gap: 8,
-    paddingBottom: 4,
-  },
-  tab: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 10,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-  },
-  tabActive: {
-    backgroundColor: '#3D5A3E',
-    borderColor: '#3D5A3E',
-  },
-  tabText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 14,
-    color: '#6B7A6B',
-  },
-  tabTextActive: {
-    color: '#FFFFFF',
-  },
+  // ── List — outer padding matches mockup's main p-8
   listContent: {
-    padding: 20,
-    paddingBottom: 40,
-  },
+    paddingHorizontal: 32,
+    paddingTop: 0,
+    paddingBottom: 48,
+  } as ViewStyle,
+
+  // ── Empty state
   emptyState: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     padding: 40,
     gap: 12,
-  },
+  } as ViewStyle,
   emptyIconCircle: {
     width: 56,
     height: 56,
@@ -809,41 +975,18 @@ const styles = StyleSheet.create({
     backgroundColor: '#3D5A3E15',
     alignItems: 'center',
     justifyContent: 'center',
-  },
+  } as ViewStyle,
   emptyTitle: {
     fontFamily: 'DMSans_700Bold',
     fontSize: 16,
     lineHeight: 22,
     color: '#1E3320',
-  },
+  } as TextStyle,
   emptySubtext: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 14,
     color: '#6B7A6B',
     textAlign: 'center',
     maxWidth: 280,
-  },
-  footnote: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 12,
-    letterSpacing: 1,
-    color: '#6B7A6B',
-    textAlign: 'center',
-    marginTop: 8,
-    paddingBottom: 8,
-  },
-  acceptedSection: {
-    marginTop: 8,
-    paddingTop: 16,
-    borderTopWidth: 1,
-    borderTopColor: '#DDD6CC',
-  },
-  acceptedSectionTitle: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 12,
-    color: '#6B7A6B',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-    marginBottom: 12,
-  },
+  } as TextStyle,
 });

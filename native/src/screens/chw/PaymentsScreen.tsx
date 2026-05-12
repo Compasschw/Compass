@@ -46,6 +46,11 @@ import {
   useConnectOnboardingLink,
   usePaymentsAccountStatus,
 } from '../../hooks/useApiQueries';
+import {
+  AppShell,
+  PageHeader,
+  Card,
+} from '../../components/ui';
 
 type Props = NativeStackScreenProps<CHWTabParamList & { Payments: undefined }, 'Payments'>;
 
@@ -89,16 +94,26 @@ export function PaymentsScreen({ navigation }: Props): React.JSX.Element {
     void Linking.openURL('https://joincompasschw.com/payments-info');
   }, []);
 
+  // ─── Wrapper ──────────────────────────────────────────────────────────────
+
+  const shellProps = {
+    role: 'chw' as const,
+    activeKey: 'earnings',
+    userBlock: { initials: 'C', name: 'CHW', role: 'CHW' as const },
+  };
+
   // ─── Loading state ────────────────────────────────────────────────────────
 
   if (statusQuery.isLoading) {
     return (
-      <SafeAreaView style={s.safeArea} edges={['top', 'bottom']}>
-        <Header onBack={() => navigation.goBack()} />
-        <View style={s.centered}>
-          <ActivityIndicator size="large" color={colors.primary} />
-        </View>
-      </SafeAreaView>
+      <AppShell {...shellProps}>
+        <SafeAreaView style={s.safeArea} edges={['top', 'bottom']}>
+          <Header onBack={() => navigation.goBack()} />
+          <View style={s.centered}>
+            <ActivityIndicator size="large" color={colors.primary} />
+          </View>
+        </SafeAreaView>
+      </AppShell>
     );
   }
 
@@ -106,56 +121,63 @@ export function PaymentsScreen({ navigation }: Props): React.JSX.Element {
 
   if (status?.payoutsEnabled) {
     return (
-      <SafeAreaView style={s.safeArea} edges={['top', 'bottom']}>
-        <Header onBack={() => navigation.goBack()} />
-        <ScrollView contentContainerStyle={s.content}>
-          <View style={s.pageWrap}>
-          <View style={[s.heroCard, s.heroCardActive]}>
-            <View style={s.heroIconCircle}>
-              <CheckCircle size={28} color="#FFFFFF" />
+      <AppShell {...shellProps}>
+        <SafeAreaView style={s.safeArea} edges={['top', 'bottom']}>
+          <Header onBack={() => navigation.goBack()} />
+          <ScrollView contentContainerStyle={s.content}>
+            <View style={s.pageWrap}>
+              <PageHeader
+                title="Payout Setup"
+                subtitle="Your Stripe Connect payout account is active."
+              />
+
+              <Card style={[s.heroCard, s.heroCardActive]}>
+                <View style={s.heroIconCircle}>
+                  <CheckCircle size={28} color="#FFFFFF" />
+                </View>
+                <Text style={s.heroTitleActive}>Direct deposit active</Text>
+                <Text style={s.heroSubtitleActive}>
+                  You're all set to receive payouts. Stripe issues weekly payouts every
+                  Friday for sessions approved that week.
+                </Text>
+              </Card>
+
+              <InfoRow
+                icon={<Landmark size={18} color={colors.primary} />}
+                title="Linked bank account"
+                subtitle="Managed by Stripe — update from your bank if it changes"
+              />
+              <InfoRow
+                icon={<ShieldCheck size={18} color={colors.primary} />}
+                title="Identity verified"
+                subtitle="Stripe handles identity verification and KYC securely"
+              />
+              <InfoRow
+                icon={<TrendingUp size={18} color={colors.primary} />}
+                title="Automatic weekly payouts"
+                subtitle="Funds from completed sessions are paid out every Friday"
+              />
+
+              <Pressable
+                style={s.secondaryButton}
+                onPress={handleStart}
+                disabled={opening || onboardingMutation.isPending}
+              >
+                {opening || onboardingMutation.isPending ? (
+                  <ActivityIndicator size="small" color={colors.primary} />
+                ) : (
+                  <Text style={s.secondaryButtonText}>Update payout info</Text>
+                )}
+              </Pressable>
+
+              <Text style={s.footnote}>
+                Tax documents (1099-NEC) are generated automatically by Stripe at year-end
+                for CHWs earning over $600. You'll receive them by email from Stripe.
+              </Text>
             </View>
-            <Text style={s.heroTitleActive}>Direct deposit active</Text>
-            <Text style={s.heroSubtitleActive}>
-              You're all set to receive payouts. Stripe issues weekly payouts every
-              Friday for sessions approved that week.
-            </Text>
-          </View>
-
-          <InfoRow
-            icon={<Landmark size={18} color={colors.primary} />}
-            title="Linked bank account"
-            subtitle="Managed by Stripe — update from your bank if it changes"
-          />
-          <InfoRow
-            icon={<ShieldCheck size={18} color={colors.primary} />}
-            title="Identity verified"
-            subtitle="Stripe handles identity verification and KYC securely"
-          />
-          <InfoRow
-            icon={<TrendingUp size={18} color={colors.primary} />}
-            title="Automatic weekly payouts"
-            subtitle="Funds from completed sessions are paid out every Friday"
-          />
-
-          <Pressable
-            style={s.secondaryButton}
-            onPress={handleStart}
-            disabled={opening || onboardingMutation.isPending}
-          >
-            {opening || onboardingMutation.isPending ? (
-              <ActivityIndicator size="small" color={colors.primary} />
-            ) : (
-              <Text style={s.secondaryButtonText}>Update payout info</Text>
-            )}
-          </Pressable>
-
-          <Text style={s.footnote}>
-            Tax documents (1099-NEC) are generated automatically by Stripe at year-end
-            for CHWs earning over $600. You'll receive them by email from Stripe.
-          </Text>
-          </View>
-        </ScrollView>
-      </SafeAreaView>
+          </ScrollView>
+        </SafeAreaView>
+      </AppShell>
     );
   }
 
@@ -163,109 +185,123 @@ export function PaymentsScreen({ navigation }: Props): React.JSX.Element {
 
   if (status?.accountId && status?.detailsSubmitted && !status?.payoutsEnabled) {
     return (
-      <SafeAreaView style={s.safeArea} edges={['top', 'bottom']}>
-        <Header onBack={() => navigation.goBack()} />
-        <ScrollView contentContainerStyle={s.content}>
-          <View style={s.pageWrap}>
-          <View style={[s.heroCard, s.heroCardPending]}>
-            <View style={[s.heroIconCircle, s.heroIconCirclePending]}>
-              <CreditCard size={28} color="#FFFFFF" />
-            </View>
-            <Text style={s.heroTitle}>Almost there</Text>
-            <Text style={s.heroSubtitle}>
-              Stripe is reviewing your information. This usually takes a few minutes,
-              sometimes up to 24 hours.
-            </Text>
-          </View>
+      <AppShell {...shellProps}>
+        <SafeAreaView style={s.safeArea} edges={['top', 'bottom']}>
+          <Header onBack={() => navigation.goBack()} />
+          <ScrollView contentContainerStyle={s.content}>
+            <View style={s.pageWrap}>
+              <PageHeader
+                title="Payout Setup"
+                subtitle="Stripe is reviewing your information."
+              />
 
-          {(status.requirementsCurrentlyDue?.length ?? 0) > 0 && (
-            <View style={s.requirementsCard}>
-              <Text style={s.requirementsTitle}>Stripe needs these items:</Text>
-              {status.requirementsCurrentlyDue.map((req: string) => (
-                <Text key={req} style={s.requirementItem}>• {req.replace(/_/g, ' ')}</Text>
-              ))}
-            </View>
-          )}
+              <Card style={[s.heroCard, s.heroCardPending]}>
+                <View style={[s.heroIconCircle, s.heroIconCirclePending]}>
+                  <CreditCard size={28} color="#FFFFFF" />
+                </View>
+                <Text style={s.heroTitle}>Almost there</Text>
+                <Text style={s.heroSubtitle}>
+                  Stripe is reviewing your information. This usually takes a few minutes,
+                  sometimes up to 24 hours.
+                </Text>
+              </Card>
 
-          <Pressable
-            style={[s.primaryButton, opening && s.primaryButtonDisabled]}
-            onPress={handleStart}
-            disabled={opening || onboardingMutation.isPending}
-          >
-            {opening || onboardingMutation.isPending ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
-            ) : (
-              <>
-                <Text style={s.primaryButtonText}>Continue setup</Text>
-                <ArrowRight size={18} color="#FFFFFF" />
-              </>
-            )}
-          </Pressable>
-          </View>
-        </ScrollView>
-      </SafeAreaView>
+              {(status.requirementsCurrentlyDue?.length ?? 0) > 0 && (
+                <Card style={s.requirementsCard}>
+                  <Text style={s.requirementsTitle}>Stripe needs these items:</Text>
+                  {status.requirementsCurrentlyDue.map((req: string) => (
+                    <Text key={req} style={s.requirementItem}>• {req.replace(/_/g, ' ')}</Text>
+                  ))}
+                </Card>
+              )}
+
+              <Pressable
+                style={[s.primaryButton, opening && s.primaryButtonDisabled]}
+                onPress={handleStart}
+                disabled={opening || onboardingMutation.isPending}
+              >
+                {opening || onboardingMutation.isPending ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    <Text style={s.primaryButtonText}>Continue setup</Text>
+                    <ArrowRight size={18} color="#FFFFFF" />
+                  </>
+                )}
+              </Pressable>
+            </View>
+          </ScrollView>
+        </SafeAreaView>
+      </AppShell>
     );
   }
 
   // ─── Empty state — never started ──────────────────────────────────────────
 
   return (
-    <SafeAreaView style={s.safeArea} edges={['top', 'bottom']}>
-      <Header onBack={() => navigation.goBack()} />
-      <ScrollView contentContainerStyle={s.content}>
-        <View style={s.pageWrap}>
-        <View style={[s.heroCard, s.heroCardEmpty]}>
-          <View style={s.heroIconCircle}>
-            <CreditCard size={28} color="#FFFFFF" />
+    <AppShell {...shellProps}>
+      <SafeAreaView style={s.safeArea} edges={['top', 'bottom']}>
+        <Header onBack={() => navigation.goBack()} />
+        <ScrollView contentContainerStyle={s.content}>
+          <View style={s.pageWrap}>
+            <PageHeader
+              title="Payout Setup"
+              subtitle="Connect your bank to receive Medi-Cal reimbursements."
+            />
+
+            <Card style={[s.heroCard, s.heroCardEmpty]}>
+              <View style={s.heroIconCircle}>
+                <CreditCard size={28} color="#FFFFFF" />
+              </View>
+              <Text style={s.heroTitle}>Set up direct deposit</Text>
+              <Text style={s.heroSubtitle}>
+                Connect your bank account to start receiving Medi-Cal reimbursements for your
+                sessions. Takes about 5 minutes — Stripe handles the rest.
+              </Text>
+            </Card>
+
+            <BulletRow
+              icon={<ShieldCheck size={18} color={colors.primary} />}
+              text="Secured by Stripe. Compass never sees your bank info or SSN."
+            />
+            <BulletRow
+              icon={<Landmark size={18} color={colors.primary} />}
+              text="Works with any US bank or credit union. ACH only — no cards needed."
+            />
+            <BulletRow
+              icon={<TrendingUp size={18} color={colors.primary} />}
+              text="Weekly automatic payouts every Friday. Funds typically arrive in your bank within 2 business days."
+            />
+
+            <Pressable
+              style={[s.primaryButton, (opening || onboardingMutation.isPending) && s.primaryButtonDisabled]}
+              onPress={handleStart}
+              disabled={opening || onboardingMutation.isPending}
+              accessibilityRole="button"
+              accessibilityLabel="Set up direct deposit"
+            >
+              {opening || onboardingMutation.isPending ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <>
+                  <Text style={s.primaryButtonText}>Set up direct deposit</Text>
+                  <ArrowRight size={18} color="#FFFFFF" />
+                </>
+              )}
+            </Pressable>
+
+            <Pressable onPress={handleLearnMore} style={s.learnMoreLink}>
+              <Text style={s.learnMoreText}>Learn more about payouts</Text>
+            </Pressable>
+
+            <Text style={s.footnote}>
+              Stripe Connect is PCI DSS Level 1 certified. Your SSN, tax ID, and bank account
+              details are collected directly by Stripe and never touch CompassCHW servers.
+            </Text>
           </View>
-          <Text style={s.heroTitle}>Set up direct deposit</Text>
-          <Text style={s.heroSubtitle}>
-            Connect your bank account to start receiving Medi-Cal reimbursements for your
-            sessions. Takes about 5 minutes — Stripe handles the rest.
-          </Text>
-        </View>
-
-        <BulletRow
-          icon={<ShieldCheck size={18} color={colors.primary} />}
-          text="Secured by Stripe. Compass never sees your bank info or SSN."
-        />
-        <BulletRow
-          icon={<Landmark size={18} color={colors.primary} />}
-          text="Works with any US bank or credit union. ACH only — no cards needed."
-        />
-        <BulletRow
-          icon={<TrendingUp size={18} color={colors.primary} />}
-          text="Weekly automatic payouts every Friday. Funds typically arrive in your bank within 2 business days."
-        />
-
-        <Pressable
-          style={[s.primaryButton, (opening || onboardingMutation.isPending) && s.primaryButtonDisabled]}
-          onPress={handleStart}
-          disabled={opening || onboardingMutation.isPending}
-          accessibilityRole="button"
-          accessibilityLabel="Set up direct deposit"
-        >
-          {opening || onboardingMutation.isPending ? (
-            <ActivityIndicator size="small" color="#FFFFFF" />
-          ) : (
-            <>
-              <Text style={s.primaryButtonText}>Set up direct deposit</Text>
-              <ArrowRight size={18} color="#FFFFFF" />
-            </>
-          )}
-        </Pressable>
-
-        <Pressable onPress={handleLearnMore} style={s.learnMoreLink}>
-          <Text style={s.learnMoreText}>Learn more about payouts</Text>
-        </Pressable>
-
-        <Text style={s.footnote}>
-          Stripe Connect is PCI DSS Level 1 certified. Your SSN, tax ID, and bank account
-          details are collected directly by Stripe and never touch CompassCHW servers.
-        </Text>
-        </View>
-      </ScrollView>
-    </SafeAreaView>
+        </ScrollView>
+      </SafeAreaView>
+    </AppShell>
   );
 }
 
@@ -339,7 +375,7 @@ const s = StyleSheet.create({
     alignSelf: 'center',
     paddingHorizontal: spacing.lg,
     paddingBottom: spacing.xxl,
-    gap: spacing.md,
+    gap: spacing.lg,
   },
 
   // Header
@@ -367,7 +403,7 @@ const s = StyleSheet.create({
   },
   headerSpacer: { width: 40 },
 
-  // Hero cards
+  // Hero cards — wrapped in <Card> for consistent styling
   heroCard: {
     borderRadius: radii.xl,
     padding: spacing.xl,

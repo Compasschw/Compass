@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Compass — Settings (Ana)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    body { font-family: 'Inter', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+    .sidebar-bg { background: linear-gradient(180deg, #134e36 0%, #0f3d2a 100%); }
+    .sidebar-item { display:flex; align-items:center; gap:12px; padding:10px 14px; border-radius:10px; color:#a7d4be; font-size:14px; font-weight:500; transition:all .15s; cursor:pointer; text-decoration:none; }
+    .sidebar-item:hover { background: rgba(255,255,255,0.06); color:#fff; }
+    .sidebar-item.active { background:#fff; color:#0f3d2a; font-weight:600; box-shadow:0 1px 3px rgba(0,0,0,.06); }
+    .sidebar-item.active .icon { color:#16a34a; }
+    .icon { width:18px; height:18px; flex-shrink:0; }
+    .pill { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; font-size:12px; font-weight:500; }
+    .card { background:#fff; border-radius:16px; box-shadow:0 1px 3px rgba(0,0,0,.04), 0 1px 2px rgba(0,0,0,.03); border:1px solid #f1f5f4; }
+    .tab { padding:10px 16px; font-size:14px; font-weight:600; color:#6b7280; border-bottom:2px solid transparent; cursor:pointer; }
+    .tab.active { color:#10b981; border-color:#10b981; }
+    .field { padding:12px 0; border-bottom:1px solid #f3f4f6; display:flex; align-items:center; gap:12px; }
+    .field:last-child { border-bottom:none; }
+    .field-label { font-size:12px; color:#6b7280; min-width:160px; font-weight:500; }
+    .field-value { flex:1; font-size:14px; color:#111827; font-weight:500; }
+    .toggle { width:42px; height:24px; border-radius:999px; position:relative; cursor:pointer; }
+    .toggle.on { background:#10b981; }
+    .toggle.off { background:#d1d5db; }
+    .toggle-knob { position:absolute; top:2px; width:20px; height:20px; border-radius:50%; background:#fff; transition:left .2s; }
+    .toggle.on .toggle-knob { left:20px; }
+    .toggle.off .toggle-knob { left:2px; }
+  </style>
+</head>
+<body class="bg-[#f5f7f6] min-h-screen">
+  <div class="flex min-h-screen">
+    <aside class="sidebar-bg w-64 flex-shrink-0 flex flex-col py-6 px-4">
+      <div class="px-2 mb-8"><div class="flex items-center gap-2.5"><div class="w-9 h-9 rounded-xl bg-emerald-500 grid place-items-center"><i data-lucide="compass" class="w-5 h-5 text-white"></i></div><div><div class="text-white font-bold text-lg leading-tight">compasschw</div><div class="text-emerald-300 text-xs font-medium">Member</div></div></div></div>
+      <nav class="flex-1 space-y-1">
+        <a href="member-home.html" class="sidebar-item"><i data-lucide="home" class="icon"></i><span>Home</span></a>
+        <a href="chw-profile.html" class="sidebar-item"><i data-lucide="user-round" class="icon"></i><span>My CHW</span></a>
+        <a href="member-journey.html" class="sidebar-item"><i data-lucide="route" class="icon"></i><span>My Journey</span></a>
+        <a href="member-messages.html" class="sidebar-item"><i data-lucide="message-square" class="icon"></i><span class="flex-1">Messages</span><span class="bg-emerald-500 text-white text-xs font-semibold px-2 py-0.5 rounded-full">2</span></a>
+        <a href="member-appointments.html" class="sidebar-item"><i data-lucide="calendar" class="icon"></i><span>Appointments</span></a>
+        <a href="member-resources.html" class="sidebar-item"><i data-lucide="folder-open" class="icon"></i><span>Resources</span></a>
+        <a href="member-rewards.html" class="sidebar-item"><i data-lucide="gift" class="icon"></i><span class="flex-1">Rewards</span><span class="text-emerald-300 text-xs font-semibold">420</span></a>
+        <a href="member-documents.html" class="sidebar-item"><i data-lucide="file-text" class="icon"></i><span>My Documents</span></a>
+        <a href="member-settings.html" class="sidebar-item active"><i data-lucide="settings" class="icon"></i><span>Settings</span></a>
+      </nav>
+      <div class="mt-6 pt-4 border-t border-emerald-900/40">
+        <a href="dashboard.html" class="text-emerald-300 text-xs hover:text-white px-2 py-1 block">Switch to CHW view →</a>
+        <div class="flex items-center gap-3 px-2 py-2 mt-1"><div class="w-9 h-9 rounded-full bg-emerald-300 grid place-items-center text-emerald-900 font-bold text-sm">AG</div><div class="flex-1 min-w-0"><div class="text-white text-sm font-semibold truncate">Ana Garcia</div><div class="text-emerald-300 text-xs">Medi-Cal Member</div></div></div>
+      </div>
+    </aside>
+
+    <main class="flex-1 p-8 overflow-y-auto">
+      <div class="mb-6">
+        <h1 class="text-2xl font-bold text-gray-900">Settings</h1>
+        <p class="text-sm text-gray-600 mt-1">Manage your account, privacy, and notifications</p>
+      </div>
+
+      <div class="card overflow-hidden">
+        <div class="border-b border-gray-200 px-6 flex">
+          <div class="tab active">Profile</div>
+          <div class="tab">Notifications</div>
+          <div class="tab">Privacy &amp; Security</div>
+          <div class="tab">Language</div>
+          <div class="tab">Help</div>
+        </div>
+
+        <div class="grid grid-cols-12 gap-8 p-8">
+          <div class="col-span-3">
+            <div class="text-center">
+              <div class="w-32 h-32 rounded-full bg-gradient-to-br from-slate-300 to-slate-500 grid place-items-center text-white text-4xl font-bold mx-auto">AG</div>
+              <button class="mt-3 px-3 py-2 border border-gray-200 text-sm font-semibold rounded-lg w-full">Change photo</button>
+              <div class="mt-4 text-left text-xs text-gray-500">JPEG/PNG, max 5MB</div>
+            </div>
+          </div>
+          <div class="col-span-9">
+            <h2 class="font-semibold text-gray-900 mb-4">Profile information</h2>
+            <div>
+              <div class="field"><div class="field-label">Name</div><div class="field-value">Ana Garcia</div><button class="text-emerald-600 text-xs font-semibold">Edit</button></div>
+              <div class="field"><div class="field-label">Date of Birth</div><div class="field-value">June 12, 1987</div><span class="text-xs text-gray-400">Verified</span></div>
+              <div class="field"><div class="field-label">Phone</div><div class="field-value">(619) 555-1234</div><button class="text-emerald-600 text-xs font-semibold">Edit</button></div>
+              <div class="field"><div class="field-label">Email</div><div class="field-value">ana.garcia.demo@compasschw.com</div><button class="text-emerald-600 text-xs font-semibold">Edit</button></div>
+              <div class="field"><div class="field-label">Address</div><div class="field-value">1234 Main St, San Diego, CA 92113</div><button class="text-emerald-600 text-xs font-semibold">Edit</button></div>
+              <div class="field"><div class="field-label">Preferred Language</div><div class="field-value">English</div><button class="text-emerald-600 text-xs font-semibold">Edit</button></div>
+              <div class="field"><div class="field-label">Insurance Plan</div><div class="field-value">Health Net Medi-Cal</div><span class="text-xs text-gray-400">From plan</span></div>
+              <div class="field"><div class="field-label">Member ID</div><div class="field-value">123456789A</div><span class="text-xs text-gray-400">From plan</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-5 mt-6">
+        <div class="card p-6">
+          <h2 class="font-semibold text-gray-900 mb-1">Privacy &amp; Security</h2>
+          <p class="text-xs text-gray-500 mb-4">Your data is protected. You're in control.</p>
+          <div>
+            <div class="field"><div class="flex-1"><div class="text-sm font-semibold text-gray-900">Two-factor authentication</div><div class="text-xs text-gray-500">SMS code on every login</div></div><div class="toggle on"><div class="toggle-knob"></div></div></div>
+            <div class="field"><div class="flex-1"><div class="text-sm font-semibold text-gray-900">Biometric login</div><div class="text-xs text-gray-500">Face ID / fingerprint</div></div><div class="toggle on"><div class="toggle-knob"></div></div></div>
+            <div class="field"><div class="flex-1"><div class="text-sm font-semibold text-gray-900">AI session transcription consent</div><div class="text-xs text-gray-500">Granted Apr 18 · revoke anytime</div></div><div class="toggle on"><div class="toggle-knob"></div></div></div>
+            <div class="field"><div class="flex-1"><div class="text-sm font-semibold text-gray-900">Share data for anonymous research</div><div class="text-xs text-gray-500">Helps improve outcomes for others</div></div><div class="toggle off"><div class="toggle-knob"></div></div></div>
+          </div>
+          <button class="mt-4 px-4 py-2 border border-gray-200 text-sm font-semibold rounded-lg flex items-center gap-2"><i data-lucide="download" class="w-4 h-4"></i>Download all my data</button>
+          <button class="mt-2 text-red-600 text-sm font-semibold flex items-center gap-2 hover:underline"><i data-lucide="trash-2" class="w-4 h-4"></i>Delete my account</button>
+        </div>
+
+        <div class="card p-6 bg-gradient-to-b from-emerald-50/30 to-white">
+          <h2 class="font-semibold text-gray-900 mb-1">Need help?</h2>
+          <p class="text-xs text-gray-500 mb-4">We're here for you 24/7</p>
+          <div class="space-y-2">
+            <button class="w-full p-3 border border-gray-200 rounded-xl flex items-center gap-3 hover:bg-gray-50 text-left"><div class="w-10 h-10 rounded-lg bg-blue-100 grid place-items-center"><i data-lucide="phone" class="w-5 h-5 text-blue-600"></i></div><div class="flex-1"><div class="font-semibold text-gray-900 text-sm">Call support</div><div class="text-xs text-gray-500">Mon–Sun 7 AM – 9 PM PT</div></div></button>
+            <button class="w-full p-3 border border-gray-200 rounded-xl flex items-center gap-3 hover:bg-gray-50 text-left"><div class="w-10 h-10 rounded-lg bg-emerald-100 grid place-items-center"><i data-lucide="message-square" class="w-5 h-5 text-emerald-600"></i></div><div class="flex-1"><div class="font-semibold text-gray-900 text-sm">Text us</div><div class="text-xs text-gray-500">(800) 555-COMPASS · usually replies in 10 min</div></div></button>
+            <button class="w-full p-3 border border-gray-200 rounded-xl flex items-center gap-3 hover:bg-gray-50 text-left"><div class="w-10 h-10 rounded-lg bg-purple-100 grid place-items-center"><i data-lucide="mail" class="w-5 h-5 text-purple-600"></i></div><div class="flex-1"><div class="font-semibold text-gray-900 text-sm">Email us</div><div class="text-xs text-gray-500">help@joincompasschw.com</div></div></button>
+          </div>
+        </div>
+      </div>
+
+      <div class="mt-8 text-center"><a href="index.html" class="text-emerald-600 hover:underline text-sm">← Back to mockups index</a></div>
+    </main>
+  </div>
+  <script>lucide.createIcons();</script>
+</body>
+</html>

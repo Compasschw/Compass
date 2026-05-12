@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Compass CHW — Members</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    body { font-family: 'Inter', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+    .sidebar-bg { background: linear-gradient(180deg, #134e36 0%, #0f3d2a 100%); }
+    .sidebar-item { display:flex; align-items:center; gap:12px; padding:10px 14px; border-radius:10px; color:#a7d4be; font-size:14px; font-weight:500; transition:all .15s; cursor:pointer; text-decoration:none; }
+    .sidebar-item:hover { background: rgba(255,255,255,0.06); color:#fff; }
+    .sidebar-item.active { background:#fff; color:#0f3d2a; font-weight:600; box-shadow:0 1px 3px rgba(0,0,0,.06); }
+    .sidebar-item.active .icon { color:#16a34a; }
+    .icon { width:18px; height:18px; flex-shrink:0; }
+    .pill { display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:999px; font-size:11px; font-weight:600; }
+    .card { background:#fff; border-radius:16px; box-shadow:0 1px 3px rgba(0,0,0,.04), 0 1px 2px rgba(0,0,0,.03); border:1px solid #f1f5f4; }
+    th { text-align:left; font-size:11px; font-weight:600; color:#6b7280; text-transform:uppercase; letter-spacing:.04em; padding:10px 16px; background:#f9fafb; border-bottom:1px solid #f3f4f6; }
+    td { padding:14px 16px; border-bottom:1px solid #f3f4f6; font-size:14px; vertical-align:middle; }
+    tr:hover td { background:#f9fafb; cursor:pointer; }
+    .filter-btn { padding:7px 14px; border-radius:10px; font-size:13px; font-weight:500; color:#6b7280; border:1px solid #e5e7eb; background:#fff; }
+    .filter-btn.active { background:#ecfdf5; color:#065f46; border-color:#a7f3d0; }
+    .dot { width:8px; height:8px; border-radius:999px; display:inline-block; }
+  </style>
+</head>
+<body class="bg-[#f5f7f6] min-h-screen">
+  <div class="flex min-h-screen">
+    <aside class="sidebar-bg w-64 flex-shrink-0 flex flex-col py-6 px-4">
+      <div class="px-2 mb-8">
+        <div class="flex items-center gap-2.5">
+          <div class="w-9 h-9 rounded-xl bg-emerald-500 grid place-items-center"><i data-lucide="compass" class="w-5 h-5 text-white"></i></div>
+          <div><div class="text-white font-bold text-lg leading-tight">compasschw</div><div class="text-emerald-300 text-xs font-medium">Medi-Cal Member</div></div>
+        </div>
+      </div>
+      <nav class="flex-1 space-y-1">
+        <a href="member-profile.html" class="sidebar-item"><i data-lucide="user-round" class="icon"></i><span>Member Profile</span></a>
+        <a href="dashboard.html" class="sidebar-item"><i data-lucide="layout-dashboard" class="icon"></i><span>Dashboard</span></a>
+        <a href="members.html" class="sidebar-item active"><i data-lucide="users" class="icon"></i><span>Members</span></a>
+        <a href="journeys.html" class="sidebar-item"><i data-lucide="route" class="icon"></i><span>Journeys</span></a>
+        <a href="messages.html" class="sidebar-item"><i data-lucide="message-square" class="icon"></i><span class="flex-1">Messages</span><span class="bg-emerald-500 text-white text-xs font-semibold px-2 py-0.5 rounded-full">12</span></a>
+        <a href="#" class="sidebar-item"><i data-lucide="calendar" class="icon"></i><span>Appointments</span></a>
+        <a href="#" class="sidebar-item"><i data-lucide="folder-open" class="icon"></i><span>Resources</span></a>
+        <a href="#" class="sidebar-item"><i data-lucide="file-text" class="icon"></i><span>Documents</span></a>
+        <a href="#" class="sidebar-item"><i data-lucide="bar-chart-3" class="icon"></i><span>Reports</span></a>
+        <a href="#" class="sidebar-item"><i data-lucide="building-2" class="icon"></i><span>Community Partners</span></a>
+        <a href="#" class="sidebar-item"><i data-lucide="settings" class="icon"></i><span>Settings</span></a>
+      </nav>
+      <div class="mt-6 pt-4 border-t border-emerald-900/40">
+        <div class="flex items-center gap-3 px-2 py-2">
+          <div class="w-9 h-9 rounded-full bg-emerald-300 grid place-items-center text-emerald-900 font-bold text-sm">MS</div>
+          <div class="flex-1 min-w-0"><div class="text-white text-sm font-semibold truncate">Maria Sanchez</div><div class="text-emerald-300 text-xs">Community Health Worker</div></div>
+        </div>
+      </div>
+    </aside>
+
+    <main class="flex-1 p-8 overflow-y-auto">
+      <div class="flex items-end justify-between mb-6">
+        <div>
+          <h1 class="text-2xl font-bold text-gray-900">My Members</h1>
+          <p class="text-sm text-gray-600 mt-1">23 active · 4 inactive · last refreshed 2 minutes ago</p>
+        </div>
+        <div class="flex items-center gap-3">
+          <div class="relative">
+            <input class="pl-10 pr-4 py-2 w-72 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-200" placeholder="Search by name, ID, phone..." />
+            <i data-lucide="search" class="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2"></i>
+          </div>
+          <button class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-xl flex items-center gap-2"><i data-lucide="user-plus" class="w-4 h-4"></i>Add Member</button>
+        </div>
+      </div>
+
+      <!-- Filter row -->
+      <div class="flex items-center gap-2 mb-5">
+        <button class="filter-btn active">All (27)</button>
+        <button class="filter-btn">Active (23)</button>
+        <button class="filter-btn">High Risk (5)</button>
+        <button class="filter-btn">Overdue follow-up (7)</button>
+        <button class="filter-btn">In a journey (18)</button>
+        <button class="filter-btn">Inactive (4)</button>
+        <div class="ml-auto flex items-center gap-2 text-sm text-gray-500">
+          <i data-lucide="filter" class="w-4 h-4"></i>Sort: Last contact ↓
+        </div>
+      </div>
+
+      <!-- Members table -->
+      <div class="card overflow-hidden">
+        <table class="w-full">
+          <thead>
+            <tr>
+              <th>Member</th>
+              <th>Status</th>
+              <th>Risk</th>
+              <th>Engagement</th>
+              <th>Active Journey</th>
+              <th>Last Contact</th>
+              <th>Top Need</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><div class="flex items-center gap-3"><div class="w-9 h-9 rounded-full bg-emerald-100 grid place-items-center text-emerald-700 font-bold text-sm">AG</div><div><div class="font-semibold text-gray-900">Ana Garcia</div><div class="text-xs text-gray-500">38 · ID 1234...A</div></div></div></td>
+              <td><span class="pill bg-emerald-100 text-emerald-700"><span class="dot bg-emerald-500"></span>Active</span></td>
+              <td><span class="pill bg-amber-100 text-amber-800"><span class="dot bg-amber-500"></span>Medium</span></td>
+              <td><span class="pill bg-emerald-100 text-emerald-700">Highly Engaged</span></td>
+              <td><span class="text-gray-700 font-medium">Food Assistance</span><div class="text-xs text-gray-500">60% · Upload Documents</div></td>
+              <td><div class="text-gray-700">2 days ago</div><div class="text-xs text-gray-500">May 7</div></td>
+              <td><span class="pill bg-red-100 text-red-700">Housing</span></td>
+              <td class="text-right"><i data-lucide="chevron-right" class="w-4 h-4 text-gray-300"></i></td>
+            </tr>
+            <tr>
+              <td><div class="flex items-center gap-3"><div class="w-9 h-9 rounded-full bg-blue-100 grid place-items-center text-blue-700 font-bold text-sm">JR</div><div><div class="font-semibold text-gray-900">Juana Ramirez</div><div class="text-xs text-gray-500">52 · ID 5523...C</div></div></div></td>
+              <td><span class="pill bg-emerald-100 text-emerald-700"><span class="dot bg-emerald-500"></span>Active</span></td>
+              <td><span class="pill bg-red-100 text-red-700"><span class="dot bg-red-500"></span>High</span></td>
+              <td><span class="pill bg-amber-100 text-amber-800">Moderately Engaged</span></td>
+              <td><span class="text-gray-700 font-medium">Housing</span><div class="text-xs text-gray-500">25% · Section 8 waitlist</div></td>
+              <td><div class="text-gray-700">5 days ago</div><div class="text-xs text-red-500 font-semibold">Overdue</div></td>
+              <td><span class="pill bg-red-100 text-red-700">Housing</span></td>
+              <td class="text-right"><i data-lucide="chevron-right" class="w-4 h-4 text-gray-300"></i></td>
+            </tr>
+            <tr>
+              <td><div class="flex items-center gap-3"><div class="w-9 h-9 rounded-full bg-purple-100 grid place-items-center text-purple-700 font-bold text-sm">DL</div><div><div class="font-semibold text-gray-900">David Lopez</div><div class="text-xs text-gray-500">29 · ID 9981...B</div></div></div></td>
+              <td><span class="pill bg-emerald-100 text-emerald-700"><span class="dot bg-emerald-500"></span>Active</span></td>
+              <td><span class="pill bg-amber-100 text-amber-800"><span class="dot bg-amber-500"></span>Medium</span></td>
+              <td><span class="pill bg-emerald-100 text-emerald-700">Highly Engaged</span></td>
+              <td><span class="text-gray-700 font-medium">Mental Health</span><div class="text-xs text-gray-500">80% · Referral pending</div></td>
+              <td><div class="text-gray-700">today</div><div class="text-xs text-gray-500">10:14 AM</div></td>
+              <td><span class="pill bg-purple-100 text-purple-700">Mental Health</span></td>
+              <td class="text-right"><i data-lucide="chevron-right" class="w-4 h-4 text-gray-300"></i></td>
+            </tr>
+            <tr>
+              <td><div class="flex items-center gap-3"><div class="w-9 h-9 rounded-full bg-amber-100 grid place-items-center text-amber-700 font-bold text-sm">SC</div><div><div class="font-semibold text-gray-900">Sandra Chavez</div><div class="text-xs text-gray-500">61 · ID 2247...D</div></div></div></td>
+              <td><span class="pill bg-emerald-100 text-emerald-700"><span class="dot bg-emerald-500"></span>Active</span></td>
+              <td><span class="pill bg-emerald-100 text-emerald-700"><span class="dot bg-emerald-500"></span>Low</span></td>
+              <td><span class="pill bg-amber-100 text-amber-800">Moderately Engaged</span></td>
+              <td><span class="text-gray-700 font-medium">Benefits Renewal</span><div class="text-xs text-gray-500">40% · Documents needed</div></td>
+              <td><div class="text-gray-700">3 days ago</div><div class="text-xs text-red-500 font-semibold">Overdue</div></td>
+              <td><span class="pill bg-orange-100 text-orange-700">Food Assistance</span></td>
+              <td class="text-right"><i data-lucide="chevron-right" class="w-4 h-4 text-gray-300"></i></td>
+            </tr>
+            <tr>
+              <td><div class="flex items-center gap-3"><div class="w-9 h-9 rounded-full bg-rose-100 grid place-items-center text-rose-700 font-bold text-sm">MB</div><div><div class="font-semibold text-gray-900">Marcus Brown</div><div class="text-xs text-gray-500">44 · ID 7711...F</div></div></div></td>
+              <td><span class="pill bg-emerald-100 text-emerald-700"><span class="dot bg-emerald-500"></span>Active</span></td>
+              <td><span class="pill bg-red-100 text-red-700"><span class="dot bg-red-500"></span>High</span></td>
+              <td><span class="pill bg-red-100 text-red-700">Disengaged</span></td>
+              <td><span class="text-gray-700 font-medium">Transportation</span><div class="text-xs text-gray-500">15% · Bus pass eligibility</div></td>
+              <td><div class="text-gray-700">2 days ago</div><div class="text-xs text-red-500 font-semibold">Overdue</div></td>
+              <td><span class="pill bg-amber-100 text-amber-700">Transportation</span></td>
+              <td class="text-right"><i data-lucide="chevron-right" class="w-4 h-4 text-gray-300"></i></td>
+            </tr>
+            <tr>
+              <td><div class="flex items-center gap-3"><div class="w-9 h-9 rounded-full bg-cyan-100 grid place-items-center text-cyan-700 font-bold text-sm">EC</div><div><div class="font-semibold text-gray-900">Elena Castro</div><div class="text-xs text-gray-500">35 · ID 4408...G</div></div></div></td>
+              <td><span class="pill bg-emerald-100 text-emerald-700"><span class="dot bg-emerald-500"></span>Active</span></td>
+              <td><span class="pill bg-emerald-100 text-emerald-700"><span class="dot bg-emerald-500"></span>Low</span></td>
+              <td><span class="pill bg-emerald-100 text-emerald-700">Highly Engaged</span></td>
+              <td><span class="text-gray-700 font-medium">Maternal Health</span><div class="text-xs text-gray-500">95% · Almost complete</div></td>
+              <td><div class="text-gray-700">today</div><div class="text-xs text-gray-500">8:02 AM</div></td>
+              <td><span class="pill bg-pink-100 text-pink-700">Maternal Health</span></td>
+              <td class="text-right"><i data-lucide="chevron-right" class="w-4 h-4 text-gray-300"></i></td>
+            </tr>
+            <tr>
+              <td><div class="flex items-center gap-3"><div class="w-9 h-9 rounded-full bg-indigo-100 grid place-items-center text-indigo-700 font-bold text-sm">RP</div><div><div class="font-semibold text-gray-900">Roberto Perez</div><div class="text-xs text-gray-500">58 · ID 3091...H</div></div></div></td>
+              <td><span class="pill bg-gray-100 text-gray-700"><span class="dot bg-gray-400"></span>Inactive</span></td>
+              <td><span class="pill bg-amber-100 text-amber-800"><span class="dot bg-amber-500"></span>Medium</span></td>
+              <td><span class="pill bg-gray-100 text-gray-600">Disengaged</span></td>
+              <td><span class="text-gray-400">No active journey</span></td>
+              <td><div class="text-gray-700">3 weeks ago</div><div class="text-xs text-red-500 font-semibold">Re-engage</div></td>
+              <td><span class="pill bg-emerald-100 text-emerald-700">Utilities</span></td>
+              <td class="text-right"><i data-lucide="chevron-right" class="w-4 h-4 text-gray-300"></i></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="mt-4 flex items-center justify-between text-sm text-gray-500">
+        <div>Showing 7 of 27 members</div>
+        <div class="flex items-center gap-1">
+          <button class="px-3 py-1.5 rounded-lg border border-gray-200">‹</button>
+          <button class="px-3 py-1.5 rounded-lg bg-emerald-600 text-white font-semibold">1</button>
+          <button class="px-3 py-1.5 rounded-lg border border-gray-200">2</button>
+          <button class="px-3 py-1.5 rounded-lg border border-gray-200">3</button>
+          <button class="px-3 py-1.5 rounded-lg border border-gray-200">›</button>
+        </div>
+      </div>
+
+      <div class="mt-8 text-center"><a href="index.html" class="text-emerald-600 hover:underline text-sm">← Back to mockups index</a></div>
+    </main>
+  </div>
+  <script>lucide.createIcons();</script>
+</body>
+</html>

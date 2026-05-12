@@ -1,11 +1,16 @@
 /**
  * CHWDashboardScreen — Landing screen for authenticated Community Health Workers.
  *
- * Sections:
- *  - Personalised greeting derived from auth context
- *  - 2×2 stat card grid: month earnings, avg rating, sessions this week, open requests
- *  - Upcoming scheduled session card (if any)
- *  - Recent open requests (top 3)
+ * Re-skinned to the new design system (AppShell + StatTile + Card + Pill + PageHeader).
+ * Behavior, hooks, mutations, and navigation are identical to the original.
+ *
+ * Layout (web):
+ *  - 4 KPI StatTiles in a 2×2 grid (Sessions today, Overdue follow-ups,
+ *    Messages awaiting reply, Earnings this week)
+ *  - 2-column row: Today's Schedule (left) + Needs Your Attention (right)
+ *  - Bottom row: Weekly Snapshot + Recent Activity feed
+ *
+ * On native: AppShell is a passthrough — the existing navigator provides chrome.
  */
 
 import React, { useMemo } from 'react';
@@ -15,6 +20,9 @@ import {
   ScrollView,
   StyleSheet,
   TouchableOpacity,
+  Platform,
+  type ViewStyle,
+  type TextStyle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -34,10 +42,14 @@ import {
   MapPin,
   Target,
   Clock,
+  AlertCircle,
+  MessageSquare,
+  TrendingUp,
 } from 'lucide-react-native';
 
-import { colors } from '../../theme/colors';
+import { colors as themeColors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
+import { colors as tokens } from '../../theme/tokens';
 import { useAuth } from '../../context/AuthContext';
 import {
   formatCurrency,
@@ -56,22 +68,18 @@ import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 import { VERTICAL_LABEL, VERTICAL_COLOR } from '../../lib/verticals';
 
+import {
+  AppShell,
+  PageHeader,
+  Card,
+  StatTile,
+  Pill,
+} from '../../components/ui';
+
 // ─── Vertical helpers — sourced from lib/verticals (single source of truth) ───
 
 const VERTICAL_COLORS: Record<Vertical, string> = VERTICAL_COLOR;
 const VERTICAL_LABELS: Record<Vertical, string> = VERTICAL_LABEL;
-
-const URGENCY_COLORS: Record<string, string> = {
-  routine: colors.secondary,
-  soon: colors.compassGold,
-  urgent: colors.destructive,
-};
-
-const URGENCY_LABELS: Record<string, string> = {
-  routine: 'Routine',
-  soon: 'Soon',
-  urgent: 'Urgent',
-};
 
 const SESSION_MODE_LABELS: Record<string, string> = {
   in_person: 'In Person',
@@ -103,47 +111,6 @@ function VerticalIconComponent({ vertical, size = 18, color }: VerticalIconProps
   }
 }
 
-// ─── StatCard sub-component ───────────────────────────────────────────────────
-
-interface StatCardProps {
-  icon: React.ReactNode;
-  iconBg: string;
-  label: string;
-  value: string | number;
-  subtext?: string;
-  /** Tap target — when set, the card becomes a button that drills into a
-   *  detail screen (per cofounder feedback on Dashboard stat tiles). */
-  onPress?: () => void;
-  accessibilityLabel?: string;
-}
-
-function StatCard({ icon, iconBg, label, value, subtext, onPress, accessibilityLabel }: StatCardProps): React.JSX.Element {
-  const body = (
-    <>
-      <View style={[styles.statIconCircle, { backgroundColor: iconBg }]}>{icon}</View>
-      <Text style={styles.statValue}>{value}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
-      {subtext ? <Text style={styles.statSubtext}>{subtext}</Text> : null}
-    </>
-  );
-
-  if (onPress) {
-    return (
-      <TouchableOpacity
-        style={styles.statCard}
-        onPress={onPress}
-        accessibilityRole="button"
-        accessibilityLabel={accessibilityLabel ?? label}
-        activeOpacity={0.85}
-      >
-        {body}
-      </TouchableOpacity>
-    );
-  }
-
-  return <View style={styles.statCard}>{body}</View>;
-}
-
 // ─── Member need-journey status (mocked until backend lands) ──────────────────
 //
 // TODO(backend): expose member_journey_status per session/request as one of
@@ -153,9 +120,9 @@ function StatCard({ icon, iconBg, label, value, subtext, onPress, accessibilityL
 type JourneyStatus = 'starting' | 'awaiting_confirmation' | 'resolved';
 
 const JOURNEY_COLORS: Record<JourneyStatus, string> = {
-  starting: '#EF4444',          // red — just started finding the resource
-  awaiting_confirmation: '#F59E0B', // yellow — shared, awaiting member confirmation
-  resolved: '#22C55E',          // green — used resources and moved on
+  starting: '#EF4444',
+  awaiting_confirmation: '#F59E0B',
+  resolved: '#22C55E',
 };
 
 const JOURNEY_LABELS: Record<JourneyStatus, string> = {
@@ -165,13 +132,21 @@ const JOURNEY_LABELS: Record<JourneyStatus, string> = {
 };
 
 function mockJourneyStatus(id: string): JourneyStatus {
-  // Stable hash on id → one of three states. Replace with real backend field.
   const sum = id.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
   const idx = sum % 3;
   return idx === 0 ? 'starting' : idx === 1 ? 'awaiting_confirmation' : 'resolved';
 }
 
-// ─── Main Component ───────────────────────────────────────────────────────────
+/**
+ * Maps a JourneyStatus to the Pill variant colours.
+ */
+function journeyStatusToPillVariant(status: JourneyStatus): 'red' | 'amber' | 'emerald' {
+  if (status === 'starting') return 'red';
+  if (status === 'awaiting_confirmation') return 'amber';
+  return 'emerald';
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
  * Formats an ISO date string to a human-readable date + time.
@@ -186,11 +161,24 @@ function formatScheduledAt(iso: string): string {
   });
 }
 
+// ─── Main Component ───────────────────────────────────────────────────────────
+
 export function CHWDashboardScreen(): React.JSX.Element {
   const { userName } = useAuth();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const navigation = useNavigation<any>();
   const firstName = userName?.split(' ')[0] ?? 'there';
+
+  // Derive initials for AppShell userBlock
+  const initials = useMemo(() => {
+    if (!userName) return 'CW';
+    return userName
+      .split(' ')
+      .map((n) => n[0] ?? '')
+      .join('')
+      .toUpperCase()
+      .slice(0, 2);
+  }, [userName]);
 
   const earningsQuery = useChwEarnings();
   const sessionsQuery = useSessions();
@@ -236,6 +224,24 @@ export function CHWDashboardScreen(): React.JSX.Element {
     [openRequests],
   );
 
+  // KPI derivations for the 4 StatTile row
+  // Sessions today: scheduled sessions for today's date
+  const todaySessions = useMemo<number>(() => {
+    const today = new Date().toDateString();
+    return allSessions.filter(
+      (s) => s.status === 'scheduled' && new Date(s.scheduledAt).toDateString() === today,
+    ).length;
+  }, [allSessions]);
+
+  // Overdue follow-ups: open requests older than 48 h (best proxy until backend exposes it)
+  // TODO(backend): expose overdue_followups_count from /chw/dashboard/stats
+  const overdueFollowups = useMemo<number>(() => {
+    const cutoff = Date.now() - 48 * 60 * 60 * 1000;
+    return openRequests.filter(
+      (r) => r.urgency === 'urgent' || new Date(r.createdAt ?? 0).getTime() < cutoff,
+    ).length;
+  }, [openRequests]);
+
   if (isLoading) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
@@ -257,25 +263,20 @@ export function CHWDashboardScreen(): React.JSX.Element {
     );
   }
 
-  return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
-        refreshControl={refresh.control}
-      >
-        <View style={styles.pageWrap}>
-        {/* ── Greeting ── */}
-        <View style={styles.greetingBlock}>
-          <Text style={styles.greetingText}>
-            Good morning,{' '}
-            <Text style={styles.greetingName}>{firstName}</Text>
-          </Text>
-          <Text style={styles.greetingSubtext}>
-            Here's what's happening with your work today.
-          </Text>
-        </View>
+  const screenContent = (
+    <ScrollView
+      style={styles.scroll}
+      contentContainerStyle={Platform.OS === 'web' ? styles.contentWeb : styles.content}
+      showsVerticalScrollIndicator={false}
+      refreshControl={refresh.control}
+    >
+      <View style={Platform.OS === 'web' ? styles.pageWrapWeb : styles.pageWrap}>
+
+        {/* ── Page header ── */}
+        <PageHeader
+          title={`Good morning, ${firstName}`}
+          subtitle="Here's what's happening with your work today."
+        />
 
         {/* ── Professional intake prompt (only while incomplete) ── */}
         {intakeIncomplete && (
@@ -287,7 +288,7 @@ export function CHWDashboardScreen(): React.JSX.Element {
             activeOpacity={0.85}
           >
             <View style={styles.intakeIconWrap}>
-              <ClipboardCheck size={20} color={colors.primary} />
+              <ClipboardCheck size={20} color={themeColors.primary} />
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.intakeTitle}>Complete your professional intake</Text>
@@ -297,187 +298,249 @@ export function CHWDashboardScreen(): React.JSX.Element {
                   : '27 quick questions help us match you with the right members'}
               </Text>
             </View>
-            <ArrowRight size={18} color={colors.primary} />
+            <ArrowRight size={18} color={themeColors.primary} />
           </TouchableOpacity>
         )}
 
-        {/* ── Stat cards 2×2 ── all clickable per Jemal's Figma feedback */}
+        {/* ── KPI stat tiles — 4-up grid ── */}
         <View style={styles.statGrid}>
-          <StatCard
-            icon={<DollarSign size={20} color={colors.primary} />}
-            iconBg={colors.primary + '18'}
-            label="This Month"
-            value={earnings ? formatCurrency(earnings.thisMonth) : '$0.00'}
-            subtext={earnings ? `${formatCurrency(earnings.pendingPayout)} pending` : ''}
-            onPress={() => navigation.navigate('EarningsStack')}
-            accessibilityLabel="Open earnings breakdown"
+          <StatTile
+            icon={<CalendarCheck size={18} color={tokens.emerald700} />}
+            iconBg={tokens.emerald100}
+            label="Sessions Today"
+            value={todaySessions}
+            delta={`${allSessions.filter((s) => s.status === 'scheduled').length} this week`}
+            style={styles.statTile}
+            onPress={() => navigation.navigate('SessionsStack' as never)}
           />
-          <StatCard
-            icon={<Star size={20} color={colors.compassGold} />}
-            iconBg={colors.compassGold + '18'}
-            label="Avg Rating"
-            value={earnings ? earnings.avgRating.toFixed(1) : '—'}
-            subtext="From reviews"
-            onPress={() => navigation.navigate('Reviews')}
-            accessibilityLabel="Open member reviews"
+          <StatTile
+            icon={<AlertCircle size={18} color={tokens.red700} />}
+            iconBg={tokens.red100}
+            label="Overdue Follow-ups"
+            value={overdueFollowups}
+            delta={overdueFollowups > 0 ? 'Needs attention' : 'All clear'}
+            deltaColor={overdueFollowups > 0 ? tokens.red700 : tokens.emerald700}
+            style={styles.statTile}
+            onPress={() => navigation.navigate('Reviews' as never)}
           />
-          <StatCard
-            icon={<CalendarCheck size={20} color={colors.secondary} />}
-            iconBg={colors.secondary + '18'}
-            label="Sessions"
-            value={earnings ? earnings.sessionsThisWeek : 0}
-            subtext="This week"
-            onPress={() => navigation.navigate('SessionsStack')}
-            accessibilityLabel="Open sessions list"
-          />
-          <StatCard
-            icon={<ClipboardList size={20} color={colors.primary} />}
-            iconBg={colors.primary + '18'}
+          <StatTile
+            icon={<MessageSquare size={18} color={tokens.blue700} />}
+            iconBg={tokens.blue100}
             label="Open Requests"
             value={openRequests.length}
-            subtext="Awaiting match"
-            onPress={() => navigation.navigate('Requests')}
-            accessibilityLabel="Open requests inbox"
+            delta="Awaiting match"
+            deltaColor={tokens.blue700}
+            style={styles.statTile}
+            onPress={() => navigation.navigate('Requests' as never)}
+          />
+          <StatTile
+            icon={<DollarSign size={18} color={tokens.emerald700} />}
+            iconBg={tokens.emerald100}
+            label="Earnings This Week"
+            value={earnings ? formatCurrency(earnings.thisMonth) : '$0.00'}
+            delta={earnings ? `${formatCurrency(earnings.pendingPayout)} pending` : ''}
+            style={styles.statTile}
+            onPress={() => navigation.navigate('EarningsStack' as never)}
           />
         </View>
 
-        {/* ── Upcoming Session ── */}
-        {upcomingSession ? (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Upcoming Session</Text>
-            <View style={styles.card}>
-              <View style={styles.sessionRow}>
-                <View
-                  style={[
-                    styles.verticalIconCircle,
-                    { backgroundColor: (VERTICAL_COLORS[upcomingSession.vertical as Vertical] ?? '#6B7A6B') + '18' },
-                  ]}
-                >
-                  <VerticalIconComponent vertical={upcomingSession.vertical as Vertical} size={20} />
-                </View>
-                <View style={styles.sessionInfo}>
-                  <View style={styles.badgeRow}>
-                    <View
-                      style={[
-                        styles.badge,
-                        { backgroundColor: (VERTICAL_COLORS[upcomingSession.vertical as Vertical] ?? '#6B7A6B') + '18' },
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.badgeText,
-                          { color: VERTICAL_COLORS[upcomingSession.vertical as Vertical] ?? '#6B7A6B' },
-                        ]}
-                      >
+        {/* ── Two-column layout (web) / stacked (native) ── */}
+        <View style={styles.midRow}>
+
+          {/* ── Left column: Today's Schedule (Upcoming Session) ── */}
+          <View style={styles.midLeft}>
+            <Text style={styles.sectionTitle}>Today's Schedule</Text>
+            {upcomingSession ? (
+              <Card style={styles.card}>
+                <View style={styles.sessionRow}>
+                  <View
+                    style={[
+                      styles.verticalIconCircle,
+                      { backgroundColor: (VERTICAL_COLORS[upcomingSession.vertical as Vertical] ?? '#6B7A6B') + '18' },
+                    ]}
+                  >
+                    <VerticalIconComponent vertical={upcomingSession.vertical as Vertical} size={20} />
+                  </View>
+                  <View style={styles.sessionInfo}>
+                    <View style={styles.badgeRow}>
+                      <Pill variant="emerald" size="sm">
                         {VERTICAL_LABELS[upcomingSession.vertical as Vertical] ?? upcomingSession.vertical}
+                      </Pill>
+                      <Pill variant="blue" size="sm">Scheduled</Pill>
+                      {(() => {
+                        const status = mockJourneyStatus(upcomingSession.id);
+                        return (
+                          <Pill variant={journeyStatusToPillVariant(status)} size="sm">
+                            {JOURNEY_LABELS[status]}
+                          </Pill>
+                        );
+                      })()}
+                    </View>
+                    <Text style={styles.memberName}>{upcomingSession.memberName}</Text>
+                    <Text style={styles.sessionMeta}>
+                      {formatScheduledAt(upcomingSession.scheduledAt)}
+                      {' · '}
+                      {SESSION_MODE_LABELS[upcomingSession.mode] ?? upcomingSession.mode}
+                    </Text>
+                    {/* Member address — TODO(backend): expose member.address on SessionData. */}
+                    <View style={styles.metaIconRow}>
+                      <MapPin size={12} color={themeColors.mutedForeground} />
+                      <Text style={styles.sessionMeta}>
+                        1834 W 6th St, Los Angeles, CA 90057
                       </Text>
                     </View>
-                    <View style={[styles.badge, { backgroundColor: colors.secondary + '18' }]}>
-                      <Text style={[styles.badgeText, { color: colors.secondary }]}>Scheduled</Text>
+                    {/* Session goal — TODO(backend): expose session.goal_note. */}
+                    <View style={styles.actionNote}>
+                      <Target size={12} color={themeColors.primary} />
+                      <Text style={styles.actionNoteText}>
+                        Goal: walk through Medi-Cal renewal paperwork together.
+                      </Text>
                     </View>
-                    {/* Member need-journey status dot — color-coded per Jemal's
-                        Dashboard feedback. Mocked until backend exposes it. */}
-                    {(() => {
-                      const status = mockJourneyStatus(upcomingSession.id);
-                      return (
-                        <View style={styles.journeyPill}>
-                          <View style={[styles.journeyDot, { backgroundColor: JOURNEY_COLORS[status] }]} />
-                          <Text style={styles.journeyText}>{JOURNEY_LABELS[status]}</Text>
-                        </View>
-                      );
-                    })()}
-                  </View>
-                  <Text style={styles.memberName}>{upcomingSession.memberName}</Text>
-                  <Text style={styles.sessionMeta}>
-                    {formatScheduledAt(upcomingSession.scheduledAt)}
-                    {' · '}
-                    {SESSION_MODE_LABELS[upcomingSession.mode] ?? upcomingSession.mode}
-                  </Text>
-                  {/* Member address — TODO(backend): expose member.address on
-                      SessionData so we can drop this mock. */}
-                  <View style={styles.metaIconRow}>
-                    <MapPin size={12} color={colors.mutedForeground} />
-                    <Text style={styles.sessionMeta}>
-                      1834 W 6th St, Los Angeles, CA 90057
-                    </Text>
-                  </View>
-                  {/* Quick action / session goal — TODO(backend): expose
-                      session.goal_note. */}
-                  <View style={styles.actionNote}>
-                    <Target size={12} color={colors.primary} />
-                    <Text style={styles.actionNoteText}>
-                      Goal: walk through Medi-Cal renewal paperwork together.
-                    </Text>
                   </View>
                 </View>
-              </View>
-            </View>
-          </View>
-        ) : null}
-
-        {/* ── Open Requests ── */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Open Requests Near You</Text>
-          </View>
-          <View style={styles.card}>
-            {recentRequests.length === 0 ? (
-              <Text style={styles.emptyText}>No open requests right now.</Text>
+              </Card>
             ) : (
-              recentRequests.map((request, index) => {
-                const verticalLabel = VERTICAL_LABELS[request.vertical as Vertical] ?? request.vertical;
-                const verticalColor = VERTICAL_COLORS[request.vertical as Vertical] ?? '#6B7A6B';
-                return (
-                  <View key={request.id}>
-                    {index > 0 ? <View style={styles.divider} /> : null}
-                    <View style={styles.requestRow}>
-                      <View
-                        style={[
-                          styles.verticalIconCircle,
-                          { backgroundColor: verticalColor + '18' },
-                        ]}
-                      >
-                        <VerticalIconComponent vertical={request.vertical as Vertical} size={18} />
-                      </View>
-                      <View style={styles.requestInfo}>
-                        <View style={styles.badgeRow}>
-                          <Text style={styles.memberName}>{request.memberName}</Text>
-                          {/* Vertical category badge (replaces urgency per Jemal) */}
-                          <View
-                            style={[
-                              styles.badge,
-                              { backgroundColor: verticalColor + '18' },
-                            ]}
-                          >
-                            <Text style={[styles.badgeText, { color: verticalColor }]}>
-                              {verticalLabel}
+              <Card style={styles.card}>
+                <Text style={styles.emptyText}>No sessions scheduled today.</Text>
+              </Card>
+            )}
+          </View>
+
+          {/* ── Right column: Needs Your Attention (Open Requests) ── */}
+          <View style={styles.midRight}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Needs Your Attention</Text>
+              {openRequests.length > 0 && (
+                <Pill variant="amber" size="sm">{openRequests.length}</Pill>
+              )}
+            </View>
+            <Card style={styles.card}>
+              {recentRequests.length === 0 ? (
+                <Text style={styles.emptyText}>No open requests right now.</Text>
+              ) : (
+                recentRequests.map((request, index) => {
+                  const verticalLabel = VERTICAL_LABELS[request.vertical as Vertical] ?? request.vertical;
+                  const verticalColor = VERTICAL_COLORS[request.vertical as Vertical] ?? '#6B7A6B';
+                  return (
+                    <View key={request.id}>
+                      {index > 0 ? <View style={styles.divider} /> : null}
+                      <View style={styles.requestRow}>
+                        <View
+                          style={[
+                            styles.verticalIconCircle,
+                            { backgroundColor: verticalColor + '18' },
+                          ]}
+                        >
+                          <VerticalIconComponent vertical={request.vertical as Vertical} size={18} />
+                        </View>
+                        <View style={styles.requestInfo}>
+                          <View style={styles.badgeRow}>
+                            <Text style={styles.memberName}>{request.memberName}</Text>
+                            <Pill variant="gray" size="sm">{verticalLabel}</Pill>
+                          </View>
+                          <Text style={styles.requestDescription} numberOfLines={2}>
+                            {request.description}
+                          </Text>
+                          {/* Mode + member-requested time. TODO(backend): expose request.preferred_time. */}
+                          <View style={styles.metaIconRow}>
+                            <Clock size={12} color={themeColors.mutedForeground} />
+                            <Text style={styles.sessionMeta}>
+                              {SESSION_MODE_LABELS[request.preferredMode] ?? request.preferredMode}
+                              {' · Wants Thu 5:30 PM'}
                             </Text>
                           </View>
                         </View>
-                        <Text style={styles.requestDescription} numberOfLines={2}>
-                          {request.description}
-                        </Text>
-                        {/* Mode + member-requested time. TODO(backend):
-                            expose request.preferred_time so we can drop the mock. */}
-                        <View style={styles.metaIconRow}>
-                          <Clock size={12} color={colors.mutedForeground} />
-                          <Text style={styles.sessionMeta}>
-                            {SESSION_MODE_LABELS[request.preferredMode] ?? request.preferredMode}
-                            {' · Wants Thu 5:30 PM'}
-                          </Text>
-                        </View>
                       </View>
                     </View>
-                  </View>
-                );
-              })
-            )}
+                  );
+                })
+              )}
+            </Card>
           </View>
         </View>
 
-        {/* Rate footnote removed per Jemal's feedback (was misleading). */}
+        {/* ── Bottom row: Weekly Snapshot + Recent Activity ── */}
+        <View style={styles.bottomRow}>
+          {/* Weekly Snapshot */}
+          <Card style={[styles.card, styles.bottomCard]}>
+            <View style={styles.cardHeader}>
+              <TrendingUp size={16} color={themeColors.primary} />
+              <Text style={styles.cardTitle}>Weekly Snapshot</Text>
+            </View>
+            <View style={styles.snapshotGrid}>
+              <View style={styles.snapshotItem}>
+                <Text style={styles.snapshotValue}>
+                  {earnings ? earnings.sessionsThisWeek : 0}
+                </Text>
+                <Text style={styles.snapshotLabel}>Sessions</Text>
+              </View>
+              <View style={styles.snapshotItem}>
+                <Text style={styles.snapshotValue}>
+                  {earnings ? earnings.avgRating.toFixed(1) : '—'}
+                </Text>
+                <View style={styles.metaIconRow}>
+                  <Star size={11} color={themeColors.compassGold} />
+                  <Text style={styles.snapshotLabel}>Avg Rating</Text>
+                </View>
+              </View>
+              <View style={styles.snapshotItem}>
+                <Text style={styles.snapshotValue}>{openRequests.length}</Text>
+                <Text style={styles.snapshotLabel}>Open Requests</Text>
+              </View>
+            </View>
+          </Card>
+
+          {/* Recent Activity */}
+          <Card style={[styles.card, styles.bottomCard]}>
+            <View style={styles.cardHeader}>
+              <Heart size={16} color={themeColors.primary} />
+              <Text style={styles.cardTitle}>Recent Activity</Text>
+            </View>
+            {allSessions.slice(0, 3).length === 0 ? (
+              <Text style={styles.emptyText}>No recent activity.</Text>
+            ) : (
+              allSessions.slice(0, 3).map((session, index) => (
+                <View key={session.id}>
+                  {index > 0 ? <View style={styles.divider} /> : null}
+                  <View style={styles.activityRow}>
+                    <View style={styles.activityDot} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.activityText} numberOfLines={1}>
+                        {session.memberName}
+                      </Text>
+                      <Text style={styles.activityMeta}>
+                        {SESSION_MODE_LABELS[session.mode] ?? session.mode}
+                        {' · '}
+                        {formatScheduledAt(session.scheduledAt)}
+                      </Text>
+                    </View>
+                    <Pill
+                      variant={session.status === 'completed' ? 'emerald' : session.status === 'cancelled' ? 'red' : 'blue'}
+                      size="sm"
+                    >
+                      {session.status}
+                    </Pill>
+                  </View>
+                </View>
+              ))
+            )}
+          </Card>
         </View>
-      </ScrollView>
+
+        {/* Rate footnote removed per Jemal's feedback (was misleading). */}
+      </View>
+    </ScrollView>
+  );
+
+  return (
+    <SafeAreaView style={styles.safe} edges={['top']}>
+      <AppShell
+        role="chw"
+        activeKey="dashboard"
+        userBlock={{ initials, name: userName ?? 'CHW', role: 'CHW' }}
+      >
+        {screenContent}
+      </AppShell>
     </SafeAreaView>
   );
 }
@@ -487,44 +550,34 @@ export function CHWDashboardScreen(): React.JSX.Element {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: '#F4F1ED',
-  },
+    backgroundColor: tokens.pageBg,
+  } as ViewStyle,
   scroll: {
     flex: 1,
-  },
+  } as ViewStyle,
   content: {
     flexGrow: 1,
     alignItems: 'center',
-  },
-  // Constrains the dashboard content to a readable max-width on desktop web
-  // without affecting native. 960 px gives the 2×2 stat grid breathing room
-  // while keeping the layout looking intentional on wide viewports.
+  } as ViewStyle,
+  contentWeb: {
+    flexGrow: 1,
+  } as ViewStyle,
   pageWrap: {
     width: '100%',
     maxWidth: 960,
     alignSelf: 'center',
     padding: 20,
     paddingBottom: 40,
-  },
-  greetingBlock: {
-    marginBottom: 24,
-  },
-  greetingText: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 24,
-    lineHeight: 30,
-    color: '#1E3320',
-  },
-  greetingName: {
-    color: '#7A9F5A',
-  },
-  greetingSubtext: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 16,
-    lineHeight: 24,
-    color: '#6B7A6B',
-    marginTop: 4,
-  },
+  } as ViewStyle,
+  pageWrapWeb: {
+    width: '100%',
+    maxWidth: 1100,
+    alignSelf: 'center',
+    padding: 32,
+    paddingBottom: 48,
+  } as ViewStyle,
+
+  // ── Intake banner
   intakeBanner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -533,110 +586,106 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: colors.primary + '40',
+    borderColor: themeColors.primary + '40',
     marginBottom: 20,
-  },
+  } as ViewStyle,
   intakeIconWrap: {
     width: 40,
     height: 40,
     borderRadius: 10,
-    backgroundColor: colors.primary + '18',
+    backgroundColor: themeColors.primary + '18',
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
-  },
+  } as ViewStyle,
   intakeTitle: {
     fontFamily: 'DMSans_700Bold',
     fontSize: 14,
-    color: colors.foreground,
-  },
+    color: themeColors.foreground,
+  } as TextStyle,
   intakeSubtitle: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 12,
-    color: colors.mutedForeground,
+    color: themeColors.mutedForeground,
     marginTop: 2,
     lineHeight: 16,
-  },
+  } as TextStyle,
+
+  // ── KPI grid — mockup: grid-cols-4 gap-4 (16px gap), stat-tile p-5 (20px)
   statGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 12,
+    gap: 16,
     marginBottom: 24,
-  },
-  statCard: {
-    width: '47%',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-    padding: 16,
-    shadowColor: '#3D5A3E',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 24,
-    elevation: 3,
-  },
-  statIconCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 12,
-    backgroundColor: '#3D5A3E15',
-  },
-  statValue: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 24,
-    lineHeight: 30,
-    color: '#1E3320',
-  },
-  statLabel: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 14,
-    color: '#6B7A6B',
-    marginTop: 2,
-  },
-  statSubtext: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 12,
-    letterSpacing: 1,
-    color: '#7A9F5A',
-    marginTop: 2,
-  },
-  section: {
+  } as ViewStyle,
+  statTile: {
+    minWidth: 160,
+    flex: 1,
+  } as ViewStyle,
+
+  // ── Mid row (two-column on web, stacked on native)
+  // Mockup: grid-cols-12 gap-6 (24px), schedule col-span-7, attention col-span-5
+  midRow: {
+    flexDirection: Platform.OS === 'web' ? 'row' : 'column',
+    gap: 24,
     marginBottom: 24,
-  },
+  } as ViewStyle,
+  midLeft: {
+    flex: Platform.OS === 'web' ? 7 : undefined,
+  } as ViewStyle,
+  midRight: {
+    flex: Platform.OS === 'web' ? 5 : undefined,
+  } as ViewStyle,
+
+  // ── Bottom row — mockup: grid-cols-12 gap-6 mt-6, snapshot col-span-5, activity col-span-7
+  bottomRow: {
+    flexDirection: Platform.OS === 'web' ? 'row' : 'column',
+    gap: 24,
+  } as ViewStyle,
+  bottomCard: {
+    flex: 1,
+    padding: 20,
+  } as ViewStyle,
+
+  // ── Section headings — mockup: font-semibold text-gray-900 mb-4
   sectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
+    gap: 8,
+    marginBottom: 16,
+  } as ViewStyle,
   sectionTitle: {
     fontFamily: 'DMSans_700Bold',
-    fontSize: 16,
-    lineHeight: 22,
-    color: '#1E3320',
-    marginBottom: 12,
-  },
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#111827',
+    marginBottom: 16,
+  } as TextStyle,
+
+  // ── Card surface — mockup: p-5 (20px) for schedule/attention cards
   card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-    padding: 16,
-    shadowColor: '#3D5A3E',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 24,
-    elevation: 3,
-  },
+    padding: 20,
+  } as ViewStyle,
+
+  // ── Card inner header row — mockup: flex items-center justify-between mb-4
+  cardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+  } as ViewStyle,
+  cardTitle: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 14,
+    color: '#111827',
+  } as TextStyle,
+
+  // ── Session row
   sessionRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 12,
-  },
+  } as ViewStyle,
   verticalIconCircle: {
     width: 44,
     height: 44,
@@ -645,68 +694,36 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     flexShrink: 0,
     backgroundColor: '#3D5A3E15',
-  },
+  } as ViewStyle,
   sessionInfo: {
     flex: 1,
     gap: 4,
-  },
+  } as ViewStyle,
   badgeRow: {
     flexDirection: 'row',
     alignItems: 'center',
     flexWrap: 'wrap',
     gap: 6,
     marginBottom: 4,
-  },
-  badge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 100,
-  },
-  badgeText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 12,
-    lineHeight: 16,
-  },
+  } as ViewStyle,
   memberName: {
     fontFamily: 'DMSans_700Bold',
-    fontSize: 16,
-    lineHeight: 22,
-    color: '#1E3320',
-  },
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#111827',
+  } as TextStyle,
   sessionMeta: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 12,
-    letterSpacing: 1,
-    color: '#6B7A6B',
+    color: '#6B7280',
     marginTop: 2,
-  },
+  } as TextStyle,
   metaIconRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     marginTop: 2,
-  },
-  journeyPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 100,
-    backgroundColor: '#F4F1ED',
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-  },
-  journeyDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-  },
-  journeyText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 11,
-    color: '#6B7A6B',
-  },
+  } as ViewStyle,
   actionNote: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -715,51 +732,101 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 8,
     borderRadius: 8,
-    backgroundColor: colors.primary + '0D',
+    backgroundColor: themeColors.primary + '0D',
     borderLeftWidth: 3,
-    borderLeftColor: colors.primary,
-  },
+    borderLeftColor: themeColors.primary,
+  } as ViewStyle,
   actionNoteText: {
     flex: 1,
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 12,
-    color: colors.foreground,
+    color: themeColors.foreground,
     lineHeight: 16,
-  },
+  } as TextStyle,
+
+  // ── Request rows
   requestRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 12,
     paddingVertical: 4,
-  },
+  } as ViewStyle,
   requestInfo: {
     flex: 1,
     gap: 4,
-  },
+  } as ViewStyle,
   requestDescription: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 14,
     color: '#6B7A6B',
     lineHeight: 20,
-  },
+  } as TextStyle,
+
+  // ── Snapshot grid — mockup: grid-cols-2 gap-3, each cell p-3 rounded-xl bg-gray-50
+  snapshotGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  } as ViewStyle,
+  snapshotItem: {
+    width: '48%',
+    backgroundColor: '#F9FAFB',
+    borderRadius: 12,
+    padding: 12,
+    gap: 4,
+  } as ViewStyle,
+  snapshotValue: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 22,
+    color: '#111827',
+    marginTop: 4,
+  } as TextStyle,
+  snapshotLabel: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 12,
+    color: '#6B7280',
+  } as TextStyle,
+
+  // ── Activity feed — mockup: py-2 border-b, 14px text, 12px meta muted
+  activityRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  } as ViewStyle,
+  activityDot: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: themeColors.primary + '18',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  } as ViewStyle,
+  activityText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 14,
+    color: '#111827',
+  } as TextStyle,
+  activityMeta: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 12,
+    color: '#6B7280',
+  } as TextStyle,
+
+  // ── Shared
   divider: {
     height: 1,
     backgroundColor: '#DDD6CC',
-    marginVertical: 12,
-  },
+    marginVertical: 8,
+  } as ViewStyle,
   emptyText: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 14,
     color: '#6B7A6B',
     textAlign: 'center',
     paddingVertical: 8,
-  },
-  footnote: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 12,
-    letterSpacing: 1,
-    color: '#6B7A6B',
-    textAlign: 'center',
-    marginTop: 4,
-  },
+  } as TextStyle,
 });

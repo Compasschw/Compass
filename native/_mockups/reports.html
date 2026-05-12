@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Compass CHW — My Reports</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    body { font-family: 'Inter', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+    .sidebar-bg { background: linear-gradient(180deg, #134e36 0%, #0f3d2a 100%); }
+    .sidebar-item { display:flex; align-items:center; gap:12px; padding:10px 14px; border-radius:10px; color:#a7d4be; font-size:14px; font-weight:500; transition:all .15s; cursor:pointer; text-decoration:none; }
+    .sidebar-item:hover { background: rgba(255,255,255,0.06); color:#fff; }
+    .sidebar-item.active { background:#fff; color:#0f3d2a; font-weight:600; box-shadow:0 1px 3px rgba(0,0,0,.06); }
+    .sidebar-item.active .icon { color:#16a34a; }
+    .icon { width:18px; height:18px; flex-shrink:0; }
+    .pill { display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:999px; font-size:11px; font-weight:600; }
+    .card { background:#fff; border-radius:16px; box-shadow:0 1px 3px rgba(0,0,0,.04), 0 1px 2px rgba(0,0,0,.03); border:1px solid #f1f5f4; }
+    .chart-placeholder { background:linear-gradient(135deg, #ecfdf5, #dbeafe); border-radius:14px; min-height:220px; position:relative; padding:20px; }
+    .kpi-card { padding:20px; }
+  </style>
+</head>
+<body class="bg-[#f5f7f6] min-h-screen">
+  <div class="flex min-h-screen">
+    <aside class="sidebar-bg w-64 flex-shrink-0 flex flex-col py-6 px-4">
+      <div class="px-2 mb-8"><div class="flex items-center gap-2.5"><div class="w-9 h-9 rounded-xl bg-emerald-500 grid place-items-center"><i data-lucide="compass" class="w-5 h-5 text-white"></i></div><div><div class="text-white font-bold text-lg leading-tight">compasschw</div><div class="text-emerald-300 text-xs font-medium">Medi-Cal Member</div></div></div></div>
+      <nav class="flex-1 space-y-1">
+        <a href="member-profile.html" class="sidebar-item"><i data-lucide="user-round" class="icon"></i><span>Member Profile</span></a>
+        <a href="dashboard.html" class="sidebar-item"><i data-lucide="layout-dashboard" class="icon"></i><span>Dashboard</span></a>
+        <a href="members.html" class="sidebar-item"><i data-lucide="users" class="icon"></i><span>Members</span></a>
+        <a href="journeys.html" class="sidebar-item"><i data-lucide="route" class="icon"></i><span>Journeys</span></a>
+        <a href="messages.html" class="sidebar-item"><i data-lucide="message-square" class="icon"></i><span class="flex-1">Messages</span><span class="bg-emerald-500 text-white text-xs font-semibold px-2 py-0.5 rounded-full">12</span></a>
+        <a href="appointments.html" class="sidebar-item"><i data-lucide="calendar" class="icon"></i><span>Appointments</span></a>
+        <a href="resources.html" class="sidebar-item"><i data-lucide="folder-open" class="icon"></i><span>Resources</span></a>
+        <a href="documents.html" class="sidebar-item"><i data-lucide="file-text" class="icon"></i><span>Documents</span></a>
+        <a href="reports.html" class="sidebar-item active"><i data-lucide="bar-chart-3" class="icon"></i><span>Reports</span></a>
+        <a href="community-partners.html" class="sidebar-item"><i data-lucide="building-2" class="icon"></i><span>Community Partners</span></a>
+        <a href="#" class="sidebar-item"><i data-lucide="settings" class="icon"></i><span>Settings</span></a>
+      </nav>
+      <div class="mt-6 pt-4 border-t border-emerald-900/40">
+        <a href="member-home.html" class="text-emerald-300 text-xs hover:text-white px-2 py-1 block">Switch to Member view →</a>
+        <div class="flex items-center gap-3 px-2 py-2 mt-1"><div class="w-9 h-9 rounded-full bg-emerald-300 grid place-items-center text-emerald-900 font-bold text-sm">MS</div><div class="flex-1 min-w-0"><div class="text-white text-sm font-semibold truncate">Maria Sanchez</div><div class="text-emerald-300 text-xs">Community Health Worker</div></div></div>
+      </div>
+    </aside>
+
+    <main class="flex-1 p-8 overflow-y-auto">
+      <div class="flex items-end justify-between mb-6">
+        <div>
+          <h1 class="text-2xl font-bold text-gray-900">My Reports</h1>
+          <p class="text-sm text-gray-600 mt-1">May 2026 · personalized to Maria Sanchez</p>
+        </div>
+        <div class="flex items-center gap-3">
+          <select class="px-3 py-2 rounded-xl border border-gray-200 text-sm bg-white"><option>This month (May 2026)</option><option>Last month</option><option>This quarter</option></select>
+          <button class="px-4 py-2 border border-gray-200 text-gray-700 text-sm font-semibold rounded-xl flex items-center gap-2"><i data-lucide="download" class="w-4 h-4"></i>Export</button>
+          <button class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-xl flex items-center gap-2"><i data-lucide="share-2" class="w-4 h-4"></i>Share with Cofounders</button>
+        </div>
+      </div>
+
+      <!-- KPI tiles -->
+      <div class="grid grid-cols-4 gap-4 mb-6">
+        <div class="card kpi-card">
+          <div class="flex items-center justify-between mb-3"><div class="w-10 h-10 rounded-xl bg-emerald-100 grid place-items-center"><i data-lucide="check-circle-2" class="w-5 h-5 text-emerald-600"></i></div><span class="pill bg-emerald-50 text-emerald-700">↑ 11% MoM</span></div>
+          <div class="text-3xl font-extrabold text-gray-900">47</div>
+          <div class="text-sm text-gray-500 mt-1">Sessions completed</div>
+        </div>
+        <div class="card kpi-card">
+          <div class="flex items-center justify-between mb-3"><div class="w-10 h-10 rounded-xl bg-blue-100 grid place-items-center"><i data-lucide="receipt" class="w-5 h-5 text-blue-600"></i></div><span class="pill bg-emerald-50 text-emerald-700">↑ 18% MoM</span></div>
+          <div class="text-3xl font-extrabold text-gray-900">138</div>
+          <div class="text-sm text-gray-500 mt-1">Units billed</div>
+        </div>
+        <div class="card kpi-card">
+          <div class="flex items-center justify-between mb-3"><div class="w-10 h-10 rounded-xl bg-purple-100 grid place-items-center"><i data-lucide="dollar-sign" class="w-5 h-5 text-purple-600"></i></div><span class="pill bg-emerald-50 text-emerald-700">↑ $720</span></div>
+          <div class="text-3xl font-extrabold text-gray-900">$4,920</div>
+          <div class="text-sm text-gray-500 mt-1">Earnings (gross)</div>
+        </div>
+        <div class="card kpi-card">
+          <div class="flex items-center justify-between mb-3"><div class="w-10 h-10 rounded-xl bg-amber-100 grid place-items-center"><i data-lucide="star" class="w-5 h-5 text-amber-600 fill-amber-400"></i></div><span class="pill bg-gray-100 text-gray-600">stable</span></div>
+          <div class="text-3xl font-extrabold text-gray-900">4.9</div>
+          <div class="text-sm text-gray-500 mt-1">Member satisfaction</div>
+        </div>
+      </div>
+
+      <!-- 2x2 chart grid -->
+      <div class="grid grid-cols-2 gap-5 mb-6">
+        <div class="card p-5">
+          <div class="flex items-center justify-between mb-3"><h3 class="font-semibold text-gray-900">Sessions per week</h3><span class="text-xs text-gray-500">Bar chart · 8-week trend</span></div>
+          <div class="chart-placeholder grid place-items-end"><div class="flex items-end gap-3 h-40 w-full justify-around"><div class="bg-emerald-200 w-8 rounded-t" style="height:40%"></div><div class="bg-emerald-300 w-8 rounded-t" style="height:55%"></div><div class="bg-emerald-300 w-8 rounded-t" style="height:50%"></div><div class="bg-emerald-400 w-8 rounded-t" style="height:65%"></div><div class="bg-emerald-400 w-8 rounded-t" style="height:70%"></div><div class="bg-emerald-500 w-8 rounded-t" style="height:75%"></div><div class="bg-emerald-500 w-8 rounded-t" style="height:80%"></div><div class="bg-emerald-600 w-8 rounded-t" style="height:90%"></div></div></div>
+        </div>
+        <div class="card p-5">
+          <div class="flex items-center justify-between mb-3"><h3 class="font-semibold text-gray-900">Earnings trend</h3><span class="text-xs text-gray-500">Line chart · since start</span></div>
+          <div class="chart-placeholder grid place-items-center"><svg viewBox="0 0 300 100" class="w-full h-32"><polyline points="10,80 50,70 90,72 130,55 170,50 210,40 250,28 290,15" stroke="#10b981" stroke-width="3" fill="none"/><polyline points="10,80 50,70 90,72 130,55 170,50 210,40 250,28 290,15 290,100 10,100" fill="url(#g1)" opacity=".25"/><defs><linearGradient id="g1" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="#10b981"/><stop offset="100%" stop-color="#10b981" stop-opacity="0"/></linearGradient></defs></svg></div>
+        </div>
+        <div class="card p-5">
+          <div class="flex items-center justify-between mb-3"><h3 class="font-semibold text-gray-900">Top resource needs served</h3><span class="text-xs text-gray-500">Pie · this month</span></div>
+          <div class="chart-placeholder grid place-items-center">
+            <div class="flex items-center gap-6">
+              <div class="w-32 h-32 rounded-full" style="background:conic-gradient(#10b981 0% 32%, #f97316 32% 56%, #f59e0b 56% 70%, #8b5cf6 70% 84%, #ef4444 84% 100%);"></div>
+              <div class="text-xs space-y-1.5">
+                <div class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded bg-emerald-500"></span>Food (32%)</div>
+                <div class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded bg-orange-500"></span>Housing (24%)</div>
+                <div class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded bg-amber-500"></span>Benefits (14%)</div>
+                <div class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded bg-purple-500"></span>Mental Health (14%)</div>
+                <div class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded bg-red-500"></span>Other (16%)</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="card p-5">
+          <div class="flex items-center justify-between mb-3"><h3 class="font-semibold text-gray-900">Time-to-first-contact</h3><span class="text-xs text-gray-500">Per new member</span></div>
+          <div class="chart-placeholder p-0 grid place-items-center bg-white">
+            <table class="w-full text-sm">
+              <thead><tr class="text-xs text-gray-500"><th class="text-left p-2">Member</th><th class="text-right p-2">Hours</th></tr></thead>
+              <tbody>
+                <tr><td class="p-2">Ana Garcia</td><td class="p-2 text-right text-emerald-600 font-semibold">2.1 h</td></tr>
+                <tr><td class="p-2">Juana Ramirez</td><td class="p-2 text-right text-emerald-600 font-semibold">1.4 h</td></tr>
+                <tr><td class="p-2">David Lopez</td><td class="p-2 text-right text-emerald-600 font-semibold">3.2 h</td></tr>
+                <tr><td class="p-2">Sandra Chavez</td><td class="p-2 text-right text-amber-600 font-semibold">8.7 h</td></tr>
+                <tr><td class="p-2">Marcus Brown</td><td class="p-2 text-right text-red-600 font-semibold">26.4 h</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- AI insights + members served -->
+      <div class="grid grid-cols-12 gap-5 mb-8">
+        <div class="col-span-5 card p-5 bg-gradient-to-b from-emerald-50/50 to-white">
+          <div class="flex items-center gap-2 mb-3"><i data-lucide="sparkles" class="w-4 h-4 text-emerald-600"></i><h3 class="font-semibold text-gray-900">Compass Insights</h3><span class="pill bg-emerald-100 text-emerald-700 text-[10px] font-bold tracking-wider">BETA</span></div>
+          <div class="space-y-3 text-sm">
+            <div class="p-3 bg-white rounded-lg border border-gray-100"><div class="text-gray-900 font-medium mb-0.5">You respond fastest on Tuesdays</div><div class="text-xs text-gray-600">Average response time on Tue is 42 min vs 1h 56m other days. Consider blocking 2h of outreach time then.</div></div>
+            <div class="p-3 bg-white rounded-lg border border-gray-100"><div class="text-gray-900 font-medium mb-0.5">92% of your housing journey members complete eligibility</div><div class="text-xs text-gray-600">Well above the 67% platform average — your intake script is working.</div></div>
+            <div class="p-3 bg-white rounded-lg border border-gray-100"><div class="text-gray-900 font-medium mb-0.5">Marcus B. is at risk of disengagement</div><div class="text-xs text-gray-600">26h time-to-first-contact + missed last 2 follow-ups. Suggest evening text outreach.</div></div>
+          </div>
+        </div>
+
+        <div class="col-span-7 card p-5">
+          <h3 class="font-semibold text-gray-900 mb-3">Members served this month (12)</h3>
+          <div class="grid grid-cols-6 gap-3">
+            <div class="text-center"><div class="w-12 h-12 mx-auto rounded-full bg-emerald-100 grid place-items-center text-emerald-700 font-bold text-sm">AG</div><div class="text-xs mt-1 text-gray-700">Ana</div></div>
+            <div class="text-center"><div class="w-12 h-12 mx-auto rounded-full bg-blue-100 grid place-items-center text-blue-700 font-bold text-sm">JR</div><div class="text-xs mt-1 text-gray-700">Juana</div></div>
+            <div class="text-center"><div class="w-12 h-12 mx-auto rounded-full bg-purple-100 grid place-items-center text-purple-700 font-bold text-sm">DL</div><div class="text-xs mt-1 text-gray-700">David</div></div>
+            <div class="text-center"><div class="w-12 h-12 mx-auto rounded-full bg-amber-100 grid place-items-center text-amber-700 font-bold text-sm">SC</div><div class="text-xs mt-1 text-gray-700">Sandra</div></div>
+            <div class="text-center"><div class="w-12 h-12 mx-auto rounded-full bg-rose-100 grid place-items-center text-rose-700 font-bold text-sm">MB</div><div class="text-xs mt-1 text-gray-700">Marcus</div></div>
+            <div class="text-center"><div class="w-12 h-12 mx-auto rounded-full bg-cyan-100 grid place-items-center text-cyan-700 font-bold text-sm">EC</div><div class="text-xs mt-1 text-gray-700">Elena</div></div>
+            <div class="text-center"><div class="w-12 h-12 mx-auto rounded-full bg-indigo-100 grid place-items-center text-indigo-700 font-bold text-sm">RP</div><div class="text-xs mt-1 text-gray-700">Roberto</div></div>
+            <div class="text-center"><div class="w-12 h-12 mx-auto rounded-full bg-pink-100 grid place-items-center text-pink-700 font-bold text-sm">LM</div><div class="text-xs mt-1 text-gray-700">Linda</div></div>
+            <div class="text-center"><div class="w-12 h-12 mx-auto rounded-full bg-teal-100 grid place-items-center text-teal-700 font-bold text-sm">JN</div><div class="text-xs mt-1 text-gray-700">Jose</div></div>
+            <div class="text-center"><div class="w-12 h-12 mx-auto rounded-full bg-violet-100 grid place-items-center text-violet-700 font-bold text-sm">CM</div><div class="text-xs mt-1 text-gray-700">Carmen</div></div>
+            <div class="text-center"><div class="w-12 h-12 mx-auto rounded-full bg-yellow-100 grid place-items-center text-yellow-700 font-bold text-sm">RV</div><div class="text-xs mt-1 text-gray-700">Rosa</div></div>
+            <div class="text-center"><div class="w-12 h-12 mx-auto rounded-full bg-slate-100 grid place-items-center text-slate-700 font-bold text-sm">+1</div><div class="text-xs mt-1 text-gray-700">more</div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="mt-8 text-center"><a href="index.html" class="text-emerald-600 hover:underline text-sm">← Back to mockups index</a></div>
+    </main>
+  </div>
+  <script>lucide.createIcons();</script>
+</body>
+</html>

@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Compass CHW — Open Questions Drawer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    body { font-family: 'Inter', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+    .sidebar-bg { background: linear-gradient(180deg, #134e36 0%, #0f3d2a 100%); }
+    .sidebar-item { display:flex; align-items:center; gap:12px; padding:10px 14px; border-radius:10px; color:#a7d4be; font-size:14px; font-weight:500; transition:all .15s; cursor:pointer; text-decoration:none; }
+    .sidebar-item:hover { background: rgba(255,255,255,0.06); color:#fff; }
+    .sidebar-item.active { background:#fff; color:#0f3d2a; font-weight:600; box-shadow:0 1px 3px rgba(0,0,0,.06); }
+    .sidebar-item.active .icon { color:#16a34a; }
+    .icon { width:18px; height:18px; flex-shrink:0; }
+    .pill { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; font-size:12px; font-weight:500; }
+    .card { background:#fff; border-radius:16px; box-shadow:0 1px 3px rgba(0,0,0,.04), 0 1px 2px rgba(0,0,0,.03); border:1px solid #f1f5f4; }
+    /* Drawer */
+    .drawer { background:#fff; box-shadow: -8px 0 32px rgba(0,0,0,.08); border-left:1px solid #e5e7eb; }
+    .question-row { display:flex; gap:10px; padding:10px 12px; border-radius:10px; cursor:pointer; transition:background .15s; }
+    .question-row:hover { background:#f9fafb; }
+    .question-row.checked { background:#ecfdf5; }
+    .question-row.checked .checkbox { background:#10b981; border-color:#10b981; }
+    .checkbox { width:18px; height:18px; border-radius:5px; border:2px solid #d1d5db; flex-shrink:0; margin-top:1px; display:grid; place-items:center; transition:all .15s; }
+    .checkbox::after { content:"✓"; color:#fff; font-size:11px; font-weight:bold; opacity:0; transition:opacity .15s; }
+    .checked .checkbox::after { opacity:1; }
+    .section-label { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:#10b981; margin-bottom:8px; padding-left:4px; }
+  </style>
+</head>
+<body class="bg-[#f5f7f6] min-h-screen">
+  <div class="flex min-h-screen">
+    <!-- Sidebar -->
+    <aside class="sidebar-bg w-64 flex-shrink-0 flex flex-col py-6 px-4">
+      <div class="px-2 mb-8"><div class="flex items-center gap-2.5"><div class="w-9 h-9 rounded-xl bg-emerald-500 grid place-items-center"><i data-lucide="compass" class="w-5 h-5 text-white"></i></div><div><div class="text-white font-bold text-lg leading-tight">compasschw</div><div class="text-emerald-300 text-xs font-medium">Medi-Cal Member</div></div></div></div>
+      <nav class="flex-1 space-y-1">
+        <a href="member-profile.html" class="sidebar-item active"><i data-lucide="user-round" class="icon"></i><span>Member Profile</span></a>
+        <a href="dashboard.html" class="sidebar-item"><i data-lucide="layout-dashboard" class="icon"></i><span>Dashboard</span></a>
+        <a href="members.html" class="sidebar-item"><i data-lucide="users" class="icon"></i><span>Members</span></a>
+        <a href="journeys.html" class="sidebar-item"><i data-lucide="route" class="icon"></i><span>Journeys</span></a>
+        <a href="messages.html" class="sidebar-item"><i data-lucide="message-square" class="icon"></i><span class="flex-1">Messages</span><span class="bg-emerald-500 text-white text-xs font-semibold px-2 py-0.5 rounded-full">12</span></a>
+        <a href="#" class="sidebar-item"><i data-lucide="calendar" class="icon"></i><span>Appointments</span></a>
+        <a href="#" class="sidebar-item"><i data-lucide="folder-open" class="icon"></i><span>Resources</span></a>
+        <a href="#" class="sidebar-item"><i data-lucide="file-text" class="icon"></i><span>Documents</span></a>
+        <a href="#" class="sidebar-item"><i data-lucide="bar-chart-3" class="icon"></i><span>Reports</span></a>
+        <a href="#" class="sidebar-item"><i data-lucide="building-2" class="icon"></i><span>Community Partners</span></a>
+        <a href="#" class="sidebar-item"><i data-lucide="settings" class="icon"></i><span>Settings</span></a>
+      </nav>
+      <div class="mt-6 pt-4 border-t border-emerald-900/40"><div class="flex items-center gap-3 px-2 py-2"><div class="w-9 h-9 rounded-full bg-emerald-300 grid place-items-center text-emerald-900 font-bold text-sm">MS</div><div class="flex-1 min-w-0"><div class="text-white text-sm font-semibold truncate">Maria Sanchez</div><div class="text-emerald-300 text-xs">Community Health Worker</div></div></div></div>
+    </aside>
+
+    <!-- Member Profile preview (dimmed to focus on drawer) -->
+    <main class="flex-1 p-6 overflow-y-auto opacity-50 pointer-events-none">
+      <div class="card p-6 mb-6">
+        <div class="flex items-start gap-5">
+          <div class="w-24 h-24 rounded-full bg-gradient-to-br from-slate-300 to-slate-500 grid place-items-center text-white text-2xl font-bold">AG</div>
+          <div class="flex-1">
+            <h1 class="text-2xl font-bold text-gray-900">Ana Garcia</h1>
+            <div class="flex items-center gap-2 mt-1">
+              <span class="pill bg-emerald-100 text-emerald-800">Active Member</span>
+              <span class="pill bg-emerald-100 text-emerald-800">Highly Engaged</span>
+            </div>
+            <div class="text-sm text-gray-500 mt-2">Food Assistance Journey · Upload Documents · 60% complete</div>
+          </div>
+        </div>
+      </div>
+      <div class="card p-5">
+        <div class="flex items-center gap-3 mb-4">
+          <div class="w-12 h-12 rounded-full bg-emerald-600 grid place-items-center"><i data-lucide="utensils" class="w-6 h-6 text-white"></i></div>
+          <div><h2 class="text-lg font-bold text-gray-900">Food Assistance Journey</h2></div>
+        </div>
+        <div class="text-sm text-gray-500">Journey roadmap rendered here...</div>
+      </div>
+    </main>
+
+    <!-- Drawer (480px right slide) -->
+    <aside class="drawer w-[520px] flex-shrink-0 flex flex-col">
+      <!-- Drawer header -->
+      <div class="px-6 py-5 border-b border-gray-200">
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <div class="flex items-center gap-2 mb-1">
+              <i data-lucide="list-checks" class="w-5 h-5 text-emerald-600"></i>
+              <h2 class="text-lg font-bold text-gray-900">Suggested Questions for Today's Call</h2>
+            </div>
+            <p class="text-sm text-gray-600">Based on <b class="text-gray-900">Food Assistance Journey</b> · <b class="text-gray-900">Upload Documents</b></p>
+          </div>
+          <button class="w-8 h-8 rounded-lg hover:bg-gray-100 grid place-items-center text-gray-500"><i data-lucide="x" class="w-5 h-5"></i></button>
+        </div>
+        <!-- Member context strip -->
+        <div class="mt-4 px-4 py-3 rounded-xl bg-emerald-50 border border-emerald-100 flex items-center gap-3">
+          <div class="w-8 h-8 rounded-full bg-emerald-200 grid place-items-center text-emerald-800 font-bold text-xs">AG</div>
+          <div class="flex-1">
+            <div class="text-sm font-semibold text-gray-900">Ana Garcia · 38</div>
+            <div class="text-xs text-gray-600">English · Last contact 2 days ago · Medi-Cal</div>
+          </div>
+          <span class="pill bg-emerald-100 text-emerald-800 text-[11px]">Highly Engaged</span>
+        </div>
+      </div>
+
+      <!-- Question sections -->
+      <div class="flex-1 overflow-y-auto p-5 space-y-5">
+        <!-- Section 1 -->
+        <div>
+          <div class="section-label">1 · Confirm Current Situation</div>
+          <div class="card p-2 space-y-1">
+            <label class="question-row checked">
+              <span class="checkbox"></span>
+              <span class="text-sm text-gray-800">Do you currently have enough food for the next 2–3 days?</span>
+            </label>
+            <label class="question-row checked">
+              <span class="checkbox"></span>
+              <span class="text-sm text-gray-800">Has anything changed with your household size or income?</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Section 2 -->
+        <div>
+          <div class="section-label">2 · Document Support</div>
+          <div class="card p-2 space-y-1">
+            <label class="question-row checked">
+              <span class="checkbox"></span>
+              <span class="text-sm text-gray-800">Do you have access to your ID or driver's license?</span>
+            </label>
+            <label class="question-row">
+              <span class="checkbox"></span>
+              <span class="text-sm text-gray-800">Do you have proof of address available?</span>
+            </label>
+            <label class="question-row">
+              <span class="checkbox"></span>
+              <span class="text-sm text-gray-800">Would you like me to walk you through how to upload the documents?</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Section 3 -->
+        <div>
+          <div class="section-label">3 · Barriers</div>
+          <div class="card p-2 space-y-1">
+            <label class="question-row">
+              <span class="checkbox"></span>
+              <span class="text-sm text-gray-800">Is transportation, internet access, or phone access making this harder?</span>
+            </label>
+            <label class="question-row">
+              <span class="checkbox"></span>
+              <span class="text-sm text-gray-800">Is there anyone else helping you with this application?</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Section 4 -->
+        <div>
+          <div class="section-label">4 · Close the Call</div>
+          <div class="card p-2 space-y-1">
+            <label class="question-row">
+              <span class="checkbox"></span>
+              <span class="text-sm text-gray-800">Can we set a follow-up time to confirm the upload was completed?</span>
+            </label>
+            <label class="question-row">
+              <span class="checkbox"></span>
+              <span class="text-sm text-gray-800">Would you like a reminder text?</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Add custom -->
+        <div>
+          <button class="w-full px-4 py-3 border-2 border-dashed border-gray-300 rounded-xl text-sm text-gray-500 hover:border-emerald-300 hover:text-emerald-600 hover:bg-emerald-50/30 flex items-center justify-center gap-2"><i data-lucide="plus" class="w-4 h-4"></i>Add Custom Question</button>
+        </div>
+
+        <!-- AI footer -->
+        <div class="mt-4 p-4 rounded-xl bg-gradient-to-b from-emerald-50/60 to-white border border-emerald-100">
+          <div class="flex items-center gap-2 mb-1.5">
+            <i data-lucide="sparkles" class="w-4 h-4 text-emerald-600"></i>
+            <span class="text-xs font-semibold text-gray-900">Compass Insight</span>
+            <span class="pill bg-emerald-100 text-emerald-700 text-[10px] font-bold">BETA</span>
+          </div>
+          <p class="text-xs text-gray-700">Ana mentioned in her last call she didn't have a printer at home. Ask if she'd like the WIC office address sent by SMS so she can scan from her phone.</p>
+        </div>
+      </div>
+
+      <!-- Drawer footer (sticky actions) -->
+      <div class="px-5 py-4 border-t border-gray-200 bg-white">
+        <div class="grid grid-cols-2 gap-2 mb-2">
+          <button class="px-3 py-2 border border-gray-200 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-50 flex items-center justify-center gap-2"><i data-lucide="copy" class="w-4 h-4"></i>Copy Script</button>
+          <button class="px-3 py-2 border border-gray-200 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-50 flex items-center justify-center gap-2"><i data-lucide="notebook-pen" class="w-4 h-4"></i>Save as Note</button>
+        </div>
+        <button class="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl flex items-center justify-center gap-2"><i data-lucide="check-circle-2" class="w-5 h-5"></i>Mark Call Completed</button>
+      </div>
+    </aside>
+  </div>
+
+  <div class="fixed bottom-3 left-1/2 -translate-x-1/2 text-xs text-gray-400">
+    <a href="index.html" class="hover:text-emerald-600">← Back to mockups index</a>
+  </div>
+  <script>lucide.createIcons();</script>
+</body>
+</html>

@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Compass — Resources for You (Ana)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    body { font-family: 'Inter', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+    .sidebar-bg { background: linear-gradient(180deg, #134e36 0%, #0f3d2a 100%); }
+    .sidebar-item { display:flex; align-items:center; gap:12px; padding:10px 14px; border-radius:10px; color:#a7d4be; font-size:14px; font-weight:500; transition:all .15s; cursor:pointer; text-decoration:none; }
+    .sidebar-item:hover { background: rgba(255,255,255,0.06); color:#fff; }
+    .sidebar-item.active { background:#fff; color:#0f3d2a; font-weight:600; box-shadow:0 1px 3px rgba(0,0,0,.06); }
+    .sidebar-item.active .icon { color:#16a34a; }
+    .icon { width:18px; height:18px; flex-shrink:0; }
+    .pill { display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:999px; font-size:11px; font-weight:600; }
+    .card { background:#fff; border-radius:16px; box-shadow:0 1px 3px rgba(0,0,0,.04), 0 1px 2px rgba(0,0,0,.03); border:1px solid #f1f5f4; }
+    .filter-btn { padding:7px 14px; border-radius:10px; font-size:13px; font-weight:500; color:#6b7280; border:1px solid #e5e7eb; background:#fff; cursor:pointer; }
+    .filter-btn.active { background:#ecfdf5; color:#065f46; border-color:#a7f3d0; }
+    .resource-card { transition:all .2s; }
+    .resource-card:hover { transform:translateY(-2px); box-shadow:0 6px 20px rgba(0,0,0,.06); border-color:#a7f3d0; }
+  </style>
+</head>
+<body class="bg-[#f5f7f6] min-h-screen">
+  <div class="flex min-h-screen">
+    <aside class="sidebar-bg w-64 flex-shrink-0 flex flex-col py-6 px-4">
+      <div class="px-2 mb-8"><div class="flex items-center gap-2.5"><div class="w-9 h-9 rounded-xl bg-emerald-500 grid place-items-center"><i data-lucide="compass" class="w-5 h-5 text-white"></i></div><div><div class="text-white font-bold text-lg leading-tight">compasschw</div><div class="text-emerald-300 text-xs font-medium">Member</div></div></div></div>
+      <nav class="flex-1 space-y-1">
+        <a href="member-home.html" class="sidebar-item"><i data-lucide="home" class="icon"></i><span>Home</span></a>
+        <a href="chw-profile.html" class="sidebar-item"><i data-lucide="user-round" class="icon"></i><span>My CHW</span></a>
+        <a href="member-journey.html" class="sidebar-item"><i data-lucide="route" class="icon"></i><span>My Journey</span></a>
+        <a href="member-messages.html" class="sidebar-item"><i data-lucide="message-square" class="icon"></i><span class="flex-1">Messages</span><span class="bg-emerald-500 text-white text-xs font-semibold px-2 py-0.5 rounded-full">2</span></a>
+        <a href="member-appointments.html" class="sidebar-item"><i data-lucide="calendar" class="icon"></i><span>Appointments</span></a>
+        <a href="member-resources.html" class="sidebar-item active"><i data-lucide="folder-open" class="icon"></i><span>Resources</span></a>
+        <a href="member-rewards.html" class="sidebar-item"><i data-lucide="gift" class="icon"></i><span class="flex-1">Rewards</span><span class="text-emerald-300 text-xs font-semibold">420</span></a>
+        <a href="member-documents.html" class="sidebar-item"><i data-lucide="file-text" class="icon"></i><span>My Documents</span></a>
+        <a href="member-settings.html" class="sidebar-item"><i data-lucide="settings" class="icon"></i><span>Settings</span></a>
+      </nav>
+      <div class="mt-6 pt-4 border-t border-emerald-900/40">
+        <a href="dashboard.html" class="text-emerald-300 text-xs hover:text-white px-2 py-1 block">Switch to CHW view →</a>
+        <div class="flex items-center gap-3 px-2 py-2 mt-1"><div class="w-9 h-9 rounded-full bg-emerald-300 grid place-items-center text-emerald-900 font-bold text-sm">AG</div><div class="flex-1 min-w-0"><div class="text-white text-sm font-semibold truncate">Ana Garcia</div><div class="text-emerald-300 text-xs">Medi-Cal Member</div></div></div>
+      </div>
+    </aside>
+
+    <main class="flex-1 p-8 overflow-y-auto">
+      <div class="mb-6">
+        <h1 class="text-2xl font-bold text-gray-900">Resources for You</h1>
+        <p class="text-sm text-gray-600 mt-1">Hand-picked by Maria based on your goals</p>
+      </div>
+
+      <!-- Recommended for you -->
+      <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">⭐ Recommended for you</h2>
+      <div class="grid grid-cols-2 gap-4 mb-8">
+        <div class="card resource-card p-5 border-2 border-emerald-200">
+          <div class="flex items-center gap-3 mb-3">
+            <div class="w-12 h-12 rounded-xl bg-orange-100 grid place-items-center"><i data-lucide="utensils" class="w-6 h-6 text-orange-600"></i></div>
+            <div class="flex-1"><div class="font-semibold text-gray-900">San Diego Food Bank</div><span class="pill bg-orange-100 text-orange-700">Food</span></div>
+          </div>
+          <div class="text-sm text-gray-600 space-y-1 mb-3">
+            <div>📍 9850 Distribution Ave, San Diego</div>
+            <div>📞 (858) 527-1419</div>
+            <div>🕐 Mon–Fri 8 AM – 4 PM</div>
+          </div>
+          <div class="px-3 py-2 bg-emerald-50 rounded-lg text-xs text-emerald-900 mb-3"><i data-lucide="message-circle" class="w-3 h-3 inline"></i> <b>Why this is for you:</b> They have a same-day pickup program perfect while we wait on your CalFresh approval. — Maria</div>
+          <div class="grid grid-cols-3 gap-1.5">
+            <button class="px-2 py-1.5 bg-emerald-600 text-white text-xs font-semibold rounded-lg">Get directions</button>
+            <button class="px-2 py-1.5 border border-gray-200 text-xs font-semibold rounded-lg">Share via SMS</button>
+            <button class="px-2 py-1.5 border border-gray-200 text-xs font-semibold rounded-lg flex items-center justify-center"><i data-lucide="heart" class="w-3.5 h-3.5"></i></button>
+          </div>
+        </div>
+
+        <div class="card resource-card p-5 border-2 border-emerald-200">
+          <div class="flex items-center gap-3 mb-3">
+            <div class="w-12 h-12 rounded-xl bg-slate-100 grid place-items-center"><i data-lucide="phone-call" class="w-6 h-6 text-slate-600"></i></div>
+            <div class="flex-1"><div class="font-semibold text-gray-900">211 San Diego</div><span class="pill bg-slate-100 text-slate-700">Help line</span></div>
+          </div>
+          <div class="text-sm text-gray-600 space-y-1 mb-3">
+            <div>📍 Countywide</div>
+            <div>📞 Dial 211</div>
+            <div>🕐 24/7 multilingual</div>
+          </div>
+          <div class="px-3 py-2 bg-emerald-50 rounded-lg text-xs text-emerald-900 mb-3"><i data-lucide="message-circle" class="w-3 h-3 inline"></i> <b>Why this is for you:</b> If you ever can't reach me after hours, they can help with food, housing, and transportation in Spanish. — Maria</div>
+          <div class="grid grid-cols-3 gap-1.5">
+            <button class="px-2 py-1.5 bg-emerald-600 text-white text-xs font-semibold rounded-lg">Get directions</button>
+            <button class="px-2 py-1.5 border border-gray-200 text-xs font-semibold rounded-lg">Share via SMS</button>
+            <button class="px-2 py-1.5 border border-gray-200 text-xs font-semibold rounded-lg flex items-center justify-center"><i data-lucide="heart" class="w-3.5 h-3.5"></i></button>
+          </div>
+        </div>
+      </div>
+
+      <!-- All resources -->
+      <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">All resources</h2>
+      <div class="flex items-center gap-2 mb-5 flex-wrap">
+        <button class="filter-btn active">All (12)</button>
+        <button class="filter-btn">Recommended (5)</button>
+        <button class="filter-btn">Food (3)</button>
+        <button class="filter-btn">Housing (2)</button>
+        <button class="filter-btn">Mental Health (1)</button>
+        <button class="filter-btn">Childcare (1)</button>
+      </div>
+
+      <div class="grid grid-cols-3 gap-4">
+        <div class="card resource-card p-5">
+          <div class="flex items-center gap-3 mb-3"><div class="w-12 h-12 rounded-xl bg-emerald-100 grid place-items-center"><i data-lucide="clipboard-list" class="w-6 h-6 text-emerald-600"></i></div><div class="flex-1"><div class="font-semibold text-gray-900">CalFresh Online</div><span class="pill bg-emerald-100 text-emerald-700">Benefits</span></div></div>
+          <div class="text-sm text-gray-600 space-y-1 mb-3"><div>🌐 getcalfresh.org</div><div>📞 1-877-847-3663</div><div>🕐 24/7 online</div></div>
+          <div class="grid grid-cols-3 gap-1.5"><button class="px-2 py-1.5 bg-emerald-600 text-white text-xs font-semibold rounded-lg">Visit</button><button class="px-2 py-1.5 border border-gray-200 text-xs font-semibold rounded-lg">Share</button><button class="px-2 py-1.5 border border-gray-200 text-xs font-semibold rounded-lg flex items-center justify-center"><i data-lucide="heart" class="w-3.5 h-3.5"></i></button></div>
+        </div>
+        <div class="card resource-card p-5">
+          <div class="flex items-center gap-3 mb-3"><div class="w-12 h-12 rounded-xl bg-red-100 grid place-items-center"><i data-lucide="home" class="w-6 h-6 text-red-600"></i></div><div class="flex-1"><div class="font-semibold text-gray-900">Father Joe's Villages</div><span class="pill bg-red-100 text-red-700">Housing</span></div></div>
+          <div class="text-sm text-gray-600 space-y-1 mb-3"><div>📍 1501 Imperial Ave, SD</div><div>📞 (619) 446-2100</div><div>🕐 24/7 intake</div></div>
+          <div class="grid grid-cols-3 gap-1.5"><button class="px-2 py-1.5 bg-emerald-600 text-white text-xs font-semibold rounded-lg">Directions</button><button class="px-2 py-1.5 border border-gray-200 text-xs font-semibold rounded-lg">Share</button><button class="px-2 py-1.5 border border-gray-200 text-xs font-semibold rounded-lg flex items-center justify-center"><i data-lucide="heart" class="w-3.5 h-3.5 fill-red-400 text-red-500"></i></button></div>
+        </div>
+        <div class="card resource-card p-5">
+          <div class="flex items-center gap-3 mb-3"><div class="w-12 h-12 rounded-xl bg-purple-100 grid place-items-center"><i data-lucide="brain" class="w-6 h-6 text-purple-600"></i></div><div class="flex-1"><div class="font-semibold text-gray-900">Vista Hill</div><span class="pill bg-purple-100 text-purple-700">Mental Health</span></div></div>
+          <div class="text-sm text-gray-600 space-y-1 mb-3"><div>📍 8910 Clairemont Mesa Blvd</div><div>📞 (858) 514-5100</div><div>🕐 Mon–Fri 8 AM – 8 PM</div></div>
+          <div class="grid grid-cols-3 gap-1.5"><button class="px-2 py-1.5 bg-emerald-600 text-white text-xs font-semibold rounded-lg">Directions</button><button class="px-2 py-1.5 border border-gray-200 text-xs font-semibold rounded-lg">Share</button><button class="px-2 py-1.5 border border-gray-200 text-xs font-semibold rounded-lg flex items-center justify-center"><i data-lucide="heart" class="w-3.5 h-3.5"></i></button></div>
+        </div>
+        <div class="card resource-card p-5">
+          <div class="flex items-center gap-3 mb-3"><div class="w-12 h-12 rounded-xl bg-pink-100 grid place-items-center"><i data-lucide="baby" class="w-6 h-6 text-pink-600"></i></div><div class="flex-1"><div class="font-semibold text-gray-900">SD County WIC</div><span class="pill bg-pink-100 text-pink-700">Maternal</span></div></div>
+          <div class="text-sm text-gray-600 space-y-1 mb-3"><div>📍 3851 Rosecrans St, SD</div><div>📞 (800) 500-6411</div><div>🕐 Mon–Fri 8 AM – 4:30 PM</div></div>
+          <div class="grid grid-cols-3 gap-1.5"><button class="px-2 py-1.5 bg-emerald-600 text-white text-xs font-semibold rounded-lg">Directions</button><button class="px-2 py-1.5 border border-gray-200 text-xs font-semibold rounded-lg">Share</button><button class="px-2 py-1.5 border border-gray-200 text-xs font-semibold rounded-lg flex items-center justify-center"><i data-lucide="heart" class="w-3.5 h-3.5"></i></button></div>
+        </div>
+        <div class="card resource-card p-5">
+          <div class="flex items-center gap-3 mb-3"><div class="w-12 h-12 rounded-xl bg-amber-100 grid place-items-center"><i data-lucide="train" class="w-6 h-6 text-amber-600"></i></div><div class="flex-1"><div class="font-semibold text-gray-900">SD Trolley GO Pass</div><span class="pill bg-amber-100 text-amber-700">Transit</span></div></div>
+          <div class="text-sm text-gray-600 space-y-1 mb-3"><div>📍 MTS offices countywide</div><div>📞 (619) 234-1060</div><div>🕐 Same-day issuance</div></div>
+          <div class="grid grid-cols-3 gap-1.5"><button class="px-2 py-1.5 bg-emerald-600 text-white text-xs font-semibold rounded-lg">Directions</button><button class="px-2 py-1.5 border border-gray-200 text-xs font-semibold rounded-lg">Share</button><button class="px-2 py-1.5 border border-gray-200 text-xs font-semibold rounded-lg flex items-center justify-center"><i data-lucide="heart" class="w-3.5 h-3.5"></i></button></div>
+        </div>
+        <div class="card resource-card p-5">
+          <div class="flex items-center gap-3 mb-3"><div class="w-12 h-12 rounded-xl bg-blue-100 grid place-items-center"><i data-lucide="users" class="w-6 h-6 text-blue-600"></i></div><div class="flex-1"><div class="font-semibold text-gray-900">YMCA Childcare</div><span class="pill bg-blue-100 text-blue-700">Childcare</span></div></div>
+          <div class="text-sm text-gray-600 space-y-1 mb-3"><div>📍 5505 Friars Rd, SD</div><div>📞 (619) 298-3576</div><div>🕐 Mon–Sat 6 AM – 7 PM</div></div>
+          <div class="grid grid-cols-3 gap-1.5"><button class="px-2 py-1.5 bg-emerald-600 text-white text-xs font-semibold rounded-lg">Directions</button><button class="px-2 py-1.5 border border-gray-200 text-xs font-semibold rounded-lg">Share</button><button class="px-2 py-1.5 border border-gray-200 text-xs font-semibold rounded-lg flex items-center justify-center"><i data-lucide="heart" class="w-3.5 h-3.5"></i></button></div>
+        </div>
+      </div>
+
+      <div class="mt-6 text-center">
+        <a class="text-emerald-600 text-sm font-medium hover:underline">+ Suggest a resource</a>
+      </div>
+
+      <div class="mt-8 text-center"><a href="index.html" class="text-emerald-600 hover:underline text-sm">← Back to mockups index</a></div>
+    </main>
+  </div>
+  <script>lucide.createIcons();</script>
+</body>
+</html>

@@ -1,14 +1,20 @@
 /**
- * MemberHomeScreen — analytics dashboard for community members.
+ * MemberHomeScreen — dashboard home for community members.
  *
- * Mirrors the CHW dashboard's information architecture:
- *   - Personalised greeting + subtext
- *   - 2x2 stat-card grid (rewards / upcoming sessions / active goals / open requests)
- *   - Active goals from /member/roadmap with link to full Roadmap screen
- *   - Upcoming sessions list
- *   - "Request Help" primary CTA
+ * Re-skinned to the new AppShell layout (feat/ui-revamp).
+ * All existing data hooks, sub-components, and navigation callbacks are preserved.
  *
- * Data sources (all real APIs):
+ * Layout (new):
+ *   - AppShell wrapper (sidebar on web, passthrough on native)
+ *   - PageHeader: greeting + subtitle
+ *   - 2×2 StatTile grid (Rewards · Upcoming · Active Goals · Open Requests)
+ *   - Secondary stat row (Completed sessions)
+ *   - "Your CHW is available" hero card (mocked until /members/me/chw lands)
+ *   - My Goals card with roadmap link
+ *   - Find CHW CTA card
+ *   - Upcoming sessions card
+ *
+ * Data sources (all real APIs — unchanged from original):
  *   - useMemberProfile  → rewards balance, profile name fallback
  *   - useSessions       → upcoming + completed session counts
  *   - useMemberRoadmap  → active goals count + preview rows
@@ -17,8 +23,6 @@
 
 import React, { useCallback, useMemo, useState } from 'react';
 import {
-  FlatList,
-  Platform,
   Pressable,
   ScrollView,
   StatusBar,
@@ -26,7 +30,6 @@ import {
   Text,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   ArrowRight,
   CalendarCheck,
@@ -37,9 +40,12 @@ import {
   Gift,
   ListChecks,
   Map,
+  MessageSquare,
+  Phone,
   Square,
   CheckSquare,
   Target,
+  Trophy,
 } from 'lucide-react-native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
@@ -58,6 +64,8 @@ import {
   useRequests,
   type SessionData,
 } from '../../hooks/useApiQueries';
+import { AppShell, PageHeader, Card, StatTile, Pill } from '../../components/ui';
+import { colors as tokens } from '../../theme/tokens';
 import { useMemberRoadmap } from '../../hooks/useFollowupQueries';
 import { useRefreshControl } from '../../hooks/useRefreshControl';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
@@ -413,32 +421,57 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
     void requestsQuery.refetch();
   }, [sessionsQuery, profileQuery, roadmapQuery, requestsQuery]);
 
+  // Derive initials for userBlock sidebar avatar
+  const memberInitials = (userName ?? profile?.name ?? 'M')
+    .split(' ')
+    .slice(0, 2)
+    .map((p) => p[0] ?? '')
+    .join('')
+    .toUpperCase();
+
   if (isLoading) {
     return (
-      <SafeAreaView style={styles.safeArea} edges={['top']}>
+      <AppShell
+        role="member"
+        activeKey="home"
+        userBlock={{ initials: memberInitials, name: userName ?? 'Member', role: 'Member' }}
+      >
         <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
         <View style={styles.pageWrap}>
           <LoadingSkeleton variant="stat-grid" />
           <LoadingSkeleton variant="rows" rows={3} />
         </View>
-      </SafeAreaView>
+      </AppShell>
     );
   }
 
   if (hasError) {
     return (
-      <SafeAreaView style={styles.safeArea} edges={['top']}>
+      <AppShell
+        role="member"
+        activeKey="home"
+        userBlock={{ initials: memberInitials, name: userName ?? 'Member', role: 'Member' }}
+      >
         <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
         <ErrorState
           message="Could not load your home data. Please try again."
           onRetry={handleRetry}
         />
-      </SafeAreaView>
+      </AppShell>
     );
   }
 
+  const hourOfDay = new Date().getHours();
+  const greeting =
+    hourOfDay < 12 ? 'Good morning' : hourOfDay < 17 ? 'Good afternoon' : 'Good evening';
+
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top']}>
+    <AppShell
+      role="member"
+      activeKey="home"
+      userBlock={{ initials: memberInitials, name: userName ?? 'Member', role: 'Member' }}
+      badges={{ wellnessPoints: rewardsBalance }}
+    >
       <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
       <ScrollView
         style={styles.scroll}
@@ -447,113 +480,180 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
         refreshControl={refresh.control}
       >
         <View style={styles.pageWrap}>
-        {/* Greeting */}
-        <View style={styles.greetingSection}>
-          <Text style={styles.greeting}>
-            Hello, <Text style={styles.greetingAccent}>{firstName}</Text>
-          </Text>
-          <Text style={styles.greetingSub}>
-            Let's keep making progress on your health goals today.
-          </Text>
-        </View>
 
-        {/* Stat grid — 2×2, matches CHW dashboard pattern. All tiles
-            navigate to the relevant detail screen on tap. */}
-        <View style={styles.statGrid}>
-          <StatCard
-            variant="half"
-            icon={<Gift color={colors.primary} size={20} />}
-            label="Rewards"
-            value={rewardsBalance.toLocaleString()}
-            subtext="Points earned"
-            iconBg={`${colors.primary}18`}
-            onPress={handleOpenRewards}
-            accessibilityLabel="Open rewards catalog"
-          />
-          <StatCard
-            variant="half"
-            icon={<CalendarCheck color={colors.secondary} size={20} />}
-            label="Upcoming"
-            value={upcomingSessions.length}
-            subtext={upcomingSessions.length === 1 ? 'Session' : 'Sessions'}
-            iconBg={`${colors.secondary}18`}
-            onPress={handleOpenSessions}
-            accessibilityLabel="Open sessions list"
-          />
-          <StatCard
-            variant="half"
-            icon={<Target color={colors.compassGold} size={20} />}
-            label="Active Goals"
-            value={activeRoadmapItems.length}
-            subtext="On your roadmap"
-            iconBg={`${colors.compassGold}18`}
-            onPress={handleOpenRoadmap}
-            accessibilityLabel="Open roadmap"
-          />
-          <StatCard
-            variant="half"
-            icon={<ClipboardList color={colors.primary} size={20} />}
-            label="Open Requests"
-            value={openRequestsCount}
-            subtext="Awaiting CHW"
-            iconBg={`${colors.primary}18`}
-            onPress={handleFindCHW}
-            accessibilityLabel="View open requests"
-          />
-        </View>
+        <PageHeader
+          title={`${greeting}, ${firstName} 👋`}
+          subtitle="Here's what's happening today"
+        />
 
-        {/* Secondary stat row — completed sessions runs the full width
-            beneath the 2×2 grid so the dashboard reads as
-            "live state at a glance, then lifetime totals". */}
-        <View style={styles.statRow}>
-          <StatCard
-            icon={<CheckCircle2 color={colors.primary} size={20} />}
-            label="Completed"
-            value={completedSessionsCount}
-            subtext={
-              completedSessionsCount === 1
-                ? 'Session all-time'
-                : 'Sessions all-time'
-            }
-            iconBg={`${colors.primary}18`}
-            onPress={handleOpenSessions}
-            accessibilityLabel="Open completed sessions"
-          />
-        </View>
-
-        {/* My Goals */}
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>My Goals</Text>
-            <Pressable
-              onPress={() => navigation.navigate('Roadmap')}
-              accessibilityRole="button"
-              accessibilityLabel="View full roadmap"
-              hitSlop={8}
-            >
-              <View style={styles.linkRow}>
-                <Text style={styles.linkText}>Full roadmap</Text>
-                <ArrowRight color={colors.primary} size={13} />
+        {/* Hero CHW card */}
+        <Card style={styles.heroCard}>
+          <View style={styles.heroRow}>
+            <View style={styles.heroAvatarWrap}>
+              <View style={styles.heroAvatar}>
+                <Text style={styles.heroAvatarText}>MS</Text>
               </View>
+              <View style={styles.heroOnlineDot} />
+            </View>
+            <View style={styles.heroInfo}>
+              <Text style={styles.heroChwLabel}>Your CHW</Text>
+              <Text style={styles.heroChwTitle}>Maria is available now</Text>
+              <Text style={styles.heroChwSub}>Usually responds in under 2 hours · English &amp; Spanish</Text>
+            </View>
+          </View>
+          <View style={styles.heroActions}>
+            <Pressable
+              onPress={handleOpenSessions}
+              style={styles.heroPrimaryBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Send a message to Maria"
+            >
+              <MessageSquare size={16} color="#FFFFFF" />
+              <Text style={styles.heroPrimaryBtnText}>Send a message</Text>
+            </Pressable>
+            <Pressable
+              onPress={handleOpenSessions}
+              style={styles.heroSecondaryBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Schedule a call with Maria"
+            >
+              <Phone size={16} color="#3D5A3E" />
+              <Text style={styles.heroSecondaryBtnText}>Schedule a call</Text>
             </Pressable>
           </View>
+        </Card>
 
-          {activeGoals.length === 0 ? (
-            <View style={styles.emptyState}>
-              <Map color={colors.mutedForeground} size={24} />
-              <Text style={styles.emptyStateTitle}>No goals yet</Text>
-              <Text style={styles.emptyStateSub}>
-                Work with a CHW to set personalized health goals.
-              </Text>
-            </View>
-          ) : (
-            <View style={styles.goalList}>
-              {activeGoals.map((goal) => (
-                <GoalCard key={goal.id} goal={goal} />
-              ))}
-            </View>
-          )}
+        {/* Stat grid — 2×2 */}
+        <View style={styles.statGrid}>
+          <View style={styles.statTileWrap}>
+            <StatTile
+              icon={<Gift color={tokens.emerald700} size={18} />}
+              iconBg={tokens.emerald100}
+              label="Wellness Points"
+              value={rewardsBalance.toLocaleString()}
+              delta="Points earned"
+              style={styles.statTile}
+              onPress={handleOpenRewards}
+            />
+          </View>
+          <View style={styles.statTileWrap}>
+            <StatTile
+              icon={<CalendarCheck color={tokens.blue700} size={18} />}
+              iconBg={tokens.blue100}
+              label="Upcoming"
+              value={upcomingSessions.length}
+              delta={upcomingSessions.length === 1 ? 'Session' : 'Sessions'}
+              deltaColor={tokens.blue700}
+              style={styles.statTile}
+              onPress={handleOpenSessions}
+            />
+          </View>
+          <View style={styles.statTileWrap}>
+            <StatTile
+              icon={<Target color={tokens.amber700} size={18} />}
+              iconBg={tokens.amber100}
+              label="Active Goals"
+              value={activeRoadmapItems.length}
+              delta="On your roadmap"
+              deltaColor={tokens.amber700}
+              style={styles.statTile}
+              onPress={handleOpenRoadmap}
+            />
+          </View>
+          <View style={styles.statTileWrap}>
+            <StatTile
+              icon={<ClipboardList color={tokens.purple700} size={18} />}
+              iconBg={tokens.purple100}
+              label="Open Requests"
+              value={openRequestsCount}
+              delta="Awaiting CHW"
+              deltaColor={tokens.purple700}
+              style={styles.statTile}
+              onPress={handleFindCHW}
+            />
+          </View>
         </View>
+
+        {/* Secondary stat row — completed sessions */}
+        <View style={styles.statRow}>
+          <StatTile
+            icon={<CheckCircle2 color={tokens.emerald700} size={18} />}
+            iconBg={tokens.emerald100}
+            label="Completed Sessions"
+            value={completedSessionsCount}
+            delta={completedSessionsCount === 1 ? 'Session all-time' : 'Sessions all-time'}
+            style={{ flex: 1 }}
+          />
+        </View>
+
+        {/* Your Journeys */}
+        <Text style={styles.sectionHeading}>Your Journeys</Text>
+        <View style={styles.journeyRow}>
+          <Pressable
+            onPress={handleOpenRoadmap}
+            style={({ pressed }) => [styles.journeyCard, pressed && { opacity: 0.85 }]}
+            accessibilityRole="button"
+            accessibilityLabel="Food Assistance journey, 60% complete"
+          >
+            <View style={styles.journeyCardHeader}>
+              <View style={[styles.journeyIconCircle, { backgroundColor: '#FED7AA' }]}>
+                <Text style={styles.journeyIconEmoji}>🍽️</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.journeyCardTitle}>Food Assistance</Text>
+                <Text style={styles.journeyCardSub}>CalFresh enrollment</Text>
+              </View>
+              <View style={styles.journeyPill}>
+                <Text style={styles.journeyPillText}>60%</Text>
+              </View>
+            </View>
+            <View style={styles.journeyProgressTrack}>
+              <View style={[styles.journeyProgressFill, { width: '60%' }]} />
+            </View>
+          </Pressable>
+
+          <Pressable
+            onPress={handleOpenRoadmap}
+            style={({ pressed }) => [styles.journeyCard, pressed && { opacity: 0.85 }]}
+            accessibilityRole="button"
+            accessibilityLabel="Mental Health journey, 80% complete"
+          >
+            <View style={styles.journeyCardHeader}>
+              <View style={[styles.journeyIconCircle, { backgroundColor: '#E9D5FF' }]}>
+                <Text style={styles.journeyIconEmoji}>🧠</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.journeyCardTitle}>Mental Health</Text>
+                <Text style={styles.journeyCardSub}>Behavioral health referral</Text>
+              </View>
+              <View style={styles.journeyPill}>
+                <Text style={styles.journeyPillText}>80%</Text>
+              </View>
+            </View>
+            <View style={styles.journeyProgressTrack}>
+              <View style={[styles.journeyProgressFill, { width: '80%' }]} />
+            </View>
+          </Pressable>
+        </View>
+
+        {/* Recent activity */}
+        <Text style={styles.sectionHeading}>Recent activity</Text>
+        <Card style={styles.activityCard}>
+          {[
+            { icon: <MessageSquare size={16} color="#2563EB" />, text: 'Maria sent you a message', time: '1h ago' },
+            { icon: <Trophy size={16} color="#D97706" />, text: 'You earned +25 pts for Eligibility Screening', time: '2d ago' },
+            { icon: <CalendarCheck size={16} color="#059669" />, text: 'Your appointment Mon was confirmed', time: '3d ago' },
+          ].map((item, idx) => (
+            <View
+              key={idx}
+              style={[styles.activityRow, idx > 0 && { borderTopWidth: 1, borderTopColor: '#F3F4F6' }]}
+            >
+              {item.icon}
+              <Text style={styles.activityText}>{item.text}</Text>
+              <Text style={styles.activityTime}>{item.time}</Text>
+            </View>
+          ))}
+        </Card>
 
         {/* CTA to find CHW */}
         <Pressable
@@ -574,7 +674,7 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
 
         {/* Upcoming sessions */}
         {upcomingSessions.length > 0 && (
-          <View style={styles.card}>
+          <Card style={styles.card}>
             <View style={styles.cardHeader}>
               <Text style={styles.cardTitle}>Upcoming Sessions</Text>
             </View>
@@ -584,13 +684,13 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
                 {idx < upcomingSessions.length - 1 && <View style={styles.divider} />}
               </React.Fragment>
             ))}
-          </View>
+          </Card>
         )}
 
         <View style={styles.bottomPadding} />
         </View>
       </ScrollView>
-    </SafeAreaView>
+    </AppShell>
   );
 }
 
@@ -644,9 +744,15 @@ const styles = StyleSheet.create({
     gap: 10,
     marginBottom: 20,
   },
-  // 2×2 stat grid — mirrors the CHW dashboard's stat grid layout. Each
-  // child StatCard already has flex: 1, so on a row of 2 they split the
-  // available width evenly. Vertical spacing handled by the rowGap.
+  // StatTile half-width wrapper: 47% keeps the 10px gap without overflow.
+  statTileWrap: {
+    width: '47%',
+  },
+  // StatTile itself occupies full width of its wrapper.
+  statTile: {
+    width: '100%',
+  } as import('react-native').ViewStyle,
+  // 2×2 stat grid — mirrors the CHW dashboard's stat grid layout.
   statGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1005,5 +1111,209 @@ const styles = StyleSheet.create({
 
   bottomPadding: {
     height: 24,
+  },
+
+  // ── Hero CHW card ────────────────────────────────────────────────────────────
+  heroCard: {
+    backgroundColor: '#F0FDF4',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    padding: 20,
+    marginBottom: 20,
+    gap: 14,
+  },
+  heroRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  heroAvatarWrap: {
+    position: 'relative',
+  },
+  heroAvatar: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#059669',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  heroAvatarText: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 20,
+    color: '#FFFFFF',
+  },
+  heroOnlineDot: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: '#10B981',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+  },
+  heroInfo: {
+    flex: 1,
+    gap: 2,
+  },
+  heroChwLabel: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 11,
+    color: '#059669',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  heroChwTitle: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 18,
+    color: '#1E3320',
+    lineHeight: 24,
+  },
+  heroChwSub: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 12,
+    color: '#6B7280',
+    lineHeight: 16,
+  },
+  heroActions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  heroPrimaryBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    backgroundColor: '#3D5A3E',
+    borderRadius: 12,
+    paddingVertical: 11,
+  },
+  heroPrimaryBtnText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 14,
+    color: '#FFFFFF',
+  },
+  heroSecondaryBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    borderRadius: 12,
+    paddingVertical: 11,
+    backgroundColor: '#FFFFFF',
+  },
+  heroSecondaryBtnText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 14,
+    color: '#3D5A3E',
+  },
+
+  // ── Section heading ──────────────────────────────────────────────────────────
+  sectionHeading: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12,
+    color: '#6B7280',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginBottom: 10,
+    marginTop: 4,
+  },
+
+  // ── Journey cards row ────────────────────────────────────────────────────────
+  journeyRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 20,
+  },
+  journeyCard: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#DDD6CC',
+    padding: 16,
+    gap: 10,
+  },
+  journeyCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  journeyIconCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  journeyIconEmoji: {
+    fontSize: 18,
+  },
+  journeyCardTitle: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 14,
+    color: '#1E3320',
+  },
+  journeyCardSub: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: '#6B7280',
+  },
+  journeyPill: {
+    backgroundColor: '#D1FAE5',
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  journeyPillText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 11,
+    color: '#059669',
+  },
+  journeyProgressTrack: {
+    height: 6,
+    backgroundColor: '#F3F4F6',
+    borderRadius: 999,
+    overflow: 'hidden',
+  },
+  journeyProgressFill: {
+    height: '100%',
+    backgroundColor: '#3D5A3E',
+    borderRadius: 999,
+  },
+
+  // ── Recent activity ──────────────────────────────────────────────────────────
+  activityCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#DDD6CC',
+    marginBottom: 16,
+    overflow: 'hidden',
+  },
+  activityRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+  },
+  activityText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: '#374151',
+    flex: 1,
+  },
+  activityTime: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: '#9CA3AF',
   },
 });

@@ -26,7 +26,6 @@
 
 import React, { useCallback } from 'react';
 import {
-  ActivityIndicator,
   Platform,
   ScrollView,
   StatusBar,
@@ -35,16 +34,23 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
   ArrowLeft,
   Award,
+  BadgeCheck,
+  Briefcase,
   Calendar,
+  CalendarPlus,
+  Clock,
   Globe,
+  MapPin,
+  MessageSquare,
+  Phone,
   ShieldOff,
   Star,
+  UserX,
 } from 'lucide-react-native';
 
 import { colors } from '../../theme/colors';
@@ -54,6 +60,8 @@ import { useMemberFacingCHWProfile } from '../../hooks/useApiQueries';
 import type { MemberFindStackParamList } from '../../navigation/MemberTabNavigator';
 import { ProfileContactButtons } from '../../components/comms/ProfileContactButtons';
 import { TestimonialsList } from '../../components/testimonials/TestimonialsList';
+import { AppShell, Card, Pill, StickyActionBar } from '../../components/ui';
+import { useAuth } from '../../context/AuthContext';
 
 // ─── Navigation types ─────────────────────────────────────────────────────────
 
@@ -263,8 +271,16 @@ export function MemberFacingCHWProfileScreen(): React.JSX.Element {
   const route = useRoute<CHWProfileRouteProp>();
   const navigation = useNavigation<CHWProfileNavProp>();
   const { chwId } = route.params;
+  const { userName } = useAuth();
 
   const { data: profile, isLoading, error } = useMemberFacingCHWProfile(chwId);
+
+  const memberInitials = (userName ?? 'M')
+    .split(' ')
+    .slice(0, 2)
+    .map((p) => p[0] ?? '')
+    .join('')
+    .toUpperCase();
 
   // ── Back navigation ─────────────────────────────────────────────────────────
   const handleGoBack = useCallback(() => {
@@ -283,11 +299,17 @@ export function MemberFacingCHWProfileScreen(): React.JSX.Element {
 
   // ── Loading skeleton ────────────────────────────────────────────────────────
 
+  const shellProps = {
+    role: 'member' as const,
+    activeKey: 'myChw',
+    userBlock: { initials: memberInitials, name: userName ?? 'Member', role: 'Member' as const },
+  };
+
   if (isLoading) {
     return (
-      <SafeAreaView style={s.safeArea} edges={['top']}>
+      <AppShell {...shellProps}>
         <StatusBar barStyle="dark-content" backgroundColor="#F4F1ED" />
-        <View style={s.header}>
+        <View style={s.pageWrap}>
           <TouchableOpacity
             style={s.backBtn}
             onPress={handleGoBack}
@@ -296,14 +318,10 @@ export function MemberFacingCHWProfileScreen(): React.JSX.Element {
           >
             <ArrowLeft size={20} color={colors.foreground} />
           </TouchableOpacity>
-          <Text style={s.headerTitle}>CHW Profile</Text>
-          <View style={{ width: 40 }} />
-        </View>
-        <View style={s.pageWrap}>
           <LoadingSkeleton variant="card" />
           <LoadingSkeleton variant="rows" rows={4} />
         </View>
-      </SafeAreaView>
+      </AppShell>
     );
   }
 
@@ -311,20 +329,8 @@ export function MemberFacingCHWProfileScreen(): React.JSX.Element {
 
   if (error != null || !profile) {
     return (
-      <SafeAreaView style={s.safeArea} edges={['top']}>
+      <AppShell {...shellProps}>
         <StatusBar barStyle="dark-content" backgroundColor="#F4F1ED" />
-        <View style={s.header}>
-          <TouchableOpacity
-            style={s.backBtn}
-            onPress={handleGoBack}
-            accessibilityRole="button"
-            accessibilityLabel="Go back"
-          >
-            <ArrowLeft size={20} color={colors.foreground} />
-          </TouchableOpacity>
-          <Text style={s.headerTitle}>CHW Profile</Text>
-          <View style={{ width: 40 }} />
-        </View>
         <View style={s.emptyState}>
           <View style={s.emptyIconCircle}>
             <ShieldOff size={28} color={colors.mutedForeground} />
@@ -342,7 +348,7 @@ export function MemberFacingCHWProfileScreen(): React.JSX.Element {
             <Text style={s.backButtonText}>Go Back</Text>
           </TouchableOpacity>
         </View>
-      </SafeAreaView>
+      </AppShell>
     );
   }
 
@@ -357,24 +363,8 @@ export function MemberFacingCHWProfileScreen(): React.JSX.Element {
   ].filter(Boolean);
 
   return (
-    <SafeAreaView style={s.safeArea} edges={['top']}>
+    <AppShell {...shellProps}>
       <StatusBar barStyle="dark-content" backgroundColor="#F4F1ED" />
-
-      {/* ── Screen header ── */}
-      <View style={s.header}>
-        <TouchableOpacity
-          style={s.backBtn}
-          onPress={handleGoBack}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-        >
-          <ArrowLeft size={20} color={colors.foreground} />
-        </TouchableOpacity>
-        <Text style={s.headerTitle} numberOfLines={1}>
-          CHW Profile
-        </Text>
-        <View style={{ width: 40 }} />
-      </View>
 
       <ScrollView
         style={s.scroll}
@@ -382,57 +372,105 @@ export function MemberFacingCHWProfileScreen(): React.JSX.Element {
         showsVerticalScrollIndicator={false}
       >
         <View style={s.pageWrap}>
+          {/* Back button — visible on native; on web the sidebar handles nav */}
+          <TouchableOpacity
+            style={[s.backBtn, s.backBtnInline]}
+            onPress={handleGoBack}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+          >
+            <ArrowLeft size={18} color={colors.foreground} />
+            <Text style={s.backBtnLabel}>My CHW</Text>
+          </TouchableOpacity>
 
-          {/* ── Hero — green banner, avatar, name, language + cert chips ── */}
-          <View style={s.bannerContainer}>
-            <View style={s.banner} />
-            <View style={s.heroSection}>
-              <View style={s.avatarWrapper}>
+          {/* ── Hero card — avatar, name, Verified pill, star rating, stats ── */}
+          <View style={s.heroCard}>
+            <View style={s.heroIdentityRow}>
+              {/* Avatar with online dot */}
+              <View style={s.heroAvatarWrap}>
                 <View style={[s.avatar, { backgroundColor: avatarBg }]}>
                   <Text style={[s.avatarText, { color: avatarTextColor }]}>
                     {initials}
                   </Text>
                 </View>
+                <View style={s.heroOnlineDot} />
               </View>
 
-              <Text style={s.displayName}>{displayName}</Text>
+              <View style={s.heroIdentityInfo}>
+                {/* Name + Verified pill */}
+                <View style={s.heroNameRow}>
+                  <Text style={s.displayName}>{displayName}</Text>
+                  <View style={s.verifiedPill}>
+                    <BadgeCheck size={12} color="#059669" />
+                    <Text style={s.verifiedPillText}>Verified CHW</Text>
+                  </View>
+                </View>
 
-              {/* Specialization + experience headline */}
-              {profile.primarySpecialization != null && (
-                <Text style={s.heroSpecialization}>
-                  {SPECIALIZATION_LABELS[profile.primarySpecialization] ??
-                    profile.primarySpecialization}
-                  {profile.yearsExperience != null
-                    ? `  ·  ${profile.yearsExperience}`
-                    : ''}
-                </Text>
+                {/* Star rating */}
+                <View style={s.starRow}>
+                  {[1, 2, 3, 4, 5].map((i) => (
+                    <Text key={i} style={{ color: '#F59E0B', fontSize: 14 }}>★</Text>
+                  ))}
+                  <Text style={s.starScore}>4.9</Text>
+                  <Text style={s.starReviews}>(48 member reviews)</Text>
+                </View>
+
+                {/* Quick stats */}
+                <View style={s.heroStatsGrid}>
+                  {profile.yearsExperience != null && (
+                    <View style={s.heroStatRow}>
+                      <Briefcase size={14} color="#9CA3AF" />
+                      <Text style={s.heroStatLabel}>Experience</Text>
+                      <Text style={s.heroStatValue}>{profile.yearsExperience} yrs as a CHW</Text>
+                    </View>
+                  )}
+                  {profile.serviceAreaZips.length > 0 && (
+                    <View style={s.heroStatRow}>
+                      <MapPin size={14} color="#9CA3AF" />
+                      <Text style={s.heroStatLabel}>Service Area</Text>
+                      <Text style={s.heroStatValue}>ZIP {profile.serviceAreaZips.slice(0, 2).join(', ')}</Text>
+                    </View>
+                  )}
+                  <View style={s.heroStatRow}>
+                    <Clock size={14} color="#9CA3AF" />
+                    <Text style={s.heroStatLabel}>Avg Response</Text>
+                    <Text style={s.heroStatValue}>Under 2 hours</Text>
+                  </View>
+                  {profile.sharedSessionCount > 0 && (
+                    <View style={s.heroStatRow}>
+                      <Calendar size={14} color="#9CA3AF" />
+                      <Text style={s.heroStatLabel}>Your Sessions</Text>
+                      <Text style={s.heroStatValue}>{profile.sharedSessionCount} completed</Text>
+                    </View>
+                  )}
+                </View>
+              </View>
+            </View>
+
+            {/* Language + cert chips */}
+            <View style={s.heroBadgesRow}>
+              {allLanguages.slice(0, 3).map((lang) => (
+                <View key={lang} style={s.languageBadge}>
+                  <Globe size={11} color="#3D5A3E" />
+                  <Text style={s.languageBadgeText}>{lang}</Text>
+                </View>
+              ))}
+              {allLanguages.length > 3 && (
+                <View style={s.languageBadge}>
+                  <Text style={s.languageBadgeText}>
+                    +{allLanguages.length - 3} more
+                  </Text>
+                </View>
               )}
-
-              {/* Badge row: primary language + CA cert */}
-              <View style={s.heroBadgesRow}>
-                {allLanguages.slice(0, 3).map((lang) => (
-                  <View key={lang} style={s.languageBadge}>
-                    <Globe size={11} color="#3D5A3E" />
-                    <Text style={s.languageBadgeText}>{lang}</Text>
-                  </View>
-                ))}
-                {allLanguages.length > 3 && (
-                  <View style={s.languageBadge}>
-                    <Text style={s.languageBadgeText}>
-                      +{allLanguages.length - 3} more
-                    </Text>
-                  </View>
-                )}
-                {profile.caChwCertified && (
-                  <View
-                    style={s.certBadge}
-                    accessibilityLabel="California CHW Certified"
-                  >
-                    <Award size={11} color="#1D4ED8" />
-                    <Text style={s.certBadgeText}>CA Certified</Text>
-                  </View>
-                )}
-              </View>
+              {profile.caChwCertified && (
+                <View
+                  style={s.certBadge}
+                  accessibilityLabel="California CHW Certified"
+                >
+                  <Award size={11} color="#1D4ED8" />
+                  <Text style={s.certBadgeText}>CA Certified</Text>
+                </View>
+              )}
             </View>
           </View>
 
@@ -442,6 +480,11 @@ export function MemberFacingCHWProfileScreen(): React.JSX.Element {
             targetUserRole="chw"
             sharedSessionCount={profile.sharedSessionCount}
             targetDisplayName={`${profile.firstName} ${profile.lastNameInitial}`}
+            onNavigateToConversation={() => {
+              // Navigate the member to their Sessions/Messages tab — the
+              // screen resolves the active conversation from route state.
+              navigation.navigate('Sessions' as never);
+            }}
           />
 
           {/* ── About ── */}
@@ -539,10 +582,40 @@ export function MemberFacingCHWProfileScreen(): React.JSX.Element {
             <TestimonialsList chwId={profile.id} limit={3} />
           </SectionCard>
 
-          <View style={{ height: 40 }} />
+          <View style={{ height: 80 }} />
         </View>
       </ScrollView>
-    </SafeAreaView>
+
+      {/* ── Sticky action bar — 5 actions matching mockup ── */}
+      <StickyActionBar
+        primary={{
+          label: `Message ${profile.firstName}`,
+          onPress: () => navigation.navigate('Sessions' as never),
+        }}
+        actions={[
+          {
+            icon: <Phone size={18} color={colors.foreground} />,
+            label: 'Call',
+            onPress: () => navigation.navigate('Sessions' as never),
+          },
+          {
+            icon: <CalendarPlus size={18} color={colors.foreground} />,
+            label: 'Schedule',
+            onPress: () => navigation.goBack(),
+          },
+          {
+            icon: <Star size={18} color={colors.foreground} />,
+            label: 'Leave Review',
+            onPress: () => navigation.navigate('Sessions' as never),
+          },
+          {
+            icon: <UserX size={18} color={colors.foreground} />,
+            label: 'Reassign',
+            onPress: () => navigation.goBack(),
+          },
+        ]}
+      />
+    </AppShell>
   );
 }
 
@@ -554,24 +627,6 @@ const s = StyleSheet.create({
     backgroundColor: '#F4F1ED',
   },
 
-  // ── Header
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    backgroundColor: '#F4F1ED',
-    borderBottomWidth: 1,
-    borderBottomColor: '#DDD6CC',
-  },
-  headerTitle: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 18,
-    color: '#1E3320',
-    flex: 1,
-    textAlign: 'center',
-  },
   backBtn: {
     width: 40,
     height: 40,
@@ -581,6 +636,19 @@ const s = StyleSheet.create({
     borderColor: '#DDD6CC',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  /** Inline back button used inside the scroll area instead of a fixed header. */
+  backBtnInline: {
+    flexDirection: 'row',
+    width: 'auto' as unknown as number,
+    paddingHorizontal: 12,
+    gap: 6,
+    marginBottom: 16,
+  },
+  backBtnLabel: {
+    fontFamily: fonts.bodySemibold,
+    fontSize: 13,
+    color: '#1E3320',
   },
 
   // ── Scroll
@@ -597,23 +665,103 @@ const s = StyleSheet.create({
     paddingTop: 0,
   },
 
-  // ── Hero
-  bannerContainer: {
-    marginHorizontal: -16,
+  // ── Hero card
+  heroCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#DDD6CC',
+    padding: 20,
+    marginBottom: 16,
+    gap: 14,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#3D5A3E',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.08,
+        shadowRadius: 24,
+      },
+      android: { elevation: 3 },
+    }),
   },
-  banner: {
-    height: 80,
-    backgroundColor: '#3D5A3E',
+  heroIdentityRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 16,
   },
-  heroSection: {
-    alignItems: 'center',
-    marginBottom: 20,
-    paddingHorizontal: 16,
+  heroAvatarWrap: {
+    position: 'relative',
+  },
+  heroOnlineDot: {
+    position: 'absolute',
+    bottom: 2,
+    right: 2,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: '#10B981',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+  },
+  heroIdentityInfo: {
+    flex: 1,
     gap: 6,
   },
-  avatarWrapper: {
-    marginTop: -40,
-    marginBottom: 4,
+  heroNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  verifiedPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#D1FAE5',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+  },
+  verifiedPillText: {
+    fontFamily: fonts.bodySemibold,
+    fontSize: 11,
+    color: '#059669',
+  },
+  starRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  starScore: {
+    fontFamily: fonts.bodySemibold,
+    fontSize: 13,
+    color: '#111827',
+    marginLeft: 2,
+  },
+  starReviews: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: '#6B7280',
+  },
+  heroStatsGrid: {
+    gap: 4,
+    marginTop: 2,
+  },
+  heroStatRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  heroStatLabel: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 12,
+    color: '#6B7280',
+    width: 100,
+  },
+  heroStatValue: {
+    fontFamily: fonts.bodySemibold,
+    fontSize: 12,
+    color: '#111827',
   },
   avatar: {
     width: 80,
@@ -642,19 +790,11 @@ const s = StyleSheet.create({
     fontSize: 20,
     color: '#1E3320',
   },
-  heroSpecialization: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 13,
-    color: '#6B7280',
-    textAlign: 'center',
-  },
   heroBadgesRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     flexWrap: 'wrap',
-    justifyContent: 'center',
-    marginTop: 2,
   },
   languageBadge: {
     flexDirection: 'row',

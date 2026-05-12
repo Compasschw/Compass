@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Compass CHW — Resources</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    body { font-family: 'Inter', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+    .sidebar-bg { background: linear-gradient(180deg, #134e36 0%, #0f3d2a 100%); }
+    .sidebar-item { display:flex; align-items:center; gap:12px; padding:10px 14px; border-radius:10px; color:#a7d4be; font-size:14px; font-weight:500; transition:all .15s; cursor:pointer; text-decoration:none; }
+    .sidebar-item:hover { background: rgba(255,255,255,0.06); color:#fff; }
+    .sidebar-item.active { background:#fff; color:#0f3d2a; font-weight:600; box-shadow:0 1px 3px rgba(0,0,0,.06); }
+    .sidebar-item.active .icon { color:#16a34a; }
+    .icon { width:18px; height:18px; flex-shrink:0; }
+    .pill { display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:999px; font-size:11px; font-weight:600; }
+    .card { background:#fff; border-radius:16px; box-shadow:0 1px 3px rgba(0,0,0,.04), 0 1px 2px rgba(0,0,0,.03); border:1px solid #f1f5f4; }
+    .resource-card { transition: all .2s; }
+    .resource-card:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,.06); border-color:#a7f3d0; }
+    .filter-btn { padding:7px 14px; border-radius:10px; font-size:13px; font-weight:500; color:#6b7280; border:1px solid #e5e7eb; background:#fff; cursor:pointer; }
+    .filter-btn.active { background:#ecfdf5; color:#065f46; border-color:#a7f3d0; }
+  </style>
+</head>
+<body class="bg-[#f5f7f6] min-h-screen">
+  <div class="flex min-h-screen">
+    <aside class="sidebar-bg w-64 flex-shrink-0 flex flex-col py-6 px-4">
+      <div class="px-2 mb-8"><div class="flex items-center gap-2.5"><div class="w-9 h-9 rounded-xl bg-emerald-500 grid place-items-center"><i data-lucide="compass" class="w-5 h-5 text-white"></i></div><div><div class="text-white font-bold text-lg leading-tight">compasschw</div><div class="text-emerald-300 text-xs font-medium">Medi-Cal Member</div></div></div></div>
+      <nav class="flex-1 space-y-1">
+        <a href="member-profile.html" class="sidebar-item"><i data-lucide="user-round" class="icon"></i><span>Member Profile</span></a>
+        <a href="dashboard.html" class="sidebar-item"><i data-lucide="layout-dashboard" class="icon"></i><span>Dashboard</span></a>
+        <a href="members.html" class="sidebar-item"><i data-lucide="users" class="icon"></i><span>Members</span></a>
+        <a href="journeys.html" class="sidebar-item"><i data-lucide="route" class="icon"></i><span>Journeys</span></a>
+        <a href="messages.html" class="sidebar-item"><i data-lucide="message-square" class="icon"></i><span class="flex-1">Messages</span><span class="bg-emerald-500 text-white text-xs font-semibold px-2 py-0.5 rounded-full">12</span></a>
+        <a href="appointments.html" class="sidebar-item"><i data-lucide="calendar" class="icon"></i><span>Appointments</span></a>
+        <a href="resources.html" class="sidebar-item active"><i data-lucide="folder-open" class="icon"></i><span>Resources</span></a>
+        <a href="documents.html" class="sidebar-item"><i data-lucide="file-text" class="icon"></i><span>Documents</span></a>
+        <a href="reports.html" class="sidebar-item"><i data-lucide="bar-chart-3" class="icon"></i><span>Reports</span></a>
+        <a href="community-partners.html" class="sidebar-item"><i data-lucide="building-2" class="icon"></i><span>Community Partners</span></a>
+        <a href="#" class="sidebar-item"><i data-lucide="settings" class="icon"></i><span>Settings</span></a>
+      </nav>
+      <div class="mt-6 pt-4 border-t border-emerald-900/40">
+        <a href="member-home.html" class="text-emerald-300 text-xs hover:text-white px-2 py-1 block">Switch to Member view →</a>
+        <div class="flex items-center gap-3 px-2 py-2 mt-1"><div class="w-9 h-9 rounded-full bg-emerald-300 grid place-items-center text-emerald-900 font-bold text-sm">MS</div><div class="flex-1 min-w-0"><div class="text-white text-sm font-semibold truncate">Maria Sanchez</div><div class="text-emerald-300 text-xs">Community Health Worker</div></div></div>
+      </div>
+    </aside>
+
+    <main class="flex-1 p-8 overflow-y-auto">
+      <div class="flex items-end justify-between mb-6">
+        <div>
+          <h1 class="text-2xl font-bold text-gray-900">Resource Folder</h1>
+          <p class="text-sm text-gray-600 mt-1">192 resources · last updated 2 days ago</p>
+        </div>
+        <div class="flex items-center gap-3">
+          <div class="relative">
+            <input class="pl-10 pr-4 py-2 w-72 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-200" placeholder="Search resources..." />
+            <i data-lucide="search" class="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2"></i>
+          </div>
+          <button class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-xl flex items-center gap-2"><i data-lucide="plus" class="w-4 h-4"></i>Suggest a Resource</button>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-2 mb-5 flex-wrap">
+        <button class="filter-btn active">All (192)</button>
+        <button class="filter-btn">Food (47)</button>
+        <button class="filter-btn">Housing (32)</button>
+        <button class="filter-btn">Transportation (18)</button>
+        <button class="filter-btn">Mental Health (24)</button>
+        <button class="filter-btn">Benefits (28)</button>
+        <button class="filter-btn">Maternal Health (15)</button>
+        <button class="filter-btn">Childcare (12)</button>
+        <button class="filter-btn">Other (16)</button>
+      </div>
+
+      <div class="grid grid-cols-12 gap-6">
+        <div class="col-span-9">
+          <div class="grid grid-cols-3 gap-4">
+            <!-- Resource 1 -->
+            <div class="card resource-card p-5">
+              <div class="flex items-center gap-3 mb-3">
+                <div class="w-12 h-12 rounded-xl bg-red-100 grid place-items-center"><i data-lucide="home" class="w-6 h-6 text-red-600"></i></div>
+                <div class="flex-1"><div class="font-semibold text-gray-900">Father Joe's Villages</div><span class="pill bg-red-100 text-red-700">Housing</span></div>
+              </div>
+              <div class="text-sm text-gray-600 space-y-1 mb-3">
+                <div class="flex items-start gap-2"><i data-lucide="map-pin" class="w-3.5 h-3.5 text-gray-400 mt-0.5"></i>1501 Imperial Ave, San Diego</div>
+                <div class="flex items-start gap-2"><i data-lucide="phone" class="w-3.5 h-3.5 text-gray-400 mt-0.5"></i>(619) 446-2100</div>
+                <div class="flex items-start gap-2"><i data-lucide="clock" class="w-3.5 h-3.5 text-gray-400 mt-0.5"></i>24/7 emergency intake</div>
+              </div>
+              <div class="text-[11px] text-gray-500 mb-3 flex items-center gap-1.5"><i data-lucide="badge-check" class="w-3 h-3 text-emerald-600"></i>Verified by 14 CHWs</div>
+              <div class="grid grid-cols-2 gap-1.5">
+                <button class="px-2 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg">Refer a member</button>
+                <button class="px-2 py-1.5 border border-gray-200 text-gray-700 text-xs font-semibold rounded-lg hover:bg-gray-50">Copy SMS link</button>
+              </div>
+            </div>
+
+            <!-- Resource 2 -->
+            <div class="card resource-card p-5">
+              <div class="flex items-center gap-3 mb-3">
+                <div class="w-12 h-12 rounded-xl bg-orange-100 grid place-items-center"><i data-lucide="utensils" class="w-6 h-6 text-orange-600"></i></div>
+                <div class="flex-1"><div class="font-semibold text-gray-900">San Diego Food Bank</div><span class="pill bg-orange-100 text-orange-700">Food</span></div>
+              </div>
+              <div class="text-sm text-gray-600 space-y-1 mb-3">
+                <div class="flex items-start gap-2"><i data-lucide="map-pin" class="w-3.5 h-3.5 text-gray-400 mt-0.5"></i>9850 Distribution Ave, San Diego</div>
+                <div class="flex items-start gap-2"><i data-lucide="phone" class="w-3.5 h-3.5 text-gray-400 mt-0.5"></i>(858) 527-1419</div>
+                <div class="flex items-start gap-2"><i data-lucide="clock" class="w-3.5 h-3.5 text-gray-400 mt-0.5"></i>Mon–Fri 8 AM – 4 PM</div>
+              </div>
+              <div class="text-[11px] text-gray-500 mb-3 flex items-center gap-1.5"><i data-lucide="badge-check" class="w-3 h-3 text-emerald-600"></i>Verified by 27 CHWs</div>
+              <div class="grid grid-cols-2 gap-1.5">
+                <button class="px-2 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg">Refer a member</button>
+                <button class="px-2 py-1.5 border border-gray-200 text-gray-700 text-xs font-semibold rounded-lg hover:bg-gray-50">Copy SMS link</button>
+              </div>
+            </div>
+
+            <!-- Resource 3 -->
+            <div class="card resource-card p-5">
+              <div class="flex items-center gap-3 mb-3">
+                <div class="w-12 h-12 rounded-xl bg-slate-100 grid place-items-center"><i data-lucide="phone-call" class="w-6 h-6 text-slate-600"></i></div>
+                <div class="flex-1"><div class="font-semibold text-gray-900">211 San Diego</div><span class="pill bg-slate-100 text-slate-700">Other</span></div>
+              </div>
+              <div class="text-sm text-gray-600 space-y-1 mb-3">
+                <div class="flex items-start gap-2"><i data-lucide="map-pin" class="w-3.5 h-3.5 text-gray-400 mt-0.5"></i>Countywide</div>
+                <div class="flex items-start gap-2"><i data-lucide="phone" class="w-3.5 h-3.5 text-gray-400 mt-0.5"></i>Dial 211</div>
+                <div class="flex items-start gap-2"><i data-lucide="clock" class="w-3.5 h-3.5 text-gray-400 mt-0.5"></i>24/7 multilingual</div>
+              </div>
+              <div class="text-[11px] text-gray-500 mb-3 flex items-center gap-1.5"><i data-lucide="user" class="w-3 h-3 text-emerald-600"></i>Last updated by Maria S. · 3d ago</div>
+              <div class="grid grid-cols-2 gap-1.5">
+                <button class="px-2 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg">Refer a member</button>
+                <button class="px-2 py-1.5 border border-gray-200 text-gray-700 text-xs font-semibold rounded-lg hover:bg-gray-50">Copy SMS link</button>
+              </div>
+            </div>
+
+            <!-- Resource 4 -->
+            <div class="card resource-card p-5">
+              <div class="flex items-center gap-3 mb-3">
+                <div class="w-12 h-12 rounded-xl bg-purple-100 grid place-items-center"><i data-lucide="brain" class="w-6 h-6 text-purple-600"></i></div>
+                <div class="flex-1"><div class="font-semibold text-gray-900">MAAC Project</div><span class="pill bg-purple-100 text-purple-700">Mental Health</span></div>
+              </div>
+              <div class="text-sm text-gray-600 space-y-1 mb-3">
+                <div class="flex items-start gap-2"><i data-lucide="map-pin" class="w-3.5 h-3.5 text-gray-400 mt-0.5"></i>1355 3rd Ave, Chula Vista</div>
+                <div class="flex items-start gap-2"><i data-lucide="phone" class="w-3.5 h-3.5 text-gray-400 mt-0.5"></i>(619) 426-3595</div>
+                <div class="flex items-start gap-2"><i data-lucide="clock" class="w-3.5 h-3.5 text-gray-400 mt-0.5"></i>Mon–Fri 9 AM – 5 PM</div>
+              </div>
+              <div class="text-[11px] text-gray-500 mb-3 flex items-center gap-1.5"><i data-lucide="badge-check" class="w-3 h-3 text-emerald-600"></i>Verified by 9 CHWs</div>
+              <div class="grid grid-cols-2 gap-1.5">
+                <button class="px-2 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg">Refer a member</button>
+                <button class="px-2 py-1.5 border border-gray-200 text-gray-700 text-xs font-semibold rounded-lg hover:bg-gray-50">Copy SMS link</button>
+              </div>
+            </div>
+
+            <!-- Resource 5 -->
+            <div class="card resource-card p-5">
+              <div class="flex items-center gap-3 mb-3">
+                <div class="w-12 h-12 rounded-xl bg-emerald-100 grid place-items-center"><i data-lucide="clipboard-list" class="w-6 h-6 text-emerald-600"></i></div>
+                <div class="flex-1"><div class="font-semibold text-gray-900">CalFresh Online</div><span class="pill bg-emerald-100 text-emerald-700">Benefits</span></div>
+              </div>
+              <div class="text-sm text-gray-600 space-y-1 mb-3">
+                <div class="flex items-start gap-2"><i data-lucide="globe" class="w-3.5 h-3.5 text-gray-400 mt-0.5"></i>getcalfresh.org</div>
+                <div class="flex items-start gap-2"><i data-lucide="phone" class="w-3.5 h-3.5 text-gray-400 mt-0.5"></i>1-877-847-3663</div>
+                <div class="flex items-start gap-2"><i data-lucide="clock" class="w-3.5 h-3.5 text-gray-400 mt-0.5"></i>Online application 24/7</div>
+              </div>
+              <div class="text-[11px] text-gray-500 mb-3 flex items-center gap-1.5"><i data-lucide="badge-check" class="w-3 h-3 text-emerald-600"></i>Verified by 31 CHWs</div>
+              <div class="grid grid-cols-2 gap-1.5">
+                <button class="px-2 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg">Refer a member</button>
+                <button class="px-2 py-1.5 border border-gray-200 text-gray-700 text-xs font-semibold rounded-lg hover:bg-gray-50">Copy SMS link</button>
+              </div>
+            </div>
+
+            <!-- Resource 6 -->
+            <div class="card resource-card p-5">
+              <div class="flex items-center gap-3 mb-3">
+                <div class="w-12 h-12 rounded-xl bg-amber-100 grid place-items-center"><i data-lucide="train" class="w-6 h-6 text-amber-600"></i></div>
+                <div class="flex-1"><div class="font-semibold text-gray-900">SD Trolley GO Pass</div><span class="pill bg-amber-100 text-amber-700">Transportation</span></div>
+              </div>
+              <div class="text-sm text-gray-600 space-y-1 mb-3">
+                <div class="flex items-start gap-2"><i data-lucide="map-pin" class="w-3.5 h-3.5 text-gray-400 mt-0.5"></i>MTS offices countywide</div>
+                <div class="flex items-start gap-2"><i data-lucide="phone" class="w-3.5 h-3.5 text-gray-400 mt-0.5"></i>(619) 234-1060</div>
+                <div class="flex items-start gap-2"><i data-lucide="clock" class="w-3.5 h-3.5 text-gray-400 mt-0.5"></i>Same-day issuance</div>
+              </div>
+              <div class="text-[11px] text-gray-500 mb-3 flex items-center gap-1.5"><i data-lucide="badge-check" class="w-3 h-3 text-emerald-600"></i>Verified by 6 CHWs</div>
+              <div class="grid grid-cols-2 gap-1.5">
+                <button class="px-2 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg">Refer a member</button>
+                <button class="px-2 py-1.5 border border-gray-200 text-gray-700 text-xs font-semibold rounded-lg hover:bg-gray-50">Copy SMS link</button>
+              </div>
+            </div>
+
+            <!-- Resource 7 -->
+            <div class="card resource-card p-5">
+              <div class="flex items-center gap-3 mb-3">
+                <div class="w-12 h-12 rounded-xl bg-purple-100 grid place-items-center"><i data-lucide="heart-pulse" class="w-6 h-6 text-purple-600"></i></div>
+                <div class="flex-1"><div class="font-semibold text-gray-900">Vista Hill</div><span class="pill bg-purple-100 text-purple-700">Mental Health</span></div>
+              </div>
+              <div class="text-sm text-gray-600 space-y-1 mb-3">
+                <div class="flex items-start gap-2"><i data-lucide="map-pin" class="w-3.5 h-3.5 text-gray-400 mt-0.5"></i>8910 Clairemont Mesa Blvd, SD</div>
+                <div class="flex items-start gap-2"><i data-lucide="phone" class="w-3.5 h-3.5 text-gray-400 mt-0.5"></i>(858) 514-5100</div>
+                <div class="flex items-start gap-2"><i data-lucide="clock" class="w-3.5 h-3.5 text-gray-400 mt-0.5"></i>Mon–Fri 8 AM – 8 PM</div>
+              </div>
+              <div class="text-[11px] text-gray-500 mb-3 flex items-center gap-1.5"><i data-lucide="badge-check" class="w-3 h-3 text-emerald-600"></i>Verified by 11 CHWs</div>
+              <div class="grid grid-cols-2 gap-1.5">
+                <button class="px-2 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg">Refer a member</button>
+                <button class="px-2 py-1.5 border border-gray-200 text-gray-700 text-xs font-semibold rounded-lg hover:bg-gray-50">Copy SMS link</button>
+              </div>
+            </div>
+
+            <!-- Resource 8 -->
+            <div class="card resource-card p-5">
+              <div class="flex items-center gap-3 mb-3">
+                <div class="w-12 h-12 rounded-xl bg-red-100 grid place-items-center"><i data-lucide="bed-double" class="w-6 h-6 text-red-600"></i></div>
+                <div class="flex-1"><div class="font-semibold text-gray-900">Salvation Army Shelter</div><span class="pill bg-red-100 text-red-700">Housing</span></div>
+              </div>
+              <div class="text-sm text-gray-600 space-y-1 mb-3">
+                <div class="flex items-start gap-2"><i data-lucide="map-pin" class="w-3.5 h-3.5 text-gray-400 mt-0.5"></i>825 7th Ave, San Diego</div>
+                <div class="flex items-start gap-2"><i data-lucide="phone" class="w-3.5 h-3.5 text-gray-400 mt-0.5"></i>(619) 239-4037</div>
+                <div class="flex items-start gap-2"><i data-lucide="clock" class="w-3.5 h-3.5 text-gray-400 mt-0.5"></i>Intake daily 4 PM</div>
+              </div>
+              <div class="text-[11px] text-gray-500 mb-3 flex items-center gap-1.5"><i data-lucide="badge-check" class="w-3 h-3 text-emerald-600"></i>Verified by 8 CHWs</div>
+              <div class="grid grid-cols-2 gap-1.5">
+                <button class="px-2 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg">Refer a member</button>
+                <button class="px-2 py-1.5 border border-gray-200 text-gray-700 text-xs font-semibold rounded-lg hover:bg-gray-50">Copy SMS link</button>
+              </div>
+            </div>
+
+            <!-- Resource 9 -->
+            <div class="card resource-card p-5">
+              <div class="flex items-center gap-3 mb-3">
+                <div class="w-12 h-12 rounded-xl bg-pink-100 grid place-items-center"><i data-lucide="baby" class="w-6 h-6 text-pink-600"></i></div>
+                <div class="flex-1"><div class="font-semibold text-gray-900">SD County WIC</div><span class="pill bg-pink-100 text-pink-700">Maternal Health</span></div>
+              </div>
+              <div class="text-sm text-gray-600 space-y-1 mb-3">
+                <div class="flex items-start gap-2"><i data-lucide="map-pin" class="w-3.5 h-3.5 text-gray-400 mt-0.5"></i>3851 Rosecrans St, San Diego</div>
+                <div class="flex items-start gap-2"><i data-lucide="phone" class="w-3.5 h-3.5 text-gray-400 mt-0.5"></i>(800) 500-6411</div>
+                <div class="flex items-start gap-2"><i data-lucide="clock" class="w-3.5 h-3.5 text-gray-400 mt-0.5"></i>Mon–Fri 8 AM – 4:30 PM</div>
+              </div>
+              <div class="text-[11px] text-gray-500 mb-3 flex items-center gap-1.5"><i data-lucide="badge-check" class="w-3 h-3 text-emerald-600"></i>Verified by 19 CHWs</div>
+              <div class="grid grid-cols-2 gap-1.5">
+                <button class="px-2 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg">Refer a member</button>
+                <button class="px-2 py-1.5 border border-gray-200 text-gray-700 text-xs font-semibold rounded-lg hover:bg-gray-50">Copy SMS link</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Pagination -->
+          <div class="mt-5 flex items-center justify-between text-sm text-gray-500">
+            <div>Showing 9 of 192 resources</div>
+            <div class="flex items-center gap-1">
+              <button class="px-3 py-1.5 rounded-lg border border-gray-200">‹</button>
+              <button class="px-3 py-1.5 rounded-lg bg-emerald-600 text-white font-semibold">1</button>
+              <button class="px-3 py-1.5 rounded-lg border border-gray-200">2</button>
+              <button class="px-3 py-1.5 rounded-lg border border-gray-200">3</button>
+              <button class="px-3 py-1.5 rounded-lg border border-gray-200">›</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- @-mention preview -->
+        <div class="col-span-3">
+          <div class="card p-5 bg-gradient-to-b from-emerald-50/40 to-white">
+            <div class="flex items-center gap-2 mb-3"><i data-lucide="at-sign" class="w-4 h-4 text-emerald-600"></i><h3 class="font-semibold text-gray-900 text-sm">@-mention preview</h3></div>
+            <p class="text-xs text-gray-600 mb-3">When chatting with a member, type <code class="bg-white px-1 rounded text-emerald-700">@food</code> to get a dropdown of relevant resources you can drop right into the conversation.</p>
+            <div class="bg-white rounded-xl border border-gray-200 p-3 mb-3 text-xs">
+              <div class="text-gray-500 mb-1">Composing message...</div>
+              <div class="text-gray-900">Have you tried @food</div>
+              <div class="bg-gray-50 rounded-lg mt-2 p-1 text-xs">
+                <div class="px-2 py-1.5 rounded hover:bg-emerald-50 flex items-center gap-2"><i data-lucide="utensils" class="w-3.5 h-3.5 text-orange-500"></i><span class="font-semibold">San Diego Food Bank</span></div>
+                <div class="px-2 py-1.5 rounded hover:bg-emerald-50 flex items-center gap-2"><i data-lucide="utensils" class="w-3.5 h-3.5 text-orange-500"></i><span class="font-semibold">CalFresh Online</span></div>
+                <div class="px-2 py-1.5 rounded hover:bg-emerald-50 flex items-center gap-2"><i data-lucide="utensils" class="w-3.5 h-3.5 text-orange-500"></i><span>Father Joe's daily meals</span></div>
+              </div>
+            </div>
+            <button class="w-full px-3 py-2 border border-emerald-200 text-emerald-700 text-xs font-semibold rounded-lg hover:bg-emerald-50">Try it in Messages</button>
+          </div>
+
+          <div class="card p-5 mt-4">
+            <h3 class="font-semibold text-gray-900 text-sm mb-3">Most-referred this month</h3>
+            <div class="space-y-2 text-sm">
+              <div class="flex items-center justify-between"><span class="text-gray-700">CalFresh Online</span><span class="text-gray-500 text-xs">23×</span></div>
+              <div class="flex items-center justify-between"><span class="text-gray-700">SD Food Bank</span><span class="text-gray-500 text-xs">18×</span></div>
+              <div class="flex items-center justify-between"><span class="text-gray-700">211 San Diego</span><span class="text-gray-500 text-xs">14×</span></div>
+              <div class="flex items-center justify-between"><span class="text-gray-700">SD County WIC</span><span class="text-gray-500 text-xs">11×</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="mt-8 text-center"><a href="index.html" class="text-emerald-600 hover:underline text-sm">← Back to mockups index</a></div>
+    </main>
+  </div>
+  <script>lucide.createIcons();</script>
+</body>
+</html>

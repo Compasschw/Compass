@@ -81,6 +81,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
   useEffect(() => {
     let cancelled = false;
 
+    // ── DEV-ONLY auth bypass for visual review without a backend ──
+    // Activated by setting EXPO_PUBLIC_DEV_BYPASS_AUTH=chw or =member when
+    // starting the dev server. NEVER active in EAS production builds because
+    // EXPO_PUBLIC_* env vars are baked at build time and prod builds do not
+    // set this flag. Use only for local UI walkthroughs.
+    const bypass = process.env.EXPO_PUBLIC_DEV_BYPASS_AUTH;
+    if (bypass === 'chw' || bypass === 'member') {
+      const role = bypass as 'chw' | 'member';
+      setAuthState({
+        isAuthenticated: true,
+        userRole: role,
+        userName: role === 'chw' ? 'Maria Sanchez (Demo)' : 'Ana Garcia (Demo)',
+      });
+      setIsLoading(false);
+      return () => { cancelled = true; };
+    }
+
     const hydrate = async (): Promise<void> => {
       try {
         // Check both async storage (user metadata) and secure store (tokens).
@@ -222,8 +239,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
     setHasJustSignedOut(true);
 
     // 2. Purge ALL React Query cache entries for the departing user.
-    //    This prevents stale CHW data from being briefly visible to a member
-    //    (or vice-versa) when the same device logs in under a different role.
+    //    Without this, a member logging in on the same device sees the prior
+    //    CHW's cached PHI for a beat (or vice-versa) — HIPAA minimum-necessary
+    //    violation. Synchronous, must complete before any new query mounts.
     //    (Audit Finding #8, HIGH/CRITICAL — cross-role cache pollution.)
     queryClient.clear();
 

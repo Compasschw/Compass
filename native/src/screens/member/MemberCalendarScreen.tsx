@@ -1,7 +1,10 @@
 /**
- * MemberCalendarScreen — Monthly calendar for the member's sessions and goal milestones.
+ * MemberCalendarScreen — "Appointments" in the new nav (feat/ui-revamp).
  *
- * Features:
+ * Re-skinned to AppShell layout. All calendar state, month navigation, event
+ * derivation logic, and data hooks are preserved verbatim.
+ *
+ * Features (unchanged):
  * - Compact monthly grid (shadcn-inspired: dense day cells, single-letter weekday header)
  * - Filled-pill "today" indicator + outlined "selected" indicator
  * - Up to 3 event dots stacked under the date number
@@ -22,7 +25,6 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   CalendarDays,
   ChevronDown,
@@ -44,6 +46,8 @@ import { useRefreshControl } from '../../hooks/useRefreshControl';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 import { VERTICAL_COLOR } from '../../lib/verticals';
+import { AppShell, PageHeader, Card } from '../../components/ui';
+import { useAuth } from '../../context/AuthContext';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -375,6 +379,14 @@ const eventCardStyles = StyleSheet.create({
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export function MemberCalendarScreen(): React.JSX.Element {
+  const { userName } = useAuth();
+  const memberInitials = (userName ?? 'M')
+    .split(' ')
+    .slice(0, 2)
+    .map((p) => p[0] ?? '')
+    .join('')
+    .toUpperCase();
+
   // Default to the actual current month, not a hardcoded one.
   const [currentMonth, setCurrentMonth] = useState(
     () => new Date(TODAY_YEAR, TODAY_MONTH, 1),
@@ -426,36 +438,38 @@ export function MemberCalendarScreen(): React.JSX.Element {
   const isViewingTodayMonth = year === TODAY_YEAR && month === TODAY_MONTH;
   const isToday = (day: number) => isViewingTodayMonth && day === TODAY_DAY;
 
+  const shellUserBlock = {
+    initials: memberInitials,
+    name: userName ?? 'Member',
+    role: 'Member' as const,
+  };
+
   if (sessionsQuery.isLoading) {
     return (
-      <SafeAreaView style={styles.safeArea} edges={['top']}>
+      <AppShell role="member" activeKey="appointments" userBlock={shellUserBlock}>
         <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
         <View style={styles.pageWrap}>
-          <View style={{ padding: 16, paddingTop: 20 }}>
-            <LoadingSkeleton variant="card" />
-            <LoadingSkeleton variant="rows" rows={3} />
-          </View>
+          <LoadingSkeleton variant="card" />
+          <LoadingSkeleton variant="rows" rows={3} />
         </View>
-      </SafeAreaView>
+      </AppShell>
     );
   }
 
   if (sessionsQuery.error) {
     return (
-      <SafeAreaView style={styles.safeArea} edges={['top']}>
+      <AppShell role="member" activeKey="appointments" userBlock={shellUserBlock}>
         <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
-        <View style={styles.pageWrap}>
-          <ErrorState
-            message="Could not load calendar data. Please try again."
-            onRetry={() => void sessionsQuery.refetch()}
-          />
-        </View>
-      </SafeAreaView>
+        <ErrorState
+          message="Could not load calendar data. Please try again."
+          onRetry={() => void sessionsQuery.refetch()}
+        />
+      </AppShell>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top']}>
+    <AppShell role="member" activeKey="appointments" userBlock={shellUserBlock}>
       <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
       <ScrollView
         style={styles.scroll}
@@ -464,11 +478,10 @@ export function MemberCalendarScreen(): React.JSX.Element {
         refreshControl={refresh.control}
       >
         <View style={styles.pageWrap}>
-          {/* Page header */}
-          <View style={styles.pageHeader}>
-            <Text style={styles.pageTitle}>My Calendar</Text>
-            <Text style={styles.pageSub}>Your upcoming sessions and goal milestones.</Text>
-          </View>
+          <PageHeader
+            title="Appointments"
+            subtitle="Your upcoming sessions and goal milestones."
+          />
 
           {/* Calendar card */}
           <View style={styles.calendarCard}>
@@ -620,7 +633,7 @@ export function MemberCalendarScreen(): React.JSX.Element {
           <View style={{ height: 24 }} />
         </View>
       </ScrollView>
-    </SafeAreaView>
+    </AppShell>
   );
 }
 

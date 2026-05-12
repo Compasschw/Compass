@@ -9,6 +9,9 @@
  *  - In-progress sessions: "Call Member (masked)" button — triggers Vonage masked bridge
  *  - Completed sessions: "Document Session" button (opens DocumentationModal)
  *  - Duration, units billed, net earnings on completed sessions
+ *
+ * Web layout: 3-pane Messages-style (thread list | active session | member context rail)
+ * Native layout: existing single-column FlatList + ChatModal pattern (unchanged)
  */
 
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
@@ -18,6 +21,7 @@ import {
   FlatList,
   Modal,
   Platform,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -42,6 +46,9 @@ import {
   Phone,
   Sparkles,
   X,
+  TrendingUp,
+  AlertCircle,
+  Lightbulb,
 } from 'lucide-react-native';
 
 import { colors } from '../../theme/colors';
@@ -55,6 +62,13 @@ import {
   type SessionDocumentation,
 } from '../../data/mock';
 import { VERTICAL_LABEL, VERTICAL_COLOR } from '../../lib/verticals';
+import {
+  AppShell,
+  PageHeader,
+  Card,
+  Pill,
+  RightRail,
+} from '../../components/ui';
 
 // ─── Vertical labels — delegated to lib/verticals (single source of truth) ───
 const VERTICAL_LABELS: Record<Vertical, string> = VERTICAL_LABEL;
@@ -208,6 +222,20 @@ function formatAITimestamp(iso: string): string {
   } catch {
     return iso;
   }
+}
+
+/**
+ * Short relative-time label for thread list snippets (e.g. "2h", "Mon", "May 3").
+ */
+function formatRelativeTime(iso: string): string {
+  const date = new Date(iso);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffHours = diffMs / (1000 * 60 * 60);
+  if (diffHours < 1) return `${Math.floor(diffMs / 60000)}m`;
+  if (diffHours < 24) return `${Math.floor(diffHours)}h`;
+  if (diffHours < 168) return date.toLocaleDateString('en-US', { weekday: 'short' });
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
 // ─── VerticalIcon helper ──────────────────────────────────────────────────────
@@ -1113,6 +1141,293 @@ const activeBannerStyles = StyleSheet.create({
   },
 });
 
+// ─── Web-only: Thread list item ───────────────────────────────────────────────
+
+interface ThreadRowProps {
+  session: SessionData;
+  isSelected: boolean;
+  onSelect: (id: string) => void;
+}
+
+/**
+ * Single row in the left-pane thread list on web. Shows member avatar initials,
+ * name, last-message snippet (mode label), relative time, and an unread dot
+ * for in-progress sessions.
+ */
+function ThreadRow({ session, isSelected, onSelect }: ThreadRowProps): React.JSX.Element {
+  const verticalColor = VERTICAL_COLORS[session.vertical as Vertical] ?? '#6B7A6B';
+  const isInProgress = session.status === 'in_progress';
+  const initials = (session.memberName ?? 'M')
+    .split(' ')
+    .map((p) => p[0]?.toUpperCase() ?? '')
+    .slice(0, 2)
+    .join('');
+
+  return (
+    <TouchableOpacity
+      style={[threadStyles.row, isSelected && threadStyles.rowSelected]}
+      onPress={() => onSelect(session.id)}
+      accessibilityRole="button"
+      accessibilityLabel={`Open session with ${session.memberName}`}
+      accessibilityState={{ selected: isSelected }}
+    >
+      {/* Avatar */}
+      <View style={[threadStyles.avatar, { backgroundColor: verticalColor + '28' }]}>
+        <Text style={[threadStyles.avatarText, { color: verticalColor }]}>{initials}</Text>
+      </View>
+      {/* Text block */}
+      <View style={threadStyles.threadInfo}>
+        <View style={threadStyles.threadTopRow}>
+          <Text style={threadStyles.memberName} numberOfLines={1}>{session.memberName}</Text>
+          <Text style={threadStyles.timeLabel}>{formatRelativeTime(session.scheduledAt)}</Text>
+        </View>
+        <Text style={threadStyles.snippet} numberOfLines={1}>
+          {sessionModeLabels[session.mode as keyof typeof sessionModeLabels] ?? session.mode}
+          {' · '}
+          {sessionStatusLabels[session.status as SessionStatus] ?? session.status}
+        </Text>
+      </View>
+      {/* Unread dot for active/in-progress */}
+      {isInProgress && <View style={threadStyles.unreadDot} />}
+    </TouchableOpacity>
+  );
+}
+
+const threadStyles = StyleSheet.create({
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0EDE9',
+    cursor: 'pointer' as unknown as undefined,
+  },
+  rowSelected: {
+    backgroundColor: '#ecfdf5',
+    borderLeftWidth: 3,
+    borderLeftColor: '#10b981',
+  },
+  avatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  avatarText: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  threadInfo: {
+    flex: 1,
+    gap: 3,
+    overflow: 'hidden',
+  },
+  threadTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 6,
+  },
+  memberName: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 14,
+    color: '#1E3320',
+    flex: 1,
+  },
+  timeLabel: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: '#9CA3AF',
+    flexShrink: 0,
+  },
+  snippet: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 12,
+    color: '#6B7A6B',
+  },
+  unreadDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#10b981',
+    flexShrink: 0,
+  },
+});
+
+// ─── Web-only: Member context rail cards ─────────────────────────────────────
+
+interface MemberContextRailProps {
+  session: SessionData | null;
+}
+
+/**
+ * Right-pane member context rail for web 3-pane layout.
+ * Shows journey progress, top resource needs, and Compass insight nudges.
+ * All content is derived from the session row — no additional API call needed.
+ */
+function MemberContextRail({ session }: MemberContextRailProps): React.JSX.Element {
+  if (session === null) {
+    return (
+      <View style={railStyles.empty}>
+        <Text style={railStyles.emptyText}>Select a session to see member context.</Text>
+      </View>
+    );
+  }
+
+  const journey = mockJourneyStatus(session.id);
+  const progressPct = journey === 'resolved' ? 100 : journey === 'awaiting_confirmation' ? 55 : 15;
+  const verticalColor = VERTICAL_COLORS[session.vertical as Vertical] ?? '#6B7A6B';
+  const verticalLabel = VERTICAL_LABELS[session.vertical as Vertical] ?? session.vertical;
+
+  return (
+    <ScrollView style={railStyles.scroll} showsVerticalScrollIndicator={false}>
+      {/* Journey progress card */}
+      <Card style={railStyles.card}>
+        <View style={railStyles.cardHeader}>
+          <TrendingUp size={14} color={colors.primary} />
+          <Text style={railStyles.cardTitle}>Active Journey</Text>
+        </View>
+        <Text style={railStyles.memberLabel}>{session.memberName}</Text>
+        <View style={railStyles.progressTrack}>
+          <View style={[railStyles.progressFill, { width: `${progressPct}%` as `${number}%`, backgroundColor: JOURNEY_COLORS[journey] }]} />
+        </View>
+        <View style={railStyles.journeyRow}>
+          <View style={[railStyles.journeyDot, { backgroundColor: JOURNEY_COLORS[journey] }]} />
+          <Text style={railStyles.journeyLabel}>{JOURNEY_LABELS[journey]}</Text>
+          <Text style={railStyles.journeyPct}>{progressPct}%</Text>
+        </View>
+      </Card>
+
+      {/* Top resource needs */}
+      <Card style={railStyles.card}>
+        <View style={railStyles.cardHeader}>
+          <AlertCircle size={14} color={verticalColor} />
+          <Text style={railStyles.cardTitle}>Top Resource Need</Text>
+        </View>
+        <View style={[railStyles.needPill, { backgroundColor: verticalColor + '18' }]}>
+          <Text style={[railStyles.needPillText, { color: verticalColor }]}>{verticalLabel}</Text>
+        </View>
+        <Text style={railStyles.needMeta}>
+          {sessionModeLabels[session.mode as keyof typeof sessionModeLabels] ?? session.mode}
+          {' · '}
+          {formatScheduledAt(session.scheduledAt)}
+        </Text>
+      </Card>
+
+      {/* Compass insight nudge */}
+      <Card style={railStyles.card}>
+        <View style={railStyles.cardHeader}>
+          <Lightbulb size={14} color={colors.compassGold} />
+          <Text style={railStyles.cardTitle}>Compass Insight</Text>
+        </View>
+        <Text style={railStyles.insightText}>
+          {journey === 'resolved'
+            ? 'Member has resolved their primary need. Consider discussing preventive resources.'
+            : journey === 'awaiting_confirmation'
+            ? 'Resources shared. Follow up to confirm member received and used them.'
+            : 'Early in the journey. Focus on building trust and identifying barriers.'}
+        </Text>
+      </Card>
+    </ScrollView>
+  );
+}
+
+const railStyles = StyleSheet.create({
+  scroll: {
+    flex: 1,
+  },
+  empty: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  emptyText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: '#9CA3AF',
+    textAlign: 'center',
+  },
+  card: {
+    padding: 16,
+    marginBottom: 16,
+    gap: 8,
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  cardTitle: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 11,
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    color: '#6B7A6B',
+  },
+  memberLabel: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 14,
+    color: '#1E3320',
+  },
+  progressTrack: {
+    height: 6,
+    backgroundColor: '#F0EDE9',
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: 6,
+    borderRadius: 3,
+  },
+  journeyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  journeyDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  journeyLabel: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12,
+    color: '#1E3320',
+    flex: 1,
+  },
+  journeyPct: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 12,
+    color: '#6B7A6B',
+  },
+  needPill: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 100,
+  },
+  needPillText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12,
+  },
+  needMeta: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 12,
+    color: '#6B7A6B',
+  },
+  insightText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: '#374151',
+    lineHeight: 18,
+  },
+});
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 type SessionTab = 'active' | 'completed';
@@ -1124,6 +1439,9 @@ type SessionTab = 'active' | 'completed';
  * - Chat modal for active sessions
  * - "Call Member (masked)" button on in-progress sessions (Vonage bridge)
  * - Documentation modal for completed sessions
+ *
+ * Web: 3-pane layout (thread list | active chat | member context rail)
+ * Native: existing single-column layout with ChatModal
  */
 type SessionsNavProp = NativeStackNavigationProp<CHWSessionsStackParamList, 'Sessions'>;
 
@@ -1154,7 +1472,7 @@ export function CHWSessionsScreen(): React.JSX.Element {
   // Documentation modal state
   const [documentingSessionId, setDocumentingSessionId] = useState<string | null>(null);
 
-  // Chat modal state
+  // Chat modal state (native) / selected thread id (web)
   const [chatSessionId, setChatSessionId] = useState<string | null>(null);
 
   // Call-bridge state: tracks which session is currently dialing (null = idle).
@@ -1216,6 +1534,13 @@ export function CHWSessionsScreen(): React.JSX.Element {
   // Ref to the FlatList so we can scroll to the in-progress card when the CHW
   // taps "View active session →" in the banner.
   const flatListRef = useRef<FlatList<SessionData>>(null);
+
+  // Web: selected session for the middle pane — default to the in-progress
+  // session if one exists, otherwise the first active session.
+  const selectedWebSession = useMemo<SessionData | null>(() => {
+    if (!chatSessionId) return inProgressSession ?? activeSessions[0] ?? null;
+    return allSessions.find((s) => s.id === chatSessionId) ?? null;
+  }, [chatSessionId, inProgressSession, activeSessions, allSessions]);
 
   /**
    * Show a short-lived toast banner at the top of the screen.
@@ -1449,26 +1774,176 @@ export function CHWSessionsScreen(): React.JSX.Element {
     ],
   );
 
+  // ── Loading / error states ─────────────────────────────────────────────────
+
   if (isLoading) {
     return (
-      <SafeAreaView style={styles.safe} edges={['top']}>
-        <View style={styles.headerBlock}>
-          <Text style={styles.pageTitle}>Sessions</Text>
-        </View>
-        <View style={styles.listContent}>
-          <LoadingSkeleton variant="rows" rows={3} />
-        </View>
-      </SafeAreaView>
+      <AppShell role="chw" activeKey="messages" userBlock={{ initials: '...', name: '...', role: 'CHW' }}>
+        <SafeAreaView style={styles.safe} edges={['top']}>
+          <View style={styles.headerBlock}>
+            <PageHeader title="Sessions" />
+          </View>
+          <View style={styles.listContent}>
+            <LoadingSkeleton variant="rows" rows={3} />
+          </View>
+        </SafeAreaView>
+      </AppShell>
     );
   }
 
   if (error) {
     return (
-      <SafeAreaView style={styles.safe} edges={['top']}>
-        <ErrorState message="Failed to load sessions" onRetry={() => void refetch()} />
-      </SafeAreaView>
+      <AppShell role="chw" activeKey="messages" userBlock={{ initials: '...', name: '...', role: 'CHW' }}>
+        <SafeAreaView style={styles.safe} edges={['top']}>
+          <ErrorState message="Failed to load sessions" onRetry={() => void refetch()} />
+        </SafeAreaView>
+      </AppShell>
     );
   }
+
+  // ── Web 3-pane layout ─────────────────────────────────────────────────────
+
+  if (Platform.OS === 'web') {
+    const threadSessions = [...activeSessions, ...completedSessions];
+    const selectedWebSessionForCard = selectedWebSession;
+    const isStartDisabledForSelected =
+      selectedWebSessionForCard !== null &&
+      hasActiveInProgress &&
+      selectedWebSessionForCard.status === 'scheduled';
+
+    return (
+      <AppShell role="chw" activeKey="messages" userBlock={{ initials: 'C', name: 'CHW', role: 'CHW' }}>
+        {/* Toast overlay — positioned absolutely over all content */}
+        {toastMessage !== null && <ToastBanner message={toastMessage} />}
+
+        <View style={webStyles.root}>
+          {/* ── Left pane: thread list (320px) ── */}
+          <View style={webStyles.threadPane}>
+            <View style={webStyles.threadHeader}>
+              <PageHeader title="Sessions" />
+              {/* Tab bar */}
+              <View style={webStyles.tabBar}>
+                {(['active', 'completed'] as SessionTab[]).map((tab) => {
+                  const isActive = activeTab === tab;
+                  const count = tab === 'active' ? activeSessions.length : completedSessions.length;
+                  return (
+                    <TouchableOpacity
+                      key={tab}
+                      style={[webStyles.tabItem, isActive && webStyles.tabItemActive]}
+                      onPress={() => setActiveTab(tab)}
+                      accessibilityRole="tab"
+                      accessibilityState={{ selected: isActive }}
+                    >
+                      <Text style={[webStyles.tabLabel, isActive && webStyles.tabLabelActive]}>
+                        {tab === 'active' ? 'Active' : 'Completed'}
+                        {count > 0 ? ` (${count})` : ''}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+
+            <ScrollView style={webStyles.threadList} showsVerticalScrollIndicator={false}>
+              {displayedSessions.length === 0 ? (
+                <View style={webStyles.threadEmpty}>
+                  <Text style={webStyles.threadEmptyText}>
+                    {activeTab === 'active' ? 'No active sessions' : 'No completed sessions'}
+                  </Text>
+                </View>
+              ) : (
+                displayedSessions.map((session) => (
+                  <ThreadRow
+                    key={session.id}
+                    session={session}
+                    isSelected={selectedWebSession?.id === session.id}
+                    onSelect={(id) => setChatSessionId(id)}
+                  />
+                ))
+              )}
+            </ScrollView>
+          </View>
+
+          {/* ── Middle pane: active session (flex) ── */}
+          <View style={webStyles.middlePane}>
+            {/* Active-session lock banner */}
+            {activeTab === 'active' && hasActiveInProgress && inProgressSession !== undefined && (
+              <ActiveSessionBanner
+                activeSessionId={inProgressSession.id}
+                onViewActiveSession={handleViewActiveSession}
+              />
+            )}
+
+            {selectedWebSessionForCard !== null ? (
+              selectedWebSessionForCard.status === 'in_progress' ? (
+                // In-progress: render SessionChatWithFollowup inline (audio/transcript plumbing preserved)
+                <View style={webStyles.chatPane}>
+                  <View style={webStyles.chatPaneHeader}>
+                    <Text style={webStyles.chatPaneTitle}>
+                      {selectedWebSessionForCard.memberName ?? 'Session Chat'}
+                    </Text>
+                    <SessionTimer startedAtMs={startTimestamps.current[selectedWebSessionForCard.id] ?? Date.now()} />
+                  </View>
+                  <View style={webStyles.chatPaneContent}>
+                    <SessionChatWithFollowup sessionId={selectedWebSessionForCard.id} />
+                  </View>
+                </View>
+              ) : (
+                // Scheduled / completed: render the session card
+                <ScrollView style={webStyles.middleScroll} contentContainerStyle={webStyles.middleScrollContent}>
+                  <SessionCard
+                    session={selectedWebSessionForCard}
+                    startedAtMs={undefined}
+                    isFirstSession={firstSessionIds.has(selectedWebSessionForCard.id)}
+                    claimsBySession={claimsBySession}
+                    isCallingMember={callingSessionId === selectedWebSessionForCard.id}
+                    isStartDisabled={isStartDisabledForSelected}
+                    onStart={(id) => { void handleStart(id); }}
+                    onComplete={handleComplete}
+                    onDocumentSession={handleDocumentSession}
+                    onOpenChat={handleOpenChat}
+                    onCallMember={(session) => { void handleCallMember(session); }}
+                    onOpenMemberProfile={handleOpenMemberProfile}
+                    onStartDisabledPress={handleStartDisabledPress}
+                  />
+                </ScrollView>
+              )
+            ) : (
+              <View style={webStyles.middleEmpty}>
+                <MessageSquare size={32} color="#DDD6CC" />
+                <Text style={webStyles.middleEmptyText}>Select a session to get started</Text>
+              </View>
+            )}
+          </View>
+
+          {/* ── Right pane: member context rail (288px) ── */}
+          <View style={webStyles.railPane}>
+            <View style={webStyles.railHeader}>
+              <Text style={webStyles.railTitle}>Member Context</Text>
+            </View>
+            <MemberContextRail session={selectedWebSession} />
+          </View>
+        </View>
+
+        {/* Documentation modal */}
+        {documentingSessionId != null && (
+          <DocumentationModal
+            visible={documentingSessionId != null}
+            onClose={() => setDocumentingSessionId(null)}
+            sessionId={documentingSessionId}
+            durationMinutes={
+              [...activeSessions, ...completedSessions].find(
+                (s) => s.id === documentingSessionId,
+              )?.durationMinutes ?? null
+            }
+            onSubmit={handleDocumentationSubmit}
+          />
+        )}
+      </AppShell>
+    );
+  }
+
+  // ── Native single-column layout (unchanged) ───────────────────────────────
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -1582,7 +2057,139 @@ export function CHWSessionsScreen(): React.JSX.Element {
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
+// ─── Web 3-pane styles ────────────────────────────────────────────────────────
+
+const webStyles = StyleSheet.create({
+  root: {
+    flex: 1,
+    flexDirection: 'row',
+    backgroundColor: '#F4F1ED',
+    minHeight: '100vh' as unknown as number,
+  },
+
+  // Left thread list (320px)
+  threadPane: {
+    width: 320,
+    backgroundColor: '#FFFFFF',
+    borderRightWidth: 1,
+    borderRightColor: '#DDD6CC',
+    flexShrink: 0,
+    flexDirection: 'column',
+  },
+  threadHeader: {
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0EDE9',
+  },
+  tabBar: {
+    flexDirection: 'row',
+    backgroundColor: '#F4F1ED',
+    borderRadius: 10,
+    padding: 3,
+    marginTop: 8,
+  },
+  tabItem: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tabItemActive: {
+    backgroundColor: '#3D5A3E',
+  },
+  tabLabel: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12,
+    color: '#6B7A6B',
+  },
+  tabLabelActive: {
+    color: '#FFFFFF',
+  },
+  threadList: {
+    flex: 1,
+  },
+  threadEmpty: {
+    padding: 32,
+    alignItems: 'center',
+  },
+  threadEmptyText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: '#9CA3AF',
+    textAlign: 'center',
+  },
+
+  // Middle active-session pane (flex)
+  middlePane: {
+    flex: 1,
+    backgroundColor: '#f9fafb',
+    borderRightWidth: 1,
+    borderRightColor: '#DDD6CC',
+    flexDirection: 'column',
+  },
+  chatPane: {
+    flex: 1,
+    flexDirection: 'column',
+  },
+  chatPaneHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#DDD6CC',
+  },
+  chatPaneTitle: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 18,
+    color: '#1E3320',
+  },
+  chatPaneContent: {
+    flex: 1,
+  },
+  middleScroll: {
+    flex: 1,
+  },
+  middleScrollContent: {
+    padding: 20,
+  },
+  middleEmpty: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+  },
+  middleEmptyText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 14,
+    color: '#9CA3AF',
+  },
+
+  // Right rail (288px)
+  railPane: {
+    width: 288,
+    backgroundColor: '#FFFFFF',
+    flexShrink: 0,
+    flexDirection: 'column',
+  },
+  railHeader: {
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0EDE9',
+  },
+  railTitle: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 11,
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    color: '#6B7A6B',
+  },
+});
+
+// ─── Native styles ────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
   safe: {

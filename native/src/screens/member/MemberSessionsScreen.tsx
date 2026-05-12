@@ -1,11 +1,13 @@
 /**
- * MemberSessionsScreen — View and manage CHW sessions.
+ * MemberSessionsScreen — "Messages" in the new nav (feat/ui-revamp).
+ *
+ * Re-skinned to AppShell layout. All existing data hooks, sub-components,
+ * audio plumbing (dual-mic), and navigation callbacks are preserved verbatim.
  *
  * Tabs:
- * - Active: scheduled/in_progress sessions with cancel action
+ * - Active: scheduled/in_progress sessions with cancel action + Message CHW
+ * - Pending: open requests awaiting CHW match
  * - Completed: past sessions with star ratings and expandable notes
- *
- * Mock member: Rosa Delgado (first in memberProfiles)
  */
 
 import React, { useCallback, useState } from 'react';
@@ -50,6 +52,8 @@ import {
   type Vertical,
   type SessionMode,
 } from '../../data/mock';
+import { AppShell, PageHeader } from '../../components/ui';
+import { useAuth } from '../../context/AuthContext';
 import {
   useSessions,
   useMyRequests,
@@ -1270,6 +1274,14 @@ const pendingCardStyles = StyleSheet.create({
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export function MemberSessionsScreen(): React.JSX.Element {
+  const { userName } = useAuth();
+  const memberInitials = (userName ?? 'M')
+    .split(' ')
+    .slice(0, 2)
+    .map((p) => p[0] ?? '')
+    .join('')
+    .toUpperCase();
+
   const [activeTab, setActiveTab] = useState<TabKey>('active');
   const [cancellingSession, setCancellingSession] = useState<SessionData | null>(null);
   const [cancelledIds, setCancelledIds] = useState<Set<string>>(new Set());
@@ -1410,20 +1422,26 @@ export function MemberSessionsScreen(): React.JSX.Element {
   const isLoading = sessionsQuery.isLoading || myRequestsQuery.isLoading;
   const hasError = sessionsQuery.error && myRequestsQuery.error;
 
+  const shellUserBlock = {
+    initials: memberInitials,
+    name: userName ?? 'Member',
+    role: 'Member' as const,
+  };
+
   if (isLoading) {
     return (
-      <SafeAreaView style={styles.safeArea} edges={['top']}>
+      <AppShell role="member" activeKey="messages" userBlock={shellUserBlock}>
         <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
         <View style={styles.pageWrap}>
           <LoadingSkeleton variant="rows" rows={4} />
         </View>
-      </SafeAreaView>
+      </AppShell>
     );
   }
 
   if (hasError) {
     return (
-      <SafeAreaView style={styles.safeArea} edges={['top']}>
+      <AppShell role="member" activeKey="messages" userBlock={shellUserBlock}>
         <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
         <ErrorState
           message="Could not load your sessions. Please try again."
@@ -1432,12 +1450,12 @@ export function MemberSessionsScreen(): React.JSX.Element {
             void myRequestsQuery.refetch();
           }}
         />
-      </SafeAreaView>
+      </AppShell>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top']}>
+    <AppShell role="member" activeKey="messages" userBlock={shellUserBlock}>
       <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
 
       {toastMessage ? <ToastBanner message={toastMessage} /> : null}
@@ -1453,10 +1471,10 @@ export function MemberSessionsScreen(): React.JSX.Element {
 
       <View style={styles.pageWrap}>
       {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.title}>My Sessions</Text>
-        <Text style={styles.subtitle}>View and manage your CHW sessions</Text>
-      </View>
+      <PageHeader
+        title="Messages"
+        subtitle="Your sessions and conversations with your CHW"
+      />
 
       {/* Tab bar — Active | Pending | Completed */}
       <View style={styles.tabBar} accessibilityRole="tablist">
@@ -1583,7 +1601,7 @@ export function MemberSessionsScreen(): React.JSX.Element {
         />
       )}
       </View>
-    </SafeAreaView>
+    </AppShell>
   );
 }
 
