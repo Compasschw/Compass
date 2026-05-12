@@ -16,7 +16,8 @@
 
 export const chwSidebarItems = [
   { key: 'dashboard',    label: 'Dashboard',          icon: 'layout-dashboard', route: 'DashboardStack'        },
-  { key: 'members',      label: 'Members',            icon: 'users',            route: 'Requests'              },
+  { key: 'members',      label: 'Members',            icon: 'users',            route: 'CHWMembers'            },
+  { key: 'inbox',        label: 'Inbox',              icon: 'inbox',            route: 'Requests'              },
   { key: 'journeys',     label: 'Journeys',           icon: 'route',            route: 'CHWJourneys'           },
   { key: 'messages',     label: 'Messages',           icon: 'message-square',   route: 'SessionsStack',         badgeKey: 'unreadMessages' },
   { key: 'appointments', label: 'Appointments',       icon: 'calendar',         route: 'Calendar'              },

@@ -288,6 +288,51 @@ export interface ChwMapData {
   resources: MapResourcePin[];
 }
 
+// ─── Members Roster ───────────────────────────────────────────────────────────
+
+/**
+ * Lightweight journey info embedded in a roster row.
+ * Matches backend ActiveJourneyInfo schema.
+ */
+export interface ActiveJourneyInfo {
+  /** Journey template name, e.g. 'Food Assistance'. */
+  name: string;
+  /** Current in-progress step name. Null when no active step. */
+  currentStep: string | null;
+  /** Completion percentage 0–100. */
+  percent: number;
+}
+
+/**
+ * A single row in the CHW Members roster table.
+ * Matches backend MembersRosterItem schema.
+ *
+ * HIPAA: medi_cal_id raw value is never present — only maskedId (last 4 chars).
+ */
+export interface MembersRosterItem {
+  /** Member's User.id — use for navigation to CHWMemberProfileScreen. */
+  id: string;
+  displayName: string;
+  /** Age in whole years from DOB. Null when DOB not recorded (v1). */
+  age: number | null;
+  /** Last 4 of medi_cal_id formatted '...XXXX'. '—' when absent. */
+  maskedId: string;
+  /** Up to 2 uppercase initials for the avatar circle. */
+  avatarInitials: string;
+  /** 'active' = session in last 30d OR open/accepted request. */
+  status: 'active' | 'inactive';
+  /** Always null in v1 — no clinical risk model yet. */
+  risk: null;
+  /** Engagement bucket derived from 60-day session count. */
+  engagement: 'highly' | 'moderately' | 'disengaged';
+  /** Most recent active journey, or null if none. */
+  activeJourney: ActiveJourneyInfo | null;
+  /** ISO timestamp of most recent session. */
+  lastContactAt: string | null;
+  /** Primary vertical of the most recent active ServiceRequest. */
+  topNeed: string | null;
+}
+
 export const queryKeys = {
   sessions: ['sessions'] as const,
   session: (id: string) => ['sessions', id] as const,
@@ -311,6 +356,8 @@ export const queryKeys = {
   memberFacingCHWProfile: (chwId: string) => ['member', 'chws', chwId] as const,
   /** CHW caseload journey list from GET /chw/journeys. */
   chwJourneys: ['chw', 'journeys'] as const,
+  /** CHW members roster from GET /chw/members. */
+  chwMembers: ['chw', 'members'] as const,
 };
 
 /** Re-export so callers don't need a second import from api/sessions. */
@@ -1789,6 +1836,24 @@ export function useChwJourneys() {
       return transformKeys<MemberJourneyResponse[]>(raw);
     },
     staleTime: 60_000,
+  });
+}
+
+/**
+ * CHW members roster from GET /chw/members.
+ *
+ * Returns all members the authenticated CHW has a relationship with (session or
+ * accepted ServiceRequest), ordered by last_contact_at descending. Stale time
+ * is 2 minutes — the roster changes at session/request granularity, not sub-minute.
+ */
+export function useChwMembers() {
+  return useQuery({
+    queryKey: queryKeys.chwMembers,
+    queryFn: async (): Promise<MembersRosterItem[]> => {
+      const raw = await api<unknown[]>('/chw/members');
+      return transformKeys<MembersRosterItem[]>(raw);
+    },
+    staleTime: 120_000,
   });
 }
 
