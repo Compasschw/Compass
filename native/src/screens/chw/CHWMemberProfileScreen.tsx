@@ -87,6 +87,7 @@ import {
   RightDrawer,
 } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
+import { OpenQuestionsDrawer } from '../../components/chw/OpenQuestionsDrawer';
 
 // ─── Navigation types ─────────────────────────────────────────────────────────
 
@@ -1955,14 +1956,47 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
         />
 
         {/* ── Open Questions drawer ── */}
-        <RightDrawer
-          isOpen={openQuestionsOpen}
+        <OpenQuestionsDrawer
+          visible={openQuestionsOpen}
           onClose={() => setOpenQuestionsOpen(false)}
-          title="Suggested Questions"
-          subtitle={`For ${displayName}`}
-        >
-          <OpenQuestionsContent />
-        </RightDrawer>
+          member={{
+            name: displayName,
+            age: null,
+            initials,
+            primaryLanguage: profile.primaryLanguage,
+            engagementLabel: 'Highly Engaged',
+          }}
+          journey={
+            profile.primaryCategories.length > 0
+              ? {
+                  templateName:    `${CATEGORY_LABELS[profile.primaryCategories[0]!] ?? profile.primaryCategories[0]!} Journey`,
+                  currentStepName: 'Upload Documents',
+                  vertical:        profile.primaryCategories[0]!,
+                }
+              : undefined
+          }
+          onMarkComplete={() => {
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+              window.alert('Call marked as completed.');
+            } else {
+              Alert.alert('Call Completed', 'This call has been marked as completed.');
+            }
+          }}
+          onCopyScript={() => {
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+              window.alert('Script copied — paste into your notes.');
+            } else {
+              Alert.alert('Copied', 'Script copied to clipboard.');
+            }
+          }}
+          onSaveNote={() => {
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+              window.alert('Note saved — coming soon.');
+            } else {
+              Alert.alert('Save Note', 'Notes feature coming soon.');
+            }
+          }}
+        />
 
         {/* ── Message Member drawer ──
             ProfileContactButtons handles the actual find-or-create flow.
