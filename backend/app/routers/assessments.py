@@ -445,10 +445,18 @@ async def get_latest_member_assessment(
     Returns the most recent completed assessment for ``member_id``.
     Returns 404 if no completed assessment exists for this member.
 
-    Auth: CHW or admin. Members do not access their own assessment data
-    directly — they receive summaries via the care team interface.
+    Auth: CHW with a shared session, or admin.  Role-only checks are
+    insufficient — any CHW would otherwise be able to read any member's
+    assessment PHI without a care relationship.  Members do not access
+    their own assessment data directly.
     """
     _assert_chw_or_admin(current_user)
+
+    # Finding #5 (CRITICAL): enforce CHW ↔ member relationship gate.
+    # Admins bypass this check — they can access any member's data.
+    if current_user.role != "admin":
+        from app.services.relationship_guards import assert_shared_session
+        await assert_shared_session(db, chw_id=current_user.id, member_id=member_id)
 
     result = await db.execute(
         select(MemberAssessment)

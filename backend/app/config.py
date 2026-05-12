@@ -9,6 +9,13 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 15
     refresh_token_expire_days: int = 7
 
+    # ── Vonage webhook signature (Finding #1, CRITICAL) ───────────────────────
+    # HMAC-SHA256 secret used to verify incoming Vonage Voice webhook requests.
+    # Set in the Vonage API Settings dashboard under "Signature method: SHA-256 HMAC".
+    # When empty in production the server refuses to start (fail-safe).
+    # Generate: python -c "import secrets; print(secrets.token_hex(32))"
+    vonage_signature_secret: str = ""
+
     aws_region: str = "us-west-2"
     s3_bucket_phi: str = "compass-phi-dev"
     s3_bucket_public: str = "compass-public-dev"
@@ -87,6 +94,13 @@ class Settings(BaseSettings):
     # Generate at: https://console.anthropic.com/settings/keys
     anthropic_api_key: str | None = None
 
+    # ── BAA confirmation gates (Findings #3, #4, CRITICAL) ────────────────────
+    # Cofounders set these to True in the production .env AFTER the BAA is
+    # countersigned by legal. Default False = fail-safe: PHI never flows to
+    # the vendor until the gate is explicitly opened.
+    assemblyai_baa_confirmed: bool = False
+    anthropic_baa_confirmed: bool = False
+
     # Observability
     sentry_dsn: str = ""
     environment: str = "development"  # development | staging | production
@@ -121,3 +135,51 @@ if len(settings.secret_key) < 32:
 if not settings.admin_key or len(settings.admin_key) < 16:
     print("FATAL: ADMIN_KEY must be set and at least 16 characters.", file=sys.stderr)
     sys.exit(1)
+
+# ── Production-only startup guards ────────────────────────────────────────────
+# These checks run at import time (process start). Any guard that fires in
+# production logs a FATAL line so the failure appears in CloudWatch / Sentry
+# before sys.exit(1) terminates the worker.
+
+import os as _os  # noqa: E402 — placed here intentionally (config module owns guards)
+
+if settings.environment == "production":
+    # Finding #2 — DISABLE_RATE_LIMIT must never be truthy in production.
+    _disable_rl = _os.environ.get("DISABLE_RATE_LIMIT", "").lower()
+    if _disable_rl in ("1", "true", "yes"):
+        print(
+            "FATAL: DISABLE_RATE_LIMIT is set to a truthy value in a production "
+            "environment. Rate limiting is a critical security control — unset "
+            "DISABLE_RATE_LIMIT before starting the server in production.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Finding #1 — Vonage signature secret must be set in production.
+    if not settings.vonage_signature_secret:
+        print(
+            "FATAL: VONAGE_SIGNATURE_SECRET is not configured in production. "
+            "Vonage webhook endpoints cannot verify request authenticity without "
+            "this secret. Set it in .env before deploying.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Findings #3, #4 — BAA gates must be confirmed before PHI flows to vendors.
+    if not settings.assemblyai_baa_confirmed:
+        print(
+            "FATAL: ASSEMBLYAI_BAA_CONFIRMED is False in production. "
+            "Set ASSEMBLYAI_BAA_CONFIRMED=true in .env after the BAA is "
+            "countersigned by legal.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if not settings.anthropic_baa_confirmed:
+        print(
+            "FATAL: ANTHROPIC_BAA_CONFIRMED is False in production. "
+            "Set ANTHROPIC_BAA_CONFIRMED=true in .env after the BAA is "
+            "countersigned by legal.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
