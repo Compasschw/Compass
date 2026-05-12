@@ -73,8 +73,10 @@ export const colors = {
   teal600: '#0d9488',
   teal700: '#0f766e',
 
-  // Emerald-300 (used by sidebar switch-view link)
+  // Emerald shades (used by sidebar avatar, badges, and switch-view link)
   emerald300: '#6ee7b7',
+  emerald500: '#10b981',
+  emerald900: '#064e3b',
 
   // Text
   textPrimary:   '#111827',

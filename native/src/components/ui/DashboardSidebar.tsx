@@ -32,6 +32,7 @@ import type { NavigationProp, ParamListBase } from '@react-navigation/native';
 
 // Lucide icons used by sidebar items
 import {
+  Compass,
   LayoutDashboard,
   Users,
   UserRound,
@@ -174,10 +175,15 @@ function SidebarContent({
 
   return (
     <View style={styles.sidebar}>
-      {/* Brand block */}
+      {/* Brand block — compass icon badge + wordmark, mirrors mock px-2 mb-8 layout */}
       <View style={styles.brandBlock}>
-        <Text style={styles.brandName}>compasschw</Text>
-        <Text style={styles.brandTagline}>{roleTagline}</Text>
+        <View style={styles.brandIconBadge}>
+          <Compass color="#ffffff" size={20} strokeWidth={1.75} />
+        </View>
+        <View style={styles.brandText}>
+          <Text style={styles.brandName}>compasschw</Text>
+          <Text style={styles.brandTagline}>{roleTagline}</Text>
+        </View>
       </View>
 
       {/* Nav items */}
@@ -245,8 +251,9 @@ function NavItem({
 }: NavItemProps): React.JSX.Element {
   const [hovered, setHovered] = useState(false);
 
+  // Active icon uses emerald-600 (#16a34a) per mock `.sidebar-item.active .icon { color:#16a34a; }`
   const iconColor = isActive
-    ? tokens.sidebarActiveText
+    ? tokens.primary
     : tokens.sidebarText;
 
   return (
@@ -343,7 +350,8 @@ function UserAvatarBlock({ userBlock }: UserAvatarBlockProps): React.JSX.Element
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
-const SIDEBAR_WIDTH = 240;
+// w-64 = 16rem = 256px per mock spec
+const SIDEBAR_WIDTH = 256;
 
 const styles = StyleSheet.create({
   sidebar: {
@@ -365,29 +373,49 @@ const styles = StyleSheet.create({
   } as ViewStyle,
 
   // ── Brand ──
+  // Mock: px-2 mb-8 flex items-center gap-2.5
+  // px-2 = 8px, mb-8 = 32px bottom margin, gap-2.5 = 10px
 
   brandBlock: {
-    paddingHorizontal: 24,
+    flexDirection:    'row',
+    alignItems:       'center',
+    gap:              10,
+    paddingHorizontal: 8,
     paddingTop:        24,
-    paddingBottom:     16,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(167,212,190,0.15)',
+    paddingBottom:     32,
   } as ViewStyle,
 
+  // w-9 h-9 rounded-xl bg-emerald-500 — 36×36, radius 12, emerald-500 = #10b981
+  brandIconBadge: {
+    width:           36,
+    height:          36,
+    borderRadius:    12,
+    backgroundColor: tokens.emerald500,
+    alignItems:      'center',
+    justifyContent:  'center',
+    flexShrink:      0,
+  } as ViewStyle,
+
+  brandText: {
+    flexShrink: 1,
+  } as ViewStyle,
+
+  // text-white font-bold text-lg leading-tight — 18px weight 700
   brandName: {
-    fontSize:      16,
-    fontWeight:    '800',
+    fontSize:      18,
+    fontWeight:    '700',
     color:         '#ffffff',
     letterSpacing: -0.3,
-    lineHeight:    20,
+    lineHeight:    22,
   } as TextStyle,
 
+  // text-emerald-300 text-xs font-medium — 12px weight 500, #6ee7b7
   brandTagline: {
-    fontSize:   11,
+    fontSize:   12,
     fontWeight: '500',
-    color:      tokens.sidebarText,
-    marginTop:  2,
-    lineHeight: 14,
+    color:      tokens.emerald300,
+    marginTop:  1,
+    lineHeight: 16,
   } as TextStyle,
 
   // ── Nav scroll ──
@@ -415,10 +443,15 @@ const styles = StyleSheet.create({
 
   navItemActive: {
     backgroundColor: '#ffffff',
+    // Mock: box-shadow:0 1px 3px rgba(0,0,0,.06)
+    ...(Platform.OS === 'web'
+      ? { boxShadow: '0 1px 3px rgba(0,0,0,.06)' }
+      : {}),
   } as ViewStyle,
 
   navItemHover: {
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    // Mock: rgba(255,255,255,0.06) — not 0.08
+    backgroundColor: 'rgba(255,255,255,0.06)',
   } as ViewStyle,
 
   navIcon: {
@@ -427,12 +460,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   } as ViewStyle,
 
+  // Mock: font-size:14px font-weight:500 color:#a7d4be
   navLabel: {
     flex:       1,
-    fontSize:   13,
+    fontSize:   14,
     fontWeight: '500',
     color:      tokens.sidebarText,
-    lineHeight: 18,
+    lineHeight: 20,
   } as TextStyle,
 
   navLabelActive: {
@@ -440,20 +474,22 @@ const styles = StyleSheet.create({
     color:      tokens.sidebarActiveText,
   } as TextStyle,
 
+  // Mock: bg-emerald-500 text-white text-xs font-semibold px-2 py-0.5 rounded-full
+  // bg-emerald-500 = #10b981, text-xs = 12px → we use 11px to keep pill compact
   badge: {
-    backgroundColor: 'rgba(255,255,255,0.18)',
-    borderRadius:    999,
-    paddingHorizontal: 6,
-    paddingVertical:   1,
-    minWidth:          18,
+    backgroundColor:   tokens.emerald500,
+    borderRadius:      999,
+    paddingHorizontal: 7,
+    paddingVertical:   2,
+    minWidth:          20,
     alignItems:        'center',
   } as ViewStyle,
 
   badgeText: {
-    fontSize:   10,
-    fontWeight: '700',
+    fontSize:   11,
+    fontWeight: '600',
     color:      '#ffffff',
-    lineHeight: 14,
+    lineHeight: 15,
   } as TextStyle,
 
   // ── Switch-view link ──
@@ -481,49 +517,59 @@ const styles = StyleSheet.create({
   } as TextStyle,
 
   // ── User block ──
+  // Mock: mt-6 pt-4 border-t border-emerald-900/40 → flex items-center gap-3 px-2 py-2
+  // border-emerald-900/40 = #064e3b at 40% opacity
 
   userBlock: {
     flexDirection:     'row',
     alignItems:        'center',
     gap:               12,
-    paddingHorizontal: 16,
-    paddingVertical:   16,
+    paddingHorizontal: 8,
+    paddingVertical:   8,
+    marginTop:         24,
+    paddingTop:        16,
     borderTopWidth:    1,
-    borderTopColor:    'rgba(167,212,190,0.15)',
+    borderTopColor:    'rgba(6,78,59,0.4)',
   } as ViewStyle,
 
+  // Mock: w-9 h-9 rounded-full bg-emerald-300 → 36×36, full circle, #6ee7b7
   avatar: {
-    width:           40,
-    height:          40,
-    borderRadius:    20,
-    backgroundColor: 'rgba(255,255,255,0.18)',
+    width:           36,
+    height:          36,
+    borderRadius:    18,
+    backgroundColor: tokens.emerald300,
     alignItems:      'center',
     justifyContent:  'center',
+    flexShrink:      0,
   } as ViewStyle,
 
+  // Mock: text-emerald-900 font-bold text-sm → dark green initials on light green bg
   avatarInitials: {
     fontSize:   13,
     fontWeight: '700',
-    color:      '#ffffff',
+    color:      tokens.emerald900,
     lineHeight: 18,
   } as TextStyle,
 
   userMeta: {
-    flex: 1,
-    gap:  1,
+    flex:    1,
+    minWidth: 0,
+    gap:     1,
   } as ViewStyle,
 
+  // Mock: text-white text-sm font-semibold truncate → 14px weight 600 white
   userName: {
-    fontSize:   13,
+    fontSize:   14,
     fontWeight: '600',
     color:      '#ffffff',
-    lineHeight: 18,
+    lineHeight: 20,
   } as TextStyle,
 
+  // Mock: text-emerald-300 text-xs → 12px #6ee7b7
   userRole: {
-    fontSize:   11,
+    fontSize:   12,
     fontWeight: '400',
-    color:      tokens.sidebarText,
-    lineHeight: 14,
+    color:      tokens.emerald300,
+    lineHeight: 16,
   } as TextStyle,
 });
