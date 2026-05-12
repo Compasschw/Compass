@@ -77,7 +77,8 @@ export interface AppShellProps {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const SIDEBAR_WIDTH = 240;
+// Match DashboardSidebar's width (mock spec is w-64 = 16rem = 256px).
+const SIDEBAR_WIDTH = 256;
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
