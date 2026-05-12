@@ -134,8 +134,7 @@ const styles = StyleSheet.create({
   } as ViewStyle,
 
   mainContent: {
-    padding:    spacing.xl,
-    paddingTop: spacing.xxl,
-    flexGrow:   1,
+    padding:  spacing.xxxl,
+    flexGrow: 1,
   } as ViewStyle,
 });

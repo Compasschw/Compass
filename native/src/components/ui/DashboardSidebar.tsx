@@ -311,7 +311,7 @@ function SwitchViewLink({
       accessibilityLabel={label}
       style={[styles.switchLink, hovered && styles.switchLinkHover]}
     >
-      <ArrowRightLeft color={tokens.sidebarText} size={14} strokeWidth={1.75} />
+      <ArrowRightLeft color={tokens.emerald300} size={14} strokeWidth={1.75} />
       <Text style={styles.switchLinkLabel}>{label}</Text>
     </Pressable>
   );
@@ -348,18 +348,18 @@ const SIDEBAR_WIDTH = 240;
 const styles = StyleSheet.create({
   sidebar: {
     width:           SIDEBAR_WIDTH,
-    // Dark sage gradient approximated with solid start colour on RN; web will
-    // apply the gradient via inline style override if needed.
+    // Native: solid fallback colour; web: full gradient via backgroundImage
     backgroundColor: tokens.sidebarBg,
     flexDirection:   'column',
     height:          '100%' as unknown as number,
-    // Web: fixed left panel
+    // Web: fixed left panel + CSS gradient (RN-Web passes unknown style props to DOM)
     ...(Platform.OS === 'web'
       ? {
-          position: 'fixed' as 'absolute',
-          left:     0,
-          top:      0,
-          bottom:   0,
+          position:        'fixed' as 'absolute',
+          left:            0,
+          top:             0,
+          bottom:          0,
+          backgroundImage: 'linear-gradient(180deg, #134e36 0%, #0f3d2a 100%)',
         }
       : {}),
   } as ViewStyle,
@@ -367,9 +367,9 @@ const styles = StyleSheet.create({
   // ── Brand ──
 
   brandBlock: {
-    paddingHorizontal: 20,
-    paddingTop:        28,
-    paddingBottom:     20,
+    paddingHorizontal: 24,
+    paddingTop:        24,
+    paddingBottom:     16,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(167,212,190,0.15)',
   } as ViewStyle,
@@ -405,12 +405,12 @@ const styles = StyleSheet.create({
   // ── Nav item ──
 
   navItem: {
-    flexDirection:  'row',
-    alignItems:     'center',
-    gap:            10,
-    paddingVertical:  9,
-    paddingHorizontal: 10,
-    borderRadius:   10,
+    flexDirection:     'row',
+    alignItems:        'center',
+    gap:               12,
+    paddingVertical:   10,
+    paddingHorizontal: 14,
+    borderRadius:      10,
   } as ViewStyle,
 
   navItemActive: {
@@ -436,7 +436,7 @@ const styles = StyleSheet.create({
   } as TextStyle,
 
   navLabelActive: {
-    fontWeight: '700',
+    fontWeight: '600',
     color:      tokens.sidebarActiveText,
   } as TextStyle,
 
@@ -475,7 +475,8 @@ const styles = StyleSheet.create({
   switchLinkLabel: {
     fontSize:   12,
     fontWeight: '500',
-    color:      tokens.sidebarText,
+    // text-emerald-300 per spec — uses the new emerald300 token
+    color:      tokens.emerald300,
     lineHeight: 16,
   } as TextStyle,
 
@@ -484,7 +485,7 @@ const styles = StyleSheet.create({
   userBlock: {
     flexDirection:     'row',
     alignItems:        'center',
-    gap:               10,
+    gap:               12,
     paddingHorizontal: 16,
     paddingVertical:   16,
     borderTopWidth:    1,
@@ -492,9 +493,9 @@ const styles = StyleSheet.create({
   } as ViewStyle,
 
   avatar: {
-    width:           36,
-    height:          36,
-    borderRadius:    18,
+    width:           40,
+    height:          40,
+    borderRadius:    20,
     backgroundColor: 'rgba(255,255,255,0.18)',
     alignItems:      'center',
     justifyContent:  'center',

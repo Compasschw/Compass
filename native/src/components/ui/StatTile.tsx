@@ -37,13 +37,18 @@ export interface StatTileProps {
   label: string;
   /** Primary metric displayed prominently, e.g. "142" or "$4,820". */
   value: string | number;
-  /** Optional change indicator, e.g. "+8 this week". */
+  /** Optional change indicator, e.g. "+8 this week". Renders as a pill in the top-right corner. */
   delta?: string;
   /**
-   * Colour of the delta text. Defaults to emerald-700 (positive / neutral).
+   * Text colour of the delta pill. Defaults to emerald-700 (positive / neutral).
    * Pass `colors.red700` for negative deltas.
    */
   deltaColor?: string;
+  /**
+   * Background colour of the delta pill. Defaults to emerald-50 tint.
+   * Pass a matching `*-50` colour for negative/warning deltas.
+   */
+  deltaBg?: string;
   /** Additional styles forwarded to the outer Card. */
   style?: StyleProp<ViewStyle>;
   /**
@@ -78,15 +83,24 @@ export function StatTile({
   value,
   delta,
   deltaColor = colors.emerald700,
+  deltaBg = '#ecfdf5',
   style,
   onPress,
   accessibilityLabel,
 }: StatTileProps): React.JSX.Element {
   const body = (
     <>
-      {/* Icon badge */}
-      <View style={[styles.iconBadge, { backgroundColor: iconBg }]}>
-        {icon}
+      {/* Top row: icon badge + delta pill */}
+      <View style={styles.topRow}>
+        <View style={[styles.iconBadge, { backgroundColor: iconBg }]}>
+          {icon}
+        </View>
+
+        {delta !== undefined && delta.length > 0 && (
+          <View style={[styles.deltaPill, { backgroundColor: deltaBg }]}>
+            <Text style={[styles.delta, { color: deltaColor }]}>{delta}</Text>
+          </View>
+        )}
       </View>
 
       {/* Value */}
@@ -94,11 +108,6 @@ export function StatTile({
 
       {/* Label */}
       <Text style={styles.label}>{label}</Text>
-
-      {/* Delta */}
-      {delta !== undefined && delta.length > 0 && (
-        <Text style={[styles.delta, { color: deltaColor }]}>{delta}</Text>
-      )}
     </>
   );
 
@@ -127,17 +136,32 @@ export function StatTile({
 
 const styles = StyleSheet.create({
   card: {
-    padding: spacing.lg,
+    padding: spacing.xl,
     gap:     spacing.xs,
+  } as ViewStyle,
+
+  // Top row: icon badge on the left, delta pill pinned to the right
+  topRow: {
+    flexDirection:  'row',
+    alignItems:     'flex-start',
+    justifyContent: 'space-between',
+    marginBottom:   spacing.sm,
   } as ViewStyle,
 
   iconBadge: {
     width:          40,
     height:         40,
-    borderRadius:   radius.md,
+    // rounded-xl = 12px
+    borderRadius:   radius.lg,
     alignItems:     'center',
     justifyContent: 'center',
-    marginBottom:   spacing.sm,
+  } as ViewStyle,
+
+  deltaPill: {
+    borderRadius:      radius.pill,
+    paddingHorizontal: 8,
+    paddingVertical:   3,
+    alignSelf:         'flex-start',
   } as ViewStyle,
 
   value: {
@@ -158,7 +182,6 @@ const styles = StyleSheet.create({
     fontSize:   11,
     fontWeight: '600',
     lineHeight: 14,
-    marginTop:  2,
   } as TextStyle,
 
   pressed: {

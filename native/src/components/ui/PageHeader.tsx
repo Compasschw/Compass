@@ -70,7 +70,7 @@ const styles = StyleSheet.create({
     flexDirection:  'row',
     alignItems:     'center',
     justifyContent: 'space-between',
-    marginBottom:   spacing.lg,
+    marginBottom:   spacing.xxl,
   } as ViewStyle,
 
   textBlock: {
@@ -86,15 +86,16 @@ const styles = StyleSheet.create({
   } as TextStyle,
 
   subtitle: {
-    fontSize:   13,
+    fontSize:   14,
     fontWeight: '400',
     color:      colors.textSecondary,
-    lineHeight: 18,
+    lineHeight: 20,
+    marginTop:  4,
   } as TextStyle,
 
   rightSlot: {
     flexDirection: 'row',
-    alignItems:    'center',
+    alignItems:    'flex-end',
     gap:           spacing.sm,
     marginLeft:    spacing.lg,
   } as ViewStyle,

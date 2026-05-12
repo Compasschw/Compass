@@ -53,6 +53,29 @@ export const colors = {
   gray100: '#f3f4f6',
   gray700: '#374151',
 
+  slate100: '#f1f5f9',
+  slate600: '#475569',
+  slate700: '#334155',
+
+  cyan100: '#cffafe',
+  cyan600: '#0891b2',
+  cyan700: '#0e7490',
+
+  indigo100: '#e0e7ff',
+  indigo600: '#4f46e5',
+  indigo700: '#4338ca',
+
+  rose100: '#ffe4e6',
+  rose600: '#e11d48',
+  rose700: '#be123c',
+
+  teal100: '#ccfbf1',
+  teal600: '#0d9488',
+  teal700: '#0f766e',
+
+  // Emerald-300 (used by sidebar switch-view link)
+  emerald300: '#6ee7b7',
+
   // Text
   textPrimary:   '#111827',
   textSecondary: '#6b7280',
@@ -64,12 +87,13 @@ export type ColorToken = keyof typeof colors;
 // ─── Spacing ──────────────────────────────────────────────────────────────────
 
 export const spacing = {
-  xs:  4,
-  sm:  8,
-  md:  12,
-  lg:  16,
-  xl:  24,
-  xxl: 32,
+  xs:   4,   // gap-1
+  sm:   8,   // gap-2
+  md:   12,  // gap-3 / p-3
+  lg:   16,  // gap-4 / p-4
+  xl:   20,  // gap-5 / p-5
+  xxl:  24,  // gap-6 / p-6
+  xxxl: 32,  // p-8
 } as const;
 
 export type SpacingToken = keyof typeof spacing;
@@ -77,10 +101,12 @@ export type SpacingToken = keyof typeof spacing;
 // ─── Border radius ────────────────────────────────────────────────────────────
 
 export const radius = {
-  sm:  6,
-  md:  10,
-  lg:  14,
-  xl:  16,
+  sm:   6,
+  md:   10,
+  // rounded-xl in Tailwind = 12px
+  lg:   12,
+  // rounded-2xl in Tailwind = 16px
+  xl:   16,
   pill: 999,
 } as const;
 
@@ -96,18 +122,24 @@ export type RadiusToken = keyof typeof radius;
  * renders correctly when accessed via `Platform.select`.
  */
 export const shadows = {
+  /**
+   * Matches Tailwind `shadow-sm`:
+   *   0 1px 3px rgba(0,0,0,.04), 0 1px 2px rgba(0,0,0,.03)
+   *
+   * Native approximation uses a single soft shadow layer.
+   */
   card: Platform.select<Record<string, unknown>>({
     ios: {
       shadowColor:   '#000000',
       shadowOffset:  { width: 0, height: 1 },
-      shadowOpacity: 0.06,
-      shadowRadius:  8,
+      shadowOpacity: 0.04,
+      shadowRadius:  3,
     },
     android: {
-      elevation: 2,
+      elevation: 1,
     },
     web: {
-      boxShadow: '0 1px 8px 0 rgba(0,0,0,0.06)',
+      boxShadow: '0 1px 3px rgba(0,0,0,.04), 0 1px 2px rgba(0,0,0,.03)',
     },
     default: {},
   }) ?? {},
