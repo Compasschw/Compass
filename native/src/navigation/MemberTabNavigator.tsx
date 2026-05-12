@@ -214,20 +214,17 @@ function MemberWebDrawerNavigatorInner(): React.JSX.Element {
 
   return (
     <Drawer.Navigator
-      drawerContent={(props) => <CollapsibleDrawerContent {...props} />}
+      // Drawer chrome is hidden on web — every screen wraps in <AppShell>
+      // which owns the visible sidebar. The drawer is still present so route
+      // registration works for navigation.navigate(...) calls.
+      drawerContent={() => null}
       screenOptions={{
         headerShown: false,
         drawerType: 'permanent',
         drawerStyle: {
-          width: drawerWidth,
-          backgroundColor: colors.card,
-          borderRightColor: colors.border,
-          borderRightWidth: 1,
-          // Web-only CSS transition so the width animates smoothly on collapse.
+          width: 0,
+          borderRightWidth: 0,
           ...(Platform.OS === 'web' && {
-            transitionProperty: 'width',
-            transitionDuration: '200ms',
-            transitionTimingFunction: 'ease-in-out',
             overflow: 'hidden',
           }),
         },

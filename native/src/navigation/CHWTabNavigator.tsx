@@ -248,20 +248,20 @@ function CHWWebDrawerNavigatorInner(): React.JSX.Element {
 
   return (
     <Drawer.Navigator
-      drawerContent={(props) => <CollapsibleDrawerContent {...props} />}
+      // Drawer chrome is hidden on web (width 0, no content) — every screen is
+      // wrapped in <AppShell> which renders the new DashboardSidebar instead.
+      // The drawer is still present so React Navigation can register screens
+      // and resolve route names from the sidebar's `navigation.navigate(...)`
+      // calls. Removing it would break navigation.
+      drawerContent={() => null}
       screenOptions={{
         headerShown: false,
         drawerType: 'permanent',
         drawerStyle: {
-          width: drawerWidth,
-          backgroundColor: colors.card,
-          borderRightColor: colors.border,
-          borderRightWidth: 1,
+          width: 0,
+          borderRightWidth: 0,
           // Web-only CSS transition so the width animates smoothly on collapse.
           ...(Platform.OS === 'web' && {
-            transitionProperty: 'width',
-            transitionDuration: '200ms',
-            transitionTimingFunction: 'ease-in-out',
             overflow: 'hidden',
           }),
         },
