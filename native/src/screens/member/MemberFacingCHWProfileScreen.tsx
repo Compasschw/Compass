@@ -184,20 +184,19 @@ const sectionCardStyles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingTop: 14,
-    paddingBottom: 6,
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 8,
   },
   title: {
     fontFamily: fonts.bodySemibold,
-    fontSize: 12,
-    color: '#6B7280',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
+    // mock: font-semibold text-gray-900 text-sm = 14px/600
+    fontSize: 14,
+    color: '#111827',
   },
   body: {
-    paddingHorizontal: 16,
-    paddingBottom: 14,
+    paddingHorizontal: 20,
+    paddingBottom: 16,
   },
 });
 
@@ -681,8 +680,8 @@ const s = StyleSheet.create({
     width: '100%',
     maxWidth: 1100,
     alignSelf: 'center',
-    paddingHorizontal: 16,
-    paddingTop: 0,
+    paddingHorizontal: 24,
+    paddingTop: 24,
   },
 
   // ── Hero card
@@ -774,19 +773,21 @@ const s = StyleSheet.create({
   },
   heroStatLabel: {
     fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 12,
+    fontSize: 13,
     color: '#6B7280',
-    width: 100,
+    // w-32 = 128px from mockup
+    width: 128,
   },
   heroStatValue: {
     fontFamily: fonts.bodySemibold,
-    fontSize: 12,
+    fontSize: 13,
     color: '#111827',
   },
   avatar: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+    // w-28 = 112px from mockup
+    width: 112,
+    height: 112,
+    borderRadius: 56,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 4,
@@ -803,12 +804,14 @@ const s = StyleSheet.create({
   },
   avatarText: {
     fontFamily: 'DMSans_700Bold',
-    fontSize: 24,
+    // text-3xl from mockup
+    fontSize: 30,
   },
   displayName: {
     fontFamily: 'DMSans_700Bold',
-    fontSize: 20,
-    color: '#1E3320',
+    // text-2xl from mockup
+    fontSize: 24,
+    color: '#111827',
   },
   heroBadgesRow: {
     flexDirection: 'row',
