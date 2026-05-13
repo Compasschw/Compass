@@ -14,7 +14,7 @@ Purpose:
     Runs the full Pear Suite billing chain for a single Compass session:
       1. Load session + member profile + CHW profile
       2. Sync member to Pear Suite (idempotent — skips if already synced)
-      3. Schedule an activity using Jemal's CHW user ID and the T1016 template
+      3. Schedule an activity using Jemal's CHW user ID and the demo template (procedure 98960)
       4. Mark the activity Complete with billing details
       5. Generate the claim
       6. Poll claim status to confirm it landed
@@ -93,11 +93,11 @@ async def submit_demo_claim(
 
     This is the demo path — real Pear API, fake member data. Jemal (CHW) must
     have pear_suite_user_id set on his CHWProfile before calling this endpoint.
-    The T1016 template ID must be set via PEAR_SUITE_T1016_TEMPLATE_ID env var.
+    The Pear Activity Template ID (procedure 98960/98961/98962, NOT T1016) must be set via PEAR_SUITE_DEMO_TEMPLATE_ID env var.
 
     Steps:
       1. Load session, member User + MemberProfile, CHW User + CHWProfile
-      2. Validate CHW has pear_suite_user_id; validate T1016 template is configured
+      2. Validate CHW has pear_suite_user_id; validate Pear demo template is configured
       3. ensure_member_synced → pear_member_id (idempotent)
       4. POST /api/beta/activities → pear_activity_id
       5. PUT /api/beta/activities/:id (Complete + billingDetails) → confirmation
@@ -109,7 +109,7 @@ async def submit_demo_claim(
         DemoClaimResponse with all Pear Suite IDs and a dashboard hint.
 
     Raises:
-        HTTP 400: session not found, CHW missing pear_suite_user_id, T1016 template not configured.
+        HTTP 400: session not found, CHW missing pear_suite_user_id, demo template not configured.
         HTTP 502: Pear Suite API returned an unexpected error.
     """
     session_id = body.session_id
@@ -229,20 +229,20 @@ async def submit_demo_claim(
         chw_pear_user_id,
     )
 
-    # ── Step 5: Validate T1016 template ID ───────────────────────────────────
-    template_id: str = getattr(settings, "pear_suite_t1016_template_id", "")
+    # ── Step 5: Validate Pear demo template ID ───────────────────────────────────
+    template_id: str = getattr(settings, "pear_suite_demo_template_id", "")
     if not template_id:
         logger.error(
             "demo_claim.missing_template_id: session_id=%s "
-            "Fix: set PEAR_SUITE_T1016_TEMPLATE_ID in the environment. "
+            "Fix: set PEAR_SUITE_DEMO_TEMPLATE_ID in the environment. "
             "Obtain the template ID from Pear Suite dashboard → Activity Templates.",
             session_id,
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                "PEAR_SUITE_T1016_TEMPLATE_ID is not configured. "
-                "Obtain the T1016 activity template ID from the Pear Suite dashboard "
+                "PEAR_SUITE_DEMO_TEMPLATE_ID is not configured. "
+                "Obtain the activity template ID (procedure 98960/98961/98962) from the Pear Suite dashboard "
                 "→ Activity Templates, then set it as an environment variable."
             ),
         )

@@ -63,9 +63,11 @@ class Settings(BaseSettings):
     # Must be set before the demo-claim endpoint can submit a real claim.
     # Empty string degrades to a clear 400 at claim time, not at startup.
     pear_suite_demo_chw_user_id: str = ""
-    # Activity template ID for T1016 CHW service, created in Pear Suite dashboard.
-    # Must match the template in Pear Suite exactly; no fallback.
-    pear_suite_t1016_template_id: str = ""
+    # Activity Template ID built in Pear's Builder UI with billing enabled.
+    # Procedure inside the template is 98960/98961/98962 (the CHW codes Pear
+    # accepts) — NOT T1016. DEPLOY.md uses this same env-var name; the code
+    # used to read PEAR_SUITE_T1016_TEMPLATE_ID which silently mismatched.
+    pear_suite_demo_template_id: str = ""
     # Default ICD-10 diagnosis codes applied to CHW service claims when the
     # session documentation does not supply specific codes.
     pear_suite_default_dx_codes: list[str] = ["Z71.89"]

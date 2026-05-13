@@ -288,7 +288,7 @@ class PearSuiteProvider(BillingProvider):
         """Schedule an activity in Pear Suite via POST /api/beta/activities.
 
         Args:
-            activity_template_id: Pear Suite template ID for the procedure (e.g. T1016).
+            activity_template_id: Pear Suite Activity Template ID (procedure must be 98960/98961/98962 for the CHW path; Pear rejects T1016).
             member_ids: List of Pear Suite member IDs participating in the activity.
             chw_user_id: Pear Suite userId for the CHW performing the service.
             service_date: Calendar date the CHW session occurred.
@@ -379,7 +379,7 @@ class PearSuiteProvider(BillingProvider):
             # Let Pear Suite use the template's configured charge amount.
             # Set to None rather than omitting — some Pear endpoints reject missing keys.
             "customClaimChargeAmount": None,
-            # Prior auth not required for T1016 under standard Medi-Cal CHW billing.
+            # Prior auth not required for the 98960/98961/98962 CHW codes under standard Medi-Cal billing.
             "priorAuthorizationNumber": None,
             # dateOfCurrentIllness: Pear requires this field; we use the service date
             # as a safe default since CHW services are episodic, not illness-indexed.
@@ -564,13 +564,13 @@ class PearSuiteProvider(BillingProvider):
         if not template_id:
             logger.error(
                 "pear_suite.submit_claim.missing_template_id: session=%s "
-                "Set PEAR_SUITE_T1016_TEMPLATE_ID in env or update pear_suite_template_map.",
+                "Set PEAR_SUITE_DEMO_TEMPLATE_ID in env or update pear_suite_template_map.",
                 claim.session_id,
             )
             return ClaimResult(
                 success=False,
                 status="error",
-                message="Activity template ID for T1016 not configured",
+                message="Activity template ID for CHW services (98960/98961/98962) not configured",
             )
 
         try:
