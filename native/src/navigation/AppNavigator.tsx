@@ -226,7 +226,12 @@ function buildLinkingConfig(): LinkingOptions<RootStackParamList> {
             Home: {
               screens: {
                 HomeMain: '',                   // /member
-                Rewards: 'rewards',             // /member (legacy nested; MemberRewards below is the canonical sidebar destination)
+                // Rewards intentionally omitted from URL routing — it's still
+                // a registered screen inside the Home stack (so the in-app
+                // "Redeem Rewards" CTA can push to it), but the canonical
+                // /member/rewards URL belongs to the MemberRewards top-level
+                // tab below. Mapping both to the same path crashes React
+                // Navigation at app startup with "conflicting screens".
               },
             },
             // FindCHW now mounts MyCHWScreen as the first screen (assigned-CHW
