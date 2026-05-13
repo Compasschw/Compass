@@ -1,23 +1,25 @@
 /**
- * MemberCalendarScreen — "Appointments" in the new nav (feat/ui-revamp).
+ * MemberCalendarScreen — Week-view calendar matching CHWCalendarScreen layout.
  *
- * Re-skinned to AppShell layout. All calendar state, month navigation, event
- * derivation logic, and data hooks are preserved verbatim.
+ * Features:
+ *  - Week-view grid: Mon–Sun columns × hourly rows (7 AM–7 PM) as the default on web
+ *  - Month nav header: prev/next chevrons + "May 11–17, 2026" week label + Today button
+ *  - Session chips: vertical color-coded, showing topic + CHW name + start time
+ *  - Right rail (web only): "Upcoming sessions" — next 5 scheduled, with vertical pill
+ *  - Native: simpler upcoming/past list (native week-view is impractical at narrow widths)
+ *  - Empty state: friendly message + "Find a CHW" CTA → FindCHW tab
  *
- * Features (unchanged):
- * - Compact monthly grid (shadcn-inspired: dense day cells, single-letter weekday header)
- * - Filled-pill "today" indicator + outlined "selected" indicator
- * - Up to 3 event dots stacked under the date number
- * - "Today" jump-back button when viewing a different month
- * - Tap a day to surface that day's event cards below
- * - Collapsible legend that only renders when the month has events
- * - Centered max-width wrapper so the card stays readable on desktop web
+ * Data: useSessions() — same hook as CHW side; member sees only their own sessions.
+ * Shell: AppShell role="member" activeKey="appointments"
+ *
+ * WeekViewGrid copied inline from CHWCalendarScreen.WeekViewGrid —
+ * the function is not tightly coupled to CHW-specific fields (only CalendarEvent),
+ * so a verbatim copy avoids a shared-component abstraction before the types stabilize.
  */
 
 import React, { useCallback, useMemo, useState } from 'react';
 import {
   Platform,
-  Pressable,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -27,13 +29,13 @@ import {
 } from 'react-native';
 import {
   CalendarDays,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
-  ChevronUp,
   Clock,
   MapPin,
+  Users,
 } from 'lucide-react-native';
+import { useNavigation } from '@react-navigation/native';
 
 import { colors } from '../../theme/colors';
 import {
@@ -46,7 +48,7 @@ import { useRefreshControl } from '../../hooks/useRefreshControl';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 import { VERTICAL_COLOR } from '../../lib/verticals';
-import { AppShell, PageHeader, Card } from '../../components/ui';
+import { AppShell, PageHeader, Card, RightRail } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -56,41 +58,46 @@ const MONTH_NAMES = [
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
 
-// Single-letter labels to keep the weekday row compact (matches shadcn calendar).
-const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+const DAY_LABELS_LONG = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const DAY_LABELS_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/** Hours displayed in week-view grid: 7 AM – 7 PM inclusive = 13 slots. */
+const WEEK_VIEW_HOURS = [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19];
+
+/** Vertical → hex color map, extended with goal_milestone. */
+const VERTICAL_COLORS: Record<Vertical | 'goal_milestone', string> = {
+  ...(VERTICAL_COLOR as Record<Vertical, string>),
+  goal_milestone: colors.secondary,
+};
 
 const now = new Date();
 const TODAY_YEAR = now.getFullYear();
 const TODAY_MONTH = now.getMonth();
 const TODAY_DAY = now.getDate();
 
-const verticalColors: Record<Vertical | 'goal_milestone', string> = {
-  ...(VERTICAL_COLOR as Record<Vertical, string>),
-  goal_milestone: colors.secondary,
-};
-
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/**
- * Returns calendar cells for a month.
- * Leading nulls pad the first row to Sunday alignment.
- */
-function getMonthDays(year: number, month: number): (number | null)[] {
-  const firstDayOfWeek = new Date(year, month, 1).getDay();
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const cells: (number | null)[] = Array(firstDayOfWeek).fill(null);
-  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
-  while (cells.length % 7 !== 0) cells.push(null);
-  return cells;
+/** Returns the 7-day Date[] for the ISO week (Mon–Sun) containing the given anchor date. */
+function getWeekDays(anchor: Date): Date[] {
+  const day = anchor.getDay(); // 0 = Sun
+  const monday = new Date(anchor);
+  monday.setDate(anchor.getDate() - day + (day === 0 ? -6 : 1));
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    return d;
+  });
 }
 
-function dateKey(year: number, month: number, day: number): string {
-  const mm = String(month + 1).padStart(2, '0');
-  const dd = String(day).padStart(2, '0');
-  return `${year}-${mm}-${dd}`;
+/** Formats a Date to YYYY-MM-DD string. */
+function dateToKey(d: Date): string {
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${mm}-${dd}`;
 }
 
-function groupEventsByDate(events: CalendarEvent[]): Map<string, CalendarEvent[]> {
+/** Groups CalendarEvent[] by their `date` field. */
+function groupByDate(events: CalendarEvent[]): Map<string, CalendarEvent[]> {
   const map = new Map<string, CalendarEvent[]>();
   for (const event of events) {
     const bucket = map.get(event.date) ?? [];
@@ -99,11 +106,46 @@ function groupEventsByDate(events: CalendarEvent[]): Map<string, CalendarEvent[]
   return map;
 }
 
-function eventColor(event: CalendarEvent): string {
-  if (event.vertical) return verticalColors[event.vertical];
-  return verticalColors.goal_milestone;
+/**
+ * Derives CalendarEvent records from the member's sessions array.
+ * Title shows "Session with <CHW first name>" from the member's perspective.
+ */
+function deriveSessionEvents(
+  sessions: { id: string; scheduledAt: string; vertical: string; chwName?: string; memberName?: string; status: string }[],
+): CalendarEvent[] {
+  return sessions.map((session) => {
+    const dt = new Date(session.scheduledAt);
+    const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(dt.getUTCDate()).padStart(2, '0');
+    const date = `${dt.getUTCFullYear()}-${mm}-${dd}`;
+    const hh = String(dt.getUTCHours()).padStart(2, '0');
+    const min = String(dt.getUTCMinutes()).padStart(2, '0');
+    const endHH = String(dt.getUTCHours() + 1).padStart(2, '0');
+    const chwFirst = (session.chwName ?? 'CHW').split(' ')[0] ?? 'CHW';
+
+    return {
+      id: `member-sess-${session.id}`,
+      title: `Session with ${chwFirst}`,
+      date,
+      startTime: `${hh}:${min}`,
+      endTime: `${endHH}:${min}`,
+      vertical: session.vertical as Vertical | undefined,
+      type: 'session' as const,
+      chwName: session.chwName,
+      memberName: session.memberName,
+    };
+  });
 }
 
+/** Resolves the hex color for a calendar event based on its vertical. */
+function eventColor(event: CalendarEvent): string {
+  if (event.vertical) return VERTICAL_COLORS[event.vertical] ?? colors.secondary;
+  return VERTICAL_COLORS.goal_milestone;
+}
+
+/**
+ * Formats HH:MM 24h → "2:00 PM".
+ */
 function formatTimeFull(time: string): string {
   const [hourStr, minuteStr] = time.split(':');
   const hour = parseInt(hourStr ?? '0', 10);
@@ -112,201 +154,269 @@ function formatTimeFull(time: string): string {
   return `${display}:${minuteStr} ${suffix}`;
 }
 
-function firstNameFromFull(fullName: string): string {
-  return fullName.split(' ')[0] ?? fullName;
+/**
+ * Formats an hour integer (24h) → "8 AM" / "12 PM" etc.
+ */
+function formatHourLabel(hour: number): string {
+  if (hour === 0) return '12 AM';
+  if (hour === 12) return '12 PM';
+  return hour < 12 ? `${hour} AM` : `${hour - 12} PM`;
+}
+
+// ─── WeekViewGrid — web-focused ───────────────────────────────────────────────
+// Mirrors CHWCalendarScreen.WeekViewGrid — copied inline rather than extracted
+// to a shared component because CalendarEvent types are still stabilizing and
+// an abstraction layer adds premature surface area.
+
+interface WeekViewGridProps {
+  weekDays: Date[];
+  eventsByDate: Map<string, CalendarEvent[]>;
+  today: { year: number; month: number; day: number };
+  /** Called when the user taps a slot — no-op until scheduling is wired. */
+  onSlotPress: (date: Date, hour: number) => void;
 }
 
 /**
- * Derives calendar events from live session data.
- *
- * Note: goal milestones are intentionally omitted here. A backend goals
- * endpoint doesn't exist yet; once it does, fetch via a `useMemberGoals`
- * query and append those events to `sessionEvents` in this function.
+ * 7-column × hourly-row week-view grid.
+ * Each cell is 56px tall; today's column carries a pale tint; sessions render
+ * as color-coded chips inside their hour slot.
  */
-function buildMemberEvents(
-  liveSessions: { id: string; scheduledAt: string; vertical: string; chwName?: string; memberName?: string }[],
-): CalendarEvent[] {
-  const sessionEvents: CalendarEvent[] = liveSessions.map((session) => {
-    const dt = new Date(session.scheduledAt);
-    const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
-    const dd = String(dt.getUTCDate()).padStart(2, '0');
-    const date = `${dt.getUTCFullYear()}-${mm}-${dd}`;
-    const startHH = String(dt.getUTCHours()).padStart(2, '0');
-    const startMin = String(dt.getUTCMinutes()).padStart(2, '0');
-    const endHH = String(dt.getUTCHours() + 1).padStart(2, '0');
-
-    return {
-      id: `live-sess-${session.id}`,
-      title: `Session with ${firstNameFromFull(session.chwName ?? 'CHW')}`,
-      date,
-      startTime: `${startHH}:${startMin}`,
-      endTime: `${endHH}:${startMin}`,
-      vertical: session.vertical as Vertical,
-      type: 'session' as const,
-      chwName: session.chwName,
-      memberName: session.memberName,
-    };
-  });
-
-  return sessionEvents;
-}
-
-// ─── Day cell ─────────────────────────────────────────────────────────────────
-
-interface DayCellProps {
-  day: number;
-  events: CalendarEvent[];
-  isToday: boolean;
-  isSelected: boolean;
-  onClick: () => void;
-}
-
-function DayCell({ day, events, isToday, isSelected, onClick }: DayCellProps): React.JSX.Element {
-  // Up to 3 unique vertical colors as event dots.
-  const uniqueColors = Array.from(new Set(events.map(eventColor))).slice(0, 3);
-
+function WeekViewGrid({
+  weekDays,
+  eventsByDate,
+  today,
+  onSlotPress,
+}: WeekViewGridProps): React.JSX.Element {
   return (
-    <TouchableOpacity
-      onPress={onClick}
-      style={dayCellStyles.cell}
-      accessibilityRole="button"
-      accessibilityLabel={`${day}${events.length > 0 ? `, ${events.length} event${events.length !== 1 ? 's' : ''}` : ''}`}
-      accessibilityState={{ selected: isSelected }}
-    >
-      <View
-        style={[
-          dayCellStyles.dateCircle,
-          isSelected && !isToday && dayCellStyles.dateCircleSelected,
-          isToday && dayCellStyles.dateCircleToday,
-        ]}
-      >
-        <Text
-          style={[
-            dayCellStyles.dateText,
-            isSelected && !isToday && dayCellStyles.dateTextSelected,
-            isToday && dayCellStyles.dateTextToday,
-          ]}
-        >
-          {day}
-        </Text>
+    <ScrollView horizontal={false} showsVerticalScrollIndicator={false}>
+      {/* Day header row */}
+      <View style={weekStyles.headerRow}>
+        {/* Time gutter header */}
+        <View style={weekStyles.timeGutter} />
+        {weekDays.map((date) => {
+          const isToday =
+            date.getFullYear() === today.year &&
+            date.getMonth() === today.month &&
+            date.getDate() === today.day;
+          return (
+            <View
+              key={dateToKey(date)}
+              style={[weekStyles.dayHeader, isToday && weekStyles.dayHeaderToday]}
+            >
+              <Text style={[weekStyles.dayHeaderLabel, isToday && weekStyles.dayHeaderLabelToday]}>
+                {DAY_LABELS_SHORT[date.getDay()]}
+              </Text>
+              <Text style={[weekStyles.dayHeaderDate, isToday && weekStyles.dayHeaderDateToday]}>
+                {date.getDate()}
+              </Text>
+            </View>
+          );
+        })}
       </View>
 
-      {/* Event dots — sit just under the date circle */}
-      <View style={dayCellStyles.dotsRow}>
-        {uniqueColors.map((c, i) => (
-          <View
-            key={i}
-            style={[dayCellStyles.dot, { backgroundColor: c }]}
-          />
-        ))}
-      </View>
-    </TouchableOpacity>
+      {/* Hourly rows */}
+      {WEEK_VIEW_HOURS.map((hour) => (
+        <View key={hour} style={weekStyles.hourRow}>
+          {/* Time label */}
+          <View style={weekStyles.timeGutter}>
+            <Text style={weekStyles.timeLabel}>{formatHourLabel(hour)}</Text>
+          </View>
+          {/* Day columns */}
+          {weekDays.map((date) => {
+            const key = dateToKey(date);
+            const dayEvents = (eventsByDate.get(key) ?? []).filter((e) => {
+              const eventHour = parseInt(e.startTime.split(':')[0] ?? '0', 10);
+              return eventHour === hour;
+            });
+            const isToday =
+              date.getFullYear() === today.year &&
+              date.getMonth() === today.month &&
+              date.getDate() === today.day;
+
+            return (
+              <TouchableOpacity
+                key={`${key}-${hour}`}
+                style={[weekStyles.hourCell, isToday && weekStyles.hourCellToday]}
+                onPress={() => onSlotPress(date, hour)}
+                accessibilityRole="button"
+                accessibilityLabel={`${DAY_LABELS_LONG[date.getDay()]} ${date.getDate()}, ${formatHourLabel(hour)}`}
+              >
+                {dayEvents.map((event) => {
+                  const barColor = eventColor(event);
+                  return (
+                    <View
+                      key={event.id}
+                      style={[weekStyles.eventChip, { backgroundColor: barColor + '22', borderLeftColor: barColor }]}
+                    >
+                      <Text
+                        style={[weekStyles.eventChipTitle, { color: barColor }]}
+                        numberOfLines={1}
+                      >
+                        {event.title}
+                      </Text>
+                      {event.chwName ? (
+                        <Text
+                          style={[weekStyles.eventChipMeta, { color: barColor }]}
+                          numberOfLines={1}
+                        >
+                          {event.chwName}
+                        </Text>
+                      ) : null}
+                      <Text style={[weekStyles.eventChipMeta, { color: barColor }]}>
+                        {formatTimeFull(event.startTime)}
+                      </Text>
+                    </View>
+                  );
+                })}
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      ))}
+    </ScrollView>
   );
 }
 
-const DAY_CELL_HEIGHT = 52;
-const DATE_CIRCLE_SIZE = 32;
-
-const dayCellStyles = StyleSheet.create({
-  cell: {
-    flexBasis: `${100 / 7}%`,
-    height: DAY_CELL_HEIGHT,
-    alignItems: 'center',
-    justifyContent: 'flex-start',
-    paddingTop: 4,
+const weekStyles = StyleSheet.create({
+  headerRow: {
+    flexDirection: 'row',
+    borderBottomWidth: 2,
+    borderBottomColor: '#DDD6CC',
+    backgroundColor: '#FFFFFF',
   },
-  dateCircle: {
-    width: DATE_CIRCLE_SIZE,
-    height: DATE_CIRCLE_SIZE,
-    borderRadius: DATE_CIRCLE_SIZE / 2,
+  timeGutter: {
+    width: 64,
+    paddingRight: 8,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+    borderRightWidth: 1,
+    borderRightColor: '#F0EDE9',
+  },
+  timeLabel: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 10,
+    color: '#9CA3AF',
+    paddingTop: 2,
+  },
+  dayHeader: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1.5,
-    borderColor: 'transparent',
+    paddingVertical: 10,
+    borderRightWidth: 1,
+    borderRightColor: '#F0EDE9',
+    gap: 2,
   },
-  dateCircleSelected: {
-    borderColor: colors.primary,
-    backgroundColor: 'transparent',
+  dayHeaderToday: {
+    backgroundColor: colors.primary + '08',
   },
-  dateCircleToday: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
+  dayHeaderLabel: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 11,
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    color: '#6B7A6B',
   },
-  dateText: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 13,
-    color: colors.foreground,
-  },
-  dateTextSelected: {
+  dayHeaderLabelToday: {
     color: colors.primary,
-    fontFamily: 'DMSans_700Bold',
   },
-  dateTextToday: {
+  dayHeaderDate: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 18,
+    color: '#1E3320',
+  },
+  dayHeaderDateToday: {
     color: '#FFFFFF',
-    fontFamily: 'DMSans_700Bold',
+    backgroundColor: colors.primary,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    textAlign: 'center',
+    lineHeight: 32,
+    overflow: 'hidden',
   },
-  dotsRow: {
+  hourRow: {
     flexDirection: 'row',
-    gap: 3,
-    marginTop: 4,
-    minHeight: 5,
+    height: 56,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0EDE9',
   },
-  dot: {
-    width: 5,
-    height: 5,
+  hourCell: {
+    flex: 1,
+    borderRightWidth: 1,
+    borderRightColor: '#F0EDE9',
+    padding: 2,
+    gap: 2,
+  },
+  hourCellToday: {
+    backgroundColor: colors.primary + '05',
+  },
+  eventChip: {
+    borderLeftWidth: 2,
     borderRadius: 3,
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+    gap: 1,
+  },
+  eventChipTitle: {
+    fontSize: 10,
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+  },
+  eventChipMeta: {
+    fontSize: 9,
+    fontFamily: 'PlusJakartaSans_400Regular',
+    opacity: 0.85,
   },
 });
 
-// ─── Event detail card ────────────────────────────────────────────────────────
+// ─── EventDetailCard — native list card ──────────────────────────────────────
 
 interface EventDetailCardProps {
   event: CalendarEvent;
 }
 
+/**
+ * Session detail card used in the native list view and the week-view selected
+ * slot panel. Matches the visual treatment from the existing MemberCalendarScreen.
+ */
 function EventDetailCard({ event }: EventDetailCardProps): React.JSX.Element {
   const barColor = eventColor(event);
   const isSession = event.type === 'session';
 
   return (
-    <View style={eventCardStyles.container}>
-      <View style={[eventCardStyles.colorStrip, { backgroundColor: barColor }]} />
-      <View style={eventCardStyles.content}>
-        <View style={eventCardStyles.titleRow}>
-          <Text style={eventCardStyles.title} numberOfLines={2}>{event.title}</Text>
+    <View style={cardStyles.container}>
+      <View style={[cardStyles.colorStrip, { backgroundColor: barColor }]} />
+      <View style={cardStyles.content}>
+        <View style={cardStyles.titleRow}>
+          <Text style={cardStyles.title} numberOfLines={2}>{event.title}</Text>
           {event.vertical ? (
-            <View style={[eventCardStyles.badge, { backgroundColor: `${barColor}20` }]}>
-              <Text style={[eventCardStyles.badgeText, { color: barColor }]}>
+            <View style={[cardStyles.badge, { backgroundColor: `${barColor}20` }]}>
+              <Text style={[cardStyles.badgeText, { color: barColor }]}>
                 {verticalLabels[event.vertical]}
               </Text>
             </View>
           ) : null}
-          {!event.vertical && event.type === 'goal_milestone' ? (
-            <View style={[eventCardStyles.badge, { backgroundColor: `${colors.primary}15` }]}>
-              <Text style={[eventCardStyles.badgeText, { color: colors.primary }]}>Milestone</Text>
-            </View>
-          ) : null}
         </View>
 
-        <View style={eventCardStyles.metaRow}>
+        <View style={cardStyles.metaRow}>
           <Clock color={colors.mutedForeground} size={12} />
-          <Text style={eventCardStyles.metaText}>
+          <Text style={cardStyles.metaText}>
             {formatTimeFull(event.startTime)}
             {event.endTime !== event.startTime ? ` – ${formatTimeFull(event.endTime)}` : ''}
           </Text>
         </View>
 
         {isSession && event.chwName ? (
-          <View style={eventCardStyles.metaRow}>
+          <View style={cardStyles.metaRow}>
             <MapPin color={colors.mutedForeground} size={12} />
-            <Text style={eventCardStyles.metaText}>With {event.chwName}</Text>
+            <Text style={cardStyles.metaText}>With {event.chwName}</Text>
           </View>
         ) : null}
 
         {!isSession ? (
-          <View style={eventCardStyles.metaRow}>
+          <View style={cardStyles.metaRow}>
             <CalendarDays color={colors.mutedForeground} size={12} />
-            <Text style={eventCardStyles.metaText}>Goal milestone</Text>
+            <Text style={cardStyles.metaText}>Goal milestone</Text>
           </View>
         ) : null}
       </View>
@@ -314,7 +424,7 @@ function EventDetailCard({ event }: EventDetailCardProps): React.JSX.Element {
   );
 }
 
-const eventCardStyles = StyleSheet.create({
+const cardStyles = StyleSheet.create({
   container: {
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
@@ -323,20 +433,15 @@ const eventCardStyles = StyleSheet.create({
     flexDirection: 'row',
     overflow: 'hidden',
     marginBottom: 10,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#3D5A3E',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.08,
-        shadowRadius: 24,
-      },
-      android: {
-        elevation: 3,
-      },
-    }),
+    shadowColor: '#3D5A3E',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 24,
+    elevation: 3,
   },
   colorStrip: {
     width: 4,
+    flexShrink: 0,
   },
   content: {
     flex: 1,
@@ -359,6 +464,7 @@ const eventCardStyles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 100,
+    flexShrink: 0,
   },
   badgeText: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
@@ -376,73 +482,308 @@ const eventCardStyles = StyleSheet.create({
   },
 });
 
-// ─── Screen ───────────────────────────────────────────────────────────────────
+// ─── Web right rail — "Upcoming Sessions" ─────────────────────────────────────
 
+interface MemberRightRailProps {
+  upcomingEvents: CalendarEvent[];
+  onFindCHW: () => void;
+}
+
+/**
+ * Web-only right rail: shows the next 5 scheduled sessions with vertical pill,
+ * scheduled time, and the CHW name. Falls back to a "Find a CHW" CTA when empty.
+ */
+function MemberRightRail({ upcomingEvents, onFindCHW }: MemberRightRailProps): React.JSX.Element {
+  return (
+    <ScrollView showsVerticalScrollIndicator={false}>
+      <Card style={railStyles.card}>
+        <Text style={railStyles.sectionTitle}>Upcoming Sessions</Text>
+        {upcomingEvents.length === 0 ? (
+          <View style={railStyles.emptyWrap}>
+            <CalendarDays size={24} color={colors.mutedForeground} />
+            <Text style={railStyles.emptyText}>No upcoming sessions.</Text>
+            <TouchableOpacity
+              style={railStyles.ctaBtn}
+              onPress={onFindCHW}
+              accessibilityRole="button"
+              accessibilityLabel="Find a CHW"
+            >
+              <Users size={13} color="#FFFFFF" />
+              <Text style={railStyles.ctaBtnText}>Find a CHW</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          upcomingEvents.map((event) => {
+            const barColor = eventColor(event);
+            return (
+              <View key={event.id} style={railStyles.sessionRow}>
+                <View style={[railStyles.verticalPill, { backgroundColor: barColor }]} />
+                <View style={railStyles.sessionInfo}>
+                  <Text style={railStyles.sessionTitle} numberOfLines={1}>
+                    {event.title}
+                  </Text>
+                  <Text style={railStyles.sessionTime}>
+                    {event.date} · {formatTimeFull(event.startTime)}
+                  </Text>
+                  {event.chwName ? (
+                    <Text style={railStyles.sessionChw} numberOfLines={1}>
+                      {event.chwName}
+                    </Text>
+                  ) : null}
+                </View>
+              </View>
+            );
+          })
+        )}
+      </Card>
+    </ScrollView>
+  );
+}
+
+const railStyles = StyleSheet.create({
+  card: {
+    padding: 20,
+    marginBottom: 16,
+    gap: 12,
+  },
+  sectionTitle: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 14,
+    color: '#111827',
+    marginBottom: 4,
+  },
+  emptyWrap: {
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 12,
+  },
+  emptyText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 12,
+    color: '#9CA3AF',
+    textAlign: 'center',
+  },
+  ctaBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.primary,
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    marginTop: 4,
+  },
+  ctaBtnText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12,
+    color: '#FFFFFF',
+  },
+  sessionRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0EDE9',
+  },
+  verticalPill: {
+    width: 4,
+    borderRadius: 2,
+    minHeight: 40,
+    flexShrink: 0,
+    marginTop: 2,
+  },
+  sessionInfo: {
+    flex: 1,
+    gap: 2,
+  },
+  sessionTitle: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12,
+    color: '#1E3320',
+  },
+  sessionTime: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: '#6B7A6B',
+  },
+  sessionChw: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: '#6B7A6B',
+  },
+});
+
+// ─── Native list view helpers ──────────────────────────────────────────────────
+
+/**
+ * Groups a flat CalendarEvent[] into upcoming (future) and past buckets
+ * relative to the current moment.
+ */
+function splitUpcomingPast(
+  events: CalendarEvent[],
+  nowIso: string,
+): { upcoming: CalendarEvent[]; past: CalendarEvent[] } {
+  const upcoming: CalendarEvent[] = [];
+  const past: CalendarEvent[] = [];
+  for (const event of events) {
+    const eventIso = `${event.date}T${event.startTime}`;
+    if (eventIso >= nowIso) {
+      upcoming.push(event);
+    } else {
+      past.push(event);
+    }
+  }
+  upcoming.sort((a, b) => `${a.date}T${a.startTime}`.localeCompare(`${b.date}T${b.startTime}`));
+  past.sort((a, b) => `${b.date}T${b.startTime}`.localeCompare(`${a.date}T${a.startTime}`));
+  return { upcoming, past };
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
+
+/**
+ * Member calendar screen — week-view grid on web, upcoming/past list on native.
+ */
 export function MemberCalendarScreen(): React.JSX.Element {
   const { userName } = useAuth();
+  const navigation = useNavigation();
+
   const memberInitials = (userName ?? 'M')
     .split(' ')
     .slice(0, 2)
-    .map((p) => p[0] ?? '')
+    .map((part) => part[0] ?? '')
     .join('')
     .toUpperCase();
-
-  // Default to the actual current month, not a hardcoded one.
-  const [currentMonth, setCurrentMonth] = useState(
-    () => new Date(TODAY_YEAR, TODAY_MONTH, 1),
-  );
-  const [selectedDay, setSelectedDay] = useState<number | null>(null);
-  const [legendOpen, setLegendOpen] = useState(false);
-
-  const sessionsQuery = useSessions();
-  const refresh = useRefreshControl([sessionsQuery.refetch]);
-  const liveSessions = sessionsQuery.data ?? [];
-
-  const year = currentMonth.getFullYear();
-  const month = currentMonth.getMonth();
-  const cells = getMonthDays(year, month);
-
-  const memberEvents = useMemo<CalendarEvent[]>(
-    () => buildMemberEvents(liveSessions),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sessionsQuery.data],
-  );
-  const eventsByDate = useMemo(() => groupEventsByDate(memberEvents), [memberEvents]);
-
-  const handlePrevMonth = useCallback(() => {
-    setCurrentMonth((prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1));
-    setSelectedDay(null);
-  }, []);
-
-  const handleNextMonth = useCallback(() => {
-    setCurrentMonth((prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1));
-    setSelectedDay(null);
-  }, []);
-
-  const handleJumpToToday = useCallback(() => {
-    setCurrentMonth(new Date(TODAY_YEAR, TODAY_MONTH, 1));
-    setSelectedDay(TODAY_DAY);
-  }, []);
-
-  const handleDayClick = useCallback((day: number) => {
-    setSelectedDay((prev) => (prev === day ? null : day));
-  }, []);
-
-  const selectedDateKey = selectedDay !== null ? dateKey(year, month, selectedDay) : null;
-  const selectedEvents = selectedDateKey ? (eventsByDate.get(selectedDateKey) ?? []) : [];
-
-  const currentMonthKey = `${year}-${String(month + 1).padStart(2, '0')}`;
-  const eventsThisMonth = memberEvents.filter((e) => e.date.startsWith(currentMonthKey));
-  const monthHasEvents = eventsThisMonth.length > 0;
-
-  const isViewingTodayMonth = year === TODAY_YEAR && month === TODAY_MONTH;
-  const isToday = (day: number) => isViewingTodayMonth && day === TODAY_DAY;
 
   const shellUserBlock = {
     initials: memberInitials,
     name: userName ?? 'Member',
     role: 'Member' as const,
   };
+
+  // Week anchor: tracks which Mon–Sun week is displayed. Defaults to today's week.
+  const [weekAnchor, setWeekAnchor] = useState(
+    () => new Date(TODAY_YEAR, TODAY_MONTH, TODAY_DAY),
+  );
+  const weekDays = useMemo(() => getWeekDays(weekAnchor), [weekAnchor]);
+
+  const sessionsQuery = useSessions();
+  const refresh = useRefreshControl([sessionsQuery.refetch]);
+  const liveSessions = sessionsQuery.data ?? [];
+
+  const allEvents = useMemo<CalendarEvent[]>(
+    () => deriveSessionEvents(liveSessions),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sessionsQuery.data],
+  );
+
+  const eventsByDate = useMemo(() => groupByDate(allEvents), [allEvents]);
+
+  // Week nav — prev/next move by 7 days; Today snaps back to current week.
+  const handlePrevWeek = useCallback(() => {
+    setWeekAnchor((prev) => {
+      const next = new Date(prev);
+      next.setDate(prev.getDate() - 7);
+      return next;
+    });
+  }, []);
+
+  const handleNextWeek = useCallback(() => {
+    setWeekAnchor((prev) => {
+      const next = new Date(prev);
+      next.setDate(prev.getDate() + 7);
+      return next;
+    });
+  }, []);
+
+  const handleJumpToToday = useCallback(() => {
+    setWeekAnchor(new Date(TODAY_YEAR, TODAY_MONTH, TODAY_DAY));
+  }, []);
+
+  const handleSlotPress = useCallback((_date: Date, _hour: number) => {
+    // TODO(nav): navigate to request scheduling when route is wired.
+  }, []);
+
+  const handleFindCHW = useCallback(() => {
+    navigation.navigate('FindCHW' as never);
+  }, [navigation]);
+
+  // ── Derived data ─────────────────────────────────────────────────────────────
+
+  // "Upcoming" = status='scheduled' and scheduledAt is in the future, next 5.
+  const nowTimestamp = now.getTime();
+  const upcomingEvents = useMemo<CalendarEvent[]>(() => {
+    return liveSessions
+      .filter(
+        (s) =>
+          s.status === 'scheduled' &&
+          new Date(s.scheduledAt).getTime() > nowTimestamp,
+      )
+      .sort(
+        (a, b) =>
+          new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime(),
+      )
+      .slice(0, 5)
+      .map((s) => {
+        const dt = new Date(s.scheduledAt);
+        const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
+        const dd = String(dt.getUTCDate()).padStart(2, '0');
+        const date = `${dt.getUTCFullYear()}-${mm}-${dd}`;
+        const hh = String(dt.getUTCHours()).padStart(2, '0');
+        const min = String(dt.getUTCMinutes()).padStart(2, '0');
+        const endHH = String(dt.getUTCHours() + 1).padStart(2, '0');
+        const chwFirst = (s.chwName ?? 'CHW').split(' ')[0] ?? 'CHW';
+        return {
+          id: `member-sess-${s.id}`,
+          title: `Session with ${chwFirst}`,
+          date,
+          startTime: `${hh}:${min}`,
+          endTime: `${endHH}:${min}`,
+          vertical: s.vertical as Vertical | undefined,
+          type: 'session' as const,
+          chwName: s.chwName,
+          memberName: s.memberName,
+        };
+      });
+  }, [liveSessions, nowTimestamp]);
+
+  // Week label: "May 11 – 17, 2026" or cross-month "Apr 28 – May 4, 2026"
+  const weekLabel = useMemo(() => {
+    const start = weekDays[0];
+    const end = weekDays[6];
+    if (start.getMonth() === end.getMonth()) {
+      return `${MONTH_NAMES[start.getMonth()]} ${start.getDate()} – ${end.getDate()}, ${end.getFullYear()}`;
+    }
+    return `${MONTH_NAMES[start.getMonth()]} ${start.getDate()} – ${MONTH_NAMES[end.getMonth()]} ${end.getDate()}, ${end.getFullYear()}`;
+  }, [weekDays]);
+
+  // Is the displayed week the current week?
+  const todayWeekDays = useMemo(() => getWeekDays(new Date(TODAY_YEAR, TODAY_MONTH, TODAY_DAY)), []);
+  const isCurrentWeek =
+    dateToKey(weekDays[0]) === dateToKey(todayWeekDays[0]);
+
+  // Empty-week detection: no events anywhere in the displayed week.
+  const weekEvents = useMemo(
+    () => weekDays.flatMap((d) => eventsByDate.get(dateToKey(d)) ?? []),
+    [weekDays, eventsByDate],
+  );
+  const weekIsEmpty = weekEvents.length === 0;
+
+  // Native split for the simple list view.
+  const nowIsoLocal = (() => {
+    const d = new Date();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const hh = String(d.getHours()).padStart(2, '0');
+    const min = String(d.getMinutes()).padStart(2, '0');
+    return `${d.getFullYear()}-${mm}-${dd}T${hh}:${min}`;
+  })();
+  const { upcoming: nativeUpcoming, past: nativePast } = useMemo(
+    () => splitUpcomingPast(allEvents, nowIsoLocal),
+    [allEvents, nowIsoLocal],
+  );
+
+  // ── Loading / error guards ────────────────────────────────────────────────────
 
   if (sessionsQuery.isLoading) {
     return (
@@ -468,6 +809,103 @@ export function MemberCalendarScreen(): React.JSX.Element {
     );
   }
 
+  // ── Nav header (shared) ───────────────────────────────────────────────────────
+
+  const navHeader = (
+    <View style={styles.monthNav}>
+      <TouchableOpacity
+        style={styles.navButton}
+        onPress={handlePrevWeek}
+        accessibilityRole="button"
+        accessibilityLabel="Previous week"
+      >
+        <ChevronLeft size={20} color="#FFFFFF" />
+      </TouchableOpacity>
+
+      <View style={styles.navCenter}>
+        <Text style={styles.weekLabel}>{weekLabel}</Text>
+        {!isCurrentWeek && (
+          <TouchableOpacity
+            style={styles.todayBtn}
+            onPress={handleJumpToToday}
+            accessibilityRole="button"
+            accessibilityLabel="Jump to current week"
+          >
+            <Text style={styles.todayBtnText}>Today</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
+      <TouchableOpacity
+        style={styles.navButton}
+        onPress={handleNextWeek}
+        accessibilityRole="button"
+        accessibilityLabel="Next week"
+      >
+        <ChevronRight size={20} color="#FFFFFF" />
+      </TouchableOpacity>
+    </View>
+  );
+
+  // ── Web layout ────────────────────────────────────────────────────────────────
+
+  if (Platform.OS === 'web') {
+    return (
+      <AppShell role="member" activeKey="appointments" userBlock={shellUserBlock}>
+        <View style={webStyles.root}>
+          {/* Main calendar column */}
+          <View style={webStyles.mainCol}>
+            <PageHeader
+              title="Appointments"
+              subtitle="Your upcoming sessions and milestones"
+            />
+
+            <Card style={webStyles.calendarCard}>
+              <View style={styles.calendarOuter}>
+                {navHeader}
+                {weekIsEmpty ? (
+                  <View style={styles.emptyWeekWrap}>
+                    <CalendarDays size={32} color={colors.mutedForeground} />
+                    <Text style={styles.emptyWeekTitle}>No sessions this week</Text>
+                    <Text style={styles.emptyWeekSub}>
+                      Schedule a session with your CHW to get started.
+                    </Text>
+                    <TouchableOpacity
+                      style={styles.findCHWBtn}
+                      onPress={handleFindCHW}
+                      accessibilityRole="button"
+                      accessibilityLabel="Find a CHW"
+                    >
+                      <Users size={14} color="#FFFFFF" />
+                      <Text style={styles.findCHWBtnText}>Find a CHW</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <WeekViewGrid
+                    weekDays={weekDays}
+                    eventsByDate={eventsByDate}
+                    today={{ year: TODAY_YEAR, month: TODAY_MONTH, day: TODAY_DAY }}
+                    onSlotPress={handleSlotPress}
+                  />
+                )}
+              </View>
+            </Card>
+          </View>
+
+          {/* Right rail — upcoming sessions */}
+          <RightRail width={288} style={webStyles.rail}>
+            <MemberRightRail
+              upcomingEvents={upcomingEvents}
+              onFindCHW={handleFindCHW}
+            />
+          </RightRail>
+        </View>
+      </AppShell>
+    );
+  }
+
+  // ── Native layout — simple upcoming/past list ─────────────────────────────────
+
   return (
     <AppShell role="member" activeKey="appointments" userBlock={shellUserBlock}>
       <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
@@ -480,285 +918,216 @@ export function MemberCalendarScreen(): React.JSX.Element {
         <View style={styles.pageWrap}>
           <PageHeader
             title="Appointments"
-            subtitle="Your upcoming sessions and goal milestones."
+            subtitle="Your upcoming sessions and milestones."
           />
 
-          {/* Calendar card */}
-          <View style={styles.calendarCard}>
-            {/* Month navigation */}
-            <View style={styles.monthNav}>
+          {allEvents.length === 0 ? (
+            /* Global empty state */
+            <View style={styles.emptyStateCard}>
+              <CalendarDays size={36} color={colors.mutedForeground} />
+              <Text style={styles.emptyStateTitle}>No sessions yet</Text>
+              <Text style={styles.emptyStateSub}>
+                Connect with a Community Health Worker to schedule your first session.
+              </Text>
               <TouchableOpacity
-                onPress={handlePrevMonth}
-                style={styles.navBtn}
+                style={styles.findCHWBtn}
+                onPress={handleFindCHW}
                 accessibilityRole="button"
-                accessibilityLabel="Previous month"
-                hitSlop={8}
+                accessibilityLabel="Find a CHW"
               >
-                <ChevronLeft color={colors.mutedForeground} size={18} />
+                <Users size={14} color="#FFFFFF" />
+                <Text style={styles.findCHWBtnText}>Find a CHW</Text>
               </TouchableOpacity>
-
-              <Text style={styles.monthTitle}>
-                {MONTH_NAMES[month]} {year}
-              </Text>
-
-              <View style={styles.navRightGroup}>
-                {!isViewingTodayMonth && (
-                  <TouchableOpacity
-                    onPress={handleJumpToToday}
-                    style={styles.todayBtn}
-                    accessibilityRole="button"
-                    accessibilityLabel="Jump to today"
-                    hitSlop={6}
-                  >
-                    <Text style={styles.todayBtnText}>Today</Text>
-                  </TouchableOpacity>
-                )}
-                <TouchableOpacity
-                  onPress={handleNextMonth}
-                  style={styles.navBtn}
-                  accessibilityRole="button"
-                  accessibilityLabel="Next month"
-                  hitSlop={8}
-                >
-                  <ChevronRight color={colors.mutedForeground} size={18} />
-                </TouchableOpacity>
-              </View>
             </View>
-
-            {/* Day-of-week header */}
-            <View style={styles.dayLabelRow}>
-              {DAY_LABELS.map((label, idx) => (
-                <Text key={`${label}-${idx}`} style={styles.dayLabel}>{label}</Text>
-              ))}
-            </View>
-
-            {/* Calendar grid */}
-            <View
-              style={styles.grid}
-              accessibilityRole="list"
-              accessibilityLabel={`${MONTH_NAMES[month]} ${year} calendar`}
-            >
-              {cells.map((day, idx) => {
-                if (day === null) {
-                  return <View key={`empty-${idx}`} style={styles.emptyCell} />;
-                }
-                const key = dateKey(year, month, day);
-                const events = eventsByDate.get(key) ?? [];
-
-                return (
-                  <DayCell
-                    key={key}
-                    day={day}
-                    events={events}
-                    isToday={isToday(day)}
-                    isSelected={selectedDay === day}
-                    onClick={() => handleDayClick(day)}
-                  />
-                );
-              })}
-            </View>
-          </View>
-
-          {/* Day detail panel */}
-          {selectedDay !== null && (
-            <View style={styles.detailSection}>
-              <Text style={styles.sectionLabel}>
-                {MONTH_NAMES[month].toUpperCase()} {selectedDay}
-              </Text>
-              {selectedEvents.length === 0 ? (
-                <View style={styles.noEventsCard}>
-                  <CalendarDays color={colors.border} size={28} />
-                  <Text style={styles.noEventsText}>No events on this day</Text>
-                </View>
-              ) : (
-                selectedEvents.map((event) => (
-                  <EventDetailCard key={event.id} event={event} />
-                ))
-              )}
-            </View>
-          )}
-
-          {/* This month's events fallback */}
-          {selectedDay === null && monthHasEvents && (
-            <View style={styles.detailSection}>
-              <Text style={styles.sectionLabel}>YOUR EVENTS THIS MONTH</Text>
-              {eventsThisMonth.map((event) => (
-                <EventDetailCard key={event.id} event={event} />
-              ))}
-            </View>
-          )}
-
-          {/* Empty-month hint — only when nothing is selected and the month is empty */}
-          {selectedDay === null && !monthHasEvents && (
-            <View style={styles.emptyMonthCard}>
-              <CalendarDays color={colors.mutedForeground} size={22} />
-              <Text style={styles.emptyMonthText}>
-                No events scheduled for {MONTH_NAMES[month]}.
-              </Text>
-            </View>
-          )}
-
-          {/* Collapsible legend — only render when the month has events to color-code */}
-          {monthHasEvents && (
-            <Pressable
-              onPress={() => setLegendOpen((prev) => !prev)}
-              style={styles.legendCard}
-              accessibilityRole="button"
-              accessibilityLabel={legendOpen ? 'Collapse legend' : 'Expand legend'}
-              accessibilityState={{ expanded: legendOpen }}
-            >
-              <View style={styles.legendHeader}>
-                <Text style={styles.legendTitle}>LEGEND</Text>
-                {legendOpen
-                  ? <ChevronUp color={colors.mutedForeground} size={16} />
-                  : <ChevronDown color={colors.mutedForeground} size={16} />}
-              </View>
-              {legendOpen && (
-                <View style={styles.legendGrid}>
-                  {(Object.entries(verticalLabels) as [Vertical, string][]).map(([key, label]) => (
-                    <View key={key} style={styles.legendRow}>
-                      <View style={[styles.legendDot, { backgroundColor: verticalColors[key] }]} />
-                      <Text style={styles.legendLabel}>{label}</Text>
-                    </View>
+          ) : (
+            <>
+              {/* Upcoming */}
+              {nativeUpcoming.length > 0 && (
+                <View style={styles.listSection}>
+                  <Text style={styles.sectionLabel}>UPCOMING</Text>
+                  {nativeUpcoming.map((event) => (
+                    <EventDetailCard key={event.id} event={event} />
                   ))}
-                  <View style={styles.legendRow}>
-                    <View style={[styles.legendDot, { backgroundColor: verticalColors.goal_milestone }]} />
-                    <Text style={styles.legendLabel}>Milestone</Text>
-                  </View>
                 </View>
               )}
-            </Pressable>
+
+              {/* Past */}
+              {nativePast.length > 0 && (
+                <View style={styles.listSection}>
+                  <Text style={styles.sectionLabel}>PAST</Text>
+                  {nativePast.map((event) => (
+                    <EventDetailCard key={event.id} event={event} />
+                  ))}
+                </View>
+              )}
+            </>
           )}
 
-          <View style={{ height: 24 }} />
+          <View style={{ height: 32 }} />
         </View>
       </ScrollView>
     </AppShell>
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
+// ─── Web styles ───────────────────────────────────────────────────────────────
+
+const webStyles = StyleSheet.create({
+  root: {
+    flex: 1,
+    flexDirection: 'row',
+    gap: 24,
+    padding: 0,
+    alignItems: 'flex-start',
+  },
+  mainCol: {
+    flex: 1,
+  },
+  calendarCard: {
+    marginBottom: 24,
+    overflow: 'hidden',
+    padding: 0,
+  },
+  rail: {
+    paddingTop: 8,
+  },
+});
+
+// ─── Shared styles ────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: '#F4F1ED',
-  },
   scroll: {
     flex: 1,
   },
   scrollContent: {
     flexGrow: 1,
   },
-  // 1100px — full width like Messages/Settings; p-8 horizontal padding.
   pageWrap: {
     width: '100%',
-    maxWidth: undefined as unknown as number,
-    alignSelf: 'center',
+    alignSelf: 'stretch',
     paddingHorizontal: 32,
     paddingTop: 24,
     paddingBottom: 32,
   },
-  pageHeader: {
-    marginBottom: 16,
-  },
-  pageTitle: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 24,
-    color: '#1E3320',
-  },
-  pageSub: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 14,
-    color: '#6B7280',
-    marginTop: 4,
+  calendarOuter: {
+    overflow: 'hidden',
   },
 
-  // Calendar card
-  calendarCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-    paddingHorizontal: 12,
-    paddingTop: 12,
-    paddingBottom: 8,
-    marginBottom: 16,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#3D5A3E',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.08,
-        shadowRadius: 24,
-      },
-      android: {
-        elevation: 3,
-      },
-    }),
-  },
+  // ── Month nav header ────────────────────────────────────────────────────────
   monthNav: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 8,
-    paddingHorizontal: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 14,
+    backgroundColor: colors.primary,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.primary,
   },
-  navBtn: {
-    width: 32,
-    height: 32,
+  navButton: {
+    padding: 6,
     borderRadius: 8,
-    backgroundColor: 'transparent',
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.15)',
   },
-  monthTitle: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 14,
-    color: '#1E3320',
-  },
-  navRightGroup: {
+  navCenter: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: 10,
+    flex: 1,
+    justifyContent: 'center',
+  },
+  weekLabel: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 15,
+    lineHeight: 22,
+    color: '#FFFFFF',
   },
   todayBtn: {
     paddingHorizontal: 10,
-    height: 28,
+    paddingVertical: 4,
     borderRadius: 8,
+    backgroundColor: 'rgba(255,255,255,0.25)',
     borderWidth: 1,
-    borderColor: '#DDD6CC',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#FFFFFF',
+    borderColor: 'rgba(255,255,255,0.4)',
   },
   todayBtnText: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 11,
-    color: colors.primary,
-  },
-  dayLabelRow: {
-    flexDirection: 'row',
-  },
-  dayLabel: {
-    flexBasis: `${100 / 7}%`,
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 11,
-    color: '#6B7280',
-    textAlign: 'center',
-    paddingVertical: 6,
-  },
-  grid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-  },
-  emptyCell: {
-    flexBasis: `${100 / 7}%`,
-    height: DAY_CELL_HEIGHT,
+    color: '#FFFFFF',
   },
 
-  // Detail section
-  detailSection: {
-    marginBottom: 16,
+  // ── Empty week state ────────────────────────────────────────────────────────
+  emptyWeekWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    paddingVertical: 56,
+    paddingHorizontal: 32,
+  },
+  emptyWeekTitle: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 18,
+    color: '#1E3320',
+    textAlign: 'center',
+  },
+  emptyWeekSub: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: '#6B7A6B',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+
+  // ── Empty state (native, no sessions at all) ────────────────────────────────
+  emptyStateCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#DDD6CC',
+    padding: 32,
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 20,
+    shadowColor: '#3D5A3E',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 24,
+    elevation: 3,
+  },
+  emptyStateTitle: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 18,
+    color: '#1E3320',
+    textAlign: 'center',
+  },
+  emptyStateSub: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: '#6B7A6B',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+
+  // ── Find a CHW CTA button ───────────────────────────────────────────────────
+  findCHWBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.primary,
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    marginTop: 4,
+  },
+  findCHWBtnText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 13,
+    color: '#FFFFFF',
+  },
+
+  // ── Native list sections ────────────────────────────────────────────────────
+  listSection: {
+    marginBottom: 20,
   },
   sectionLabel: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
@@ -766,83 +1135,5 @@ const styles = StyleSheet.create({
     color: '#6B7280',
     letterSpacing: 1,
     marginBottom: 10,
-  },
-  noEventsCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-    padding: 24,
-    alignItems: 'center',
-    gap: 8,
-  },
-  noEventsText: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 13,
-    color: '#6B7280',
-  },
-
-  // Empty-month hint (no events anywhere this month)
-  emptyMonthCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    marginBottom: 12,
-  },
-  emptyMonthText: {
-    flex: 1,
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 13,
-    color: '#6B7280',
-  },
-
-  // Legend
-  legendCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    marginBottom: 8,
-  },
-  legendHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  legendTitle: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 12,
-    color: '#6B7280',
-    letterSpacing: 1,
-  },
-  legendGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-    marginTop: 12,
-  },
-  legendRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    width: '45%',
-  },
-  legendDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-  },
-  legendLabel: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 12,
-    color: '#6B7280',
   },
 });
