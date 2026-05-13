@@ -509,7 +509,7 @@ const styles = StyleSheet.create({
   statTile: {
     flex: 1,
     minWidth: 160,
-    padding: spacing.lg,
+    padding: spacing.xl,
   } as ViewStyle,
 
   chartGrid: {
