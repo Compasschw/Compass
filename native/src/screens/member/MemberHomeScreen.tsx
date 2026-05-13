@@ -708,13 +708,13 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     alignItems: 'center',
   },
-  // 960 px — dashboard with 2×2 stat grid and cards, matches CHW dashboard.
+  // 1100 px — matches full-width layout used by Messages/Settings and mockup.
   pageWrap: {
     width: '100%',
-    maxWidth: 960,
+    maxWidth: 1100,
     alignSelf: 'center',
-    paddingHorizontal: 16,
-    paddingTop: 20,
+    paddingHorizontal: 24,
+    paddingTop: 24,
   },
 
   // Greeting
@@ -1188,9 +1188,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 7,
-    backgroundColor: '#3D5A3E',
+    // emerald-600 (#059669) matching mockup — distinct from sidebar #3D5A3E forest green
+    backgroundColor: '#059669',
     borderRadius: 12,
-    paddingVertical: 11,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
   },
   heroPrimaryBtnText: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
@@ -1206,24 +1208,25 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#BBF7D0',
     borderRadius: 12,
-    paddingVertical: 11,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
     backgroundColor: '#FFFFFF',
   },
   heroSecondaryBtnText: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 14,
-    color: '#3D5A3E',
+    color: '#059669',
   },
 
   // ── Section heading ──────────────────────────────────────────────────────────
   sectionHeading: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 12,
-    color: '#6B7280',
+    fontSize: 13,
+    color: '#374151',
     textTransform: 'uppercase',
     letterSpacing: 0.8,
-    marginBottom: 10,
-    marginTop: 4,
+    marginBottom: 12,
+    marginTop: 8,
   },
 
   // ── Journey cards row ────────────────────────────────────────────────────────
@@ -1237,55 +1240,62 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#DDD6CC',
-    padding: 16,
-    gap: 10,
+    borderColor: '#E5E7EB',
+    padding: 20,
+    gap: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 3,
+    elevation: 1,
   },
   journeyCardHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 12,
   },
   journeyIconCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
+    // 44px = w-11 from mockup
+    width: 44,
+    height: 44,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
   journeyIconEmoji: {
-    fontSize: 18,
+    fontSize: 20,
   },
   journeyCardTitle: {
     fontFamily: 'DMSans_700Bold',
-    fontSize: 14,
-    color: '#1E3320',
+    fontSize: 15,
+    color: '#111827',
   },
   journeyCardSub: {
     fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 11,
+    fontSize: 12,
     color: '#6B7280',
   },
   journeyPill: {
+    // pill: rounded-full, bg-emerald-100, text-emerald-700, px-10 py-4 12px 500
     backgroundColor: '#D1FAE5',
     borderRadius: 999,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
   },
   journeyPillText: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 11,
-    color: '#059669',
+    fontSize: 12,
+    color: '#047857',
   },
   journeyProgressTrack: {
-    height: 6,
+    height: 8,
     backgroundColor: '#F3F4F6',
     borderRadius: 999,
     overflow: 'hidden',
   },
   journeyProgressFill: {
     height: '100%',
-    backgroundColor: '#3D5A3E',
+    backgroundColor: '#059669',
     borderRadius: 999,
   },
 
@@ -1294,26 +1304,33 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#DDD6CC',
+    borderColor: '#F1F5F4',
     marginBottom: 16,
     overflow: 'hidden',
+    // subtle shadow matching mockup card definition
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 3,
+    elevation: 1,
   },
   activityRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: 16,
-    paddingVertical: 13,
+    gap: 12,
+    // mock: px-3 py-3 = 12px horizontal, 12px vertical
+    paddingHorizontal: 12,
+    paddingVertical: 12,
   },
   activityText: {
     fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 13,
+    fontSize: 14,
     color: '#374151',
     flex: 1,
   },
   activityTime: {
     fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 11,
+    fontSize: 12,
     color: '#9CA3AF',
   },
 });
