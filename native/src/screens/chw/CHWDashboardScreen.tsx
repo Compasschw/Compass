@@ -1042,8 +1042,12 @@ const styles = StyleSheet.create({
   } as ViewStyle,
 
   kpiTile: {
-    minWidth: 160,
-    flex:     1,
+    // Force 2 tiles per row instead of 4 — minWidth at 48% means after the
+    // first two fit (48 + 48 + gap), the next two wrap onto a second row.
+    // Each tile ends up roughly twice as wide as the old 4-up layout.
+    minWidth:  '48%' as unknown as number,
+    flexBasis: '48%' as unknown as number,
+    flexGrow:  1,
   } as ViewStyle,
 
   // ── Mid row (schedule + attention) ────────────────────────────────────────
