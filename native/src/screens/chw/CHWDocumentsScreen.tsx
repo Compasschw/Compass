@@ -479,9 +479,19 @@ const styles = StyleSheet.create({
 
   chipRow: {
     marginBottom: spacing.lg,
+    // Prevent the horizontal ScrollView from claiming any extra vertical
+    // height in its column-direction parent. Without this, RN-Web's default
+    // flex behaviour stretches the row to fill, and the chips inside (which
+    // are flex items in the row) get stretched vertically into tall capsules.
+    flexGrow: 0,
+    flexShrink: 0,
   } as ViewStyle,
 
   chipRowContent: {
+    flexDirection: 'row',
+    // Cross-axis center keeps each chip at its natural content height
+    // instead of inheriting the row's full height.
+    alignItems: 'center',
     gap: spacing.sm,
     paddingRight: spacing.md,
   } as ViewStyle,

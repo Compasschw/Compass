@@ -527,9 +527,13 @@ const styles = StyleSheet.create({
 
   chipRow: {
     marginBottom: spacing.lg,
+    flexGrow: 0,
+    flexShrink: 0,
   } as ViewStyle,
 
   chipRowContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: spacing.sm,
     paddingRight: spacing.md,
   } as ViewStyle,
