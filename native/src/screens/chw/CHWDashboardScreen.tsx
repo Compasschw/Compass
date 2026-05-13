@@ -972,10 +972,14 @@ const styles = StyleSheet.create({
     paddingBottom: 48,
   } as ViewStyle,
 
-  // Web page wrap — matches mockup's p-8 max-w-[1280px] mx-auto
+  // Web page wrap — fills the available viewport width on wide displays.
+  // The mock used max-w-[1280] but that leaves a lot of dead space on
+  // ultra-wide monitors after the sidebar. 1600 gives room to breathe
+  // while keeping the dashboard readable; if this still feels too narrow
+  // on a 2560px display, drop maxWidth entirely.
   pageWrapWeb: {
     width: '100%',
-    maxWidth: 1280,
+    maxWidth: 1600,
     alignSelf: 'center',
     padding: spacing.xxxl,
     paddingBottom: 48,

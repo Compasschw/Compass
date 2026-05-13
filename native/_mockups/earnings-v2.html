@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Compass CHW — Earnings (v2 Revamp)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    body { font-family: 'Inter', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+    .sidebar-bg { background: linear-gradient(180deg, #134e36 0%, #0f3d2a 100%); }
+    .sidebar-item { display:flex; align-items:center; gap:12px; padding:10px 14px; border-radius:10px; color:#a7d4be; font-size:14px; font-weight:500; transition:all .15s; cursor:pointer; text-decoration:none; }
+    .sidebar-item:hover { background: rgba(255,255,255,0.06); color:#fff; }
+    .sidebar-item.active { background:#fff; color:#0f3d2a; font-weight:600; box-shadow:0 1px 3px rgba(0,0,0,.06); }
+    .sidebar-item.active .icon { color:#16a34a; }
+    .icon { width:18px; height:18px; flex-shrink:0; }
+    .pill { display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:999px; font-size:11px; font-weight:600; }
+    .card { background:#fff; border-radius:16px; box-shadow:0 1px 3px rgba(0,0,0,.04), 0 1px 2px rgba(0,0,0,.03); border:1px solid #f1f5f4; }
+    .stat-card { background:#fff; border-radius:16px; box-shadow:0 1px 3px rgba(0,0,0,.04); border:1px solid #f1f5f4; padding:18px 20px; }
+    th { text-align:left; font-size:11px; font-weight:600; color:#6b7280; text-transform:uppercase; letter-spacing:.04em; padding:10px 16px; background:#f9fafb; border-bottom:1px solid #f3f4f6; }
+    td { padding:13px 16px; border-bottom:1px solid #f3f4f6; font-size:13.5px; vertical-align:middle; }
+    /* Hero bar */
+    .hero { background: linear-gradient(135deg, #064e3b 0%, #047857 60%, #059669 100%); border-radius:20px; }
+    /* Donut helpers */
+    .donut { transform: rotate(-90deg); }
+    /* Progress bar */
+    .bar-track { background:#f3f4f6; border-radius:999px; overflow:hidden; height:8px; }
+    .bar-fill  { height:100%; background:#10b981; border-radius:999px; }
+    /* Earnings calendar heatmap cell */
+    .hm-cell { width:18px; height:18px; border-radius:4px; }
+    .hm-0 { background:#f3f4f6; }
+    .hm-1 { background:#d1fae5; }
+    .hm-2 { background:#86efac; }
+    .hm-3 { background:#34d399; }
+    .hm-4 { background:#059669; }
+    /* Subtle row hover */
+    tr:hover td { background:#f9fafb; }
+    /* Pipeline pill */
+    .pipe-stage { display:flex; align-items:center; gap:10px; padding:12px 14px; border-radius:12px; border:1px solid #f1f5f4; background:#fff; }
+    .pipe-stage .badge { width:32px; height:32px; border-radius:10px; display:grid; place-items:center; }
+  </style>
+</head>
+<body class="bg-[#f5f7f6] min-h-screen">
+  <div class="flex min-h-screen">
+    <!-- ── Sidebar (CHW) ─────────────────────────────────────── -->
+    <aside class="sidebar-bg w-64 flex-shrink-0 flex flex-col py-6 px-4">
+      <div class="px-2 mb-8">
+        <div class="flex items-center gap-2.5">
+          <div class="w-9 h-9 rounded-xl bg-emerald-500 grid place-items-center"><i data-lucide="compass" class="w-5 h-5 text-white"></i></div>
+          <div><div class="text-white font-bold text-lg leading-tight">compasschw</div><div class="text-emerald-300 text-xs font-medium">CHW Portal</div></div>
+        </div>
+      </div>
+      <nav class="flex-1 space-y-1">
+        <a href="dashboard.html" class="sidebar-item"><i data-lucide="layout-dashboard" class="icon"></i><span>Dashboard</span></a>
+        <a href="members.html" class="sidebar-item"><i data-lucide="users" class="icon"></i><span>Members</span></a>
+        <a href="journeys.html" class="sidebar-item"><i data-lucide="route" class="icon"></i><span>Journeys</span></a>
+        <a href="messages.html" class="sidebar-item"><i data-lucide="message-square" class="icon"></i><span class="flex-1">Messages</span><span class="bg-emerald-500 text-white text-xs font-semibold px-2 py-0.5 rounded-full">12</span></a>
+        <a href="appointments.html" class="sidebar-item"><i data-lucide="calendar" class="icon"></i><span>Appointments</span></a>
+        <a href="resources.html" class="sidebar-item"><i data-lucide="folder-open" class="icon"></i><span>Resources</span></a>
+        <a href="documents.html" class="sidebar-item"><i data-lucide="file-text" class="icon"></i><span>Documents</span></a>
+        <a href="earnings-v2.html" class="sidebar-item active"><i data-lucide="dollar-sign" class="icon"></i><span>Earnings</span></a>
+        <a href="reports.html" class="sidebar-item"><i data-lucide="bar-chart-3" class="icon"></i><span>Reports</span></a>
+        <a href="community-partners.html" class="sidebar-item"><i data-lucide="building-2" class="icon"></i><span>Community Partners</span></a>
+        <a href="#" class="sidebar-item"><i data-lucide="settings" class="icon"></i><span>Settings</span></a>
+      </nav>
+      <div class="mt-6 pt-4 border-t border-emerald-900/40">
+        <div class="flex items-center gap-3 px-2 py-2"><div class="w-9 h-9 rounded-full bg-emerald-300 grid place-items-center text-emerald-900 font-bold text-sm">MS</div><div class="flex-1 min-w-0"><div class="text-white text-sm font-semibold truncate">Maria Sanchez</div><div class="text-emerald-300 text-xs">Community Health Worker</div></div></div>
+      </div>
+    </aside>
+
+    <!-- ── Main ──────────────────────────────────────────────── -->
+    <main class="flex-1 p-8 overflow-y-auto">
+      <!-- Page header -->
+      <div class="flex items-end justify-between mb-6">
+        <div>
+          <div class="text-xs text-gray-500 mb-1">Earnings · May 2026</div>
+          <h1 class="text-2xl font-bold text-gray-900">Your Earnings</h1>
+          <p class="text-sm text-gray-600 mt-1">Stripe Connect <span class="pill bg-emerald-100 text-emerald-700"><i data-lucide="badge-check" class="w-3 h-3"></i>Payouts enabled</span> · Next payout <b class="text-gray-900">Fri May 16</b></p>
+        </div>
+        <div class="flex items-center gap-3">
+          <select class="px-3 py-2 rounded-xl border border-gray-200 text-sm bg-white">
+            <option>This month (May 2026)</option><option>Last month</option><option>Year to date</option><option>Last 12 months</option>
+          </select>
+          <button class="px-4 py-2 border border-gray-200 text-gray-700 text-sm font-semibold rounded-xl flex items-center gap-2"><i data-lucide="download" class="w-4 h-4"></i>1099 / Tax docs</button>
+          <button class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-xl flex items-center gap-2"><i data-lucide="external-link" class="w-4 h-4"></i>Stripe dashboard</button>
+        </div>
+      </div>
+
+      <!-- Hero strip: monthly progress toward goal -->
+      <div class="hero text-white p-7 mb-6">
+        <div class="grid grid-cols-12 gap-6 items-center">
+          <div class="col-span-7">
+            <div class="text-emerald-100 text-xs font-semibold uppercase tracking-wider">May 2026 · 82% to goal</div>
+            <div class="mt-2 flex items-end gap-3">
+              <div class="text-5xl font-extrabold tracking-tight">$4,920</div>
+              <div class="text-emerald-100 text-sm pb-2">/ $6,000 goal</div>
+            </div>
+            <div class="mt-3 max-w-md">
+              <div class="bar-track" style="background:rgba(255,255,255,.18)"><div class="bar-fill" style="width:82%; background:#a7f3d0"></div></div>
+              <div class="text-emerald-100 text-xs mt-2 flex items-center gap-2"><i data-lucide="trending-up" class="w-3.5 h-3.5"></i><span>+18% vs last month · keep this pace and you'll clear the goal by May 27</span></div>
+            </div>
+          </div>
+          <div class="col-span-5 grid grid-cols-3 gap-3">
+            <div class="rounded-xl bg-emerald-900/35 px-4 py-3 backdrop-blur">
+              <div class="text-emerald-100 text-[11px] uppercase tracking-wider">Avg / session</div>
+              <div class="text-white text-2xl font-bold mt-1">$96</div>
+            </div>
+            <div class="rounded-xl bg-emerald-900/35 px-4 py-3">
+              <div class="text-emerald-100 text-[11px] uppercase tracking-wider">Sessions</div>
+              <div class="text-white text-2xl font-bold mt-1">51</div>
+            </div>
+            <div class="rounded-xl bg-emerald-900/35 px-4 py-3">
+              <div class="text-emerald-100 text-[11px] uppercase tracking-wider">Hours</div>
+              <div class="text-white text-2xl font-bold mt-1">62.5</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Top stat row -->
+      <div class="grid grid-cols-4 gap-4 mb-6">
+        <div class="stat-card">
+          <div class="flex items-center justify-between mb-3"><div class="w-10 h-10 rounded-xl bg-emerald-100 grid place-items-center"><i data-lucide="dollar-sign" class="w-5 h-5 text-emerald-600"></i></div><span class="pill bg-emerald-50 text-emerald-700">↑ 18% MoM</span></div>
+          <div class="text-3xl font-extrabold text-gray-900">$4,920</div>
+          <div class="text-sm text-gray-500 mt-1">This month</div>
+        </div>
+        <div class="stat-card">
+          <div class="flex items-center justify-between mb-3"><div class="w-10 h-10 rounded-xl bg-blue-100 grid place-items-center"><i data-lucide="banknote" class="w-5 h-5 text-blue-600"></i></div><span class="pill bg-blue-50 text-blue-700">in transit</span></div>
+          <div class="text-3xl font-extrabold text-gray-900">$840</div>
+          <div class="text-sm text-gray-500 mt-1">Pending payout · Fri May 16</div>
+        </div>
+        <div class="stat-card">
+          <div class="flex items-center justify-between mb-3"><div class="w-10 h-10 rounded-xl bg-amber-100 grid place-items-center"><i data-lucide="clock" class="w-5 h-5 text-amber-600"></i></div><span class="pill bg-amber-50 text-amber-700">awaiting Pear</span></div>
+          <div class="text-3xl font-extrabold text-gray-900">$840</div>
+          <div class="text-sm text-gray-500 mt-1">Claims pending adjudication</div>
+        </div>
+        <div class="stat-card">
+          <div class="flex items-center justify-between mb-3"><div class="w-10 h-10 rounded-xl bg-purple-100 grid place-items-center"><i data-lucide="trophy" class="w-5 h-5 text-purple-600"></i></div><span class="pill bg-purple-50 text-purple-700">YTD</span></div>
+          <div class="text-3xl font-extrabold text-gray-900">$22,140</div>
+          <div class="text-sm text-gray-500 mt-1">Year-to-date earnings</div>
+        </div>
+      </div>
+
+      <!-- Trend + Vertical breakdown -->
+      <div class="grid grid-cols-12 gap-5 mb-6">
+        <!-- Earnings trend (8 weeks) -->
+        <div class="col-span-8 card p-5">
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <h2 class="font-semibold text-gray-900">Earnings trend</h2>
+              <p class="text-xs text-gray-500 mt-0.5">Weekly · last 8 weeks · gross + net overlay</p>
+            </div>
+            <div class="flex items-center gap-1 text-xs">
+              <button class="px-3 py-1.5 rounded-md bg-emerald-100 text-emerald-700 font-semibold">Week</button>
+              <button class="px-3 py-1.5 rounded-md text-gray-500 hover:bg-gray-100">Month</button>
+              <button class="px-3 py-1.5 rounded-md text-gray-500 hover:bg-gray-100">Year</button>
+            </div>
+          </div>
+          <div class="rounded-xl bg-gradient-to-br from-emerald-50 to-blue-50 p-5">
+            <svg viewBox="0 0 600 200" class="w-full h-48">
+              <!-- Gross -->
+              <polyline points="20,170 90,150 160,140 230,118 300,108 370,86 440,58 510,28" stroke="#10b981" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+              <polyline points="20,170 90,150 160,140 230,118 300,108 370,86 440,58 510,28 510,200 20,200" fill="url(#g1)" opacity=".22"/>
+              <!-- Net (slightly lower) -->
+              <polyline points="20,178 90,164 160,156 230,138 300,128 370,108 440,82 510,55" stroke="#1e40af" stroke-width="2.5" stroke-dasharray="5 4" fill="none" stroke-linecap="round"/>
+              <defs><linearGradient id="g1" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="#10b981"/><stop offset="100%" stop-color="#10b981" stop-opacity="0"/></linearGradient></defs>
+              <g font-family="Inter" font-size="10" fill="#9ca3af">
+                <text x="20" y="195" text-anchor="middle">Mar 17</text>
+                <text x="160" y="195" text-anchor="middle">Mar 31</text>
+                <text x="300" y="195" text-anchor="middle">Apr 14</text>
+                <text x="440" y="195" text-anchor="middle">Apr 28</text>
+                <text x="510" y="195" text-anchor="middle">May 5</text>
+              </g>
+            </svg>
+          </div>
+          <div class="flex items-center gap-5 mt-3 text-xs">
+            <div class="flex items-center gap-2"><span class="w-3 h-1.5 rounded bg-emerald-500"></span><span class="text-gray-600">Gross</span></div>
+            <div class="flex items-center gap-2"><span class="w-3 h-0.5 rounded bg-blue-700" style="border-top:2px dashed #1e40af"></span><span class="text-gray-600">Net (after platform fee)</span></div>
+            <div class="ml-auto text-gray-500">Highest week: <b class="text-gray-900">$1,240</b> (Apr 28)</div>
+          </div>
+        </div>
+
+        <!-- Vertical breakdown (donut) -->
+        <div class="col-span-4 card p-5">
+          <h2 class="font-semibold text-gray-900 mb-1">Earnings by category</h2>
+          <p class="text-xs text-gray-500 mb-4">May 2026 · share of total $4,920</p>
+          <div class="flex items-center justify-center mb-3">
+            <svg viewBox="0 0 120 120" class="w-44 h-44 donut">
+              <!-- 4 segments: Housing 38%, Food 24%, Mental Health 20%, Other 18% -->
+              <circle r="48" cx="60" cy="60" fill="none" stroke="#fee2e2" stroke-width="20"/>
+              <circle r="48" cx="60" cy="60" fill="none" stroke="#ef4444" stroke-width="20"
+                      stroke-dasharray="114.6 301.6" stroke-dashoffset="0"/>
+              <circle r="48" cx="60" cy="60" fill="none" stroke="#f97316" stroke-width="20"
+                      stroke-dasharray="72.4 343.8" stroke-dashoffset="-114.6"/>
+              <circle r="48" cx="60" cy="60" fill="none" stroke="#8b5cf6" stroke-width="20"
+                      stroke-dasharray="60.3 355.9" stroke-dashoffset="-187.0"/>
+              <circle r="48" cx="60" cy="60" fill="none" stroke="#10b981" stroke-width="20"
+                      stroke-dasharray="54.3 361.9" stroke-dashoffset="-247.3"/>
+              <text x="60" y="58" text-anchor="middle" font-family="Inter" font-size="11" fill="#6b7280" transform="rotate(90 60 60)">Total</text>
+              <text x="60" y="74" text-anchor="middle" font-family="Inter" font-size="14" font-weight="700" fill="#111827" transform="rotate(90 60 60)">$4,920</text>
+            </svg>
+          </div>
+          <div class="space-y-2 text-sm">
+            <div class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded bg-red-500"></span><span class="flex-1 text-gray-700">Housing</span><span class="text-gray-900 font-semibold">$1,870</span><span class="text-gray-400 text-xs ml-1">38%</span></div>
+            <div class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded bg-orange-500"></span><span class="flex-1 text-gray-700">Food assistance</span><span class="text-gray-900 font-semibold">$1,180</span><span class="text-gray-400 text-xs ml-1">24%</span></div>
+            <div class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded bg-purple-500"></span><span class="flex-1 text-gray-700">Mental health</span><span class="text-gray-900 font-semibold">$985</span><span class="text-gray-400 text-xs ml-1">20%</span></div>
+            <div class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded bg-emerald-500"></span><span class="flex-1 text-gray-700">Other (rehab, healthcare)</span><span class="text-gray-900 font-semibold">$885</span><span class="text-gray-400 text-xs ml-1">18%</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Pear claim pipeline + Tax estimator -->
+      <div class="grid grid-cols-12 gap-5 mb-6">
+        <!-- Claim pipeline -->
+        <div class="col-span-7 card p-5">
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <h2 class="font-semibold text-gray-900">Pear Suite claim pipeline</h2>
+              <p class="text-xs text-gray-500 mt-0.5">Where every billed session sits right now</p>
+            </div>
+            <a class="text-emerald-600 text-sm font-semibold">Open Pear claims →</a>
+          </div>
+          <div class="grid grid-cols-5 gap-3">
+            <div class="pipe-stage flex-col items-start">
+              <div class="badge bg-gray-100"><i data-lucide="file-edit" class="w-4 h-4 text-gray-500"></i></div>
+              <div class="text-xs text-gray-500 mt-1">Drafting</div>
+              <div class="text-2xl font-bold text-gray-900">2</div>
+              <div class="text-[11px] text-gray-400">$120</div>
+            </div>
+            <div class="pipe-stage flex-col items-start">
+              <div class="badge bg-blue-100"><i data-lucide="upload-cloud" class="w-4 h-4 text-blue-600"></i></div>
+              <div class="text-xs text-gray-500 mt-1">Submitted</div>
+              <div class="text-2xl font-bold text-gray-900">5</div>
+              <div class="text-[11px] text-gray-400">$420</div>
+            </div>
+            <div class="pipe-stage flex-col items-start">
+              <div class="badge bg-amber-100"><i data-lucide="hourglass" class="w-4 h-4 text-amber-600"></i></div>
+              <div class="text-xs text-gray-500 mt-1">Adjudicating</div>
+              <div class="text-2xl font-bold text-gray-900">7</div>
+              <div class="text-[11px] text-gray-400">$840</div>
+            </div>
+            <div class="pipe-stage flex-col items-start">
+              <div class="badge bg-emerald-100"><i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-600"></i></div>
+              <div class="text-xs text-gray-500 mt-1">Paid</div>
+              <div class="text-2xl font-bold text-gray-900">36</div>
+              <div class="text-[11px] text-gray-400">$3,540</div>
+            </div>
+            <div class="pipe-stage flex-col items-start">
+              <div class="badge bg-red-100"><i data-lucide="x-circle" class="w-4 h-4 text-red-500"></i></div>
+              <div class="text-xs text-gray-500 mt-1">Denied</div>
+              <div class="text-2xl font-bold text-gray-900">1</div>
+              <div class="text-[11px] text-red-500">needs appeal</div>
+            </div>
+          </div>
+          <div class="mt-4 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 flex items-start gap-2 text-xs">
+            <i data-lucide="alert-circle" class="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5"></i>
+            <div>
+              <span class="text-amber-900 font-semibold">1 denied claim is over 30 days old.</span>
+              <span class="text-amber-800"> File an appeal within 60 days of denial to recover the $96.</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tax estimator -->
+        <div class="col-span-5 card p-5">
+          <div class="flex items-center justify-between mb-1">
+            <h2 class="font-semibold text-gray-900">Tax & 1099</h2>
+            <span class="pill bg-emerald-100 text-emerald-700">on track</span>
+          </div>
+          <p class="text-xs text-gray-500 mb-4">Estimated quarterly taxes based on YTD earnings</p>
+          <div class="space-y-3">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <span class="w-7 h-7 rounded-lg bg-blue-100 grid place-items-center"><i data-lucide="calendar-check" class="w-4 h-4 text-blue-600"></i></span>
+                <div>
+                  <div class="text-sm font-semibold text-gray-900">Q2 estimated payment</div>
+                  <div class="text-xs text-gray-500">Due Mon June 15</div>
+                </div>
+              </div>
+              <div class="text-right">
+                <div class="text-base font-bold text-gray-900">$1,240</div>
+                <a class="text-emerald-600 text-xs font-semibold">Set reminder</a>
+              </div>
+            </div>
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <span class="w-7 h-7 rounded-lg bg-purple-100 grid place-items-center"><i data-lucide="receipt" class="w-4 h-4 text-purple-600"></i></span>
+                <div>
+                  <div class="text-sm font-semibold text-gray-900">2026 1099-NEC (preview)</div>
+                  <div class="text-xs text-gray-500">Filed by Compass · ready Jan 31, 2027</div>
+                </div>
+              </div>
+              <a class="text-emerald-600 text-xs font-semibold">Preview →</a>
+            </div>
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <span class="w-7 h-7 rounded-lg bg-emerald-100 grid place-items-center"><i data-lucide="piggy-bank" class="w-4 h-4 text-emerald-600"></i></span>
+                <div>
+                  <div class="text-sm font-semibold text-gray-900">Suggested tax savings</div>
+                  <div class="text-xs text-gray-500">Set aside ~25% of each payout</div>
+                </div>
+              </div>
+              <div class="text-right">
+                <div class="text-base font-bold text-gray-900">$5,535</div>
+                <div class="text-[11px] text-gray-400">YTD set-aside target</div>
+              </div>
+            </div>
+          </div>
+          <div class="mt-4 px-3 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-xs text-emerald-800">
+            <b>Tip:</b> Compass partners with Keeper Tax for self-employed CHWs — free for your first 60 days.
+          </div>
+        </div>
+      </div>
+
+      <!-- Sessions billed table -->
+      <div class="card overflow-hidden mb-6">
+        <div class="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+          <div>
+            <h2 class="font-semibold text-gray-900">Sessions billed this month</h2>
+            <p class="text-xs text-gray-500 mt-0.5">14 sessions · gross $1,680 · net $1,344</p>
+          </div>
+          <div class="flex items-center gap-2 text-xs">
+            <button class="px-3 py-1.5 rounded-md bg-emerald-100 text-emerald-700 font-semibold">All</button>
+            <button class="px-3 py-1.5 rounded-md text-gray-500 hover:bg-gray-100">Paid</button>
+            <button class="px-3 py-1.5 rounded-md text-gray-500 hover:bg-gray-100">Pending</button>
+            <button class="px-3 py-1.5 rounded-md text-gray-500 hover:bg-gray-100">Denied</button>
+            <a class="text-emerald-600 text-sm font-medium ml-3">Export CSV →</a>
+          </div>
+        </div>
+        <table class="w-full">
+          <thead><tr><th>Member</th><th>Date</th><th>CPT</th><th>Units</th><th>Gross</th><th>Net</th><th>Pear Suite</th><th>Stripe</th><th></th></tr></thead>
+          <tbody>
+            <tr><td><div class="flex items-center gap-2.5"><div class="w-7 h-7 rounded-full bg-emerald-100 grid place-items-center text-emerald-700 font-bold text-xs">AG</div><div class="font-semibold text-gray-900">Ana Garcia</div></div></td><td class="text-gray-600">May 7</td><td><span class="pill bg-blue-100 text-blue-700">98960</span></td><td>2</td><td>$120.00</td><td class="font-semibold">$96.00</td><td><span class="pill bg-emerald-100 text-emerald-700"><i data-lucide="check" class="w-3 h-3"></i>paid</span></td><td><span class="pill bg-emerald-100 text-emerald-700">transferred</span></td><td class="text-right"><i data-lucide="chevron-right" class="w-4 h-4 text-gray-300"></i></td></tr>
+            <tr><td><div class="flex items-center gap-2.5"><div class="w-7 h-7 rounded-full bg-purple-100 grid place-items-center text-purple-700 font-bold text-xs">DL</div><div class="font-semibold text-gray-900">David Lopez</div></div></td><td class="text-gray-600">May 6</td><td><span class="pill bg-blue-100 text-blue-700">98961</span></td><td>3</td><td>$180.00</td><td class="font-semibold">$144.00</td><td><span class="pill bg-emerald-100 text-emerald-700"><i data-lucide="check" class="w-3 h-3"></i>paid</span></td><td><span class="pill bg-emerald-100 text-emerald-700">transferred</span></td><td class="text-right"><i data-lucide="chevron-right" class="w-4 h-4 text-gray-300"></i></td></tr>
+            <tr><td><div class="flex items-center gap-2.5"><div class="w-7 h-7 rounded-full bg-blue-100 grid place-items-center text-blue-700 font-bold text-xs">JR</div><div class="font-semibold text-gray-900">Juana Ramirez</div></div></td><td class="text-gray-600">May 5</td><td><span class="pill bg-blue-100 text-blue-700">98961</span></td><td>2</td><td>$120.00</td><td class="font-semibold">$96.00</td><td><span class="pill bg-amber-100 text-amber-800"><i data-lucide="hourglass" class="w-3 h-3"></i>adjudicating</span></td><td><span class="pill bg-gray-100 text-gray-600">awaiting claim</span></td><td class="text-right"><i data-lucide="chevron-right" class="w-4 h-4 text-gray-300"></i></td></tr>
+            <tr><td><div class="flex items-center gap-2.5"><div class="w-7 h-7 rounded-full bg-amber-100 grid place-items-center text-amber-700 font-bold text-xs">SC</div><div class="font-semibold text-gray-900">Sandra Chavez</div></div></td><td class="text-gray-600">May 4</td><td><span class="pill bg-blue-100 text-blue-700">98960</span></td><td>1</td><td>$60.00</td><td class="font-semibold">$48.00</td><td><span class="pill bg-blue-100 text-blue-700"><i data-lucide="upload-cloud" class="w-3 h-3"></i>submitted</span></td><td><span class="pill bg-gray-100 text-gray-600">awaiting claim</span></td><td class="text-right"><i data-lucide="chevron-right" class="w-4 h-4 text-gray-300"></i></td></tr>
+            <tr><td><div class="flex items-center gap-2.5"><div class="w-7 h-7 rounded-full bg-cyan-100 grid place-items-center text-cyan-700 font-bold text-xs">EC</div><div class="font-semibold text-gray-900">Elena Castro</div></div></td><td class="text-gray-600">May 3</td><td><span class="pill bg-blue-100 text-blue-700">98962</span></td><td>4</td><td>$240.00</td><td class="font-semibold">$192.00</td><td><span class="pill bg-emerald-100 text-emerald-700"><i data-lucide="check" class="w-3 h-3"></i>paid</span></td><td><span class="pill bg-emerald-100 text-emerald-700">transferred</span></td><td class="text-right"><i data-lucide="chevron-right" class="w-4 h-4 text-gray-300"></i></td></tr>
+            <tr><td><div class="flex items-center gap-2.5"><div class="w-7 h-7 rounded-full bg-rose-100 grid place-items-center text-rose-700 font-bold text-xs">MB</div><div class="font-semibold text-gray-900">Marcus Brown</div></div></td><td class="text-gray-600">May 1</td><td><span class="pill bg-blue-100 text-blue-700">98960</span></td><td>2</td><td>$120.00</td><td class="font-semibold text-red-500">—</td><td><span class="pill bg-red-100 text-red-700"><i data-lucide="x" class="w-3 h-3"></i>denied</span></td><td><span class="pill bg-gray-100 text-gray-600">—</span></td><td class="text-right"><a class="text-red-600 text-xs font-semibold">Appeal →</a></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Recent payouts + heatmap -->
+      <div class="grid grid-cols-12 gap-5 mb-6">
+        <!-- Recent payouts -->
+        <div class="col-span-7 card overflow-hidden">
+          <div class="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+            <h2 class="font-semibold text-gray-900">Recent payouts</h2>
+            <a class="text-emerald-600 text-sm font-medium">All payouts →</a>
+          </div>
+          <div class="p-2">
+            <div class="flex items-center gap-3 px-3 py-3 rounded-lg hover:bg-gray-50">
+              <div class="w-9 h-9 rounded-lg bg-emerald-100 grid place-items-center"><i data-lucide="arrow-down-circle" class="w-5 h-5 text-emerald-600"></i></div>
+              <div class="flex-1"><div class="font-semibold text-gray-900 text-sm">$840.00</div><div class="text-xs text-gray-500">Paid Fri May 9 · ACH · ···4421 · 6 sessions</div></div>
+              <span class="pill bg-emerald-100 text-emerald-700">Completed</span>
+              <a class="text-gray-400 hover:text-gray-700"><i data-lucide="external-link" class="w-4 h-4"></i></a>
+            </div>
+            <div class="flex items-center gap-3 px-3 py-3 rounded-lg hover:bg-gray-50">
+              <div class="w-9 h-9 rounded-lg bg-emerald-100 grid place-items-center"><i data-lucide="arrow-down-circle" class="w-5 h-5 text-emerald-600"></i></div>
+              <div class="flex-1"><div class="font-semibold text-gray-900 text-sm">$1,200.00</div><div class="text-xs text-gray-500">Paid Fri May 2 · ACH · ···4421 · 9 sessions</div></div>
+              <span class="pill bg-emerald-100 text-emerald-700">Completed</span>
+              <a class="text-gray-400 hover:text-gray-700"><i data-lucide="external-link" class="w-4 h-4"></i></a>
+            </div>
+            <div class="flex items-center gap-3 px-3 py-3 rounded-lg hover:bg-gray-50">
+              <div class="w-9 h-9 rounded-lg bg-emerald-100 grid place-items-center"><i data-lucide="arrow-down-circle" class="w-5 h-5 text-emerald-600"></i></div>
+              <div class="flex-1"><div class="font-semibold text-gray-900 text-sm">$1,200.00</div><div class="text-xs text-gray-500">Paid Fri Apr 25 · ACH · ···4421 · 9 sessions</div></div>
+              <span class="pill bg-emerald-100 text-emerald-700">Completed</span>
+              <a class="text-gray-400 hover:text-gray-700"><i data-lucide="external-link" class="w-4 h-4"></i></a>
+            </div>
+            <div class="flex items-center gap-3 px-3 py-3 rounded-lg hover:bg-gray-50">
+              <div class="w-9 h-9 rounded-lg bg-blue-100 grid place-items-center"><i data-lucide="clock" class="w-5 h-5 text-blue-600"></i></div>
+              <div class="flex-1"><div class="font-semibold text-gray-900 text-sm">$840.00</div><div class="text-xs text-gray-500">Scheduled Fri May 16 · ACH · ···4421 · 6 sessions</div></div>
+              <span class="pill bg-blue-100 text-blue-700">In transit</span>
+              <i class="w-4 h-4"></i>
+            </div>
+          </div>
+        </div>
+
+        <!-- Earnings heatmap (last 12 weeks) -->
+        <div class="col-span-5 card p-5">
+          <div class="flex items-center justify-between mb-1">
+            <h2 class="font-semibold text-gray-900">Earnings consistency</h2>
+            <span class="text-xs text-gray-500">Last 12 weeks</span>
+          </div>
+          <p class="text-xs text-gray-500 mb-4">Each cell is a workday · darker = higher earnings</p>
+          <div class="space-y-1.5">
+            <!-- 12 weeks × 5 days. Random-ish heat distribution. Day labels at left -->
+            <div class="flex items-center gap-1.5"><span class="text-[10px] text-gray-400 w-6">Mon</span>
+              <div class="hm-cell hm-1"></div><div class="hm-cell hm-2"></div><div class="hm-cell hm-2"></div><div class="hm-cell hm-3"></div><div class="hm-cell hm-3"></div><div class="hm-cell hm-2"></div><div class="hm-cell hm-3"></div><div class="hm-cell hm-3"></div><div class="hm-cell hm-4"></div><div class="hm-cell hm-3"></div><div class="hm-cell hm-4"></div><div class="hm-cell hm-3"></div>
+            </div>
+            <div class="flex items-center gap-1.5"><span class="text-[10px] text-gray-400 w-6">Tue</span>
+              <div class="hm-cell hm-2"></div><div class="hm-cell hm-3"></div><div class="hm-cell hm-2"></div><div class="hm-cell hm-3"></div><div class="hm-cell hm-2"></div><div class="hm-cell hm-3"></div><div class="hm-cell hm-3"></div><div class="hm-cell hm-4"></div><div class="hm-cell hm-3"></div><div class="hm-cell hm-4"></div><div class="hm-cell hm-3"></div><div class="hm-cell hm-4"></div>
+            </div>
+            <div class="flex items-center gap-1.5"><span class="text-[10px] text-gray-400 w-6">Wed</span>
+              <div class="hm-cell hm-1"></div><div class="hm-cell hm-2"></div><div class="hm-cell hm-3"></div><div class="hm-cell hm-2"></div><div class="hm-cell hm-3"></div><div class="hm-cell hm-2"></div><div class="hm-cell hm-3"></div><div class="hm-cell hm-3"></div><div class="hm-cell hm-3"></div><div class="hm-cell hm-3"></div><div class="hm-cell hm-4"></div><div class="hm-cell hm-3"></div>
+            </div>
+            <div class="flex items-center gap-1.5"><span class="text-[10px] text-gray-400 w-6">Thu</span>
+              <div class="hm-cell hm-0"></div><div class="hm-cell hm-1"></div><div class="hm-cell hm-2"></div><div class="hm-cell hm-2"></div><div class="hm-cell hm-3"></div><div class="hm-cell hm-3"></div><div class="hm-cell hm-2"></div><div class="hm-cell hm-3"></div><div class="hm-cell hm-3"></div><div class="hm-cell hm-3"></div><div class="hm-cell hm-3"></div><div class="hm-cell hm-2"></div>
+            </div>
+            <div class="flex items-center gap-1.5"><span class="text-[10px] text-gray-400 w-6">Fri</span>
+              <div class="hm-cell hm-1"></div><div class="hm-cell hm-2"></div><div class="hm-cell hm-1"></div><div class="hm-cell hm-2"></div><div class="hm-cell hm-2"></div><div class="hm-cell hm-3"></div><div class="hm-cell hm-3"></div><div class="hm-cell hm-3"></div><div class="hm-cell hm-3"></div><div class="hm-cell hm-4"></div><div class="hm-cell hm-3"></div><div class="hm-cell hm-3"></div>
+            </div>
+          </div>
+          <div class="mt-4 flex items-center justify-between text-[11px] text-gray-500">
+            <span>Less</span>
+            <div class="flex items-center gap-1.5">
+              <div class="hm-cell hm-0"></div><div class="hm-cell hm-1"></div><div class="hm-cell hm-2"></div><div class="hm-cell hm-3"></div><div class="hm-cell hm-4"></div>
+            </div>
+            <span>More</span>
+          </div>
+          <div class="mt-3 text-xs text-emerald-700 flex items-center gap-2"><i data-lucide="sparkles" class="w-3.5 h-3.5"></i>Your most consistent day is Tuesday — 11 of 12 weeks above $90.</div>
+        </div>
+      </div>
+
+      <!-- Boost & Insight footer -->
+      <div class="grid grid-cols-12 gap-5">
+        <div class="col-span-8 card p-5 bg-gradient-to-br from-emerald-50 to-blue-50">
+          <div class="flex items-start gap-4">
+            <div class="w-12 h-12 rounded-xl bg-emerald-600 grid place-items-center flex-shrink-0"><i data-lucide="sparkles" class="w-6 h-6 text-white"></i></div>
+            <div class="flex-1">
+              <div class="flex items-center gap-2 mb-1">
+                <h2 class="font-semibold text-gray-900">Boost this week's earnings</h2>
+                <span class="pill bg-emerald-100 text-emerald-700">3 opportunities</span>
+              </div>
+              <p class="text-sm text-gray-700 mb-3">Compass found <b>3 unmatched member requests</b> in your service area that match your specialties. Each accepted session averages <b>$96 net</b>.</p>
+              <div class="space-y-2">
+                <div class="flex items-center gap-3 bg-white/70 rounded-lg px-3 py-2">
+                  <div class="w-8 h-8 rounded-full bg-red-100 grid place-items-center text-red-700 font-bold text-xs">RM</div>
+                  <div class="flex-1 text-sm"><b class="text-gray-900">Rosa M.</b> · Housing navigation · ZIP 92113</div>
+                  <button class="px-3 py-1.5 bg-emerald-600 text-white text-xs font-semibold rounded-lg">Accept</button>
+                </div>
+                <div class="flex items-center gap-3 bg-white/70 rounded-lg px-3 py-2">
+                  <div class="w-8 h-8 rounded-full bg-orange-100 grid place-items-center text-orange-700 font-bold text-xs">JT</div>
+                  <div class="flex-1 text-sm"><b class="text-gray-900">James T.</b> · CalFresh enrollment · ZIP 92102</div>
+                  <button class="px-3 py-1.5 bg-emerald-600 text-white text-xs font-semibold rounded-lg">Accept</button>
+                </div>
+                <div class="flex items-center gap-3 bg-white/70 rounded-lg px-3 py-2">
+                  <div class="w-8 h-8 rounded-full bg-purple-100 grid place-items-center text-purple-700 font-bold text-xs">SK</div>
+                  <div class="flex-1 text-sm"><b class="text-gray-900">Sasha K.</b> · Mental health referral · ZIP 92113</div>
+                  <button class="px-3 py-1.5 bg-emerald-600 text-white text-xs font-semibold rounded-lg">Accept</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Bank & payout setup -->
+        <div class="col-span-4 card p-5">
+          <h2 class="font-semibold text-gray-900 mb-3">Bank & payout setup</h2>
+          <div class="space-y-2 text-sm">
+            <div class="flex items-center gap-2"><i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-600"></i><span class="text-gray-700">Identity verified <span class="text-gray-400 ml-1">via Stripe Identity</span></span></div>
+            <div class="flex items-center gap-2"><i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-600"></i><span class="text-gray-700">Bank account on file <span class="text-gray-400 ml-1">···4421</span></span></div>
+            <div class="flex items-center gap-2"><i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-600"></i><span class="text-gray-700">Tax info submitted (W-9)</span></div>
+            <div class="flex items-center gap-2"><i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-600"></i><span class="text-gray-700">Payout schedule: weekly (Fri)</span></div>
+          </div>
+          <div class="mt-4 px-3 py-2 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center gap-2 text-xs">
+            <i data-lucide="shield-check" class="w-4 h-4 text-emerald-600"></i><span class="text-emerald-800 font-semibold">Payouts enabled · next on Fri May 16</span>
+          </div>
+          <div class="mt-3 grid grid-cols-2 gap-2">
+            <button class="px-3 py-2 border border-gray-200 text-xs font-semibold rounded-lg hover:bg-gray-50">Update bank</button>
+            <button class="px-3 py-2 border border-gray-200 text-xs font-semibold rounded-lg hover:bg-gray-50">Change schedule</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="mt-8 text-center"><a href="index.html" class="text-emerald-600 hover:underline text-sm">← Back to mockups index</a></div>
+    </main>
+  </div>
+  <script>lucide.createIcons();</script>
+</body>
+</html>
