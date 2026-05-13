@@ -539,6 +539,8 @@ const styles = StyleSheet.create({
   } as ViewStyle,
 
   filterChip: {
+    alignSelf: 'flex-start',
+    flexShrink: 0,
     paddingHorizontal: 14,
     paddingVertical: 7,
     borderRadius: 10,

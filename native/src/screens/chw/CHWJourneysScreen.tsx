@@ -721,6 +721,8 @@ const styles = StyleSheet.create({
   } as ViewStyle,
 
   filterChip: {
+    alignSelf: 'flex-start',
+    flexShrink: 0,
     // mockup: filter-btn — px-3.5 py-1.5 rounded-10 (14px h / 7px v / r-10)
     paddingHorizontal: 14,
     paddingVertical: 7,

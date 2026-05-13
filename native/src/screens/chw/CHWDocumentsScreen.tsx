@@ -497,6 +497,8 @@ const styles = StyleSheet.create({
   } as ViewStyle,
 
   filterChip: {
+    alignSelf: 'flex-start',
+    flexShrink: 0,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
