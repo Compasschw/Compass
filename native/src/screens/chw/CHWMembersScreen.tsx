@@ -4,11 +4,14 @@
  * Layout (web, matching native/_mockups/members.html):
  *   - AppShell with role="chw" / activeKey="members"
  *   - Header: "My Members" + subtitle (active count · inactive count · refreshed N mins ago)
- *   - Filter chips: All / Active / High Risk / Overdue follow-up / In a journey / Inactive
- *   - Search input: filter by name, masked ID
- *   - Table: Member (avatar + name + age + masked ID) · Status · Risk · Engagement ·
- *             Active Journey · Last Contact · Top Need · chevron
- *   - Tap a row → navigate to CHWMemberProfileScreen
+ *     Right side: search input (288px, magnifying-glass leading icon) + "Add Member" button
+ *   - Filter chips row: All / Active / High Risk / Overdue follow-up / In a journey / Inactive
+ *     Right-aligned: filter icon + "Sort: Last contact ↓"
+ *   - Table card (rounded-16, white, bordered):
+ *       THEAD: #F9FAFB bg, 11px/600/uppercase/#6B7280, padding 10×16, border-bottom #F3F4F6
+ *       Columns: Member · Status · Risk · Engagement · Active Journey · Last Contact · Top Need · (chevron)
+ *       TBODY rows: padding 14×16, border-bottom #F3F4F6, hover #F9FAFB, cursor pointer
+ *   - Pagination footer: "Showing N of M members" + page buttons (static v1)
  *
  * On native: simplified card list (table layout doesn't suit small screens).
  *
@@ -33,6 +36,8 @@ import { useNavigation } from '@react-navigation/native';
 import type { DrawerNavigationProp } from '@react-navigation/drawer';
 import {
   ChevronRight,
+  ChevronLeft,
+  Filter,
   Search,
   UserPlus,
   Users,
@@ -62,12 +67,12 @@ interface FilterChip {
 const OVERDUE_THRESHOLD_DAYS = 5;
 
 const FILTER_CHIPS: FilterChip[] = [
-  { key: 'all',        label: 'All'              },
-  { key: 'active',     label: 'Active'           },
-  { key: 'high_risk',  label: 'High Risk'        },
+  { key: 'all',        label: 'All'               },
+  { key: 'active',     label: 'Active'            },
+  { key: 'high_risk',  label: 'High Risk'         },
   { key: 'overdue',    label: 'Overdue follow-up' },
-  { key: 'in_journey', label: 'In a journey'     },
-  { key: 'inactive',   label: 'Inactive'         },
+  { key: 'in_journey', label: 'In a journey'      },
+  { key: 'inactive',   label: 'Inactive'          },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -112,18 +117,49 @@ function isOverdue(lastContactAt: string | null): boolean {
 }
 
 /**
- * Map engagement → Pill variant.
+ * Maps risk level to Pill variant. Returns null when risk is null (pill hidden).
+ * Accepts the loosened string type to remain forward-compatible once a risk
+ * model is wired up and the backend starts returning non-null values.
  */
-function engagementVariant(engagement: MembersRosterItem['engagement']) {
-  switch (engagement) {
-    case 'highly':      return 'emerald' as const;
-    case 'moderately':  return 'amber' as const;
-    case 'disengaged':  return 'red' as const;
+function riskVariant(risk: string | null): 'emerald' | 'amber-dark' | 'red' | null {
+  switch (risk) {
+    case 'low':    return 'emerald';
+    case 'medium': return 'amber-dark';
+    case 'high':   return 'red';
+    default:       return null;
   }
 }
 
 /**
- * Map engagement → display label.
+ * Maps risk level to display label.
+ */
+function riskLabel(risk: string | null): string {
+  switch (risk) {
+    case 'low':    return 'Low';
+    case 'medium': return 'Medium';
+    case 'high':   return 'High';
+    default:       return '';
+  }
+}
+
+/**
+ * Maps engagement level → Pill variant.
+ * When the member is inactive, "disengaged" renders as gray-muted (gray-100/gray-600).
+ */
+function engagementVariant(
+  engagement: MembersRosterItem['engagement'],
+  status: MembersRosterItem['status'],
+): 'emerald' | 'amber-dark' | 'red' | 'gray-muted' {
+  switch (engagement) {
+    case 'highly':      return 'emerald';
+    case 'moderately':  return 'amber-dark';
+    case 'disengaged':
+      return status === 'inactive' ? 'gray-muted' : 'red';
+  }
+}
+
+/**
+ * Maps engagement → display label.
  */
 function engagementLabel(engagement: MembersRosterItem['engagement']): string {
   switch (engagement) {
@@ -134,25 +170,27 @@ function engagementLabel(engagement: MembersRosterItem['engagement']): string {
 }
 
 /**
- * Map a vertical string to a Pill variant for the Top Need cell.
+ * Maps a vertical slug to a Pill variant for the Top Need cell.
  */
-function verticalVariant(vertical: string | null) {
-  if (!vertical) return 'gray' as const;
+function verticalVariant(
+  vertical: string | null,
+): 'red' | 'orange' | 'purple' | 'amber' | 'pink' | 'emerald' | 'blue' | 'gray' {
+  if (!vertical) return 'gray';
   const map: Record<string, 'red' | 'orange' | 'purple' | 'amber' | 'pink' | 'emerald' | 'blue' | 'gray'> = {
-    housing:        'red',
-    food:           'orange',
-    mental_health:  'purple',
-    transportation: 'amber',
-    maternal_health:'pink',
-    healthcare:     'emerald',
-    benefits:       'blue',
-    utilities:      'emerald',
+    housing:         'red',
+    food:            'orange',
+    mental_health:   'purple',
+    transportation:  'amber',
+    maternal_health: 'pink',
+    healthcare:      'emerald',
+    benefits:        'blue',
+    utilities:       'emerald',
   };
   return map[vertical.toLowerCase()] ?? 'gray';
 }
 
 /**
- * Capitalize and format a vertical slug for display, e.g. "mental_health" → "Mental Health".
+ * Capitalises and formats a vertical slug for display, e.g. "mental_health" → "Mental Health".
  */
 function formatVertical(vertical: string | null): string {
   if (!vertical) return '—';
@@ -167,16 +205,17 @@ function formatVertical(vertical: string | null): string {
 /**
  * Deterministically picks a background colour for an avatar based on initials.
  * Uses a stable hash so the same person always gets the same colour.
+ * Palette matches: emerald-100/rose-100/blue-100/purple-100/amber-100/cyan-100/indigo-100.
  */
 const AVATAR_COLORS: Array<{ bg: string; text: string }> = [
   { bg: colors.emerald100, text: colors.emerald700 },
   { bg: colors.blue100,    text: colors.blue700    },
   { bg: colors.purple100,  text: colors.purple700  },
   { bg: colors.amber100,   text: colors.amber700   },
-  { bg: colors.pink100,    text: colors.pink700    },
+  { bg: colors.rose100,    text: colors.rose700    },
   { bg: colors.cyan100,    text: colors.cyan700    },
   { bg: colors.indigo100,  text: colors.indigo700  },
-  { bg: colors.rose100,    text: colors.rose700    },
+  { bg: colors.pink100,    text: colors.pink700    },
 ];
 
 function avatarColorFor(initials: string): { bg: string; text: string } {
@@ -210,9 +249,9 @@ function AvatarCircle({ initials, size = 36 }: AvatarProps): React.JSX.Element {
 
 const avatarStyles = StyleSheet.create({
   circle: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
+    alignItems:      'center',
+    justifyContent:  'center',
+    flexShrink:      0,
   } as ViewStyle,
   initials: {
     fontWeight: '700',
@@ -229,11 +268,17 @@ interface RowProps {
 
 function MemberTableRow({ item, onPress }: RowProps): React.JSX.Element {
   const overdue = isOverdue(item.lastContactAt);
+  const [hovered, setHovered] = useState(false);
+
+  const risk = riskVariant(item.risk);
 
   return (
     <TouchableOpacity
-      style={rowStyles.row}
+      style={[rowStyles.row, hovered && rowStyles.rowHover]}
       onPress={onPress}
+      // @ts-ignore — web-only pointer events
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       accessible
       accessibilityRole="button"
       accessibilityLabel={`View profile for ${item.displayName}`}
@@ -249,23 +294,29 @@ function MemberTableRow({ item, onPress }: RowProps): React.JSX.Element {
         </View>
       </View>
 
-      {/* Status */}
+      {/* Status — dot indicator + Active/Inactive */}
       <View style={rowStyles.cell}>
-        <Pill variant={item.status === 'active' ? 'emerald' : 'gray'} size="sm">
+        <Pill
+          variant={item.status === 'active' ? 'emerald' : 'gray'}
+          size="sm"
+          withDot
+        >
           {item.status === 'active' ? 'Active' : 'Inactive'}
         </Pill>
       </View>
 
-      {/* Risk — hidden in v1 (always null) */}
+      {/* Risk — hidden when null */}
       <View style={rowStyles.cell}>
-        {item.risk != null && (
-          <Pill variant="amber" size="sm">Unknown</Pill>
+        {risk != null && (
+          <Pill variant={risk} size="sm" withDot>
+            {riskLabel(item.risk)}
+          </Pill>
         )}
       </View>
 
       {/* Engagement */}
       <View style={rowStyles.cell}>
-        <Pill variant={engagementVariant(item.engagement)} size="sm">
+        <Pill variant={engagementVariant(item.engagement, item.status)} size="sm">
           {engagementLabel(item.engagement)}
         </Pill>
       </View>
@@ -310,7 +361,7 @@ function MemberTableRow({ item, onPress }: RowProps): React.JSX.Element {
 
       {/* Chevron */}
       <View style={[rowStyles.cell, rowStyles.chevronCell]}>
-        <ChevronRight size={16} color={colors.textMuted} />
+        <ChevronRight size={16} color="#D1D5DB" />
       </View>
     </TouchableOpacity>
   );
@@ -318,83 +369,88 @@ function MemberTableRow({ item, onPress }: RowProps): React.JSX.Element {
 
 const rowStyles = StyleSheet.create({
   row: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection:   'row',
+    alignItems:      'center',
     borderBottomWidth: 1,
-    borderBottomColor: colors.cardBorder,
-    // @ts-ignore — web-only hover
+    borderBottomColor: '#F3F4F6',
+    // @ts-ignore — web-only
     cursor: 'pointer',
   } as ViewStyle,
 
+  rowHover: {
+    backgroundColor: '#F9FAFB',
+  } as ViewStyle,
+
   cell: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-    flex: 1,
-    flexShrink: 0,
+    paddingHorizontal: 16,
+    paddingVertical:   14,
+    flex:              1,
+    flexShrink:        0,
   } as ViewStyle,
 
   memberCell: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    flex: 2,
+    alignItems:    'center',
+    gap:           12,
+    flex:          2,
   } as ViewStyle,
 
   memberInfo: {
-    gap: 2,
+    gap:      2,
     flexShrink: 1,
   } as ViewStyle,
 
   memberName: {
-    fontSize: 14,
+    fontSize:   14,
     fontWeight: '600',
-    color: colors.textPrimary,
+    color:      '#111827',
   } as TextStyle,
 
   memberMeta: {
-    fontSize: 11,
-    color: colors.textSecondary,
+    fontSize: 12,
+    color:    '#6B7280',
   } as TextStyle,
 
   journeyName: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: colors.textPrimary,
+    fontSize:   14,
+    fontWeight: '500',
+    color:      '#374151',
   } as TextStyle,
 
   journeyMeta: {
-    fontSize: 11,
-    color: colors.textSecondary,
+    fontSize:  12,
+    color:     '#6B7280',
     marginTop: 1,
   } as TextStyle,
 
   noJourney: {
-    fontSize: 13,
-    color: colors.textMuted,
+    fontSize: 14,
+    color:    '#9CA3AF',
   } as TextStyle,
 
   lastContact: {
-    fontSize: 13,
-    color: colors.textPrimary,
+    fontSize: 14,
+    color:    '#374151',
   } as TextStyle,
 
   lastContactDate: {
-    fontSize: 11,
-    color: colors.textSecondary,
+    fontSize:  11,
+    color:     '#6B7280',
     marginTop: 1,
   } as TextStyle,
 
   overdueLabel: {
-    fontSize: 11,
+    fontSize:   11,
     fontWeight: '600',
-    color: colors.red700,
-    marginTop: 1,
+    color:      '#EF4444',
+    marginTop:  1,
   } as TextStyle,
 
   chevronCell: {
-    flex: 0,
-    width: 40,
-    alignItems: 'center',
+    flex:         0,
+    width:        48,
+    alignItems:   'flex-end',
+    paddingRight: 16,
   } as ViewStyle,
 });
 
@@ -428,10 +484,10 @@ function MemberCard({ item, onPress }: MemberCardProps): React.JSX.Element {
         </View>
 
         <View style={cardStyles.pillRow}>
-          <Pill variant={item.status === 'active' ? 'emerald' : 'gray'} size="sm">
+          <Pill variant={item.status === 'active' ? 'emerald' : 'gray'} size="sm" withDot>
             {item.status === 'active' ? 'Active' : 'Inactive'}
           </Pill>
-          <Pill variant={engagementVariant(item.engagement)} size="sm">
+          <Pill variant={engagementVariant(item.engagement, item.status)} size="sm">
             {engagementLabel(item.engagement)}
           </Pill>
           {item.topNeed != null && (
@@ -462,63 +518,124 @@ function MemberCard({ item, onPress }: MemberCardProps): React.JSX.Element {
 
 const cardStyles = StyleSheet.create({
   card: {
-    padding: spacing.lg,
-    gap: spacing.sm,
+    padding:      spacing.lg,
+    gap:          spacing.sm,
     marginBottom: spacing.sm,
   } as ViewStyle,
 
   headerRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
+    alignItems:    'center',
+    gap:           spacing.sm,
   } as ViewStyle,
 
   nameBlock: {
     flex: 1,
-    gap: 2,
+    gap:  2,
   } as ViewStyle,
 
   name: {
-    fontSize: 15,
+    fontSize:   15,
     fontWeight: '600',
-    color: colors.textPrimary,
+    color:      colors.textPrimary,
   } as TextStyle,
 
   meta: {
     fontSize: 12,
-    color: colors.textSecondary,
+    color:    colors.textSecondary,
   } as TextStyle,
 
   pillRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.xs,
-    marginTop: spacing.xs,
+    flexWrap:      'wrap',
+    gap:           spacing.xs,
+    marginTop:     spacing.xs,
   } as ViewStyle,
 
   journeyLine: {
-    fontSize: 12,
-    color: colors.textSecondary,
+    fontSize:  12,
+    color:     colors.textSecondary,
     marginTop: spacing.xs,
   } as TextStyle,
 
   contactRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    marginTop: spacing.xs,
+    alignItems:    'center',
+    gap:           spacing.sm,
+    marginTop:     spacing.xs,
   } as ViewStyle,
 
   contactTime: {
     fontSize: 12,
-    color: colors.textSecondary,
-    flex: 1,
+    color:    colors.textSecondary,
+    flex:     1,
   } as TextStyle,
 
   overdueTag: {
-    fontSize: 11,
+    fontSize:   11,
     fontWeight: '700',
-    color: colors.red700,
+    color:      colors.red700,
+  } as TextStyle,
+});
+
+// ─── Pagination button (web) ──────────────────────────────────────────────────
+
+interface PageButtonProps {
+  label: string;
+  active?: boolean;
+  icon?: 'prev' | 'next';
+}
+
+function PageButton({ label, active = false, icon }: PageButtonProps): React.JSX.Element {
+  return (
+    <View
+      style={[
+        pageStyles.btn,
+        active ? pageStyles.btnActive : pageStyles.btnDefault,
+      ]}
+    >
+      {icon === 'prev' ? (
+        <ChevronLeft size={14} color={active ? '#fff' : '#374151'} />
+      ) : icon === 'next' ? (
+        <ChevronRight size={14} color={active ? '#fff' : '#374151'} />
+      ) : (
+        <Text style={[pageStyles.btnText, active && pageStyles.btnTextActive]}>
+          {label}
+        </Text>
+      )}
+    </View>
+  );
+}
+
+const pageStyles = StyleSheet.create({
+  btn: {
+    minWidth:        32,
+    height:          32,
+    borderRadius:    8,
+    alignItems:      'center',
+    justifyContent:  'center',
+    paddingHorizontal: 10,
+  } as ViewStyle,
+
+  btnDefault: {
+    borderWidth:  1,
+    borderColor:  '#E5E7EB',
+    backgroundColor: '#fff',
+  } as ViewStyle,
+
+  btnActive: {
+    backgroundColor: '#059669', // emerald-600
+  } as ViewStyle,
+
+  btnText: {
+    fontSize:   13,
+    fontWeight: '500',
+    color:      '#374151',
+  } as TextStyle,
+
+  btnTextActive: {
+    color:      '#fff',
+    fontWeight: '600',
   } as TextStyle,
 });
 
@@ -541,6 +658,18 @@ export function CHWMembersScreen(): React.JSX.Element {
     () => members.filter((m) => m.status === 'inactive').length,
     [members],
   );
+  const highRiskCount = useMemo(
+    () => members.filter((m) => m.risk != null && m.risk === 'high').length,
+    [members],
+  );
+  const overdueCount = useMemo(
+    () => members.filter((m) => m.status === 'active' && isOverdue(m.lastContactAt)).length,
+    [members],
+  );
+  const inJourneyCount = useMemo(
+    () => members.filter((m) => m.activeJourney != null).length,
+    [members],
+  );
 
   const lastRefreshedLabel = useMemo(() => {
     if (!dataUpdatedAt) return '';
@@ -554,14 +683,12 @@ export function CHWMembersScreen(): React.JSX.Element {
   const filtered = useMemo(() => {
     let result = members;
 
-    // Apply filter chip.
     switch (activeFilter) {
       case 'active':
         result = result.filter((m) => m.status === 'active');
         break;
       case 'high_risk':
-        // risk is always null in v1; show an empty result rather than all members.
-        result = result.filter((m) => m.risk != null);
+        result = result.filter((m) => m.risk === 'high');
         break;
       case 'overdue':
         result = result.filter((m) => m.status === 'active' && isOverdue(m.lastContactAt));
@@ -576,7 +703,6 @@ export function CHWMembersScreen(): React.JSX.Element {
         break;
     }
 
-    // Apply search query (name or masked ID).
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       result = result.filter(
@@ -599,17 +725,28 @@ export function CHWMembersScreen(): React.JSX.Element {
 
   // ── Navigation ───────────────────────────────────────────────────────────────
   const handleMemberPress = (memberId: string) => {
-    // Navigate to the existing CHWMemberProfileScreen inside SessionsStack.
     (navigation as any).navigate('SessionsStack', {
       screen: 'MemberProfile',
       params: { memberId },
     });
   };
 
+  // ── Count helper for chip labels ─────────────────────────────────────────────
+  const chipCount = (key: FilterKey): number => {
+    switch (key) {
+      case 'all':        return members.length;
+      case 'active':     return activeCount;
+      case 'high_risk':  return highRiskCount;
+      case 'overdue':    return overdueCount;
+      case 'in_journey': return inJourneyCount;
+      case 'inactive':   return inactiveCount;
+    }
+  };
+
   // ── Shared content ───────────────────────────────────────────────────────────
   const content = (
     <>
-      {/* Header */}
+      {/* ── Header row ────────────────────────────────────────────────────── */}
       <View style={styles.headerRow}>
         <View>
           <PageHeader title="My Members" />
@@ -622,11 +759,11 @@ export function CHWMembersScreen(): React.JSX.Element {
         {/* Search + Add Member */}
         <View style={styles.headerActions}>
           <View style={styles.searchWrap}>
-            <Search size={16} color={colors.textMuted} style={styles.searchIcon} />
+            <Search size={16} color="#9CA3AF" style={styles.searchIcon as any} />
             <TextInput
               style={styles.searchInput}
               placeholder="Search by name, ID, phone..."
-              placeholderTextColor={colors.textMuted}
+              placeholderTextColor="#9CA3AF"
               value={searchQuery}
               onChangeText={setSearchQuery}
               accessible
@@ -645,46 +782,42 @@ export function CHWMembersScreen(): React.JSX.Element {
         </View>
       </View>
 
-      {/* Filter chips row */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.filterRow}
-        contentContainerStyle={styles.filterRowContent}
-      >
-        {FILTER_CHIPS.map((chip) => {
-          const count =
-            chip.key === 'all'        ? members.length :
-            chip.key === 'active'     ? activeCount :
-            chip.key === 'high_risk'  ? members.filter((m) => m.risk != null).length :
-            chip.key === 'overdue'    ? members.filter((m) => m.status === 'active' && isOverdue(m.lastContactAt)).length :
-            chip.key === 'in_journey' ? members.filter((m) => m.activeJourney != null).length :
-            inactiveCount;
+      {/* ── Filter chips row ─────────────────────────────────────────────── */}
+      <View style={styles.filterRow}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filterChipsContent}
+        >
+          {FILTER_CHIPS.map((chip) => {
+            const isActive = activeFilter === chip.key;
+            const count = chipCount(chip.key);
+            return (
+              <TouchableOpacity
+                key={chip.key}
+                onPress={() => setActiveFilter(chip.key)}
+                style={[styles.filterChip, isActive && styles.filterChipActive]}
+                accessible
+                accessibilityRole="button"
+                accessibilityState={{ selected: isActive }}
+                accessibilityLabel={`Filter: ${chip.label} (${count})`}
+              >
+                <Text style={[styles.filterChipText, isActive && styles.filterChipTextActive]}>
+                  {chip.label} ({count})
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
 
-          const isActive = activeFilter === chip.key;
-          return (
-            <TouchableOpacity
-              key={chip.key}
-              onPress={() => setActiveFilter(chip.key)}
-              style={[styles.filterChip, isActive && styles.filterChipActive]}
-              accessible
-              accessibilityRole="button"
-              accessibilityState={{ selected: isActive }}
-              accessibilityLabel={`Filter: ${chip.label} (${count})`}
-            >
-              <Text style={[styles.filterChipText, isActive && styles.filterChipTextActive]}>
-                {chip.label} ({count})
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-
+        {/* Sort label — right-aligned, web only looks best as absolute but flex works */}
         <View style={styles.sortLabel}>
+          <Filter size={14} color="#6B7280" />
           <Text style={styles.sortText}>Sort: Last contact ↓</Text>
         </View>
-      </ScrollView>
+      </View>
 
-      {/* Body */}
+      {/* ── Body ─────────────────────────────────────────────────────────── */}
       {isLoading ? (
         <View style={styles.loadingWrap}>
           <ActivityIndicator size="large" color={colors.primary} />
@@ -713,16 +846,27 @@ export function CHWMembersScreen(): React.JSX.Element {
         <Card style={styles.tableCard}>
           {/* Table header */}
           <View style={styles.tableHead}>
-            {(['Member', 'Status', 'Risk', 'Engagement', 'Active Journey', 'Last Contact', 'Top Need', ''] as const).map((col) => (
+            {(
+              [
+                { label: 'Member',         flex: 2 },
+                { label: 'Status',         flex: 1 },
+                { label: 'Risk',           flex: 1 },
+                { label: 'Engagement',     flex: 1 },
+                { label: 'Active Journey', flex: 1 },
+                { label: 'Last Contact',   flex: 1 },
+                { label: 'Top Need',       flex: 1 },
+                { label: '',               flex: 0, width: 48 },
+              ] as const
+            ).map((col) => (
               <View
-                key={col}
+                key={col.label}
                 style={[
                   styles.headCell,
-                  col === 'Member' && styles.memberHeadCell,
-                  col === ''       && styles.chevronHeadCell,
+                  { flex: col.flex },
+                  'width' in col ? { flex: 0, width: col.width } : undefined,
                 ]}
               >
-                <Text style={styles.headText}>{col}</Text>
+                <Text style={styles.headText}>{col.label}</Text>
               </View>
             ))}
           </View>
@@ -749,18 +893,25 @@ export function CHWMembersScreen(): React.JSX.Element {
         </View>
       )}
 
-      {/* Pagination footer (web, static v1) */}
+      {/* ── Pagination footer (web, static v1) ───────────────────────────── */}
       {Platform.OS === 'web' && !isLoading && filtered.length > 0 && (
         <View style={styles.paginationRow}>
           <Text style={styles.paginationInfo}>
             Showing {filtered.length} of {members.length} member{members.length !== 1 ? 's' : ''}
           </Text>
+          <View style={styles.paginationButtons}>
+            <PageButton label="‹" icon="prev" />
+            <PageButton label="1" active />
+            <PageButton label="2" />
+            <PageButton label="3" />
+            <PageButton label="›" icon="next" />
+          </View>
         </View>
       )}
     </>
   );
 
-  // ── Platform shell ────────────────────────────────────────────────────────────
+  // ── Platform shell ─────────────────────────────────────────────────────────
   if (Platform.OS !== 'web') {
     return (
       <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -789,12 +940,12 @@ export function CHWMembersScreen(): React.JSX.Element {
 
 const styles = StyleSheet.create({
   safeArea: {
-    flex: 1,
+    flex:            1,
     backgroundColor: colors.pageBg,
   } as ViewStyle,
 
   nativeScroll: {
-    padding: spacing.lg,
+    padding:  spacing.lg,
     flexGrow: 1,
   } as ViewStyle,
 
@@ -802,154 +953,147 @@ const styles = StyleSheet.create({
 
   headerRow: {
     flexDirection: Platform.OS === 'web' ? 'row' : 'column',
-    alignItems: Platform.OS === 'web' ? 'flex-end' : 'flex-start',
+    alignItems:    Platform.OS === 'web' ? 'flex-end' : 'flex-start',
     justifyContent: 'space-between',
-    marginBottom: spacing.xl,
-    gap: spacing.md,
+    marginBottom:  spacing.xl,
+    gap:           spacing.md,
   } as ViewStyle,
 
   subtitle: {
-    fontSize: 13,
-    color: colors.textSecondary,
+    fontSize: 14,
+    color:    '#6B7280',
     marginTop: 4,
   } as TextStyle,
 
   headerActions: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    flexShrink: 1,
+    alignItems:    'center',
+    gap:           spacing.sm,
+    flexShrink:    1,
   } as ViewStyle,
 
   searchWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderRadius: radius.lg,
-    paddingHorizontal: spacing.sm,
+    flexDirection:   'row',
+    alignItems:      'center',
+    borderWidth:     1,
+    borderColor:     '#E5E7EB',
+    borderRadius:    radius.lg,
+    paddingLeft:     10,
+    paddingRight:    spacing.md,
     backgroundColor: '#fff',
-    height: 38,
-    width: Platform.OS === 'web' ? 280 : undefined,
-    flex: Platform.OS === 'web' ? undefined : 1,
+    height:          38,
+    width:           Platform.OS === 'web' ? 288 : undefined,
+    flex:            Platform.OS === 'web' ? undefined : 1,
+    gap:             6,
   } as ViewStyle,
 
-  searchIcon: {
-    marginRight: spacing.xs,
-  } as ViewStyle,
+  searchIcon: {} as ViewStyle,
 
   searchInput: {
-    flex: 1,
-    fontSize: 13,
-    color: colors.textPrimary,
-    height: '100%',
+    flex:     1,
+    fontSize: 14,
+    color:    colors.textPrimary,
+    height:   '100%',
     // @ts-ignore — outline not in RN types but needed on web
     outlineStyle: 'none',
   } as TextStyle,
 
   addButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    backgroundColor: colors.primary,
-    borderRadius: radius.lg,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    flexShrink: 0,
+    flexDirection:   'row',
+    alignItems:      'center',
+    gap:             spacing.xs,
+    backgroundColor: '#10B981', // emerald-500 (#10B981) per mock
+    borderRadius:    radius.lg,
+    paddingHorizontal: 16,
+    paddingVertical:   8,
+    flexShrink:      0,
   } as ViewStyle,
 
   addButtonText: {
-    fontSize: 13,
+    fontSize:   14,
     fontWeight: '600',
-    color: '#fff',
+    color:      '#fff',
   } as TextStyle,
 
-  // ── Filter chips ─────────────────────────────────────────────────────────────
+  // ── Filter chips row ─────────────────────────────────────────────────────────
 
   filterRow: {
-    marginBottom: spacing.lg,
+    flexDirection:  'row',
+    alignItems:     'center',
+    marginBottom:   spacing.lg,
+    gap:            spacing.sm,
   } as ViewStyle,
 
-  filterRowContent: {
+  filterChipsContent: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    paddingRight: spacing.md,
+    alignItems:    'center',
+    gap:           spacing.sm,
   } as ViewStyle,
 
   filterChip: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    backgroundColor: '#fff',
+    paddingHorizontal: 14,
+    paddingVertical:   7,
+    borderRadius:      10,
+    borderWidth:       1,
+    borderColor:       '#E5E7EB',
+    backgroundColor:   '#fff',
   } as ViewStyle,
 
   filterChipActive: {
-    backgroundColor: '#ecfdf5',
-    borderColor: '#a7f3d0',
+    backgroundColor: '#ECFDF5',
+    borderColor:     '#A7F3D0',
   } as ViewStyle,
 
   filterChipText: {
-    fontSize: 13,
+    fontSize:   13,
     fontWeight: '500',
-    color: colors.textSecondary,
+    color:      '#6B7280',
   } as TextStyle,
 
   filterChipTextActive: {
-    color: '#065f46',
+    color:      '#065F46',
     fontWeight: '600',
   } as TextStyle,
 
   sortLabel: {
-    marginLeft: 'auto',
+    flexShrink:    0,
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
+    alignItems:    'center',
+    gap:           6,
+    marginLeft:    'auto',
   } as ViewStyle,
 
   sortText: {
-    fontSize: 13,
-    color: colors.textSecondary,
+    fontSize: 14,
+    color:    '#6B7280',
   } as TextStyle,
 
   // ── Table (web) ──────────────────────────────────────────────────────────────
 
   tableCard: {
     overflow: 'hidden',
-    padding: 0,
+    padding:  0,
   } as ViewStyle,
 
   tableHead: {
-    flexDirection: 'row',
-    backgroundColor: '#f9fafb',
+    flexDirection:     'row',
+    backgroundColor:   '#F9FAFB',
     borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
+    borderBottomColor: '#F3F4F6',
   } as ViewStyle,
 
   headCell: {
-    flex: 1,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    flexShrink: 0,
-  } as ViewStyle,
-
-  memberHeadCell: {
-    flex: 2,
-  } as ViewStyle,
-
-  chevronHeadCell: {
-    flex: 0,
-    width: 40,
+    paddingHorizontal: 16,
+    paddingVertical:   10,
+    flexShrink:        0,
   } as ViewStyle,
 
   headText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: colors.textSecondary,
+    fontSize:      11,
+    fontWeight:    '600',
+    color:         '#6B7280',
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    letterSpacing: 0.44, // 0.04em at 11px
   } as TextStyle,
 
   // ── Card list (native) ───────────────────────────────────────────────────────
@@ -961,47 +1105,53 @@ const styles = StyleSheet.create({
   // ── States ───────────────────────────────────────────────────────────────────
 
   loadingWrap: {
-    alignItems: 'center',
+    alignItems:     'center',
     justifyContent: 'center',
-    gap: spacing.md,
+    gap:            spacing.md,
     paddingVertical: spacing.xxxl,
   } as ViewStyle,
 
   loadingText: {
     fontSize: 14,
-    color: colors.textSecondary,
+    color:    colors.textSecondary,
   } as TextStyle,
 
   emptyCard: {
-    padding: spacing.xxl,
+    padding:    spacing.xxl,
     alignItems: 'center',
-    gap: spacing.md,
+    gap:        spacing.md,
   } as ViewStyle,
 
   emptyTitle: {
-    fontSize: 16,
+    fontSize:   16,
     fontWeight: '600',
-    color: colors.textPrimary,
+    color:      colors.textPrimary,
   } as TextStyle,
 
   emptyText: {
-    fontSize: 14,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    maxWidth: 360,
+    fontSize:   14,
+    color:      colors.textSecondary,
+    textAlign:  'center',
+    maxWidth:   360,
   } as TextStyle,
 
   // ── Pagination ───────────────────────────────────────────────────────────────
 
   paginationRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: spacing.md,
+    flexDirection:   'row',
+    alignItems:      'center',
+    justifyContent:  'space-between',
+    marginTop:       spacing.md,
   } as ViewStyle,
 
   paginationInfo: {
-    fontSize: 13,
-    color: colors.textSecondary,
+    fontSize: 14,
+    color:    '#6B7280',
   } as TextStyle,
+
+  paginationButtons: {
+    flexDirection: 'row',
+    alignItems:    'center',
+    gap:           4,
+  } as ViewStyle,
 });

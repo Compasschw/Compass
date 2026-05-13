@@ -2,8 +2,11 @@
  * Pill — semantic colour-coded label chip for statuses, verticals, etc.
  *
  * Supports the full set of colour variants defined in the design system tokens
- * (`emerald | red | amber | blue | purple | orange | pink | gray`) and two
- * sizes (`sm` for inline use, `md` for standalone / table use).
+ * and two sizes (`sm` for inline use, `md` for standalone / table use).
+ *
+ * The optional `withDot` prop renders a small filled circle before the label —
+ * used for Status and Risk pills in the Members table (matching members.html).
+ * The dot colour is automatically derived from the variant's dot-colour token.
  */
 
 import React from 'react';
@@ -23,17 +26,21 @@ export type PillVariant =
   | 'emerald'
   | 'red'
   | 'amber'
+  | 'amber-dark'   // amber-100 bg / amber-800 text (Medium risk, Moderately Engaged)
   | 'blue'
   | 'purple'
   | 'orange'
   | 'pink'
-  | 'gray';
+  | 'gray'
+  | 'gray-muted';  // gray-100 bg / gray-600 text (Inactive-Disengaged)
 
 export type PillSize = 'sm' | 'md';
 
 export interface PillProps {
   variant: PillVariant;
   size?: PillSize;
+  /** When true, renders an 8×8 filled dot before the label text. */
+  withDot?: boolean;
   children: React.ReactNode;
 }
 
@@ -42,17 +49,21 @@ export interface PillProps {
 interface PillTokens {
   bg:   string;
   text: string;
+  /** Dot fill colour. Falls back to `text` when not explicitly set. */
+  dot:  string;
 }
 
 const variantTokens: Record<PillVariant, PillTokens> = {
-  emerald: { bg: colors.emerald100, text: colors.emerald700 },
-  red:     { bg: colors.red100,     text: colors.red700     },
-  amber:   { bg: colors.amber100,   text: colors.amber700   },
-  blue:    { bg: colors.blue100,    text: colors.blue700    },
-  purple:  { bg: colors.purple100,  text: colors.purple700  },
-  orange:  { bg: colors.orange100,  text: colors.orange700  },
-  pink:    { bg: colors.pink100,    text: colors.pink700    },
-  gray:    { bg: colors.gray100,    text: colors.gray700    },
+  emerald:    { bg: colors.emerald100, text: colors.emerald700, dot: '#10b981' /* emerald-500 */ },
+  red:        { bg: colors.red100,     text: colors.red700,     dot: '#ef4444' /* red-500    */ },
+  amber:      { bg: colors.amber100,   text: colors.amber700,   dot: '#f59e0b' /* amber-500  */ },
+  'amber-dark':{ bg: colors.amber100,  text: colors.amber800,   dot: '#f59e0b' /* amber-500  */ },
+  blue:       { bg: colors.blue100,    text: colors.blue700,    dot: '#3b82f6' /* blue-500   */ },
+  purple:     { bg: colors.purple100,  text: colors.purple700,  dot: '#8b5cf6' /* purple-500 */ },
+  orange:     { bg: colors.orange100,  text: colors.orange700,  dot: '#f97316' /* orange-500 */ },
+  pink:       { bg: colors.pink100,    text: colors.pink700,    dot: '#ec4899' /* pink-500   */ },
+  gray:       { bg: colors.gray100,    text: colors.gray700,    dot: '#9ca3af' /* gray-400   */ },
+  'gray-muted':{ bg: colors.gray100,   text: colors.gray600,    dot: '#9ca3af' /* gray-400   */ },
 };
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -61,16 +72,18 @@ const variantTokens: Record<PillVariant, PillTokens> = {
  * Renders a pill chip with colour-coded background and text.
  *
  * ```tsx
- * <Pill variant="emerald">Active</Pill>
- * <Pill variant="red" size="sm">Overdue</Pill>
+ * <Pill variant="emerald" withDot>Active</Pill>
+ * <Pill variant="amber-dark" size="sm">Moderately Engaged</Pill>
+ * <Pill variant="red" size="sm">Housing</Pill>
  * ```
  */
 export function Pill({
   variant,
   size = 'md',
+  withDot = false,
   children,
 }: PillProps): React.JSX.Element {
-  const { bg, text } = variantTokens[variant];
+  const { bg, text, dot } = variantTokens[variant];
 
   return (
     <View
@@ -80,6 +93,9 @@ export function Pill({
         { backgroundColor: bg },
       ]}
     >
+      {withDot && (
+        <View style={[styles.dot, { backgroundColor: dot }]} />
+      )}
       <Text style={[styles.label, { color: text }]}>
         {children}
       </Text>
@@ -91,8 +107,11 @@ export function Pill({
 
 const styles = StyleSheet.create({
   base: {
-    alignSelf:    'flex-start',
-    borderRadius: radius.pill,
+    alignSelf:      'flex-start',
+    borderRadius:   radius.pill,
+    flexDirection:  'row',
+    alignItems:     'center',
+    gap:            6,
   } as ViewStyle,
 
   sizeSm: {
@@ -103,6 +122,13 @@ const styles = StyleSheet.create({
   sizeMd: {
     paddingHorizontal: 10,
     paddingVertical:   3,
+  } as ViewStyle,
+
+  dot: {
+    width:        8,
+    height:       8,
+    borderRadius: 999,
+    flexShrink:   0,
   } as ViewStyle,
 
   label: {

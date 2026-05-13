@@ -37,6 +37,7 @@ export const colors = {
 
   amber100: '#fef3c7',
   amber700: '#b45309',
+  amber800: '#92400e',
 
   blue100: '#dbeafe',
   blue700: '#1d4ed8',
@@ -51,6 +52,7 @@ export const colors = {
   pink700: '#be185d',
 
   gray100: '#f3f4f6',
+  gray600: '#4b5563',
   gray700: '#374151',
 
   slate100: '#f1f5f9',
