@@ -717,9 +717,10 @@ const styles = StyleSheet.create({
   } as ViewStyle,
 
   filterChip: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-    borderRadius: radius.pill,
+    // mockup: filter-btn — px-3.5 py-1.5 rounded-10 (14px h / 7px v / r-10)
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: colors.cardBorder,
     backgroundColor: colors.cardBg,
@@ -731,7 +732,8 @@ const styles = StyleSheet.create({
   } as ViewStyle,
 
   filterChipText: {
-    fontSize: 12,
+    // mockup: font-size 13px / font-weight 500
+    fontSize: 13,
     fontWeight: '500',
     color: colors.textSecondary,
   } as TextStyle,
@@ -773,11 +775,12 @@ const styles = StyleSheet.create({
   } as ViewStyle,
 
   sectionHead: {
-    fontSize: 12,
+    // mockup: text-sm font-semibold text-gray-700 uppercase tracking-wide = 14px/600
+    fontSize: 14,
     fontWeight: '600',
-    color: colors.textSecondary,
+    color: '#374151',
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    letterSpacing: 0.8,
     marginBottom: spacing.xs,
     marginTop: spacing.sm,
   } as TextStyle,

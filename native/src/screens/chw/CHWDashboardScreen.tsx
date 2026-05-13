@@ -564,7 +564,6 @@ const styles = StyleSheet.create({
   } as ViewStyle,
   pageWrap: {
     width: '100%',
-    maxWidth: 960,
     alignSelf: 'center',
     padding: 20,
     paddingBottom: 40,
@@ -647,7 +646,7 @@ const styles = StyleSheet.create({
     padding: 20,
   } as ViewStyle,
 
-  // ── Section headings — mockup: font-semibold text-gray-900 mb-4
+  // ── Section headings — mockup: font-semibold text-gray-900 mb-4 (16px/600)
   sectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -655,9 +654,9 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   } as ViewStyle,
   sectionTitle: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 14,
-    lineHeight: 20,
+    fontFamily: 'DMSans_600SemiBold',
+    fontSize: 16,
+    lineHeight: 24,
     color: '#111827',
     marginBottom: 16,
   } as TextStyle,
@@ -675,8 +674,8 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   } as ViewStyle,
   cardTitle: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 14,
+    fontFamily: 'DMSans_600SemiBold',
+    fontSize: 16,
     color: '#111827',
   } as TextStyle,
 
@@ -776,8 +775,9 @@ const styles = StyleSheet.create({
     gap: 4,
   } as ViewStyle,
   snapshotValue: {
+    // mockup: text-2xl font-bold = 24px/700
     fontFamily: 'DMSans_700Bold',
-    fontSize: 22,
+    fontSize: 24,
     color: '#111827',
     marginTop: 4,
   } as TextStyle,

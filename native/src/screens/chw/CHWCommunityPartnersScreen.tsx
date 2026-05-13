@@ -700,9 +700,9 @@ const styles = StyleSheet.create({
   } as ViewStyle,
 
   filterChip: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-    borderRadius: radius.pill,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: colors.cardBorder,
     backgroundColor: colors.cardBg,
@@ -714,7 +714,7 @@ const styles = StyleSheet.create({
   } as ViewStyle,
 
   filterChipText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '500',
     color: colors.textSecondary,
   } as unknown as TextStyle,

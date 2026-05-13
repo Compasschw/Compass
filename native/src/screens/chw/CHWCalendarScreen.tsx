@@ -668,16 +668,14 @@ function CalendarRightRail({
 
 const railStyles = StyleSheet.create({
   card: {
-    padding: 16,
+    padding: 20,
     marginBottom: 16,
     gap: 8,
   },
   railSectionTitle: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 11,
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
-    color: '#6B7A6B',
+    fontSize: 14,
+    color: '#111827',
     marginBottom: 4,
   },
   railEmpty: {

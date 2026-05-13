@@ -792,10 +792,10 @@ const styles = StyleSheet.create({
   },
   pageWrap: {
     width: '100%',
-    maxWidth: 960,
+    maxWidth: 1100,
     alignSelf: 'center',
-    padding: 20,
-    paddingBottom: 40,
+    padding: 32,
+    paddingBottom: 48,
   },
 
   // ── 4-tile stat grid ────────────────────────────────────────────────────────
@@ -919,7 +919,7 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   sectionTitle: {
-    fontFamily: 'DMSans_700Bold',
+    fontFamily: 'DMSans_600SemiBold',
     fontSize: 16,
     lineHeight: 22,
     color: '#1E3320',
@@ -1069,13 +1069,13 @@ const styles = StyleSheet.create({
   },
   payoutMemberName: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 16,
-    lineHeight: 24,
+    fontSize: 14,
+    lineHeight: 20,
     color: '#1E3320',
   },
   payoutMeta: {
     fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 14,
+    fontSize: 12,
     color: '#6B7A6B',
   },
   payoutRight: {
@@ -1085,8 +1085,8 @@ const styles = StyleSheet.create({
   },
   payoutAmount: {
     fontFamily: 'DMSans_700Bold',
-    fontSize: 16,
-    lineHeight: 22,
+    fontSize: 14,
+    lineHeight: 20,
     color: '#1E3320',
   },
   badge: {
