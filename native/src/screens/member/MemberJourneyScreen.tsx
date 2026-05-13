@@ -130,11 +130,11 @@ function StepNode({ step, isSelected, onPress }: StepNodeProps): React.JSX.Eleme
     >
       <View style={[sn.circle, { borderColor: color, backgroundColor: isCompleted ? color : 'transparent' }]}>
         {isCompleted ? (
-          <CheckCircle2 size={14} color="#FFFFFF" />
+          <CheckCircle2 size={22} color="#FFFFFF" />
         ) : step.status === 'in_progress' ? (
-          <Clock size={14} color={color} />
+          <Clock size={22} color={color} />
         ) : (
-          <Circle size={14} color={color} />
+          <Circle size={22} color={color} />
         )}
       </View>
       <Text style={[sn.label, { color }]} numberOfLines={2}>{step.stepName}</Text>
@@ -144,7 +144,8 @@ function StepNode({ step, isSelected, onPress }: StepNodeProps): React.JSX.Eleme
 
 const sn = StyleSheet.create({
   node: {
-    width: 88,
+    // w-32 = 128px from mockup
+    width: 128,
     alignItems: 'center',
     gap: 6,
     paddingVertical: 8,
@@ -154,18 +155,19 @@ const sn = StyleSheet.create({
     backgroundColor: `${tokens.primary}10`,
   },
   circle: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    // step-circle: 56×56 from mockup
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     borderWidth: 2,
     alignItems: 'center',
     justifyContent: 'center',
   },
   label: {
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: '600',
     textAlign: 'center',
-    lineHeight: 14,
+    lineHeight: 16,
   } as TextStyle,
 });
 
@@ -585,7 +587,10 @@ const styles = StyleSheet.create({
   scroll: { flex: 1 },
   scrollContent: { flexGrow: 1 },
   pageWrap: {
-    padding: 24,
+    // p-8 = 32px from mockup
+    paddingHorizontal: 32,
+    paddingTop: 24,
+    paddingBottom: 32,
     maxWidth: 1100,
     width: '100%',
     alignSelf: 'center',
@@ -639,15 +644,20 @@ const styles = StyleSheet.create({
   } as TextStyle,
   roadmapScroll: {
     flexDirection: 'row',
-    alignItems: 'center',
-    paddingBottom: 4,
+    // keep top-aligned so the connector line aligns with circle centers
+    alignItems: 'flex-start',
+    paddingBottom: 8,
+    paddingTop: 4,
   } as ViewStyle,
   connectorLine: {
-    width: 24,
-    height: 2,
+    // flex: 1 fills the space between nodes, matching mock's step-line flex:1
+    flex: 1,
+    height: 3,
     backgroundColor: tokens.cardBorder,
     alignSelf: 'flex-start',
-    marginTop: 17,
+    // center vertically in the 56px circle: 56/2 - 3/2 ≈ 26px from top of node
+    marginTop: 26,
+    minWidth: 16,
   } as ViewStyle,
   railCard: {
     padding: 16,
