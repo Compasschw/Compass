@@ -187,10 +187,25 @@ function buildLinkingConfig(): LinkingOptions<RootStackParamList> {
             SessionsStack: {
               path: 'sessions',
               screens: {
-                Sessions: '',                   // /chw/sessions
+                // Messages (3-pane inbox) is the web root of this stack
+                // (CHWTabNavigator wires it that way on web; native still
+                // shows the CHWSessionsScreen list at the same path slot).
+                // The sidebar "Messages" item navigates to SessionsStack →
+                // first screen, so URL-based nav must agree: empty path
+                // resolves to Messages, not the legacy session-detail list.
+                Messages: '',                       // /chw/sessions
+                Sessions: 'list',                   // /chw/sessions/list (legacy session-detail list)
                 SessionReview: 'review/:sessionId', // /chw/sessions/review/abc123
+                MemberProfile: 'member/:memberId',  // /chw/sessions/member/abc123 (CHW-facing member profile)
               },
             },
+            CHWMembers: 'members',                  // /chw/members  (new roster screen)
+            CHWJourneys: 'journeys',                // /chw/journeys
+            CHWResources: 'resources',              // /chw/resources
+            CHWDocuments: 'documents',              // /chw/documents
+            CHWReports: 'reports',                  // /chw/reports
+            CHWCommunityPartners: 'partners',       // /chw/partners
+            Map: 'map',                             // /chw/map
             Calendar: 'calendar',               // /chw/calendar
             EarningsStack: {
               path: 'earnings',
@@ -211,14 +226,27 @@ function buildLinkingConfig(): LinkingOptions<RootStackParamList> {
             Home: {
               screens: {
                 HomeMain: '',                   // /member
-                Rewards: 'rewards',             // /member/rewards
+                Rewards: 'rewards',             // /member (legacy nested; MemberRewards below is the canonical sidebar destination)
               },
             },
-            FindCHW: 'find',                    // /member/find
-            Sessions: 'sessions',               // /member/sessions
-            Calendar: 'calendar',               // /member/calendar
-            Roadmap: 'roadmap',                 // /member/roadmap
-            Profile: 'profile',                 // /member/profile
+            // FindCHW now mounts MyCHWScreen as the first screen (assigned-CHW
+            // view) — keep `find` URL for parity with the sidebar item label.
+            FindCHW: {
+              path: 'my-chw',
+              screens: {
+                FindMain: '',                   // /member/my-chw
+                CHWProfile: 'profile/:chwId',   // /member/my-chw/profile/abc123
+              },
+            },
+            Sessions:        'messages',        // /member/messages (single-thread w/ assigned CHW on web)
+            MemberJourney:   'journey',         // /member/journey
+            Calendar:        'appointments',    // /member/appointments
+            MemberResources: 'resources',       // /member/resources
+            MemberRewards:   'rewards',         // /member/rewards
+            MemberDocuments: 'documents',       // /member/documents
+            Roadmap:         'roadmap',         // /member/roadmap
+            Profile:         'profile',         // /member/profile
+            MemberSettings:  'settings',        // /member/settings
           },
         },
       },
