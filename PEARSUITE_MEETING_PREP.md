@@ -4,9 +4,11 @@ Goal: leave the call with a single billable claim accepted into the Pear pipelin
 
 ## TL;DR
 
-Everything on our side is wired. We're blocked on **two** things from Pear:
+Everything on our side is wired. BAA is signed (confirmed 2026-05-12), so we're clear to send real PHI through their API. We're blocked on **one** thing from Pear:
+
 1. **Jemal's userId in Pear** — the rep wouldn't expose it to us; their tech team must hand it over.
-2. **Confirmation of the activity-template wiring** — we built it from the docs, but want them to validate the payload before we send PHI.
+
+We also want them to validate our `complete_activity` payload shape before the first claim, but that's a question we ask live, not a blocker.
 
 After the call, we run **one** curl against `/api/v1/admin/pear-suite/demo-claim`, see the claim land in their dashboard, and we're done.
 
@@ -90,7 +92,7 @@ These are the things only they can answer or hand over.
 
 ### Hard blockers
 1. **Jemal's userId.** They wouldn't show it in the rep dashboard. We need it pasted into the SQL above.
-2. **BAA confirmation.** Memory says BAA signing status was unconfirmed last we checked. Before we send a real (synthetic) member name + DOB + medi_cal_id + DX codes through their API, we need explicit confirmation the BAA is signed and PHI is protected end-to-end.
+2. ~~BAA confirmation~~ — **signed 2026-05-12**, no longer blocking. Safe to send real PHI through `https://api.pearsuite.com`.
 
 ### API behavior questions
 3. **Activity template payload validation.** We built `complete_activity` to send `billingDetails` with `procedure`, `modifiers`, `placeOfService`, `units`, and a `diagnosisPointers` array referring to a top-level `diagnosisCodes` list. Confirm this is the shape they expect — or give us the canonical example payload.
@@ -156,7 +158,7 @@ Whether or not the demo lands cleanly, the next steps are:
 - [ ] If they don't: schedule a poller job for claims in `submitted` status, transition them when status flips
 - [ ] Wire the in-app "Submit claim" button on `CHWSessionsScreen` to fire the same orchestrator (currently only the admin endpoint can fire it)
 - [ ] Add a Pear status badge to `CHWEarningsScreen` per claim (already partly there — uses session/claim data)
-- [ ] Confirm BAA in writing, store the PDF in `docs/`, flip `pear_suite_baa_confirmed=true` in `app/config.py` and prod `.env`
+- [x] BAA signed (2026-05-12). Store the countersigned PDF in `docs/baa/pearsuite_baa_2026.pdf` for audit. No env-gate to flip — Pear isn't behind a `*_baa_confirmed` startup gate the way Vonage / AssemblyAI / Anthropic are. Worth adding one for symmetry next time we touch the config.
 
 ---
 
