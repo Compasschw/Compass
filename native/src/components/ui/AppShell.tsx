@@ -115,10 +115,11 @@ export function AppShell({
       />
 
       {/* Main content column. Either a vertical scroll wrapper (default —
-       *  good for static screens) or a passthrough View (for screens whose
-       *  internal layout owns scrolling, e.g. FlatList-based or 3-pane). */}
+       *  good for static screens) or an unpadded passthrough View (for
+       *  screens whose internal layout owns scrolling AND padding, e.g.
+       *  the 3-pane Messages inbox or any FlatList-based roster). */}
       {disableMainScroll ? (
-        <View style={[styles.main, styles.mainContent]}>{children}</View>
+        <View style={[styles.main, styles.mainNoPad]}>{children}</View>
       ) : (
         <ScrollView
           style={styles.main}
@@ -150,5 +151,13 @@ const styles = StyleSheet.create({
   mainContent: {
     padding:  spacing.xxxl,
     flexGrow: 1,
+  } as ViewStyle,
+
+  // Used when disableMainScroll=true. Edge-to-edge — the screen's own
+  // internal layout (e.g. 3-pane, FlatList header) is responsible for
+  // any padding it wants.
+  mainNoPad: {
+    flexGrow: 1,
+    minHeight: '100vh' as unknown as number,
   } as ViewStyle,
 });
