@@ -57,6 +57,7 @@ import {
   Car,
   ArrowLeft,
   AlertCircle,
+  GripVertical,
 } from 'lucide-react-native';
 import { OpenQuestionsDrawer } from '../../components/chw/OpenQuestionsDrawer';
 
@@ -77,6 +78,12 @@ import { ErrorState } from '../../components/shared/ErrorState';
 
 const BP_HIDE_RAIL  = 1280; // right rail hidden below this
 const BP_HIDE_LIST  = 900;  // thread list hidden below this (mobile-web)
+
+// ─── Utils ────────────────────────────────────────────────────────────────────
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
 
 // ─── Quick-reply templates (presentation only) ────────────────────────────────
 
@@ -585,12 +592,87 @@ function QuickActionBtn({ icon, label, onPress }: QuickActionBtnProps): React.JS
   );
 }
 
+// ─── Pane resize handle (web-only drag) ──────────────────────────────────────
+
+interface ResizeHandleProps {
+  /**
+   * Called on mousedown with the starting clientX. Parent attaches the
+   * mousemove / mouseup listeners and computes the new pane width.
+   */
+  onDragStart: (startX: number) => void;
+  isDragging: boolean;
+}
+
+/**
+ * Vertical 6-px column between two panes. On web, mouse-down begins a drag;
+ * the parent screen owns the actual resize math + global event listeners so
+ * the handle stays a dumb visual element. On native this just renders as
+ * the same chrome (drag is web-only because there's no mouse).
+ */
+function ResizeHandle({ onDragStart, isDragging }: ResizeHandleProps): React.JSX.Element {
+  const [hovered, setHovered] = useState(false);
+  const active = hovered || isDragging;
+
+  // RN-Web passes unknown style props through to the underlying div, so
+  // `cursor` is honoured even though it's not in the RN style typings.
+  const webCursorStyle =
+    Platform.OS === 'web'
+      ? ({ cursor: 'col-resize' } as unknown as ViewStyle)
+      : undefined;
+
+  return (
+    <View
+      // Web mouse events flow through View → div on RN-Web. The cast
+      // bypasses the RN type system, which doesn't know about onMouseDown
+      // even though the runtime accepts it.
+      {...(Platform.OS === 'web'
+        ? {
+            onMouseDown: (e: { clientX: number; preventDefault: () => void }) => {
+              e.preventDefault();
+              onDragStart(e.clientX);
+            },
+            onMouseEnter: () => setHovered(true),
+            onMouseLeave: () => setHovered(false),
+          }
+        : {})}
+      style={[
+        styles.resizeHandle,
+        active && styles.resizeHandleActive,
+        webCursorStyle,
+      ]}
+      accessibilityRole="button"
+      accessibilityLabel="Drag to resize pane"
+    >
+      <View style={styles.resizeHandleGrip}>
+        <GripVertical
+          size={14}
+          color={active ? '#374151' : '#9CA3AF'}
+        />
+      </View>
+    </View>
+  );
+}
+
+// ─── Pane width constraints ──────────────────────────────────────────────────
+
+const THREAD_LIST_DEFAULT = 320;
+const THREAD_LIST_MIN     = 240;
+const THREAD_LIST_MAX     = 480;
+
+const CONTEXT_RAIL_DEFAULT = 288;
+const CONTEXT_RAIL_MIN     = 240;
+const CONTEXT_RAIL_MAX     = 420;
+
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 /**
  * CHWMessagesScreen — 3-pane messaging inbox.
  * Rendered as the root of the SessionsStack on web; the navigator continues to
  * expose CHWSessionsScreen for individual session detail flows.
+ *
+ * Pane resizing (web only): the thread list and context rail can be dragged
+ * via the GripVertical handle on each border. Widths are clamped to the
+ * MIN / MAX constants above. The conversation pane fills whatever's left.
  */
 export function CHWMessagesScreen(): React.JSX.Element {
   const { userName } = useAuth();
@@ -604,6 +686,66 @@ export function CHWMessagesScreen(): React.JSX.Element {
   const [showThreadList, setShowThreadList] = useState(true);
   // Open Questions drawer — only shown when a member thread is active
   const [questionsDrawerOpen, setQuestionsDrawerOpen] = useState(false);
+
+  // ── Pane widths (web-only resize) ─────────────────────────────────────────
+  const [threadListWidth, setThreadListWidth] = useState(THREAD_LIST_DEFAULT);
+  const [contextRailWidth, setContextRailWidth] = useState(CONTEXT_RAIL_DEFAULT);
+  // Which handle is being dragged. Drives global mousemove/mouseup wiring.
+  const [draggingHandle, setDraggingHandle] = useState<'list' | 'rail' | null>(null);
+  // The clientX where drag began + the pane width at that moment. Closed-over
+  // by the mousemove handler so we apply absolute deltas (avoids drift from
+  // accumulating per-frame deltas).
+  const dragStartXRef = useRef(0);
+  const dragStartWidthRef = useRef(0);
+
+  // Attach global pointer listeners only while a drag is active. Detach on
+  // mouseup so we don't keep a hot mousemove handler running idle.
+  useEffect(() => {
+    if (draggingHandle === null || Platform.OS !== 'web') return;
+
+    const doc = (globalThis as { document?: Document }).document;
+    if (doc === undefined) return;
+
+    const handleMove = (e: MouseEvent): void => {
+      const delta = e.clientX - dragStartXRef.current;
+      if (draggingHandle === 'list') {
+        const next = clamp(
+          dragStartWidthRef.current + delta,
+          THREAD_LIST_MIN,
+          THREAD_LIST_MAX,
+        );
+        setThreadListWidth(next);
+      } else {
+        // Rail handle: dragging right shrinks the rail, dragging left grows it.
+        const next = clamp(
+          dragStartWidthRef.current - delta,
+          CONTEXT_RAIL_MIN,
+          CONTEXT_RAIL_MAX,
+        );
+        setContextRailWidth(next);
+      }
+    };
+    const handleUp = (): void => setDraggingHandle(null);
+
+    doc.addEventListener('mousemove', handleMove);
+    doc.addEventListener('mouseup', handleUp);
+    return () => {
+      doc.removeEventListener('mousemove', handleMove);
+      doc.removeEventListener('mouseup', handleUp);
+    };
+  }, [draggingHandle]);
+
+  const handleListDragStart = useCallback((startX: number) => {
+    dragStartXRef.current = startX;
+    dragStartWidthRef.current = threadListWidth;
+    setDraggingHandle('list');
+  }, [threadListWidth]);
+
+  const handleRailDragStart = useCallback((startX: number) => {
+    dragStartXRef.current = startX;
+    dragStartWidthRef.current = contextRailWidth;
+    setDraggingHandle('rail');
+  }, [contextRailWidth]);
 
   const hideRail = width < BP_HIDE_RAIL;
   const hideList = width < BP_HIDE_LIST;
@@ -690,7 +832,11 @@ export function CHWMessagesScreen(): React.JSX.Element {
       <View style={styles.root}>
         {/* Thread list */}
         {shouldShowList ? (
-          <View style={styles.threadList} accessibilityRole="navigation" accessibilityLabel="Message threads">
+          <View
+            style={[styles.threadList, { width: threadListWidth }]}
+            accessibilityRole="navigation"
+            accessibilityLabel="Message threads"
+          >
             {/* Header */}
             <View style={styles.threadListHeader}>
               <Text style={styles.threadListTitle}>Messages</Text>
@@ -749,26 +895,47 @@ export function CHWMessagesScreen(): React.JSX.Element {
           </View>
         ) : null}
 
+        {/* Resize handle — between thread list and conversation pane.
+         *  Web only (no mouse on native). Hidden when the list isn't visible. */}
+        {shouldShowList && shouldShowConv && Platform.OS === 'web' ? (
+          <ResizeHandle
+            onDragStart={handleListDragStart}
+            isDragging={draggingHandle === 'list'}
+          />
+        ) : null}
+
         {/* Conversation pane */}
         {shouldShowConv && selectedSession ? (
-          <ConversationPane
-            key={selectedSession.id}
-            session={selectedSession}
-            onBack={handleBack}
-            showBackButton={hideList}
-          />
+          <View style={styles.convPaneWrap}>
+            <ConversationPane
+              key={selectedSession.id}
+              session={selectedSession}
+              onBack={handleBack}
+              showBackButton={hideList}
+            />
+          </View>
         ) : shouldShowConv ? (
           <View style={styles.noSelectionPlaceholder}>
             <Text style={styles.noSelectionText}>Select a thread to start messaging</Text>
           </View>
         ) : null}
 
+        {/* Resize handle — between conversation pane and context rail. */}
+        {!hideRail && selectedSession && Platform.OS === 'web' ? (
+          <ResizeHandle
+            onDragStart={handleRailDragStart}
+            isDragging={draggingHandle === 'rail'}
+          />
+        ) : null}
+
         {/* Right context rail — hidden below BP_HIDE_RAIL */}
         {!hideRail && selectedSession ? (
-          <ContextRail
-            session={selectedSession}
-            onOpenSuggestedQuestions={() => setQuestionsDrawerOpen(true)}
-          />
+          <View style={[styles.contextRailWrap, { width: contextRailWidth }]}>
+            <ContextRail
+              session={selectedSession}
+              onOpenSuggestedQuestions={() => setQuestionsDrawerOpen(true)}
+            />
+          </View>
         ) : null}
       </View>
 
@@ -813,11 +980,9 @@ const styles = StyleSheet.create({
     flex: 1,
   } as ViewStyle,
 
-  // Thread list
+  // Thread list — width is set inline from threadListWidth state.
   threadList: {
-    width: 320,
-    borderRightWidth: 1,
-    borderRightColor: '#E5E7EB',
+    borderRightWidth: 0,
     backgroundColor: '#fff',
     flexShrink: 0,
   } as ViewStyle,
@@ -1196,13 +1361,44 @@ const styles = StyleSheet.create({
     color: '#9CA3AF',
   } as TextStyle,
 
-  // Context rail
-  contextRailOuter: {
-    width: 288,
-    borderLeftWidth: 1,
-    borderLeftColor: '#E5E7EB',
+  // Context rail wrap — width is set inline from contextRailWidth state.
+  contextRailWrap: {
+    borderLeftWidth: 0,
     backgroundColor: '#fff',
     flexShrink: 0,
+  } as ViewStyle,
+  // Inner ScrollView still uses the same outer/inner split.
+  contextRailOuter: {
+    flex: 1,
+    backgroundColor: '#fff',
+  } as ViewStyle,
+
+  // Conversation pane wrap — flex:1 so it fills the space between the two
+  // resizable panes regardless of their widths.
+  convPaneWrap: {
+    flex: 1,
+    minWidth: 0,
+  } as ViewStyle,
+
+  // ── Resize handles between panes ──
+  resizeHandle: {
+    width: 6,
+    backgroundColor: '#F3F4F6',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+    // No transition on RN, but the hover state changes color via active flag.
+  } as ViewStyle,
+  resizeHandleActive: {
+    backgroundColor: '#D1D5DB',
+  } as ViewStyle,
+  resizeHandleGrip: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 32,
+    width: 14,
+    borderRadius: 4,
+    // Slight inset so the icon sits clearly on the bar
   } as ViewStyle,
   contextRail: {
     padding: 20,
