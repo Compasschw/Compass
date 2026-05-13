@@ -201,26 +201,29 @@ function ResourceCard({ resource, highlighted = false }: ResourceCardProps): Rea
 
 const rc = StyleSheet.create({
   card: {
-    padding: 16,
-    gap: 10,
+    // p-5 = 20px from mockup
+    padding: 20,
+    gap: 12,
     marginBottom: 12,
   } as ViewStyle,
   cardHighlighted: {
-    backgroundColor: tokens.primary,
-    borderColor: tokens.primary,
+    // recommended cards: border-2 border-emerald-200 (not inverted color)
+    borderWidth: 2,
+    borderColor: '#A7F3D0',
+    backgroundColor: '#FFFFFF',
   } as ViewStyle,
   recommendedBadge: {
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
+    backgroundColor: '#D1FAE5',
+    paddingHorizontal: 10,
+    paddingVertical: 3,
     borderRadius: 999,
     alignSelf: 'flex-start',
   } as ViewStyle,
   recommendedText: {
-    fontSize: 9,
+    fontSize: 10,
     fontWeight: '700',
-    color: '#FFFFFF',
-    letterSpacing: 0.8,
+    color: '#065F46',
+    letterSpacing: 0.5,
   } as TextStyle,
   body: {
     flexDirection: 'row',
@@ -228,30 +231,31 @@ const rc = StyleSheet.create({
     gap: 12,
   } as ViewStyle,
   iconCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
+    // w-12 h-12 = 48px from mockup
+    width: 48,
+    height: 48,
+    borderRadius: 12,
     backgroundColor: `${tokens.primary}12`,
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
   } as ViewStyle,
   title: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '700',
-    color: tokens.textPrimary,
+    color: '#111827',
     lineHeight: 20,
   } as TextStyle,
   titleLight: {
-    color: '#FFFFFF',
+    color: '#111827',
   } as TextStyle,
   desc: {
     fontSize: 13,
-    color: tokens.textSecondary,
+    color: '#6B7280',
     lineHeight: 18,
   } as TextStyle,
   descLight: {
-    color: 'rgba(255,255,255,0.85)',
+    color: '#6B7280',
   } as TextStyle,
   footer: {
     flexDirection: 'row',
@@ -262,14 +266,19 @@ const rc = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
+    // px-2 py-1.5 bg-emerald-600 text-white from mockup
+    backgroundColor: '#059669',
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 8,
   } as ViewStyle,
   linkText: {
     fontSize: 12,
     fontWeight: '600',
-    color: tokens.primary,
+    color: '#FFFFFF',
   } as TextStyle,
   linkTextLight: {
-    color: 'rgba(255,255,255,0.85)',
+    color: '#FFFFFF',
   } as TextStyle,
 });
 
@@ -305,24 +314,27 @@ const fc = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    paddingHorizontal: 12,
+    // filter-btn: padding 7px 14px, borderRadius 10px from mockup
+    paddingHorizontal: 14,
     paddingVertical: 7,
-    borderRadius: 999,
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: tokens.cardBorder,
-    backgroundColor: tokens.cardBg,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#FFFFFF',
   } as ViewStyle,
   chipActive: {
-    backgroundColor: tokens.primary,
-    borderColor: tokens.primary,
+    // filter-btn.active: bg-emerald-50, text-emerald-900, border-emerald-200
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
   } as ViewStyle,
   label: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: tokens.textSecondary,
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#6B7280',
   } as TextStyle,
   labelActive: {
-    color: '#FFFFFF',
+    color: '#065F46',
+    fontWeight: '600',
   } as TextStyle,
 });
 
@@ -448,8 +460,11 @@ const styles = StyleSheet.create({
   scroll: { flex: 1 },
   scrollContent: { flexGrow: 1 },
   pageWrap: {
-    padding: 24,
-    maxWidth: 900,
+    // p-8 = 32px from mockup; 1100px matches full-width layout
+    paddingHorizontal: 32,
+    paddingTop: 24,
+    paddingBottom: 32,
+    maxWidth: 1100,
     width: '100%',
     alignSelf: 'center',
   } as ViewStyle,
