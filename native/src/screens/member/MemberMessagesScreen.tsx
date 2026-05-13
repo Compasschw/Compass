@@ -34,6 +34,9 @@ import {
   TouchableOpacity,
   ScrollView,
   StyleSheet,
+  Platform,
+  Alert,
+  ActivityIndicator,
   type ViewStyle,
   type TextStyle,
 } from 'react-native';
@@ -44,6 +47,8 @@ import {
   Send,
   Lock,
   MessageSquare,
+  CheckCircle,
+  XCircle,
 } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
 
@@ -53,8 +58,13 @@ import {
   useSessions,
   useSessionMessages,
   useSessionSendMessage,
+  useStartCall,
+  usePendingConsents,
+  useApproveConsentRequest,
+  useDenyConsentRequest,
   type SessionData,
   type SessionMessageLocal,
+  type ConsentRequestData,
 } from '../../hooks/useApiQueries';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
@@ -145,6 +155,177 @@ function MessageBubble({ message, isMe }: BubbleProps): React.JSX.Element {
   );
 }
 
+// ─── Inline toast ─────────────────────────────────────────────────────────────
+
+interface MemberInlineToastProps {
+  message: string;
+  isError: boolean;
+}
+
+function MemberInlineToast({ message, isError }: MemberInlineToastProps): React.JSX.Element {
+  return (
+    <View
+      style={[toastStyles.container, isError ? toastStyles.error : toastStyles.success]}
+      accessibilityRole="alert"
+      accessibilityLiveRegion="polite"
+    >
+      <Text style={[toastStyles.text, isError ? toastStyles.errorText : toastStyles.successText]}>
+        {message}
+      </Text>
+    </View>
+  );
+}
+
+const toastStyles = StyleSheet.create({
+  container: {
+    marginHorizontal: 16,
+    marginBottom: 4,
+    marginTop: 4,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  success: {
+    backgroundColor: '#f0fdf4',
+    borderColor: '#bbf7d0',
+  },
+  error: {
+    backgroundColor: '#fef2f2',
+    borderColor: '#fecaca',
+  },
+  text: {
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  successText: { color: '#15803d' },
+  errorText: { color: '#dc2626' },
+});
+
+// ─── Consent request banner ────────────────────────────────────────────────────
+
+interface ConsentBannerProps {
+  chwName: string | null;
+  isPendingApprove: boolean;
+  isPendingDeny: boolean;
+  onAllow: () => void;
+  onDeny: () => void;
+}
+
+/**
+ * Banner shown above the conversation thread when the CHW has requested
+ * permission to record the session for AI notes.
+ *
+ * Mirrors the consent request UI from SessionChat for the member side.
+ * Uses the CHW's first name for personalization; falls back to "Your CHW".
+ */
+function ConsentBanner({
+  chwName,
+  isPendingApprove,
+  isPendingDeny,
+  onAllow,
+  onDeny,
+}: ConsentBannerProps): React.JSX.Element {
+  const chwFirstName = chwName?.split(' ')[0] ?? 'Your CHW';
+  const isLoading = isPendingApprove || isPendingDeny;
+
+  return (
+    <View style={consentBannerStyles.container} accessibilityRole="alert">
+      <Text style={consentBannerStyles.message}>
+        {chwFirstName} has requested permission to record this session for AI notes.
+      </Text>
+      <View style={consentBannerStyles.actions}>
+        <TouchableOpacity
+          style={[consentBannerStyles.allowBtn, isLoading && consentBannerStyles.btnDisabled]}
+          onPress={onAllow}
+          disabled={isLoading}
+          accessibilityRole="button"
+          accessibilityLabel="Allow recording"
+          accessibilityState={{ disabled: isLoading }}
+        >
+          {isPendingApprove ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <CheckCircle size={14} color="#fff" />
+          )}
+          <Text style={consentBannerStyles.allowBtnText}>Allow</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[consentBannerStyles.denyBtn, isLoading && consentBannerStyles.btnDisabled]}
+          onPress={onDeny}
+          disabled={isLoading}
+          accessibilityRole="button"
+          accessibilityLabel="Deny recording"
+          accessibilityState={{ disabled: isLoading }}
+        >
+          {isPendingDeny ? (
+            <ActivityIndicator size="small" color="#374151" />
+          ) : (
+            <XCircle size={14} color="#374151" />
+          )}
+          <Text style={consentBannerStyles.denyBtnText}>Deny</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
+const consentBannerStyles = StyleSheet.create({
+  container: {
+    marginHorizontal: 16,
+    marginTop: 8,
+    marginBottom: 4,
+    padding: 14,
+    borderRadius: 12,
+    backgroundColor: '#fefce8',
+    borderWidth: 1,
+    borderColor: '#fde68a',
+    gap: 10,
+  } as ViewStyle,
+  message: {
+    fontSize: 14,
+    color: '#92400E',
+    lineHeight: 20,
+  } as TextStyle,
+  actions: {
+    flexDirection: 'row',
+    gap: 8,
+  } as ViewStyle,
+  allowBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#059669',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+  } as ViewStyle,
+  allowBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#fff',
+  } as TextStyle,
+  denyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#F3F4F6',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  } as ViewStyle,
+  denyBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#374151',
+  } as TextStyle,
+  btnDisabled: {
+    opacity: 0.6,
+  } as ViewStyle,
+});
+
 // ─── No CHW yet state ─────────────────────────────────────────────────────────
 
 interface NoCHWStateProps {
@@ -187,10 +368,16 @@ export function MemberMessagesScreen(): React.JSX.Element {
 
   const [draftText, setDraftText] = useState('');
   const [localMessages, setLocalMessages] = useState<SessionMessageLocal[]>([]);
+  const [callInitiating, setCallInitiating] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toastIsError, setToastIsError] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
 
   const sessionsQuery = useSessions();
   const sendMessage = useSessionSendMessage();
+  const startCall = useStartCall();
+  const approveConsentRequest = useApproveConsentRequest();
+  const denyConsentRequest = useDenyConsentRequest();
 
   const memberInitials = (userName ?? 'M')
     .split(' ')
@@ -219,6 +406,88 @@ export function MemberMessagesScreen(): React.JSX.Element {
   const sessionId = latestSession?.id ?? '';
 
   const messagesQuery = useSessionMessages(sessionId);
+
+  // ── Poll for pending consent requests (CHW asking for recording permission) ───
+  // Polls every 3s while the session is in_progress, matching SessionChat behavior.
+  const pendingConsentsQuery = usePendingConsents(sessionId, {
+    enabled: latestSession?.status === 'in_progress' && sessionId.length > 0,
+  });
+  const pendingConsent: ConsentRequestData | null =
+    (pendingConsentsQuery.data ?? [])[0] ?? null;
+
+  // ── Toast helper ──────────────────────────────────────────────────────────────
+  const showToast = useCallback((message: string, isError: boolean) => {
+    setToastMessage(message);
+    setToastIsError(isError);
+    const timer = setTimeout(() => setToastMessage(null), 3_500);
+    return () => clearTimeout(timer);
+  }, []);
+
+  // ── Call handler (mirrors SessionChat.handleCall) ─────────────────────────────
+  /**
+   * Initiates a Vonage masked-number call between member and their assigned CHW.
+   * Vonage handles the masked-number routing automatically on the server side.
+   */
+  const handleCall = useCallback(async () => {
+    if (callInitiating || !sessionId) return;
+    const chwFirstName = chwName?.split(' ')[0] ?? 'your CHW';
+
+    const doCall = async (): Promise<void> => {
+      setCallInitiating(true);
+      try {
+        await startCall.mutateAsync(sessionId);
+        showToast('Calling now — both phones will ring.', false);
+      } catch (err) {
+        const detail =
+          err instanceof Error && err.message
+            ? err.message
+            : 'Could not start the call. Try again.';
+        showToast(detail, true);
+      } finally {
+        setCallInitiating(false);
+      }
+    };
+
+    // Web uses window.confirm; native uses Alert.alert
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const ok = window.confirm(`Start a call with ${chwFirstName}?`);
+      if (ok) void doCall();
+    } else {
+      Alert.alert(
+        'Start call?',
+        `Start a masked call with ${chwFirstName}? Both phones will ring.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Call', onPress: () => void doCall() },
+        ],
+      );
+    }
+  }, [callInitiating, sessionId, chwName, startCall, showToast]);
+
+  // ── Consent approval/denial handlers ─────────────────────────────────────────
+  const handleApproveConsent = useCallback(async () => {
+    if (!pendingConsent) return;
+    try {
+      // typedSignature: member's name serves as the HIPAA digital signature
+      await approveConsentRequest.mutateAsync({
+        requestId: pendingConsent.id,
+        typedSignature: userName ?? 'Member',
+      });
+      showToast('Recording approved.', false);
+    } catch {
+      showToast('Could not approve. Please try again.', true);
+    }
+  }, [pendingConsent, approveConsentRequest, userName, showToast]);
+
+  const handleDenyConsent = useCallback(async () => {
+    if (!pendingConsent) return;
+    try {
+      await denyConsentRequest.mutateAsync(pendingConsent.id);
+      showToast('Recording declined.', false);
+    } catch {
+      showToast('Could not submit response. Please try again.', true);
+    }
+  }, [pendingConsent, denyConsentRequest, showToast]);
 
   // Merge server + local optimistic messages
   const mergedMessages = useMemo<SessionMessageLocal[]>(() => {
@@ -323,20 +592,32 @@ export function MemberMessagesScreen(): React.JSX.Element {
             <Text style={styles.headerStatus}>● Active now · Reply within 2h typically</Text>
           </View>
 
+          {/* Phone button — initiates Vonage masked-number call to CHW */}
           <TouchableOpacity
-            style={styles.iconBtn}
+            style={[styles.iconBtn, callInitiating && styles.iconBtnDisabled]}
+            onPress={() => void handleCall()}
+            disabled={callInitiating}
             accessibilityRole="button"
-            accessibilityLabel="Call your CHW"
+            accessibilityLabel={callInitiating ? 'Call initiating…' : 'Call your CHW'}
+            accessibilityState={{ disabled: callInitiating }}
           >
-            <Phone size={20} color="#6B7280" />
+            {callInitiating ? (
+              <ActivityIndicator size="small" color="#6B7280" />
+            ) : (
+              <Phone size={20} color="#6B7280" />
+            )}
           </TouchableOpacity>
+
+          {/* CalendarPlus button — navigate to the member's Calendar tab */}
           <TouchableOpacity
             style={styles.iconBtn}
+            onPress={() => navigation.navigate('Calendar')}
             accessibilityRole="button"
-            accessibilityLabel="Schedule an appointment"
+            accessibilityLabel="Go to appointments"
           >
             <CalendarPlus size={20} color="#6B7280" />
           </TouchableOpacity>
+
           {chwName ? (
             <TouchableOpacity
               style={styles.profileLink}
@@ -348,6 +629,22 @@ export function MemberMessagesScreen(): React.JSX.Element {
             </TouchableOpacity>
           ) : null}
         </View>
+
+        {/* Inline toast — success/error feedback */}
+        {toastMessage !== null ? (
+          <MemberInlineToast message={toastMessage} isError={toastIsError} />
+        ) : null}
+
+        {/* Consent request banner — shown when CHW has requested recording permission */}
+        {pendingConsent !== null ? (
+          <ConsentBanner
+            chwName={chwName}
+            isPendingApprove={approveConsentRequest.isPending}
+            isPendingDeny={denyConsentRequest.isPending}
+            onAllow={() => void handleApproveConsent()}
+            onDeny={() => void handleDenyConsent()}
+          />
+        ) : null}
 
         {/* Messages thread */}
         <ScrollView
@@ -565,6 +862,9 @@ const styles = StyleSheet.create({
   iconBtn: {
     padding: 8,
     borderRadius: 8,
+  } as ViewStyle,
+  iconBtnDisabled: {
+    opacity: 0.5,
   } as ViewStyle,
   profileLink: {
     paddingHorizontal: 12,

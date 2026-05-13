@@ -37,6 +37,8 @@ import {
   ScrollView,
   StyleSheet,
   Platform,
+  Alert,
+  ActivityIndicator,
   useWindowDimensions,
   type ViewStyle,
   type TextStyle,
@@ -58,7 +60,10 @@ import {
   ArrowLeft,
   AlertCircle,
   GripVertical,
+  CheckCircle,
+  Clock,
 } from 'lucide-react-native';
+import { useNavigation } from '@react-navigation/native';
 import { OpenQuestionsDrawer } from '../../components/chw/OpenQuestionsDrawer';
 
 import { AppShell, Card, Pill } from '../../components/ui';
@@ -67,9 +72,14 @@ import {
   useSessions,
   useSessionMessages,
   useSessionSendMessage,
+  useStartCall,
+  useCreateConsentRequest,
+  useConsentRequestStatus,
+  useGenerateAISummary,
   type SessionData,
   type SessionMessageLocal,
   type SessionMessageData,
+  type AISummaryResponse,
 } from '../../hooks/useApiQueries';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
@@ -146,6 +156,78 @@ function groupByDay(messages: SessionMessageLocal[]): Array<{ date: string; mess
     (buckets[key] ??= []).push(msg);
   }
   return Object.entries(buckets).map(([date, msgs]) => ({ date, messages: msgs }));
+}
+
+// ─── Inline toast ─────────────────────────────────────────────────────────────
+
+interface InlineToastProps {
+  message: string;
+  isError: boolean;
+}
+
+/**
+ * Transient feedback strip rendered below the conversation header.
+ * Matches the toast component pattern from SessionChat.tsx.
+ */
+function InlineToast({ message, isError }: InlineToastProps): React.JSX.Element {
+  return (
+    <View
+      style={[toastStyles.container, isError ? toastStyles.error : toastStyles.success]}
+      accessibilityRole="alert"
+      accessibilityLiveRegion="polite"
+    >
+      <Text style={[toastStyles.text, isError ? toastStyles.errorText : toastStyles.successText]}>
+        {message}
+      </Text>
+    </View>
+  );
+}
+
+const toastStyles = StyleSheet.create({
+  container: {
+    marginHorizontal: 16,
+    marginBottom: 4,
+    marginTop: 4,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  success: {
+    backgroundColor: '#f0fdf4',
+    borderColor: '#bbf7d0',
+  },
+  error: {
+    backgroundColor: '#fef2f2',
+    borderColor: '#fecaca',
+  },
+  text: {
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  successText: { color: '#15803d' },
+  errorText: { color: '#dc2626' },
+});
+
+// ─── CalendarPlus button (navigates to Calendar tab) ──────────────────────────
+
+/**
+ * Navigates the CHW to the Calendar tab when pressed.
+ * Extracted as a named component because useNavigation() must be called inside
+ * a component that is a descendant of the NavigationContainer.
+ */
+function CalendarPlusButton(): React.JSX.Element {
+  const navigation = useNavigation<any>(); // eslint-disable-line @typescript-eslint/no-explicit-any
+  return (
+    <TouchableOpacity
+      style={styles.iconBtn}
+      onPress={() => navigation.navigate('Calendar')}
+      accessibilityRole="button"
+      accessibilityLabel="Go to calendar"
+    >
+      <CalendarPlus size={20} color="#6B7280" />
+    </TouchableOpacity>
+  );
 }
 
 // ─── Avatar chip ──────────────────────────────────────────────────────────────
@@ -258,10 +340,64 @@ function ConversationPane({
 }: ConversationPaneProps): React.JSX.Element {
   const [draftText, setDraftText] = useState('');
   const [localMessages, setLocalMessages] = useState<SessionMessageLocal[]>([]);
+  const [callInitiating, setCallInitiating] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toastIsError, setToastIsError] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
 
   const messagesQuery = useSessionMessages(session.id);
   const sendMessage = useSessionSendMessage();
+  const startCall = useStartCall();
+
+  // ── Toast helper ──────────────────────────────────────────────────────────────
+  const showToast = useCallback((message: string, isError: boolean) => {
+    setToastMessage(message);
+    setToastIsError(isError);
+    const timer = setTimeout(() => setToastMessage(null), 3_500);
+    return () => clearTimeout(timer);
+  }, []);
+
+  // ── Call handler (mirrors SessionChat.handleCall) ─────────────────────────────
+  /**
+   * Initiates a Vonage masked-number call between CHW and member.
+   * Shows a confirmation alert first, then optimistically disables the button
+   * while the POST is in flight. On success, both phones ring via Vonage.
+   */
+  const handleCall = useCallback(async () => {
+    if (callInitiating) return;
+    const memberName = session.memberName ?? 'this member';
+
+    const doCall = async (): Promise<void> => {
+      setCallInitiating(true);
+      try {
+        await startCall.mutateAsync(session.id);
+        showToast('Calling now — both your phones will ring.', false);
+      } catch (err) {
+        const detail =
+          err instanceof Error && err.message
+            ? err.message
+            : 'Could not start the call. Try again.';
+        showToast(detail, true);
+      } finally {
+        setCallInitiating(false);
+      }
+    };
+
+    // Web uses window.confirm; native uses Alert.alert (no multi-button on web)
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const ok = window.confirm(`Start masked call with ${memberName}?`);
+      if (ok) void doCall();
+    } else {
+      Alert.alert(
+        'Start call?',
+        `Start a masked call with ${memberName}? Both phones will ring.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Call', onPress: () => void doCall() },
+        ],
+      );
+    }
+  }, [callInitiating, session.id, session.memberName, startCall, showToast]);
 
   const memberName = session.memberName ?? 'Unknown Member';
   const initials = getInitials(memberName);
@@ -344,20 +480,25 @@ function ConversationPane({
             {session.mode ? `${session.mode.replace('_', ' ')} · ` : ''}Active Member
           </Text>
         </View>
+        {/* Phone button — initiates Vonage masked-number call */}
         <TouchableOpacity
-          style={styles.iconBtn}
+          style={[styles.iconBtn, callInitiating && styles.iconBtnDisabled]}
+          onPress={() => void handleCall()}
+          disabled={callInitiating}
           accessibilityRole="button"
-          accessibilityLabel="Call member"
+          accessibilityLabel={callInitiating ? 'Call initiating…' : 'Call member'}
+          accessibilityState={{ disabled: callInitiating }}
         >
-          <Phone size={20} color="#6B7280" />
+          {callInitiating ? (
+            <ActivityIndicator size="small" color="#6B7280" />
+          ) : (
+            <Phone size={20} color="#6B7280" />
+          )}
         </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.iconBtn}
-          accessibilityRole="button"
-          accessibilityLabel="Schedule appointment"
-        >
-          <CalendarPlus size={20} color="#6B7280" />
-        </TouchableOpacity>
+
+        {/* CalendarPlus button — navigate to the CHW Calendar tab */}
+        <CalendarPlusButton />
+
         <TouchableOpacity
           style={styles.openProfileBtn}
           accessibilityRole="link"
@@ -366,6 +507,11 @@ function ConversationPane({
           <Text style={styles.openProfileText}>Open Profile →</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Inline toast — success/error feedback for call + consent actions */}
+      {toastMessage !== null ? (
+        <InlineToast message={toastMessage} isError={toastIsError} />
+      ) : null}
 
       {/* Messages thread */}
       <ScrollView
@@ -486,7 +632,102 @@ interface ContextRailProps {
   onOpenSuggestedQuestions: () => void;
 }
 
+/**
+ * ConsentGateState — local to the ContextRail for the consent request flow.
+ *
+ *   idle              → button ready to press
+ *   requesting        → POST in flight
+ *   waiting_for_member → polling for member response
+ *   approved          → member approved; show success pill
+ *   denied            → member denied
+ *   error             → network/server failure
+ */
+type ConsentGateState =
+  | 'idle'
+  | 'requesting'
+  | 'waiting_for_member'
+  | 'approved'
+  | 'denied'
+  | 'error';
+
 function ContextRail({ session, onOpenSuggestedQuestions }: ContextRailProps): React.JSX.Element {
+  // ── Consent request state ────────────────────────────────────────────────────
+  const [consentGate, setConsentGate] = useState<ConsentGateState>('idle');
+  const [activeConsentRequestId, setActiveConsentRequestId] = useState<string | null>(null);
+
+  // ── AI summary state ─────────────────────────────────────────────────────────
+  const [aiSummary, setAiSummary] = useState<AISummaryResponse | null>(null);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+
+  const navigation = useNavigation<any>(); // eslint-disable-line @typescript-eslint/no-explicit-any
+
+  const createConsentRequest = useCreateConsentRequest(session.id);
+  const generateAISummary = useGenerateAISummary();
+
+  // ── Poll for consent status while waiting for member response ────────────────
+  const consentStatusQuery = useConsentRequestStatus(
+    activeConsentRequestId ?? '',
+    {
+      enabled:
+        activeConsentRequestId !== null &&
+        consentGate === 'waiting_for_member',
+    },
+  );
+
+  // React to status changes from the polling query
+  useEffect(() => {
+    const status = consentStatusQuery.data?.status;
+    if (status === undefined) return;
+    if (status === 'approved' && consentGate === 'waiting_for_member') {
+      setConsentGate('approved');
+    } else if (status === 'denied' && consentGate === 'waiting_for_member') {
+      setConsentGate('denied');
+    } else if (status === 'expired' && consentGate === 'waiting_for_member') {
+      setConsentGate('error');
+    }
+  }, [consentStatusQuery.data?.status, consentGate]);
+
+  // ── Consent request handler ──────────────────────────────────────────────────
+  /**
+   * Fires POST /sessions/{id}/consent-requests with type 'ai_transcription'.
+   * Transitions gate to 'waiting_for_member' on success; 'error' on failure.
+   */
+  const handleRequestConsent = useCallback(async () => {
+    if (consentGate !== 'idle') return;
+    setConsentGate('requesting');
+    try {
+      const result = await createConsentRequest.mutateAsync('ai_transcription');
+      setActiveConsentRequestId(result.id);
+      setConsentGate('waiting_for_member');
+    } catch {
+      setConsentGate('error');
+    }
+  }, [consentGate, createConsentRequest]);
+
+  // ── AI summary handler ────────────────────────────────────────────────────────
+  /**
+   * Fires POST /sessions/{id}/ai-summary. Enabled when the session has an
+   * ended_at or at least one message. Stores the result inline for preview.
+   */
+  const handleGenerateSummary = useCallback(async () => {
+    setSummaryError(null);
+    try {
+      const result = await generateAISummary.mutateAsync(session.id);
+      setAiSummary(result);
+    } catch (err) {
+      const detail =
+        err instanceof Error && err.message
+          ? err.message
+          : 'Could not generate summary. Try again.';
+      setSummaryError(detail);
+    }
+  }, [generateAISummary, session.id]);
+
+  // Summary is enabled when the session has ended or has a recorded end time.
+  // Without a server-side message count available in SessionData, we gate on
+  // ended_at as the primary signal (mirrors SessionChat's isCallable pattern).
+  const summaryEnabled = session.endedAt != null || session.status === 'completed';
+
   return (
     <ScrollView
       style={styles.contextRailOuter}
@@ -536,6 +777,8 @@ function ContextRail({ session, onOpenSuggestedQuestions }: ContextRailProps): R
       {/* Quick Actions */}
       <View>
         <Text style={styles.railSectionLabel}>Quick Actions</Text>
+
+        {/* Existing: Open Suggested Questions */}
         <QuickActionBtn
           icon={<List size={16} color="#6B7280" />}
           label="Open Suggested Questions"
@@ -549,8 +792,196 @@ function ContextRail({ session, onOpenSuggestedQuestions }: ContextRailProps): R
           icon={<Flag size={16} color="#6B7280" />}
           label="Flag this Thread"
         />
+
+        {/* New: Request Recording Consent */}
+        <ConsentActionBtn
+          state={consentGate}
+          onPress={() => void handleRequestConsent()}
+        />
+
+        {/* New: Generate AI Summary */}
+        <AISummaryActionBtn
+          isPending={generateAISummary.isPending}
+          isEnabled={summaryEnabled}
+          summary={aiSummary}
+          error={summaryError}
+          onPress={() => void handleGenerateSummary()}
+          onOpenFull={() =>
+            navigation.navigate('SessionReview', {
+              sessionId: session.id,
+              memberName: session.memberName ?? 'Member',
+              memberId: session.memberId,
+            })
+          }
+        />
       </View>
     </ScrollView>
+  );
+}
+
+// ─── Consent action button ─────────────────────────────────────────────────────
+
+interface ConsentActionBtnProps {
+  state: ConsentGateState;
+  onPress: () => void;
+}
+
+/**
+ * Quick action button for the CHW consent-request flow.
+ * Transitions through: idle → requesting → waiting_for_member → approved | denied | error.
+ */
+function ConsentActionBtn({ state, onPress }: ConsentActionBtnProps): React.JSX.Element {
+  if (state === 'approved') {
+    return (
+      <View style={styles.consentApprovedRow} accessibilityRole="status">
+        <CheckCircle size={14} color="#16a34a" />
+        <Text style={styles.consentApprovedText}>Consent granted</Text>
+      </View>
+    );
+  }
+
+  if (state === 'denied') {
+    return (
+      <View style={styles.consentDeniedRow} accessibilityRole="status">
+        <Text style={styles.consentDeniedText}>Member declined — ask again later</Text>
+      </View>
+    );
+  }
+
+  if (state === 'waiting_for_member') {
+    return (
+      <View style={styles.consentWaitingRow} accessibilityRole="status">
+        <Clock size={14} color="#9A3412" />
+        <Text style={styles.consentWaitingText}>Awaiting member approval…</Text>
+      </View>
+    );
+  }
+
+  if (state === 'error') {
+    return (
+      <QuickActionBtn
+        icon={<AlertCircle size={16} color="#DC2626" />}
+        label="Request failed — try again"
+        onPress={onPress}
+      />
+    );
+  }
+
+  // 'idle' or 'requesting'
+  return (
+    <TouchableOpacity
+      style={[styles.quickActionBtn, state === 'requesting' && styles.quickActionBtnDisabled]}
+      onPress={onPress}
+      disabled={state === 'requesting'}
+      accessibilityRole="button"
+      accessibilityLabel="Request recording consent from member"
+      accessibilityState={{ disabled: state === 'requesting' }}
+    >
+      {state === 'requesting' ? (
+        <ActivityIndicator size="small" color="#6B7280" />
+      ) : (
+        <NotebookPen size={16} color="#6B7280" />
+      )}
+      <Text style={styles.quickActionText}>
+        {state === 'requesting' ? 'Sending request…' : 'Request Recording Consent'}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
+// ─── AI summary action button ──────────────────────────────────────────────────
+
+interface AISummaryActionBtnProps {
+  isPending: boolean;
+  isEnabled: boolean;
+  summary: AISummaryResponse | null;
+  error: string | null;
+  onPress: () => void;
+  onOpenFull: () => void;
+}
+
+/**
+ * Quick action button for generating an AI summary from the session transcript.
+ * When a summary is available, shows a 200-char preview and an "Open full summary" link.
+ */
+function AISummaryActionBtn({
+  isPending,
+  isEnabled,
+  summary,
+  error,
+  onPress,
+  onOpenFull,
+}: AISummaryActionBtnProps): React.JSX.Element {
+  if (summary !== null && summary.ai_summary) {
+    const preview = summary.ai_summary.slice(0, 200);
+    const isTruncated = summary.ai_summary.length > 200;
+    return (
+      <View style={styles.summaryPreviewCard}>
+        <View style={styles.insightHeader}>
+          <Sparkles size={14} color="#16a34a" />
+          <Text style={styles.insightTitle}>AI Summary</Text>
+        </View>
+        <Text style={styles.summaryPreviewText}>
+          {preview}{isTruncated ? '…' : ''}
+        </Text>
+        <TouchableOpacity
+          onPress={onOpenFull}
+          accessibilityRole="link"
+          accessibilityLabel="Open full AI summary"
+        >
+          <Text style={styles.summaryOpenLink}>Open full summary →</Text>
+        </TouchableOpacity>
+        {/* Allow regeneration */}
+        <TouchableOpacity
+          style={styles.summaryRegenerateBtn}
+          onPress={onPress}
+          disabled={isPending}
+          accessibilityRole="button"
+          accessibilityLabel="Regenerate AI summary"
+        >
+          <Text style={styles.summaryRegenerateText}>
+            {isPending ? 'Regenerating…' : 'Regenerate'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  return (
+    <>
+      <TouchableOpacity
+        style={[
+          styles.quickActionBtn,
+          (!isEnabled || isPending) && styles.quickActionBtnDisabled,
+        ]}
+        onPress={onPress}
+        disabled={!isEnabled || isPending}
+        accessibilityRole="button"
+        accessibilityLabel={
+          !isEnabled
+            ? 'Generate AI Summary — available after session ends'
+            : 'Generate AI Summary'
+        }
+        accessibilityState={{ disabled: !isEnabled || isPending }}
+      >
+        {isPending ? (
+          <ActivityIndicator size="small" color="#6B7280" />
+        ) : (
+          <Sparkles size={16} color={isEnabled ? '#6B7280' : '#D1D5DB'} />
+        )}
+        <Text style={[styles.quickActionText, !isEnabled && styles.quickActionTextDisabled]}>
+          {isPending ? 'Generating summary…' : 'Generate AI Summary'}
+        </Text>
+      </TouchableOpacity>
+      {!isEnabled ? (
+        <Text style={styles.summaryDisabledHint}>
+          Available after session ends
+        </Text>
+      ) : null}
+      {error !== null ? (
+        <Text style={styles.summaryErrorText}>{error}</Text>
+      ) : null}
+    </>
   );
 }
 
@@ -1168,6 +1599,9 @@ const styles = StyleSheet.create({
     padding: 8,
     borderRadius: 8,
   } as ViewStyle,
+  iconBtnDisabled: {
+    opacity: 0.5,
+  } as ViewStyle,
   openProfileBtn: {
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -1500,5 +1934,102 @@ const styles = StyleSheet.create({
   quickActionText: {
     fontSize: 14,
     color: '#374151',
+  } as TextStyle,
+  quickActionBtnDisabled: {
+    opacity: 0.5,
+  } as ViewStyle,
+  quickActionTextDisabled: {
+    color: '#9CA3AF',
+  } as TextStyle,
+
+  // Consent flow status rows
+  consentApprovedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+    borderRadius: 8,
+    marginBottom: 6,
+    backgroundColor: '#f0fdf4',
+  } as ViewStyle,
+  consentApprovedText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#15803d',
+  } as TextStyle,
+  consentDeniedRow: {
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    borderRadius: 8,
+    marginBottom: 6,
+    backgroundColor: '#fef2f2',
+  } as ViewStyle,
+  consentDeniedText: {
+    fontSize: 13,
+    color: '#dc2626',
+  } as TextStyle,
+  consentWaitingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderWidth: 1,
+    borderColor: '#fed7aa',
+    borderRadius: 8,
+    marginBottom: 6,
+    backgroundColor: '#fff7ed',
+  } as ViewStyle,
+  consentWaitingText: {
+    fontSize: 13,
+    color: '#9A3412',
+  } as TextStyle,
+
+  // AI Summary preview card
+  summaryPreviewCard: {
+    borderWidth: 1,
+    borderColor: '#d1fae5',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 6,
+    backgroundColor: '#f0fdf4',
+    gap: 6,
+  } as ViewStyle,
+  summaryPreviewText: {
+    fontSize: 13,
+    color: '#374151',
+    lineHeight: 18,
+  } as TextStyle,
+  summaryOpenLink: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#059669',
+    marginTop: 2,
+  } as TextStyle,
+  summaryRegenerateBtn: {
+    marginTop: 4,
+    alignSelf: 'flex-start',
+  } as ViewStyle,
+  summaryRegenerateText: {
+    fontSize: 12,
+    color: '#6B7280',
+  } as TextStyle,
+  summaryDisabledHint: {
+    fontSize: 11,
+    color: '#9CA3AF',
+    paddingHorizontal: 12,
+    marginTop: -2,
+    marginBottom: 6,
+  } as TextStyle,
+  summaryErrorText: {
+    fontSize: 12,
+    color: '#dc2626',
+    paddingHorizontal: 12,
+    marginBottom: 6,
   } as TextStyle,
 });
