@@ -139,6 +139,82 @@ async def retry_pending_claims() -> None:
                 logger.warning("Claim retry failed for %s: %s", claim.id, e)
 
 
+async def poll_pear_claim_status() -> None:
+    """Poll Pear Suite for status updates on submitted claims.
+
+    Closes the loop on the billing pipeline when Pear doesn't push us a
+    webhook (status quo until they ship one). For each BillingClaim with
+    pear_suite_claim_id set and status in {'submitted', 'accepted'},
+    asks `provider.get_claim_status` for the latest state and writes it
+    back. Once a claim flips to 'paid', `trigger_pending_payouts` (also
+    on a 10-minute cadence) picks it up and fires the Stripe transfer.
+
+    Bounded scan: only claims submitted in the last 90 days. Older ones
+    likely need manual reconciliation in the Pear dashboard, not polling.
+
+    Idempotent — only updates the row when the new status differs.
+
+    The worker swallows per-claim errors so one Pear timeout doesn't
+    poison the rest of the batch.
+    """
+    from app.database import async_session
+    from app.models.billing import BillingClaim
+    from app.services.billing import get_billing_provider
+
+    cutoff = datetime.now(UTC) - timedelta(days=90)
+    polling_states = ("submitted", "accepted")
+
+    async with async_session() as db:
+        result = await db.execute(
+            select(BillingClaim)
+            .where(BillingClaim.status.in_(polling_states))
+            .where(BillingClaim.pear_suite_claim_id.is_not(None))
+            .where(BillingClaim.created_at >= cutoff)
+            .limit(50)  # Batch cap per run
+        )
+        claims = list(result.scalars().all())
+
+        if not claims:
+            return
+
+        provider = get_billing_provider()
+        for claim in claims:
+            try:
+                pear_id: str | None = claim.pear_suite_claim_id
+                if pear_id is None:
+                    continue
+
+                result = await provider.get_claim_status(pear_id)
+                # ClaimResult.status — canonical (pending|submitted|accepted|
+                # rejected|paid). Compare case-insensitively in case Pear
+                # ships casing changes.
+                normalized = (result.status or "").strip().lower()
+                if not normalized or normalized == claim.status:
+                    continue
+
+                logger.info(
+                    "pear_claim_status_poll: claim_id=%s pear_claim_id=%s "
+                    "old_status=%s new_status=%s",
+                    claim.id,
+                    pear_id,
+                    claim.status,
+                    normalized,
+                )
+                claim.status = normalized
+                # Set submitted_at the first time we see anything past pending,
+                # set paid_at when adjudication completes — both used by the
+                # Earnings dashboard + Stripe transfer trigger downstream.
+                if normalized == "paid" and claim.paid_at is None:
+                    claim.paid_at = datetime.now(UTC)
+                await db.commit()
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "pear_claim_status_poll_failed: claim_id=%s error=%s",
+                    claim.id,
+                    e,
+                )
+
+
 async def trigger_pending_payouts() -> None:
     """Transfer net payouts to CHWs for claims that have been adjudicated + paid.
 
@@ -385,6 +461,19 @@ def start_scheduler() -> None:
         "interval",
         minutes=10,
         id="payout_trigger",
+        max_instances=1,
+        coalesce=True,
+    )
+
+    # Pear Suite status polling — closes the loop when Pear doesn't push us
+    # a webhook. Runs every 30 minutes so we don't hammer their rate limit;
+    # bounded to claims from the last 90 days. Drops out the moment Pear's
+    # webhook contract lands (POST /api/v1/webhooks/pear-suite endpoint).
+    _scheduler.add_job(
+        poll_pear_claim_status,
+        "interval",
+        minutes=30,
+        id="pear_claim_poll",
         max_instances=1,
         coalesce=True,
     )

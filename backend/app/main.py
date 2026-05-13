@@ -108,6 +108,7 @@ app.add_middleware(AuditMiddleware)
 
 from app.routers.admin import router as admin_router
 from app.routers.admin_demo import router as admin_demo_router
+from app.routers.pear_webhook import router as pear_webhook_router
 from app.routers.assessments import router as assessments_router
 from app.routers.auth import router as auth_router
 from app.routers.chw import router as chw_router
@@ -163,6 +164,7 @@ app.include_router(health_router)
 app.include_router(waitlist_router)
 app.include_router(admin_router)
 app.include_router(admin_demo_router)
+app.include_router(pear_webhook_router)
 app.include_router(devices_router)
 app.include_router(payments_router)
 app.include_router(journeys_router)
