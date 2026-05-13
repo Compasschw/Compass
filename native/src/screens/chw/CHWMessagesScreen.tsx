@@ -303,7 +303,7 @@ function ConversationPane({
         prev.map((m) => (m.id === optimisticId ? { ...m, status: 'failed' as const } : m)),
       );
     }
-  }, [draftText, session.id, currentUserId, sendMessage]);
+  }, [draftText, session.id, sendMessage]);
 
   const handleTemplatePress = useCallback((label: string) => {
     setDraftText((prev) => (prev ? `${prev} ${label}` : label));
