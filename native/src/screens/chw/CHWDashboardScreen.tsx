@@ -972,15 +972,14 @@ const styles = StyleSheet.create({
     paddingBottom: 48,
   } as ViewStyle,
 
-  // Web page wrap — fills the available viewport width on wide displays.
-  // The mock used max-w-[1280] but that leaves a lot of dead space on
-  // ultra-wide monitors after the sidebar. 1600 gives room to breathe
-  // while keeping the dashboard readable; if this still feels too narrow
-  // on a 2560px display, drop maxWidth entirely.
+  // Web page wrap — fills the entire main content area (no max-width cap).
+  // The mock visually fills its viewport because that viewport is the
+  // dashboard's natural size; on a 2400+ px display the cap was leaving a
+  // dead band on the right. Removing maxWidth makes the dashboard expand
+  // edge-to-edge inside AppShell, matching what the user sees in the mock.
   pageWrapWeb: {
     width: '100%',
-    maxWidth: 1600,
-    alignSelf: 'center',
+    alignSelf: 'stretch',
     padding: spacing.xxxl,
     paddingBottom: 48,
   } as ViewStyle,
