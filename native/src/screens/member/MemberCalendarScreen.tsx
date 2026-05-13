@@ -654,7 +654,7 @@ const styles = StyleSheet.create({
   // Web stretches edge-to-edge by default; cap at 560px and center.
   pageWrap: {
     width: '100%',
-    maxWidth: 560,
+    maxWidth: 1100,
     alignSelf: 'center',
   },
   pageHeader: {

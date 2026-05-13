@@ -1015,7 +1015,7 @@ const styles = StyleSheet.create({
   // 560 px — roadmap is a single-column form/list matching profile screens.
   pageWrap: {
     width: '100%',
-    maxWidth: 560,
+    maxWidth: 1100,
     alignSelf: 'center',
     paddingHorizontal: 16,
     paddingTop: 20,

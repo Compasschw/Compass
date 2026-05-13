@@ -1353,7 +1353,7 @@ const styles = StyleSheet.create({
   // 560 px — single-column profile form matches CHW profile and intake screens.
   pageWrap: {
     width: '100%',
-    maxWidth: 560,
+    maxWidth: 1100,
     alignSelf: 'center',
     paddingHorizontal: 16,
     paddingTop: 0,

@@ -679,7 +679,7 @@ const s = StyleSheet.create({
   },
   pageWrap: {
     width: '100%',
-    maxWidth: 560,
+    maxWidth: 1100,
     alignSelf: 'center',
     paddingHorizontal: 16,
     paddingTop: 0,

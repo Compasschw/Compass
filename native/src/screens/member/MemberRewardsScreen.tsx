@@ -406,7 +406,7 @@ const styles = StyleSheet.create({
   // 560 px — single-column rewards catalog matches form screens.
   pageWrap: {
     width: '100%',
-    maxWidth: 560,
+    maxWidth: 1100,
     alignSelf: 'center',
     padding: 16,
   },
