@@ -464,7 +464,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 32,
     paddingTop: 24,
     paddingBottom: 32,
-    maxWidth: 1100,
+    maxWidth: undefined as unknown as number,
     width: '100%',
     alignSelf: 'center',
   } as ViewStyle,

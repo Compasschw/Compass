@@ -653,7 +653,7 @@ const styles = StyleSheet.create({
   // 1100px — full width like Messages/Settings; p-8 horizontal padding.
   pageWrap: {
     width: '100%',
-    maxWidth: 1100,
+    maxWidth: undefined as unknown as number,
     alignSelf: 'center',
     paddingHorizontal: 32,
     paddingTop: 24,

@@ -711,7 +711,7 @@ const styles = StyleSheet.create({
   // 1100 px — matches full-width layout used by Messages/Settings and mockup.
   pageWrap: {
     width: '100%',
-    maxWidth: 1100,
+    maxWidth: undefined as unknown as number,
     alignSelf: 'center',
     paddingHorizontal: 24,
     paddingTop: 24,
