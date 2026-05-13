@@ -165,17 +165,20 @@ const styles = StyleSheet.create({
   } as ViewStyle,
 
   value: {
-    fontSize:   22,
-    fontWeight: '700',
+    // mockup: text-3xl font-extrabold = 30px / 800 weight
+    fontSize:   30,
+    fontWeight: '800',
     color:      colors.textPrimary,
-    lineHeight: 28,
+    lineHeight: 36,
   } as TextStyle,
 
   label: {
-    fontSize:   12,
-    fontWeight: '500',
+    // mockup: text-sm text-gray-500 mt-1 = 14px / 400 / #6b7280
+    fontSize:   14,
+    fontWeight: '400',
     color:      colors.textSecondary,
-    lineHeight: 16,
+    lineHeight: 20,
+    marginTop:  4,
   } as TextStyle,
 
   delta: {
