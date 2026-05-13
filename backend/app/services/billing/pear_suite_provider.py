@@ -332,7 +332,16 @@ class PearSuiteProvider(BillingProvider):
             idempotency_key=idempotency_key,
         )
 
-        pear_activity_id = data.get("id") or data.get("activityId")
+        # Pear's response shape (validated live 2026-05-13):
+        #   { "success": true, "message": "...", "data": { "_id": "<uuid>", ... } }
+        # Extract from data.data._id first; fall back to legacy keys for safety.
+        nested = data.get("data") if isinstance(data.get("data"), dict) else None
+        pear_activity_id = (
+            (nested.get("_id") if nested else None)
+            or (nested.get("id") if nested else None)
+            or data.get("id")
+            or data.get("activityId")
+        )
         logger.info(
             "pear_suite.schedule_activity.success: pear_activity_id=%s session_id=%s",
             pear_activity_id,

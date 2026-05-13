@@ -2,6 +2,39 @@
 
 Goal: leave the call with a single billable claim accepted into the Pear pipeline for a Compass session, and a clear path to repeat it from inside the app.
 
+## Live integration test — 2026-05-13
+
+Pre-meeting smoke test against `https://api.pearsuite.com` using the prod API key.
+
+**What worked end-to-end:**
+
+| Step | Endpoint | Result |
+|---|---|---|
+| List users | `GET /api/beta/users` | 200 — Jemal (`3f205159-f1b3-43c0-a875-dec3ecc97025`) and Akram (`a0f12270-3e30-424d-8adb-2fe8e9402ca9`) returned. Both real. |
+| List members | `GET /api/beta/members` | 200 — `Test Tester` (`d25bcbc0-6d66-4d71-9bc7-8f3a58ccb169`) is the test member. |
+| Schedule activity | `POST /api/beta/activities` with `{ activityTemplateId, memberIds, userId, date, scheduledStartAt, scheduledEndAt, notes }` | **201 — Activity created.** ID `42471496-8968-4b8c-b15a-3ecdd46a60f6`. Title: "Compass CHW Self-Management Education (98960)". `billable: true`. Status `Scheduled`. **Procedure 98960 confirmed in template.** |
+
+**Stuck on one thing — `costId is required` on `PUT /activities/:id`:**
+
+Each `billingDetails` entry needs a `costId` Pear assigns. We tried `GET /api/beta/{costs|activityCosts|billing-codes|prices|fees|procedures|activityTemplates|insuranceCompanies}` — all 404. The cost item must come from somewhere in their data model we haven't found.
+
+→ **Direct ask for tomorrow:** "How do we get the `costId` we need to put in `billingDetails[*].costId` when completing an activity? Is it on the activity template, the insurance company, or a separate `/costs`-style endpoint?"
+
+**Payload-shape findings to bake into our provider:**
+
+- `POST /members` — `gender` and `language` are arrays, not strings (`["Female"]`, `["English"]`). Our code currently sends them as strings; needs fix.
+- `POST /members` — "Female" is rejected as a Gender value. Need their list of accepted values.
+- `POST /activities` — required keys are `userId` (singular, not `ownerUserId`), `date` (calendar date, not `scheduledDate`), `scheduledStartAt`, `scheduledEndAt`. `notes` and `memberIds` work as expected.
+- Activity response shape — `{ "success": true, "data": { "_id": "<uuid>", ... } }`. Our code reads `data.id` / `data.activityId` first; just patched to fall back to `data.data._id`.
+
+**What this means for the meeting:**
+- We don't need the rep to give us Jemal's userId — we already have it (above).
+- We don't need to ask "do payouts work, does the API take our key" — confirmed.
+- The single tactical question is the `costId` resolution path.
+- Everything else is confirmation: BAA in writing (already verbally confirmed by Akram), webhook contract for status pushes, and adjudication SLA.
+
+---
+
 ## TL;DR
 
 Everything on our side is wired. BAA is signed (confirmed 2026-05-12), so we're clear to send real PHI through their API. We're blocked on **one** thing from Pear:
