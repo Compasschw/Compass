@@ -262,7 +262,7 @@ export function MemberMessagesScreen(): React.JSX.Element {
         ),
       );
     }
-  }, [draftText, sessionId, userId, sendMessage]);
+  }, [draftText, sessionId, sendMessage]);
 
   const handleQuickReply = useCallback(
     (text: string) => {
