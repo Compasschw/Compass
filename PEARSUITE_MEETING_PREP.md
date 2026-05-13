@@ -20,6 +20,13 @@ Each `billingDetails` entry needs a `costId` Pear assigns. We tried `GET /api/be
 
 → **Direct ask for tomorrow:** "How do we get the `costId` we need to put in `billingDetails[*].costId` when completing an activity? Is it on the activity template, the insurance company, or a separate `/costs`-style endpoint?"
 
+**Member + CHW lifecycle findings (2026-05-13 evening probe):**
+
+- `POST /api/beta/members` ✅ works — created two test members (`6d4f57a9-…` minimal, `7aef5fd2-…` rich payload with dateOfBirth + phone + email + mediCalId + address). `firstName` + `lastName` are the only required fields. Gender is optional but if sent, none of the obvious enum values pass (we tried male/female/man/woman/other/non-binary/M/F/Unknown/PreferNotToSay — all rejected). Need their accepted enum.
+- **`POST /api/beta/users` is 404.** Pear deliberately doesn't expose CHW user creation via the API. Every new CHW we onboard onto Compass requires a manual Pear-side invite (probably handled by their account manager via email). This is a process question for tomorrow — confirm the SOP and whether they'll set up a bulk-invite path as we scale beyond a handful of CHWs.
+- Insurance assignment to new members is unclear — the existing Test Tester has `primaryInsuranceCompanyId` set but our new test members don't. Activity creation would likely succeed against them, but billing might fail because no insurance is on file. Need to know if there's an `/api/beta/members/:id/insurance` endpoint or if insurance is also admin-only setup.
+- mediCalId field is accepted in `POST /members` but Pear's response only returns `{ memberId }` — we can't tell if the value was stored or silently ignored. Worth confirming.
+
 **Payload-shape findings to bake into our provider:**
 
 - `POST /members` — `gender` and `language` are arrays, not strings (`["Female"]`, `["English"]`). Our code currently sends them as strings; needs fix.
