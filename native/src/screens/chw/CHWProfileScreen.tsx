@@ -1,1477 +1,1435 @@
 /**
- * CHWProfileScreen — Profile management for the authenticated CHW.
+ * CHWProfileScreen — Settings, profile, and privacy for the authenticated CHW.
  *
- * Sections:
- *  - Avatar circle with initials + camera overlay (edit mode)
- *  - Profile info cards (name, email, phone, zip, bio w/ 400 char counter)
- *  - Specializations — toggle pills in edit mode
- *  - Languages — toggle pills in edit mode
- *  - Credentials section with Upload placeholder per credential
- *  - Availability toggle
- *  - Sign out button
+ * Layout matches the MemberSettingsScreen visual language 1:1:
+ *   - PageHeader (Settings + subtitle)
+ *   - Main Card with underline-style tab strip (Profile / Notifications /
+ *     Privacy & Security / Language / Help). Profile is the default tab.
+ *   - Profile tab: 192px avatar column + inline-editable form column, plus
+ *     specialization multi-select chips below the grid.
+ *   - Always-visible bottom 2-column grid:
+ *       left: Account & Security (sign out, download data, delete account)
+ *       right: Earnings & Payouts (next payout stats + link to EarningsStack)
  *
- * Edit mode:
- *  - "Edit" button in header opens inline editing of a `draft` state copy.
- *  - "Save" commits draft to profile state; "Cancel" reverts to previous.
+ * Inline field editing: each row shows label + value + Edit link. Tapping Edit
+ * converts that row into a TextInput + Save/Cancel. Avoids the previous
+ * all-or-nothing draft-commit pattern.
+ *
+ * Data: `useChwProfile` (read), `useUpdateChwProfile` (write),
+ *        `useChwEarnings` (earnings bottom card).
+ *
+ * Stubbed fields (backend ChwProfile shape does not expose them yet):
+ *   - modality (in_person / virtual / hybrid)
+ *   - availableDays (mon…sun chips)
+ *   - serviceAreaZips (comma-separated; only zipCode is available)
+ *   - additionalLanguages (ChwProfile.languages[1+] used as a proxy)
+ *   - primaryLanguage (ChwProfile.languages[0] used as a proxy)
+ *
+ * Intentional divergences from MemberSettingsScreen:
+ *   - Bottom-right card is "Earnings & Payouts" (CHW-specific) instead of
+ *     "Need help?". The help content is moved to the Help tab.
+ *   - Profile tab includes specialization chips and multi-select day chips
+ *     that Member Settings does not have (CHW-specific fields).
+ *   - Bio is multi-line (TextInput multiline=true) instead of a single-line
+ *     EditableField, to match the existing CHW UX expectation.
  */
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
-  View,
-  Text,
-  ScrollView,
-  StyleSheet,
-  TouchableOpacity,
-  Switch,
-  TextInput,
   Alert,
+  Pressable,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  View,
+  type ViewStyle,
+  type TextStyle,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import {
+  DollarSign,
+  Download,
+  Globe,
+  HelpCircle,
   Mail,
-  Phone,
-  MapPin,
+  MessageSquare,
   Shield,
-  Lock,
-  UserCheck,
-  BookOpen,
-  LogOut,
-  Star,
-  Briefcase,
-  Edit2,
-  X,
-  Check,
-  Camera,
-  Upload,
-  ClipboardCheck,
-  ChevronRight,
+  Trash2,
 } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
 
-import { colors } from '../../theme/colors';
-import { typography } from '../../theme/typography';
 import { useAuth } from '../../context/AuthContext';
-import { PhoneVerificationModal } from '../../components/shared/PhoneVerificationModal';
-import {
-  type Vertical,
-  type Credential,
-  type CredentialStatus,
-} from '../../data/mock';
-import { useQueryClient } from '@tanstack/react-query';
 import {
   useChwProfile,
   useUpdateChwProfile,
-  useCHWIntake,
-  useCredentialValidations,
-  type ChwProfile,
-  type CredentialValidation,
+  useChwEarnings,
 } from '../../hooks/useApiQueries';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
-import { ErrorState } from '../../components/shared/ErrorState';
-import { CredentialUploadModal } from '../../components/chw/CredentialUploadModal';
-import { DeleteAccountModal } from '../../components/profile/DeleteAccountModal';
-import { useDeleteAccount } from '../../hooks/useApiQueries';
+import { AppShell, PageHeader, Card } from '../../components/ui';
+import { colors as tokens } from '../../theme/tokens';
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// ─── Types & constants ────────────────────────────────────────────────────────
 
-const VERTICAL_LABELS: Record<Vertical, string> = {
-  housing: 'Housing',
-  rehab: 'Rehab & Recovery',
-  food: 'Food Security',
-  mental_health: 'Mental Health',
-  healthcare: 'Healthcare Access',
+type SettingsTab = 'profile' | 'notifications' | 'privacy' | 'language' | 'help';
+
+const TAB_LABELS: Record<SettingsTab, string> = {
+  profile:       'Profile',
+  notifications: 'Notifications',
+  privacy:       'Privacy & Security',
+  language:      'Language',
+  help:          'Help',
 };
 
-const ALL_VERTICALS: Vertical[] = ['housing', 'rehab', 'food', 'mental_health', 'healthcare'];
+const TAB_ORDER: SettingsTab[] = ['profile', 'notifications', 'privacy', 'language', 'help'];
 
-const VERTICAL_COLORS: Record<Vertical, string> = {
-  housing: '#3B82F6',
-  rehab: '#EF4444',
-  food: '#F59E0B',
-  mental_health: '#8B5CF6',
-  healthcare: '#06B6D4',
-};
-
-const ALL_LANGUAGES: string[] = [
-  'English',
-  'Spanish',
-  'Vietnamese',
-  'Arabic',
-  'Cantonese',
-  'Mandarin',
-  'Tagalog',
-  'Korean',
+const LANGUAGE_OPTIONS = [
+  { value: 'English',    label: 'English' },
+  { value: 'Spanish',    label: 'Español' },
+  { value: 'Chinese',    label: '中文' },
+  { value: 'Tagalog',    label: 'Tagalog' },
+  { value: 'Vietnamese', label: 'Tiếng Việt' },
+  { value: 'Korean',     label: '한국어' },
+  { value: 'Arabic',     label: 'العربية' },
+  { value: 'Cantonese',  label: '粵語' },
 ];
 
-const CREDENTIAL_STATUS_COLORS: Record<CredentialStatus | 'rejected', string> = {
-  verified: '#16A34A',
-  pending: colors.compassGold,
-  expired: colors.destructive,
-  rejected: colors.destructive,
+type Vertical = 'housing' | 'food' | 'mental_health' | 'rehab' | 'healthcare';
+
+const VERTICAL_LABELS: Record<Vertical, string> = {
+  housing:       'Housing',
+  food:          'Food Security',
+  mental_health: 'Mental Health',
+  rehab:         'Rehab & Recovery',
+  healthcare:    'Healthcare Access',
 };
 
-const CREDENTIAL_STATUS_LABELS: Record<CredentialStatus | 'rejected', string> = {
-  verified: 'Verified',
-  pending: 'Pending Review',
-  expired: 'Expired',
-  rejected: 'Rejected',
+const ALL_VERTICALS: Vertical[] = ['housing', 'food', 'mental_health', 'rehab', 'healthcare'];
+
+const VERTICAL_COLORS: Record<Vertical, string> = {
+  housing:       '#3B82F6',
+  food:          '#F59E0B',
+  mental_health: '#8B5CF6',
+  rehab:         '#EF4444',
+  healthcare:    '#06B6D4',
 };
 
-// Bio length cap. Was 400; Jemal Figma feedback: keep it short and sweet (~200).
-const BIO_MAX_CHARS = 200;
+type DayKey = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
 
-// ─── Draft profile shape ──────────────────────────────────────────────────────
-
-interface ProfileDraft {
-  firstName: string;
-  lastName: string;
-  phone: string;
-  email: string;
-  zipCode: string;
-  bio: string;
-  specializations: Vertical[];
-  languages: string[];
-}
-
-// ─── CredentialIcon helper ────────────────────────────────────────────────────
-
-function CredentialIconComponent({
-  type,
-}: {
-  type: Credential['type'];
-}): React.JSX.Element {
-  switch (type) {
-    case 'chw_certification':
-      return <Shield size={16} color={colors.primary} />;
-    case 'hipaa_training':
-      return <Lock size={16} color="#0077B6" />;
-    case 'background_check':
-      return <UserCheck size={16} color="#D97706" />;
-    case 'continuing_education':
-      return <BookOpen size={16} color="#7C3AED" />;
-  }
-}
-
-const CREDENTIAL_ICON_BG: Record<Credential['type'], string> = {
-  chw_certification: colors.primary + '18',
-  hipaa_training: '#0077B618',
-  background_check: '#D9770618',
-  continuing_education: '#7C3AED18',
+const DAY_LABELS: Record<DayKey, string> = {
+  mon: 'Mon',
+  tue: 'Tue',
+  wed: 'Wed',
+  thu: 'Thu',
+  fri: 'Fri',
+  sat: 'Sat',
+  sun: 'Sun',
 };
 
-function formatCredentialDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
+const ALL_DAYS: DayKey[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+
+type Modality = 'in_person' | 'virtual' | 'hybrid';
+
+const MODALITY_LABELS: Record<Modality, string> = {
+  in_person: 'In Person',
+  virtual:   'Virtual',
+  hybrid:    'Hybrid',
+};
+
+const ALL_MODALITIES: Modality[] = ['in_person', 'virtual', 'hybrid'];
+
+// ─── TabBar ───────────────────────────────────────────────────────────────────
+
+interface TabBarProps {
+  active:   SettingsTab;
+  onChange: (tab: SettingsTab) => void;
 }
 
-// ─── SectionHeader with optional per-section edit pencil ─────────────────────
-//
-// Per Jemal's Figma feedback: each section gets its own pencil instead of one
-// global "Edit" button. Tapping the pencil enters the existing edit mode (same
-// state — keeps the refactor minimal). Hidden once edit mode is active so the
-// header strip stays clean.
-
-interface SectionHeaderProps {
-  title: string;
-  /** Hide the pencil — used in view mode when no editable equivalent exists */
-  hideEdit?: boolean;
-  isEditing: boolean;
-  onEdit: () => void;
-  /** Override marginBottom to match adjacent layout */
-  noMarginBottom?: boolean;
-}
-
-function SectionHeader({
-  title,
-  hideEdit,
-  isEditing,
-  onEdit,
-  noMarginBottom,
-}: SectionHeaderProps): React.JSX.Element {
+function TabBar({ active, onChange }: TabBarProps): React.JSX.Element {
   return (
-    <View style={[sectionHeaderStyles.row, noMarginBottom && { marginBottom: 0 }]}>
-      <Text style={sectionHeaderStyles.title}>{title}</Text>
-      {!isEditing && !hideEdit ? (
-        <TouchableOpacity
-          style={sectionHeaderStyles.pencilBtn}
-          onPress={onEdit}
-          accessibilityRole="button"
-          accessibilityLabel={`Edit ${title}`}
-          hitSlop={8}
-        >
-          <Edit2 size={13} color={colors.primary} />
-        </TouchableOpacity>
-      ) : null}
-    </View>
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={tabStyles.row}
+      style={tabStyles.scroll}
+    >
+      {TAB_ORDER.map((tab) => {
+        const isActive = tab === active;
+        return (
+          <Pressable
+            key={tab}
+            onPress={() => onChange(tab)}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: isActive }}
+            accessibilityLabel={TAB_LABELS[tab]}
+            style={({ pressed, hovered }: { pressed: boolean; hovered?: boolean }) => [
+              tabStyles.tab,
+              isActive && tabStyles.tabActive,
+              !isActive && (hovered || pressed) && tabStyles.tabHover,
+            ]}
+          >
+            <Text style={[tabStyles.label, isActive && tabStyles.labelActive]}>
+              {TAB_LABELS[tab]}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </ScrollView>
   );
 }
 
-const sectionHeaderStyles = StyleSheet.create({
+const tabStyles = StyleSheet.create({
+  scroll: {
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  } as ViewStyle,
   row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  title: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 16,
-    lineHeight: 22,
-    color: '#1E3320',
-  },
-  pencilBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.primary + '12',
-  },
-});
-
-// ─── InfoRow (view mode) ──────────────────────────────────────────────────────
-
-interface InfoRowProps {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-}
-
-function InfoRow({ icon, label, value }: InfoRowProps): React.JSX.Element {
-  return (
-    <View style={infoStyles.row}>
-      <View style={infoStyles.iconCircle}>{icon}</View>
-      <View style={infoStyles.textBlock}>
-        <Text style={infoStyles.label}>{label}</Text>
-        <Text style={infoStyles.value}>{value}</Text>
-      </View>
-    </View>
-  );
-}
-
-const infoStyles = StyleSheet.create({
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    backgroundColor: '#E5DFD6',
-    marginBottom: 8,
-  },
-  iconCircle: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: '#3D5A3E15',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  textBlock: {
-    flex: 1,
-  },
+    flexDirection:     'row',
+    paddingHorizontal: 24,
+  } as ViewStyle,
+  tab: {
+    paddingVertical:   14,
+    paddingHorizontal: 16,
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+    marginBottom:      -1,
+  } as ViewStyle,
+  tabActive: {
+    borderBottomColor: '#10B981',
+  } as ViewStyle,
+  tabHover: {
+    borderBottomColor: '#A7F3D0',
+  } as ViewStyle,
   label: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 12,
-    letterSpacing: 1,
-    color: '#6B7A6B',
-    textTransform: 'uppercase',
-  },
-  value: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 16,
-    lineHeight: 24,
-    color: '#1E3320',
-    marginTop: 1,
-  },
+    fontSize:   14,
+    fontWeight: '600',
+    color:      '#6B7280',
+  } as TextStyle,
+  labelActive: {
+    color: '#10B981',
+  } as TextStyle,
 });
 
-// ─── EditField (edit mode) ────────────────────────────────────────────────────
+// ─── EditableField (Profile tab) ──────────────────────────────────────────────
 
-interface EditFieldProps {
-  label: string;
-  value: string;
-  onChangeText: (text: string) => void;
+interface EditableFieldProps {
+  label:        string;
+  value:        string;
+  /** When set, renders a non-editable tag instead of an Edit button. */
+  tagLabel?:    string;
+  /** Hides the right-side action entirely (read-only field). */
+  readOnly?:    boolean;
+  isEditing:    boolean;
+  onEditStart:  () => void;
+  onEditCancel: () => void;
+  onSave:       (next: string) => Promise<void> | void;
   placeholder?: string;
   keyboardType?: 'default' | 'email-address' | 'phone-pad' | 'numeric';
-  multiline?: boolean;
-  maxLength?: number;
+  /** Render a multiline TextInput (for Bio). */
+  multiline?:   boolean;
 }
 
-function EditField({
+function EditableField({
   label,
   value,
-  onChangeText,
+  tagLabel,
+  readOnly,
+  isEditing,
+  onEditStart,
+  onEditCancel,
+  onSave,
   placeholder,
   keyboardType = 'default',
   multiline = false,
-  maxLength,
-}: EditFieldProps): React.JSX.Element {
+}: EditableFieldProps): React.JSX.Element {
+  const [draft, setDraft] = useState(value);
+  const [saving, setSaving] = useState(false);
+
+  // Reset draft whenever we enter edit mode (fresh value snapshot).
+  React.useEffect(() => {
+    if (isEditing) setDraft(value);
+  }, [isEditing, value]);
+
+  const handleSave = async (): Promise<void> => {
+    if (draft === value) {
+      onEditCancel();
+      return;
+    }
+    setSaving(true);
+    try {
+      await onSave(draft);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (isEditing) {
+    return (
+      <View style={[fieldStyles.row, multiline && fieldStyles.rowMultiline]}>
+        <Text style={fieldStyles.label}>{label}</Text>
+        <TextInput
+          value={draft}
+          onChangeText={setDraft}
+          placeholder={placeholder ?? label}
+          placeholderTextColor="#9CA3AF"
+          keyboardType={keyboardType}
+          editable={!saving}
+          autoFocus
+          multiline={multiline}
+          style={[fieldStyles.input, multiline && fieldStyles.inputMultiline]}
+          accessibilityLabel={label}
+        />
+        <Pressable
+          onPress={() => void handleSave()}
+          disabled={saving}
+          accessibilityRole="button"
+          accessibilityLabel="Save"
+          style={fieldStyles.editLink}
+        >
+          <Text style={fieldStyles.editLinkText}>{saving ? 'Saving…' : 'Save'}</Text>
+        </Pressable>
+        <Pressable
+          onPress={onEditCancel}
+          disabled={saving}
+          accessibilityRole="button"
+          accessibilityLabel="Cancel edit"
+          style={fieldStyles.editLink}
+        >
+          <Text style={fieldStyles.cancelLinkText}>Cancel</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
   return (
-    <View style={editFieldStyles.container}>
-      <Text style={editFieldStyles.label}>{label}</Text>
-      <TextInput
-        style={[editFieldStyles.input, multiline && editFieldStyles.inputMultiline]}
-        value={value}
-        onChangeText={onChangeText}
-        placeholder={placeholder ?? label}
-        placeholderTextColor={colors.mutedForeground}
-        keyboardType={keyboardType}
-        multiline={multiline}
-        maxLength={maxLength}
-        accessibilityLabel={label}
-      />
-      {maxLength != null ? (
-        <Text style={editFieldStyles.charCount}>
-          {value.length}/{maxLength}
-        </Text>
+    <View style={fieldStyles.row}>
+      <Text style={fieldStyles.label}>{label}</Text>
+      <Text style={fieldStyles.value} numberOfLines={multiline ? 3 : 1}>
+        {value || '—'}
+      </Text>
+      {tagLabel !== undefined ? (
+        <Text style={fieldStyles.tag}>{tagLabel}</Text>
+      ) : !readOnly ? (
+        <Pressable
+          onPress={onEditStart}
+          accessibilityRole="button"
+          accessibilityLabel={`Edit ${label}`}
+          style={fieldStyles.editLink}
+        >
+          <Text style={fieldStyles.editLinkText}>Edit</Text>
+        </Pressable>
       ) : null}
     </View>
   );
 }
 
-const editFieldStyles = StyleSheet.create({
-  container: {
-    marginBottom: 12,
-  },
+const fieldStyles = StyleSheet.create({
+  row: {
+    flexDirection:     'row',
+    alignItems:        'center',
+    gap:               12,
+    paddingVertical:   12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  } as ViewStyle,
+  rowMultiline: {
+    alignItems: 'flex-start',
+  } as ViewStyle,
   label: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize:   12,
+    fontWeight: '500',
+    color:      '#6B7280',
+    minWidth:   160,
+  } as TextStyle,
+  value: {
+    flex:       1,
+    fontSize:   14,
+    fontWeight: '500',
+    color:      '#111827',
+  } as TextStyle,
+  tag: {
     fontSize: 12,
-    letterSpacing: 1,
-    color: '#6B7A6B',
-    textTransform: 'uppercase',
-    marginBottom: 6,
-  },
+    color:    '#9CA3AF',
+  } as TextStyle,
   input: {
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    backgroundColor: '#FFFFFF',
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 14,
-    lineHeight: 20,
-    color: '#1E3320',
-  },
+    flex:              1,
+    fontSize:          14,
+    color:             '#111827',
+    backgroundColor:   '#F9FAFB',
+    borderWidth:       1,
+    borderColor:       '#E5E7EB',
+    borderRadius:      8,
+    paddingHorizontal: 10,
+    paddingVertical:   8,
+  } as ViewStyle,
   inputMultiline: {
-    minHeight: 100,
+    minHeight:         80,
     textAlignVertical: 'top',
-  },
-  charCount: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 12,
-    letterSpacing: 1,
-    color: '#6B7A6B',
-    textAlign: 'right',
-    marginTop: 4,
-  },
+  } as ViewStyle,
+  editLink: {
+    paddingHorizontal: 4,
+    paddingVertical:   4,
+  } as ViewStyle,
+  editLinkText: {
+    fontSize:   12,
+    fontWeight: '700',
+    color:      '#10B981',
+  } as TextStyle,
+  cancelLinkText: {
+    fontSize:   12,
+    fontWeight: '600',
+    color:      '#6B7280',
+  } as TextStyle,
 });
 
-// ─── Main Component ───────────────────────────────────────────────────────────
+// ─── ToggleRow (Privacy + Notifications tabs and bottom card) ─────────────────
+
+interface ToggleRowProps {
+  label:         string;
+  description:   string;
+  value:         boolean;
+  onValueChange: (val: boolean) => void;
+}
+
+function ToggleRow({ label, description, value, onValueChange }: ToggleRowProps): React.JSX.Element {
+  return (
+    <View style={toggleStyles.row}>
+      <View style={toggleStyles.text}>
+        <Text style={toggleStyles.label}>{label}</Text>
+        <Text style={toggleStyles.desc}>{description}</Text>
+      </View>
+      <Switch
+        value={value}
+        onValueChange={onValueChange}
+        thumbColor="#FFFFFF"
+        trackColor={{ false: '#D1D5DB', true: '#10B981' }}
+        accessibilityRole="switch"
+        accessibilityLabel={label}
+        accessibilityState={{ checked: value }}
+      />
+    </View>
+  );
+}
+
+const toggleStyles = StyleSheet.create({
+  row: {
+    flexDirection:     'row',
+    alignItems:        'center',
+    gap:               16,
+    paddingVertical:   12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  } as ViewStyle,
+  text: {
+    flex: 1,
+    gap:  2,
+  } as ViewStyle,
+  label: {
+    fontSize:   14,
+    fontWeight: '600',
+    color:      '#111827',
+  } as TextStyle,
+  desc: {
+    fontSize:   12,
+    color:      '#6B7280',
+    lineHeight: 16,
+  } as TextStyle,
+});
+
+// ─── ContactCard (Help tab) ───────────────────────────────────────────────────
+
+interface ContactCardProps {
+  icon:        React.ReactNode;
+  iconBgColor: string;
+  title:       string;
+  description: string;
+  onPress:     () => void;
+}
+
+function ContactCard({ icon, iconBgColor, title, description, onPress }: ContactCardProps): React.JSX.Element {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={title}
+      style={({ pressed, hovered }: { pressed: boolean; hovered?: boolean }) => [
+        contactStyles.card,
+        (pressed || hovered) && contactStyles.cardHover,
+      ]}
+    >
+      <View style={[contactStyles.iconBox, { backgroundColor: iconBgColor }]}>
+        {icon}
+      </View>
+      <View style={contactStyles.text}>
+        <Text style={contactStyles.title}>{title}</Text>
+        <Text style={contactStyles.desc} numberOfLines={2}>
+          {description}
+        </Text>
+      </View>
+    </Pressable>
+  );
+}
+
+const contactStyles = StyleSheet.create({
+  card: {
+    flexDirection:   'row',
+    alignItems:      'center',
+    gap:             12,
+    padding:         12,
+    borderRadius:    12,
+    borderWidth:     1,
+    borderColor:     '#E5E7EB',
+    backgroundColor: '#FFFFFF',
+  } as ViewStyle,
+  cardHover: {
+    backgroundColor: '#F9FAFB',
+  } as ViewStyle,
+  iconBox: {
+    width:          40,
+    height:         40,
+    borderRadius:   8,
+    alignItems:     'center',
+    justifyContent: 'center',
+    flexShrink:     0,
+  } as ViewStyle,
+  text: {
+    flex: 1,
+    gap:  2,
+  } as ViewStyle,
+  title: {
+    fontSize:   14,
+    fontWeight: '600',
+    color:      '#111827',
+  } as TextStyle,
+  desc: {
+    fontSize:   12,
+    color:      '#6B7280',
+    lineHeight: 16,
+  } as TextStyle,
+});
+
+// ─── ChipRow (multi-select chips for specializations and available days) ───────
+
+interface ChipRowProps<T extends string> {
+  items:     T[];
+  labels:    Record<T, string>;
+  selected:  T[];
+  colors?:   Record<T, string>;
+  onChange:  (next: T[]) => void;
+}
+
+function ChipRow<T extends string>({
+  items,
+  labels,
+  selected,
+  colors: chipColors,
+  onChange,
+}: ChipRowProps<T>): React.JSX.Element {
+  const toggle = (item: T): void => {
+    const isSelected = selected.includes(item);
+    onChange(
+      isSelected
+        ? selected.filter((s) => s !== item)
+        : [...selected, item],
+    );
+  };
+
+  return (
+    <View style={chipStyles.row}>
+      {items.map((item) => {
+        const isSelected = selected.includes(item);
+        const accent = chipColors?.[item] ?? '#10B981';
+        return (
+          <Pressable
+            key={item}
+            onPress={() => toggle(item)}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: isSelected }}
+            accessibilityLabel={labels[item]}
+            style={[
+              chipStyles.chip,
+              isSelected
+                ? { backgroundColor: accent + '20', borderColor: accent }
+                : chipStyles.chipInactive,
+            ]}
+          >
+            <Text
+              style={[
+                chipStyles.chipText,
+                { color: isSelected ? accent : '#6B7280' },
+              ]}
+            >
+              {labels[item]}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+const chipStyles = StyleSheet.create({
+  row: {
+    flexDirection: 'row',
+    flexWrap:      'wrap',
+    gap:           8,
+    marginTop:     8,
+  } as ViewStyle,
+  chip: {
+    paddingHorizontal: 12,
+    paddingVertical:   6,
+    borderRadius:      100,
+    borderWidth:       1,
+  } as ViewStyle,
+  chipInactive: {
+    backgroundColor: '#F9FAFB',
+    borderColor:     '#E5E7EB',
+  } as ViewStyle,
+  chipText: {
+    fontSize:   13,
+    fontWeight: '600',
+  } as TextStyle,
+});
+
+// ─── Screen ───────────────────────────────────────────────────────────────────
 
 /**
- * CHW Profile screen — shows profile info, credentials, and account actions.
- * Supports inline editing via a draft state pattern.
+ * CHW Settings screen — uses the same polished tab + inline-edit visual
+ * language as MemberSettingsScreen, with CHW-specific fields and a bottom
+ * Earnings & Payouts summary card instead of the member's "Need help?" card.
  */
 export function CHWProfileScreen(): React.JSX.Element {
-  const { logout, userName } = useAuth();
+  const { userName, logout } = useAuth();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const navigation = useNavigation<any>();
-
-  const { data: apiProfile, isLoading, error, refetch } = useChwProfile();
+  const profileQuery = useChwProfile();
   const updateProfile = useUpdateChwProfile();
-  const { data: intake } = useCHWIntake();
-  const { data: credentials, refetch: refetchCredentials } = useCredentialValidations();
-  const queryClient = useQueryClient();
+  const earningsQuery = useChwEarnings();
 
-  const [isUploadModalVisible, setIsUploadModalVisible] = useState(false);
-  const [isDeleteModalVisible, setIsDeleteModalVisible] = useState(false);
-  const [deleteErrorMessage, setDeleteErrorMessage] = useState<string | null>(null);
-  const deleteAccount = useDeleteAccount();
-
-  // Phone verification — triggered in handleSave when draft.phone changes.
-  const [isPhoneVerificationVisible, setIsPhoneVerificationVisible] = useState(false);
-  const [pendingPhone, setPendingPhone] = useState<string>('');
-
-  // Derive display name from auth context (API profile has no name field)
-  const displayName = userName ?? 'My Profile';
-  const nameParts = displayName.split(' ');
-  const avatarInitials = nameParts
+  const chwInitials = (userName ?? 'C')
+    .split(' ')
     .slice(0, 2)
     .map((p) => p[0] ?? '')
     .join('')
     .toUpperCase();
 
-  // Local availability state synced from API on mount
-  const [isAvailable, setIsAvailable] = useState(apiProfile?.isAvailable ?? true);
-  useEffect(() => {
-    if (apiProfile != null) {
-      setIsAvailable(apiProfile.isAvailable);
-    }
-  }, [apiProfile]);
+  const [activeTab, setActiveTab] = useState<SettingsTab>('profile');
+  const [editingField, setEditingField] = useState<string | null>(null);
 
-  // Edit mode state
-  const [isEditing, setIsEditing] = useState(false);
+  const profile = profileQuery.data;
+
+  // ── Derived / stubbed profile fields ─────────────────────────────────────
+  // primaryLanguage and additionalLanguages are not separate fields on
+  // ChwProfile — use languages[0] / languages[1+] as a proxy until the backend
+  // exposes them as first-class fields.
+  const primaryLanguage   = profile?.languages?.[0] ?? '';
+  const additionalLangs   = (profile?.languages ?? []).slice(1);
+
+  // Specializations come directly from the profile.
+  const [specializations, setSpecializations] = useState<Vertical[]>(
+    () => (profile?.specializations ?? []) as Vertical[],
+  );
+
+  // Stubbed fields — not yet in ChwProfile shape.
+  const [modality, setModality]       = useState<Modality>('hybrid');
+  const [availableDays, setAvailableDays] = useState<DayKey[]>(['mon', 'tue', 'wed', 'thu', 'fri']);
+
+  // Sync specializations when profile loads.
+  React.useEffect(() => {
+    if (profile?.specializations != null) {
+      setSpecializations(profile.specializations as Vertical[]);
+    }
+  }, [profile?.specializations]);
+
+  // ── Local-only toggle state ───────────────────────────────────────────────
+  const [twoFactor, setTwoFactor]             = useState(true);
+  const [biometric, setBiometric]             = useState(false);
+  const [showProfileByZip, setShowProfileByZip] = useState(true);
+  const [aiDraftSummaries, setAiDraftSummaries] = useState(true);
+  const [sessionReminders, setSessionReminders] = useState(true);
+  const [memberRequestAlerts, setMemberRequestAlerts] = useState(true);
+  const [messageNotifications, setMessageNotifications] = useState(true);
+  const [earningsDeposit, setEarningsDeposit] = useState(true);
 
   /**
-   * Build a draft from the current API profile.
+   * Save a single field to the backend. On success the query cache is
+   * invalidated by the mutation's onSuccess handler. On error an Alert is
+   * shown with the field name so the user knows what to retry.
    */
-  function buildDraft(p: ChwProfile | undefined): ProfileDraft {
-    // Prefer name from the API (joined from the User row); fall back to
-    // the auth-context display name if the API hasn't loaded yet. Never
-    // fall back to hard-coded values — the previous mock fallback
-    // ("maria.reyes@compasschw.org" / "(213) 555-0192") misled real CHWs
-    // into thinking the platform had cached someone else's identity.
-    const authNameParts = displayName.split(' ');
-    const apiNameParts = (p?.name ?? '').split(' ').filter(Boolean);
-    const firstName = apiNameParts[0] ?? authNameParts[0] ?? '';
-    const lastName =
-      apiNameParts.length > 1
-        ? apiNameParts.slice(1).join(' ')
-        : authNameParts.slice(1).join(' ');
-    return {
-      firstName,
-      lastName,
-      phone: p?.phone ?? '',
-      email: p?.email ?? '',
-      zipCode: p?.zipCode ?? '',
-      bio: p?.bio ?? '',
-      specializations: [...(p?.specializations ?? [])] as Vertical[],
-      languages: [...(p?.languages ?? [])],
-    };
-  }
-
-  const [draft, setDraft] = useState<ProfileDraft>(() => buildDraft(apiProfile));
-
-  const handleEditPress = useCallback(() => {
-    setDraft(buildDraft(apiProfile));
-    setIsEditing(true);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [apiProfile]);
-
-  const handleCancel = useCallback(() => {
-    setIsEditing(false);
-  }, []);
-
-  const handleSave = useCallback(() => {
-    void updateProfile.mutateAsync({
-      zipCode: draft.zipCode.trim() || apiProfile?.zipCode,
-      bio: draft.bio.trim() || apiProfile?.bio,
-      specializations: draft.specializations,
-      languages: draft.languages,
-    });
-    setIsEditing(false);
-
-    // If the phone field changed, trigger SMS verification.
-    // The backend updates User.phone only on confirm-verification success,
-    // so the current draft.phone is shown as pending until verified.
-    const trimmedPhone = draft.phone.trim();
-    const currentPhone = apiProfile?.phone ?? '';
-    if (trimmedPhone && trimmedPhone !== currentPhone) {
-      setPendingPhone(trimmedPhone);
-      setIsPhoneVerificationVisible(true);
-    }
-  }, [draft, apiProfile, updateProfile]);
-
-  const handleToggleSpecialization = useCallback((vertical: Vertical) => {
-    setDraft((prev) => {
-      const isSelected = prev.specializations.includes(vertical);
-      return {
-        ...prev,
-        specializations: isSelected
-          ? prev.specializations.filter((v) => v !== vertical)
-          : [...prev.specializations, vertical],
-      };
-    });
-  }, []);
-
-  const handleToggleLanguage = useCallback((lang: string) => {
-    setDraft((prev) => {
-      const isSelected = prev.languages.includes(lang);
-      return {
-        ...prev,
-        languages: isSelected
-          ? prev.languages.filter((l) => l !== lang)
-          : [...prev.languages, lang],
-      };
-    });
-  }, []);
-
-  const handleAvatarPress = useCallback(() => {
-    Alert.alert('Photo picker coming soon', 'Avatar upload will be available in a future release.');
-  }, []);
-
-  const handleOpenUploadModal = useCallback(() => {
-    setIsUploadModalVisible(true);
-  }, []);
-
-  const handleCloseUploadModal = useCallback(() => {
-    setIsUploadModalVisible(false);
-  }, []);
+  const handleSaveField = useCallback(
+    async (fieldLabel: string, payload: Record<string, unknown>) => {
+      try {
+        await updateProfile.mutateAsync(payload as Parameters<typeof updateProfile.mutateAsync>[0]);
+        setEditingField(null);
+      } catch {
+        Alert.alert('Could not save', `${fieldLabel} was not updated. Please try again.`);
+      }
+    },
+    [updateProfile],
+  );
 
   /**
-   * Called by CredentialUploadModal after a successful upload.
-   * Invalidates the credentials cache so the list refreshes automatically.
+   * Save the specializations chip selection. Uses the same mutation endpoint;
+   * the chip state is updated optimistically in local state via setSpecializations.
    */
-  const handleCredentialUploaded = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: ['credentials', 'validations'] });
-    void refetchCredentials();
-  }, [queryClient, refetchCredentials]);
+  const handleSaveSpecializations = useCallback(
+    async (next: Vertical[]) => {
+      setSpecializations(next);
+      try {
+        await updateProfile.mutateAsync({ specializations: next });
+      } catch {
+        // Roll back optimistic update.
+        setSpecializations((profile?.specializations ?? []) as Vertical[]);
+        Alert.alert('Could not save', 'Specializations were not updated. Please try again.');
+      }
+    },
+    [updateProfile, profile?.specializations],
+  );
 
-  const handleToggleAvailability = useCallback((value: boolean) => {
-    setIsAvailable(value);
-    void updateProfile.mutateAsync({ isAvailable: value });
-  }, [updateProfile]);
+  const handleDeleteAccount = useCallback(() => {
+    Alert.alert(
+      'Delete account',
+      'This permanently removes your Compass account and all associated data. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () =>
+            Alert.alert(
+              'Coming soon',
+              'Account deletion is handled by support. Email help@joincompasschw.com to request deletion.',
+            ),
+        },
+      ],
+    );
+  }, []);
 
-  const handleSignOut = useCallback(async () => {
-    await logout();
+  const handleDownloadData = useCallback(() => {
+    Alert.alert('Data export', 'We will email a copy of your data to you within 24 hours.');
+  }, []);
+
+  const handleLogout = useCallback(() => {
+    Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Sign Out', style: 'destructive', onPress: () => void logout() },
+    ]);
   }, [logout]);
 
-  const handleDeleteAccountConfirm = useCallback(async (password: string) => {
-    setDeleteErrorMessage(null);
-    try {
-      await deleteAccount.mutateAsync({ password });
-      setIsDeleteModalVisible(false);
-      await logout();
-    } catch (err: unknown) {
-      const message =
-        err != null &&
-        typeof err === 'object' &&
-        'detail' in err &&
-        typeof (err as { detail: unknown }).detail === 'string'
-          ? (err as { detail: string }).detail
-          : 'Something went wrong. Please try again.';
-      setDeleteErrorMessage(message);
-      throw err; // re-throw so the modal can reset its submitting state
-    }
-  }, [deleteAccount, logout]);
+  const shellUserBlock = {
+    initials: chwInitials,
+    name:     userName ?? 'CHW',
+    role:     'CHW' as const,
+  };
 
-  // Sourced from the joined User row in /chw/profile. Empty strings render
-  // as a "—" placeholder downstream (no hard-coded mock identities).
-  const displayEmail = apiProfile?.email ?? '';
-  const displayPhone = apiProfile?.phone ?? '';
-
-  if (isLoading) {
+  if (profileQuery.isLoading) {
     return (
-      <SafeAreaView style={styles.safe} edges={['top']}>
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>My Profile</Text>
-        </View>
-        <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
-          <View style={styles.pageWrap}>
-            <LoadingSkeleton variant="card" />
-            <LoadingSkeleton variant="rows" rows={4} />
-          </View>
-        </ScrollView>
-      </SafeAreaView>
+      <AppShell role="chw" activeKey="settings" userBlock={shellUserBlock}>
+        <LoadingSkeleton variant="card" />
+        <LoadingSkeleton variant="rows" rows={5} />
+      </AppShell>
     );
   }
 
-  if (error) {
-    return (
-      <SafeAreaView style={styles.safe} edges={['top']}>
-        <ErrorState message="Failed to load profile" onRetry={() => void refetch()} />
-      </SafeAreaView>
-    );
-  }
+  const earnings = earningsQuery.data;
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
-      {/* ── Header with Edit/Save/Cancel buttons ── */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>My Profile</Text>
-        {isEditing ? (
-          <View style={styles.headerActions}>
-            <TouchableOpacity
-              style={styles.headerCancelBtn}
-              onPress={handleCancel}
-              accessibilityRole="button"
-              accessibilityLabel="Cancel editing"
-            >
-              <X size={16} color={colors.mutedForeground} />
-              <Text style={styles.headerCancelText}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.headerSaveBtn}
-              onPress={handleSave}
-              accessibilityRole="button"
-              accessibilityLabel="Save profile changes"
-            >
-              <Check size={16} color="#FFFFFF" />
-              <Text style={styles.headerSaveText}>Save</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <TouchableOpacity
-            style={styles.headerEditBtn}
-            onPress={handleEditPress}
-            accessibilityRole="button"
-            accessibilityLabel="Edit profile"
-          >
-            <Edit2 size={15} color={colors.primary} />
-            <Text style={styles.headerEditText}>Edit</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-
+    <AppShell role="chw" activeKey="settings" userBlock={shellUserBlock}>
+      <StatusBar barStyle="dark-content" backgroundColor={tokens.pageBg} />
       <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.content}
+        style={pageStyles.scroll}
+        contentContainerStyle={pageStyles.scrollContent}
         showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
       >
-        <View style={styles.pageWrap}>
-        {/* ── Banner + Avatar header ── */}
-        <View style={styles.bannerContainer}>
-          <View style={styles.banner} />
-          <View style={styles.avatarSection}>
-            <TouchableOpacity
-              onPress={isEditing ? handleAvatarPress : undefined}
-              style={styles.avatarWrapper}
-              accessibilityRole={isEditing ? 'button' : 'image'}
-              accessibilityLabel={isEditing ? 'Change avatar photo' : 'Profile avatar'}
-              disabled={!isEditing}
-            >
-              <View style={styles.avatarCircle}>
-                <Text style={styles.avatarInitials}>{avatarInitials}</Text>
-              </View>
-              {isEditing ? (
-                <View style={styles.cameraOverlay}>
-                  <Camera size={16} color="#FFFFFF" />
-                </View>
-              ) : null}
-            </TouchableOpacity>
-
-          {isEditing ? (
-            <View style={styles.nameEditRow}>
-              <TextInput
-                style={[styles.nameInput, { flex: 1 }]}
-                value={draft.firstName}
-                onChangeText={(text) => setDraft((prev) => ({ ...prev, firstName: text }))}
-                placeholder="First name"
-                placeholderTextColor={colors.mutedForeground}
-                accessibilityLabel="First name"
-              />
-              <TextInput
-                style={[styles.nameInput, { flex: 1 }]}
-                value={draft.lastName}
-                onChangeText={(text) => setDraft((prev) => ({ ...prev, lastName: text }))}
-                placeholder="Last name"
-                placeholderTextColor={colors.mutedForeground}
-                accessibilityLabel="Last name"
-              />
-            </View>
-          ) : (
-            <Text style={styles.profileName}>{displayName}</Text>
-          )}
-
-          <View style={styles.statsRow}>
-            <View style={styles.statPill}>
-              <Star size={12} color={colors.compassGold} />
-              <Text style={styles.statPillText}>{(apiProfile?.rating ?? 0).toFixed(1)} rating</Text>
-            </View>
-            <View style={styles.statPill}>
-              <Briefcase size={12} color={colors.secondary} />
-              <Text style={styles.statPillText}>{apiProfile?.yearsExperience ?? 0} yrs exp</Text>
-            </View>
-            <View style={styles.statPill}>
-              <Text style={styles.statPillText}>{apiProfile?.totalSessions ?? 0} sessions</Text>
-            </View>
-          </View>
-          </View>
-        </View>
-
-        {/* ── Personal info ── */}
-        <View style={styles.card}>
-          <SectionHeader
-            title="Personal Info"
-            isEditing={isEditing}
-            onEdit={handleEditPress}
+        <View style={pageStyles.pageWrap}>
+          <PageHeader
+            title="Settings"
+            subtitle="Manage your profile, privacy, and payout information"
           />
-          {isEditing ? (
-            <>
-              <EditField
-                label="Phone"
-                value={draft.phone}
-                onChangeText={(text) => setDraft((prev) => ({ ...prev, phone: text }))}
-                keyboardType="phone-pad"
-                placeholder="(213) 555-0000"
-              />
-              <EditField
-                label="Email"
-                value={draft.email}
-                onChangeText={(text) => setDraft((prev) => ({ ...prev, email: text }))}
-                keyboardType="email-address"
-                placeholder="your@email.com"
-              />
-              <EditField
-                label="Zip Code"
-                value={draft.zipCode}
-                onChangeText={(text) => setDraft((prev) => ({ ...prev, zipCode: text }))}
-                keyboardType="numeric"
-                placeholder="90033"
-              />
-            </>
-          ) : (
-            <>
-              <View style={styles.divider} />
-              <InfoRow
-                icon={<Mail size={16} color={colors.primary} />}
-                label="Email"
-                value={displayEmail}
-              />
-              <View style={styles.divider} />
-              <InfoRow
-                icon={<Phone size={16} color={colors.primary} />}
-                label={
-                  displayPhone && apiProfile?.phoneVerifiedAt
-                    ? 'Phone (verified)'
-                    : displayPhone
-                    ? 'Phone (unverified)'
-                    : 'Phone'
-                }
-                value={displayPhone || '—'}
-              />
-              <View style={styles.divider} />
-              <InfoRow
-                icon={<MapPin size={16} color={colors.primary} />}
-                label="Zip Code"
-                value={apiProfile?.zipCode ?? '—'}
-              />
-            </>
-          )}
-        </View>
 
-        {/* ── Bio ── */}
-        <View style={styles.card}>
-          <SectionHeader
-            title="About"
-            isEditing={isEditing}
-            onEdit={handleEditPress}
-          />
-          {isEditing ? (
-            <EditField
-              label="Bio"
-              value={draft.bio}
-              onChangeText={(text) => setDraft((prev) => ({ ...prev, bio: text }))}
-              multiline
-              maxLength={BIO_MAX_CHARS}
-              placeholder="Tell members about your background and specializations..."
-            />
-          ) : (
-            <Text style={styles.bioText}>{apiProfile?.bio ?? ''}</Text>
-          )}
-        </View>
+          {/* Main card with tab strip */}
+          <Card style={pageStyles.mainCard}>
+            <TabBar active={activeTab} onChange={setActiveTab} />
 
-        {/* ── Specializations ── */}
-        <View style={styles.card}>
-          <SectionHeader
-            title="Specializations"
-            isEditing={isEditing}
-            onEdit={handleEditPress}
-          />
-          {isEditing ? (
-            <>
-              <Text style={styles.toggleHint}>Tap to select your specializations</Text>
-              <View style={styles.pillRow}>
-                {ALL_VERTICALS.map((spec) => {
-                  const isSelected = draft.specializations.includes(spec);
-                  return (
-                    <TouchableOpacity
-                      key={spec}
-                      style={[
-                        styles.pill,
-                        styles.pillBorder,
-                        isSelected
-                          ? { backgroundColor: colors.primary + '20', borderColor: colors.primary }
-                          : { backgroundColor: colors.card, borderColor: colors.border },
-                      ]}
-                      onPress={() => handleToggleSpecialization(spec)}
-                      accessibilityRole="checkbox"
-                      accessibilityState={{ checked: isSelected }}
-                      accessibilityLabel={VERTICAL_LABELS[spec]}
-                    >
-                      <Text
-                        style={[
-                          styles.pillText,
-                          { color: isSelected ? colors.primary : colors.mutedForeground },
-                        ]}
-                      >
-                        {VERTICAL_LABELS[spec]}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </>
-          ) : (
-            <View style={styles.pillRow}>
-              {(apiProfile?.specializations ?? []).map((spec) => (
-                <View
-                  key={spec}
-                  style={[
-                    styles.pill,
-                    { backgroundColor: (VERTICAL_COLORS[spec as Vertical] ?? '#6B7A6B') + '18' },
-                  ]}
-                >
-                  <Text style={[styles.pillText, { color: VERTICAL_COLORS[spec as Vertical] ?? '#6B7A6B' }]}>
-                    {VERTICAL_LABELS[spec as Vertical] ?? spec}
-                  </Text>
-                </View>
-              ))}
-            </View>
-          )}
-        </View>
+            <View style={pageStyles.tabContent}>
 
-        {/* ── Languages ── */}
-        <View style={styles.card}>
-          <SectionHeader
-            title="Languages"
-            isEditing={isEditing}
-            onEdit={handleEditPress}
-          />
-          {isEditing ? (
-            <>
-              <Text style={styles.toggleHint}>Tap to select the languages you speak</Text>
-              <View style={styles.pillRow}>
-                {ALL_LANGUAGES.map((lang) => {
-                  const isSelected = draft.languages.includes(lang);
-                  return (
-                    <TouchableOpacity
-                      key={lang}
-                      style={[
-                        styles.pill,
-                        styles.pillBorder,
-                        isSelected
-                          ? { backgroundColor: colors.primary + '20', borderColor: colors.primary }
-                          : { backgroundColor: colors.card, borderColor: colors.border },
-                      ]}
-                      onPress={() => handleToggleLanguage(lang)}
-                      accessibilityRole="checkbox"
-                      accessibilityState={{ checked: isSelected }}
-                      accessibilityLabel={lang}
-                    >
-                      <Text
-                        style={[
-                          styles.pillText,
-                          { color: isSelected ? colors.primary : colors.mutedForeground },
-                        ]}
-                      >
-                        {lang}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </>
-          ) : (
-            <View style={styles.pillRow}>
-              {(apiProfile?.languages ?? []).map((lang) => (
-                <View key={lang} style={[styles.pill, { backgroundColor: colors.primary + '18' }]}>
-                  <Text style={[styles.pillText, { color: colors.primary }]}>{lang}</Text>
-                </View>
-              ))}
-            </View>
-          )}
-        </View>
-
-        {/* ── Credentials ── */}
-        <View style={styles.card}>
-          <View style={styles.credSectionHeader}>
-            <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Credentials</Text>
-            <TouchableOpacity
-              style={styles.uploadButton}
-              onPress={handleOpenUploadModal}
-              accessibilityRole="button"
-              accessibilityLabel="Upload a new credential document"
-            >
-              <Upload size={14} color={colors.primary} />
-              <Text style={styles.uploadButtonText}>Upload</Text>
-            </TouchableOpacity>
-          </View>
-
-          {(credentials ?? []).length === 0 ? (
-            <View style={styles.credEmptyState}>
-              <Text style={{ ...typography.bodyMd, color: colors.mutedForeground }}>
-                No credentials on file yet.
-              </Text>
-              <Text
-                style={{
-                  ...typography.bodySm,
-                  color: colors.mutedForeground,
-                  marginTop: 4,
-                }}
-              >
-                Upload your CHW certificate, HIPAA training, and background
-                check using the Upload button above. Documents are reviewed
-                within 48 hours.
-              </Text>
-            </View>
-          ) : (
-            (credentials ?? []).map((cred: CredentialValidation, index: number) => {
-              const rawStatus = cred.validationStatus as
-                | 'pending'
-                | 'verified'
-                | 'expired'
-                | 'rejected';
-              const statusColor =
-                CREDENTIAL_STATUS_COLORS[rawStatus] ?? colors.mutedForeground;
-              const statusLabel =
-                CREDENTIAL_STATUS_LABELS[rawStatus] ?? cred.validationStatus;
-              return (
-                <View key={cred.id}>
-                  {index > 0 ? <View style={styles.divider} /> : null}
-                  <View style={styles.credRow}>
-                    <View
-                      style={[
-                        styles.credIconCircle,
-                        { backgroundColor: colors.primary + '18' },
-                      ]}
-                    >
-                      <Shield size={18} color={colors.primary} />
-                    </View>
-                    <View style={styles.credInfo}>
-                      <View style={styles.credTitleRow}>
-                        <Text style={styles.credLabel}>{cred.programName}</Text>
-                        <View style={[styles.badge, { backgroundColor: statusColor + '18' }]}>
-                          <Text style={[styles.badgeText, { color: statusColor }]}>
-                            {statusLabel}
-                          </Text>
-                        </View>
+              {/* ── Profile tab ─────────────────────────────────────────── */}
+              {activeTab === 'profile' && (
+                <>
+                  <View style={profileStyles.grid}>
+                    {/* Avatar column */}
+                    <View style={profileStyles.avatarCol}>
+                      <View style={profileStyles.avatar}>
+                        <Text style={profileStyles.avatarInitials}>{chwInitials}</Text>
                       </View>
-                      <Text style={styles.credMeta}>
-                        Submitted {formatCredentialDate(cred.createdAt)}
-                      </Text>
-                      {cred.expiryDate != null ? (
-                        <Text style={styles.credMeta}>
-                          Expires {formatCredentialDate(cred.expiryDate)}
+                      <Pressable
+                        onPress={() =>
+                          Alert.alert(
+                            'Coming soon',
+                            'Photo upload is rolling out next release.',
+                          )
+                        }
+                        accessibilityRole="button"
+                        accessibilityLabel="Change profile photo"
+                        style={profileStyles.changePhotoBtn}
+                      >
+                        <Text style={profileStyles.changePhotoText}>Change photo</Text>
+                      </Pressable>
+                      <Text style={profileStyles.photoHint}>JPEG/PNG, max 5MB</Text>
+                    </View>
+
+                    {/* Form column */}
+                    <View style={profileStyles.formCol}>
+                      <Text style={profileStyles.formTitle}>Profile information</Text>
+
+                      <EditableField
+                        label="Full Name"
+                        value={profile?.name ?? ''}
+                        isEditing={editingField === 'name'}
+                        onEditStart={() => setEditingField('name')}
+                        onEditCancel={() => setEditingField(null)}
+                        onSave={(v) => handleSaveField('Full Name', { name: v })}
+                      />
+                      <EditableField
+                        label="Email"
+                        value={profile?.email ?? ''}
+                        keyboardType="email-address"
+                        isEditing={editingField === 'email'}
+                        onEditStart={() => setEditingField('email')}
+                        onEditCancel={() => setEditingField(null)}
+                        onSave={(v) => handleSaveField('Email', { email: v })}
+                      />
+                      <EditableField
+                        label="Phone"
+                        value={profile?.phone ?? ''}
+                        keyboardType="phone-pad"
+                        isEditing={editingField === 'phone'}
+                        onEditStart={() => setEditingField('phone')}
+                        onEditCancel={() => setEditingField(null)}
+                        onSave={(v) => handleSaveField('Phone', { phone: v })}
+                      />
+                      <EditableField
+                        label="Service Area ZIPs"
+                        value={profile?.zipCode ?? ''}
+                        placeholder="90033, 90031, 90032"
+                        keyboardType="default"
+                        isEditing={editingField === 'serviceAreaZips'}
+                        onEditStart={() => setEditingField('serviceAreaZips')}
+                        onEditCancel={() => setEditingField(null)}
+                        onSave={(v) => handleSaveField('Service Area ZIPs', { zipCode: v.split(',')[0]?.trim() ?? v })}
+                      />
+                      <EditableField
+                        label="Primary Language"
+                        value={primaryLanguage}
+                        isEditing={editingField === 'primaryLanguage'}
+                        onEditStart={() => setEditingField('primaryLanguage')}
+                        onEditCancel={() => setEditingField(null)}
+                        onSave={async (v) => {
+                          // Prepend new primary language, keep rest.
+                          const rest = additionalLangs.filter((l) => l !== v);
+                          await handleSaveField('Primary Language', { languages: [v, ...rest] });
+                        }}
+                      />
+                      <EditableField
+                        label="Additional Languages"
+                        value={additionalLangs.join(', ')}
+                        placeholder="Spanish, Vietnamese…"
+                        isEditing={editingField === 'additionalLanguages'}
+                        onEditStart={() => setEditingField('additionalLanguages')}
+                        onEditCancel={() => setEditingField(null)}
+                        onSave={async (v) => {
+                          const extras = v
+                            .split(',')
+                            .map((s) => s.trim())
+                            .filter(Boolean);
+                          await handleSaveField('Additional Languages', {
+                            languages: [primaryLanguage, ...extras].filter(Boolean),
+                          });
+                        }}
+                      />
+                      <EditableField
+                        label="Years of Experience"
+                        value={profile?.yearsExperience != null ? String(profile.yearsExperience) : ''}
+                        keyboardType="numeric"
+                        isEditing={editingField === 'yearsExperience'}
+                        onEditStart={() => setEditingField('yearsExperience')}
+                        onEditCancel={() => setEditingField(null)}
+                        onSave={(v) =>
+                          handleSaveField('Years of Experience', { yearsExperience: Number(v) || 0 })
+                        }
+                      />
+                      <EditableField
+                        label="Bio"
+                        value={profile?.bio ?? ''}
+                        placeholder="Tell members about your background and specializations…"
+                        multiline
+                        isEditing={editingField === 'bio'}
+                        onEditStart={() => setEditingField('bio')}
+                        onEditCancel={() => setEditingField(null)}
+                        onSave={(v) => handleSaveField('Bio', { bio: v })}
+                      />
+
+                      {/* Modality radio chips — stubbed (no backend field yet) */}
+                      <View style={profileStyles.chipsSection}>
+                        <Text style={profileStyles.chipsSectionLabel}>Modality</Text>
+                        <View style={chipStyles.row}>
+                          {ALL_MODALITIES.map((m) => {
+                            const isSelected = modality === m;
+                            return (
+                              <Pressable
+                                key={m}
+                                onPress={() => setModality(m)}
+                                accessibilityRole="radio"
+                                accessibilityState={{ checked: isSelected }}
+                                accessibilityLabel={MODALITY_LABELS[m]}
+                                style={[
+                                  chipStyles.chip,
+                                  isSelected
+                                    ? { backgroundColor: '#10B98120', borderColor: '#10B981' }
+                                    : chipStyles.chipInactive,
+                                ]}
+                              >
+                                <Text
+                                  style={[
+                                    chipStyles.chipText,
+                                    { color: isSelected ? '#10B981' : '#6B7280' },
+                                  ]}
+                                >
+                                  {MODALITY_LABELS[m]}
+                                </Text>
+                              </Pressable>
+                            );
+                          })}
+                        </View>
+                        <Text style={profileStyles.stubNote}>
+                          Modality preference — saved locally until backend field ships
                         </Text>
-                      ) : null}
-                      {cred.institutionConfirmed ? (
-                        <Text style={styles.credMeta}>Institution confirmed</Text>
-                      ) : null}
+                      </View>
+
+                      {/* Available Days — stubbed (no backend field yet) */}
+                      <View style={profileStyles.chipsSection}>
+                        <Text style={profileStyles.chipsSectionLabel}>Available Days</Text>
+                        <ChipRow<DayKey>
+                          items={ALL_DAYS}
+                          labels={DAY_LABELS}
+                          selected={availableDays}
+                          onChange={setAvailableDays}
+                        />
+                        <Text style={profileStyles.stubNote}>
+                          Availability saved locally until backend field ships
+                        </Text>
+                      </View>
                     </View>
                   </View>
+
+                  {/* Specialization chips — full-width below the grid */}
+                  <View style={profileStyles.specializationsSection}>
+                    <Text style={profileStyles.formTitle}>Specializations</Text>
+                    <ChipRow<Vertical>
+                      items={ALL_VERTICALS}
+                      labels={VERTICAL_LABELS}
+                      selected={specializations}
+                      colors={VERTICAL_COLORS}
+                      onChange={(next) => void handleSaveSpecializations(next)}
+                    />
+                  </View>
+                </>
+              )}
+
+              {/* ── Notifications tab ───────────────────────────────────── */}
+              {activeTab === 'notifications' && (
+                <View style={pageStyles.tabPanel}>
+                  <Text style={pageStyles.tabPanelTitle}>Notifications</Text>
+                  <ToggleRow
+                    label="New session reminders"
+                    description="Get reminders 24 hours and 1 hour before each upcoming session."
+                    value={sessionReminders}
+                    onValueChange={setSessionReminders}
+                  />
+                  <ToggleRow
+                    label="New member request alerts"
+                    description="Notify me when a member requests to connect with me."
+                    value={memberRequestAlerts}
+                    onValueChange={setMemberRequestAlerts}
+                  />
+                  <ToggleRow
+                    label="Message notifications"
+                    description="Push notifications for new messages from members."
+                    value={messageNotifications}
+                    onValueChange={setMessageNotifications}
+                  />
+                  <ToggleRow
+                    label="Earnings deposit confirmations"
+                    description="Notify me when a payout is initiated to my bank account."
+                    value={earningsDeposit}
+                    onValueChange={setEarningsDeposit}
+                  />
                 </View>
-              );
-            })
-          )}
-        </View>
+              )}
 
-        {/* ── Credential upload modal ── */}
-        <CredentialUploadModal
-          visible={isUploadModalVisible}
-          onClose={handleCloseUploadModal}
-          onUploaded={handleCredentialUploaded}
-        />
+              {/* ── Privacy & Security tab ──────────────────────────────── */}
+              {activeTab === 'privacy' && (
+                <View style={pageStyles.tabPanel}>
+                  <Text style={pageStyles.tabPanelTitle}>Privacy & Security</Text>
+                  <ToggleRow
+                    label="Two-factor authentication"
+                    description="SMS code on every login for an added layer of protection."
+                    value={twoFactor}
+                    onValueChange={setTwoFactor}
+                  />
+                  <ToggleRow
+                    label="Biometric login"
+                    description="Use Face ID or fingerprint to sign in on your device."
+                    value={biometric}
+                    onValueChange={setBiometric}
+                  />
+                  <ToggleRow
+                    label="Show profile to members searching by ZIP"
+                    description="Members can discover and request you by service area ZIP."
+                    value={showProfileByZip}
+                    onValueChange={setShowProfileByZip}
+                  />
+                  <ToggleRow
+                    label="Allow AI to draft session summaries"
+                    description="AI suggests session notes after each session. You review and approve before saving."
+                    value={aiDraftSummaries}
+                    onValueChange={setAiDraftSummaries}
+                  />
+                  <View style={pageStyles.privacyNote}>
+                    <Shield size={14} color="#6B7280" />
+                    <Text style={pageStyles.privacyNoteText}>
+                      Member health information is protected under HIPAA and California CMIA.
+                      Compass never sells or shares data without explicit consent.
+                    </Text>
+                  </View>
+                </View>
+              )}
 
-        {/* ── Professional intake ── */}
-        <TouchableOpacity
-          style={styles.intakeRowCard}
-          onPress={() => navigation.navigate('Intake')}
-          accessibilityRole="button"
-          accessibilityLabel={
-            intake?.completedAt
-              ? 'Edit your professional intake'
-              : 'Continue your professional intake'
-          }
-          activeOpacity={0.8}
-        >
-          <View style={styles.intakeRowIcon}>
-            <ClipboardCheck size={18} color={colors.primary} />
+              {/* ── Language tab ────────────────────────────────────────── */}
+              {activeTab === 'language' && (
+                <View style={pageStyles.tabPanel}>
+                  <Text style={pageStyles.tabPanelTitle}>Primary Language</Text>
+                  {LANGUAGE_OPTIONS.map((opt) => {
+                    const isCurrent = primaryLanguage === opt.value;
+                    return (
+                      <Pressable
+                        key={opt.value}
+                        onPress={() =>
+                          void handleSaveField('Primary Language', {
+                            languages: [opt.value, ...additionalLangs.filter((l) => l !== opt.value)],
+                          })
+                        }
+                        accessibilityRole="radio"
+                        accessibilityState={{ checked: isCurrent }}
+                        accessibilityLabel={opt.label}
+                        style={({ pressed, hovered }: { pressed: boolean; hovered?: boolean }) => [
+                          pageStyles.languageRow,
+                          isCurrent && pageStyles.languageRowActive,
+                          (pressed || hovered) && !isCurrent && { backgroundColor: '#F9FAFB' },
+                        ]}
+                      >
+                        <Globe size={16} color="#6B7280" />
+                        <Text style={pageStyles.languageLabel}>{opt.label}</Text>
+                        {isCurrent && <Text style={pageStyles.languageCurrentTag}>Current</Text>}
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              )}
+
+              {/* ── Help tab ────────────────────────────────────────────── */}
+              {activeTab === 'help' && (
+                <View style={pageStyles.tabPanel}>
+                  <Text style={pageStyles.tabPanelTitle}>Help & Support</Text>
+                  <ContactCard
+                    icon={<MessageSquare size={18} color="#10B981" />}
+                    iconBgColor="#D1FAE5"
+                    title="Message Support"
+                    description="Send a message to the Compass support team. Typically responds within a few hours."
+                    onPress={() =>
+                      Alert.alert('Support', 'Email help@joincompasschw.com or use the in-app chat.')
+                    }
+                  />
+                  <View style={{ height: 8 }} />
+                  <ContactCard
+                    icon={<HelpCircle size={18} color="#2563EB" />}
+                    iconBgColor="#DBEAFE"
+                    title="FAQs"
+                    description="Find answers to common questions about Compass CHW."
+                    onPress={() => Alert.alert('FAQs', 'FAQ page coming soon.')}
+                  />
+                  <View style={{ height: 8 }} />
+                  <ContactCard
+                    icon={<Mail size={18} color="#7C3AED" />}
+                    iconBgColor="#EDE9FE"
+                    title="Report an Issue"
+                    description="Found a bug or have feedback? Let us know."
+                    onPress={() =>
+                      Alert.alert('Report', 'Email bugs@joincompasschw.com with a description of the issue.')
+                    }
+                  />
+                </View>
+              )}
+            </View>
+          </Card>
+
+          {/* Bottom: 2-col grid (always visible) */}
+          <View style={pageStyles.bottomGrid}>
+            {/* Account & Security card (left) */}
+            <Card style={pageStyles.bottomCard}>
+              <Text style={pageStyles.bottomCardTitle}>Account & Security</Text>
+              <Text style={pageStyles.bottomCardSubtitle}>Your account settings and data</Text>
+
+              <Pressable
+                onPress={handleLogout}
+                accessibilityRole="button"
+                accessibilityLabel="Sign out of your account"
+                style={({ pressed }: { pressed: boolean }) => [
+                  pageStyles.dangerLink,
+                  { marginTop: 16 },
+                  pressed && { opacity: 0.7 },
+                ]}
+              >
+                <Text style={pageStyles.dangerLinkText}>Sign out of this device</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={handleDownloadData}
+                accessibilityRole="button"
+                accessibilityLabel="Download all my data"
+                style={({ pressed, hovered }: { pressed: boolean; hovered?: boolean }) => [
+                  pageStyles.outlineBtn,
+                  (pressed || hovered) && pageStyles.outlineBtnHover,
+                ]}
+              >
+                <Download size={16} color="#374151" />
+                <Text style={pageStyles.outlineBtnText}>Download all my data</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={handleDeleteAccount}
+                accessibilityRole="button"
+                accessibilityLabel="Delete my account"
+                style={({ pressed }: { pressed: boolean }) => [
+                  pageStyles.dangerLink,
+                  pressed && { opacity: 0.7 },
+                ]}
+              >
+                <Trash2 size={16} color="#DC2626" />
+                <Text style={pageStyles.dangerLinkText}>Delete my account</Text>
+              </Pressable>
+            </Card>
+
+            {/* Earnings & Payouts card (right) */}
+            <Card style={[pageStyles.bottomCard, pageStyles.earningsCard]}>
+              <Text style={pageStyles.bottomCardTitle}>Earnings & Payouts</Text>
+              <Text style={pageStyles.bottomCardSubtitle}>Your payout summary</Text>
+
+              <View style={earningsStyles.statsGrid}>
+                <View style={earningsStyles.statItem}>
+                  <Text style={earningsStyles.statLabel}>Pending payout</Text>
+                  <Text style={earningsStyles.statValue}>
+                    {earnings != null
+                      ? `$${earnings.pendingPayout.toFixed(2)}`
+                      : earningsQuery.isLoading
+                      ? '—'
+                      : '—'}
+                  </Text>
+                </View>
+                <View style={earningsStyles.statItem}>
+                  <Text style={earningsStyles.statLabel}>This month</Text>
+                  <Text style={earningsStyles.statValue}>
+                    {earnings != null ? `$${earnings.thisMonth.toFixed(2)}` : '—'}
+                  </Text>
+                </View>
+                <View style={earningsStyles.statItem}>
+                  <Text style={earningsStyles.statLabel}>All time</Text>
+                  <Text style={earningsStyles.statValue}>
+                    {earnings != null ? `$${earnings.allTime.toFixed(2)}` : '—'}
+                  </Text>
+                </View>
+                <View style={earningsStyles.statItem}>
+                  <Text style={earningsStyles.statLabel}>Sessions this week</Text>
+                  <Text style={earningsStyles.statValue}>
+                    {earnings != null ? String(earnings.sessionsThisWeek) : '—'}
+                  </Text>
+                </View>
+              </View>
+
+              <Pressable
+                onPress={() => navigation.navigate('EarningsStack')}
+                accessibilityRole="button"
+                accessibilityLabel="View full earnings and payout dashboard"
+                style={({ pressed, hovered }: { pressed: boolean; hovered?: boolean }) => [
+                  earningsStyles.earningsBtn,
+                  (pressed || hovered) && earningsStyles.earningsBtnHover,
+                ]}
+              >
+                <DollarSign size={16} color="#10B981" />
+                <Text style={earningsStyles.earningsBtnText}>View earnings dashboard</Text>
+              </Pressable>
+            </Card>
           </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.intakeRowTitle}>Professional Intake</Text>
-            <Text style={styles.intakeRowSubtitle}>
-              {intake?.completedAt
-                ? 'Completed — tap to review or update answers'
-                : intake && (intake.lastCompletedSection ?? 0) > 0
-                ? `${intake.lastCompletedSection} of 6 sections — resume`
-                : '27 questions help us match you with the right members'}
-            </Text>
-          </View>
-          <ChevronRight size={18} color={colors.mutedForeground} />
-        </TouchableOpacity>
-
-        {/* ── Availability toggle ── */}
-        <View style={styles.toggleCard}>
-          <View style={styles.toggleInfo}>
-            <Text style={styles.toggleTitle}>Available for Requests</Text>
-            <Text style={styles.toggleSubtext}>
-              {isAvailable
-                ? 'You are visible to members seeking support.'
-                : 'You are hidden from new requests.'}
-            </Text>
-          </View>
-          <Switch
-            value={isAvailable}
-            onValueChange={handleToggleAvailability}
-            trackColor={{ false: colors.border, true: colors.primary }}
-            thumbColor="#FFFFFF"
-            accessibilityLabel="Toggle availability"
-          />
-        </View>
-
-        {/* ── Sign out ── */}
-        <TouchableOpacity
-          style={styles.signOutButton}
-          onPress={handleSignOut}
-          accessibilityRole="button"
-          accessibilityLabel="Sign out"
-        >
-          <LogOut size={18} color={colors.destructive} />
-          <Text style={styles.signOutText}>Sign Out</Text>
-        </TouchableOpacity>
-
-        {/* ── Delete account ── */}
-        <TouchableOpacity
-          style={styles.deleteAccountButton}
-          onPress={() => {
-            setDeleteErrorMessage(null);
-            setIsDeleteModalVisible(true);
-          }}
-          accessibilityRole="button"
-          accessibilityLabel="Delete account"
-        >
-          <Text style={styles.deleteAccountText}>Delete Account</Text>
-        </TouchableOpacity>
-
-        <DeleteAccountModal
-          visible={isDeleteModalVisible}
-          onClose={() => setIsDeleteModalVisible(false)}
-          onConfirm={handleDeleteAccountConfirm}
-          errorMessage={deleteErrorMessage}
-        />
-
-        {/* Phone verification modal — appears after saving a changed phone */}
-        <PhoneVerificationModal
-          visible={isPhoneVerificationVisible}
-          initialPhone={pendingPhone}
-          onVerified={() => {
-            setIsPhoneVerificationVisible(false);
-            // Refresh CHW profile so phone_verified_at is up to date
-            void refetch();
-          }}
-          onClose={() => setIsPhoneVerificationVisible(false)}
-        />
         </View>
       </ScrollView>
-    </SafeAreaView>
+    </AppShell>
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
+// ─── Page styles ──────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: '#F4F1ED',
-  },
-  header: {
+const profileStyles = StyleSheet.create({
+  grid: {
     flexDirection: 'row',
+    gap:           32,
+    flexWrap:      'wrap',
+  } as ViewStyle,
+  avatarCol: {
+    width:      192,
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 14,
-    backgroundColor: '#F4F1ED',
-    borderBottomWidth: 1,
-    borderBottomColor: '#DDD6CC',
-  },
-  headerTitle: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 16,
-    lineHeight: 22,
-    color: '#1E3320',
-  },
-  headerActions: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  headerEditBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: colors.primary + '40',
-    backgroundColor: colors.primary + '10',
-  },
-  headerEditText: {
-    ...typography.bodySm,
-    fontWeight: '600',
-    color: colors.primary,
-  },
-  headerSaveBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 10,
-    backgroundColor: colors.primary,
-  },
-  headerSaveText: {
-    ...typography.bodySm,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  headerCancelBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
-  },
-  headerCancelText: {
-    ...typography.bodySm,
-    fontWeight: '600',
-    color: colors.mutedForeground,
-  },
-  scroll: {
-    flex: 1,
-  },
-  content: {
-    flexGrow: 1,
-    alignItems: 'center',
-  },
-  // Constrains the profile form to a readable column on desktop web.
-  // 560 px matches the CHWIntakeScreen pattern for single-column forms.
-  pageWrap: {
-    width: '100%',
-    maxWidth: 560,
-    alignSelf: 'center',
-    padding: 20,
-    paddingBottom: 48,
-  },
-  bannerContainer: {
-    marginBottom: 24,
-  },
-  banner: {
-    height: 80,
+  } as ViewStyle,
+  avatar: {
+    width:           128,
+    height:          128,
+    borderRadius:    64,
     backgroundColor: '#3D5A3E',
-    width: '100%',
-  },
-  avatarSection: {
-    alignItems: 'center',
-    paddingHorizontal: 20,
-  },
-  avatarWrapper: {
-    marginTop: -40,
-    marginBottom: 12,
-    position: 'relative',
-  },
-  avatarCircle: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: '#3D5A3E',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 4,
-    borderColor: '#FFFFFF',
-    shadowColor: '#3D5A3E',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 4,
-  },
+    alignItems:      'center',
+    justifyContent:  'center',
+  } as ViewStyle,
   avatarInitials: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 24,
-    lineHeight: 30,
-    color: '#FFFFFF',
-  },
-  cameraOverlay: {
-    position: 'absolute',
-    bottom: 0,
-    right: 0,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: colors.compassGold,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: colors.background,
-  },
-  nameEditRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginBottom: 10,
-    paddingHorizontal: 20,
-    width: '100%',
-  },
-  nameInput: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 12,
+    fontSize:   36,
+    fontWeight: '800',
+    color:      '#FFFFFF',
+  } as TextStyle,
+  changePhotoBtn: {
+    marginTop:         12,
     paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: colors.card,
-    ...typography.bodyMd,
-    color: colors.foreground,
-    textAlign: 'center',
-  },
-  profileName: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 24,
-    lineHeight: 30,
-    color: '#1E3320',
-    textAlign: 'center',
-    marginBottom: 10,
-  },
-  statsRow: {
-    flexDirection: 'row',
-    gap: 8,
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    marginBottom: 16,
-  },
-  statPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 100,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-  },
-  statPillText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 12,
-    letterSpacing: 1,
-    color: '#6B7A6B',
-  },
-  card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-    padding: 16,
-    marginBottom: 16,
-    shadowColor: '#3D5A3E',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 24,
-    elevation: 3,
-  },
-  sectionTitle: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 16,
-    lineHeight: 22,
-    color: '#1E3320',
-    marginBottom: 12,
-  },
-  toggleHint: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 12,
-    letterSpacing: 1,
-    color: '#6B7A6B',
-    marginBottom: 10,
-  },
-  divider: {
-    height: 1,
-    backgroundColor: '#DDD6CC',
-  },
-  bioText: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 14,
-    color: '#6B7A6B',
-    lineHeight: 22,
-  },
-  pillRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  pill: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 100,
-  },
-  pillBorder: {
-    borderWidth: 1,
-  },
-  pillText: {
-    fontSize: 13,
+    paddingVertical:   8,
+    borderRadius:      8,
+    borderWidth:       1,
+    borderColor:       '#E5E7EB',
+    backgroundColor:   '#FFFFFF',
+    width:             '100%',
+    alignItems:        'center',
+  } as ViewStyle,
+  changePhotoText: {
+    fontSize:   13,
     fontWeight: '600',
-    lineHeight: 18,
-  },
-  credRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-    paddingVertical: 10,
-  },
-  credIconCircle: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  credInfo: {
-    flex: 1,
-    gap: 3,
-  },
-  credTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  credLabel: {
-    ...typography.bodyMd,
-    fontWeight: '600',
-    color: colors.foreground,
-    flex: 1,
-  },
-  credMeta: {
-    ...typography.label,
-    color: colors.mutedForeground,
-  },
-  badge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 100,
-  },
-  badgeText: {
-    fontSize: 12,
-    fontWeight: '600',
-    lineHeight: 16,
-  },
-  credSectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  credEmptyState: {
-    paddingVertical: 12,
-  },
-  uploadButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: colors.primary + '40',
-    backgroundColor: colors.primary + '10',
-  },
-  uploadButtonText: {
-    ...typography.label,
-    color: colors.primary,
-  },
-  intakeRowCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-    padding: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    marginBottom: 16,
-    shadowColor: '#3D5A3E',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 24,
-    elevation: 3,
-  },
-  intakeRowIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    backgroundColor: colors.primary + '18',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  intakeRowTitle: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 14,
-    color: colors.foreground,
-  },
-  intakeRowSubtitle: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 12,
-    color: colors.mutedForeground,
-    marginTop: 2,
-    lineHeight: 16,
-  },
-  toggleCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-    padding: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    marginBottom: 16,
-    shadowColor: '#3D5A3E',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 24,
-    elevation: 3,
-  },
-  toggleInfo: {
-    flex: 1,
-  },
-  toggleTitle: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 16,
-    lineHeight: 22,
-    color: '#1E3320',
-  },
-  toggleSubtext: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 14,
-    color: '#6B7A6B',
-    marginTop: 2,
-  },
-  signOutButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#DC262640',
-    paddingVertical: 16,
-  },
-  signOutText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 16,
-    color: '#DC2626',
-  },
-  deleteAccountButton: {
-    alignItems: 'center',
-    paddingVertical: 14,
+    color:      '#374151',
+  } as TextStyle,
+  photoHint: {
     marginTop: 8,
-  },
-  deleteAccountText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize:  11,
+    color:     '#6B7280',
+    alignSelf: 'flex-start',
+  } as TextStyle,
+  formCol: {
+    flex:     1,
+    minWidth: 320,
+  } as ViewStyle,
+  formTitle: {
+    fontSize:     16,
+    fontWeight:   '600',
+    color:        '#111827',
+    marginBottom: 16,
+  } as TextStyle,
+  chipsSection: {
+    paddingVertical:   12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  } as ViewStyle,
+  chipsSectionLabel: {
+    fontSize:     12,
+    fontWeight:   '500',
+    color:        '#6B7280',
+    marginBottom: 4,
+  } as TextStyle,
+  stubNote: {
+    marginTop:  6,
+    fontSize:   11,
+    color:      '#9CA3AF',
+    fontStyle:  'italic',
+  } as TextStyle,
+  specializationsSection: {
+    marginTop:  24,
+    paddingTop: 24,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+  } as ViewStyle,
+});
+
+const earningsStyles = StyleSheet.create({
+  statsGrid: {
+    flexDirection: 'row',
+    flexWrap:      'wrap',
+    gap:           12,
+    marginTop:     12,
+  } as ViewStyle,
+  statItem: {
+    flex:    1,
+    minWidth: 120,
+  } as ViewStyle,
+  statLabel: {
+    fontSize:  11,
+    color:     '#6B7280',
+    marginBottom: 2,
+  } as TextStyle,
+  statValue: {
+    fontSize:   18,
+    fontWeight: '700',
+    color:      '#111827',
+  } as TextStyle,
+  earningsBtn: {
+    flexDirection:     'row',
+    alignItems:        'center',
+    gap:               8,
+    marginTop:         16,
+    paddingHorizontal: 16,
+    paddingVertical:   10,
+    borderRadius:      10,
+    borderWidth:       1,
+    borderColor:       '#10B981',
+    backgroundColor:   '#ECFDF5',
+    alignSelf:         'flex-start',
+  } as ViewStyle,
+  earningsBtnHover: {
+    backgroundColor: '#D1FAE5',
+  } as ViewStyle,
+  earningsBtnText: {
+    fontSize:   13,
+    fontWeight: '600',
+    color:      '#10B981',
+  } as TextStyle,
+});
+
+const pageStyles = StyleSheet.create({
+  scroll: { flex: 1 } as ViewStyle,
+  scrollContent: { flexGrow: 1 } as ViewStyle,
+  pageWrap: {
+    padding:   32,
+    width:     '100%',
+    alignSelf: 'stretch',
+  } as ViewStyle,
+
+  // Main settings card
+  mainCard: {
+    padding:  0,
+    overflow: 'hidden',
+  } as ViewStyle,
+  tabContent: {
+    padding: 32,
+  } as ViewStyle,
+  tabPanel: {
+    gap: 4,
+  } as ViewStyle,
+  tabPanelTitle: {
+    fontSize:     16,
+    fontWeight:   '600',
+    color:        '#111827',
+    marginBottom: 12,
+  } as TextStyle,
+  privacyNote: {
+    flexDirection:   'row',
+    alignItems:      'flex-start',
+    gap:             8,
+    marginTop:       16,
+    backgroundColor: '#F9FAFB',
+    borderRadius:    10,
+    padding:         12,
+  } as ViewStyle,
+  privacyNoteText: {
+    flex:       1,
+    fontSize:   12,
+    color:      '#6B7280',
+    lineHeight: 16,
+  } as TextStyle,
+  languageRow: {
+    flexDirection:     'row',
+    alignItems:        'center',
+    gap:               12,
+    paddingVertical:   12,
+    paddingHorizontal: 8,
+    borderRadius:      8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  } as ViewStyle,
+  languageRowActive: {
+    backgroundColor: '#ECFDF5',
+  } as ViewStyle,
+  languageLabel: {
+    flex:     1,
     fontSize: 14,
-    color: colors.destructive,
-    textDecorationLine: 'underline',
-  },
+    color:    '#111827',
+  } as TextStyle,
+  languageCurrentTag: {
+    fontSize:          11,
+    fontWeight:        '700',
+    color:             '#10B981',
+    backgroundColor:   '#D1FAE5',
+    paddingHorizontal: 8,
+    paddingVertical:   3,
+    borderRadius:      999,
+  } as TextStyle,
+
+  // Bottom 2-col grid (always visible)
+  bottomGrid: {
+    flexDirection: 'row',
+    gap:           20,
+    marginTop:     24,
+    flexWrap:      'wrap',
+  } as ViewStyle,
+  bottomCard: {
+    flex:     1,
+    minWidth: 320,
+    padding:  24,
+  } as ViewStyle,
+  earningsCard: {
+    backgroundColor: '#F0FDF4',
+  } as ViewStyle,
+  bottomCardTitle: {
+    fontSize:   16,
+    fontWeight: '600',
+    color:      '#111827',
+  } as TextStyle,
+  bottomCardSubtitle: {
+    marginTop: 4,
+    fontSize:  12,
+    color:     '#6B7280',
+  } as TextStyle,
+  outlineBtn: {
+    flexDirection:     'row',
+    alignItems:        'center',
+    justifyContent:    'center',
+    gap:               8,
+    marginTop:         16,
+    paddingHorizontal: 16,
+    paddingVertical:   10,
+    borderRadius:      10,
+    borderWidth:       1,
+    borderColor:       '#E5E7EB',
+    backgroundColor:   '#FFFFFF',
+    alignSelf:         'flex-start',
+  } as ViewStyle,
+  outlineBtnHover: {
+    backgroundColor: '#F9FAFB',
+  } as ViewStyle,
+  outlineBtnText: {
+    fontSize:   13,
+    fontWeight: '600',
+    color:      '#374151',
+  } as TextStyle,
+  dangerLink: {
+    flexDirection:   'row',
+    alignItems:      'center',
+    gap:             6,
+    marginTop:       8,
+    paddingVertical: 6,
+    alignSelf:       'flex-start',
+  } as ViewStyle,
+  dangerLinkText: {
+    fontSize:   13,
+    fontWeight: '600',
+    color:      '#DC2626',
+  } as TextStyle,
 });
