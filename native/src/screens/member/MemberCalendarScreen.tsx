@@ -648,14 +648,16 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    paddingHorizontal: 16,
-    paddingTop: 20,
+    flexGrow: 1,
   },
-  // Web stretches edge-to-edge by default; cap at 560px and center.
+  // 1100px — full width like Messages/Settings; p-8 horizontal padding.
   pageWrap: {
     width: '100%',
     maxWidth: 1100,
     alignSelf: 'center',
+    paddingHorizontal: 32,
+    paddingTop: 24,
+    paddingBottom: 32,
   },
   pageHeader: {
     marginBottom: 16,
