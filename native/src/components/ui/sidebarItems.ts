@@ -17,7 +17,9 @@
 export const chwSidebarItems = [
   { key: 'dashboard',    label: 'Dashboard',          icon: 'layout-dashboard', route: 'DashboardStack'        },
   { key: 'members',      label: 'Members',            icon: 'users',            route: 'CHWMembers'            },
-  { key: 'inbox',        label: 'Inbox',              icon: 'inbox',            route: 'Requests'              },
+  // Inbox removed from sidebar — `Requests` route is still registered in
+  // CHWTabNavigator + linked at /chw/requests so any deep link / programmatic
+  // navigation still works, just no sidebar entry.
   { key: 'journeys',     label: 'Journeys',           icon: 'route',            route: 'CHWJourneys'           },
   { key: 'messages',     label: 'Messages',           icon: 'message-square',   route: 'SessionsStack',         badgeKey: 'unreadMessages' },
   { key: 'appointments', label: 'Appointments',       icon: 'calendar',         route: 'Calendar'              },
