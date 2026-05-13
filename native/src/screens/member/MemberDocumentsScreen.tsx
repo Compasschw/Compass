@@ -191,62 +191,69 @@ function DocCard({ doc, onUpload, isUploadPlaceholder = false }: DocCardProps): 
 
 const dc = StyleSheet.create({
   card: {
-    padding: 14,
+    // p-4 = 16px from mockup; fixed-width thumbnail card matching mock grid
+    padding: 16,
     gap: 8,
     alignItems: 'flex-start',
     flex: 1,
-    minWidth: 140,
-    maxWidth: 200,
+    // min 160px so cards look like tiles, not tiny chips
+    minWidth: 160,
+    maxWidth: 220,
   } as ViewStyle,
   cardPending: {
-    borderColor: tokens.amber100,
-    backgroundColor: `${tokens.amber100}60`,
+    borderColor: '#FDE68A',
+    backgroundColor: '#FFFBEB',
   } as ViewStyle,
   cardPlaceholder: {
     borderStyle: 'dashed',
     borderWidth: 2,
-    borderColor: tokens.primary,
-    backgroundColor: `${tokens.primary}06`,
+    borderColor: '#A7F3D0',
+    backgroundColor: `#D1FAE5` + '20',
   } as ViewStyle,
   iconCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 10,
+    // doc-thumb: w-full h-120 from mockup → use fixed 48px icon box
+    width: '100%' as unknown as number,
+    height: 96,
+    borderRadius: 12,
     backgroundColor: tokens.gray100,
     alignItems: 'center',
     justifyContent: 'center',
   } as ViewStyle,
   iconCirclePending: {
-    backgroundColor: `${tokens.amber100}80`,
+    backgroundColor: '#FFFBEB',
   } as ViewStyle,
   iconEmoji: {
-    fontSize: 22,
+    // text-5xl ≈ 36px from mockup doc thumbnail
+    fontSize: 36,
   } as TextStyle,
   name: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '600',
-    color: tokens.textPrimary,
-    lineHeight: 18,
+    color: '#111827',
+    lineHeight: 20,
   } as TextStyle,
   namePending: {
-    color: tokens.amber700,
+    color: '#B45309',
   } as TextStyle,
   date: {
-    fontSize: 10,
+    fontSize: 11,
     color: tokens.textMuted,
   } as TextStyle,
   uploadBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: tokens.primary,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 6,
-    marginTop: 2,
+    // bg-emerald-600 from mockup
+    backgroundColor: '#059669',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+    marginTop: 4,
+    width: '100%' as unknown as number,
+    justifyContent: 'center',
   } as ViewStyle,
   uploadBtnText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '600',
     color: '#FFFFFF',
   } as TextStyle,
@@ -420,7 +427,10 @@ const styles = StyleSheet.create({
   scroll: { flex: 1 },
   scrollContent: { flexGrow: 1 },
   pageWrap: {
-    padding: 24,
+    // p-8 = 32px from mockup
+    paddingHorizontal: 32,
+    paddingTop: 24,
+    paddingBottom: 32,
     maxWidth: 1100,
     width: '100%',
     alignSelf: 'center',
@@ -435,21 +445,24 @@ const styles = StyleSheet.create({
     minWidth: 0,
   } as ViewStyle,
   sectionLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: tokens.textSecondary,
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#374151',
     textTransform: 'uppercase',
     letterSpacing: 0.8,
-    marginBottom: 12,
+    marginBottom: 16,
   } as TextStyle,
   docGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 12,
+    // gap-4 = 16px from mockup
+    gap: 16,
   } as ViewStyle,
   railCard: {
-    padding: 16,
+    padding: 20,
     gap: 12,
+    // mock: bg-gradient-to-b from-amber-50/40 to-white
+    backgroundColor: '#FFFBEB',
   } as ViewStyle,
   railHeader: {
     flexDirection: 'row',
@@ -457,16 +470,16 @@ const styles = StyleSheet.create({
     gap: 8,
   } as ViewStyle,
   railTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: tokens.textPrimary,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111827',
     flex: 1,
-    lineHeight: 18,
+    lineHeight: 20,
   } as TextStyle,
   railBody: {
-    fontSize: 12,
-    color: tokens.textSecondary,
-    lineHeight: 18,
+    fontSize: 13,
+    color: '#6B7280',
+    lineHeight: 20,
   } as TextStyle,
   railList: {
     gap: 8,
