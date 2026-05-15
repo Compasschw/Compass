@@ -49,16 +49,39 @@ async def main() -> None:
         },
         timeout=30.0,
     ) as client:
-        response = await client.post("/api/beta/members", json=PAYLOAD)
+        # 1. Create the member.
+        post_response = await client.post("/api/beta/members", json=PAYLOAD)
+        print("=== POST /api/beta/members ===")
+        print("HTTP", post_response.status_code)
+        try:
+            post_body = post_response.json()
+        except ValueError:
+            print("(non-json body)")
+            print(post_response.text)
+            return
+        print(json.dumps(post_body, indent=2))
 
-    print("HTTP", response.status_code)
-    try:
-        body = response.json()
-    except ValueError:
-        print("(non-json body)")
-        print(response.text)
-        return
-    print(json.dumps(body, indent=2))
+        # 2. Pull the member back so we can see what Pear actually stored.
+        # The id may be at top level or nested under "data".
+        nested = post_body.get("data") if isinstance(post_body, dict) else None
+        member_id = (
+            (nested or {}).get("_id")
+            or (nested or {}).get("id")
+            or post_body.get("_id")
+            or post_body.get("id")
+        )
+        if not member_id:
+            print("\n(could not find member id in POST response — skipping GET)")
+            return
+
+        print(f"\n=== GET /api/beta/members/{member_id} ===")
+        get_response = await client.get(f"/api/beta/members/{member_id}")
+        print("HTTP", get_response.status_code)
+        try:
+            print(json.dumps(get_response.json(), indent=2))
+        except ValueError:
+            print("(non-json body)")
+            print(get_response.text)
 
 
 if __name__ == "__main__":
