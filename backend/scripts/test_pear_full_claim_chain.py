@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -32,7 +33,10 @@ from app.config import settings
 # ─── Hard-coded test inputs (matches what's already set in Pear's UI) ────────
 
 # Test Tester member — Blue Shield Promise + CIN 12345678A pre-configured.
-MEMBER_ID = "d25bcbc0-6d66-4d71-9bc7-8f3a58ccb169"
+# Override via PEAR_TEST_MEMBER_ID env to point at any member that has
+# primaryInsuranceCompany + primaryCIN already set in Pear's dashboard.
+DEFAULT_MEMBER_ID = "d25bcbc0-6d66-4d71-9bc7-8f3a58ccb169"
+MEMBER_ID = os.environ.get("PEAR_TEST_MEMBER_ID") or DEFAULT_MEMBER_ID
 
 # Jemal as CHW + the 98960 template (already proven).
 USER_ID = settings.pear_suite_demo_chw_user_id or "3f205159-f1b3-43c0-a875-dec3ecc97025"
