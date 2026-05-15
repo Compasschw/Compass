@@ -114,6 +114,12 @@ class Settings(BaseSettings):
     # the vendor until the gate is explicitly opened.
     assemblyai_baa_confirmed: bool = False
     anthropic_baa_confirmed: bool = False
+    # Vonage carries voice + SMS PHI (member phone numbers, recorded audio, IVR
+    # consent capture). Production refuses to start unless the BAA is signed.
+    vonage_baa_confirmed: bool = False
+    # Pear Suite stores member name, DOB, medi_cal_id, DX codes for billing.
+    # Production refuses to start unless the BAA is signed.
+    pear_suite_baa_confirmed: bool = False
 
     # Observability
     sentry_dsn: str = ""
@@ -203,6 +209,28 @@ if settings.environment == "production":
         print(
             "FATAL: ANTHROPIC_BAA_CONFIRMED is False in production. "
             "Set ANTHROPIC_BAA_CONFIRMED=true in .env after the BAA is "
+            "countersigned by legal.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Vonage handles PHI (voice recordings, member phone numbers, IVR capture).
+    # The BAA must be signed before any call/SMS code path runs in production.
+    if not settings.vonage_baa_confirmed:
+        print(
+            "FATAL: VONAGE_BAA_CONFIRMED is False in production. "
+            "Set VONAGE_BAA_CONFIRMED=true in .env after the BAA is "
+            "countersigned by legal.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Pear Suite stores PHI for Medi-Cal claim submission (member name, DOB,
+    # medi_cal_id, DX codes). Refuse to boot until the BAA is signed.
+    if not settings.pear_suite_baa_confirmed:
+        print(
+            "FATAL: PEAR_SUITE_BAA_CONFIRMED is False in production. "
+            "Set PEAR_SUITE_BAA_CONFIRMED=true in .env after the BAA is "
             "countersigned by legal.",
             file=sys.stderr,
         )
