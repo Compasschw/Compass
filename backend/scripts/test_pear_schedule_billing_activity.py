@@ -39,6 +39,35 @@ ACTIVITY_TEMPLATE_ID = (
     or "cb5875f0-444d-448f-9700-996c2ab65817"
 )
 
+# ─── Pear costIds, by insurance carrier ──────────────────────────────────────
+# Each carrier has a Pear-side "Cost configuration" UUID for the CHW Service
+# 1-Person procedure (98960). We must include the right costId in
+# billingDetails when completing a billable activity. Captured 2026-05-15.
+
+COST_IDS_BY_CARRIER: dict[str, str] = {
+    "anthem_blue_cross_blue_shield":     "a88faa1c-e8d5-42d4-a057-ac092cb4b878",
+    "blue_shield_of_california_promise": "a553f4ed-d5a4-43fa-82e9-c6b22045fa40",
+    "health_net":                        "42456f6f-d745-46ad-85b1-755e2c48721b",
+    "kaiser_independent_living_systems": "7e60840e-18da-4a7d-b8dd-21b0d650a4ce",
+    "la_care_health_plan":               "78dad802-f121-4e33-af8b-e367f009d427",
+    "molina_healthcare_california":      "78dad802-f121-4e33-af8b-e367f009d427",
+}
+
+# Carrier to test with — Health Net is a major California Medi-Cal MCO and a
+# good first choice. Override via PEAR_TEST_CARRIER env (snake_case key from
+# the dict above) if you want to test a different carrier.
+DEFAULT_CARRIER = "health_net"
+CARRIER_KEY = os.environ.get("PEAR_TEST_CARRIER") or DEFAULT_CARRIER
+COST_ID = COST_IDS_BY_CARRIER[CARRIER_KEY]
+
+# Place of service: 2 = telehealth (typical for CHW phone sessions).
+# Other common codes: 11 = office, 12 = home, 99 = other.
+PLACE_OF_SERVICE = 2
+
+# Default ICD-10 diagnosis. Z71.89 = "Other specified counseling" — a generic,
+# non-clinical visit code commonly used by CHWs.
+DIAGNOSIS_CODES = ["Z71.89"]
+
 
 async def main() -> None:
     async with httpx.AsyncClient(
@@ -74,16 +103,23 @@ async def main() -> None:
         if not activity_id:
             raise SystemExit("Could not extract activity id from POST response.")
 
-        # ── Step 2: PUT the activity to Complete with billable=true. We
-        # deliberately omit billingDetails so we observe what Pear says when
-        # asked to complete a billable activity without the cost-side data.
+        # ── Step 2: PUT the activity to Complete WITH billingDetails using
+        # the real costId we now have for the chosen carrier.
         put_payload = {
             "status": "Complete",
             "billable": True,
+            "billingDetails": [
+                {
+                    "memberId": MEMBER_ID,
+                    "costId": COST_ID,
+                    "placeOfService": PLACE_OF_SERVICE,
+                    "diagnosisCodes": DIAGNOSIS_CODES,
+                },
+            ],
         }
         print(
             f"\n=== PUT /api/beta/activities/{activity_id} "
-            "(Complete, billable=true, no billingDetails) ==="
+            f"(Complete, billable=true, costId={CARRIER_KEY}) ==="
         )
         print("payload =", json.dumps(put_payload, indent=2))
         put_response = await client.put(
@@ -96,8 +132,9 @@ async def main() -> None:
             print(put_response.text)
 
         print(
-            "\nRefresh Jemal Test's profile in the Pear dashboard — the "
-            "activity should appear under the billing-activities section.",
+            "\nRefresh Jemal Test's profile in the Pear dashboard — if the "
+            "PUT succeeded, the activity should appear as Completed with "
+            "billing details under the billing-activities section.",
         )
 
 
