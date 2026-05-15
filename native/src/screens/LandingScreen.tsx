@@ -72,7 +72,7 @@ const heroMemberImage = require('../../assets/hero-member.jpg') as number;
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const chwMobileImage = require('../../assets/chw-mobile.jpg') as number;
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const neighborhoodImage = require('../../assets/neighborhood.webp') as number;
+const neighborhoodImage = require('../../assets/neighborhood.jpg') as number;
 
 // ─── Layout constants ─────────────────────────────────────────────────────────
 

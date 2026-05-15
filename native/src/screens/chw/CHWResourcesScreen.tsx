@@ -34,7 +34,10 @@ import {
   Utensils,
   Brain,
   Stethoscope,
-  HeartHandshake,
+  LifeBuoy,
+  Scale,
+  Bus,
+  Folder,
   FileText,
   TrendingUp,
   MapPin,
@@ -46,22 +49,31 @@ import { colors, spacing, radius } from '../../theme/tokens';
 import { useAuth } from '../../context/AuthContext';
 import { useChwResources, type ChwResourceItem } from '../../hooks/useApiQueries';
 
-// ─── Icon-circle bg colours per category (matches mockup) ────────────────────
+// ─── Icon-circle bg colours per category ─────────────────────────────────────
+// Mirrors the live API enum (housing | food | mental_health | rehab |
+// healthcare | legal | transportation | other) so every resource gets a
+// distinct, recognisable colour treatment instead of collapsing to one tone.
 
 const CATEGORY_ICON_BG: Record<Exclude<ResourceCategory, 'all'>, string> = {
-  housing:       colors.red100,
-  food:          colors.orange100,
-  mental_health: colors.purple100,
-  healthcare:    colors.emerald100,
-  benefits:      colors.emerald100,
+  housing:        colors.red100,
+  food:           colors.orange100,
+  mental_health:  colors.purple100,
+  rehab:          colors.rose100,
+  healthcare:     colors.emerald100,
+  legal:          colors.blue100,
+  transportation: colors.amber100,
+  other:          colors.slate100,
 };
 
 const CATEGORY_ICON_COLOR: Record<Exclude<ResourceCategory, 'all'>, string> = {
-  housing:       colors.red700,
-  food:          colors.orange700,
-  mental_health: colors.purple700,
-  healthcare:    colors.emerald700,
-  benefits:      colors.emerald700,
+  housing:        colors.red700,
+  food:           colors.orange700,
+  mental_health:  colors.purple700,
+  rehab:          colors.rose700,
+  healthcare:     colors.emerald700,
+  legal:          colors.blue700,
+  transportation: colors.amber800,
+  other:          colors.slate700,
 };
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -71,8 +83,11 @@ type ResourceCategory =
   | 'housing'
   | 'food'
   | 'mental_health'
+  | 'rehab'
   | 'healthcare'
-  | 'benefits';
+  | 'legal'
+  | 'transportation'
+  | 'other';
 
 interface Resource {
   id: string;
@@ -90,20 +105,29 @@ interface Resource {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const CATEGORY_LABELS: Record<ResourceCategory, string> = {
-  all:           'All',
-  housing:       'Housing',
-  food:          'Food',
-  mental_health: 'Mental Health',
-  healthcare:    'Healthcare',
-  benefits:      'Benefits',
+  all:            'All',
+  housing:        'Housing',
+  food:           'Food',
+  mental_health:  'Mental Health',
+  rehab:          'Recovery',
+  healthcare:     'Healthcare',
+  legal:          'Legal',
+  transportation: 'Transit',
+  other:          'Other',
 };
 
-const CATEGORY_PILL: Record<Exclude<ResourceCategory, 'all'>, 'blue' | 'amber' | 'purple' | 'emerald' | 'orange'> = {
-  housing:       'blue',
-  food:          'amber',
-  mental_health: 'purple',
-  healthcare:    'emerald',
-  benefits:      'orange',
+const CATEGORY_PILL: Record<
+  Exclude<ResourceCategory, 'all'>,
+  'red' | 'amber' | 'purple' | 'pink' | 'emerald' | 'blue' | 'orange' | 'gray-muted'
+> = {
+  housing:        'red',
+  food:           'amber',
+  mental_health:  'purple',
+  rehab:          'pink',
+  healthcare:     'emerald',
+  legal:          'blue',
+  transportation: 'orange',
+  other:          'gray-muted',
 };
 
 const CategoryIcon: React.FC<{ category: Exclude<ResourceCategory, 'all'>; size?: number; iconColor?: string }> = ({
@@ -113,12 +137,15 @@ const CategoryIcon: React.FC<{ category: Exclude<ResourceCategory, 'all'>; size?
 }) => {
   const color = iconColor ?? colors.textSecondary;
   switch (category) {
-    case 'housing':       return <Home size={size} color={color} />;
-    case 'food':          return <Utensils size={size} color={color} />;
-    case 'mental_health': return <Brain size={size} color={color} />;
-    case 'healthcare':    return <Stethoscope size={size} color={color} />;
-    case 'benefits':      return <HeartHandshake size={size} color={color} />;
-    default:              return <FileText size={size} color={color} />;
+    case 'housing':        return <Home size={size} color={color} />;
+    case 'food':           return <Utensils size={size} color={color} />;
+    case 'mental_health':  return <Brain size={size} color={color} />;
+    case 'rehab':          return <LifeBuoy size={size} color={color} />;
+    case 'healthcare':     return <Stethoscope size={size} color={color} />;
+    case 'legal':          return <Scale size={size} color={color} />;
+    case 'transportation': return <Bus size={size} color={color} />;
+    case 'other':          return <Folder size={size} color={color} />;
+    default:               return <FileText size={size} color={color} />;
   }
 };
 
@@ -231,24 +258,18 @@ function ResourceCard({ resource }: ResourceCardProps): React.JSX.Element {
 /**
  * Map an API ChwResourceItem onto the screen-local Resource shape.
  *
- * The two shapes diverged historically (mock catalog vs. real /resources/search
- * endpoint). Until those are unified, we collapse unsupported API categories
- * to 'healthcare' (closest visual fallback) and synthesise organization/tags/
- * pinned/updatedAt fields the API doesn't yet expose.
+ * The screen's ResourceCategory mirrors the live API enum 1:1, so we pass
+ * `api.category` straight through to keep colour + icon variety per row.
+ * Fields the API doesn't (yet) expose — organization, tags, pinning — are
+ * synthesised with reasonable defaults; tags falls back to ``languages`` so
+ * search keyword matching still works.
  */
 function adaptApiResource(api: ChwResourceItem): Resource {
-  const screenCategory: Exclude<ResourceCategory, 'all'> =
-    api.category === 'housing' ||
-    api.category === 'food' ||
-    api.category === 'mental_health' ||
-    api.category === 'healthcare'
-      ? api.category
-      : 'healthcare';
   return {
     id: api.id,
     title: api.name,
     organization: '',
-    category: screenCategory,
+    category: api.category,
     description: api.description,
     phone: api.phone ?? undefined,
     address: api.address ?? undefined,
