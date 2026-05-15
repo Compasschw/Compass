@@ -73,8 +73,10 @@ async def main() -> None:
         # The id may be at top level or nested under "data".
         nested = post_body.get("data") if isinstance(post_body, dict) else None
         member_id = (
-            (nested or {}).get("_id")
+            (nested or {}).get("memberId")
+            or (nested or {}).get("_id")
             or (nested or {}).get("id")
+            or post_body.get("memberId")
             or post_body.get("_id")
             or post_body.get("id")
         )
