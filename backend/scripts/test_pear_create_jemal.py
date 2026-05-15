@@ -39,9 +39,9 @@ PAYLOAD: dict = {
     # Address — POST wants an OBJECT (GET serialises flat). Sub-keys mirror
     # the GET shape: address (line 1) / address2 (line 2) / city / state /
     # country / zip.
+    # Pear rejects nulls in optional sub-fields — omit unset keys entirely.
     "address": {
         "address": "1234 Veteran Ave",
-        "address2": None,
         "city": "Los Angeles",
         "state": "CA",
         "country": "US",
