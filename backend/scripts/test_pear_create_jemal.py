@@ -44,7 +44,7 @@ async def main() -> None:
     async with httpx.AsyncClient(
         base_url=settings.pear_suite_base_url,
         headers={
-            "Authorization": "Bearer " + settings.pear_suite_api_key,
+            "api-key": settings.pear_suite_api_key,
             "Content-Type": "application/json",
         },
         timeout=30.0,
