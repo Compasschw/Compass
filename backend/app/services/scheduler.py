@@ -521,3 +521,34 @@ def stop_scheduler() -> None:
     _scheduler.shutdown(wait=False)
     _scheduler = None
     logger.info("Scheduler stopped")
+
+
+def scheduler_status() -> dict[str, object]:
+    """Return a small dict summarising the scheduler's liveness.
+
+    Exposed via ``GET /api/v1/health`` so monitoring can detect a silently-
+    crashed scheduler without having to wait for a missed reminder / payout
+    to surface the failure days later.
+
+    Shape::
+
+        {
+            "running": bool,
+            "job_count": int,
+            "jobs": [{"id": str, "next_run_at": str | None}, ...],
+        }
+    """
+    if _scheduler is None or not _scheduler.running:
+        return {"running": False, "job_count": 0, "jobs": []}
+    jobs = _scheduler.get_jobs()
+    return {
+        "running": True,
+        "job_count": len(jobs),
+        "jobs": [
+            {
+                "id": j.id,
+                "next_run_at": j.next_run_time.isoformat() if j.next_run_time else None,
+            }
+            for j in jobs
+        ],
+    }

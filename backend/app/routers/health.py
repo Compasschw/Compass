@@ -41,6 +41,7 @@ class HealthChecks(BaseModel):
     vonage: str
     assemblyai: str
     stripe: str
+    scheduler: str
 
 
 class HealthResponse(BaseModel):
@@ -115,6 +116,24 @@ async def health(db: AsyncSession = Depends(get_db)) -> HealthResponse:
     else:
         checks["stripe"] = f"skipped (provider={settings.payments_provider})"
 
+    # ── Scheduler heartbeat ────────────────────────────────────────────────────
+    # APScheduler runs session reminders, claim retries, payout triggers, and
+    # daily HIPAA jobs. If it crashes silently, those jobs stop firing without
+    # any 5xx surface — so we surface its state here.
+    try:
+        from app.services.scheduler import scheduler_status
+
+        sched = scheduler_status()
+        if sched["running"] and (sched["job_count"] or 0) > 0:
+            checks["scheduler"] = f"ok ({sched['job_count']} jobs)"
+        elif sched["running"]:
+            checks["scheduler"] = "degraded: running with 0 jobs"
+        else:
+            checks["scheduler"] = "stopped"
+    except Exception as exc:  # noqa: BLE001
+        logger.error("health check: scheduler status read failed: %s", exc)
+        checks["scheduler"] = f"error: {type(exc).__name__}"
+
     # ── Aggregate status ──────────────────────────────────────────────────────
     degraded = any(
         v not in {"ok"} and not v.startswith("skipped")
@@ -133,6 +152,7 @@ async def health(db: AsyncSession = Depends(get_db)) -> HealthResponse:
             vonage=checks["vonage"],
             assemblyai=checks["assemblyai"],
             stripe=checks["stripe"],
+            scheduler=checks["scheduler"],
         ),
     )
 

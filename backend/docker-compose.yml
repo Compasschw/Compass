@@ -26,6 +26,15 @@ services:
         condition: service_healthy
     volumes:
       - ./app:/code/app
+    restart: unless-stopped
+    healthcheck:
+      # /api/v1/ready returns 503 (not 200) on DB failure so the orchestrator
+      # restarts the container instead of routing requests to a broken worker.
+      test: ["CMD-SHELL", "python -c \"import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/v1/ready', timeout=3).status == 200 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
 volumes:
   pgdata:
