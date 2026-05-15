@@ -31,23 +31,27 @@ PAYLOAD: dict = {
     "dob": "1993-01-05",
     "sex": "Male",
     "spokenLanguages": ["English"],
-    # Contact — verified from prior GET: phoneNumbers + primaryPhoneNumber are
-    # top-level; contactInfo wrapper was wrong.
-    "primaryPhoneNumber": "+13101234567",
-    "phoneNumbers": ["+13101234567"],
-    "email": "jemal+test@joincompasschw.com",
-    # Address — POST wants an OBJECT (GET serialises flat). Sub-keys mirror
-    # the GET shape: address (line 1) / address2 (line 2) / city / state /
-    # country / zip.
-    # Pear rejects nulls in optional sub-fields — omit unset keys entirely.
+    # Contact info goes inside the contactInfo wrapper. Phone field is
+    # ``primaryPhoneNumberDigits`` and Pear wants raw digits, no + or formatting.
+    # phoneNumbers is an array of objects with explicit type.
+    "contactInfo": {
+        "primaryPhoneNumberDigits": "3102103402",
+        "phoneNumbers": [
+            {"digits": "3102103402", "type": "Mobile", "doNotCall": False},
+        ],
+        "email": "jemal+test@joincompasschw.com",
+    },
+    # Address sub-fields use the *Name suffix Pear's schema requires.
+    # Pear rejects null on optional fields — omit address2 entirely.
     "address": {
         "address": "1234 Veteran Ave",
-        "city": "Los Angeles",
-        "state": "CA",
-        "country": "US",
+        "cityName": "Los Angeles",
+        "stateName": "CA",
+        "countryName": "US",
         "zip": "90210",
     },
-    # Medi-Cal ID — Pear's field is primaryCIN (uppercase CIN).
+    # Medi-Cal ID — Pear's read-shape exposes primaryCIN at top level. Try
+    # there; if still null on GET, the field may need PATCH on a sub-resource.
     "primaryCIN": "12345678A",
 }
 
