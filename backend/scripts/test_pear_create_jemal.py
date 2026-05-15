@@ -36,13 +36,17 @@ PAYLOAD: dict = {
     "primaryPhoneNumber": "+13101234567",
     "phoneNumbers": ["+13101234567"],
     "email": "jemal+test@joincompasschw.com",
-    # Address — all top-level fields, NOT nested. ``address`` is line 1.
-    "address": "1234 Veteran Ave",
-    "address2": None,
-    "city": "Los Angeles",
-    "state": "CA",
-    "country": "US",
-    "zip": "90210",
+    # Address — POST wants an OBJECT (GET serialises flat). Sub-keys mirror
+    # the GET shape: address (line 1) / address2 (line 2) / city / state /
+    # country / zip.
+    "address": {
+        "address": "1234 Veteran Ave",
+        "address2": None,
+        "city": "Los Angeles",
+        "state": "CA",
+        "country": "US",
+        "zip": "90210",
+    },
     # Medi-Cal ID — Pear's field is primaryCIN (uppercase CIN).
     "primaryCIN": "12345678A",
 }
