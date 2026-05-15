@@ -38,6 +38,7 @@ import { AppShell, PageHeader, Card, Pill, RightRail, StatTile } from '../../com
 import { colors, spacing, radius } from '../../theme/tokens';
 import { useAuth } from '../../context/AuthContext';
 import { useChwJourneys, type MemberJourneyResponse } from '../../hooks/useApiQueries';
+import { PressableMember } from '../../components/shared/PressableMember';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -267,9 +268,16 @@ function JourneyCard({ journey, memberName, stalled = false }: JourneyCardProps)
           <Route size={18} color={colors.emerald700} />
         </View>
         <View style={journeyCardStyles.nameBlock}>
-          <Text style={journeyCardStyles.memberName}>
-            {memberName} · {journey.template.name}
-          </Text>
+          <View style={journeyCardStyles.memberNameRow}>
+            <PressableMember memberId={journey.memberId} displayName={memberName}>
+              <Text style={[journeyCardStyles.memberName, journeyCardStyles.memberNameLink]}>
+                {memberName}
+              </Text>
+            </PressableMember>
+            <Text style={journeyCardStyles.memberName}>
+              {' · '}{journey.template.name}
+            </Text>
+          </View>
           {stalled && (
             <Text style={journeyCardStyles.stalledSubtitle}>
               {hasMissedStep ? 'Missed step — needs attention' : 'Paused · no movement'}
@@ -353,11 +361,22 @@ const journeyCardStyles = StyleSheet.create({
     gap: 2,
   } as ViewStyle,
 
+  memberNameRow: {
+    flexDirection: 'row',
+    alignItems:    'baseline',
+    flexWrap:      'wrap',
+  } as ViewStyle,
+
   memberName: {
     fontSize: 14,
     fontWeight: '600',
     color: colors.textPrimary,
     lineHeight: 20,
+  } as TextStyle,
+
+  memberNameLink: {
+    textDecorationLine: 'underline',
+    textDecorationStyle: 'dotted',
   } as TextStyle,
 
   stalledSubtitle: {

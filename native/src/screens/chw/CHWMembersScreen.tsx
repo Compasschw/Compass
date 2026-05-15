@@ -44,6 +44,7 @@ import {
 } from 'lucide-react-native';
 
 import { AppShell, Card, PageHeader, Pill } from '../../components/ui';
+import { Avatar } from '../../components/shared/Avatar';
 import { colors, radius, spacing } from '../../theme/tokens';
 import { useAuth } from '../../context/AuthContext';
 import {
@@ -201,63 +202,11 @@ function formatVertical(vertical: string | null): string {
 }
 
 // ─── Avatar circle ────────────────────────────────────────────────────────────
-
-/**
- * Deterministically picks a background colour for an avatar based on initials.
- * Uses a stable hash so the same person always gets the same colour.
- * Palette matches: emerald-100/rose-100/blue-100/purple-100/amber-100/cyan-100/indigo-100.
- */
-const AVATAR_COLORS: Array<{ bg: string; text: string }> = [
-  { bg: colors.emerald100, text: colors.emerald700 },
-  { bg: colors.blue100,    text: colors.blue700    },
-  { bg: colors.purple100,  text: colors.purple700  },
-  { bg: colors.amber100,   text: colors.amber700   },
-  { bg: colors.rose100,    text: colors.rose700    },
-  { bg: colors.cyan100,    text: colors.cyan700    },
-  { bg: colors.indigo100,  text: colors.indigo700  },
-  { bg: colors.pink100,    text: colors.pink700    },
-];
-
-function avatarColorFor(initials: string): { bg: string; text: string } {
-  let hash = 0;
-  for (let i = 0; i < initials.length; i++) {
-    hash = (hash * 31 + initials.charCodeAt(i)) & 0xffffffff;
-  }
-  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
-}
-
-interface AvatarProps {
-  initials: string;
-  size?: number;
-}
-
-function AvatarCircle({ initials, size = 36 }: AvatarProps): React.JSX.Element {
-  const { bg, text } = avatarColorFor(initials);
-  return (
-    <View
-      style={[
-        avatarStyles.circle,
-        { width: size, height: size, borderRadius: size / 2, backgroundColor: bg },
-      ]}
-    >
-      <Text style={[avatarStyles.initials, { color: text, fontSize: size * 0.35 }]}>
-        {initials}
-      </Text>
-    </View>
-  );
-}
-
-const avatarStyles = StyleSheet.create({
-  circle: {
-    alignItems:      'center',
-    justifyContent:  'center',
-    flexShrink:      0,
-  } as ViewStyle,
-  initials: {
-    fontWeight: '700',
-    lineHeight: undefined,
-  } as TextStyle,
-});
+//
+// Local AvatarCircle removed in favor of the shared `Avatar` component
+// (`components/shared/Avatar.tsx`), which now hosts the deterministic
+// per-person color palette. Pass `displayName` for the color seed and an
+// optional `initials` override matching the backend-supplied value.
 
 // ─── Table row (web) ──────────────────────────────────────────────────────────
 
@@ -285,7 +234,11 @@ function MemberTableRow({ item, onPress }: RowProps): React.JSX.Element {
     >
       {/* Member column */}
       <View style={[rowStyles.cell, rowStyles.memberCell]}>
-        <AvatarCircle initials={item.avatarInitials} />
+        <Avatar
+          displayName={item.displayName}
+          initials={item.avatarInitials}
+          size={36}
+        />
         <View style={rowStyles.memberInfo}>
           <Text style={rowStyles.memberName}>{item.displayName}</Text>
           <Text style={rowStyles.memberMeta}>
@@ -473,7 +426,11 @@ function MemberCard({ item, onPress }: MemberCardProps): React.JSX.Element {
     >
       <Card style={cardStyles.card}>
         <View style={cardStyles.headerRow}>
-          <AvatarCircle initials={item.avatarInitials} size={40} />
+          <Avatar
+            displayName={item.displayName}
+            initials={item.avatarInitials}
+            size={40}
+          />
           <View style={cardStyles.nameBlock}>
             <Text style={cardStyles.name}>{item.displayName}</Text>
             <Text style={cardStyles.meta}>

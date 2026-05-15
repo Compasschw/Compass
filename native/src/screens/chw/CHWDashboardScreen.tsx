@@ -72,6 +72,7 @@ import {
 import { useRefreshControl } from '../../hooks/useRefreshControl';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
+import { PressableMember } from '../../components/shared/PressableMember';
 
 import {
   AppShell,
@@ -323,12 +324,24 @@ function ScheduleRow({
         <Text style={styles.timeAm}>{meridiem}</Text>
       </View>
 
-      {/* Avatar */}
-      <Avatar name={name} />
+      {/* Avatar — taps to MemberProfile (RN's deepest-pressable wins inside the row's TouchableOpacity). */}
+      <PressableMember
+        memberId={session.memberId ?? ''}
+        displayName={name}
+        enabled={!!session.memberId}
+      >
+        <Avatar name={name} />
+      </PressableMember>
 
-      {/* Info */}
+      {/* Info — only the member name is pressable; subtitle is informational. */}
       <View style={styles.scheduleInfo}>
-        <Text style={styles.scheduleNameText}>{name}</Text>
+        <PressableMember
+          memberId={session.memberId ?? ''}
+          displayName={name}
+          enabled={!!session.memberId}
+        >
+          <Text style={styles.scheduleNameText}>{name}</Text>
+        </PressableMember>
         <Text style={styles.scheduleMetaText}>
           {session.vertical}
           {session.mode != null ? ` · ${MODE_LABELS[session.mode] ?? session.mode}` : ''}
@@ -355,7 +368,14 @@ function ScheduleRow({
   );
 }
 
-/** One alert card in the "Needs your attention" section. */
+/**
+ * One alert card in the "Needs your attention" section.
+ *
+ * When ``memberId`` + ``memberName`` are passed, the title is rendered as a
+ * pressable name prefix + the rest of the title text — tapping the name
+ * navigates to the member's profile, while tapping the action button on the
+ * right still fires ``onPress`` (typically opening the request/session list).
+ */
 function AttentionCard({
   variant,
   icon,
@@ -363,6 +383,8 @@ function AttentionCard({
   subtitle,
   actionLabel,
   onPress,
+  memberId,
+  memberName,
 }: {
   variant:     'red' | 'amber' | 'blue' | 'emerald';
   icon:        React.ReactNode;
@@ -370,6 +392,8 @@ function AttentionCard({
   subtitle:    string;
   actionLabel: string;
   onPress:     () => void;
+  memberId?:   string;
+  memberName?: string;
 }): React.JSX.Element {
   const borders: Record<string, { borderColor: string; backgroundColor: string }> = {
     red:     { borderColor: '#fecaca', backgroundColor: 'rgba(254,242,242,0.5)' },
@@ -379,11 +403,32 @@ function AttentionCard({
   };
   const style = borders[variant] ?? borders.amber!;
 
+  // Split the title at the first occurrence of the member name so the prefix
+  // can be rendered inside a PressableMember while the rest stays plain text.
+  const renderTitle = () => {
+    if (!memberId || !memberName || !title.startsWith(memberName)) {
+      return <Text style={styles.attentionTitle}>{title}</Text>;
+    }
+    const rest = title.slice(memberName.length);
+    return (
+      <View style={styles.attentionTitleRow}>
+        <PressableMember memberId={memberId} displayName={memberName}>
+          <Text style={[styles.attentionTitle, styles.attentionTitleLink]}>
+            {memberName}
+          </Text>
+        </PressableMember>
+        {rest.length > 0 ? (
+          <Text style={styles.attentionTitle}>{rest}</Text>
+        ) : null}
+      </View>
+    );
+  };
+
   return (
     <View style={[styles.attentionCard, { borderColor: style.borderColor, backgroundColor: style.backgroundColor }]}>
       <View style={styles.attentionIcon}>{icon}</View>
       <View style={{ flex: 1 }}>
-        <Text style={styles.attentionTitle}>{title}</Text>
+        {renderTitle()}
         <Text style={styles.attentionSub}>{subtitle}</Text>
       </View>
       <TouchableOpacity onPress={onPress} accessibilityRole="button" accessibilityLabel={actionLabel}>
@@ -805,12 +850,15 @@ export function CHWDashboardScreen(): React.JSX.Element {
                 const daysOverdue = Math.floor(
                   (Date.now() - new Date(req.createdAt).getTime()) / 86_400_000,
                 );
+                const memberName = req.memberName ?? 'Member';
                 return (
                   <AttentionCard
                     key={req.id}
                     variant="red"
                     icon={<AlertTriangle size={14} color="#dc2626" />}
-                    title={`${req.memberName ?? 'Member'} · ${daysOverdue}d overdue`}
+                    title={`${memberName} · ${daysOverdue}d overdue`}
+                    memberId={req.memberId}
+                    memberName={memberName}
                     subtitle={req.description}
                     actionLabel="Open →"
                     onPress={() => navigation.navigate('Requests' as never)}
@@ -1233,6 +1281,17 @@ const styles = StyleSheet.create({
     fontSize:   14,
     fontWeight: '600',
     color:      '#111827',
+  } as TextStyle,
+
+  attentionTitleRow: {
+    flexDirection: 'row',
+    flexWrap:      'wrap',
+    alignItems:    'baseline',
+  } as ViewStyle,
+
+  attentionTitleLink: {
+    textDecorationLine: 'underline',
+    textDecorationStyle: 'dotted',
   } as TextStyle,
 
   attentionSub: {

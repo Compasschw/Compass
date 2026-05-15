@@ -83,6 +83,7 @@ import {
 } from '../../hooks/useApiQueries';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
+import { PressableMember } from '../../components/shared/PressableMember';
 
 // ─── Breakpoints ──────────────────────────────────────────────────────────────
 
@@ -468,10 +469,21 @@ function ConversationPane({
             <ArrowLeft size={20} color="#374151" />
           </TouchableOpacity>
         ) : null}
-        <View style={[styles.avatar44, { backgroundColor: bg }]}>
-          <Text style={[styles.avatarText44, { color: text }]}>{initials}</Text>
-        </View>
-        <View style={styles.convHeaderInfo}>
+        <PressableMember
+          memberId={session.memberId ?? ''}
+          displayName={memberName}
+          enabled={!!session.memberId}
+        >
+          <View style={[styles.avatar44, { backgroundColor: bg }]}>
+            <Text style={[styles.avatarText44, { color: text }]}>{initials}</Text>
+          </View>
+        </PressableMember>
+        <PressableMember
+          memberId={session.memberId ?? ''}
+          displayName={memberName}
+          enabled={!!session.memberId}
+          style={styles.convHeaderInfo}
+        >
           <View style={styles.convHeaderNameRow}>
             <Text style={styles.convHeaderName}>{memberName}</Text>
             <Pill variant="emerald" size="sm">Highly Engaged</Pill>
@@ -479,7 +491,7 @@ function ConversationPane({
           <Text style={styles.convHeaderMeta}>
             {session.mode ? `${session.mode.replace('_', ' ')} · ` : ''}Active Member
           </Text>
-        </View>
+        </PressableMember>
         {/* Phone button — initiates Vonage masked-number call */}
         <TouchableOpacity
           style={[styles.iconBtn, callInitiating && styles.iconBtnDisabled]}
@@ -499,13 +511,14 @@ function ConversationPane({
         {/* CalendarPlus button — navigate to the CHW Calendar tab */}
         <CalendarPlusButton />
 
-        <TouchableOpacity
+        <PressableMember
+          memberId={session.memberId ?? ''}
+          displayName={memberName}
+          enabled={!!session.memberId}
           style={styles.openProfileBtn}
-          accessibilityRole="link"
-          accessibilityLabel={`Open ${memberName}'s profile`}
         >
           <Text style={styles.openProfileText}>Open Profile →</Text>
-        </TouchableOpacity>
+        </PressableMember>
       </View>
 
       {/* Inline toast — success/error feedback for call + consent actions */}

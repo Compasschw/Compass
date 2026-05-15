@@ -1,10 +1,9 @@
 /**
  * Avatar — initials-based circular avatar component.
  *
- * Renders a 40×40 (configurable) circle with a sage-green background and
- * white initials derived from the display name. Intentionally initials-only
- * for now: neither User nor CHWProfile stores an `avatar_url` column in the
- * current schema, so there is no photo URI to render.
+ * Renders a (default 40×40) circle with deterministic per-person colors and
+ * initials derived from the display name. Each person gets the same color
+ * every time, so members are visually distinguishable in lists at a glance.
  *
  * SCHEMA GAP (follow-up required):
  *   Add `avatar_url: str | None` to both the `users` table and the
@@ -18,18 +17,19 @@
  * ```tsx
  * <Avatar displayName="Maria Johnson" size={40} />
  * <Avatar displayName="James T" size={32} photoUri={session.chwAvatarUrl} />
+ * <Avatar displayName="Maria Johnson" initials="MJ" size={36} />
  * ```
  */
 
 import React, { useMemo } from 'react';
 import { Image, StyleSheet, Text, View } from 'react-native';
-import { colors } from '../../theme/colors';
+import { colors as paletteColors } from '../../theme/tokens';
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
 export interface AvatarProps {
   /**
-   * Full display name used to derive initials.
+   * Full display name used to derive initials and the deterministic color.
    * "Maria Johnson" → "MJ", "CHW" → "C", "" → "?"
    */
   displayName: string;
@@ -45,6 +45,41 @@ export interface AvatarProps {
    * instead of initials. Not used today — see SCHEMA GAP above.
    */
   photoUri?: string;
+
+  /**
+   * Optional override for the initials shown. Used when the backend already
+   * computed display-safe initials (e.g., MembersRosterItem.avatarInitials)
+   * and we want to mirror that exactly instead of re-deriving locally.
+   */
+  initials?: string;
+}
+
+// ─── Deterministic color palette ──────────────────────────────────────────────
+//
+// Each person's avatar gets the same color every time, derived from a stable
+// hash over the input. This makes members visually distinguishable in long
+// lists without requiring photos. The palette is intentionally pastel-bg /
+// dark-text so the initial reads cleanly against any container background.
+
+const AVATAR_PALETTE: ReadonlyArray<{ bg: string; text: string }> = [
+  { bg: paletteColors.emerald100, text: paletteColors.emerald700 },
+  { bg: paletteColors.blue100,    text: paletteColors.blue700    },
+  { bg: paletteColors.purple100,  text: paletteColors.purple700  },
+  { bg: paletteColors.amber100,   text: paletteColors.amber700   },
+  { bg: paletteColors.rose100,    text: paletteColors.rose700    },
+  { bg: paletteColors.indigo100,  text: paletteColors.indigo700  },
+];
+
+/**
+ * Pick a palette entry from a stable hash over the seed string.
+ * Same seed → same color, every call.
+ */
+export function avatarColorFor(seed: string): { bg: string; text: string } {
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = (hash * 31 + seed.charCodeAt(i)) & 0xffffffff;
+  }
+  return AVATAR_PALETTE[Math.abs(hash) % AVATAR_PALETTE.length];
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -78,8 +113,16 @@ export function Avatar({
   displayName,
   size = 40,
   photoUri,
+  initials: initialsOverride,
 }: AvatarProps): React.JSX.Element {
-  const initials = useMemo(() => deriveInitials(displayName), [displayName]);
+  const initials = useMemo(
+    () => initialsOverride ?? deriveInitials(displayName),
+    [initialsOverride, displayName],
+  );
+  const palette = useMemo(
+    () => avatarColorFor(initials || displayName),
+    [initials, displayName],
+  );
 
   const containerStyle = useMemo(
     () => ({
@@ -107,11 +150,19 @@ export function Avatar({
 
   return (
     <View
-      style={[s.base, s.initialsContainer, containerStyle]}
+      style={[
+        s.base,
+        s.initialsContainer,
+        containerStyle,
+        { backgroundColor: palette.bg },
+      ]}
       accessibilityRole="image"
       accessibilityLabel={`${displayName} avatar — initials ${initials}`}
     >
-      <Text style={[s.initialsText, { fontSize }]} allowFontScaling={false}>
+      <Text
+        style={[s.initialsText, { fontSize, color: palette.text }]}
+        allowFontScaling={false}
+      >
         {initials}
       </Text>
     </View>
@@ -126,12 +177,10 @@ const s = StyleSheet.create({
     flexShrink: 0,
   },
   initialsContainer: {
-    backgroundColor: colors.compassSage,
     alignItems: 'center',
     justifyContent: 'center',
   },
   initialsText: {
-    color: '#FFFFFF',
     fontWeight: '700',
     letterSpacing: 0.5,
     lineHeight: undefined, // let the system handle line height at computed fontSize
