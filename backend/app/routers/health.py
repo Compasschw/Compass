@@ -125,7 +125,11 @@ async def health(db: AsyncSession = Depends(get_db)) -> HealthResponse:
 
         sched = scheduler_status()
         if sched["running"] and (sched["job_count"] or 0) > 0:
-            checks["scheduler"] = f"ok ({sched['job_count']} jobs)"
+            # Match the rest of the checks dict — the aggregate degraded test
+            # uses an exact "ok" comparison, so the job-count detail goes in
+            # the log line rather than the response value.
+            checks["scheduler"] = "ok"
+            logger.debug("scheduler heartbeat: %d jobs", sched["job_count"])
         elif sched["running"]:
             checks["scheduler"] = "degraded: running with 0 jobs"
         else:
