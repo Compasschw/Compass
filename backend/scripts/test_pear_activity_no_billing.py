@@ -1,22 +1,28 @@
-"""End-to-end test: create member -> schedule activity -> complete WITHOUT billing.
+"""End-to-end test: schedule activity -> complete WITHOUT billing.
 
 Validates that we can run an activity through Pear's lifecycle up to (but
 excluding) the billing step. Stops short of `billingDetails` because Pear
 requires a ``costId`` we don't yet know how to obtain — that's the open
 question for Friday's PearSuite meeting.
 
-Run from inside the api container::
+Reuses an EXISTING "Jemal Test" Pear member (default: the one most recently
+created). Override the id via env::
+
+    sudo docker compose exec -T \
+        -e PYTHONPATH=/code \
+        -e PEAR_TEST_MEMBER_ID=<uuid> \
+        api python /tmp/a.py
+
+Run::
 
     sudo docker compose cp scripts/test_pear_activity_no_billing.py api:/tmp/a.py
     sudo docker compose exec -T -e PYTHONPATH=/code api python /tmp/a.py
-
-Expected result: HTTP 201 on member, HTTP 201 on activity, HTTP 200 on the
-PUT-to-Complete. The final GET prints the activity in its Complete state.
 """
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -24,29 +30,13 @@ import httpx
 from app.config import settings
 
 
-# ─── Member payload (mirrors test_pear_create_jemal.py — full working shape) ─
+# ─── Existing Pear member id (Jemal Test, fully populated profile) ──────────
+#
+# Override via PEAR_TEST_MEMBER_ID env if you've manually deleted this one
+# in Pear's dashboard and have a fresher id you want to use instead.
 
-MEMBER_PAYLOAD: dict = {
-    "firstName": "Jemal",
-    "lastName": "Test",
-    "dob": "1993-01-05",
-    "sex": "Male",
-    "spokenLanguages": ["English"],
-    "contactInfo": {
-        "primaryPhoneNumberDigits": "3102103402",
-        "phoneNumbers": [
-            {"digits": "3102103402", "type": "Mobile", "doNotCall": False},
-        ],
-        "email": "jemal+test@joincompasschw.com",
-    },
-    "address": {
-        "address": "1234 Veteran Ave",
-        "cityName": "Los Angeles",
-        "stateName": "CA",
-        "countryName": "US",
-        "zip": "90210",
-    },
-}
+DEFAULT_MEMBER_ID = "0d5a0a26-b5a1-44a7-a7ec-17cd9dd85190"
+MEMBER_ID = os.environ.get("PEAR_TEST_MEMBER_ID") or DEFAULT_MEMBER_ID
 
 
 # ─── Activity inputs (Jemal as CHW + the 98960 CHW template) ──────────────────
@@ -66,16 +56,23 @@ ACTIVITY_TEMPLATE_ID = (
 )
 
 
-async def _create_member(client: httpx.AsyncClient) -> str:
-    print("=== POST /api/beta/members ===")
-    response = await client.post("/api/beta/members", json=MEMBER_PAYLOAD)
+async def _verify_member(client: httpx.AsyncClient, member_id: str) -> None:
+    """Sanity-check the member still exists in Pear before scheduling."""
+    print(f"=== GET /api/beta/members/{member_id} (sanity check) ===")
+    response = await client.get(f"/api/beta/members/{member_id}")
     print("HTTP", response.status_code)
+    if response.status_code != 200:
+        print(response.text)
+        raise SystemExit(
+            "Member not found in Pear. Delete the wrong id, override via "
+            "PEAR_TEST_MEMBER_ID, or re-create with test_pear_create_jemal.py."
+        )
     body = response.json()
-    print(json.dumps(body, indent=2))
-    member_id = (body.get("data") or {}).get("memberId")
-    if not member_id:
-        raise SystemExit("Could not create member — aborting.")
-    return member_id
+    member = body.get("data", {})
+    print(
+        "OK —", member.get("firstName"), member.get("lastName"),
+        "(dob", member.get("dob"), "sex", member.get("sex") + ")",
+    )
 
 
 async def _schedule_activity(
@@ -151,8 +148,8 @@ async def main() -> None:
         },
         timeout=30.0,
     ) as client:
-        member_id = await _create_member(client)
-        activity_id = await _schedule_activity(client, member_id)
+        await _verify_member(client, MEMBER_ID)
+        activity_id = await _schedule_activity(client, MEMBER_ID)
         await _complete_activity_no_billing(client, activity_id)
         await _fetch_activity(client, activity_id)
 
