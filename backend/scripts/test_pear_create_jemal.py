@@ -27,16 +27,24 @@ from app.config import settings
 PAYLOAD: dict = {
     "firstName": "Jemal",
     "lastName": "Test",
-    "dateOfBirth": "1993-01-05",
-    "phone": "+13101234567",
-    "language": ["English"],
-    "mediCalId": "12345678A",
+    "dob": "1993-01-05",
+    "sex": "Male",
+    "spokenLanguages": ["English"],
+    "contactInfo": {
+        "phone": "+13101234567",
+    },
     "address": {
         "line1": "1234 Veteran Ave",
         "city": "Los Angeles",
         "state": "CA",
         "zip": "90210",
     },
+    # mediCalId field name not visible in the API doc snippet we have —
+    # send under multiple plausible keys; Pear silently drops unknown ones,
+    # the GET below will show which (if any) stuck.
+    "mediCalId": "12345678A",
+    "medicaidId": "12345678A",
+    "primaryCin": "12345678A",
 }
 
 
