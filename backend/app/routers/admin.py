@@ -132,11 +132,24 @@ def _decrypt_totp_secret(encrypted: str) -> str:
     return aesgcm.decrypt(nonce, ciphertext, associated_data=None).decode("utf-8")
 
 
+def _admin_2fa_signing_secret() -> str:
+    """Return the secret used to sign and verify admin 2FA JWTs.
+
+    Production refuses to start unless ``ADMIN_2FA_SECRET`` is set and distinct
+    from ``SECRET_KEY`` (see config.py guards). In dev/staging we fall back to
+    ``settings.secret_key`` for backwards compatibility with existing deploys.
+    """
+    return settings.admin_2fa_secret or settings.secret_key
+
+
 def _issue_2fa_token() -> str:
     """Issue a short-lived JWT that proves the operator completed TOTP verification.
 
     The token type ``admin_2fa`` is distinct from user access tokens so that a
-    stolen user JWT cannot be used to access admin endpoints.
+    stolen user JWT cannot be used to access admin endpoints. The signing
+    secret is also distinct from ``settings.secret_key`` (in production) so a
+    leaked user access token cannot be used to forge a 2FA token even if the
+    type-claim check were ever bypassed.
     """
     payload = {
         "type": _2FA_TOKEN_TYPE,
@@ -144,7 +157,7 @@ def _issue_2fa_token() -> str:
         "exp": datetime.now(UTC) + timedelta(minutes=_2FA_TOKEN_EXPIRE_MINUTES),
         "iat": datetime.now(UTC),
     }
-    return jwt.encode(payload, settings.secret_key, algorithm=_2FA_JWT_ALGORITHM)
+    return jwt.encode(payload, _admin_2fa_signing_secret(), algorithm=_2FA_JWT_ALGORITHM)
 
 
 async def require_2fa_token(
@@ -165,7 +178,9 @@ async def require_2fa_token(
         )
     try:
         payload = jwt.decode(
-            x_admin_2fa_token, settings.secret_key, algorithms=[_2FA_JWT_ALGORITHM]
+            x_admin_2fa_token,
+            _admin_2fa_signing_secret(),
+            algorithms=[_2FA_JWT_ALGORITHM],
         )
     except JWTError as exc:
         raise HTTPException(
@@ -410,26 +425,38 @@ async def admin_logout() -> RedirectResponse:
 async def admin_waitlist_page(
     db: AsyncSession = Depends(get_db),
     compass_admin: str | None = Cookie(default=None),
+    page: int = Query(default=1, ge=1, le=10000),
+    page_size: int = Query(default=50, ge=1, le=200),
 ) -> HTMLResponse:
-    """Show waitlist submissions if authenticated, otherwise show login form."""
+    """Show waitlist submissions if authenticated, otherwise show login form.
+
+    Paginated to keep the rendered HTML bounded as the waitlist grows. Default
+    page size is 50; cap is 200. Older pages reachable via ``?page=N``.
+    """
     if not _is_authenticated(compass_admin):
         return _login_page()
 
-    # Fetch all waitlist entries
+    offset = (page - 1) * page_size
+
+    # Fetch this page's waitlist entries (newest first)
     result = await db.execute(
-        select(WaitlistEntry).order_by(WaitlistEntry.created_at.desc())
+        select(WaitlistEntry)
+        .order_by(WaitlistEntry.created_at.desc())
+        .limit(page_size)
+        .offset(offset)
     )
     entries = list(result.scalars().all())
 
-    # Count
+    # Total count (for pagination footer + page badge)
     count_result = await db.execute(
         select(func.count()).select_from(WaitlistEntry)
     )
     total = count_result.scalar() or 0
+    total_pages = max(1, (total + page_size - 1) // page_size)
 
     # Build table rows
     rows_html = ""
-    for i, entry in enumerate(entries, 1):
+    for i, entry in enumerate(entries, offset + 1):
         role_color = {
             "chw": "#3D5A3E",
             "member": "#7A9F5A",
@@ -485,6 +512,13 @@ async def admin_waitlist_page(
         </div>
         <div class="card">
             {'<table><thead><tr><th>#</th><th>Name</th><th>Email</th><th>Role</th><th>Signed Up</th></tr></thead><tbody>' + rows_html + '</tbody></table>' if entries else '<div class="empty">No waitlist submissions yet.</div>'}
+        </div>
+        <div style="max-width: 1200px; margin: 16px auto 0; display: flex; justify-content: space-between; align-items: center; color: #6B7A6B; font-size: 13px;">
+            <div>Page {page} of {total_pages} · showing {len(entries)} of {total}</div>
+            <div style="display: flex; gap: 8px;">
+                {'<a class="refresh" href="?page=' + str(page - 1) + '&page_size=' + str(page_size) + '">← Newer</a>' if page > 1 else ''}
+                {'<a class="refresh" href="?page=' + str(page + 1) + '&page_size=' + str(page_size) + '">Older →</a>' if page < total_pages else ''}
+            </div>
         </div>
     </body>
     </html>

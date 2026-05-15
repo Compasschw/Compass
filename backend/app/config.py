@@ -133,6 +133,16 @@ class Settings(BaseSettings):
     # Generate: python -c "import secrets; print(secrets.token_urlsafe(48))"
     vonage_ws_jwt_secret: str = ""
 
+    # ── Admin 2FA JWT secret (separate from user-access SECRET_KEY) ───────────
+    # Signs the short-lived (15-minute) JWT issued after a successful
+    # ``POST /api/v1/admin/2fa/verify`` and required as ``X-Admin-2FA-Token``
+    # on every privileged admin endpoint. Kept distinct from ``secret_key`` so
+    # that a leaked user access token cannot be used to forge admin 2FA tokens.
+    # Falls back to ``secret_key`` when empty (backwards-compat with existing
+    # deploys); production refuses to start unless explicitly set.
+    # Generate: python -c "import secrets; print(secrets.token_urlsafe(48))"
+    admin_2fa_secret: str = ""
+
     class Config:
         env_file = ".env"
 
@@ -194,6 +204,27 @@ if settings.environment == "production":
             "FATAL: ANTHROPIC_BAA_CONFIRMED is False in production. "
             "Set ANTHROPIC_BAA_CONFIRMED=true in .env after the BAA is "
             "countersigned by legal.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Auth-lifecycle guardrail #3 — admin 2FA JWT must use a secret that is
+    # cryptographically distinct from the user access secret_key.
+    if not settings.admin_2fa_secret:
+        print(
+            "FATAL: ADMIN_2FA_SECRET is not configured in production. The "
+            "admin 2FA JWT must be signed with a secret that is distinct "
+            "from SECRET_KEY (used for user access tokens). Generate one with: "
+            "python -c \"import secrets; print(secrets.token_urlsafe(48))\" "
+            "and set it in .env before deploying.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if settings.admin_2fa_secret == settings.secret_key:
+        print(
+            "FATAL: ADMIN_2FA_SECRET and SECRET_KEY are identical in production. "
+            "These must be different so that a leaked user access token cannot "
+            "forge admin 2FA tokens.",
             file=sys.stderr,
         )
         sys.exit(1)

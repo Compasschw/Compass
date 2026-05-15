@@ -934,18 +934,29 @@ async def voice_events(
     # If this is a recording event, persist the URL on the session.
     if payload.get("recording_url"):
         recording_url = payload["recording_url"]
-        provider_session_id = payload.get("conversation_uuid") or payload.get("call_uuid")
-        if provider_session_id:
-            result = await db.execute(
-                select(CommunicationSession).where(
-                    CommunicationSession.provider_session_id == provider_session_id
-                )
+        # Trust-boundary validation: the inbound webhook payload is attacker-
+        # controllable until Vonage signature verification covers this branch.
+        # Reject anything that is not https + a known Vonage-controlled host so
+        # we never store (and later re-serve) a hostile URL on a PHI row.
+        if not _is_safe_vendor_recording_url(recording_url):
+            logger.warning(
+                "voice/events: rejected unsafe recording_url=%r (session=%s)",
+                recording_url,
+                session,
             )
-            comm_session = result.scalar_one_or_none()
-            if comm_session is not None:
-                comm_session.recording_url = recording_url
-                await db.commit()
-                logger.info("Recording URL saved for session %s", provider_session_id)
+        else:
+            provider_session_id = payload.get("conversation_uuid") or payload.get("call_uuid")
+            if provider_session_id:
+                result = await db.execute(
+                    select(CommunicationSession).where(
+                        CommunicationSession.provider_session_id == provider_session_id
+                    )
+                )
+                comm_session = result.scalar_one_or_none()
+                if comm_session is not None:
+                    comm_session.recording_url = recording_url
+                    await db.commit()
+                    logger.info("Recording URL saved for session %s", provider_session_id)
 
     return {"received": True}
 
@@ -964,6 +975,43 @@ async def _safely_read_body(request: Request) -> dict:
             return dict(form)
         except Exception:  # noqa: BLE001
             return {}
+
+
+# Vendor-controlled hosts we trust to serve recording media. Anything else
+# is refused at ingest so we never persist and re-serve a hostile URL.
+# Vonage hosts: api.nexmo.com (legacy global), api-{region}.nexmo.com (regional).
+# Our own S3 bucket may also host recordings exported by ops jobs.
+_SAFE_RECORDING_HOST_SUFFIXES: tuple[str, ...] = (
+    ".nexmo.com",
+    ".vonage.com",
+    ".s3.amazonaws.com",
+    ".s3-us-west-2.amazonaws.com",
+)
+
+
+def _is_safe_vendor_recording_url(url: object) -> bool:
+    """Validate a recording URL before persistence.
+
+    Returns True only when the value is a string, parses as ``https://``, and
+    the host (case-folded) ends with a suffix in ``_SAFE_RECORDING_HOST_SUFFIXES``.
+    Used by the Vonage voice webhook (attacker-controllable input) and the
+    session-end recording finaliser (provider-controlled but worth defending
+    against compromised provider credentials).
+    """
+    if not isinstance(url, str) or not url:
+        return False
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
+    if parsed.scheme != "https":
+        return False
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return False
+    return any(host == suffix.lstrip(".") or host.endswith(suffix) for suffix in _SAFE_RECORDING_HOST_SUFFIXES)
 
 
 def _public_base_url() -> str:

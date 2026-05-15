@@ -251,14 +251,27 @@ async def complete_session(session_id: UUID, current_user=Depends(get_current_us
 
             recording = await provider.get_recording(comm_session.provider_session_id)
             if recording:
-                comm_session.recording_url = recording.recording_url
-                comm_session.recording_duration_seconds = recording.duration_seconds
-                comm_session.provider_recording_id = recording.provider_recording_id
+                # Even though the provider response is server-controlled, we
+                # reject non-https / non-vendor hosts as a defence-in-depth
+                # measure (compromised provider creds, future provider swap).
+                from app.routers.communication import _is_safe_vendor_recording_url
 
-                transcript = await provider.get_transcript(recording.recording_url)
-                if transcript:
-                    comm_session.transcript_text = transcript.text
-                    comm_session.transcript_confidence = transcript.confidence
+                if _is_safe_vendor_recording_url(recording.recording_url):
+                    comm_session.recording_url = recording.recording_url
+                    comm_session.recording_duration_seconds = recording.duration_seconds
+                    comm_session.provider_recording_id = recording.provider_recording_id
+
+                    transcript = await provider.get_transcript(recording.recording_url)
+                    if transcript:
+                        comm_session.transcript_text = transcript.text
+                        comm_session.transcript_confidence = transcript.confidence
+                else:
+                    import logging
+                    logging.getLogger("compass").warning(
+                        "Rejected provider recording_url=%r for session=%s — not a trusted vendor host",
+                        recording.recording_url,
+                        session_id,
+                    )
 
             comm_session.status = "closed"
             comm_session.closed_at = datetime.now(UTC)
