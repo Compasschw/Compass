@@ -1248,8 +1248,6 @@ export function MemberFindScreen(): React.JSX.Element {
         // a network failure becomes a plain Error.
         const reason =
           err instanceof Error && err.message ? err.message : 'Unknown error';
-        // eslint-disable-next-line no-console
-        console.error('[MemberFindScreen] createRequest failed:', err);
         showToast(`Failed to submit request: ${reason}`);
       }
     },

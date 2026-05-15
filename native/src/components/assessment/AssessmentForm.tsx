@@ -27,6 +27,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Animated,
   Platform,
   Pressable,
@@ -38,7 +39,7 @@ import {
   View,
 } from 'react-native';
 import { CheckCircle, Circle, ChevronLeft, ChevronRight, PauseCircle } from 'lucide-react-native';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { colors } from '../../theme/colors';
 import { fonts } from '../../theme/typography';
@@ -296,8 +297,9 @@ export function AssessmentForm({
       await postComplete(assessmentId);
       void qc.invalidateQueries({ queryKey: ['assessments', assessmentId] });
       onComplete();
-    } catch {
-      // Surface error but do not block completion attempt
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Please try again.';
+      Alert.alert('Something went wrong', message);
       setIsCompleting(false);
     }
   }, [assessmentId, isCompleting, onComplete, qc]);

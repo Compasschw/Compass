@@ -10,6 +10,7 @@
  * All network errors are redacted before surfacing.
  */
 
+import { Alert } from 'react-native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { transformKeys, toSnakeCase } from '../utils/caseTransform';
@@ -268,10 +269,12 @@ export function useCompleteRoadmapItem() {
       return { previous };
     },
 
-    onError: (_err, _vars, context) => {
+    onError: (err, _vars, context) => {
       if (context?.previous) {
         qc.setQueryData<SessionFollowup[]>(cacheKey, context.previous);
       }
+      const message = err instanceof Error ? err.message : 'Please try again.';
+      Alert.alert('Something went wrong', message);
     },
 
     onSettled: () => {
