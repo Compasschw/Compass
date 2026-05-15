@@ -12,7 +12,7 @@
  *   - Redemption history
  */
 
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Alert,
   FlatList,
@@ -27,10 +27,6 @@ import {
 import { ArrowLeft, Gift, Sparkles } from 'lucide-react-native';
 
 import { colors } from '../../theme/colors';
-import {
-  redemptionCatalog,
-  type RedemptionItem,
-} from '../../data/mock';
 import {
   useMemberProfile,
   useMemberRewards,
@@ -82,48 +78,21 @@ export function MemberRewardsScreen(): React.JSX.Element {
     balanceQuery.data?.currentBalance ?? profileQuery.data?.rewardsBalance ?? 0;
   const balance = localBalance ?? apiBalance;
 
-  // Group legacy mock catalog items by category.
-  const grouped = useMemo(() => {
-    const map = new Map<string, RedemptionItem[]>();
-    for (const item of redemptionCatalog) {
-      const bucket = map.get(item.category) ?? [];
-      map.set(item.category, [...bucket, item]);
-    }
-    return [...map.entries()];
-  }, []);
-
   // Up to 3 featured items from the live catalog.
   const featuredCatalog = useMemo(
     () => (catalogQuery.data ?? []).filter((i) => i.isActive).slice(0, 3),
     [catalogQuery.data],
   );
 
-  const handleRedeem = useCallback(
-    (item: RedemptionItem) => {
-      if (balance < item.pointsCost) {
-        Alert.alert(
-          'Insufficient points',
-          `You need ${item.pointsCost - balance} more points to redeem ${item.name}.`,
-        );
-        return;
-      }
-      Alert.alert(
-        `Redeem ${item.name}?`,
-        `This will use ${item.pointsCost} points. Current balance: ${balance} pts.`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Confirm',
-            onPress: () => {
-              setLocalBalance(balance - item.pointsCost);
-              Alert.alert('Redemption submitted', `Your ${item.name} request has been submitted.`);
-            },
-          },
-        ],
-      );
-    },
-    [balance],
-  );
+  // Group all active live-catalog items by fulfillment type for the full-list view.
+  const groupedCatalog = useMemo(() => {
+    const map = new Map<string, typeof featuredCatalog>();
+    for (const item of (catalogQuery.data ?? []).filter((i) => i.isActive)) {
+      const bucket = map.get(item.fulfillmentType) ?? [];
+      map.set(item.fulfillmentType, [...bucket, item]);
+    }
+    return [...map.entries()];
+  }, [catalogQuery.data]);
 
   const shellUserBlock = {
     initials: memberInitials,
@@ -286,30 +255,78 @@ export function MemberRewardsScreen(): React.JSX.Element {
           </View>
         )}
 
-        {/* Legacy mock catalog grouped by category */}
-        {grouped.map(([category, items]) => (
+        {/* Full live catalog grouped by fulfillment type */}
+        {catalogQuery.isLoading && (
+          <LoadingSkeleton variant="rows" rows={3} />
+        )}
+        {catalogQuery.isError && (
+          <Text style={styles.historyEmpty}>
+            Could not load rewards catalog. Pull to refresh.
+          </Text>
+        )}
+        {!catalogQuery.isLoading &&
+          !catalogQuery.isError &&
+          groupedCatalog.length === 0 && (
+            <Text style={styles.historyEmpty}>No rewards available right now.</Text>
+          )}
+        {groupedCatalog.map(([category, items]) => (
           <View key={category} style={styles.categorySection}>
             <Text style={styles.categoryLabel}>
-              {category.toUpperCase()}
+              {category.replace(/_/g, ' ').toUpperCase()}
             </Text>
             {items.map((item) => {
-              const canAfford = balance >= item.pointsCost;
+              const canAfford = balance >= item.costPoints;
               return (
                 <Card key={item.id} style={styles.catalogCard}>
-                  <Text style={styles.catalogEmoji}>{item.emoji}</Text>
+                  <Text style={styles.catalogEmoji}>{item.imageEmoji}</Text>
                   <View style={styles.catalogInfo}>
                     <Text style={styles.catalogName}>{item.name}</Text>
                     <Text style={styles.catalogDesc} numberOfLines={2}>
                       {item.description}
                     </Text>
-                    <Text style={styles.catalogCost}>{item.pointsCost} pts</Text>
+                    <Text style={styles.catalogCost}>
+                      {item.costPoints.toLocaleString()} pts
+                    </Text>
                   </View>
                   <Pressable
-                    onPress={() => handleRedeem(item)}
-                    disabled={!canAfford}
+                    onPress={() => {
+                      if (!canAfford) {
+                        Alert.alert(
+                          'Insufficient points',
+                          `You need ${item.costPoints - balance} more points to redeem ${item.name}.`,
+                        );
+                        return;
+                      }
+                      Alert.alert(
+                        `Redeem ${item.name}?`,
+                        `This will use ${item.costPoints} points. Current balance: ${balance} pts.`,
+                        [
+                          { text: 'Cancel', style: 'cancel' },
+                          {
+                            text: 'Confirm',
+                            onPress: async () => {
+                              try {
+                                await createRedemption.mutateAsync(item.id);
+                                setLocalBalance(balance - item.costPoints);
+                                Alert.alert(
+                                  'Redemption submitted',
+                                  `Your ${item.name} request has been submitted.`,
+                                );
+                              } catch {
+                                Alert.alert(
+                                  'Error',
+                                  'Could not submit redemption. Please try again.',
+                                );
+                              }
+                            },
+                          },
+                        ],
+                      );
+                    }}
+                    disabled={!canAfford || createRedemption.isPending}
                     style={[styles.redeemBtn, !canAfford && styles.redeemBtnDisabled]}
                     accessibilityRole="button"
-                    accessibilityLabel={`Redeem ${item.name} for ${item.pointsCost} points`}
+                    accessibilityLabel={`Redeem ${item.name} for ${item.costPoints} points`}
                     accessibilityState={{ disabled: !canAfford }}
                   >
                     <Text

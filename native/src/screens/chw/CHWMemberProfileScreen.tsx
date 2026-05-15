@@ -1863,42 +1863,72 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                       iconBg="#EFF6FF"
                       label="Case Notes"
                       sublabel="View all notes"
-                      onPress={() => {/* TODO: navigate to case notes */}}
+                      onPress={() =>
+                        Alert.alert(
+                          'Coming soon',
+                          'Per-member case notes are scoped to each session today — open a session card below to view or add notes. A dedicated case-notes timeline ships next sprint.',
+                        )
+                      }
                     />
                     <QuickAccessItem
                       icon={<ClipboardList size={16} color="#7C3AED" />}
                       iconBg="#F5F3FF"
                       label="Assessments"
                       sublabel="Latest: view history"
-                      onPress={() => {/* TODO: navigate to assessments */}}
+                      onPress={() =>
+                        Alert.alert(
+                          'Coming soon',
+                          'Health assessments are started from inside a session today. A member-level assessment history view is planned for the next sprint.',
+                        )
+                      }
                     />
                     <QuickAccessItem
                       icon={<CheckSquare size={16} color="#EA580C" />}
                       iconBg="#FFF7ED"
                       label="Screening Results"
                       sublabel="View history"
-                      onPress={() => {/* TODO: navigate to screenings */}}
+                      onPress={() =>
+                        Alert.alert(
+                          'Coming soon',
+                          'Screening results tracking is not yet available. This feature is planned for an upcoming sprint.',
+                        )
+                      }
                     />
                     <QuickAccessItem
                       icon={<CheckCircle size={16} color="#16A34A" />}
                       iconBg="#F0FDF4"
                       label="Eligibility Verification"
                       sublabel="CalFresh pending"
-                      onPress={() => {/* TODO: navigate to eligibility */}}
+                      onPress={() =>
+                        Alert.alert(
+                          'Coming soon',
+                          'Eligibility verification tracking is not yet available. This feature is planned for an upcoming sprint.',
+                        )
+                      }
                     />
                     <QuickAccessItem
                       icon={<UploadCloud size={16} color="#64748B" />}
                       iconBg="#F8FAFC"
                       label="Uploaded Documents"
                       sublabel="3 documents"
-                      onPress={() => {/* TODO: navigate to documents */}}
+                      onPress={() =>
+                        Alert.alert(
+                          'Coming soon',
+                          'CHW-scoped document review is not yet available. Member-uploaded documents will be accessible here in an upcoming sprint.',
+                        )
+                      }
                     />
                     <QuickAccessItem
                       icon={<RadioTower size={16} color="#D97706" />}
                       iconBg="#FFFBEB"
                       label="Outreach History"
                       sublabel="View all interactions"
-                      onPress={() => {/* TODO: navigate to outreach */}}
+                      onPress={() =>
+                        Alert.alert(
+                          'Coming soon',
+                          'Outreach history tracking is not yet available. This feature is planned for an upcoming sprint.',
+                        )
+                      }
                     />
                   </Card>
                 </RightRail>

@@ -12,6 +12,7 @@
 
 import React, { useMemo, useState } from 'react';
 import {
+  Alert,
   View,
   Text,
   ScrollView,
@@ -43,6 +44,7 @@ import {
 import { AppShell, PageHeader, Card, Pill, RightRail, StatTile } from '../../components/ui';
 import { colors, spacing, radius } from '../../theme/tokens';
 import { useAuth } from '../../context/AuthContext';
+import { useChwResources, type ChwResourceItem } from '../../hooks/useApiQueries';
 
 // ─── Icon-circle bg colours per category (matches mockup) ────────────────────
 
@@ -84,116 +86,6 @@ interface Resource {
   isPinned: boolean;
   updatedAt: string;
 }
-
-// ─── Mock data — TODO: replace with real hook ─────────────────────────────────
-
-// TODO: replace with real hook — GET /chw/resources
-const MOCK_RESOURCES: Resource[] = [
-  {
-    id: 'r-001',
-    title: 'Emergency Housing Assistance',
-    organization: 'LA County Housing Authority',
-    category: 'housing',
-    description:
-      'Rapid rehousing and emergency shelter vouchers for qualifying individuals and families facing homelessness.',
-    phone: '(800) 593-8222',
-    address: '2615 S Grand Ave, Los Angeles, CA 90007',
-    tags: ['emergency', 'vouchers', 'shelter'],
-    isPinned: true,
-    updatedAt: '2026-05-07',
-  },
-  {
-    id: 'r-002',
-    title: 'CalFresh Application Support',
-    organization: 'Hunger Action LA',
-    category: 'food',
-    description:
-      'Walk-in CalFresh enrollment assistance. Staff speak Spanish, Korean, and Cantonese.',
-    phone: '(213) 738-6363',
-    address: '523 W 6th St, Los Angeles, CA 90014',
-    tags: ['calFresh', 'snap', 'enrollment'],
-    isPinned: true,
-    updatedAt: '2026-05-06',
-  },
-  {
-    id: 'r-003',
-    title: 'Didi Hirsch Mental Health Services',
-    organization: 'Didi Hirsch',
-    category: 'mental_health',
-    description:
-      'Outpatient therapy, crisis intervention, and psychiatry for Medi-Cal members. Sliding scale available.',
-    phone: '(800) 854-7771',
-    address: '4760 S Sepulveda Blvd, Culver City, CA 90230',
-    tags: ['therapy', 'crisis', 'medi-cal'],
-    isPinned: false,
-    updatedAt: '2026-05-05',
-  },
-  {
-    id: 'r-004',
-    title: 'AltaMed Health Services',
-    organization: 'AltaMed',
-    category: 'healthcare',
-    description:
-      'Community health center offering primary care, dental, and vision for underserved populations.',
-    phone: '(888) 499-9303',
-    address: '2040 Camfield Ave, Los Angeles, CA 90040',
-    tags: ['primary care', 'dental', 'vision'],
-    isPinned: true,
-    updatedAt: '2026-05-04',
-  },
-  {
-    id: 'r-005',
-    title: 'Social Security Disability Benefits Navigator',
-    organization: 'Bet Tzedek Legal Services',
-    category: 'benefits',
-    description:
-      'Free legal support for SSI/SSDI applications and appeals. Priority for seniors and people with disabilities.',
-    phone: '(323) 939-0506',
-    address: '3250 Wilshire Blvd #1300, Los Angeles, CA 90010',
-    tags: ['SSI', 'SSDI', 'legal'],
-    isPinned: false,
-    updatedAt: '2026-05-03',
-  },
-  {
-    id: 'r-006',
-    title: 'PATH (People Assisting The Homeless)',
-    organization: 'PATH',
-    category: 'housing',
-    description:
-      'Street outreach, temporary housing, and permanent supportive housing navigation services.',
-    phone: '(323) 644-2200',
-    address: '340 N Madison Ave, Los Angeles, CA 90004',
-    tags: ['outreach', 'permanent housing', 'navigation'],
-    isPinned: false,
-    updatedAt: '2026-05-02',
-  },
-  {
-    id: 'r-007',
-    title: 'LA Food Bank Emergency Pantry',
-    organization: 'LA Regional Food Bank',
-    category: 'food',
-    description:
-      'Weekly emergency food distributions. No income verification required. Walk-ins welcome.',
-    phone: '(323) 234-3030',
-    address: '1734 E 41st St, Los Angeles, CA 90058',
-    tags: ['pantry', 'emergency', 'walk-in'],
-    isPinned: false,
-    updatedAt: '2026-05-01',
-  },
-  {
-    id: 'r-008',
-    title: 'Medi-Cal Enrollment Specialist',
-    organization: 'Covered California',
-    category: 'benefits',
-    description:
-      'Free certified enrollment assistance for Medi-Cal and Covered California plans.',
-    phone: '(800) 300-1506',
-    address: 'Multiple locations — call for nearest site',
-    tags: ['medi-cal', 'insurance', 'enrollment'],
-    isPinned: false,
-    updatedAt: '2026-04-30',
-  },
-];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -294,6 +186,21 @@ function ResourceCard({ resource }: ResourceCardProps): React.JSX.Element {
           accessible
           accessibilityRole="button"
           accessibilityLabel={`Refer a member to ${resource.title}`}
+          onPress={() => {
+            const blurb = [
+              resource.title,
+              resource.address ? `📍 ${resource.address}` : null,
+              resource.phone ? `📞 ${resource.phone}` : null,
+              '',
+              resource.description,
+            ]
+              .filter(Boolean)
+              .join('\n');
+            Alert.alert(
+              `Refer a member to ${resource.title}`,
+              `Open Messages and paste this blurb into a thread:\n\n${blurb}`,
+            );
+          }}
         >
           <Text style={styles.btnPrimaryText}>Refer a member</Text>
         </TouchableOpacity>
@@ -302,6 +209,15 @@ function ResourceCard({ resource }: ResourceCardProps): React.JSX.Element {
           accessible
           accessibilityRole="button"
           accessibilityLabel={`Copy SMS link for ${resource.title}`}
+          onPress={() => {
+            const sms = resource.phone
+              ? `${resource.title}: call ${resource.phone}.${resource.address ? ` Located at ${resource.address}.` : ''}`
+              : `${resource.title}.${resource.address ? ` Located at ${resource.address}.` : ''} ${resource.description}`;
+            Alert.alert(
+              'SMS-ready blurb',
+              `Copy this into a text to your member:\n\n${sms}`,
+            );
+          }}
         >
           <Text style={styles.btnSecondaryText}>Copy SMS link</Text>
         </TouchableOpacity>
@@ -312,27 +228,64 @@ function ResourceCard({ resource }: ResourceCardProps): React.JSX.Element {
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
+/**
+ * Map an API ChwResourceItem onto the screen-local Resource shape.
+ *
+ * The two shapes diverged historically (mock catalog vs. real /resources/search
+ * endpoint). Until those are unified, we collapse unsupported API categories
+ * to 'healthcare' (closest visual fallback) and synthesise organization/tags/
+ * pinned/updatedAt fields the API doesn't yet expose.
+ */
+function adaptApiResource(api: ChwResourceItem): Resource {
+  const screenCategory: Exclude<ResourceCategory, 'all'> =
+    api.category === 'housing' ||
+    api.category === 'food' ||
+    api.category === 'mental_health' ||
+    api.category === 'healthcare'
+      ? api.category
+      : 'healthcare';
+  return {
+    id: api.id,
+    title: api.name,
+    organization: '',
+    category: screenCategory,
+    description: api.description,
+    phone: api.phone ?? undefined,
+    address: api.address ?? undefined,
+    tags: api.languages,
+    isPinned: false,
+    updatedAt: new Date(api.createdAt).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+    }),
+  };
+}
+
 export function CHWResourcesScreen(): React.JSX.Element {
   const { userName } = useAuth();
   const [query, setQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState<ResourceCategory>('all');
 
-  const filtered = useMemo(() => {
-    return MOCK_RESOURCES.filter((r) => {
-      const matchesCategory =
-        activeCategory === 'all' || r.category === activeCategory;
-      const lowerQuery = query.toLowerCase();
-      const matchesQuery =
-        query.length === 0 ||
-        r.title.toLowerCase().includes(lowerQuery) ||
-        r.organization.toLowerCase().includes(lowerQuery) ||
-        r.description.toLowerCase().includes(lowerQuery) ||
-        r.tags.some((t) => t.toLowerCase().includes(lowerQuery));
-      return matchesCategory && matchesQuery;
-    });
-  }, [query, activeCategory]);
+  const resourcesQuery = useChwResources({ category: activeCategory, q: query });
+  const allResources = useMemo<Resource[]>(
+    () => (resourcesQuery.data ?? []).map(adaptApiResource),
+    [resourcesQuery.data],
+  );
 
-  const pinnedCount = MOCK_RESOURCES.filter((r) => r.isPinned).length;
+  // The API already filters by category + query server-side, so we just
+  // surface the result. Keep the local lowercase-q double-check for the
+  // 'all' case (server returns up to 50 with no q).
+  const filtered = useMemo(() => {
+    if (!query) return allResources;
+    const lowerQuery = query.toLowerCase();
+    return allResources.filter((r) =>
+      r.title.toLowerCase().includes(lowerQuery) ||
+      r.description.toLowerCase().includes(lowerQuery) ||
+      r.tags.some((t) => t.toLowerCase().includes(lowerQuery)),
+    );
+  }, [allResources, query]);
+
+  const pinnedCount = 0; // Pinning persisted server-side ships in v1.1.
   const categories = Object.keys(CATEGORY_LABELS) as ResourceCategory[];
 
   const userInitials = (userName ?? 'CHW')
@@ -346,7 +299,11 @@ export function CHWResourcesScreen(): React.JSX.Element {
     <>
       <PageHeader
         title="Resource Folder"
-        subtitle={`${MOCK_RESOURCES.length} resources · last updated 2 days ago`}
+        subtitle={
+          resourcesQuery.isLoading
+            ? 'Loading resources…'
+            : `${allResources.length} resource${allResources.length === 1 ? '' : 's'}`
+        }
         right={
           <View style={styles.searchWrap}>
             <Search size={14} color={colors.textSecondary} style={styles.searchIcon as TextStyle} />
@@ -421,7 +378,7 @@ export function CHWResourcesScreen(): React.JSX.Element {
                   icon={<FolderOpen size={18} color={colors.emerald700} />}
                   iconBg={colors.emerald100}
                   label="Total Resources"
-                  value={MOCK_RESOURCES.length}
+                  value={allResources.length}
                   style={styles.statTile}
                 />
                 <StatTile
@@ -444,14 +401,9 @@ export function CHWResourcesScreen(): React.JSX.Element {
             <Card style={styles.railCard}>
               <Text style={styles.railTitle}>Pinned Resources</Text>
               <View style={styles.railList}>
-                {MOCK_RESOURCES.filter((r) => r.isPinned).map((r) => (
-                  <TouchableOpacity key={r.id} style={styles.pinnedItem} accessible accessibilityLabel={r.title}>
-                    <CategoryIcon category={r.category} size={12} />
-                    <Text style={styles.pinnedTitle} numberOfLines={2}>
-                      {r.title}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
+                <Text style={styles.emptyText}>
+                  Pinning ships in v1.1. Use Search to find resources fast.
+                </Text>
               </View>
             </Card>
           </RightRail>

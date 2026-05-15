@@ -19,6 +19,7 @@
 import React, { useCallback, useState } from 'react';
 import {
   Alert,
+  Linking,
   Pressable,
   ScrollView,
   StatusBar,
@@ -478,7 +479,20 @@ export function MemberSettingsScreen(): React.JSX.Element {
       'This permanently removes your Compass account and all associated data. This cannot be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: () => Alert.alert('Coming soon', 'Account deletion will be available soon. Contact support to delete now.') },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            Linking.openURL(
+              'mailto:help@joincompasschw.com?subject=Account%20deletion%20request&body=Please%20delete%20my%20Compass%20account%20and%20all%20associated%20data.',
+            ).catch(() =>
+              Alert.alert(
+                'Could not open email',
+                'Email help@joincompasschw.com to request account deletion.',
+              ),
+            );
+          },
+        },
       ],
     );
   }, []);
@@ -536,7 +550,12 @@ export function MemberSettingsScreen(): React.JSX.Element {
                       <Text style={profileStyles.avatarInitials}>{memberInitials}</Text>
                     </View>
                     <Pressable
-                      onPress={() => Alert.alert('Coming soon', 'Photo upload is rolling out next release.')}
+                      onPress={() =>
+                        Alert.alert(
+                          'Coming soon',
+                          'Profile photos ship in v1.1. We\'ll email you when it goes live.',
+                        )
+                      }
                       accessibilityRole="button"
                       accessibilityLabel="Change profile photo"
                       style={profileStyles.changePhotoBtn}
@@ -703,7 +722,14 @@ export function MemberSettingsScreen(): React.JSX.Element {
                     iconBgColor="#DBEAFE"
                     title="FAQs"
                     description="Find answers to common questions about Compass."
-                    onPress={() => Alert.alert('FAQs', 'FAQ page coming soon.')}
+                    onPress={() =>
+                      Linking.openURL('https://joincompasschw.com/faq').catch(() =>
+                        Alert.alert(
+                          'Could not open FAQ',
+                          'Visit https://joincompasschw.com/faq from your browser.',
+                        ),
+                      )
+                    }
                   />
                 </View>
               )}
@@ -782,21 +808,42 @@ export function MemberSettingsScreen(): React.JSX.Element {
                   iconBgColor="#DBEAFE"
                   title="Call support"
                   description="Mon–Sun 7 AM – 9 PM PT"
-                  onPress={() => Alert.alert('Support', 'Call (800) 555-COMPASS')}
+                  onPress={() =>
+                    Linking.openURL('tel:+18005552667').catch(() =>
+                      Alert.alert(
+                        'Could not open dialer',
+                        'Call (800) 555-COMPASS from your phone.',
+                      ),
+                    )
+                  }
                 />
                 <ContactCard
                   icon={<MessageSquare size={20} color="#10B981" />}
                   iconBgColor="#D1FAE5"
                   title="Text us"
                   description="(800) 555-COMPASS · usually replies in 10 min"
-                  onPress={() => Alert.alert('Support', 'Text (800) 555-COMPASS')}
+                  onPress={() =>
+                    Linking.openURL('sms:+18005552667').catch(() =>
+                      Alert.alert(
+                        'Could not open SMS app',
+                        'Text (800) 555-COMPASS from your phone.',
+                      ),
+                    )
+                  }
                 />
                 <ContactCard
                   icon={<Mail size={20} color="#7C3AED" />}
                   iconBgColor="#EDE9FE"
                   title="Email us"
                   description="help@joincompasschw.com"
-                  onPress={() => Alert.alert('Support', 'Email help@joincompasschw.com')}
+                  onPress={() =>
+                    Linking.openURL('mailto:help@joincompasschw.com').catch(() =>
+                      Alert.alert(
+                        'Could not open email app',
+                        'Email help@joincompasschw.com from your inbox.',
+                      ),
+                    )
+                  }
                 />
               </View>
 

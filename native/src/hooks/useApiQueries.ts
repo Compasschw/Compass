@@ -8,7 +8,7 @@
  * All request bodies are auto-transformed from camelCase → snake_case.
  */
 
-import { Platform } from 'react-native';
+import { Alert, Platform } from 'react-native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
@@ -358,6 +358,9 @@ export const queryKeys = {
   chwJourneys: ['chw', 'journeys'] as const,
   /** CHW members roster from GET /chw/members. */
   chwMembers: ['chw', 'members'] as const,
+  /** CHW resource-folder search results, scoped by category + free-text query. */
+  chwResources: (category?: string, q?: string) =>
+    ['chw', 'resources', category ?? 'all', q ?? ''] as const,
 };
 
 /** Re-export so callers don't need a second import from api/sessions. */
@@ -706,6 +709,9 @@ export function useCreateRequest() {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.requests });
     },
+    onError: (error: Error) => {
+      Alert.alert('Something went wrong', error?.message ?? 'Please try again.');
+    },
   });
 }
 
@@ -838,6 +844,9 @@ export function useConnectOnboardingLink() {
     onSuccess: () => {
       // Creating/reusing the account may affect account-status — refetch
       void qc.invalidateQueries({ queryKey: ['payments', 'account-status'] });
+    },
+    onError: (error: Error) => {
+      Alert.alert('Something went wrong', error?.message ?? 'Please try again.');
     },
   });
 }
@@ -1857,6 +1866,57 @@ export function useChwMembers() {
   });
 }
 
+/**
+ * CHW Resource-folder search.
+ *
+ * GET /resources/search?category=&q= — returns up to 50 active resources
+ * ranked by full-text relevance + category exact match.
+ *
+ * Caches per (category, query) tuple; stale after 5 min since the catalog
+ * changes infrequently.
+ */
+export interface ChwResourceItem {
+  id: string;
+  name: string;
+  description: string;
+  category:
+    | 'housing'
+    | 'food'
+    | 'mental_health'
+    | 'rehab'
+    | 'healthcare'
+    | 'legal'
+    | 'transportation'
+    | 'other';
+  url: string | null;
+  phone: string | null;
+  address: string | null;
+  zipCode: string | null;
+  hours: string | null;
+  eligibility: string | null;
+  languages: string[];
+  status: 'active' | 'inactive';
+  createdAt: string;
+}
+
+export function useChwResources(params: { category?: string; q?: string } = {}) {
+  const { category, q } = params;
+  const search = new URLSearchParams();
+  if (category && category !== 'all') search.set('category', category);
+  if (q) search.set('q', q);
+  const qs = search.toString();
+  const url = `/resources/search${qs ? `?${qs}` : ''}`;
+
+  return useQuery({
+    queryKey: queryKeys.chwResources(category, q),
+    queryFn: async (): Promise<ChwResourceItem[]> => {
+      const raw = await api<unknown[]>(url);
+      return transformKeys<ChwResourceItem[]>(raw);
+    },
+    staleTime: 300_000,
+  });
+}
+
 // ─── Member-facing rewards (new /rewards backend) ────────────────────────────
 
 /**
@@ -2028,6 +2088,9 @@ export function useCreateRedemption(memberId: string) {
       return transformKeys<RewardRedemption>(raw);
     },
     onSuccess: () => {
+      // Guardrail #4: invalidate ALL three caches so balance deducts,
+      // catalog inventory_remaining decrements, and history refreshes.
+      void qc.invalidateQueries({ queryKey: rewardsCatalogKey });
       void qc.invalidateQueries({ queryKey: memberRewardsBalanceKey(memberId) });
       void qc.invalidateQueries({ queryKey: memberRedemptionsKey(memberId) });
     },
