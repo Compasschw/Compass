@@ -25,26 +25,26 @@ from app.config import settings
 
 
 PAYLOAD: dict = {
+    # Identity
     "firstName": "Jemal",
     "lastName": "Test",
     "dob": "1993-01-05",
     "sex": "Male",
     "spokenLanguages": ["English"],
-    "contactInfo": {
-        "phone": "+13101234567",
-    },
-    "address": {
-        "line1": "1234 Veteran Ave",
-        "city": "Los Angeles",
-        "state": "CA",
-        "zip": "90210",
-    },
-    # mediCalId field name not visible in the API doc snippet we have —
-    # send under multiple plausible keys; Pear silently drops unknown ones,
-    # the GET below will show which (if any) stuck.
-    "mediCalId": "12345678A",
-    "medicaidId": "12345678A",
-    "primaryCin": "12345678A",
+    # Contact — verified from prior GET: phoneNumbers + primaryPhoneNumber are
+    # top-level; contactInfo wrapper was wrong.
+    "primaryPhoneNumber": "+13101234567",
+    "phoneNumbers": ["+13101234567"],
+    "email": "jemal+test@joincompasschw.com",
+    # Address — all top-level fields, NOT nested. ``address`` is line 1.
+    "address": "1234 Veteran Ave",
+    "address2": None,
+    "city": "Los Angeles",
+    "state": "CA",
+    "country": "US",
+    "zip": "90210",
+    # Medi-Cal ID — Pear's field is primaryCIN (uppercase CIN).
+    "primaryCIN": "12345678A",
 }
 
 
