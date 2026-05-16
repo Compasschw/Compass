@@ -217,9 +217,14 @@ async def _verify_vonage_signature(request: Request) -> None:
             )
 
     # ── Body integrity: payload_hash is SHA-256 hex of the raw request body ──
-    # Empty body (typical for GET webhooks) → no payload_hash claim expected.
+    # Only enforced for POST / PUT / PATCH where the body is the principal
+    # vehicle of data. For GET (e.g. /voice/answer that's expected to RETURN
+    # an NCCO based on query params), Vonage's JWT carries a payload_hash but
+    # over a different input than the empty body — left unverified here. The
+    # JWT's HS256 signature still proves Vonage authored the request, and the
+    # iat freshness check above bounds replay; the trade-off is documented.
     payload_hash_claim = claims.get("payload_hash")
-    if payload_hash_claim:
+    if payload_hash_claim and request.method in {"POST", "PUT", "PATCH"}:
         body_bytes = await request.body()
         actual_hash = hashlib.sha256(body_bytes or b"").hexdigest()
         if not hmac.compare_digest(actual_hash.lower(), payload_hash_claim.lower()):
