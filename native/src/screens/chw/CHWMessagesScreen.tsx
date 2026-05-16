@@ -372,7 +372,12 @@ function ConversationPane({
       setCallInitiating(true);
       try {
         await startCall.mutateAsync(session.id);
-        showToast('Calling now — both your phones will ring.', false);
+        // Honest wording — Vonage accepted the call, but the member still
+        // has to answer + press 1 on the consent IVR before audio bridges.
+        // Failure of either step bubbles up through other webhooks, not this
+        // mutation. Toast says "call requested" rather than promising both
+        // phones will ring.
+        showToast('Call requested — your phone should ring shortly.', false);
       } catch (err) {
         const detail =
           err instanceof Error && err.message
