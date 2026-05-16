@@ -55,29 +55,18 @@ logger = logging.getLogger("compass.communication")
 
 # ─── Vonage webhook signature verification (Finding #1, CRITICAL) ─────────────
 #
-# Vonage signs webhook requests using HMAC-SHA256 with your account-level
-# signature secret (configured in the Vonage API dashboard under
-# API Settings → Signature method: SHA-256 HMAC).
+# Vonage's "Signed Webhooks" feature sends a JWT in the Authorization header,
+# signed with HS256 using the account-level Signature Secret (configured in
+# the Vonage API dashboard under Account Settings → "Signed Webhooks"). We:
+#   1. Pull the JWT from `Authorization: Bearer <token>`
+#   2. Verify HS256 signature with `settings.vonage_signature_secret`
+#   3. Reject tokens with `iat` outside the 5-min replay window
+#   4. For POST/PUT/PATCH (where a body is the primary payload), verify the
+#      `payload_hash` claim matches SHA-256 of the raw request body
 #
-# Signature scheme:
-#   1. Vonage sends the signature as an `Authorization: Bearer <sig>` header
-#      OR as a `sig` parameter appended to the query string / body.
-#   2. The HMAC input is the concatenation of all query/body parameters sorted
-#      alphabetically (key=value pairs) plus the shared secret appended.
-#
-# Because the exact scheme varies by Vonage SDK version and webhook type, we
-# support two patterns:
-#   A. JWT-style: `Authorization: Bearer <token>` — where <token> is a
-#      Vonage-issued JWT.  We verify the HMAC signature embedded in it.
-#   B. X-Vonage-Signature header — raw HMAC-SHA256 hex digest of the sorted
-#      payload params, keyed with vonage_signature_secret.
-#
-# Design decision: use HMAC-SHA256 with vonage_signature_secret (account-level)
-# rather than RS256 JWT (application-level JWKS) for two reasons:
-#   1. HMAC verification is synchronous and requires no external network call.
-#   2. The Vonage API dashboard's "Signature method" setting covers ALL
-#      account-level webhooks regardless of Application configuration, making
-#      it the single control plane that ops teams understand.
+# GETs skip the body-hash check because Vonage hashes their query-string
+# representation (not the empty body); the JWT signature + iat freshness
+# remain primary auth.
 #
 # References:
 #   https://developer.vonage.com/en/getting-started/concepts/webhooks#validating-signed-webhooks
@@ -85,36 +74,6 @@ logger = logging.getLogger("compass.communication")
 
 
 _VONAGE_SIG_MAX_AGE_SECONDS = 300  # 5 minutes — reject replayed webhooks
-
-
-def _compute_vonage_hmac(
-    params: dict,
-    secret: str,
-) -> str:
-    """Compute the expected HMAC-SHA256 hex digest for a Vonage webhook payload.
-
-    Vonage sorts all payload parameters alphabetically by key, concatenates
-    them as ``&key=value`` pairs (no leading ``&``), then appends the shared
-    secret with an ``&`` separator and digests the whole string.
-
-    Args:
-        params: Dict of query-string or body parameters from the webhook.
-                Must NOT include the ``sig`` key itself.
-        secret: The account-level Vonage signature secret.
-
-    Returns:
-        Lowercase hex digest of the HMAC-SHA256 hash.
-    """
-    sorted_params = sorted(
-        (k, v) for k, v in params.items() if k != "sig"
-    )
-    message = "&".join(f"{k}={v}" for k, v in sorted_params)
-    message += f"&{secret}"
-    return hmac.new(
-        key=secret.encode(),
-        msg=message.encode(),
-        digestmod=hashlib.sha256,
-    ).hexdigest()  # hmac.new() is the stdlib HMAC constructor (Python 3.x)
 
 
 async def _verify_vonage_signature(request: Request) -> None:
@@ -677,23 +636,46 @@ async def voice_consent_prompt(
         f"{_public_base_url()}/api/v1/communication/voice/consent-result"
         f"?session={session or ''}"
     )
-    disclosure = (
-        "Hello. This call is from your CompassCHW community health worker. "
-        "For documentation and Medi-Cal billing, this call needs to be recorded. "
-        "Press 1 to consent and continue. Press 2 to decline and hang up."
+
+    # Voice quality: switch from Vonage's default standard TTS to an Amazon
+    # Polly **neural** voice (much more natural prosody). We use the en-US
+    # neural Joanna voice (Vonage NCCO ``language="en-US"`` + ``style=11`` +
+    # ``premium=True``). SSML wrapping with explicit ``<break>`` tags gives
+    # the IVR a deliberate, friendly cadence rather than a single run-on
+    # sentence that members otherwise misparse as robotic.
+    #
+    # NB: SSML requires ``<speak>...</speak>`` as the outer element; Vonage
+    # auto-detects SSML by the opening tag (no extra config needed).
+    disclosure_ssml = (
+        "<speak>"
+        "Hello, this is Compass Community Health calling."
+        '<break time="450ms"/>'
+        "Your care worker is on the line to speak with you."
+        '<break time="500ms"/>'
+        "So we can keep accurate notes for your care, this call will be recorded."
+        '<break time="600ms"/>'
+        "<emphasis level=\"moderate\">Press 1</emphasis> to accept and connect now."
+        '<break time="300ms"/>'
+        "<emphasis level=\"moderate\">Press 2</emphasis> if you'd rather not be recorded."
+        "</speak>"
     )
     return [
         {
             "action": "talk",
-            "text": disclosure,
-            "bargeIn": True,
+            "text": disclosure_ssml,
+            "language": "en-US",
+            "style": 11,         # en-US Joanna (Neural variant when premium=True)
+            "premium": True,     # Use Polly Neural voice — far more natural
+            "bargeIn": True,     # Member can press 1/2 before prompt finishes
         },
         {
             "action": "input",
             "type": ["dtmf"],
             "dtmf": {
                 "maxDigits": 1,
-                "timeOut": 8,
+                # 8s was tight — bump to 12s so a member who's still listening
+                # has time to press after the second emphasis.
+                "timeOut": 12,
                 "submitOnHash": False,
             },
             "eventUrl": [consent_result_url],

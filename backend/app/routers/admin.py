@@ -41,7 +41,7 @@ from uuid import UUID
 from fastapi import APIRouter, Cookie, Depends, Form, Header, HTTPException, Query, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from jose import JWTError, jwt
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -1114,4 +1114,78 @@ async def update_claim_status(
         paid_at=claim.paid_at,
         payout_triggered=payout_triggered,
         payout_blocked_reason=payout_blocked_reason,
+    )
+
+
+
+# ─── CHW PearSuite user-id provisioning ─────────────────────────────────────
+#
+# Pear Suite does not expose POST /api/beta/users — every new CHW has to be
+# created manually in Pear's dashboard (or by their account manager). Once
+# Pear assigns the userId, ops needs a way to plug it onto our CHWProfile
+# without dropping into raw SQL. This endpoint does exactly that.
+
+
+class _SetChwPearUserBody(BaseModel):
+    pear_user_id: str = Field(
+        ..., min_length=8, max_length=64,
+        description="Pear Suite userId (UUID) for this CHW, as shown in the "
+                    "Pear dashboard → Users tab.",
+    )
+
+
+class _SetChwPearUserResponse(BaseModel):
+    chw_id: UUID
+    chw_email: str
+    pear_suite_user_id: str
+    updated: bool
+
+
+@router.post(
+    "/chw/{chw_id}/pear-user",
+    response_model=_SetChwPearUserResponse,
+    summary="Set the Pear Suite userId for a CHW (one-off ops tool)",
+)
+async def set_chw_pear_user_id(
+    chw_id: UUID,
+    body: _SetChwPearUserBody,
+    _key: bool = Depends(require_admin_key),
+    _2fa: None = Depends(require_2fa_token),
+    db: AsyncSession = Depends(get_db),
+) -> _SetChwPearUserResponse:
+    """Plug Pear Suite's per-CHW userId onto our ``chw_profiles`` row.
+
+    Required before any session that CHW completes can be auto-billed —
+    ``PearSuiteProvider.submit_claim`` reads this id from
+    ``claim.extra['pear_suite_chw_user_id']`` (hydrated in
+    ``sessions.submit_documentation``). Idempotent: re-running with the same
+    id is a no-op; with a different id, the value is updated.
+    """
+    chw_user = await db.get(User, chw_id)
+    if not chw_user or chw_user.role != "chw":
+        raise HTTPException(status_code=404, detail="CHW not found")
+
+    profile_row = (await db.execute(
+        select(CHWProfile).where(CHWProfile.user_id == chw_id)
+    )).scalar_one_or_none()
+    if not profile_row:
+        raise HTTPException(
+            status_code=404,
+            detail="CHW has no profile row — register them first.",
+        )
+
+    previous = profile_row.pear_suite_user_id
+    profile_row.pear_suite_user_id = body.pear_user_id
+    await db.commit()
+
+    logger.info(
+        "admin.set_chw_pear_user_id: chw_id=%s previous=%s new=%s",
+        chw_id, previous, body.pear_user_id,
+    )
+
+    return _SetChwPearUserResponse(
+        chw_id=chw_id,
+        chw_email=chw_user.email,
+        pear_suite_user_id=body.pear_user_id,
+        updated=(previous != body.pear_user_id),
     )

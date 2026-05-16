@@ -392,12 +392,59 @@ async def submit_documentation(
     #   - We always want local source of truth even if Pear Suite is down
     #   - CHW already completed the work; don't make them retry documentation
     #   - Retries should happen in a separate worker that reads `status='pending'`
+    #
+    # We hydrate four Pear identifiers into ClaimSubmission.extra so that
+    # PearSuiteProvider.submit_claim() can orchestrate sync -> schedule ->
+    # complete (with cost_id) -> generate end-to-end without needing any DB
+    # access of its own:
+    #   1. pear_suite_member_id         — set by ensure_member_synced (idempotent)
+    #   2. pear_suite_chw_user_id       — read from CHWProfile (set per CHW via admin)
+    #   3. pear_suite_activity_template_id — looked up in PearSuiteTemplateMap by CPT
+    #   4. cost_id                      — resolved from MemberProfile.insurance_company
     from decimal import Decimal as _Dec
 
+    from app.models.billing import PearSuiteTemplateMap
+    from app.models.user import CHWProfile, MemberProfile, User
     from app.services.billing import ClaimSubmission, get_billing_provider
+    from app.services.billing.pear_cost_ids import resolve_cost_id
+    from app.services.pear_suite_member_sync import ensure_member_synced
+
     try:
         provider = get_billing_provider()
-        result = await provider.submit_claim(ClaimSubmission(
+
+        # Load member + CHW profiles for the Pear identifiers.
+        member_user = await db.get(User, session.member_id)
+        member_profile_row = (await db.execute(
+            select(MemberProfile).where(MemberProfile.user_id == session.member_id)
+        )).scalar_one_or_none()
+        chw_profile_row = (await db.execute(
+            select(CHWProfile).where(CHWProfile.user_id == session.chw_id)
+        )).scalar_one_or_none()
+        template_row = (await db.execute(
+            select(PearSuiteTemplateMap).where(
+                PearSuiteTemplateMap.cpt_code == data.procedure_code
+            )
+        )).scalar_one_or_none()
+
+        # Ensure the member exists in Pear (idempotent; no-op when already synced).
+        # Best-effort: if this raises we still attempt the rest so the error
+        # surfaces in provider.submit_claim() with the precise missing-id message.
+        if member_profile_row and member_user:
+            try:
+                await ensure_member_synced(db, member_profile_row, member_user)
+            except Exception as sync_err:  # noqa: BLE001
+                import logging as _lg
+                _lg.getLogger("compass").warning(
+                    "Pear member sync failed pre-claim: %s", sync_err
+                )
+
+        # Resolve cost_id from member's insurance carrier.
+        cost_id = resolve_cost_id(
+            member_profile_row.insurance_company if member_profile_row else None,
+            procedure_code=data.procedure_code,
+        ) if member_profile_row else None
+
+        claim_submission = ClaimSubmission(
             session_id=session_id,
             chw_id=session.chw_id,
             member_id=session.member_id,
@@ -407,7 +454,15 @@ async def submit_documentation(
             diagnosis_codes=data.diagnosis_codes,
             units=computed_units,
             gross_amount=_Dec(str(earnings["gross"])),
-        ))
+        )
+        claim_submission.extra = {
+            "pear_suite_member_id":            (member_profile_row.pear_suite_member_id if member_profile_row else None),
+            "pear_suite_chw_user_id":          (chw_profile_row.pear_suite_user_id if chw_profile_row else None),
+            "pear_suite_activity_template_id": (template_row.template_id if template_row else None),
+            "cost_id":                         cost_id,
+        }
+
+        result = await provider.submit_claim(claim_submission)
         if result.success and result.provider_claim_id:
             claim.pear_suite_claim_id = result.provider_claim_id
             claim.status = result.status

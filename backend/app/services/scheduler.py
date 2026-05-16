@@ -162,7 +162,12 @@ async def poll_pear_claim_status() -> None:
     from app.services.billing import get_billing_provider
 
     cutoff = datetime.now(UTC) - timedelta(days=90)
-    polling_states = ("submitted", "accepted")
+    # Statuses we still want to poll on. Pear's "submitted" covers their
+    # ScheduledForGeneration / Generated / Submitted lifecycle stages; "accepted"
+    # is kept for the older Pear enum we sometimes still see. We exclude
+    # terminal states (paid / denied) so we stop polling once adjudication
+    # completes.
+    polling_states = ("submitted", "accepted", "needs_correction")
 
     async with async_session() as db:
         result = await db.execute(

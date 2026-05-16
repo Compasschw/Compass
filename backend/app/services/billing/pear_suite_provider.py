@@ -61,16 +61,27 @@ _ACTIVITY_STATUS_SCHEDULED = "Scheduled"
 _ACTIVITY_STATUS_COMPLETE = "Complete"
 
 # Pear Suite claim status → our internal status mapping.
-# Pear's enum values are not fully documented; defensive fallback to "submitted".
+# Pear's actual enum (confirmed via POST /claims response 2026-05-15):
+#   ScheduledForGeneration -> "submitted" (queued for X12 generation)
+#   Generated              -> "submitted" (X12 837P built, awaiting transmission)
+#   Submitted              -> "submitted" (sent to Availity clearinghouse)
+#   Paid                   -> "paid"
+#   Denied                 -> "denied"
+# Plus the older labels (Pending/Approved/Rejected/NeedsCorrection) we observed
+# during early integration testing — kept for defensive backwards compat.
 _PEAR_STATUS_MAP: dict[str, str] = {
-    "Submitted": "submitted",
-    "Pending": "submitted",
-    "Paid": "paid",
-    "Approved": "paid",
-    "Denied": "denied",
-    "Rejected": "denied",
-    "NeedsCorrection": "needs_correction",
-    "NeedsCorrectionManual": "needs_correction",
+    # New canonical Pear states
+    "ScheduledForGeneration": "submitted",
+    "Generated":              "submitted",
+    "Submitted":              "submitted",
+    "Paid":                   "paid",
+    "Denied":                 "denied",
+    # Legacy / backwards-compat aliases
+    "Pending":                "submitted",
+    "Approved":               "paid",
+    "Rejected":               "denied",
+    "NeedsCorrection":        "needs_correction",
+    "NeedsCorrectionManual":  "needs_correction",
 }
 
 
@@ -358,6 +369,7 @@ class PearSuiteProvider(BillingProvider):
         service_date: date,
         diagnosis_codes: list[str],
         session_id: uuid.UUID,
+        cost_id: str,
     ) -> dict[str, Any]:
         """Mark an activity Complete with billing details via PUT /api/beta/activities/:id.
 
@@ -371,6 +383,10 @@ class PearSuiteProvider(BillingProvider):
             service_date: Calendar date of the session.
             diagnosis_codes: ICD-10 codes; first element is the primary diagnosis.
             session_id: Local Compass session UUID — for idempotency key + logging.
+            cost_id: Pear cost configuration UUID for the member's insurance carrier
+                (per-carrier rate + claim format). Resolved from
+                ``MemberProfile.insurance_company`` via ``pear_cost_ids.resolve_cost_id``.
+                Required by Pear; without it the PUT returns 400 "Expected billing details".
 
         Returns:
             Pear Suite updated activity object dict.
@@ -382,6 +398,7 @@ class PearSuiteProvider(BillingProvider):
 
         billing_detail: dict[str, Any] = {
             "memberId": pear_member_id,
+            "costId": cost_id,
             "placeOfService": _PLACE_OF_SERVICE_COMMUNITY,
             "primaryDiagnosisCode": primary_dx,
             "diagnosisCodes": diagnosis_codes,
@@ -545,6 +562,7 @@ class PearSuiteProvider(BillingProvider):
         pear_member_id = claim.extra.get("pear_suite_member_id")
         chw_user_id = claim.extra.get("pear_suite_chw_user_id")
         template_id = claim.extra.get("pear_suite_activity_template_id")
+        cost_id = claim.extra.get("cost_id")
 
         if not pear_member_id:
             logger.error(
@@ -582,6 +600,19 @@ class PearSuiteProvider(BillingProvider):
                 message="Activity template ID for CHW services (98960/98961/98962) not configured",
             )
 
+        if not cost_id:
+            logger.error(
+                "pear_suite.submit_claim.missing_cost_id: session=%s "
+                "Member's insurance_company did not resolve to a known carrier; "
+                "update pear_cost_ids.py mapping or set the member's insurance.",
+                claim.session_id,
+            )
+            return ClaimResult(
+                success=False,
+                status="error",
+                message="No costId for member's insurance — Pear would reject the bill",
+            )
+
         try:
             # Step 1: Schedule the activity
             activity_data = await self.schedule_activity(
@@ -605,7 +636,7 @@ class PearSuiteProvider(BillingProvider):
                     message="Pear Suite did not return an activity ID",
                 )
 
-            # Step 2: Mark Complete with billing details
+            # Step 2: Mark Complete with billing details (cost_id required)
             dx_codes = claim.diagnosis_codes or ["Z71.89"]
             await self.complete_activity(
                 pear_activity_id=pear_activity_id,
@@ -614,6 +645,7 @@ class PearSuiteProvider(BillingProvider):
                 service_date=claim.service_date,
                 diagnosis_codes=dx_codes,
                 session_id=claim.session_id,
+                cost_id=cost_id,
             )
 
             # Step 3: Generate the claim
