@@ -39,6 +39,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from jose import JWTError, jwt as jose_jwt
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -117,19 +118,30 @@ def _compute_vonage_hmac(
 
 
 async def _verify_vonage_signature(request: Request) -> None:
-    """FastAPI dependency that verifies the Vonage webhook HMAC-SHA256 signature.
+    """FastAPI dependency that verifies the Vonage webhook JWT.
+
+    Vonage sends a JWT in ``Authorization: Bearer <token>``, signed with
+    HS256 using the account-level Signature Secret. The JWT body includes:
+
+        iss            "Vonage"
+        iat            issued-at Unix timestamp (replay-window source)
+        jti            unique token id
+        application_id our Vonage Application UUID
+        payload_hash   SHA-256 hex of the raw request body (integrity)
+
+    We validate the signature, ``iat`` freshness, and (when the body is
+    non-empty) the ``payload_hash`` claim against a fresh SHA-256 of the
+    actual body bytes.
 
     Behaviour by environment:
-    - ``production``: always verify; return 401 on failure.
-      The server refuses to start without ``vonage_signature_secret`` (guarded
-      in config.py), so an empty secret here is impossible in production.
-    - Other environments (development, staging): skip verification when
-      ``vonage_signature_secret`` is empty, log a warning, and continue.
-      This allows local development without a Vonage account while still
-      exercising the real code path when the secret IS set.
+    - ``production``: always verify; return 401 on failure. config.py refuses
+      to boot without ``vonage_signature_secret`` so an unset secret here is
+      impossible.
+    - Other environments: skip when secret unset; log a warning.
 
     Raises:
-        HTTPException(401): Signature absent, invalid, or replayed (outside window).
+        HTTPException(401): JWT absent, invalid signature, replayed, or
+        body-hash mismatch.
     """
     # Access through the module reference so tests that patch `app.config.settings`
     # see the patched object rather than a stale module-level import snapshot.
@@ -139,8 +151,6 @@ async def _verify_vonage_signature(request: Request) -> None:
 
     if not vonage_secret:
         if is_production:
-            # config.py sys.exit(1) guard should have prevented reaching here,
-            # but be defensive in case the object was hot-patched in tests.
             logger.error(
                 "vonage signature verification skipped — secret not set in production; "
                 "this is a critical security misconfiguration"
@@ -156,85 +166,74 @@ async def _verify_vonage_signature(request: Request) -> None:
         )
         return
 
-    # Collect all params: merge query string + body (both GET and POST supported).
-    params: dict[str, str] = dict(request.query_params)
-
-    content_type = request.headers.get("content-type", "")
-    if "application/json" in content_type:
-        try:
-            body_json = await request.json()
-            if isinstance(body_json, dict):
-                params.update({k: str(v) for k, v in body_json.items()})
-        except Exception:  # noqa: BLE001
-            pass
-    elif "application/x-www-form-urlencoded" in content_type:
-        try:
-            form = await request.form()
-            params.update(dict(form))
-        except Exception:  # noqa: BLE001
-            pass
-
-    # Try to get the signature from the Authorization header (Bearer <sig>)
-    # or from the X-Vonage-Signature header, or from the sig query/body param.
-    received_sig: str = ""
-
+    # ── Pull the JWT from the Authorization header ────────────────────────────
     auth_header = request.headers.get("authorization", "")
-    if auth_header.lower().startswith("bearer "):
-        received_sig = auth_header[7:].strip()
-
-    if not received_sig:
-        received_sig = request.headers.get("x-vonage-signature", "").strip()
-
-    if not received_sig:
-        received_sig = params.get("sig", "").strip()
-
-    if not received_sig:
+    if not auth_header.lower().startswith("bearer "):
         logger.warning(
-            "vonage webhook rejected — no signature present "
-            "path=%s method=%s",
+            "vonage webhook rejected — no Bearer token present path=%s method=%s",
             request.url.path,
             request.method,
         )
-        raise HTTPException(status_code=401, detail="Missing Vonage webhook signature.")
+        raise HTTPException(status_code=401, detail="Missing Vonage webhook JWT.")
+    token = auth_header[7:].strip()
 
-    # Replay-window check: Vonage embeds a `timestamp` param (Unix seconds).
-    # Reject webhooks older than _VONAGE_SIG_MAX_AGE_SECONDS.
-    timestamp_str = params.get("timestamp", "")
-    if timestamp_str:
-        try:
-            webhook_ts = int(timestamp_str)
-            age_seconds = abs(int(time.time()) - webhook_ts)
-            if age_seconds > _VONAGE_SIG_MAX_AGE_SECONDS:
-                logger.warning(
-                    "vonage webhook rejected — timestamp outside replay window "
-                    "age_s=%d max_age_s=%d path=%s",
-                    age_seconds,
-                    _VONAGE_SIG_MAX_AGE_SECONDS,
-                    request.url.path,
-                )
-                raise HTTPException(
-                    status_code=401,
-                    detail="Vonage webhook timestamp outside acceptable window.",
-                )
-        except ValueError:
-            # Non-integer timestamp — do not block but log.
+    # ── Decode + verify HS256 signature with our shared secret ────────────────
+    try:
+        claims = jose_jwt.decode(
+            token,
+            vonage_secret,
+            algorithms=["HS256"],
+            options={
+                # Vonage doesn't issue ``exp``, freshness is checked via ``iat``.
+                "verify_exp": False,
+                "verify_aud": False,
+            },
+        )
+    except JWTError as exc:
+        logger.warning(
+            "vonage webhook rejected — JWT verification failed path=%s err=%s",
+            request.url.path,
+            exc,
+        )
+        raise HTTPException(
+            status_code=401, detail="Invalid Vonage webhook JWT signature."
+        ) from exc
+
+    # ── Replay window: reject tokens issued more than 5 minutes ago ──────────
+    iat = claims.get("iat")
+    if isinstance(iat, (int, float)):
+        age_seconds = abs(int(time.time()) - int(iat))
+        if age_seconds > _VONAGE_SIG_MAX_AGE_SECONDS:
             logger.warning(
-                "vonage webhook timestamp is non-integer: %r — skipping age check",
-                timestamp_str,
+                "vonage webhook rejected — iat outside replay window "
+                "age_s=%d max_age_s=%d path=%s",
+                age_seconds,
+                _VONAGE_SIG_MAX_AGE_SECONDS,
+                request.url.path,
+            )
+            raise HTTPException(
+                status_code=401,
+                detail="Vonage webhook iat outside acceptable window.",
             )
 
-    expected_sig = _compute_vonage_hmac(params, vonage_secret)
-
-    if not hmac.compare_digest(expected_sig.lower(), received_sig.lower()):
-        logger.warning(
-            "vonage webhook rejected — HMAC mismatch path=%s method=%s",
-            request.url.path,
-            request.method,
-        )
-        raise HTTPException(status_code=401, detail="Invalid Vonage webhook signature.")
+    # ── Body integrity: payload_hash is SHA-256 hex of the raw request body ──
+    # Empty body (typical for GET webhooks) → no payload_hash claim expected.
+    payload_hash_claim = claims.get("payload_hash")
+    if payload_hash_claim:
+        body_bytes = await request.body()
+        actual_hash = hashlib.sha256(body_bytes or b"").hexdigest()
+        if not hmac.compare_digest(actual_hash.lower(), payload_hash_claim.lower()):
+            logger.warning(
+                "vonage webhook rejected — body hash mismatch path=%s method=%s",
+                request.url.path,
+                request.method,
+            )
+            raise HTTPException(
+                status_code=401, detail="Vonage webhook body hash mismatch."
+            )
 
     logger.debug(
-        "vonage webhook signature verified path=%s method=%s",
+        "vonage webhook JWT verified path=%s method=%s",
         request.url.path,
         request.method,
     )
