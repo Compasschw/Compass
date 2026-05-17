@@ -233,6 +233,55 @@ class VonageProvider(CommunicationProvider):
         # directly — no live Vonage lookup required.
         return None
 
+    async def download_recording_bytes(self, recording_url: str) -> bytes | None:
+        """Download a Vonage call recording's bytes for downstream processing.
+
+        Vonage recording URLs (``https://api-{region}.nexmo.com/v1/files/...``)
+        require an application-scoped JWT in the ``Authorization`` header — they
+        are NOT publicly fetchable.  The Vonage SDK's
+        ``client.voice.get_recording(url)`` mints and attaches that JWT
+        automatically using the configured private key, so we delegate to it
+        rather than duplicating the JWT logic here.
+
+        Returns ``None`` on any failure (SDK not configured, unreachable,
+        non-200, etc.) so callers can persist the empty state and retry later
+        rather than blowing up the webhook handler.
+        """
+        client = self._get_client()
+        if client is None:
+            logger.warning(
+                "download_recording_bytes called but Vonage client not configured"
+            )
+            return None
+
+        def _fetch_sync() -> bytes | None:
+            # Vonage SDK v4+: client.voice.get_recording(url) → bytes
+            try:
+                data = client.voice.get_recording(recording_url)
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "Vonage get_recording failed url_host=%s error_type=%s",
+                    _safe_host(recording_url),
+                    type(exc).__name__,
+                )
+                return None
+            # Some SDK versions return a ``RecordingResponse`` wrapper instead
+            # of raw bytes; handle both shapes.
+            if isinstance(data, (bytes, bytearray)):
+                return bytes(data)
+            content = getattr(data, "content", None)
+            if isinstance(content, (bytes, bytearray)):
+                return bytes(content)
+            logger.error(
+                "Vonage get_recording returned unexpected type=%s for url_host=%s",
+                type(data).__name__,
+                _safe_host(recording_url),
+            )
+            return None
+
+        import asyncio
+        return await asyncio.to_thread(_fetch_sync)
+
     async def get_transcript(self, recording_url: str) -> TranscriptResult | None:
         """Transcribe via the transcription provider (AssemblyAI by default).
 
@@ -267,6 +316,15 @@ class VonageProvider(CommunicationProvider):
 def _strip(number: str) -> str:
     """Vonage wants digits only (no +, spaces, dashes). E.164 without the +."""
     return "".join(ch for ch in (number or "") if ch.isdigit())
+
+
+def _safe_host(url: str) -> str:
+    """Extract just the hostname from a URL for safe logging (no PHI in path)."""
+    from urllib.parse import urlparse
+    try:
+        return urlparse(url).hostname or "<unparseable>"
+    except Exception:  # noqa: BLE001
+        return "<unparseable>"
 
 
 def _webhook_base() -> str:

@@ -379,6 +379,109 @@ class AssemblyAIProvider(TranscriptionProvider):
             is_partial=False,
         )
 
+    async def transcribe_bytes(
+        self,
+        audio_bytes: bytes,
+        language: str = "en",
+        medical_model: bool = True,
+    ) -> TranscriptionResult:
+        """Upload raw audio bytes to AssemblyAI, transcribe, poll, persist.
+
+        Used for recordings that aren't publicly fetchable (Vonage recording
+        URLs require per-application JWT auth, which AssemblyAI can't supply
+        on its own).  The SDK's ``Transcriber.transcribe(audio_bytes)`` form
+        handles the upload-then-submit dance internally.
+
+        Returns an empty TranscriptionResult on any failure so callers can
+        record the empty state and retry later, mirroring ``transcribe_async``.
+        """
+        if not self._api_key:
+            logger.info(
+                "AssemblyAI API key not configured — skipping bytes transcription"
+            )
+            return TranscriptionResult()
+        if not audio_bytes:
+            logger.warning("transcribe_bytes called with empty payload")
+            return TranscriptionResult()
+
+        aai = self._get_sdk()
+        config = self._make_transcription_config(
+            language=language,
+            medical_model=medical_model,
+        )
+
+        # The SDK accepts a bytes-like path/handle. We stage the bytes into a
+        # spooled tempfile so the SDK uploads from a real file handle without
+        # us holding the entire payload twice in memory.
+        import io
+        import tempfile
+
+        def _transcribe_sync():
+            # SDK supports passing a bytes file-like or path; using a NamedTemp
+            # avoids touching its internal upload helper directly.
+            transcriber = aai.Transcriber()
+            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=True) as fh:
+                fh.write(audio_bytes)
+                fh.flush()
+                return transcriber.submit(fh.name, config=config)
+
+        try:
+            job = await asyncio.to_thread(_transcribe_sync)
+            transcript_id: str = job.id
+            logger.info(
+                "AssemblyAI bytes job submitted transcript_id=%s payload_bytes=%d medical_model=%s",
+                transcript_id, len(audio_bytes), medical_model,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("AssemblyAI bytes submission failed payload_bytes=%d", len(audio_bytes))
+            return TranscriptionResult()
+
+        def _poll_until_done(transcript_id: str):
+            import time
+            aai_local = self._get_sdk()
+            elapsed = 0
+            while elapsed < POLL_TIMEOUT_SECONDS:
+                poll = aai_local.Transcript.get_by_id(transcript_id)
+                if poll.status == aai_local.TranscriptStatus.completed:
+                    return poll
+                if poll.status == aai_local.TranscriptStatus.error:
+                    logger.error(
+                        "AssemblyAI bytes transcription error transcript_id=%s", transcript_id,
+                    )
+                    return None
+                time.sleep(POLL_INTERVAL_SECONDS)
+                elapsed += POLL_INTERVAL_SECONDS
+            logger.warning(
+                "AssemblyAI bytes transcription timed out after %ds transcript_id=%s",
+                POLL_TIMEOUT_SECONDS, transcript_id,
+            )
+            return None
+
+        try:
+            completed = await asyncio.to_thread(_poll_until_done, transcript_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("AssemblyAI bytes poll loop failed transcript_id=%s", transcript_id)
+            return TranscriptionResult(provider_transcript_id=transcript_id)
+
+        if completed is None:
+            return TranscriptionResult(provider_transcript_id=transcript_id)
+
+        chunks = self._parse_utterances(getattr(completed, "utterances", None))
+        entities = self._parse_entities(getattr(completed, "entities", None))
+        duration_ms: int | None = getattr(completed, "audio_duration", None)
+        if duration_ms is not None:
+            duration_ms = int(duration_ms * 1000)
+        return TranscriptionResult(
+            provider_transcript_id=transcript_id,
+            language=language,
+            confidence=float(getattr(completed, "confidence", 0.0) or 0.0),
+            full_text=getattr(completed, "text", "") or "",
+            chunks=chunks,
+            duration_ms=duration_ms,
+            medical_entities=entities,
+            is_partial=False,
+        )
+
     async def transcribe_async(
         self,
         audio_url: str,

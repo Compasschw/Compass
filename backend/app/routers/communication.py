@@ -38,7 +38,7 @@ import time
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from jose import JWTError, jwt as jose_jwt
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
@@ -514,51 +514,9 @@ async def voice_answer(
     # conversation name is stable and correlates back to the Compass session.
     conversation_name = f"compass-session-{session}" if session else "compass-session-unknown"
 
-    # Build the optional CHW-leg WebSocket fork action.
-    # Requires vonage_ws_audio_url_base + vonage_ws_jwt_secret to be set.
-    chw_ws_connect_action: dict | None = None
-    if settings.vonage_ws_audio_url_base and session:
-        try:
-            from uuid import UUID as _UUIDWS
-
-            from app.utils.security import create_vonage_ws_token
-
-            chw_ws_token = create_vonage_ws_token(_UUIDWS(session), role="chw")
-            chw_ws_uri = (
-                f"{settings.vonage_ws_audio_url_base}"
-                f"/api/v1/sessions/{session}/transcript/vonage-stream"
-                f"?token={chw_ws_token}"
-            )
-            chw_ws_connect_action = {
-                "action": "connect",
-                "from": settings.vonage_from_number or "",
-                "endpoint": [
-                    {
-                        "type": "websocket",
-                        "uri": chw_ws_uri,
-                        # 16 kHz PCM signed int16 — matches AssemblyAI v3 streaming.
-                        "content-type": "audio/l16;rate=16000",
-                        "headers": {"session_id": session, "role": "chw"},
-                    }
-                ],
-            }
-            logger.info(
-                "CHW-leg WebSocket fork configured session=%s → %s",
-                session,
-                settings.vonage_ws_audio_url_base,
-            )
-        except (RuntimeError, ValueError, Exception) as exc:  # noqa: BLE001
-            logger.warning(
-                "CHW-leg WebSocket fork skipped session=%s — token error: %s %s",
-                session,
-                type(exc).__name__,
-                exc,
-            )
-
     # Assemble the CHW leg NCCO. Order matters:
     #   1. talk — immediate hold message to the CHW.
-    #   2. connect (websocket, optional) — fork CHW mic audio to the pipeline.
-    #   3. conversation — join the named room. Member leg joins the same name
+    #   2. conversation — join the named room. Member leg joins the same name
     #      after passing the consent IVR (placed as a separate outbound call).
     #
     # ``record: True`` on the CHW leg's conversation action enables
@@ -567,16 +525,21 @@ async def voice_answer(
     # Only the first joiner's record setting takes effect; the member leg's
     # subsequent conversation join inherits it without needing its own
     # record action.  The eventUrl receives the ``recording_url`` callback
-    # when the conversation ends.
+    # when the conversation ends.  Post-call batch transcription is then
+    # triggered from the voice/events handler when the recording_url lands.
+    #
+    # Note: per-leg WebSocket audio forks (an earlier attempt at live
+    # transcription) are intentionally NOT included here.  ``connect(ws)``
+    # blocks the call leg for its entire duration — it cannot coexist with
+    # a ``conversation`` action on the same leg.  Live phone-call captions
+    # would require Vonage's Audio Connector (separate leg) or a switch to
+    # a SIP recording fork; not in scope.  Web sessions still have live
+    # transcription via the in-browser mic path.
     ncco: list[dict] = [
         {
             "action": "talk",
             "text": "Hold while we connect you to your member.",
         },
-    ]
-    if chw_ws_connect_action is not None:
-        ncco.append(chw_ws_connect_action)
-    ncco.append(
         {
             "action": "conversation",
             "name": conversation_name,
@@ -586,8 +549,8 @@ async def voice_answer(
                 f"?session={session or ''}"
             ],
             "eventMethod": "POST",
-        }
-    )
+        },
+    ]
     return ncco
 
 
@@ -731,105 +694,33 @@ async def voice_consent_result(
         # CHW leg so both legs join the same named audio bridge.
         conversation_name = f"compass-session-{session}" if session else "compass-session-unknown"
 
-        # Build the per-leg WebSocket fork actions for the member leg.
-        # We issue a token with role="member" so this leg's audio is routed to
-        # the member-specific AssemblyAI streaming session.
-        #
-        # Requires BOTH vonage_ws_audio_url_base (wss:// base) AND
-        # vonage_ws_jwt_secret to be configured.  Either absent → graceful
-        # degradation: fall back to conversation-only (no transcription WS),
-        # so production calls are never dropped due to a config gap.
-        member_ws_connect_action: dict | None = None
+        # Per-leg WebSocket audio fork intentionally NOT built here.
+        # ``connect(websocket)`` blocks a phone leg for its full duration,
+        # which prevents it from later joining the named ``conversation``
+        # that actually bridges the call.  Live phone-call captions would
+        # need Vonage Audio Connector (separate participant leg) — not in
+        # scope.  Post-call batch transcription handles the transcript
+        # off the recording_url that Vonage posts back to /voice/events.
 
-        if settings.vonage_ws_audio_url_base and session:
-            try:
-                from uuid import UUID as _UUIDWS
-
-                from app.utils.security import create_vonage_ws_token
-
-                member_ws_token = create_vonage_ws_token(_UUIDWS(session), role="member")
-                member_ws_uri = (
-                    f"{settings.vonage_ws_audio_url_base}"
-                    f"/api/v1/sessions/{session}/transcript/vonage-stream"
-                    f"?token={member_ws_token}"
-                )
-                member_ws_connect_action = {
-                    "action": "connect",
-                    "from": settings.vonage_from_number or "",
-                    "endpoint": [
-                        {
-                            "type": "websocket",
-                            "uri": member_ws_uri,
-                            # 16 kHz PCM signed int16 — matches AssemblyAI v3
-                            # streaming (universal_streaming_english / u3_rt_pro).
-                            "content-type": "audio/l16;rate=16000",
-                            # Headers carry session_id and role so the receiving
-                            # handler can log/correlate without parsing the JWT.
-                            "headers": {"session_id": session, "role": "member"},
-                        }
-                    ],
-                }
-                logger.info(
-                    "Member-leg WebSocket fork configured session=%s → %s",
-                    session,
-                    settings.vonage_ws_audio_url_base,
-                )
-            except RuntimeError as exc:
-                # create_vonage_ws_token raises RuntimeError when
-                # vonage_ws_jwt_secret is not set.  Fall back gracefully.
-                logger.warning(
-                    "Member-leg WebSocket fork skipped session=%s — token generation failed: %s",
-                    session,
-                    exc,
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "Member-leg WebSocket fork skipped session=%s — unexpected error: %s",
-                    session,
-                    exc,
-                )
-        else:
-            if not settings.vonage_ws_audio_url_base:
-                logger.debug(
-                    "vonage_ws_audio_url_base not configured — per-leg WebSocket fork disabled "
-                    "(set VONAGE_WS_AUDIO_URL_BASE=wss://api.joincompasschw.com to enable)"
-                )
-
-        # Assemble the member-leg NCCO.  Action order matters to Vonage:
+        # Assemble the member-leg NCCO.  Action order:
         #   1. talk — immediate acknowledgement to the member ("Thank you…").
-        #   2. connect (websocket, optional) — forks member mic audio to the
-        #      member-specific AssemblyAI streaming session before the
-        #      conversation join, ensuring no audio gap at the start.
-        #      This is a passthrough: execution continues to the next action.
-        #   3. conversation — joins the member leg into the named Vonage
+        #   2. conversation — joins the member leg into the named Vonage
         #      Conversation that the CHW leg already joined (set in voice/answer).
         #      This bridges the two legs so they can hear each other.
         #
         # Recording is handled by ``record: True`` on the **CHW leg's**
         # conversation action (the first joiner sets the recording policy for
-        # the named conversation).  A per-leg ``record`` action here would
-        # finalize on its own silence/timeout long before the bridge ends —
-        # which is what produced the earlier 18KB/38KB consent-prompt-only
-        # MP3s instead of the full bridged audio.
-        #
-        # No bargeIn after talk — the next action is `connect` (not `input`).
-        # Vonage rejects bargeIn-followed-by-non-input as a syntax error.
+        # the named conversation).
         ncco: list[dict] = [
             {
                 "action": "talk",
                 "text": "Thank you. You are now connected.",
             },
-        ]
-        if member_ws_connect_action is not None:
-            ncco.append(member_ws_connect_action)
-        # Join the member leg into the same named conversation as the CHW leg.
-        ncco.append(
             {
                 "action": "conversation",
                 "name": conversation_name,
-            }
-        )
-
+            },
+        ]
         return ncco
 
     # Decline path (digit "2", invalid, or timeout).
@@ -861,6 +752,7 @@ async def voice_consent_result(
 @router.api_route("/voice/events", methods=["GET", "POST"])
 async def voice_events(
     request: Request,
+    background_tasks: BackgroundTasks,
     session: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     _sig: None = Depends(_verify_vonage_signature),
@@ -944,6 +836,24 @@ async def voice_events(
                 "Recording URL saved for session %s (compass session=%s)",
                 comm_session.id, session,
             )
+
+            # Fire-and-forget: download the recording, run AssemblyAI batch
+            # transcription, persist transcript + utterances, and pre-populate
+            # the AI summary draft.  The webhook returns immediately; the
+            # pipeline runs in a background task with its own DB session.
+            # Only schedule when transcript_text isn't already populated to
+            # avoid duplicate work on Vonage webhook re-deliveries.
+            if not comm_session.transcript_text:
+                from app.services.communication.recording_finalizer import finalize_recording
+                background_tasks.add_task(
+                    finalize_recording,
+                    communication_session_id=comm_session.id,
+                )
+                logger.info(
+                    "voice/events: scheduled background transcription "
+                    "comm_session_id=%s",
+                    comm_session.id,
+                )
         else:
             logger.warning(
                 "voice/events: recording_url received but no CommunicationSession "

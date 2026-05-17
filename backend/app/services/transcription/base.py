@@ -106,6 +106,25 @@ class TranscriptionProvider(ABC):
             returns a result with empty full_text rather than raising.
         """
 
+    async def transcribe_bytes(
+        self,
+        audio_bytes: bytes,
+        language: str = "en",
+        medical_model: bool = True,
+    ) -> TranscriptionResult:
+        """Transcribe raw audio bytes (post-call MP3/PCM payload).
+
+        Used when the recording URL is not publicly fetchable (e.g., Vonage
+        recordings require a per-application JWT to download).  The provider
+        is expected to upload the bytes to its own ingestion endpoint and
+        then run the same batch transcription pipeline as ``transcribe_async``.
+
+        Default implementation returns an empty TranscriptionResult so
+        providers without bytes-upload support degrade gracefully rather
+        than raising.  AssemblyAI overrides this with a real implementation.
+        """
+        return TranscriptionResult()
+
     @abstractmethod
     async def transcribe_async(
         self,
