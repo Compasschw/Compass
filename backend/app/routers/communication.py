@@ -457,59 +457,55 @@ async def call_bridge(
 async def voice_answer(
     request: Request,
     session: str | None = Query(default=None, description="Internal session id."),
-    member: str | None = Query(default=None, description="Member phone number (digits only)."),
+    member: str | None = Query(default=None, description="Deprecated — member dialed by a separate outbound call."),
     _sig: None = Depends(_verify_vonage_signature),
 ):
-    """Vonage calls this when the CHW answers — returns an NCCO that:
+    """Vonage calls this when the CHW leg answers. Returns an NCCO that:
 
-    1. Forks the CHW leg's audio to its own WebSocket (role="chw") when the
+    1. Plays a brief hold message to the CHW.
+    2. Forks the CHW leg's audio to its own WebSocket (role="chw") when the
        per-leg WS feature is configured.
-    2. Joins the CHW leg into a named Vonage Conversation (keyed on session_id).
-    3. Connects to the member's phone via a separate ``connect`` action whose
-       ``onAnswer`` URL fires on the member's leg, letting that leg run its own
-       consent IVR and per-leg WS fork independently.
+    3. Joins the CHW leg into a named Vonage Conversation (keyed on session_id).
+
+    The member's leg is dialed by a SEPARATE outbound call placed by
+    ``VonageProvider.create_proxy_session`` at the same time as the CHW leg.
+    That second call's answer_url points at ``/voice/consent-prompt``, which
+    runs the California §632 consent IVR; on DTMF "1" the member NCCO does
+    its own WS fork + ``conversation(name=...)`` join — so both legs end up
+    in the same named conversation and Vonage bridges their audio.
 
     Per-leg isolation topology (Pattern A — conversation + independent WS forks):
     ┌──────────────────────────────────────────────────────────────────────────┐
     │ CHW leg NCCO (this endpoint):                                            │
     │   talk → connect(ws_chw, role=chw) → conversation(name=<session_id>)   │
     │                                                                          │
-    │ Member leg NCCO (via onAnswer → consent-prompt → consent-result):        │
+    │ Member leg NCCO (via separate outbound call → consent-prompt →           │
+    │ consent-result):                                                         │
     │   talk → input(dtmf) → talk(ack) → connect(ws_member, role=member)     │
     │        → conversation(name=<session_id>)                                 │
     └──────────────────────────────────────────────────────────────────────────┘
-    The two WebSocket connections each receive only the microphone audio of
-    the leg their NCCO runs on (Vonage sends per-leg mic audio to a websocket
-    endpoint that appears in that leg's own NCCO before the conversation join).
-    The named Conversation bridges the two legs for voice so participants can
-    still hear each other.
 
-    When vonage_ws_audio_url_base is not configured (local dev / staging without
-    the feature enabled), the WS fork actions are omitted and the call falls back
-    to a direct connect+conversation without transcription — the call still works.
+    Each WebSocket connection receives only the microphone audio of the leg
+    whose NCCO listed it. The named Conversation bridges the two legs for
+    two-way voice.
+
+    Earlier versions placed only one outbound call (to CHW) and nested a
+    ``connect(phone, onAnswer=consent_url)`` action inside this NCCO to dial
+    the member. That pattern silently failed to bridge: the ``connect`` action
+    blocks until its child leg ends, so the ``conversation`` action that
+    follows it never executes while the call is live. Switching to two
+    independent outbound calls + a shared conversation name fixes the bridge.
 
     NOTE: Accepts both GET and POST. Vonage's default ``answer_method`` is GET;
     POST-only causes a 405 on the CHW's answer event and the call aborts.
 
-    Consent flow (California Civil Code §632 — two-party consent):
-      1. CHW answers (this endpoint fires).
-      2. CHW leg joins the named conversation after its optional WS fork.
-      3. Member's leg fires onAnswer → consent-prompt IVR → consent-result.
-      4. Member presses 1 → consent-result NCCO: WS fork + conversation join.
-      5. Member presses 2 (or no input) → polite hangup on member leg.
-
     NCCO reference: https://developer.vonage.com/en/voice/voice-api/ncco-reference
     """
     payload = await _safely_read_body(request)
-    logger.info("voice/answer received (session=%s member=%s): %s", session, member, payload)
-
-    if not member:
-        return [
-            {
-                "action": "talk",
-                "text": "This call is not configured. Please hang up and try again.",
-            }
-        ]
+    logger.info("voice/answer received (session=%s): %s", session, payload)
+    # ``member`` query param retained for backward compat but no longer used —
+    # the member leg is dialed by VonageProvider.create_proxy_session directly.
+    _ = member
 
     from app.config import settings
 
@@ -517,14 +513,6 @@ async def voice_answer(
     # joined into the same audio bridge.  We use the session_id so the
     # conversation name is stable and correlates back to the Compass session.
     conversation_name = f"compass-session-{session}" if session else "compass-session-unknown"
-
-    # The "answerOnAnswer" pattern: connect to member phone; once the member
-    # picks up, the inner `onAnswer` URL fires on that leg and returns the
-    # consent IVR NCCO.  That NCCO drives disclosure → DTMF → consent-result.
-    consent_url = (
-        f"{_public_base_url()}/api/v1/communication/voice/consent-prompt"
-        f"?session={session or ''}"
-    )
 
     # Build the optional CHW-leg WebSocket fork action.
     # Requires vonage_ws_audio_url_base + vonage_ws_jwt_secret to be set.
@@ -567,14 +555,11 @@ async def voice_answer(
                 exc,
             )
 
-    # Assemble the CHW leg NCCO.
-    # Action ordering matters:
+    # Assemble the CHW leg NCCO. Order matters:
     #   1. talk — immediate hold message to the CHW.
     #   2. connect (websocket, optional) — fork CHW mic audio to the pipeline.
-    #      This is a passthrough: after the WS connects, execution continues.
-    #   3. connect (phone + onAnswer) — dial the member; triggers member-leg NCCO.
-    #   NOTE: `bargeIn` on `talk` is only valid when the next action is `input`.
-    #   Vonage rejects bargeIn-followed-by-connect as a syntax error.
+    #   3. conversation — join the named room. Member leg joins the same name
+    #      after passing the consent IVR (placed as a separate outbound call).
     ncco: list[dict] = [
         {
             "action": "talk",
@@ -583,32 +568,12 @@ async def voice_answer(
     ]
     if chw_ws_connect_action is not None:
         ncco.append(chw_ws_connect_action)
-
-    ncco.append(
-        {
-            "action": "connect",
-            "from": settings.vonage_from_number or "",
-            "endpoint": [
-                {
-                    "type": "phone",
-                    "number": member,
-                    # When the member picks up, Vonage fetches this NCCO and
-                    # plays it on the member leg — independently of the CHW leg.
-                    "onAnswer": {"url": consent_url},
-                }
-            ],
-        }
-    )
-
-    # Join the CHW leg into the named conversation so the two legs can hear
-    # each other.  The member leg joins the same conversation name after consent.
     ncco.append(
         {
             "action": "conversation",
             "name": conversation_name,
         }
     )
-
     return ncco
 
 

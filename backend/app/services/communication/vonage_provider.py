@@ -88,12 +88,32 @@ class VonageProvider(CommunicationProvider):
     ) -> ProxySession:
         """Initiate a masked bridge between CHW and member.
 
-        Places an outbound call from our Vonage number to the CHW; when the
-        CHW answers, our `/voice/answer` webhook receives the event and
-        returns an NCCO that `connect`s the call to the member. Both legs
-        are recorded to S3 via the `record` NCCO action.
+        Places **two** parallel outbound calls from our Vonage number:
+
+        1. CHW leg → answer URL ``/voice/answer`` returns NCCO that joins the
+           CHW into the named Conversation ``compass-session-<session_id>``
+           after a brief hold message + optional WebSocket fork for
+           transcription.
+        2. Member leg → answer URL ``/voice/consent-prompt`` runs the
+           California §632 consent IVR; on DTMF "1" the consent-result NCCO
+           plays an ack, forks audio to a member-role WebSocket, and joins
+           the same named Conversation. On DTMF "2" or timeout the member
+           leg hangs up and the session is marked ``cancelled_no_consent``.
+
+        Both legs joining the same named Conversation is what bridges them
+        for two-way voice. Earlier versions placed only the CHW call and
+        nested a ``connect(phone)`` action inside the CHW NCCO to dial the
+        member — that pattern silently failed to bridge because the
+        ``connect`` action blocks until the dialed leg ends, so the
+        ``conversation`` action that follows never runs while the call is
+        live.
 
         Returns a placeholder if Vonage isn't configured (e.g. local dev).
+
+        NOTE: The Vonage Python SDK v4+ uses pydantic models where the
+        source-number field is ``from_`` (trailing underscore — ``from`` is a
+        Python keyword). The legacy dict form requires the same ``from_``
+        key.
         """
         client = self._get_client()
 
@@ -108,52 +128,83 @@ class VonageProvider(CommunicationProvider):
                 provider="vonage",
             )
 
-        # Outbound call — Vonage hits our answer webhook with the session_id
-        # in the custom `event_url` query so we can look up the member phone
-        # at bridge time. The answer URL is configured on the Vonage
-        # Application (points at /api/v1/communication/voice/answer).
-        #
-        # NOTE: The Vonage Python SDK v4+ uses pydantic models where the
-        # source-number field is `from_` (trailing underscore — `from` is a
-        # Python keyword). The legacy dict form requires the same `from_`
-        # key. Using `from` here triggers `VoiceError: Either `from_` or
-        # `random_from_number` must be set`. See scripts/test_vonage.py
-        # for a typed-model variant of this same call.
-        try:
-            response = client.voice.create_call(
-                {
-                    "to": [{"type": "phone", "number": _strip(chw_phone)}],
-                    "from_": {"type": "phone", "number": _strip(self._from_number)},
-                    # Pass context as query params so the webhook can route
-                    # the call to the right member without touching the DB.
-                    "answer_url": [
-                        f"{_webhook_base()}/voice/answer"
-                        f"?session={session_id}&member={_strip(member_phone)}"
-                    ],
-                    "event_url": [f"{_webhook_base()}/voice/events?session={session_id}"],
-                }
-            )
-            # Vonage returns { "uuid": "...", "conversation_uuid": "...", "status": "started" }
-            call_uuid = getattr(response, "uuid", None) or (
-                response.get("uuid") if isinstance(response, dict) else None
-            )
-            conversation_uuid = getattr(response, "conversation_uuid", None) or (
-                response.get("conversation_uuid") if isinstance(response, dict) else None
-            )
-            provider_session_id = conversation_uuid or call_uuid or f"vonage-unknown-{uuid4()}"
+        from_endpoint = {"type": "phone", "number": _strip(self._from_number)}
+        event_url = [f"{_webhook_base()}/voice/events?session={session_id}"]
 
-            return ProxySession(
-                provider_session_id=provider_session_id,
-                proxy_number=self._from_number,
-                provider="vonage",
+        chw_call_payload = {
+            "to": [{"type": "phone", "number": _strip(chw_phone)}],
+            "from_": from_endpoint,
+            # No `member=` query param needed any more — the member is dialed
+            # by the second create_call below.
+            "answer_url": [f"{_webhook_base()}/voice/answer?session={session_id}"],
+            "event_url": event_url,
+        }
+        member_call_payload = {
+            "to": [{"type": "phone", "number": _strip(member_phone)}],
+            "from_": from_endpoint,
+            # consent-prompt is the answer URL for the member leg — it plays
+            # the §632 IVR and on DTMF "1" hands off to consent-result which
+            # joins the named conversation.
+            "answer_url": [
+                f"{_webhook_base()}/voice/consent-prompt?session={session_id}"
+            ],
+            "event_url": event_url,
+        }
+
+        # Place the CHW call first so the CHW is in the named conversation
+        # (or at least ringing toward it) before the member's leg dials.
+        try:
+            chw_response = client.voice.create_call(chw_call_payload)
+            chw_uuid = getattr(chw_response, "uuid", None) or (
+                chw_response.get("uuid") if isinstance(chw_response, dict) else None
+            )
+            chw_conv = getattr(chw_response, "conversation_uuid", None) or (
+                chw_response.get("conversation_uuid") if isinstance(chw_response, dict) else None
+            )
+            logger.info(
+                "vonage.create_call.chw_leg: session=%s uuid=%s conv=%s",
+                session_id, chw_uuid, chw_conv,
             )
         except Exception as e:  # noqa: BLE001
-            logger.error("Vonage create_call failed for session %s: %s", session_id, e)
+            logger.error("Vonage create_call (CHW leg) failed for session %s: %s", session_id, e)
             return ProxySession(
                 provider_session_id=f"vonage-failed-{session_id}",
                 proxy_number=self._from_number,
                 provider="vonage",
             )
+
+        # Now place the member leg. If this fails, the CHW is alone on the
+        # named conversation and will hear silence — we still return success
+        # so the UI doesn't block, but log the failure prominently so ops
+        # can intervene (e.g. retry or rotate the call).
+        try:
+            member_response = client.voice.create_call(member_call_payload)
+            member_uuid = getattr(member_response, "uuid", None) or (
+                member_response.get("uuid") if isinstance(member_response, dict) else None
+            )
+            member_conv = getattr(member_response, "conversation_uuid", None) or (
+                member_response.get("conversation_uuid") if isinstance(member_response, dict) else None
+            )
+            logger.info(
+                "vonage.create_call.member_leg: session=%s uuid=%s conv=%s",
+                session_id, member_uuid, member_conv,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.error(
+                "Vonage create_call (MEMBER leg) failed for session %s — "
+                "CHW will hear silence on the named conversation: %s",
+                session_id, e,
+            )
+
+        # The "session" id we surface to the rest of the app is the named
+        # conversation (deterministic, joinable by both legs), not the per-
+        # leg Vonage UUID.  This makes downstream lookups (recording URL,
+        # transcript joining) consistent across legs.
+        return ProxySession(
+            provider_session_id=f"compass-session-{session_id}",
+            proxy_number=self._from_number,
+            provider="vonage",
+        )
 
     async def end_proxy_session(self, provider_session_id: str) -> None:
         """Hang up the active Vonage call if it's still live."""
