@@ -560,6 +560,14 @@ async def voice_answer(
     #   2. connect (websocket, optional) — fork CHW mic audio to the pipeline.
     #   3. conversation — join the named room. Member leg joins the same name
     #      after passing the consent IVR (placed as a separate outbound call).
+    #
+    # ``record: True`` on the CHW leg's conversation action enables
+    # Vonage-side recording of the **entire** bridged audio (both legs),
+    # which is the right primitive for a named multi-party conversation.
+    # Only the first joiner's record setting takes effect; the member leg's
+    # subsequent conversation join inherits it without needing its own
+    # record action.  The eventUrl receives the ``recording_url`` callback
+    # when the conversation ends.
     ncco: list[dict] = [
         {
             "action": "talk",
@@ -572,6 +580,12 @@ async def voice_answer(
         {
             "action": "conversation",
             "name": conversation_name,
+            "record": True,
+            "eventUrl": [
+                f"{_public_base_url()}/api/v1/communication/voice/events"
+                f"?session={session or ''}"
+            ],
+            "eventMethod": "POST",
         }
     )
     return ncco
@@ -787,25 +801,19 @@ async def voice_consent_result(
         #      member-specific AssemblyAI streaming session before the
         #      conversation join, ensuring no audio gap at the start.
         #      This is a passthrough: execution continues to the next action.
-        #   3. record — backup mp3 upload via /voice/events; kept regardless of
-        #      WS fork state for compliance audit trail (Medi-Cal billing).
-        #   4. conversation — joins the member leg into the named Vonage
+        #   3. conversation — joins the member leg into the named Vonage
         #      Conversation that the CHW leg already joined (set in voice/answer).
         #      This bridges the two legs so they can hear each other.
         #
+        # Recording is handled by ``record: True`` on the **CHW leg's**
+        # conversation action (the first joiner sets the recording policy for
+        # the named conversation).  A per-leg ``record`` action here would
+        # finalize on its own silence/timeout long before the bridge ends —
+        # which is what produced the earlier 18KB/38KB consent-prompt-only
+        # MP3s instead of the full bridged audio.
+        #
         # No bargeIn after talk — the next action is `connect` (not `input`).
         # Vonage rejects bargeIn-followed-by-non-input as a syntax error.
-        record_action: dict = {
-            "action": "record",
-            "eventUrl": [
-                f"{_public_base_url()}/api/v1/communication/voice/events"
-                f"?session={session or ''}"
-            ],
-            "endOnSilence": 3,
-            "format": "mp3",
-            "beepStart": False,
-        }
-
         ncco: list[dict] = [
             {
                 "action": "talk",
@@ -814,7 +822,6 @@ async def voice_consent_result(
         ]
         if member_ws_connect_action is not None:
             ncco.append(member_ws_connect_action)
-        ncco.append(record_action)
         # Join the member leg into the same named conversation as the CHW leg.
         ncco.append(
             {
@@ -882,7 +889,25 @@ async def voice_events(
     event_type = payload.get("status") or payload.get("event_type") or payload.get("reason")
     logger.info("voice/events (session=%s type=%s): %s", session, event_type, payload)
 
-    # If this is a recording event, persist the URL on the session.
+    # Resolve the CommunicationSession via the deterministic
+    # ``compass-session-<session_id>`` mapping we set in
+    # ``VonageProvider.create_proxy_session``.  Vonage's own ``conversation_uuid``
+    # changes per call leg, so matching on it would miss the bridged
+    # conversation entirely.  When create_proxy_session was called more than
+    # once for the same session (retries), update the most recent row so the
+    # finalisation lands where the user will actually look.
+    comm_session: CommunicationSession | None = None
+    if session:
+        target_provider_id = f"compass-session-{session}"
+        result = await db.execute(
+            select(CommunicationSession)
+            .where(CommunicationSession.provider_session_id == target_provider_id)
+            .order_by(CommunicationSession.created_at.desc())
+            .limit(1)
+        )
+        comm_session = result.scalar_one_or_none()
+
+    # ── Recording URL persistence ─────────────────────────────────────────
     if payload.get("recording_url"):
         recording_url = payload["recording_url"]
         # Trust-boundary validation: the inbound webhook payload is attacker-
@@ -895,19 +920,58 @@ async def voice_events(
                 recording_url,
                 session,
             )
-        else:
-            provider_session_id = payload.get("conversation_uuid") or payload.get("call_uuid")
-            if provider_session_id:
-                result = await db.execute(
-                    select(CommunicationSession).where(
-                        CommunicationSession.provider_session_id == provider_session_id
+        elif comm_session is not None:
+            comm_session.recording_url = recording_url
+            recording_uuid = payload.get("recording_uuid")
+            if recording_uuid:
+                comm_session.provider_recording_id = str(recording_uuid)
+            # Vonage gives us start/end timestamps on the record event; derive
+            # duration so the UI can show "X-minute call" without re-parsing.
+            start_iso = payload.get("start_time")
+            end_iso = payload.get("end_time")
+            if start_iso and end_iso:
+                try:
+                    from datetime import datetime as _dt
+                    start_dt = _dt.fromisoformat(str(start_iso).replace("Z", "+00:00"))
+                    end_dt = _dt.fromisoformat(str(end_iso).replace("Z", "+00:00"))
+                    comm_session.recording_duration_seconds = max(
+                        0, int((end_dt - start_dt).total_seconds())
                     )
-                )
-                comm_session = result.scalar_one_or_none()
-                if comm_session is not None:
-                    comm_session.recording_url = recording_url
-                    await db.commit()
-                    logger.info("Recording URL saved for session %s", provider_session_id)
+                except (ValueError, TypeError):
+                    pass
+            await db.commit()
+            logger.info(
+                "Recording URL saved for session %s (compass session=%s)",
+                comm_session.id, session,
+            )
+        else:
+            logger.warning(
+                "voice/events: recording_url received but no CommunicationSession "
+                "found for session=%s (payload conv_uuid=%s)",
+                session, payload.get("conversation_uuid"),
+            )
+
+    # ── Call-completion finalisation ──────────────────────────────────────
+    # Vonage sends per-leg ``status=completed`` events with ``disconnected_by``
+    # set to ``user`` (the participant hung up) or ``platform`` (Vonage timed
+    # the leg out / NCCO finished).  We flip the CommunicationSession to
+    # ``completed`` on the first ``user`` disconnect we see so the row reflects
+    # that the bridge has ended and downstream finalisation (transcript merge,
+    # AI summary trigger) can kick in.
+    if (
+        event_type == "completed"
+        and comm_session is not None
+        and comm_session.status != "completed"
+        and payload.get("disconnected_by") == "user"
+    ):
+        from datetime import datetime as _dt, timezone as _tz
+        comm_session.status = "completed"
+        comm_session.closed_at = _dt.now(_tz.utc)
+        await db.commit()
+        logger.info(
+            "CommunicationSession %s marked completed (compass session=%s)",
+            comm_session.id, session,
+        )
 
     return {"received": True}
 
