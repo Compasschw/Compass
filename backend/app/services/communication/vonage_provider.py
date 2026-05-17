@@ -237,50 +237,92 @@ class VonageProvider(CommunicationProvider):
         """Download a Vonage call recording's bytes for downstream processing.
 
         Vonage recording URLs (``https://api-{region}.nexmo.com/v1/files/...``)
-        require an application-scoped JWT in the ``Authorization`` header — they
-        are NOT publicly fetchable.  The Vonage SDK's
-        ``client.voice.get_recording(url)`` mints and attaches that JWT
-        automatically using the configured private key, so we delegate to it
-        rather than duplicating the JWT logic here.
+        require an application-scoped RS256 JWT in the ``Authorization`` header
+        — they are NOT publicly fetchable.  The Vonage Python SDK in our
+        currently-pinned version does not expose a download method on the
+        voice namespace, so we mint the JWT ourselves with the configured
+        application_id + private key file and fetch via ``httpx``.
 
-        Returns ``None`` on any failure (SDK not configured, unreachable,
-        non-200, etc.) so callers can persist the empty state and retry later
-        rather than blowing up the webhook handler.
+        Returns ``None`` on any failure (private key missing, JWT mint error,
+        non-200 from Vonage, unreachable host).  Callers persist the empty
+        state and let a re-delivered webhook retry rather than crashing.
+
+        Security: the recording URL host is logged at INFO; the full URL is
+        not logged because the path contains the recording UUID which can be
+        correlated back to a member via downstream lookups.
         """
-        client = self._get_client()
-        if client is None:
+        if not (self._application_id and self._private_key_path):
             logger.warning(
-                "download_recording_bytes called but Vonage client not configured"
+                "download_recording_bytes: application_id or private_key_path "
+                "not configured — cannot mint Vonage JWT"
             )
             return None
 
-        def _fetch_sync() -> bytes | None:
-            # Vonage SDK v4+: client.voice.get_recording(url) → bytes
-            try:
-                data = client.voice.get_recording(recording_url)
-            except Exception as exc:  # noqa: BLE001
-                logger.error(
-                    "Vonage get_recording failed url_host=%s error_type=%s",
-                    _safe_host(recording_url),
-                    type(exc).__name__,
-                )
-                return None
-            # Some SDK versions return a ``RecordingResponse`` wrapper instead
-            # of raw bytes; handle both shapes.
-            if isinstance(data, (bytes, bytearray)):
-                return bytes(data)
-            content = getattr(data, "content", None)
-            if isinstance(content, (bytes, bytearray)):
-                return bytes(content)
+        # Mint the Vonage application JWT (RS256 over PKCS#1 private key).
+        # The python-jose dependency we already ship handles RS256 signing.
+        import time
+        import uuid
+        from jose import jwt as jose_jwt
+
+        try:
+            with open(self._private_key_path, "rb") as fh:
+                private_key_pem = fh.read()
+        except OSError as exc:
             logger.error(
-                "Vonage get_recording returned unexpected type=%s for url_host=%s",
-                type(data).__name__,
-                _safe_host(recording_url),
+                "download_recording_bytes: cannot read private key path=%s error=%s",
+                self._private_key_path, exc,
             )
             return None
 
-        import asyncio
-        return await asyncio.to_thread(_fetch_sync)
+        now = int(time.time())
+        try:
+            token = jose_jwt.encode(
+                claims={
+                    "application_id": self._application_id,
+                    "iat": now,
+                    # 60-second TTL is enough for a single download and well
+                    # within Vonage's allowed clock skew.
+                    "exp": now + 60,
+                    "jti": str(uuid.uuid4()),
+                },
+                key=private_key_pem,
+                algorithm="RS256",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "download_recording_bytes: Vonage JWT mint failed error_type=%s error=%s",
+                type(exc).__name__, exc,
+            )
+            return None
+
+        # Fetch the recording.  httpx is already a top-level dependency.
+        import httpx
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(60.0)) as client:
+                response = await client.get(
+                    recording_url,
+                    headers={"Authorization": f"Bearer {token}"},
+                    follow_redirects=True,
+                )
+        except httpx.HTTPError as exc:
+            logger.error(
+                "download_recording_bytes: httpx error url_host=%s error_type=%s",
+                _safe_host(recording_url), type(exc).__name__,
+            )
+            return None
+
+        if response.status_code != 200:
+            logger.error(
+                "download_recording_bytes: Vonage returned %d url_host=%s body_prefix=%s",
+                response.status_code,
+                _safe_host(recording_url),
+                # Truncate so we don't dump a giant HTML error page into logs;
+                # status + first 200 chars is enough to diagnose.
+                (response.text or "")[:200].replace("\n", " "),
+            )
+            return None
+
+        return response.content
 
     async def get_transcript(self, recording_url: str) -> TranscriptResult | None:
         """Transcribe via the transcription provider (AssemblyAI by default).
