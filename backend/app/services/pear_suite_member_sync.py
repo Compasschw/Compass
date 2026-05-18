@@ -66,11 +66,15 @@ def _build_member_payload(
         "lastName": last_name,
     }
 
-    if user.email:
-        payload["email"] = user.email
-
-    if user.phone:
-        payload["phone"] = user.phone
+    # Always include email + phone keys, even when empty.  Pear Suite's
+    # Edit Member UI fails to render the corresponding input boxes when
+    # these keys are absent on the original create payload (observed on
+    # eefcfacd-... 2026-05-18 — "Update" button non-functional because
+    # the phone input was missing entirely).  Sending "" preserves the
+    # field so the CHW or admin can fill it in later from the Pear edit
+    # page.
+    payload["email"] = user.email or ""
+    payload["phone"] = user.phone or ""
 
     if profile.primary_language:
         payload["language"] = profile.primary_language
@@ -171,7 +175,22 @@ async def ensure_member_synced(
 
     pear_response = await provider.create_member(member_payload)
 
-    pear_member_id = pear_response.get("id") or pear_response.get("memberId")
+    # Pear Suite's response shape varies across endpoints.  The 2026 beta
+    # API on POST /api/beta/members wraps the created member as
+    # ``{"success": true, "data": {"id": "...", ...}}`` — older
+    # documentation showed a flat ``{"id": ...}``.  Handle both so an
+    # API-shape change doesn't silently break sync persistence (which is
+    # what just happened: member was created in Pear, our extraction
+    # returned None, ValueError raised, ID never persisted).
+    candidate_dicts: list[dict] = [pear_response]
+    inner = pear_response.get("data") if isinstance(pear_response, dict) else None
+    if isinstance(inner, dict):
+        candidate_dicts.append(inner)
+    pear_member_id = None
+    for candidate in candidate_dicts:
+        pear_member_id = candidate.get("id") or candidate.get("memberId")
+        if pear_member_id:
+            break
     if not pear_member_id:
         logger.error(
             "pear_suite.member_sync.no_id: member_user_id=%s response_keys=%s",
