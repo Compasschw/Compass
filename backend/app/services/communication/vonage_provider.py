@@ -356,8 +356,30 @@ class VonageProvider(CommunicationProvider):
 
 
 def _strip(number: str) -> str:
-    """Vonage wants digits only (no +, spaces, dashes). E.164 without the +."""
-    return "".join(ch for ch in (number or "") if ch.isdigit())
+    """Normalize a phone string into Vonage's expected format.
+
+    Vonage's create_call ``to.number`` field expects E.164 **without** the
+    leading ``+`` — for a US 10-digit number that means ``"13105550199"``.
+    Common input shapes from our DB and signup form:
+
+      "+1 (310) 555-0199" → "13105550199"   (strip formatting, keep "1")
+      "+13105550199"      → "13105550199"   (strip "+")
+      "13105550199"       → "13105550199"   (already correct)
+      "3105550199"        → "13105550199"   (default to US: prepend "1")
+      "(310) 555-0199"    → "13105550199"   (10-digit local → US E.164)
+
+    Without the country-code prepend on 10-digit inputs, Vonage's outbound
+    call routes unpredictably — observed 2026-05-18: one leg never rang,
+    the other rang with a multi-second delay before dropping.
+
+    Non-US international numbers (15-digit + already include their own
+    country code) pass through unchanged.
+    """
+    digits = "".join(ch for ch in (number or "") if ch.isdigit())
+    # US default: bare 10-digit NANP numbers get the "1" country code.
+    if len(digits) == 10:
+        digits = f"1{digits}"
+    return digits
 
 
 def _safe_host(url: str) -> str:

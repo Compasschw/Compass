@@ -47,7 +47,7 @@ async def register_user(
         password_hash=hash_password(password),
         name=name,
         role=role,
-        phone=phone,
+        phone=_normalize_phone_e164(phone),
     )
     db.add(user)
     await db.flush()  # populate user.id without ending the transaction
@@ -77,6 +77,39 @@ async def register_user(
     await db.commit()
     await db.refresh(user)
     return user
+
+
+def _normalize_phone_e164(value: str | None) -> str | None:
+    """Canonicalize a US phone string to E.164 (+1XXXXXXXXXX) for storage.
+
+    Frontend signup, magic-link, and re-onboarding flows all collect phones
+    as loose strings ("(310) 555-0199", "310-555-0199", "+1 310 555 0199",
+    "3105550199", etc.).  We standardize on +1-prefixed E.164 at the User
+    record so downstream callers — Vonage create_call, Pear contactInfo,
+    SMS notifications — never have to second-guess the format.
+
+    Rules:
+      - None / empty → None (phone is optional)
+      - 10 digits      → "+1XXXXXXXXXX" (US default)
+      - 11 starting "1" → "+1XXXXXXXXXX"
+      - Already starts with "+" → strip non-digits, re-prepend "+"
+      - Anything else → return the digits-only form with a "+" prefix
+        (best-effort for non-US numbers; we don't run outside the US so
+        this branch is rarely hit)
+    """
+    if value is None:
+        return None
+    raw = value.strip()
+    if not raw:
+        return None
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    if not digits:
+        return None
+    if len(digits) == 10:
+        return f"+1{digits}"
+    if len(digits) == 11 and digits.startswith("1"):
+        return f"+{digits}"
+    return f"+{digits}"
 
 
 # Re-exported for callers that want the type without re-importing date.
