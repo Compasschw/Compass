@@ -1607,21 +1607,29 @@ export function useSubmitCredential() {
 // ─── Account deletion ─────────────────────────────────────────────────────────
 
 /**
- * Mutation that calls DELETE /auth/users/me with the user's current password.
+ * Mutation that calls DELETE /auth/users/me.
+ *
+ * Password is optional — the backend treats JWT auth as sufficient for
+ * the web Yes/No confirmation flow.  Legacy mobile callers that still
+ * collect a password should pass it through and the backend will verify;
+ * the Apple-policy-mandated password challenge can be reinstated by
+ * flipping this back to required.
  *
  * The server responds 204 No Content on success. The caller is responsible
  * for clearing auth state and routing to the landing screen.
  *
  * Usage:
  *   const deleteAccount = useDeleteAccount();
- *   await deleteAccount.mutateAsync({ password: 'hunter2' });
+ *   await deleteAccount.mutateAsync();                  // web Yes/No flow
+ *   await deleteAccount.mutateAsync({ password: '…' }); // legacy mobile flow
  */
 export function useDeleteAccount() {
   return useMutation({
-    mutationFn: async ({ password }: { password: string }): Promise<void> => {
+    mutationFn: async (args?: { password?: string }): Promise<void> => {
+      const body = args?.password ? { password: args.password } : {};
       await api<void>('/auth/users/me', {
         method: 'DELETE',
-        body: JSON.stringify({ password }),
+        body: JSON.stringify(body),
       });
     },
   });

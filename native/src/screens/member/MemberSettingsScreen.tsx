@@ -20,6 +20,7 @@ import React, { useCallback, useState } from 'react';
 import {
   Alert,
   Linking,
+  Platform,
   Pressable,
   ScrollView,
   StatusBar,
@@ -46,6 +47,7 @@ import { useAuth } from '../../context/AuthContext';
 import {
   useMemberProfile,
   useUpdateMemberProfile,
+  useDeleteAccount,
 } from '../../hooks/useApiQueries';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { AppShell, PageHeader, Card } from '../../components/ui';
@@ -436,7 +438,8 @@ const contactStyles = StyleSheet.create({
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export function MemberSettingsScreen(): React.JSX.Element {
-  const { userName, logout } = useAuth();
+  const { userName, logout, clearAfterDeletion } = useAuth();
+  const deleteAccount = useDeleteAccount();
   const profileQuery = useMemberProfile();
   const updateProfile = useUpdateMemberProfile();
 
@@ -474,28 +477,49 @@ export function MemberSettingsScreen(): React.JSX.Element {
   );
 
   const handleDeleteAccount = useCallback(() => {
+    // Two-step branching by platform: native shows Alert.alert (which has
+    // synchronous Yes/No buttons), web uses window.confirm because RN-web's
+    // Alert.alert doesn't render Yes/No buttons reliably.  Both paths end
+    // in the same delete-then-clear-then-Landing sequence.
+    const proceed = (): void => {
+      void (async () => {
+        try {
+          await deleteAccount.mutateAsync(undefined);
+          // On success, clear local auth state without setting
+          // hasJustSignedOut — that flag steers the next render to Login,
+          // but the deleted account can't log back in.  clearAfterDeletion
+          // lands the user on the marketing Landing page instead.
+          await clearAfterDeletion();
+        } catch (err) {
+          const message =
+            err instanceof Error && err.message
+              ? err.message
+              : 'Could not delete your account. Please try again or contact support.';
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.alert(message);
+          } else {
+            Alert.alert('Deletion failed', message);
+          }
+        }
+      })();
+    };
+
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const confirmed = window.confirm(
+        'Are you sure you want to delete this account?',
+      );
+      if (confirmed) proceed();
+      return;
+    }
     Alert.alert(
       'Delete account',
-      'This permanently removes your Compass account and all associated data. This cannot be undone.',
+      'Are you sure you want to delete this account?',
       [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => {
-            Linking.openURL(
-              'mailto:help@joincompasschw.com?subject=Account%20deletion%20request&body=Please%20delete%20my%20Compass%20account%20and%20all%20associated%20data.',
-            ).catch(() =>
-              Alert.alert(
-                'Could not open email',
-                'Email help@joincompasschw.com to request account deletion.',
-              ),
-            );
-          },
-        },
+        { text: 'No', style: 'cancel' },
+        { text: 'Yes', style: 'destructive', onPress: proceed },
       ],
     );
-  }, []);
+  }, [deleteAccount, clearAfterDeletion]);
 
   const handleDownloadData = useCallback(() => {
     Alert.alert('Data export', 'We will email a copy of your data to you within 24 hours.');

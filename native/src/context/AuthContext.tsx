@@ -55,6 +55,14 @@ interface AuthContextValue extends AuthState {
   /** Sign in directly from a JWT pair — used by magic-link verify. */
   signInWithTokens: (payload: SignInPayload) => Promise<void>;
   logout: () => Promise<void>;
+  /**
+   * Clear auth state after the user deletes their own account.
+   * Identical token/cache cleanup to ``logout()`` but resets the
+   * ``hasJustSignedOut`` hint so the next render lands on the marketing
+   * Landing screen (not the Login screen, which would imply they can
+   * still sign back in — they can't, the account is anonymised).
+   */
+  clearAfterDeletion: () => Promise<void>;
 }
 
 // ─── Storage keys ─────────────────────────────────────────────────────────────
@@ -270,10 +278,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
     }
   }, [queryClient]);
 
+  // ── clearAfterDeletion ─────────────────────────────────────────────────────
+  // Same teardown as logout() but explicitly resets hasJustSignedOut so the
+  // auth navigator picks Landing (not Login) as the initial route.  The
+  // deleted account can't log back in (is_active=false on the backend) so
+  // surfacing the Login screen would be confusing — Landing makes it clear
+  // the session is over.
+  const clearAfterDeletion = useCallback(async (): Promise<void> => {
+    setAuthState({ isAuthenticated: false, userRole: null, userName: null });
+    setHasJustSignedOut(false);
+    queryClient.clear();
+    try {
+      await Promise.all([
+        clearTokens(),
+        AsyncStorage.removeItem(AUTH_STATE_KEY),
+      ]);
+    } catch {
+      // Storage clear failure: in-memory state is already cleared, the user
+      // is on the Landing screen, stale storage will be overwritten on next
+      // login attempt.
+    }
+  }, [queryClient]);
+
   // ── Context value ──────────────────────────────────────────────────────────
   const value = useMemo<AuthContextValue>(
-    () => ({ ...authState, isLoading, hasJustSignedOut, login, register, signInWithTokens, logout }),
-    [authState, isLoading, hasJustSignedOut, login, register, signInWithTokens, logout],
+    () => ({ ...authState, isLoading, hasJustSignedOut, login, register, signInWithTokens, logout, clearAfterDeletion }),
+    [authState, isLoading, hasJustSignedOut, login, register, signInWithTokens, logout, clearAfterDeletion],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
