@@ -50,6 +50,23 @@ class Session(Base):
     recording_consent_given_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Inbox swipe-action state (CHW perspective). All three are nullable
+    # timestamps: NULL means "not in this state", a populated value records
+    # when the action was taken. See migration b2c3d4e5f6a7 for design notes.
+    #   - pinned_at: thread is stuck to the top of the CHW's inbox.
+    #   - archived_at: thread is hidden from the default inbox view but
+    #     still retrievable via the "Show archived" filter toggle.
+    #   - deleted_at: thread is hidden everywhere; PHI/messages remain in
+    #     the DB for compliance audit + admin-side undelete.
+    pinned_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    archived_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

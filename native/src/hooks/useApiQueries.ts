@@ -42,6 +42,12 @@ export interface SessionData {
   aiSummaryGeneratedAt?: string | null;
   /** When true, the CHW opted to exclude the AI summary from submitted documentation. */
   aiSummaryExcluded?: boolean;
+  /** Inbox swipe-action state. Null/undefined = default (not pinned / not archived / not deleted).
+   *  When set, holds the UTC ISO8601 timestamp the CHW applied the action. Deleted threads are
+   *  never returned by the inbox list endpoint, so deletedAt is informational only on detail loads. */
+  pinnedAt?: string | null;
+  archivedAt?: string | null;
+  deletedAt?: string | null;
   createdAt: string;
   chwName?: string;
   memberName?: string;
@@ -389,11 +395,19 @@ export interface ChwClaim {
 
 // ─── Query Hooks ─────────────────────────────────────────────────────────────
 
-export function useSessions() {
+/**
+ * Inbox list. When ``includeArchived`` is true the CHW also sees archived
+ * threads in the same list (used to power the "Show archived" toggle in
+ * the inbox header). Soft-deleted threads are NEVER returned. The query
+ * key splits on the flag so toggling doesn't return stale cached data.
+ */
+export function useSessions(options?: { includeArchived?: boolean }) {
+  const includeArchived = options?.includeArchived ?? false;
   return useQuery({
-    queryKey: queryKeys.sessions,
+    queryKey: [...queryKeys.sessions, { includeArchived }],
     queryFn: async () => {
-      const raw = await api<unknown[]>('/sessions/');
+      const qs = includeArchived ? '?include_archived=true' : '';
+      const raw = await api<unknown[]>(`/sessions/${qs}`);
       return transformKeys<SessionData[]>(raw);
     },
   });
@@ -747,6 +761,67 @@ export function useSubmitDocumentation() {
       await api(`/sessions/${sessionId}/documentation`, {
         method: 'POST',
         body: JSON.stringify(toSnakeCase(data)),
+      });
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.sessions });
+    },
+  });
+}
+
+// ─── CHW Messages inbox swipe-actions ────────────────────────────────────────
+// Three small mutations powering the swipe-revealed Pin / Archive / Delete
+// buttons.  Each invalidates the sessions query so the inbox re-fetches and
+// the row visually shifts (pin → top of list, archive → vanishes, delete →
+// vanishes).  All three are idempotent on the backend.
+
+/**
+ * Pin or unpin a thread.  Pinned threads sort to the top of the inbox.
+ */
+export function useToggleSessionPin() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ sessionId, pinned }: { sessionId: string; pinned: boolean }) => {
+      await api(`/sessions/${sessionId}/pin`, {
+        method: 'PATCH',
+        body: JSON.stringify({ pinned }),
+      });
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.sessions });
+    },
+  });
+}
+
+/**
+ * Archive or unarchive a thread.  Archived threads disappear from the
+ * default inbox; flip the "Show archived" toggle to see them inline.
+ */
+export function useToggleSessionArchive() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ sessionId, archived }: { sessionId: string; archived: boolean }) => {
+      await api(`/sessions/${sessionId}/archive`, {
+        method: 'PATCH',
+        body: JSON.stringify({ archived }),
+      });
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.sessions });
+    },
+  });
+}
+
+/**
+ * Soft-delete a thread.  Hides it from the inbox; PHI/messages remain
+ * in the DB for compliance audit + admin-side undelete.
+ */
+export function useDeleteSession() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (sessionId: string) => {
+      await api(`/sessions/${sessionId}`, {
+        method: 'DELETE',
       });
     },
     onSuccess: () => {

@@ -24,8 +24,10 @@ from app.schemas.session import (
     ConsentRequestCreate,
     ConsentRequestResponse,
     ConsentSubmit,
+    SessionArchiveUpdate,
     SessionCreate,
     SessionDocumentationSubmit,
+    SessionPinUpdate,
     SessionResponse,
     TranscriptResponse,
 )
@@ -40,12 +42,30 @@ async def list_sessions(
     db: AsyncSession = Depends(get_db),
     limit: int = Query(default=50, ge=1, le=200, description="Max sessions to return"),
     offset: int = Query(default=0, ge=0, description="Skip this many sessions"),
+    include_archived: bool = Query(
+        default=False,
+        description=(
+            "When true, also return archived threads (CHW perspective). Soft-"
+            "deleted threads are never returned through this endpoint."
+        ),
+    ),
 ):
     """List sessions for the current user.
+
+    Sort order for CHW callers: pinned threads first (newest-pin first),
+    then everything else by creation time desc.  This is what the inbox
+    expects so pinned threads form a top section with the rest below.
+
+    Soft-deleted threads (``deleted_at IS NOT NULL``) are always hidden;
+    archived threads (``archived_at IS NOT NULL``) are hidden unless the
+    caller passes ``include_archived=true``.  Member callers see the full
+    set unfiltered — the CHW inbox swipe-action state is intentionally not
+    surfaced on the member side.
 
     Offset-based pagination keeps response shape identical to the unpaginated
     variant (still a flat array). For total counts, clients call /sessions/count.
     """
+    from sqlalchemy import desc, nulls_last
     from sqlalchemy.orm import aliased
 
     from app.models.user import User
@@ -55,12 +75,22 @@ async def list_sessions(
         select(Session, CHWUser.name, MemberUser.name)
         .join(CHWUser, Session.chw_id == CHWUser.id)
         .join(MemberUser, Session.member_id == MemberUser.id)
-        .order_by(Session.created_at.desc())
     )
     if current_user.role == "chw":
         stmt = stmt.where(Session.chw_id == current_user.id)
+        # Hide soft-deleted threads from the inbox.
+        stmt = stmt.where(Session.deleted_at.is_(None))
+        if not include_archived:
+            stmt = stmt.where(Session.archived_at.is_(None))
+        # Pinned threads bubble to the top of the CHW inbox; everything
+        # else stays in creation-time-desc order beneath them.
+        stmt = stmt.order_by(
+            nulls_last(desc(Session.pinned_at)),
+            Session.created_at.desc(),
+        )
     else:
         stmt = stmt.where(Session.member_id == current_user.id)
+        stmt = stmt.order_by(Session.created_at.desc())
     stmt = stmt.limit(limit).offset(offset)
     result = await db.execute(stmt)
     rows = result.all()
@@ -68,6 +98,131 @@ async def list_sessions(
         SessionResponse.model_validate({**s.__dict__, "chw_name": chw_name, "member_name": member_name})
         for s, chw_name, member_name in rows
     ]
+
+
+# ── Swipe-action endpoints (CHW Messages inbox) ──────────────────────────────
+#
+# Three small endpoints back the CHW Messages thread-row swipe actions:
+#   PATCH  /sessions/{id}/pin      → toggle pinned_at
+#   PATCH  /sessions/{id}/archive  → toggle archived_at
+#   DELETE /sessions/{id}          → soft-delete (deleted_at)
+#
+# All three require the caller to be either (a) the CHW that owns the
+# session or (b) an admin.  Members never see these — the swipe UI is
+# CHW-only.  The endpoints are idempotent: re-pinning an already-pinned
+# thread updates the timestamp; un-pinning a never-pinned thread is a no-op
+# that returns 200 with the unchanged row.
+#
+# Soft delete vs hard delete: clinical records carry HIPAA + Pear-billing
+# audit obligations. We only stamp ``deleted_at`` and let the inbox query
+# hide the row.  An admin-side undelete + scheduled purge job can come
+# later; today the row is recoverable indefinitely.
+
+
+async def _load_chw_session_or_404(
+    *, session_id: UUID, db: AsyncSession, current_user: User
+) -> Session:
+    """Resolve a session for a CHW-action endpoint, enforcing ownership.
+
+    Returns the loaded ``Session`` row when the caller is either the
+    session's owning CHW or an admin.  Raises HTTPException(404) when the
+    row doesn't exist *or* when the caller is not authorised — we return
+    404 instead of 403 so we don't leak the existence of sessions the
+    caller cannot see.
+    """
+    session = await db.get(Session, session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if current_user.role == "admin":
+        return session
+    if current_user.role == "chw" and session.chw_id == current_user.id:
+        return session
+    raise HTTPException(status_code=404, detail="Session not found")
+
+
+@router.patch("/{session_id}/pin", response_model=SessionResponse)
+async def update_session_pin(
+    session_id: UUID,
+    body: SessionPinUpdate,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SessionResponse:
+    """Pin or unpin a thread in the CHW's Messages inbox.
+
+    ``pinned=true`` stamps the current UTC time onto ``pinned_at`` (so the
+    most-recently-pinned threads sort first among pinned items).
+    ``pinned=false`` clears the timestamp.
+    """
+    session = await _load_chw_session_or_404(
+        session_id=session_id, db=db, current_user=current_user
+    )
+    session.pinned_at = datetime.now(UTC) if body.pinned else None
+    await db.commit()
+    await db.refresh(session)
+    # Re-load names for the response shape (list endpoint joins them; this
+    # endpoint loads them directly because the user names rarely change and
+    # the round-trip is cheap).
+    from app.models.user import User as _User
+    chw = await db.get(_User, session.chw_id)
+    member = await db.get(_User, session.member_id)
+    return SessionResponse.model_validate({
+        **session.__dict__,
+        "chw_name": chw.name if chw else None,
+        "member_name": member.name if member else None,
+    })
+
+
+@router.patch("/{session_id}/archive", response_model=SessionResponse)
+async def update_session_archive(
+    session_id: UUID,
+    body: SessionArchiveUpdate,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SessionResponse:
+    """Archive or unarchive a thread in the CHW's Messages inbox.
+
+    Archived threads disappear from the default inbox but reappear when the
+    CHW toggles "Show archived" in the inbox header (the list endpoint
+    accepts ``?include_archived=true`` for that case).
+    """
+    session = await _load_chw_session_or_404(
+        session_id=session_id, db=db, current_user=current_user
+    )
+    session.archived_at = datetime.now(UTC) if body.archived else None
+    await db.commit()
+    await db.refresh(session)
+    from app.models.user import User as _User
+    chw = await db.get(_User, session.chw_id)
+    member = await db.get(_User, session.member_id)
+    return SessionResponse.model_validate({
+        **session.__dict__,
+        "chw_name": chw.name if chw else None,
+        "member_name": member.name if member else None,
+    })
+
+
+@router.delete("/{session_id}", status_code=204)
+async def delete_session(
+    session_id: UUID,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Soft-delete a thread from the CHW's Messages inbox.
+
+    Stamps ``deleted_at`` on the row so the inbox query hides it.  The
+    underlying messages, transcript, recording_url, and any downstream
+    billing claim rows remain intact — this is intentionally not a hard
+    delete because clinical records carry HIPAA + Pear-billing audit
+    obligations.  An admin-side undelete tool can flip ``deleted_at`` back
+    to NULL.
+    """
+    session = await _load_chw_session_or_404(
+        session_id=session_id, db=db, current_user=current_user
+    )
+    if session.deleted_at is None:
+        session.deleted_at = datetime.now(UTC)
+        await db.commit()
+    return None
 
 
 @router.post("/", response_model=SessionResponse, status_code=201)

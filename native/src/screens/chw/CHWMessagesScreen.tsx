@@ -63,6 +63,8 @@ import {
   CheckCircle,
   Clock,
   FileText,
+  Pin as PinIcon,
+  Archive as ArchiveIcon,
 } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
 import { OpenQuestionsDrawer } from '../../components/chw/OpenQuestionsDrawer';
@@ -78,6 +80,9 @@ import {
   useConsentRequestStatus,
   useGenerateAISummary,
   useSubmitDocumentation,
+  useToggleSessionPin,
+  useToggleSessionArchive,
+  useDeleteSession,
   type SessionData,
   type SessionMessageLocal,
   type SessionMessageData,
@@ -88,6 +93,7 @@ import type { SessionDocumentation } from '../../data/mock';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 import { PressableMember } from '../../components/shared/PressableMember';
+import { SwipeableThreadRow } from '../../components/chw/SwipeableThreadRow';
 
 // ─── Breakpoints ──────────────────────────────────────────────────────────────
 
@@ -258,6 +264,10 @@ interface ThreadRowProps {
   isActive: boolean;
   lastMessage: SessionMessageData | null;
   unread: boolean;
+  /** When true, renders a small pin icon next to the timestamp so the CHW
+   *  sees which threads they've pinned even when scrolled into the unpinned
+   *  region. Doesn't change layout — the icon takes the trailing-edge slot. */
+  isPinned?: boolean;
   onSelect: (session: SessionData) => void;
 }
 
@@ -266,6 +276,7 @@ function ThreadRow({
   isActive,
   lastMessage,
   unread,
+  isPinned = false,
   onSelect,
 }: ThreadRowProps): React.JSX.Element {
   const name = session.memberName ?? 'Unknown Member';
@@ -274,12 +285,15 @@ function ThreadRow({
   const preview = lastMessage?.body ?? session.notes ?? 'No messages yet';
   const ts = formatThreadTime(lastMessage?.createdAt ?? session.scheduledAt);
 
+  // Note: onPress is intentionally a no-op when the parent SwipeableThreadRow
+  // intercepts the tap. We keep the prop for the legacy non-swipeable callers
+  // (none today, but the type contract pre-dates the swipe wrapper).
   return (
     <TouchableOpacity
       onPress={() => onSelect(session)}
       style={[styles.threadRow, isActive && styles.threadRowActive]}
       accessibilityRole="button"
-      accessibilityLabel={`Thread with ${name}${unread ? ', unread' : ''}`}
+      accessibilityLabel={`Thread with ${name}${unread ? ', unread' : ''}${isPinned ? ', pinned' : ''}`}
       accessibilityState={{ selected: isActive }}
     >
       <View style={[styles.avatar40, { backgroundColor: bg }]}>
@@ -288,7 +302,12 @@ function ThreadRow({
       <View style={styles.threadInfo}>
         <View style={styles.threadTopRow}>
           <Text style={styles.threadName} numberOfLines={1}>{name}</Text>
-          <Text style={styles.threadTime}>{ts}</Text>
+          <View style={styles.threadTimeWrap}>
+            {isPinned ? (
+              <PinIcon size={10} color="#F59E0B" style={styles.threadPinIcon} />
+            ) : null}
+            <Text style={styles.threadTime}>{ts}</Text>
+          </View>
         </View>
         <Text style={styles.threadPreview} numberOfLines={1}>{preview}</Text>
       </View>
@@ -1200,7 +1219,17 @@ const CONTEXT_RAIL_MAX     = 420;
 export function CHWMessagesScreen(): React.JSX.Element {
   const { userName } = useAuth();
   const { width } = useWindowDimensions();
-  const sessionsQuery = useSessions();
+
+  // Inbox-archive filter toggle. Default: hide archived. The CHW flips this
+  // in the header to reveal archived threads inline alongside active ones.
+  const [showArchived, setShowArchived] = useState(false);
+  const sessionsQuery = useSessions({ includeArchived: showArchived });
+
+  // Swipe-action mutations. Each invalidates the sessions cache on success
+  // so the row visually moves (pin → top) or disappears (archive/delete).
+  const toggleSessionPin = useToggleSessionPin();
+  const toggleSessionArchive = useToggleSessionArchive();
+  const deleteSession = useDeleteSession();
 
   const [selectedSession, setSelectedSession] = useState<SessionData | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -1393,6 +1422,21 @@ export function CHWMessagesScreen(): React.JSX.Element {
                     </Text>
                   </TouchableOpacity>
                 ))}
+                {/* Archive toggle — flips the inbox between "active only" and
+                    "active + archived". Sits beside the existing filter chips
+                    so it reads as a peer filter, not a settings toggle. */}
+                <TouchableOpacity
+                  style={[styles.filterChip, showArchived && styles.filterChipActive]}
+                  onPress={() => setShowArchived((v) => !v)}
+                  accessibilityRole="switch"
+                  accessibilityState={{ checked: showArchived }}
+                  accessibilityLabel={showArchived ? 'Hide archived threads' : 'Show archived threads'}
+                >
+                  <ArchiveIcon size={12} color={showArchived ? '#fff' : '#6B7280'} />
+                  <Text style={[styles.filterChipText, showArchived && styles.filterChipTextActive]}>
+                    Archived
+                  </Text>
+                </TouchableOpacity>
               </View>
             </View>
 
@@ -1403,16 +1447,32 @@ export function CHWMessagesScreen(): React.JSX.Element {
                   <Text style={styles.emptyThreadsText}>No threads found.</Text>
                 </View>
               ) : (
-                filteredSessions.map((session) => (
-                  <ThreadRow
-                    key={session.id}
-                    session={session}
-                    isActive={selectedSession?.id === session.id}
-                    lastMessage={null}
-                    unread={false}
-                    onSelect={handleSelectSession}
-                  />
-                ))
+                filteredSessions.map((session) => {
+                  const isPinned = session.pinnedAt != null;
+                  return (
+                    <SwipeableThreadRow
+                      key={session.id}
+                      isPinned={isPinned}
+                      onPress={() => handleSelectSession(session)}
+                      onPin={(nextPinned) =>
+                        toggleSessionPin.mutate({ sessionId: session.id, pinned: nextPinned })
+                      }
+                      onArchive={() =>
+                        toggleSessionArchive.mutate({ sessionId: session.id, archived: true })
+                      }
+                      onDelete={() => deleteSession.mutate(session.id)}
+                    >
+                      <ThreadRow
+                        session={session}
+                        isActive={selectedSession?.id === session.id}
+                        lastMessage={null}
+                        unread={false}
+                        isPinned={isPinned}
+                        onSelect={handleSelectSession}
+                      />
+                    </SwipeableThreadRow>
+                  );
+                })
               )}
             </ScrollView>
           </View>
@@ -1623,6 +1683,18 @@ const styles = StyleSheet.create({
     color: '#9CA3AF',
     flexShrink: 0,
   } as TextStyle,
+  // Wrapper so the pin icon and the timestamp sit on the same trailing-edge
+  // baseline. flexShrink:0 prevents the timestamp from being squeezed when
+  // the member name is long.
+  threadTimeWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    flexShrink: 0,
+  } as ViewStyle,
+  threadPinIcon: {
+    // Lucide icons accept a style prop for transforms; keep it empty/cosmetic.
+  } as ViewStyle,
   threadPreview: {
     fontSize: 12,
     color: '#6B7280',

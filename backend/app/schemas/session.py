@@ -34,9 +34,32 @@ class SessionResponse(BaseModel):
     units_billed: int | None
     gross_amount: float | None
     net_amount: float | None
+    # Inbox swipe-action state. ``None`` for the default (not pinned /
+    # not archived / not deleted) case; populated timestamps record when the
+    # CHW applied the action. The frontend uses these to render the pin
+    # badge and the archived filter.
+    pinned_at: datetime | None = None
+    archived_at: datetime | None = None
+    deleted_at: datetime | None = None
     created_at: datetime
     chw_name: str | None = None
     member_name: str | None = None
+
+
+# ── Swipe-action request bodies (CHW Messages inbox) ─────────────────────────
+
+
+class SessionPinUpdate(BaseModel):
+    """Body for ``PATCH /sessions/{id}/pin``. ``pinned=true`` stamps the
+    timestamp; ``pinned=false`` clears it."""
+
+    pinned: bool
+
+
+class SessionArchiveUpdate(BaseModel):
+    """Body for ``PATCH /sessions/{id}/archive``."""
+
+    archived: bool
 
 
 class SessionDocumentationSubmit(BaseModel):
