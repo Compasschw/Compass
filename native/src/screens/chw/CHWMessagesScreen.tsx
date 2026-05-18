@@ -62,6 +62,7 @@ import {
   GripVertical,
   CheckCircle,
   Clock,
+  FileText,
 } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
 import { OpenQuestionsDrawer } from '../../components/chw/OpenQuestionsDrawer';
@@ -76,11 +77,14 @@ import {
   useCreateConsentRequest,
   useConsentRequestStatus,
   useGenerateAISummary,
+  useSubmitDocumentation,
   type SessionData,
   type SessionMessageLocal,
   type SessionMessageData,
   type AISummaryResponse,
 } from '../../hooks/useApiQueries';
+import { DocumentationModal } from '../../components/sessions/DocumentationModal';
+import type { SessionDocumentation } from '../../data/mock';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 import { PressableMember } from '../../components/shared/PressableMember';
@@ -677,10 +681,17 @@ function ContextRail({ session, onOpenSuggestedQuestions }: ContextRailProps): R
   const [aiSummary, setAiSummary] = useState<AISummaryResponse | null>(null);
   const [summaryError, setSummaryError] = useState<string | null>(null);
 
+  // ── End-session / documentation state ────────────────────────────────────────
+  // When set, opens the DocumentationModal for this session so the CHW can
+  // review notes, edit the AI summary, pick diagnosis + procedure codes, and
+  // submit for billing. Mirrors the pattern in CHWSessionsScreen.
+  const [documentingSessionId, setDocumentingSessionId] = useState<string | null>(null);
+
   const navigation = useNavigation<any>(); // eslint-disable-line @typescript-eslint/no-explicit-any
 
   const createConsentRequest = useCreateConsentRequest(session.id);
   const generateAISummary = useGenerateAISummary();
+  const submitDocumentation = useSubmitDocumentation();
 
   // ── Poll for consent status while waiting for member response ────────────────
   const consentStatusQuery = useConsentRequestStatus(
@@ -745,6 +756,43 @@ function ContextRail({ session, onOpenSuggestedQuestions }: ContextRailProps): R
   // Without a server-side message count available in SessionData, we gate on
   // ended_at as the primary signal (mirrors SessionChat's isCallable pattern).
   const summaryEnabled = session.endedAt != null || session.status === 'completed';
+
+  // ── End Session / documentation submit handler ───────────────────────────────
+  /**
+   * Opens the DocumentationModal so the CHW can finalize the session: review
+   * notes, edit the AI summary, pick diagnosis + procedure codes, then submit.
+   * Submitting fires POST /api/v1/sessions/{id}/documentation which triggers
+   * the Pear claim chain (member sync → schedule activity → complete with
+   * costId → generate claim).
+   */
+  const handleOpenEndSession = useCallback(() => {
+    setDocumentingSessionId(session.id);
+  }, [session.id]);
+
+  const handleDocumentationSubmit = useCallback(
+    async (data: SessionDocumentation): Promise<void> => {
+      if (documentingSessionId == null) return;
+      try {
+        await submitDocumentation.mutateAsync({
+          sessionId: documentingSessionId,
+          data: data as unknown as Record<string, unknown>,
+        });
+        setDocumentingSessionId(null);
+      } catch (err) {
+        const reason =
+          err instanceof Error && err.message ? err.message : 'Unknown error';
+        // Keep modal open so the CHW can fix and retry. Surface the error.
+        // eslint-disable-next-line no-console
+        console.error('[CHWMessages] submitDocumentation failed:', err);
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.alert(`Failed to submit documentation\n\n${reason}\n\nThe modal will stay open so you can adjust and try again.`);
+        } else {
+          Alert.alert('Failed to submit documentation', reason);
+        }
+      }
+    },
+    [documentingSessionId, submitDocumentation],
+  );
 
   return (
     <ScrollView
@@ -832,7 +880,33 @@ function ContextRail({ session, onOpenSuggestedQuestions }: ContextRailProps): R
             })
           }
         />
+
+        {/* End Session — opens DocumentationModal for notes/AI summary review,
+            diagnosis + procedure code selection, and billing submission.
+            Destructive (red) styling because clicking it commits the session
+            for downstream Pear claim generation. */}
+        <TouchableOpacity
+          style={styles.endSessionBtn}
+          onPress={handleOpenEndSession}
+          accessibilityRole="button"
+          accessibilityLabel="End session and open documentation for review"
+        >
+          <FileText size={16} color="#fff" />
+          <Text style={styles.endSessionBtnText}>End Session</Text>
+        </TouchableOpacity>
       </View>
+
+      {/* Documentation modal — mounted inside the rail so it owns its own
+          lifecycle and we don't need to thread state up to the parent. */}
+      {documentingSessionId != null && (
+        <DocumentationModal
+          visible={documentingSessionId != null}
+          onClose={() => setDocumentingSessionId(null)}
+          sessionId={documentingSessionId}
+          durationMinutes={session.durationMinutes ?? null}
+          onSubmit={handleDocumentationSubmit}
+        />
+      )}
     </ScrollView>
   );
 }
@@ -1958,6 +2032,27 @@ const styles = StyleSheet.create({
   } as ViewStyle,
   quickActionTextDisabled: {
     color: '#9CA3AF',
+  } as TextStyle,
+
+  // End Session — destructive call-to-action that opens DocumentationModal.
+  // Red background, white text + icon to communicate finality (this submits
+  // the session for downstream Pear claim generation).
+  endSessionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    backgroundColor: '#DC2626',
+    borderRadius: 8,
+    marginTop: 8,
+    marginBottom: 4,
+  } as ViewStyle,
+  endSessionBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFFFFF',
   } as TextStyle,
 
   // Consent flow status rows
