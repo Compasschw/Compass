@@ -50,6 +50,7 @@ interface AuthContextValue extends AuthState {
     name: string,
     role: string,
     phone?: string,
+    memberExtras?: import('../api/auth').MemberSignupExtras,
   ) => Promise<void>;
   /** Sign in directly from a JWT pair — used by magic-link verify. */
   signInWithTokens: (payload: SignInPayload) => Promise<void>;
@@ -194,8 +195,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       name: string,
       role: string,
       phone?: string,
+      memberExtras?: import('../api/auth').MemberSignupExtras,
     ): Promise<void> => {
-      const response = await registerUser(email, password, name, role, phone);
+      const response = await registerUser(email, password, name, role, phone, memberExtras);
 
       const newState: AuthState = {
         isAuthenticated: true,

@@ -96,6 +96,24 @@ class MemberProfile(Base):
     # Encrypted at rest (AES-256-GCM). PHI per HIPAA 45 CFR §164.312(a)(2)(iv).
     medi_cal_id: Mapped[str | None] = mapped_column(EncryptedString)
 
+    # ── Expanded signup fields (member RegisterScreen) ───────────────────
+    # Captured at signup OR later via profile-edit; all nullable so a
+    # half-complete profile doesn't block account creation.  Only DOB +
+    # gender are required for the curated Pear Suite member-create payload
+    # (see app.services.pear_suite_member_sync._build_member_payload).
+    date_of_birth: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # Maps to Pear Suite's ``sex`` enum: "Male" | "Female" | "Other".
+    gender: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    address_line1: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    address_line2: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    city: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    state: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    # Curated 6-carrier dropdown value from the signup form.  Used by
+    # pear_cost_ids.resolve_cost_id to pick the per-carrier costId at claim
+    # submission.  Keeps ``insurance_provider`` (free-text legacy column)
+    # untouched so older intake data still works.
+    insurance_company: Mapped[str | None] = mapped_column(String(80), nullable=True)
+
     # Pear Suite member ID returned by POST /api/beta/members. Null until the
     # member has been synced. Indexed for fast existence check in ensure_member_synced.
     pear_suite_member_id: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)

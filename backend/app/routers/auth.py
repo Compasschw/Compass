@@ -1,7 +1,8 @@
+import logging
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,17 +20,101 @@ from app.services.auth_service import (
 )
 from app.utils.security import decode_token
 
+logger = logging.getLogger("compass.auth")
+
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
+
+
+async def _sync_new_member_to_pear(user_id: UUID) -> None:
+    """Best-effort background task: sync a freshly-registered member to Pear.
+
+    Runs after /auth/register returns so the user isn't stalled on Pear's
+    response time (or outage).  Opens its own DB session because the request
+    session is closed by the time this fires.  Logs any failure but never
+    re-raises — admin can retry later via /admin/members/{id}/sync-to-pear.
+    """
+    from app.database import async_session
+    from app.models.user import MemberProfile, User as _User
+    from sqlalchemy import select
+    from app.services.pear_suite_member_sync import ensure_member_synced
+
+    async with async_session() as db:
+        try:
+            user = await db.get(_User, user_id)
+            if user is None or user.role != "member":
+                return
+            result = await db.execute(
+                select(MemberProfile).where(MemberProfile.user_id == user_id)
+            )
+            profile = result.scalar_one_or_none()
+            if profile is None:
+                logger.warning(
+                    "register: skipped Pear sync — no MemberProfile for user=%s",
+                    user_id,
+                )
+                return
+            await ensure_member_synced(db, profile, user)
+            logger.info(
+                "register: Pear sync completed user=%s pear_member_id=%s",
+                user_id, profile.pear_suite_member_id,
+            )
+        except Exception:  # noqa: BLE001
+            # Background task — never raise; admin can retry from /admin.
+            logger.exception(
+                "register: Pear sync failed user=%s (non-fatal, retryable from admin)",
+                user_id,
+            )
 
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 @limiter.limit("3/minute")
-async def register(request: Request, data: RegisterRequest, db: Annotated[AsyncSession, Depends(get_db)]):
-    user = await register_user(db, data.email, data.password, data.name, data.role, data.phone)
+async def register(
+    request: Request,
+    data: RegisterRequest,
+    background_tasks: BackgroundTasks,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Create a Compass account.
+
+    For members, the expanded-signup fields (DOB, gender, address, insurance,
+    CIN) are copied onto the MemberProfile row at creation time and a
+    background task fires to mirror the member into Pear Suite.  The Pear
+    sync is fire-and-forget — a Pear outage or rejection never blocks
+    account creation; admin can retry via POST /admin/members/{id}/sync-to-pear.
+    """
+    # Build the optional member-profile payload from the signup request.
+    # None for non-member roles so the service short-circuits cleanly.
+    member_profile_fields = None
+    if data.role == "member":
+        member_profile_fields = {
+            "date_of_birth": data.date_of_birth,
+            "gender": data.gender,
+            "address_line1": data.address_line1,
+            "address_line2": data.address_line2,
+            "city": data.city,
+            "state": data.state,
+            "zip_code": data.zip_code,
+            "insurance_company": data.insurance_company,
+            "medi_cal_id": data.medi_cal_id,
+        }
+
+    user = await register_user(
+        db,
+        data.email, data.password, data.name, data.role, data.phone,
+        member_profile_fields=member_profile_fields,
+    )
     if user is None:
         raise HTTPException(status_code=400, detail="Email already registered")
     access, refresh = create_tokens(user)
     await store_refresh_token(db, user.id, refresh)
+
+    # Schedule the Pear sync to run after the response is sent.  Members
+    # without DOB/gender/CIN will hit Pear's validation and the sync logs
+    # the failure — they can complete the profile later from the app and
+    # admin can re-trigger the sync at that point.
+    if user.role == "member":
+        background_tasks.add_task(_sync_new_member_to_pear, user.id)
+
     return TokenResponse(access_token=access, refresh_token=refresh, role=user.role, name=user.name)
 
 

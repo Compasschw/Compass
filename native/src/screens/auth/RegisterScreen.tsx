@@ -19,10 +19,11 @@
  * with the intake banner, Member → MemberTabNavigator).
  */
 
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -35,7 +36,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { Mail, Lock, User as UserIcon, MapPin, Phone, Eye, EyeOff, ArrowRight } from 'lucide-react-native';
+import { Mail, Lock, User as UserIcon, MapPin, Phone, Eye, EyeOff, ArrowRight, Cake, Users, Building2, IdCard, Home as HomeIcon, ChevronDown, Globe } from 'lucide-react-native';
 
 import { useAuth } from '../../context/AuthContext';
 import { PhoneVerificationModal } from '../../components/shared/PhoneVerificationModal';
@@ -47,6 +48,7 @@ import type { AuthStackParamList } from '../../navigation/AppNavigator';
 type RegisterNavProp = NativeStackNavigationProp<AuthStackParamList>;
 
 type Role = 'chw' | 'member';
+type Sex = 'Male' | 'Female' | 'Other';
 
 interface FieldRefs {
   name: React.RefObject<TextInput | null>;
@@ -57,6 +59,53 @@ interface FieldRefs {
 }
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// DOB input format: MM/DD/YYYY entered, ISO YYYY-MM-DD sent to backend.
+// Inline format because adding a native date-picker library risks the
+// Expo-managed web build; plain TextInput + parse is the lighter path.
+const DOB_INPUT_PATTERN = /^(0[1-9]|1[0-2])\/(0[1-9]|[12]\d|3[01])\/(19|20)\d{2}$/;
+
+function parseDobInputToIso(value: string): string | null {
+  if (!DOB_INPUT_PATTERN.test(value)) return null;
+  const [mm, dd, yyyy] = value.split('/');
+  // Construct via Date to detect impossible calendar dates (Feb 30 etc).
+  const probe = new Date(`${yyyy}-${mm}-${dd}T00:00:00Z`);
+  if (
+    probe.getUTCFullYear() !== Number(yyyy) ||
+    probe.getUTCMonth() + 1 !== Number(mm) ||
+    probe.getUTCDate() !== Number(dd)
+  ) {
+    return null;
+  }
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+/**
+ * Auto-formats MM/DD/YYYY as the user types: digits only, inserts slashes
+ * after positions 2 and 4. Keeps backspace behavior intact (no trailing
+ * slashes on partial input).
+ */
+function formatDobInput(raw: string): string {
+  const digits = raw.replace(/\D/g, '').slice(0, 8);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+}
+
+// Curated insurance dropdown — matches the 6 contracted carriers + the
+// backend's carrier→costId map in app.services.billing.pear_cost_ids.
+// Order here is alphabetical by display name; first entry is shown as
+// the default placeholder hint.
+const INSURANCE_OPTIONS: readonly string[] = [
+  'Anthem Blue Cross Blue Shield',
+  'Blue Shield of California - Promise Plan',
+  'Health Net',
+  'Independent Living Systems (Kaiser)',
+  'LA Care Health Plan',
+  'Molina Healthcare California',
+] as const;
+
+const SEX_OPTIONS: readonly Sex[] = ['Male', 'Female', 'Other'] as const;
 
 export function RegisterScreen(): React.JSX.Element {
   const navigation = useNavigation<RegisterNavProp>();
@@ -72,6 +121,28 @@ export function RegisterScreen(): React.JSX.Element {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // ── Expanded member-signup fields ──────────────────────────────────────
+  // Only required when role === 'member'.  DOB + Sex gate the submit;
+  // everything else is captured optionally so a partial signup still works.
+  const [dob, setDob] = useState('');             // MM/DD/YYYY
+  const [sex, setSex] = useState<Sex | null>(null);
+  const [insuranceCompany, setInsuranceCompany] = useState('');
+  const [primaryCin, setPrimaryCin] = useState('');
+  const [addressLine1, setAddressLine1] = useState('');
+  const [addressLine2, setAddressLine2] = useState('');
+  const [city, setCity] = useState('');
+  const [stateCode, setStateCode] = useState('');
+  // Modal pickers for the two enum-style fields.  Plain Modal + list avoids
+  // pulling in a third-party Picker / SelectInput dependency that we don't
+  // need anywhere else.
+  const [sexPickerOpen, setSexPickerOpen] = useState(false);
+  const [insurancePickerOpen, setInsurancePickerOpen] = useState(false);
+
+  // Pre-parsed DOB for both validation and submit.  null when invalid /
+  // incomplete; the submit button stays disabled until this is non-null
+  // for member signups.
+  const dobIso = useMemo(() => parseDobInputToIso(dob), [dob]);
+
   // Phone verification modal — shown after successful registration when the
   // user provided a phone number.  The modal fires against the live backend
   // using the JWT already stored by AuthContext.register.
@@ -86,12 +157,21 @@ export function RegisterScreen(): React.JSX.Element {
     phone: useRef<TextInput>(null),
   };
 
-  const canSubmit =
+  // Hard-required gate by role:
+  //   - CHW: name + valid email + 8-char password (unchanged from before).
+  //   - Member: name + valid email + 8-char password + valid DOB + Sex
+  //     (everything else is captured optionally and persists to the
+  //     MemberProfile but doesn't block submission).
+  // ZIP is no longer required at signup — it's part of the optional
+  // address block.  Phone label no longer says "(optional)" but the
+  // submit gate still doesn't enforce it.
+  const accountBasicsOk =
     name.trim().length > 1 &&
     EMAIL_PATTERN.test(email.trim()) &&
     password.length >= 8 &&
-    zip.trim().length === 5 &&
     !isSubmitting;
+  const memberProfileOk = role !== 'member' || (dobIso !== null && sex !== null);
+  const canSubmit = accountBasicsOk && memberProfileOk;
 
   const handleSubmit = useCallback(async (): Promise<void> => {
     if (!canSubmit) return;
@@ -99,12 +179,30 @@ export function RegisterScreen(): React.JSX.Element {
     setIsSubmitting(true);
     try {
       const trimmedPhone = phone.trim();
+      // Build the optional member-extras payload only when registering as a
+      // member.  Empty strings are omitted client-side too (the api/auth
+      // layer skips them, but doing it here keeps the network shape tidy).
+      const memberExtras =
+        role === 'member'
+          ? {
+              date_of_birth: dobIso ?? undefined,
+              gender: sex ?? undefined,
+              address_line1: addressLine1.trim() || undefined,
+              address_line2: addressLine2.trim() || undefined,
+              city: city.trim() || undefined,
+              state: stateCode.trim().toUpperCase().slice(0, 2) || undefined,
+              zip_code: zip.trim() || undefined,
+              insurance_company: insuranceCompany.trim() || undefined,
+              medi_cal_id: primaryCin.trim() || undefined,
+            }
+          : undefined;
       await register(
         email.trim().toLowerCase(),
         password,
         name.trim(),
         role,
         trimmedPhone || undefined,
+        memberExtras,
       );
       // AuthContext.register stores JWT tokens and flips authState.
       // If the user provided a phone number, show the verification modal
@@ -131,7 +229,11 @@ export function RegisterScreen(): React.JSX.Element {
     } finally {
       setIsSubmitting(false);
     }
-  }, [canSubmit, email, password, name, role, phone, register]);
+  }, [
+    canSubmit, email, password, name, role, phone, register,
+    dobIso, sex, addressLine1, addressLine2, city, stateCode, zip,
+    insuranceCompany, primaryCin,
+  ]);
 
   const handleNavToLogin = useCallback((): void => {
     navigation.navigate('Login');
@@ -257,25 +359,9 @@ export function RegisterScreen(): React.JSX.Element {
               </TouchableOpacity>
             </FormField>
 
-            {/* ZIP */}
-            <FormField label="ZIP code" icon={<MapPin size={18} color={colors.mutedForeground} />}>
-              <TextInput
-                ref={refs.zip}
-                value={zip}
-                onChangeText={(v) => setZip(v.replace(/[^0-9]/g, '').slice(0, 5))}
-                placeholder="90031"
-                placeholderTextColor={colors.mutedForeground}
-                keyboardType="number-pad"
-                maxLength={5}
-                returnKeyType="next"
-                onSubmitEditing={() => refs.phone.current?.focus()}
-                style={s.input}
-              />
-            </FormField>
-
-            {/* Phone (optional) */}
+            {/* Phone */}
             <FormField
-              label="Phone (optional)"
+              label="Phone"
               icon={<Phone size={18} color={colors.mutedForeground} />}
             >
               <TextInput
@@ -285,11 +371,151 @@ export function RegisterScreen(): React.JSX.Element {
                 placeholder="(555) 123-4567"
                 placeholderTextColor={colors.mutedForeground}
                 keyboardType="phone-pad"
-                returnKeyType="done"
+                returnKeyType={role === 'member' ? 'next' : 'done'}
                 onSubmitEditing={handleSubmit}
                 style={s.input}
               />
             </FormField>
+
+            {/* ── Member-only profile fields (DOB, sex, insurance, address) ── */}
+            {role === 'member' && (
+              <>
+                <SectionDivider label="About you" />
+
+                {/* Date of birth */}
+                <FormField label="Date of birth" icon={<Cake size={18} color={colors.mutedForeground} />}>
+                  <TextInput
+                    value={dob}
+                    onChangeText={(v) => setDob(formatDobInput(v))}
+                    placeholder="MM/DD/YYYY"
+                    placeholderTextColor={colors.mutedForeground}
+                    keyboardType="number-pad"
+                    maxLength={10}
+                    style={s.input}
+                    accessibilityLabel="Date of birth in MM/DD/YYYY format"
+                  />
+                </FormField>
+
+                {/* Sex — modal-picker dropdown */}
+                <FormField label="Sex" icon={<Users size={18} color={colors.mutedForeground} />}>
+                  <Pressable
+                    style={s.input}
+                    onPress={() => setSexPickerOpen(true)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Select sex"
+                  >
+                    <Text style={[s.pickerValue, !sex && s.pickerPlaceholder]}>
+                      {sex ?? 'Select…'}
+                    </Text>
+                    <ChevronDown size={16} color={colors.mutedForeground} style={s.pickerChevron} />
+                  </Pressable>
+                </FormField>
+
+                <SectionDivider label="Insurance" />
+
+                {/* Primary Insurance Company — modal-picker dropdown */}
+                <FormField label="Primary insurance company" icon={<Building2 size={18} color={colors.mutedForeground} />}>
+                  <Pressable
+                    style={s.input}
+                    onPress={() => setInsurancePickerOpen(true)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Select primary insurance company"
+                  >
+                    <Text
+                      numberOfLines={1}
+                      style={[s.pickerValue, !insuranceCompany && s.pickerPlaceholder]}
+                    >
+                      {insuranceCompany || 'Select…'}
+                    </Text>
+                    <ChevronDown size={16} color={colors.mutedForeground} style={s.pickerChevron} />
+                  </Pressable>
+                </FormField>
+
+                {/* Primary CIN (Medi-Cal ID) */}
+                <FormField label="Primary CIN (Medi-Cal ID)" icon={<IdCard size={18} color={colors.mutedForeground} />}>
+                  <TextInput
+                    value={primaryCin}
+                    onChangeText={setPrimaryCin}
+                    placeholder="9-character Medi-Cal CIN"
+                    placeholderTextColor={colors.mutedForeground}
+                    autoCapitalize="characters"
+                    autoCorrect={false}
+                    style={s.input}
+                  />
+                </FormField>
+
+                <SectionDivider label="Address" />
+
+                <FormField label="Address line 1" icon={<HomeIcon size={18} color={colors.mutedForeground} />}>
+                  <TextInput
+                    value={addressLine1}
+                    onChangeText={setAddressLine1}
+                    placeholder="Street address"
+                    placeholderTextColor={colors.mutedForeground}
+                    autoCapitalize="words"
+                    autoComplete="address-line1"
+                    style={s.input}
+                  />
+                </FormField>
+
+                <FormField label="Address line 2" icon={<HomeIcon size={18} color={colors.mutedForeground} />}>
+                  <TextInput
+                    value={addressLine2}
+                    onChangeText={setAddressLine2}
+                    placeholder="Apt, suite, unit (optional)"
+                    placeholderTextColor={colors.mutedForeground}
+                    autoCapitalize="words"
+                    autoComplete="address-line2"
+                    style={s.input}
+                  />
+                </FormField>
+
+                {/* Country — read-only US per product decision */}
+                <FormField label="Country" icon={<Globe size={18} color={colors.mutedForeground} />}>
+                  <View style={[s.input, s.readOnlyInput]}>
+                    <Text style={s.readOnlyText}>United States</Text>
+                  </View>
+                </FormField>
+
+                {/* State + City side-by-side on wider viewports */}
+                <FormField label="State" icon={<MapPin size={18} color={colors.mutedForeground} />}>
+                  <TextInput
+                    value={stateCode}
+                    onChangeText={(v) => setStateCode(v.replace(/[^A-Za-z]/g, '').toUpperCase().slice(0, 2))}
+                    placeholder="CA"
+                    placeholderTextColor={colors.mutedForeground}
+                    autoCapitalize="characters"
+                    maxLength={2}
+                    style={s.input}
+                  />
+                </FormField>
+
+                <FormField label="City" icon={<MapPin size={18} color={colors.mutedForeground} />}>
+                  <TextInput
+                    value={city}
+                    onChangeText={setCity}
+                    placeholder="Los Angeles"
+                    placeholderTextColor={colors.mutedForeground}
+                    autoCapitalize="words"
+                    autoComplete="postal-address-locality"
+                    style={s.input}
+                  />
+                </FormField>
+
+                <FormField label="ZIP code" icon={<MapPin size={18} color={colors.mutedForeground} />}>
+                  <TextInput
+                    ref={refs.zip}
+                    value={zip}
+                    onChangeText={(v) => setZip(v.replace(/[^0-9]/g, '').slice(0, 5))}
+                    placeholder="90031"
+                    placeholderTextColor={colors.mutedForeground}
+                    keyboardType="number-pad"
+                    maxLength={5}
+                    style={s.input}
+                  />
+                </FormField>
+              </>
+            )}
 
             {/* Submit */}
             <Pressable
@@ -338,7 +564,98 @@ export function RegisterScreen(): React.JSX.Element {
         onVerified={handlePhoneVerified}
         onClose={handlePhoneVerificationClose}
       />
+
+      {/* Sex picker — minimal modal with the three Pear-enum options. */}
+      <OptionPickerModal
+        visible={sexPickerOpen}
+        title="Sex"
+        options={SEX_OPTIONS}
+        selected={sex}
+        onSelect={(value) => {
+          setSex(value as Sex);
+          setSexPickerOpen(false);
+        }}
+        onClose={() => setSexPickerOpen(false)}
+      />
+
+      {/* Insurance picker — curated 6-carrier dropdown.  Mirrors the
+          backend's carrier→costId map; do NOT add free-text here without
+          a corresponding map entry or claim generation will fail. */}
+      <OptionPickerModal
+        visible={insurancePickerOpen}
+        title="Primary insurance company"
+        options={INSURANCE_OPTIONS}
+        selected={insuranceCompany || null}
+        onSelect={(value) => {
+          setInsuranceCompany(value);
+          setInsurancePickerOpen(false);
+        }}
+        onClose={() => setInsurancePickerOpen(false)}
+      />
     </SafeAreaView>
+  );
+}
+
+// ─── Section divider (visual group within the long member form) ──────────────
+
+function SectionDivider({ label }: { label: string }): React.JSX.Element {
+  return (
+    <View style={s.sectionDivider}>
+      <View style={s.sectionRule} />
+      <Text style={s.sectionLabel}>{label}</Text>
+      <View style={s.sectionRule} />
+    </View>
+  );
+}
+
+// ─── Generic option-picker modal (Sex, Insurance) ────────────────────────────
+
+interface OptionPickerModalProps {
+  visible: boolean;
+  title: string;
+  options: readonly string[];
+  selected: string | null;
+  onSelect: (value: string) => void;
+  onClose: () => void;
+}
+
+function OptionPickerModal({
+  visible,
+  title,
+  options,
+  selected,
+  onSelect,
+  onClose,
+}: OptionPickerModalProps): React.JSX.Element {
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
+      <Pressable style={s.modalBackdrop} onPress={onClose}>
+        <Pressable style={s.modalCard} onPress={(e) => e.stopPropagation()}>
+          <Text style={s.modalTitle}>{title}</Text>
+          {options.map((option) => {
+            const isSelected = option === selected;
+            return (
+              <TouchableOpacity
+                key={option}
+                style={[s.modalOption, isSelected && s.modalOptionSelected]}
+                onPress={() => onSelect(option)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: isSelected }}
+              >
+                <Text style={[s.modalOptionText, isSelected && s.modalOptionTextSelected]}>
+                  {option}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </Pressable>
+      </Pressable>
+    </Modal>
   );
 }
 
@@ -535,6 +852,100 @@ const s = StyleSheet.create({
   },
   signInLink: {
     fontSize: 13,
+    fontFamily: fonts.bodySemibold,
+    color: colors.primary,
+  },
+
+  // ── Expanded member signup additions ───────────────────────────────────
+  sectionDivider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: spacing.md,
+    marginBottom: spacing.xs,
+  },
+  sectionRule: {
+    flex: 1,
+    height: 1,
+    backgroundColor: colors.border,
+  },
+  sectionLabel: {
+    fontSize: 11,
+    fontFamily: fonts.bodySemibold,
+    color: colors.mutedForeground,
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+  },
+  // Dropdown pickers reuse the input chrome but the inner content is a
+  // Text label instead of a TextInput; the chevron sits at the right edge.
+  pickerValue: {
+    flex: 1,
+    fontSize: 14,
+    fontFamily: fonts.body,
+    color: colors.foreground,
+    alignSelf: 'center',
+  },
+  pickerPlaceholder: {
+    color: colors.mutedForeground,
+  },
+  pickerChevron: {
+    position: 'absolute',
+    right: 12,
+    top: '50%',
+    marginTop: -8,
+  },
+  // Country read-only display — same visual chrome as inputs to keep the
+  // form rhythm consistent, just non-interactive.
+  readOnlyInput: {
+    justifyContent: 'center',
+    backgroundColor: colors.muted ?? '#F3F4F6',
+  },
+  readOnlyText: {
+    fontSize: 14,
+    fontFamily: fonts.body,
+    color: colors.foreground,
+  },
+  // Picker modal — centered card with the option list.  Backdrop is a
+  // pressable so tapping outside the card dismisses without selecting.
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.md,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: colors.card,
+    borderRadius: radii.lg,
+    padding: spacing.md,
+    gap: 4,
+  },
+  modalTitle: {
+    fontSize: 16,
+    fontFamily: fonts.displaySemibold,
+    color: colors.foreground,
+    marginBottom: spacing.xs,
+    textAlign: 'center',
+  },
+  modalOption: {
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  modalOptionSelected: {
+    backgroundColor: 'rgba(107,143,113,0.12)',
+    borderColor: colors.primary,
+  },
+  modalOptionText: {
+    fontSize: 14,
+    fontFamily: fonts.body,
+    color: colors.foreground,
+  },
+  modalOptionTextSelected: {
     fontFamily: fonts.bodySemibold,
     color: colors.primary,
   },

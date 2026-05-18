@@ -1,5 +1,6 @@
 import hashlib
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,14 +9,29 @@ from app.config import settings
 from app.utils.security import create_access_token, create_refresh_token, hash_password, verify_password
 
 
-async def register_user(db: AsyncSession, email: str, password: str, name: str, role: str, phone: str | None = None):
+async def register_user(
+    db: AsyncSession,
+    email: str,
+    password: str,
+    name: str,
+    role: str,
+    phone: str | None = None,
+    *,
+    member_profile_fields: dict[str, Any] | None = None,
+):
     """Register a new User and provision the role-appropriate profile row.
 
     A `MemberProfile` (or `CHWProfile`) is created with sensible defaults at
     signup time so downstream endpoints — `GET /member/profile`, `PUT
     /member/profile`, `GET /chw/intake`, request submission, etc. — never 404
-    on a freshly-registered account. Onboarding flows then PATCH the empty
-    fields with the user's real data (zip, language, Medi-Cal ID, etc.).
+    on a freshly-registered account.
+
+    When ``role == "member"`` and ``member_profile_fields`` is provided, the
+    expanded-signup fields (DOB, gender, address parts, insurance, CIN) are
+    written onto the MemberProfile row in the same transaction so a
+    downstream Pear sync (best-effort, scheduled from the auth router) can
+    build a complete Pear member payload without a follow-up PATCH.
+    Unknown / None keys are ignored.
 
     Returns None when the email is already taken (handled at the router layer
     as HTTP 400).
@@ -40,7 +56,20 @@ async def register_user(db: AsyncSession, email: str, password: str, name: str, 
     # never exists in a half-onboarded state where queries against the join
     # row would 404.
     if role == "member":
-        db.add(MemberProfile(user_id=user.id))
+        profile = MemberProfile(user_id=user.id)
+        # Copy any supplied signup fields onto the profile.  We allow-list to
+        # the known columns so a malicious client can't set arbitrary
+        # attributes (e.g. rewards_balance, pear_suite_member_id).
+        allowed_fields = {
+            "date_of_birth", "gender",
+            "address_line1", "address_line2", "city", "state",
+            "zip_code", "insurance_company", "medi_cal_id",
+        }
+        if member_profile_fields:
+            for key, value in member_profile_fields.items():
+                if key in allowed_fields and value is not None:
+                    setattr(profile, key, value)
+        db.add(profile)
     elif role == "chw":
         db.add(CHWProfile(user_id=user.id))
     # Other roles (admin) don't need a profile row.
@@ -48,6 +77,10 @@ async def register_user(db: AsyncSession, email: str, password: str, name: str, 
     await db.commit()
     await db.refresh(user)
     return user
+
+
+# Re-exported for callers that want the type without re-importing date.
+__all__ = ["register_user", "authenticate_user", "create_tokens", "store_refresh_token", "revoke_refresh_token", "date"]
 
 
 async def authenticate_user(db: AsyncSession, email: str, password: str):

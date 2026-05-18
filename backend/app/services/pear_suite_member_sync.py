@@ -80,14 +80,44 @@ def _build_member_payload(
     if profile.medi_cal_id:
         payload["mediCalId"] = profile.medi_cal_id
 
-    # Address: Pear Suite accepts street/city/state/zip. We use zip_code only
-    # since Compass does not store full member address (by design — minimal PHI).
-    # This may cause Pear to reject the address block; omit it if zip_code is None
-    # so we don't send a partial address object that fails validation.
+    # Date of birth — Pear expects ISO 8601 YYYY-MM-DD.
+    if profile.date_of_birth:
+        payload["dob"] = profile.date_of_birth.isoformat()
+
+    # Sex enum: Male | Female | Other — the signup dropdown enforces this.
+    if profile.gender:
+        payload["sex"] = profile.gender
+
+    # Address — Pear accepts an address sub-object.  We send whatever sub-keys
+    # the member has filled in; missing keys are omitted rather than sent as
+    # null so Pear's validation doesn't reject the whole block.
+    address: dict[str, Any] = {}
+    if profile.address_line1:
+        address["address"] = profile.address_line1
+    if profile.address_line2:
+        address["address2"] = profile.address_line2
+    if profile.city:
+        address["cityName"] = profile.city
+    if profile.state:
+        address["stateName"] = profile.state
     if profile.zip_code:
-        payload["address"] = {
-            "zip": profile.zip_code,
-        }
+        # 5-digit ZIP is accepted today; ZIP+4 lookup deferred until/unless
+        # Pear rejects 5-digit values for billable members.  See product
+        # decision recorded in conversation 2026-05-17.
+        address["zip"] = profile.zip_code
+    if address:
+        # Country is implicit US (we don't run outside California); include it
+        # only when we already have at least one other address field so we
+        # don't send a country-only address that Pear may reject.
+        address["countryName"] = "US"
+        payload["address"] = address
+
+    # Insurance carrier — surfaced as a free-text hint for Pear today; once
+    # the Friday meeting clarifies the primaryHealthPlanId write path we'll
+    # add it here in the official shape.  Keeping insurance_company in our DB
+    # means resolve_cost_id() works for billing regardless.
+    if profile.insurance_company:
+        payload["insuranceCompany"] = profile.insurance_company
 
     return payload
 
