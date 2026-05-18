@@ -9,8 +9,8 @@
  *     contact column (DOB/Phone/Address/Insurance) · Resource Needs column
  *   - Mid row: 4-column insights card (9/12) + Compass Insights AI panel (3/12 RightRail)
  *   - Journey section: 9/12 horizontal step roadmap + 3/12 Quick Access RightRail
- *   - StickyActionBar: Message Member · Start Call · Schedule Session ·
- *     Open Questions · Add Note
+ *   - (StickyActionBar removed — entry points live in the contact section
+ *     and Quick Access rail; Schedule Session is reachable from tab nav.)
  *   - RightDrawer: Open Questions (static suggested questions v1)
  *   - RightDrawer: Message Member (inline thread via ProfileContactButtons)
  *
@@ -54,10 +54,6 @@ import {
   ShieldX,
   Sparkles,
   User,
-  MessageSquare,
-  PhoneCall,
-  CalendarPlus,
-  HelpCircle,
   NotebookPen,
   FileText,
   ClipboardList,
@@ -83,7 +79,6 @@ import {
   Card,
   Pill,
   RightRail,
-  StickyActionBar,
   RightDrawer,
 } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
@@ -1935,55 +1930,14 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
               )}
             </View>
 
-            {/* Spacer to clear StickyActionBar */}
-            <View style={{ height: 80 }} />
           </View>
         </ScrollView>
 
-        {/* ── Sticky Action Bar ── */}
-        <StickyActionBar
-          primary={{
-            label: 'Schedule Session',
-            onPress: () => navigation.navigate('Sessions'),
-          }}
-          actions={[
-            {
-              icon: <MessageSquare size={18} color={tokens.textSecondary} />,
-              label: 'Message',
-              onPress: () => setMessageDrawerOpen(true),
-            },
-            {
-              icon: <PhoneCall size={18} color={tokens.textSecondary} />,
-              label: 'Call',
-              onPress: () => {
-                // Delegates to ProfileContactButtons flow — surfaced via alert
-                // until standalone call UI lands.
-                if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                  window.alert('Use the Call button in the contact section above.');
-                } else {
-                  Alert.alert('Call', 'Use the Call button in the contact section above.');
-                }
-              },
-            },
-            {
-              icon: <HelpCircle size={18} color={tokens.textSecondary} />,
-              label: 'Open Questions',
-              onPress: () => setOpenQuestionsOpen(true),
-            },
-            {
-              icon: <NotebookPen size={18} color={tokens.textSecondary} />,
-              label: 'Add Note',
-              onPress: () => {
-                // TODO(navigation): navigate to Add Note screen once Agent C delivers it.
-                if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                  window.alert('Add Note screen coming soon.');
-                } else {
-                  Alert.alert('Add Note', 'Coming soon.');
-                }
-              },
-            },
-          ]}
-        />
+        {/* StickyActionBar removed — it duplicated entry points already
+            provided elsewhere (Schedule Session in tab nav, Message/Call
+            inline in the contact section, Open Questions in the Quick
+            Access rail). Reintroduce only if a real net-new entry point
+            for the profile becomes necessary. */}
 
         {/* ── Open Questions drawer ── */}
         <OpenQuestionsDrawer
