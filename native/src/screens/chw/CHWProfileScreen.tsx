@@ -37,6 +37,7 @@
 import React, { useCallback, useState } from 'react';
 import {
   Alert,
+  Platform,
   Pressable,
   ScrollView,
   StatusBar,
@@ -65,6 +66,7 @@ import {
   useChwProfile,
   useUpdateChwProfile,
   useChwEarnings,
+  useDeleteAccount,
 } from '../../hooks/useApiQueries';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { AppShell, PageHeader, Card } from '../../components/ui';
@@ -600,7 +602,8 @@ const chipStyles = StyleSheet.create({
  * Earnings & Payouts summary card instead of the member's "Need help?" card.
  */
 export function CHWProfileScreen(): React.JSX.Element {
-  const { userName, logout } = useAuth();
+  const { userName, logout, clearAfterDeletion } = useAuth();
+  const deleteAccount = useDeleteAccount();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const navigation = useNavigation<any>();
   const profileQuery = useChwProfile();
@@ -688,23 +691,47 @@ export function CHWProfileScreen(): React.JSX.Element {
   );
 
   const handleDeleteAccount = useCallback(() => {
+    // Mirrors the member-side flow in MemberSettingsScreen.handleDeleteAccount.
+    // Web uses window.confirm because RN-web's Alert.alert doesn't render
+    // destructive buttons reliably; native uses Alert.alert.  Either way:
+    // Yes → DELETE /auth/users/me → clearAfterDeletion → user lands on the
+    // marketing Landing page.  Pear Suite member record (if any) is NOT
+    // touched — admin handles Pear-side cleanup manually.
+    const proceed = (): void => {
+      void (async () => {
+        try {
+          await deleteAccount.mutateAsync(undefined);
+          await clearAfterDeletion();
+        } catch (err) {
+          const message =
+            err instanceof Error && err.message
+              ? err.message
+              : 'Could not delete your account. Please try again or contact support.';
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.alert(message);
+          } else {
+            Alert.alert('Deletion failed', message);
+          }
+        }
+      })();
+    };
+
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const confirmed = window.confirm(
+        'Are you sure you want to delete this account?',
+      );
+      if (confirmed) proceed();
+      return;
+    }
     Alert.alert(
       'Delete account',
-      'This permanently removes your Compass account and all associated data. This cannot be undone.',
+      'Are you sure you want to delete this account?',
       [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () =>
-            Alert.alert(
-              'Coming soon',
-              'Account deletion is handled by support. Email help@joincompasschw.com to request deletion.',
-            ),
-        },
+        { text: 'No', style: 'cancel' },
+        { text: 'Yes', style: 'destructive', onPress: proceed },
       ],
     );
-  }, []);
+  }, [deleteAccount, clearAfterDeletion]);
 
   const handleDownloadData = useCallback(() => {
     Alert.alert('Data export', 'We will email a copy of your data to you within 24 hours.');
