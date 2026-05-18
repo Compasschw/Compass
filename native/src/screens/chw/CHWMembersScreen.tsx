@@ -37,25 +37,32 @@ import type { DrawerNavigationProp } from '@react-navigation/drawer';
 import {
   ChevronRight,
   ChevronLeft,
+  Check,
   Filter,
   Search,
   UserPlus,
   Users,
+  X,
 } from 'lucide-react-native';
 
 import { AppShell, Card, PageHeader, Pill } from '../../components/ui';
+import type { PillVariant } from '../../components/ui/Pill';
 import { Avatar } from '../../components/shared/Avatar';
 import { colors, radius, spacing } from '../../theme/tokens';
 import { useAuth } from '../../context/AuthContext';
 import {
   useChwMembers,
+  useIncomingMemberRequests,
+  useAcceptRequest,
+  usePassRequest,
   type MembersRosterItem,
+  type IncomingMemberRequest,
 } from '../../hooks/useApiQueries';
 import type { CHWTabParamList } from '../../navigation/CHWTabNavigator';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type FilterKey = 'all' | 'active' | 'high_risk' | 'overdue' | 'in_journey' | 'inactive';
+type FilterKey = 'all' | 'active' | 'high_risk' | 'overdue' | 'in_journey' | 'inactive' | 'request';
 
 interface FilterChip {
   key: FilterKey;
@@ -74,6 +81,12 @@ const FILTER_CHIPS: FilterChip[] = [
   { key: 'overdue',    label: 'Overdue follow-up' },
   { key: 'in_journey', label: 'In a journey'      },
   { key: 'inactive',   label: 'Inactive'          },
+  // Pending Schedule-with-Me requests within their 24h CHW-exclusive
+  // window.  Backed by GET /requests/incoming + the useIncomingMemberRequests
+  // hook.  Renders a different row layout than the other filters (inline
+  // Accept/Decline buttons) because each entry is a prospective member, not
+  // an established one.
+  { key: 'request',    label: 'Request'           },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -207,6 +220,167 @@ function formatVertical(vertical: string | null): string {
 // (`components/shared/Avatar.tsx`), which now hosts the deterministic
 // per-person color palette. Pass `displayName` for the color seed and an
 // optional `initials` override matching the backend-supplied value.
+
+// ─── Request row (Schedule-with-Me pending requests) ────────────────────────
+//
+// One row per pending incoming request. Layout mirrors the standard member
+// table row (avatar + name on the left, status pill + extra metadata in the
+// middle, action column on the right) so the visual rhythm matches the rest
+// of the table.  Differences vs MemberTableRow:
+//   - Status pill says "Pending request" (yellow) instead of Active/Inactive
+//   - Engagement column shows the urgency chip (Routine / Soon / Urgent)
+//   - Last-contact column shows time-since-submitted + 24h-window countdown
+//   - Trailing chevron slot replaced with Accept (green) / Decline (red) buttons
+
+interface RequestRowProps {
+  request: IncomingMemberRequest;
+  onAccept: () => void;
+  onDecline: () => void;
+  disabled: boolean;
+}
+
+function RequestRow({ request, onAccept, onDecline, disabled }: RequestRowProps): React.JSX.Element {
+  const [hovered, setHovered] = useState(false);
+
+  // Human-readable "submitted N minutes/hours ago".
+  const createdAgo = useMemo(() => {
+    const diffMs = Date.now() - new Date(request.createdAt).getTime();
+    const mins = Math.floor(diffMs / 60_000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins} min ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs} hr${hrs > 1 ? 's' : ''} ago`;
+    return 'over a day ago';
+  }, [request.createdAt]);
+
+  // Urgency → visual variant. Matches the chip colors used in MemberFindScreen.
+  const urgencyTone = request.urgency === 'urgent'
+    ? 'red'
+    : request.urgency === 'soon'
+      ? 'amber'
+      : 'gray';
+
+  const verticalsLabel = request.verticals.length > 0
+    ? request.verticals.map((v) => v.replace(/_/g, ' ')).join(', ')
+    : request.vertical.replace(/_/g, ' ');
+
+  const urgencyPill: PillVariant = urgencyTone === 'red'
+    ? 'red'
+    : urgencyTone === 'amber'
+      ? 'amber'
+      : 'gray';
+
+  // Native: fall back to a card-style row.  Web: full table layout.
+  if (Platform.OS !== 'web') {
+    return (
+      <View style={styles.requestNativeCard}>
+        <View style={styles.requestNativeHeader}>
+          <Avatar displayName={request.memberName} size={36} />
+          <View style={{ flex: 1 }}>
+            <Text style={cardStyles.name}>{request.memberName}</Text>
+            <Text style={styles.requestSubText}>{verticalsLabel} · {createdAgo}</Text>
+          </View>
+        </View>
+        <View style={styles.requestActionsRow}>
+          <TouchableOpacity
+            style={[styles.declineBtn, disabled && styles.disabledBtn]}
+            onPress={onDecline}
+            disabled={disabled}
+          >
+            <X size={14} color="#fff" />
+            <Text style={styles.acceptDeclineText}>Decline</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.acceptBtn, disabled && styles.disabledBtn]}
+            onPress={onAccept}
+            disabled={disabled}
+          >
+            <Check size={14} color="#fff" />
+            <Text style={styles.acceptDeclineText}>Accept</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <View
+      style={[rowStyles.row, hovered && rowStyles.rowHover]}
+      // @ts-ignore — web-only pointer events
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      {/* Member column */}
+      <View style={[rowStyles.cell, rowStyles.memberCell]}>
+        <Avatar displayName={request.memberName} size={36} />
+        <View style={rowStyles.memberInfo}>
+          <Text style={rowStyles.memberName}>{request.memberName}</Text>
+          <Text style={rowStyles.memberMeta}>{verticalsLabel}</Text>
+        </View>
+      </View>
+
+      {/* Status — Pending request pill */}
+      <View style={rowStyles.cell}>
+        <Pill variant="amber" size="sm" withDot>Pending request</Pill>
+      </View>
+
+      {/* Risk column placeholder — kept blank for prospective members. */}
+      <View style={rowStyles.cell}>
+        <Text style={rowStyles.noJourney}>—</Text>
+      </View>
+
+      {/* Engagement column → urgency chip */}
+      <View style={rowStyles.cell}>
+        <Pill variant={urgencyPill} size="sm">
+          {request.urgency.charAt(0).toUpperCase() + request.urgency.slice(1)}
+        </Pill>
+      </View>
+
+      {/* Active Journey column placeholder. */}
+      <View style={rowStyles.cell}>
+        <Text style={rowStyles.noJourney}>—</Text>
+      </View>
+
+      {/* Last Contact column → "submitted N min ago" */}
+      <View style={rowStyles.cell}>
+        <Text style={rowStyles.lastContact}>{createdAgo}</Text>
+      </View>
+
+      {/* Top Need column → preferred-mode label so the CHW knows what was asked. */}
+      <View style={rowStyles.cell}>
+        <Text style={rowStyles.memberMeta}>
+          {request.preferredMode === 'in_person' ? 'In Person'
+            : request.preferredMode === 'virtual' ? 'Virtual'
+              : 'Phone'}
+        </Text>
+      </View>
+
+      {/* Action column — Accept / Decline buttons replace the chevron */}
+      <View style={[rowStyles.cell, { flex: 0, width: 200, gap: 6, flexDirection: 'row', justifyContent: 'flex-end' }]}>
+        <TouchableOpacity
+          style={[styles.declineBtn, disabled && styles.disabledBtn]}
+          onPress={onDecline}
+          disabled={disabled}
+          accessibilityRole="button"
+          accessibilityLabel={`Decline request from ${request.memberName}`}
+        >
+          <X size={14} color="#fff" />
+          <Text style={styles.acceptDeclineText}>Decline</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.acceptBtn, disabled && styles.disabledBtn]}
+          onPress={onAccept}
+          disabled={disabled}
+          accessibilityRole="button"
+          accessibilityLabel={`Accept request from ${request.memberName}`}
+        >
+          <Check size={14} color="#fff" />
+          <Text style={styles.acceptDeclineText}>Accept</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
 
 // ─── Table row (web) ──────────────────────────────────────────────────────────
 
@@ -606,6 +780,13 @@ export function CHWMembersScreen(): React.JSX.Element {
 
   const { data: members = [], isLoading, isError, dataUpdatedAt } = useChwMembers();
 
+  // Incoming Schedule-with-X member requests (24h CHW-exclusive window).
+  // Always fetch — the chip count needs the array length even when the
+  // user is on a different filter.
+  const { data: incomingRequests = [] } = useIncomingMemberRequests();
+  const acceptRequest = useAcceptRequest();
+  const passRequest = usePassRequest();
+
   // ── Derived counts ───────────────────────────────────────────────────────────
   const activeCount = useMemo(
     () => members.filter((m) => m.status === 'active').length,
@@ -697,6 +878,7 @@ export function CHWMembersScreen(): React.JSX.Element {
       case 'overdue':    return overdueCount;
       case 'in_journey': return inJourneyCount;
       case 'inactive':   return inactiveCount;
+      case 'request':    return incomingRequests.length;
     }
   };
 
@@ -775,7 +957,34 @@ export function CHWMembersScreen(): React.JSX.Element {
       </View>
 
       {/* ── Body ─────────────────────────────────────────────────────────── */}
-      {isLoading ? (
+      {activeFilter === 'request' ? (
+        /* Request filter — pending Schedule-with-Me requests. Different row
+           shape than the standard members table: each row is a prospective
+           member with inline Accept/Decline buttons.  Uses the same Card
+           container so the visual rhythm matches the other filters. */
+        incomingRequests.length === 0 ? (
+          <Card style={styles.emptyCard}>
+            <Users size={32} color={colors.textMuted} />
+            <Text style={styles.emptyTitle}>No pending requests</Text>
+            <Text style={styles.emptyText}>
+              When a member schedules a session with you from their My CHW
+              screen, the request will appear here for the first 24 hours.
+            </Text>
+          </Card>
+        ) : (
+          <Card style={styles.tableCard}>
+            {incomingRequests.map((req) => (
+              <RequestRow
+                key={req.id}
+                request={req}
+                onAccept={() => acceptRequest.mutate(req.id)}
+                onDecline={() => passRequest.mutate(req.id)}
+                disabled={acceptRequest.isPending || passRequest.isPending}
+              />
+            ))}
+          </Card>
+        )
+      ) : isLoading ? (
         <View style={styles.loadingWrap}>
           <ActivityIndicator size="large" color={colors.primary} />
           <Text style={styles.loadingText}>Loading members…</Text>
@@ -1110,5 +1319,63 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems:    'center',
     gap:           4,
+  } as ViewStyle,
+
+  // ── Request filter: inline Accept/Decline buttons ──────────────────────────
+  // Sized to fit comfortably in the trailing action slot on web (200px column).
+  // Both use a flat color fill for a clear "primary action" feel; gray text
+  // background on disabled to indicate in-flight mutations.
+  acceptBtn: {
+    flexDirection: 'row',
+    alignItems:    'center',
+    gap:           4,
+    paddingHorizontal: 12,
+    paddingVertical:   8,
+    borderRadius:  radius.sm,
+    backgroundColor: '#16A34A',
+  } as ViewStyle,
+  declineBtn: {
+    flexDirection: 'row',
+    alignItems:    'center',
+    gap:           4,
+    paddingHorizontal: 12,
+    paddingVertical:   8,
+    borderRadius:  radius.sm,
+    backgroundColor: '#6B7280',
+  } as ViewStyle,
+  disabledBtn: {
+    opacity: 0.5,
+  } as ViewStyle,
+  acceptDeclineText: {
+    fontSize:   13,
+    fontWeight: '600',
+    color:      '#fff',
+  } as TextStyle,
+  dashText: {
+    fontSize: 13,
+    color:    colors.textMuted,
+  } as TextStyle,
+
+  // Native fallback card for request rows
+  requestNativeCard: {
+    backgroundColor: '#fff',
+    padding: spacing.sm,
+    gap: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  } as ViewStyle,
+  requestNativeHeader: {
+    flexDirection: 'row',
+    alignItems:    'center',
+    gap:           10,
+  } as ViewStyle,
+  requestSubText: {
+    fontSize: 12,
+    color:    colors.textSecondary,
+  } as TextStyle,
+  requestActionsRow: {
+    flexDirection: 'row',
+    gap:           8,
+    justifyContent: 'flex-end',
   } as ViewStyle,
 });

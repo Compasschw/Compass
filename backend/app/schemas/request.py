@@ -38,6 +38,14 @@ class ServiceRequestCreate(BaseModel):
     description: str = Field(default="", description="Optional member-supplied context.")
     preferred_mode: SessionMode = SessionMode.in_person
     estimated_units: int = Field(default=1, ge=1, le=4)
+    # Schedule-with-X flow: when the member selected a specific CHW from the
+    # My CHW screen, pass that CHW's user_id here.  The backend will stamp
+    # target_chw_id + target_expires_at = now()+24h so only that CHW sees
+    # the request until the window expires.  None = open-pool request.
+    target_chw_id: UUID | None = Field(
+        default=None,
+        description="When set, route this request to a specific CHW for 24h.",
+    )
 
     @field_validator("verticals", mode="before")
     @classmethod
@@ -82,6 +90,11 @@ class ServiceRequestResponse(BaseModel):
     estimated_units: int
     created_at: datetime
     member_name: str | None = None
+    # Targeted-routing state (Schedule-with-X flow).  When ``target_chw_id``
+    # is the caller and ``target_expires_at`` is in the future, this request
+    # appears in that CHW's Request filter on the Members page.
+    target_chw_id: UUID | None = None
+    target_expires_at: datetime | None = None
 
 
 class ServiceRequestSummaryResponse(BaseModel):
@@ -109,3 +122,35 @@ class ServiceRequestSummaryResponse(BaseModel):
 class ServiceRequestUpdate(BaseModel):
     status: str | None = None
     matched_chw_id: UUID | None = None
+
+
+class IncomingMemberRequestResponse(BaseModel):
+    """Row shape for the CHW's "Request" filter on the Members page.
+
+    Returned by ``GET /requests/incoming`` — one row per pending
+    member-targeted request the CHW has the right to accept right now
+    (target_chw_id == me AND status='open' AND target hasn't expired).
+
+    Carries enough detail to render the Members-page row inline:
+    member display name, verticals chosen, urgency, preferred mode,
+    description preview, and the timestamp the request was opened so
+    the UI can show a "Pending request" pill with relative time.
+
+    PHI note: ``member_name`` and ``description`` are PHI but allowed
+    here because the row is gated to the CHW the member explicitly chose
+    — the minimum-necessary HIPAA standard is satisfied by that consent
+    signal.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    member_id: UUID
+    member_name: str
+    vertical: str
+    verticals: list[str]
+    urgency: str
+    preferred_mode: str
+    description: str
+    estimated_units: int
+    target_expires_at: datetime | None
+    created_at: datetime

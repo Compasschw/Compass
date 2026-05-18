@@ -44,5 +44,16 @@ class ServiceRequest(Base):
     preferred_mode: Mapped[str] = mapped_column(String(20), nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="open", index=True)
     estimated_units: Mapped[int] = mapped_column(Integer, default=1)
+    # CHW-exclusive routing (Schedule-with-X flow).  When set, the request is
+    # visible only to ``target_chw_id`` until ``target_expires_at`` passes
+    # (24h after creation) OR the target explicitly declines (PATCH /pass).
+    # NULL on both = open-pool request, every CHW can claim it (legacy
+    # general-request behavior).  See migration d4e5f6a7b8c9.
+    target_chw_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    target_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

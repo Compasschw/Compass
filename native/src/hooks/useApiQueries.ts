@@ -346,6 +346,8 @@ export const queryKeys = {
   requests: ['requests'] as const,
   /** Member-scoped: the authenticated member's own requests regardless of status. */
   myRequests: ['requests', 'mine'] as const,
+  /** CHW-scoped: requests the member directed at THIS CHW (24h lock window). */
+  incomingMemberRequests: ['requests', 'incoming'] as const,
   chwEarnings: ['chw', 'earnings'] as const,
   chwClaims: ['chw', 'claims'] as const,
   chwProfile: ['chw', 'profile'] as const,
@@ -641,6 +643,43 @@ export function useMessages(conversationId: string) {
 
 // ─── Mutation Hooks ──────────────────────────────────────────────────────────
 
+/**
+ * Row shape for the CHW Members-page "Request" filter. One entry per
+ * pending Schedule-with-X request that's still inside its 24h CHW-exclusive
+ * lock window AND directed at the authenticated CHW.
+ */
+export interface IncomingMemberRequest {
+  id: string;
+  memberId: string;
+  memberName: string;
+  vertical: string;
+  verticals: string[];
+  urgency: string;
+  preferredMode: string;
+  description: string;
+  estimatedUnits: number;
+  targetExpiresAt: string | null;
+  createdAt: string;
+}
+
+/**
+ * GET /api/v1/requests/incoming — pending member requests directed at the
+ * authenticated CHW.  Polls every 30s while mounted so the Request filter
+ * picks up new submissions without a manual pull-to-refresh.
+ */
+export function useIncomingMemberRequests(options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: queryKeys.incomingMemberRequests,
+    queryFn: async () => {
+      const raw = await api<unknown[]>('/requests/incoming');
+      return transformKeys<IncomingMemberRequest[]>(raw);
+    },
+    enabled: options?.enabled ?? true,
+    refetchInterval: 30_000,
+    refetchOnWindowFocus: true,
+  });
+}
+
 export function useAcceptRequest() {
   const qc = useQueryClient();
   return useMutation({
@@ -650,6 +689,8 @@ export function useAcceptRequest() {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.requests });
       void qc.invalidateQueries({ queryKey: queryKeys.sessions });
+      // Request filter row vanishes after Accept (request becomes a member).
+      void qc.invalidateQueries({ queryKey: queryKeys.incomingMemberRequests });
     },
   });
 }
@@ -665,6 +706,8 @@ export function usePassRequest() {
       // so both sides reflect the pass within the next polling cycle.
       void qc.invalidateQueries({ queryKey: queryKeys.requests });
       void qc.invalidateQueries({ queryKey: queryKeys.myRequests });
+      // Decline button on the Request filter routes through pass too.
+      void qc.invalidateQueries({ queryKey: queryKeys.incomingMemberRequests });
     },
   });
 }
@@ -706,6 +749,9 @@ export interface CreateRequestPayload {
   description: string;
   preferredMode: string;
   estimatedUnits: number;
+  /** Schedule-with-X: chosen CHW's user_id. Backend locks the request to
+   *  this CHW for 24h before opening it to the general pool. */
+  targetChwId?: string;
 }
 
 export function useCreateRequest() {

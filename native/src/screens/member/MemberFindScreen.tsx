@@ -1222,18 +1222,27 @@ export function MemberFindScreen(): React.JSX.Element {
 
   const handleModalSubmit = useCallback(
     async (chwFirstName: string, formData: ScheduleFormData) => {
+      // Capture the chosen CHW's id BEFORE clearing the modal state, so the
+      // payload below doesn't read a closed-over null.
+      const targetChwId = schedulingChw?.id;
       setSchedulingChw(null);
       const count = formData.verticals.length;
       try {
         // Send ONE request carrying all selected verticals. The backend
         // writes both `verticals` (authoritative array) and `vertical`
         // (first element, for sessions/claims backwards-compat).
+        //
+        // ``targetChwId`` is captured from the CHW card the member tapped:
+        // the backend locks the request to that CHW for 24h so it lands
+        // in their Request filter on the Members page (not in the open
+        // pool any other CHW could claim).
         const payload: CreateRequestPayload = {
           verticals: formData.verticals,
           urgency: formData.urgency,
           description: formData.description,
           preferredMode: formData.mode,
           estimatedUnits: 1,
+          targetChwId,
         };
         await createRequest.mutateAsync(payload);
         showToast(
@@ -1251,7 +1260,7 @@ export function MemberFindScreen(): React.JSX.Element {
         showToast(`Failed to submit request: ${reason}`);
       }
     },
-    [createRequest, showToast],
+    [createRequest, showToast, schedulingChw],
   );
 
   return (
