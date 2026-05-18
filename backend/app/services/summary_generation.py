@@ -121,12 +121,22 @@ async def _build_transcript_text(session: Session, db: AsyncSession) -> str:
         logger.debug("transcript build: SessionTranscript source skipped: %s", exc)
 
     # 3. Fallback: comm_session.transcript_text (post-call full Vonage transcript)
+    # A single Compass Session can have multiple CommunicationSession rows
+    # when the CHW retried the call (each call-bridge attempt inserts a
+    # fresh row), so we order by created_at desc + limit 1 to pick the most
+    # recent one — that's the row the post-call finalizer wrote the
+    # transcript onto.  Previously this used scalar_one_or_none() which
+    # raised MultipleResultsFound on retry-heavy sessions; the broad
+    # try/except swallowed it and the summary endpoint returned the empty
+    # "AI summary unavailable" message even though a usable transcript
+    # existed on one of the rows.
     if not pieces:
         try:
             comm_result = await db.execute(
-                select(CommunicationSession).where(
-                    CommunicationSession.session_id == session.id
-                )
+                select(CommunicationSession)
+                .where(CommunicationSession.session_id == session.id)
+                .order_by(CommunicationSession.created_at.desc())
+                .limit(1)
             )
             comm = comm_result.scalar_one_or_none()
             if comm is not None and getattr(comm, "transcript_text", None):
