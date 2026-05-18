@@ -776,6 +776,68 @@ function ContextRail({ session, onOpenSuggestedQuestions }: ContextRailProps): R
   // ended_at as the primary signal (mirrors SessionChat's isCallable pattern).
   const summaryEnabled = session.endedAt != null || session.status === 'completed';
 
+  // ── Auto-trigger AI summary after the call ends ──────────────────────────
+  // Once the session has ended, we poll the summary endpoint up to 8 times
+  // (every 15s ≈ 2 min total) so the CHW sees the summary appear inline in
+  // the rail without having to click "Generate AI Summary".  The backend
+  // returns ai_summary="" while the post-call AssemblyAI transcription
+  // hasn't finished yet — that empty response is our "retry later" signal,
+  // not an error.  After the budget is exhausted we stop and fall back to
+  // the manual button so the CHW can re-trigger if AssemblyAI was slow.
+  const autoPollAttempts = useRef(0);
+  const [autoPollExhausted, setAutoPollExhausted] = useState(false);
+  const MAX_AUTO_POLL_ATTEMPTS = 8;
+  const POLL_DELAY_MS = 15_000;
+
+  useEffect(() => {
+    // Skip when:
+    //   - the session hasn't ended yet (nothing to summarise)
+    //   - we already have a non-empty summary (job done)
+    //   - the polling budget is spent (don't keep hammering)
+    //   - the mutation is mid-flight (avoid stacking concurrent calls)
+    if (
+      !summaryEnabled
+      || (aiSummary && aiSummary.ai_summary)
+      || autoPollExhausted
+      || generateAISummary.isPending
+    ) {
+      return;
+    }
+    const delay = autoPollAttempts.current === 0 ? 5_000 : POLL_DELAY_MS;
+    const timer = setTimeout(async () => {
+      try {
+        const result = await generateAISummary.mutateAsync(session.id);
+        if (result.ai_summary && result.ai_summary.length > 0) {
+          // Real summary arrived — show it and stop polling.
+          setAiSummary(result);
+          setAutoPollExhausted(true);
+          return;
+        }
+      } catch {
+        // Backend errors are treated as a transient — same retry budget
+        // governs them.  The existing manual button surfaces the error
+        // text if the CHW chooses to retry after exhaustion.
+      }
+      // No usable summary yet — schedule next attempt up to the budget.
+      autoPollAttempts.current += 1;
+      if (autoPollAttempts.current >= MAX_AUTO_POLL_ATTEMPTS) {
+        setAutoPollExhausted(true);
+      } else {
+        // Re-render to trigger the next effect run.  We bump a state flag
+        // through aiSummary intentionally left null so the gate above
+        // doesn't short-circuit; the dep on generateAISummary.isPending
+        // flipping back to false drives the next cycle.
+      }
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [
+    summaryEnabled,
+    aiSummary,
+    autoPollExhausted,
+    generateAISummary,
+    session.id,
+  ]);
+
   // ── End Session / documentation submit handler ───────────────────────────────
   /**
    * Opens the DocumentationModal so the CHW can finalize the session: review
