@@ -1222,9 +1222,11 @@ export function MemberFindScreen(): React.JSX.Element {
 
   const handleModalSubmit = useCallback(
     async (chwFirstName: string, formData: ScheduleFormData) => {
-      // Capture the chosen CHW's id BEFORE clearing the modal state, so the
-      // payload below doesn't read a closed-over null.
-      const targetChwId = schedulingChw?.id;
+      // Capture the chosen CHW's user UUID BEFORE clearing the modal state,
+      // so the payload below doesn't read a closed-over null.  Use ``userId``,
+      // not ``id`` — the latter is the CHWProfile PK and the backend validates
+      // the target against the users table (where it would not exist).
+      const targetChwId = schedulingChw?.userId;
       setSchedulingChw(null);
       const count = formData.verticals.length;
       try {
