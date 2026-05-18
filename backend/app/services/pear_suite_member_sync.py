@@ -66,24 +66,6 @@ def _build_member_payload(
         "lastName": last_name,
     }
 
-    # Always include email + phone keys, even when empty.  Pear Suite's
-    # Edit Member UI fails to render the corresponding input boxes when
-    # these keys are absent on the original create payload (observed on
-    # eefcfacd-... 2026-05-18 — "Update" button non-functional because
-    # the phone input was missing entirely).  Sending "" preserves the
-    # field so the CHW or admin can fill it in later from the Pear edit
-    # page.
-    payload["email"] = user.email or ""
-    payload["phone"] = user.phone or ""
-
-    if profile.primary_language:
-        payload["language"] = profile.primary_language
-
-    # mediCalId is PHI — included but never logged. Pear Suite uses this
-    # to link to Medi-Cal eligibility records server-side.
-    if profile.medi_cal_id:
-        payload["mediCalId"] = profile.medi_cal_id
-
     # Date of birth — Pear expects ISO 8601 YYYY-MM-DD.
     if profile.date_of_birth:
         payload["dob"] = profile.date_of_birth.isoformat()
@@ -92,9 +74,46 @@ def _build_member_payload(
     if profile.gender:
         payload["sex"] = profile.gender
 
-    # Address — Pear accepts an address sub-object.  We send whatever sub-keys
-    # the member has filled in; missing keys are omitted rather than sent as
-    # null so Pear's validation doesn't reject the whole block.
+    # Pear's documented schema uses ``spokenLanguages`` (array), NOT the
+    # singular ``language`` we used to send (silently dropped).
+    if profile.primary_language:
+        payload["spokenLanguages"] = [profile.primary_language]
+
+    # ── contactInfo (Pear's documented shape for email + phone) ──────────
+    # Earlier versions sent ``email`` and ``phone`` as top-level keys
+    # because the older docs implied that shape; Pear's 2026 Beta API
+    # actually requires both to live inside the ``contactInfo`` object,
+    # and silently drops anything at the top level.  That's why phone
+    # numbers we entered at signup never appeared on the Pear member
+    # page (observed on abdumahmoud@gmail.com 2026-05-18).
+    #
+    # ``primaryPhoneNumberDigits`` is digits-only (no +, spaces, dashes);
+    # ``phoneNumbers[*].digits`` is the same shape.  We default the type
+    # to "Mobile" because virtually every member signing up online has a
+    # mobile number — Pear's other option, "Landline", is rarer enough
+    # that we don't surface it in the signup UI today.
+    phone_digits = _digits_only(user.phone) if user.phone else ""
+    contact_info: dict[str, Any] = {
+        # Always include email + phone keys (even when empty) so Pear's
+        # Edit Member UI still renders the input fields — the page silently
+        # omits the field entirely when these keys are absent from the
+        # original create call.
+        "email": user.email or "",
+        "primaryPhoneNumberDigits": phone_digits,
+    }
+    if phone_digits:
+        contact_info["phoneNumbers"] = [
+            {
+                "digits": phone_digits,
+                "type": "Mobile",
+                "doNotCall": False,
+            }
+        ]
+    payload["contactInfo"] = contact_info
+
+    # Address — Pear accepts an address sub-object.  We send whatever
+    # sub-keys the member has filled in; missing keys are omitted rather
+    # than sent as null so Pear's validation doesn't reject the whole block.
     address: dict[str, Any] = {}
     if profile.address_line1:
         address["address"] = profile.address_line1
@@ -116,14 +135,38 @@ def _build_member_payload(
         address["countryName"] = "US"
         payload["address"] = address
 
-    # Insurance carrier — surfaced as a free-text hint for Pear today; once
-    # the Friday meeting clarifies the primaryHealthPlanId write path we'll
-    # add it here in the official shape.  Keeping insurance_company in our DB
-    # means resolve_cost_id() works for billing regardless.
+    # ── Out-of-spec fields kept for forward compatibility ───────────────
+    # These are NOT in Pear's published CreateMember schema.  We include
+    # them anyway because:
+    #   - mediCalId historically worked (test member 0d5a0a26-... had it
+    #     accepted; primaryCIN write path is on the Friday meeting agenda).
+    #   - insuranceCompany is a Compass-side concept that drives
+    #     resolve_cost_id() at billing time — Pear may drop it server-side
+    #     today but harmless to send.
+    # PHI guard: mediCalId is never logged (the payload_shape log line
+    # filters it out before emit).
+    if profile.medi_cal_id:
+        payload["mediCalId"] = profile.medi_cal_id
     if profile.insurance_company:
         payload["insuranceCompany"] = profile.insurance_company
 
     return payload
+
+
+def _digits_only(value: str) -> str:
+    """Strip everything except 0-9 from a phone string.
+
+    Pear's ``primaryPhoneNumberDigits`` and ``phoneNumbers[*].digits``
+    fields expect digits without country code, spaces, parens, or
+    dashes.  US numbers like "(310) 210-2352" or "+1 310-210-2352" →
+    "3102102352"; we drop a leading "1" (US country code) when the input
+    is 11 digits so the resulting string is the conventional 10-digit
+    NANP number Pear expects.
+    """
+    digits = "".join(ch for ch in (value or "") if ch.isdigit())
+    if len(digits) == 11 and digits.startswith("1"):
+        digits = digits[1:]
+    return digits
 
 
 async def ensure_member_synced(
