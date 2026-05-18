@@ -771,10 +771,19 @@ function ContextRail({ session, onOpenSuggestedQuestions }: ContextRailProps): R
     }
   }, [generateAISummary, session.id]);
 
-  // Summary is enabled when the session has ended or has a recorded end time.
-  // Without a server-side message count available in SessionData, we gate on
-  // ended_at as the primary signal (mirrors SessionChat's isCallable pattern).
-  const summaryEnabled = session.endedAt != null || session.status === 'completed';
+  // Summary becomes available the moment the session enters in_progress
+  // — i.e. as soon as a CHW starts a call — so a CHW who hangs up and
+  // wants to review the AI summary BEFORE clicking End Session sees the
+  // button enabled.  Previously the gate required session.endedAt or
+  // status='completed', but those flip only AFTER the CHW submits
+  // documentation, which means the button was greyed exactly when the
+  // CHW wanted to use it.  The backend gracefully returns an empty
+  // summary if no transcript has landed yet — the auto-poll below
+  // handles that case by retrying for 2 min.
+  const summaryEnabled =
+    session.endedAt != null
+    || session.status === 'completed'
+    || session.status === 'in_progress';
 
   // ── Auto-trigger AI summary after the call ends ──────────────────────────
   // Once the session has ended, we poll the summary endpoint up to 8 times

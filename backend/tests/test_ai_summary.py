@@ -395,3 +395,140 @@ async def test_documentation_persists_without_ai_summary(
         assert doc.ai_summary is None
         assert doc.ai_summary_generated_at is None
         assert doc.ai_summary_excluded is False
+
+
+# ---------------------------------------------------------------------------
+# Regression: AI summary across multiple CommunicationSession rows per Session
+# ---------------------------------------------------------------------------
+#
+# Real-world reproduction: a single Compass Session can have several
+# ``communication_sessions`` rows when the CHW retries the call (each
+# /call-bridge attempt inserts a fresh row).  Before the fix in summary_
+# generation._build_transcript_text, the fallback path used
+# ``scalar_one_or_none()`` on a query that matched all of them, which
+# raises ``MultipleResultsFound``; the broad try/except swallowed the
+# exception and the AI summary endpoint silently returned the empty
+# "AI summary unavailable" sentinel even when the freshest row had a
+# perfectly good transcript on it.
+#
+# This test pins the fix: with two completed CommunicationSession rows
+# (older one with transcript A, newer one with transcript B), the
+# summarizer is invoked exactly once with transcript B.
+
+
+@pytest.mark.asyncio
+async def test_ai_summary_uses_newest_communication_session_transcript(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict
+) -> None:
+    """Verify that when a session has multiple CommunicationSession rows,
+    generate_session_summary picks the most-recently-created row's
+    ``transcript_text`` instead of falling through to "unavailable"."""
+    from app.models.communication import CommunicationSession
+
+    # ── Create a request + accept + session ────────────────────────────
+    res = await client.post(
+        "/api/v1/requests/",
+        json={
+            "vertical": "mental_health",
+            "urgency": "routine",
+            "description": "Need someone to talk to",
+            "preferred_mode": "phone",
+        },
+        headers=auth_header(member_tokens),
+    )
+    assert res.status_code == 201
+    request_id = res.json()["id"]
+
+    res = await client.patch(
+        f"/api/v1/requests/{request_id}/accept", headers=auth_header(chw_tokens)
+    )
+    assert res.status_code == 200
+
+    res = await client.post(
+        "/api/v1/sessions/",
+        json={
+            "request_id": request_id,
+            "scheduled_at": "2026-07-01T10:00:00Z",
+            "mode": "phone",
+        },
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 201
+    session_id = res.json()["id"]
+
+    # ── Insert two CommunicationSession rows (older + newer) ──────────
+    # Simulates a CHW who retried the call: each /call-bridge attempt
+    # creates a fresh comm row.  The post-call finalizer stamps
+    # transcript_text on each as AssemblyAI finishes.
+    older_transcript = "Older attempt transcript — short call that didn't go anywhere useful."
+    newer_transcript = (
+        "Newer attempt transcript — full conversation about housing, food security, "
+        "and follow-up steps the CHW will take next week."
+    )
+    older_created = datetime(2026, 7, 1, 10, 5, 0, tzinfo=UTC)
+    newer_created = datetime(2026, 7, 1, 10, 15, 0, tzinfo=UTC)
+
+    async with _test_session_factory() as db:
+        db.add(
+            CommunicationSession(
+                session_id=uuid.UUID(session_id),
+                provider="vonage",
+                provider_session_id=f"compass-session-{session_id}-attempt-1",
+                proxy_number="+18127224291",
+                status="completed",
+                transcript_text=older_transcript,
+                transcript_confidence=0.78,
+                created_at=older_created,
+            )
+        )
+        db.add(
+            CommunicationSession(
+                session_id=uuid.UUID(session_id),
+                provider="vonage",
+                provider_session_id=f"compass-session-{session_id}-attempt-2",
+                proxy_number="+18127224291",
+                status="completed",
+                transcript_text=newer_transcript,
+                transcript_confidence=0.91,
+                created_at=newer_created,
+            )
+        )
+        await db.commit()
+
+    # ── Spy on the summarizer so we can assert which transcript it saw ─
+    # NoopSummarizer always returns empty; we replace it with a MagicMock
+    # that returns a SummaryResult with a known text so we can both
+    # verify the endpoint returns it AND inspect the input it was given.
+    expected_summary = "Member discussed housing + food needs; CHW to follow up."
+    spy_summarizer = MagicMock()
+    spy_summarizer.summarize = AsyncMock(
+        return_value=SummaryResult(text=expected_summary, generated_at=datetime.now(UTC)),
+    )
+
+    with patch(
+        "app.services.summary_generation.get_summarizer",
+        return_value=spy_summarizer,
+    ):
+        res = await client.post(
+            f"/api/v1/sessions/{session_id}/ai-summary",
+            headers=auth_header(chw_tokens),
+        )
+
+    # ── Assertions ────────────────────────────────────────────────────
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["ai_summary"] == expected_summary
+    assert body["generated_at"] is not None
+
+    # The summarizer must have been called with the NEWER transcript.
+    spy_summarizer.summarize.assert_called_once()
+    call_args = spy_summarizer.summarize.call_args
+    transcript_passed = call_args.kwargs.get("transcript") or call_args.args[0]
+    assert newer_transcript in transcript_passed, (
+        f"Summarizer received the wrong transcript. Expected the newer "
+        f"transcript to win; got:\n{transcript_passed[:200]}…"
+    )
+    assert older_transcript not in transcript_passed, (
+        "Summarizer received the older transcript — multi-row regression "
+        "is back; check summary_generation._build_transcript_text."
+    )
