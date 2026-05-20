@@ -59,6 +59,13 @@ class BillingClaim(Base):
     adjudicated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     rejection_reason: Mapped[str | None] = mapped_column(String(500))
+    # CMS-1500 box 24B Place of Service. "02"=Telehealth (most phone/web
+    # sessions), "11"=Office, "12"=Home, etc. Set at documentation-submit
+    # time from session.mode unless the CHW overrides. Required by Pear's
+    # bulk-upload CSV in "NN - Label" form (the CSV writer reformats).
+    place_of_service_code: Mapped[str] = mapped_column(
+        String(5), nullable=False, server_default="02"
+    )
     # Stripe transfer that moved the CHW's net share from platform balance to
     # their connected account. Populated after successful payout; null while
     # awaiting Medi-Cal adjudication via Pear Suite.

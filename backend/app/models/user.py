@@ -79,6 +79,12 @@ class CHWProfile(Base):
     # Indexed for fast lookup during claim orchestration.
     pear_suite_user_id: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
 
+    # National Provider Identifier (10-digit CMS-issued ID for billing). Not
+    # in Pear's bulk-upload CSV template today, but required for Medi-Cal
+    # billing audit + future Pear API submissions. Nullable until the CHW
+    # provides it during onboarding / admin sets it via the admin endpoint.
+    npi: Mapped[str | None] = mapped_column(String(10), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

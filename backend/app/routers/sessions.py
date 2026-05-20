@@ -575,56 +575,93 @@ async def submit_documentation(
         chw_profile_row = (await db.execute(
             select(CHWProfile).where(CHWProfile.user_id == session.chw_id)
         )).scalar_one_or_none()
+        chw_user = await db.get(User, session.chw_id)
         template_row = (await db.execute(
             select(PearSuiteTemplateMap).where(
                 PearSuiteTemplateMap.cpt_code == data.procedure_code
             )
         )).scalar_one_or_none()
 
-        # Ensure the member exists in Pear (idempotent; no-op when already synced).
-        # Best-effort: if this raises we still attempt the rest so the error
-        # surfaces in provider.submit_claim() with the precise missing-id message.
-        if member_profile_row and member_user:
+        # ── Pear bulk-upload CSV row (sandbox + future prod parallel) ──
+        # When billing_csv_enabled, append a row to the rolling monthly
+        # CSV in S3 so ops can bulk-upload to Pear (workaround until
+        # Pear's API accepts the full field set).  This runs BEFORE the
+        # Pear API call so a Pear outage doesn't block the CSV write —
+        # the CSV is the canonical billing artifact on this path.
+        from app.config import settings as _settings
+        if _settings.billing_csv_enabled and member_profile_row and member_user:
             try:
-                await ensure_member_synced(db, member_profile_row, member_user)
-            except Exception as sync_err:  # noqa: BLE001
+                from app.services.billing_csv_writer import append_row, build_row_from_models
+                csv_row = build_row_from_models(
+                    claim=claim,
+                    session=session,
+                    member_user=member_user,
+                    member_profile=member_profile_row,
+                    chw_user=chw_user,
+                    documentation=doc,
+                    consent_given=session.recording_consent_given_at is not None,
+                )
+                # Environment prefix: "prod" when Pear API is also on, else "sandbox".
+                # Lets a single bucket host both worlds cleanly.
+                env_prefix = "prod" if _settings.pear_suite_enabled else "sandbox"
+                append_row(csv_row, environment=env_prefix)
+            except Exception as csv_err:  # noqa: BLE001
                 import logging as _lg
                 _lg.getLogger("compass").warning(
-                    "Pear member sync failed pre-claim: %s", sync_err
+                    "billing CSV append failed (non-fatal, retryable from admin): %s",
+                    csv_err,
                 )
 
-        # Resolve cost_id from member's insurance carrier.
-        cost_id = resolve_cost_id(
-            member_profile_row.insurance_company if member_profile_row else None,
-            procedure_code=data.procedure_code,
-        ) if member_profile_row else None
+        # Skip the entire Pear API chain when disabled (sandbox uses CSV only).
+        # Using a flag rather than ``return`` so the follow-up extraction
+        # background task below the try-block still gets scheduled — only
+        # the Pear network calls are gated, not the post-documentation
+        # workflow.
+        if _settings.pear_suite_enabled:
+            # Ensure the member exists in Pear (idempotent; no-op when already synced).
+            # Best-effort: if this raises we still attempt the rest so the error
+            # surfaces in provider.submit_claim() with the precise missing-id message.
+            if member_profile_row and member_user:
+                try:
+                    await ensure_member_synced(db, member_profile_row, member_user)
+                except Exception as sync_err:  # noqa: BLE001
+                    import logging as _lg
+                    _lg.getLogger("compass").warning(
+                        "Pear member sync failed pre-claim: %s", sync_err
+                    )
 
-        claim_submission = ClaimSubmission(
-            session_id=session_id,
-            chw_id=session.chw_id,
-            member_id=session.member_id,
-            service_date=session_date,
-            procedure_code=data.procedure_code,
-            modifier=claim.modifier or "U2",
-            diagnosis_codes=data.diagnosis_codes,
-            units=computed_units,
-            gross_amount=_Dec(str(earnings["gross"])),
-        )
-        claim_submission.extra = {
-            "pear_suite_member_id":            (member_profile_row.pear_suite_member_id if member_profile_row else None),
-            "pear_suite_chw_user_id":          (chw_profile_row.pear_suite_user_id if chw_profile_row else None),
-            "pear_suite_activity_template_id": (template_row.template_id if template_row else None),
-            "cost_id":                         cost_id,
-        }
+            # Resolve cost_id from member's insurance carrier.
+            cost_id = resolve_cost_id(
+                member_profile_row.insurance_company if member_profile_row else None,
+                procedure_code=data.procedure_code,
+            ) if member_profile_row else None
 
-        result = await provider.submit_claim(claim_submission)
-        if result.success and result.provider_claim_id:
-            claim.pear_suite_claim_id = result.provider_claim_id
-            claim.status = result.status
-            from datetime import UTC as _UTC
-            from datetime import datetime as _dt
-            claim.submitted_at = _dt.now(_UTC)
-            await db.commit()
+            claim_submission = ClaimSubmission(
+                session_id=session_id,
+                chw_id=session.chw_id,
+                member_id=session.member_id,
+                service_date=session_date,
+                procedure_code=data.procedure_code,
+                modifier=claim.modifier or "U2",
+                diagnosis_codes=data.diagnosis_codes,
+                units=computed_units,
+                gross_amount=_Dec(str(earnings["gross"])),
+            )
+            claim_submission.extra = {
+                "pear_suite_member_id":            (member_profile_row.pear_suite_member_id if member_profile_row else None),
+                "pear_suite_chw_user_id":          (chw_profile_row.pear_suite_user_id if chw_profile_row else None),
+                "pear_suite_activity_template_id": (template_row.template_id if template_row else None),
+                "cost_id":                         cost_id,
+            }
+
+            result = await provider.submit_claim(claim_submission)
+            if result.success and result.provider_claim_id:
+                claim.pear_suite_claim_id = result.provider_claim_id
+                claim.status = result.status
+                from datetime import UTC as _UTC
+                from datetime import datetime as _dt
+                claim.submitted_at = _dt.now(_UTC)
+                await db.commit()
     except Exception as e:  # noqa: BLE001
         import logging
         logging.getLogger("compass").warning("Pear Suite claim submission deferred: %s", e)

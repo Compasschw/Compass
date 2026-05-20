@@ -20,6 +20,23 @@ class Settings(BaseSettings):
     s3_bucket_phi: str = "compass-phi-dev"
     s3_bucket_public: str = "compass-public-dev"
 
+    # Pear bulk-upload CSV workaround. When enabled, every successful
+    # submit_documentation appends a row to a monthly rolling CSV in
+    # ``s3_bucket_billing_csv`` shaped to match Pear's CSV-import template
+    # (see backend/app/services/billing_csv_writer.py for the column list).
+    # Default OFF so prod stays Pear-API-only until ops promotes this flag.
+    # Sandbox sets it to true in its .env so cofounder testing produces
+    # CSV rows we can verify against Pear's bulk-upload UI.
+    billing_csv_enabled: bool = False
+    s3_bucket_billing_csv: str = "compass-sandbox-billing-csv"
+
+    # Sandbox / cofounder-testing toggle for the live PearSuite API.
+    # When False, ensure_member_synced + submit_claim short-circuit cleanly
+    # so the sandbox backend never posts to api.pearsuite.com. Production
+    # leaves this True (default) so today's Pear claim chain continues to
+    # fire alongside the CSV write.
+    pear_suite_enabled: bool = True
+
     cors_origins: list[str] = [
         "http://localhost:5173",
         "http://localhost:8081",

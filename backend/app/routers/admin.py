@@ -1189,3 +1189,93 @@ async def set_chw_pear_user_id(
         pear_suite_user_id=body.pear_user_id,
         updated=(previous != body.pear_user_id),
     )
+
+
+# ── Billing CSV export (Pear bulk-upload workaround) ────────────────────────
+
+
+class _BillingExportResponse(BaseModel):
+    """Response shape for GET /admin/billing-export."""
+
+    month: str = Field(..., description='Month in YYYY-MM form, e.g. "2026-05".')
+    bucket: str = Field(..., description="S3 bucket name where the CSV lives.")
+    key: str = Field(..., description="S3 object key for the month's CSV.")
+    download_url: str | None = Field(
+        default=None,
+        description=(
+            "Presigned download URL (15-minute TTL).  None when the CSV "
+            "for that month doesn't exist yet (no claims submitted)."
+        ),
+    )
+    exists: bool = Field(
+        ..., description="True when the S3 object exists for the requested month."
+    )
+
+
+@router.get(
+    "/billing-export",
+    response_model=_BillingExportResponse,
+    summary="Get a presigned download URL for the monthly billing CSV",
+    description=(
+        "Returns a 15-minute presigned S3 URL pointing at the Pear-shaped "
+        "bulk-upload CSV for the requested month.  Ops downloads the CSV "
+        "and uploads it to Pear's bulk-import UI.  This is the workaround "
+        "for fields Pear's API does not currently accept; the CSV captures "
+        "every column Pear's parser expects."
+    ),
+)
+async def get_billing_export(
+    month: str = Query(
+        ...,
+        pattern=r"^\d{4}-\d{2}$",
+        description='Month in YYYY-MM form (e.g. "2026-05").',
+    ),
+    environment: str = Query(
+        default="sandbox",
+        pattern=r"^(sandbox|prod)$",
+        description=(
+            "Which environment's CSV to download.  Defaults to sandbox so "
+            "an accidental click on a sandbox admin dashboard cannot leak "
+            "prod PHI; pass `environment=prod` explicitly for real billing."
+        ),
+    ),
+    _key: bool = Depends(require_admin_key),
+    _2fa: None = Depends(require_2fa_token),
+) -> _BillingExportResponse:
+    """Return a presigned download URL for the month's Pear bulk-upload CSV."""
+    from app.services.s3_service import generate_presigned_download_url, get_s3_client
+
+    bucket = settings.s3_bucket_billing_csv
+    if not bucket:
+        raise HTTPException(
+            status_code=503,
+            detail="s3_bucket_billing_csv is not configured on this environment",
+        )
+    key = f"{environment}/{month}.csv"
+
+    # Check existence before issuing a presigned URL — a presigned URL to
+    # a missing object would 404 at download time and confuse ops.
+    s3 = get_s3_client()
+    try:
+        s3.head_object(Bucket=bucket, Key=key)
+        exists = True
+    except Exception:  # noqa: BLE001
+        # Either NoSuchKey or a real error; treat as "not yet" so admin
+        # sees a clear "no claims this month" result rather than a 500.
+        exists = False
+
+    download_url: str | None = None
+    if exists:
+        download_url = generate_presigned_download_url(bucket, key, expires_in=900)
+
+    logger.info(
+        "admin.get_billing_export: month=%s env=%s exists=%s",
+        month, environment, exists,
+    )
+    return _BillingExportResponse(
+        month=month,
+        bucket=bucket,
+        key=key,
+        download_url=download_url,
+        exists=exists,
+    )
