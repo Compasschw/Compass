@@ -1,0 +1,260 @@
+#!/usr/bin/env python3
+"""Download a Pear-shaped billing CSV from Compass for a date range.
+
+Use this daily (or whatever cadence matches your billing rhythm) to
+pull every BillingClaim submitted in a date range, then bulk-upload
+the resulting CSV to Pear's UI.  Each row carries a hidden
+``[compass-session:<uuid>]`` marker in Member Notes so duplicates
+are reconcilable if you ever upload an overlapping range twice.
+
+────────────────────────────────────────────────────────────────────
+Setup (one time)
+────────────────────────────────────────────────────────────────────
+
+1. Save your admin key locally (600 perms so only you can read it):
+
+       printf '%s' '<your-admin-key>' > ~/.compass-admin-key
+       chmod 600 ~/.compass-admin-key
+
+   Alternatively, export ``COMPASS_ADMIN_KEY=<key>`` in your shell rc.
+
+2. Make this script executable and (optionally) symlink it into PATH:
+
+       chmod +x scripts/billing-csv
+       ln -sf "$(pwd)/scripts/billing-csv" ~/bin/compass-billing-csv
+
+3. Make sure your authenticator app has a TOTP entry for the Compass
+   admin 2FA — you'll be prompted for the current 6-digit code on
+   every run (codes are short-lived JWTs and we don't cache them).
+
+────────────────────────────────────────────────────────────────────
+Usage
+────────────────────────────────────────────────────────────────────
+
+    scripts/billing-csv                                # today only (UTC)
+    scripts/billing-csv 2026-05-22                     # one specific day
+    scripts/billing-csv 2026-05-20 2026-05-22          # a date range
+    scripts/billing-csv --sandbox                      # hit sandbox API
+    scripts/billing-csv --out ~/Desktop/today.csv      # custom output path
+    scripts/billing-csv yesterday                      # convenience alias
+    scripts/billing-csv last-7-days
+
+Output defaults to ``~/Downloads/compass-billing_<range>.csv`` so the
+file lands where you'd expect Safari/Chrome downloads to land.
+
+Exit codes: 0 = success, 1 = auth/setup error, 2 = API error.
+"""
+
+from __future__ import annotations
+
+import argparse
+import getpass
+import json
+import os
+import pathlib
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+from datetime import date, timedelta
+
+PROD_URL = "https://api.joincompasschw.com/api/v1"
+SANDBOX_URL = "https://sandbox-api.joincompasschw.com/api/v1"
+ADMIN_KEY_FILE = pathlib.Path.home() / ".compass-admin-key"
+
+
+def load_admin_key() -> str:
+    """Read admin key from env or ~/.compass-admin-key file."""
+    env_key = os.environ.get("COMPASS_ADMIN_KEY")
+    if env_key:
+        return env_key.strip()
+    if ADMIN_KEY_FILE.exists():
+        key = ADMIN_KEY_FILE.read_text().strip()
+        if key:
+            return key
+    sys.stderr.write(
+        "ERROR: No admin key found.\n"
+        "  Either set COMPASS_ADMIN_KEY in your shell, OR write the key to\n"
+        f"  {ADMIN_KEY_FILE} (chmod 600).\n"
+    )
+    sys.exit(1)
+
+
+def fetch_2fa_token(api_base: str, admin_key: str) -> str:
+    """POST /admin/2fa/verify with a freshly-prompted TOTP code.
+    Returns the short-lived 2fa_token JWT (valid ~15 min)."""
+    code = getpass.getpass("Enter 6-digit TOTP code (hidden): ").strip()
+    if not code.isdigit() or len(code) != 6:
+        sys.stderr.write("ERROR: TOTP code must be exactly 6 digits.\n")
+        sys.exit(1)
+
+    body = json.dumps({"token": code}).encode("utf-8")
+    req = urllib.request.Request(
+        url=f"{api_base}/admin/2fa/verify",
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {admin_key}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        sys.stderr.write(
+            f"ERROR: 2FA verify failed ({exc.code}). "
+            f"Wrong key or TOTP code, or 2FA not yet set up.\n"
+            f"Body: {exc.read().decode('utf-8', 'replace')[:300]}\n"
+        )
+        sys.exit(1)
+    except urllib.error.URLError as exc:
+        sys.stderr.write(f"ERROR: network failure: {exc}\n")
+        sys.exit(2)
+
+    token = payload.get("two_fa_token")
+    if not token:
+        sys.stderr.write(f"ERROR: 2FA response missing token: {payload}\n")
+        sys.exit(1)
+    return token
+
+
+def download_csv(
+    api_base: str,
+    admin_key: str,
+    two_fa_token: str,
+    from_date: date,
+    to_date: date,
+    out_path: pathlib.Path,
+) -> int:
+    """Stream the CSV to disk. Returns bytes written."""
+    qs = urllib.parse.urlencode({"from": from_date.isoformat(), "to": to_date.isoformat()})
+    req = urllib.request.Request(
+        url=f"{api_base}/admin/billing-export?{qs}",
+        method="GET",
+        headers={
+            "Authorization": f"Bearer {admin_key}",
+            "X-Admin-2FA-Token": two_fa_token,
+            "Accept": "text/csv",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            data = resp.read()
+    except urllib.error.HTTPError as exc:
+        sys.stderr.write(
+            f"ERROR: download failed ({exc.code}): "
+            f"{exc.read().decode('utf-8', 'replace')[:300]}\n"
+        )
+        sys.exit(2)
+    except urllib.error.URLError as exc:
+        sys.stderr.write(f"ERROR: network failure: {exc}\n")
+        sys.exit(2)
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_bytes(data)
+    return len(data)
+
+
+def resolve_date_args(raw: list[str]) -> tuple[date, date]:
+    """Parse positional date args + convenience aliases."""
+    today = date.today()
+    if not raw:
+        return today, today
+
+    # Convenience aliases.
+    first = raw[0].lower()
+    if first == "today":
+        return today, today
+    if first == "yesterday":
+        return today - timedelta(days=1), today - timedelta(days=1)
+    if first == "last-7-days":
+        return today - timedelta(days=6), today  # inclusive 7-day window
+    if first == "last-30-days":
+        return today - timedelta(days=29), today
+    if first == "this-month":
+        first_of_month = today.replace(day=1)
+        return first_of_month, today
+
+    # Otherwise parse 1 or 2 YYYY-MM-DD positional args.
+    try:
+        start = date.fromisoformat(raw[0])
+    except ValueError:
+        sys.stderr.write(f"ERROR: invalid date '{raw[0]}', expected YYYY-MM-DD.\n")
+        sys.exit(1)
+    end = start
+    if len(raw) >= 2:
+        try:
+            end = date.fromisoformat(raw[1])
+        except ValueError:
+            sys.stderr.write(f"ERROR: invalid date '{raw[1]}', expected YYYY-MM-DD.\n")
+            sys.exit(1)
+    if end < start:
+        sys.stderr.write(f"ERROR: end date {end} must be on or after start date {start}.\n")
+        sys.exit(1)
+    return start, end
+
+
+def default_out_path(start: date, end: date) -> pathlib.Path:
+    downloads = pathlib.Path.home() / "Downloads"
+    if start == end:
+        name = f"compass-billing_{start.isoformat()}.csv"
+    else:
+        name = f"compass-billing_{start.isoformat()}_to_{end.isoformat()}.csv"
+    return downloads / name
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Download a Pear-shaped billing CSV for a date range.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  billing-csv                              # today\n"
+            "  billing-csv yesterday\n"
+            "  billing-csv last-7-days\n"
+            "  billing-csv 2026-05-22\n"
+            "  billing-csv 2026-05-20 2026-05-22\n"
+            "  billing-csv --sandbox last-7-days\n"
+        ),
+    )
+    parser.add_argument(
+        "dates", nargs="*",
+        help=(
+            "Date or date range. One of: today, yesterday, last-7-days, "
+            "last-30-days, this-month, or 1-2 YYYY-MM-DD args."
+        ),
+    )
+    parser.add_argument(
+        "--sandbox", action="store_true",
+        help="Hit the sandbox API (sandbox-api.joincompasschw.com) instead of prod.",
+    )
+    parser.add_argument(
+        "--out", type=pathlib.Path, default=None,
+        help="Output path (default: ~/Downloads/compass-billing_<range>.csv).",
+    )
+    args = parser.parse_args()
+
+    api_base = SANDBOX_URL if args.sandbox else PROD_URL
+    admin_key = load_admin_key()
+    start, end = resolve_date_args(args.dates)
+    out_path = args.out or default_out_path(start, end)
+
+    print(f"→ Environment: {'SANDBOX' if args.sandbox else 'PRODUCTION'}")
+    print(f"→ Date range:  {start} → {end}")
+    print(f"→ Output:      {out_path}")
+
+    token = fetch_2fa_token(api_base, admin_key)
+    bytes_written = download_csv(api_base, admin_key, token, start, end, out_path)
+
+    # Count rows for a quick sanity check (header row excluded).
+    rows = max(0, out_path.read_text().count("\n") - 1)
+    print(f"✓ Downloaded {bytes_written} bytes ({rows} claim row{'s' if rows != 1 else ''}).")
+    if rows == 0:
+        print("  (No claims in this range — nothing to upload to Pear.)")
+    else:
+        print(f"  Next: open Pear's bulk-upload UI and import {out_path}")
+
+
+if __name__ == "__main__":
+    main()

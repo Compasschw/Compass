@@ -409,6 +409,31 @@ def append_row(row: BillingCsvRow, *, environment: str = "sandbox") -> None:
     )
 
 
+def build_csv_bytes(rows: list[BillingCsvRow]) -> bytes:
+    """Render a Pear-shaped CSV (header + rows) for the date-range export.
+
+    Unlike ``append_row``, this does not touch S3 — it produces the CSV
+    bytes in-memory so the admin endpoint can stream them directly in
+    the HTTP response.  Each row is annotated with the session-id marker
+    so ops downloading a date-range slice can still correlate Pear rows
+    back to Compass sessions.
+    """
+    buf = io.StringIO()
+    writer = csv.writer(buf, quoting=csv.QUOTE_MINIMAL)
+    writer.writerow(_PEAR_CSV_HEADER)
+    for row in rows:
+        annotated = BillingCsvRow(
+            **{
+                **row.__dict__,
+                "member_notes": _annotate_session_marker(
+                    row.member_notes, row.session_id
+                ),
+            },
+        )
+        writer.writerow(_row_to_csv_cells(annotated))
+    return buf.getvalue().encode("utf-8")
+
+
 def build_row_from_models(
     *,
     claim: Any,            # BillingClaim

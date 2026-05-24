@@ -1194,88 +1194,142 @@ async def set_chw_pear_user_id(
 # ── Billing CSV export (Pear bulk-upload workaround) ────────────────────────
 
 
-class _BillingExportResponse(BaseModel):
-    """Response shape for GET /admin/billing-export."""
-
-    month: str = Field(..., description='Month in YYYY-MM form, e.g. "2026-05".')
-    bucket: str = Field(..., description="S3 bucket name where the CSV lives.")
-    key: str = Field(..., description="S3 object key for the month's CSV.")
-    download_url: str | None = Field(
-        default=None,
-        description=(
-            "Presigned download URL (15-minute TTL).  None when the CSV "
-            "for that month doesn't exist yet (no claims submitted)."
-        ),
-    )
-    exists: bool = Field(
-        ..., description="True when the S3 object exists for the requested month."
-    )
-
-
 @router.get(
     "/billing-export",
-    response_model=_BillingExportResponse,
-    summary="Get a presigned download URL for the monthly billing CSV",
+    summary="Download a Pear-shaped billing CSV for a date range",
     description=(
-        "Returns a 15-minute presigned S3 URL pointing at the Pear-shaped "
-        "bulk-upload CSV for the requested month.  Ops downloads the CSV "
-        "and uploads it to Pear's bulk-import UI.  This is the workaround "
-        "for fields Pear's API does not currently accept; the CSV captures "
-        "every column Pear's parser expects."
+        "Streams a CSV in the exact column shape Pear's bulk-upload UI "
+        "expects, containing every billing claim created in the requested "
+        "date range.  Default range is today (UTC).  Ops downloads daily "
+        "(or whatever cadence matches their billing rhythm) and uploads "
+        "the file to Pear's bulk-import UI.  Each row carries a hidden "
+        "``[compass-session:<uuid>]`` marker in Member Notes so ops can "
+        "reconcile uploads back to Compass sessions if Pear rejects rows.\n\n"
+        "Rows are filtered by ``BillingClaim.created_at`` (the moment the "
+        "CHW submitted documentation) rather than ``service_date`` so the "
+        "filter is reliable even when claims have no service_date set."
     ),
 )
 async def get_billing_export(
-    month: str = Query(
-        ...,
-        pattern=r"^\d{4}-\d{2}$",
-        description='Month in YYYY-MM form (e.g. "2026-05").',
-    ),
-    environment: str = Query(
-        default="sandbox",
-        pattern=r"^(sandbox|prod)$",
+    from_date: str | None = Query(
+        default=None,
+        alias="from",
+        pattern=r"^\d{4}-\d{2}-\d{2}$",
         description=(
-            "Which environment's CSV to download.  Defaults to sandbox so "
-            "an accidental click on a sandbox admin dashboard cannot leak "
-            "prod PHI; pass `environment=prod` explicitly for real billing."
+            'Start date (inclusive), ``YYYY-MM-DD`` form.  Defaults to '
+            "today (UTC) when omitted."
         ),
     ),
+    to_date: str | None = Query(
+        default=None,
+        alias="to",
+        pattern=r"^\d{4}-\d{2}-\d{2}$",
+        description=(
+            'End date (inclusive), ``YYYY-MM-DD`` form.  Defaults to the '
+            "value of ``from`` when omitted (single-day download)."
+        ),
+    ),
+    db: AsyncSession = Depends(get_db),
     _key: bool = Depends(require_admin_key),
     _2fa: None = Depends(require_2fa_token),
-) -> _BillingExportResponse:
-    """Return a presigned download URL for the month's Pear bulk-upload CSV."""
-    from app.services.s3_service import generate_presigned_download_url, get_s3_client
+):
+    """Stream a Pear-shaped CSV containing claims in the date range."""
+    from datetime import date as _date, time as _time
 
-    bucket = settings.s3_bucket_billing_csv
-    if not bucket:
-        raise HTTPException(
-            status_code=503,
-            detail="s3_bucket_billing_csv is not configured on this environment",
-        )
-    key = f"{environment}/{month}.csv"
+    from fastapi.responses import StreamingResponse
 
-    # Check existence before issuing a presigned URL — a presigned URL to
-    # a missing object would 404 at download time and confuse ops.
-    s3 = get_s3_client()
-    try:
-        s3.head_object(Bucket=bucket, Key=key)
-        exists = True
-    except Exception:  # noqa: BLE001
-        # Either NoSuchKey or a real error; treat as "not yet" so admin
-        # sees a clear "no claims this month" result rather than a 500.
-        exists = False
-
-    download_url: str | None = None
-    if exists:
-        download_url = generate_presigned_download_url(bucket, key, expires_in=900)
-
-    logger.info(
-        "admin.get_billing_export: month=%s env=%s exists=%s",
-        month, environment, exists,
+    from app.models.session import SessionDocumentation
+    from app.services.billing_csv_writer import (
+        build_csv_bytes,
+        build_row_from_models,
     )
-    return _BillingExportResponse(
-        month=month,
-        bucket=bucket,
-        key=key,
-        download_url=download_url,
-        exists=exists,
+
+    # ── Resolve date range with today-as-default semantics ───────────────
+    today = datetime.now(UTC).date()
+    try:
+        start = _date.fromisoformat(from_date) if from_date else today
+        end = _date.fromisoformat(to_date) if to_date else start
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="from/to must be YYYY-MM-DD",
+        )
+    if end < start:
+        raise HTTPException(
+            status_code=400,
+            detail=f"to ({end}) must be on or after from ({start})",
+        )
+
+    # Translate inclusive [start, end] dates to UTC datetime bounds.
+    range_lo = datetime.combine(start, _time.min, tzinfo=UTC)
+    range_hi = datetime.combine(end, _time.max, tzinfo=UTC)
+
+    # ── Pull claims joined with the data the CSV row needs ───────────────
+    MemberUser = aliased(User)
+    CHWUser = aliased(User)
+
+    stmt = (
+        select(
+            BillingClaim,
+            Session,
+            MemberUser,
+            MemberProfile,
+            CHWUser,
+            SessionDocumentation,
+        )
+        .join(Session, Session.id == BillingClaim.session_id)
+        .join(MemberUser, MemberUser.id == BillingClaim.member_id)
+        .join(
+            MemberProfile,
+            MemberProfile.user_id == BillingClaim.member_id,
+            isouter=True,
+        )
+        .join(CHWUser, CHWUser.id == BillingClaim.chw_id)
+        .join(
+            SessionDocumentation,
+            SessionDocumentation.session_id == BillingClaim.session_id,
+            isouter=True,
+        )
+        .where(BillingClaim.created_at >= range_lo)
+        .where(BillingClaim.created_at <= range_hi)
+        .order_by(BillingClaim.created_at.asc())
+    )
+    result = await db.execute(stmt)
+    tuples = result.all()
+
+    # ── Build BillingCsvRow per claim ────────────────────────────────────
+    rows = []
+    for claim, session, member_user, member_profile, chw_user, doc in tuples:
+        # Skip claims without a member_profile (rare; pre-onboarded edge case).
+        # We still want the row though — the writer handles None profile fields.
+        rows.append(
+            build_row_from_models(
+                claim=claim,
+                session=session,
+                member_user=member_user,
+                member_profile=member_profile,
+                chw_user=chw_user,
+                documentation=doc,
+                consent_given=session.recording_consent_given_at is not None,
+            )
+        )
+
+    csv_bytes = build_csv_bytes(rows)
+
+    filename = (
+        f"compass-billing_{start.isoformat()}_to_{end.isoformat()}.csv"
+        if start != end
+        else f"compass-billing_{start.isoformat()}.csv"
+    )
+    logger.info(
+        "admin.get_billing_export: range=[%s..%s] claims=%d bytes=%d",
+        start, end, len(rows), len(csv_bytes),
+    )
+    return StreamingResponse(
+        iter([csv_bytes]),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
     )
