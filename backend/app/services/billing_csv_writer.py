@@ -502,7 +502,10 @@ def build_row_from_models(
     else:
         start_utc = getattr(session, "started_at", None)
 
-    end_utc = getattr(documentation, "created_at", None) or getattr(
+    # SessionDocumentation uses ``submitted_at`` (not created_at) as the
+    # canonical doc-submission timestamp. Fall back to session.ended_at
+    # for the rare case where documentation is somehow absent.
+    end_utc = getattr(documentation, "submitted_at", None) or getattr(
         session, "ended_at", None
     )
 
