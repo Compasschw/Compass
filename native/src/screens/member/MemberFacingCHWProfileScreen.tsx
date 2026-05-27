@@ -630,7 +630,14 @@ export function MemberFacingCHWProfileScreen(
           {
             icon: <UserX size={18} color={colors.foreground} />,
             label: 'Reassign',
-            onPress: () => navigation.goBack(),
+            // Members with existing sessions can't reach the find/match
+            // flow because MyCHWScreen auto-renders this profile when any
+            // session exists. Navigate to the explicit FindList route on
+            // the FindStack to bypass that gate. After picking a CHW
+            // (could be the same one) and submitting a new request, a
+            // fresh Session is created — fixes the "no way to start a
+            // new session with the same CHW" blocker.
+            onPress: () => navigation.navigate('FindList' as never),
           },
         ]}
       />

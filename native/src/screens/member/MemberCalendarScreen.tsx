@@ -705,7 +705,14 @@ export function MemberCalendarScreen(): React.JSX.Element {
   }, []);
 
   const handleFindCHW = useCallback(() => {
-    navigation.navigate('FindCHW' as never);
+    // Navigate into the FindCHW tab's nested stack at the explicit FindList
+    // screen — MyCHWScreen (FindMain) auto-renders the existing-CHW profile
+    // when the member already has sessions, so 'FindCHW' alone dead-ends
+    // there. FindList always shows MemberFindScreen.
+    navigation.navigate(
+      'FindCHW' as never,
+      { screen: 'FindList' } as never,
+    );
   }, [navigation]);
 
   // ── Derived data ─────────────────────────────────────────────────────────────

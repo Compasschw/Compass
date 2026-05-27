@@ -66,6 +66,12 @@ export type MemberHomeStackParamList = {
 export type MemberFindStackParamList = {
   FindMain: undefined;
   CHWProfile: { chwId: string };
+  // Explicit "find a different / new CHW" entry point. FindMain auto-renders
+  // the existing CHW's profile when the member has any sessions, so members
+  // can't reach the find/match flow once assigned. This route bypasses that
+  // gate (used by the Reassign button on MemberFacingCHWProfileScreen + the
+  // Appointments "Find a CHW" CTAs).
+  FindList: undefined;
 };
 
 export type MemberTabParamList = {
@@ -117,6 +123,7 @@ function FindStackNavigator(): React.JSX.Element {
     <FindStack.Navigator screenOptions={{ headerShown: false }}>
       <FindStack.Screen name="FindMain" component={withErrorBoundary(MyCHWScreen)} />
       <FindStack.Screen name="CHWProfile" component={withErrorBoundary(MemberFacingCHWProfileScreen)} />
+      <FindStack.Screen name="FindList" component={withErrorBoundary(MemberFindScreen)} />
     </FindStack.Navigator>
   );
 }
