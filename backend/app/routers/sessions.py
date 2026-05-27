@@ -591,7 +591,24 @@ async def submit_documentation(
         from app.config import settings as _settings
         if _settings.billing_csv_enabled and member_profile_row and member_user:
             try:
+                from app.models.communication import CommunicationSession
                 from app.services.billing_csv_writer import append_row, build_row_from_models
+
+                # Pull the most recent CommunicationSession for this Session
+                # — its created_at is "when the call connected", which is
+                # the right Activity Start Time for billing (vs the chat
+                # thread's started_at, which can be days older). Falls back
+                # to None for in-person sessions with no call leg; the
+                # writer then defaults to Session.started_at.
+                latest_comm = (
+                    await db.execute(
+                        select(CommunicationSession)
+                        .where(CommunicationSession.session_id == session_id)
+                        .order_by(CommunicationSession.created_at.desc())
+                        .limit(1)
+                    )
+                ).scalar_one_or_none()
+
                 csv_row = build_row_from_models(
                     claim=claim,
                     session=session,
@@ -600,6 +617,7 @@ async def submit_documentation(
                     chw_user=chw_user,
                     documentation=doc,
                     consent_given=session.recording_consent_given_at is not None,
+                    communication_session=latest_comm,
                 )
                 # Environment prefix: "prod" when Pear API is also on, else "sandbox".
                 # Lets a single bucket host both worlds cleanly.

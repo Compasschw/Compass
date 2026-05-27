@@ -1298,8 +1298,24 @@ async def get_billing_export(
     tuples = result.all()
 
     # ── Build BillingCsvRow per claim ────────────────────────────────────
+    from app.models.communication import CommunicationSession
+
     rows = []
     for claim, session, member_user, member_profile, chw_user, doc in tuples:
+        # Pull the most recent CommunicationSession so Activity Start Time
+        # reflects the actual call's connect time. N+1 by design — date-
+        # range exports are bounded (typically days/weeks of claims, not
+        # months) so per-claim fetches stay cheap. If volume grows, swap
+        # for a lateral join or a batched IN-query.
+        latest_comm = (
+            await db.execute(
+                select(CommunicationSession)
+                .where(CommunicationSession.session_id == claim.session_id)
+                .order_by(CommunicationSession.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+
         # Skip claims without a member_profile (rare; pre-onboarded edge case).
         # We still want the row though — the writer handles None profile fields.
         rows.append(
@@ -1311,6 +1327,7 @@ async def get_billing_export(
                 chw_user=chw_user,
                 documentation=doc,
                 consent_given=session.recording_consent_given_at is not None,
+                communication_session=latest_comm,
             )
         )
 

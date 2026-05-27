@@ -436,18 +436,28 @@ def build_csv_bytes(rows: list[BillingCsvRow]) -> bytes:
 
 def build_row_from_models(
     *,
-    claim: Any,            # BillingClaim
-    session: Any,          # Session
-    member_user: Any,      # User (role='member')
-    member_profile: Any,   # MemberProfile
-    chw_user: Any,         # User (role='chw')
-    documentation: Any,    # SessionDocumentation
+    claim: Any,                       # BillingClaim
+    session: Any,                     # Session
+    member_user: Any,                 # User (role='member')
+    member_profile: Any,              # MemberProfile
+    chw_user: Any,                    # User (role='chw')
+    documentation: Any,               # SessionDocumentation
     consent_given: bool,
+    communication_session: Any = None,  # CommunicationSession (most recent)
 ) -> BillingCsvRow:
     """Map our SQLAlchemy models to a ``BillingCsvRow``.
 
     Centralizes the mapping so the submit-documentation handler stays
     thin and the field-extraction logic is unit-testable in isolation.
+
+    ``communication_session`` (the most recent CommunicationSession for
+    this Session) provides the actual call timing.  Activity Start Time
+    is the call's started_at (when the bridged call connected); Activity
+    End Time is the documentation's created_at (the moment the CHW
+    clicked Submit on the DocumentationModal) — that's when the billable
+    activity is considered closed for Pear's purposes.  Both fall back
+    to Session.started_at / Session.ended_at when no CommunicationSession
+    exists (in-person sessions with no call leg).
     """
     name = (member_user.name or "").strip().split(" ", maxsplit=1)
     first_name = name[0] if name else ""
@@ -478,11 +488,23 @@ def build_row_from_models(
     dx_codes = getattr(documentation, "diagnosis_codes", None) or []
     first_dx = dx_codes[0] if dx_codes else None
 
-    # Activity start/end: prefer session timestamps; fall back to
-    # service_date+now for the rare case of a claim without explicit
-    # session timing (shouldn't happen but defensive).
-    start_utc = getattr(session, "started_at", None)
-    end_utc = getattr(session, "ended_at", None)
+    # Activity start = when the bridged call connected (the actual
+    # billable encounter), pulled from the most recent
+    # CommunicationSession. Activity end = when the CHW submitted the
+    # documentation (the moment the claim is considered closed for
+    # billing purposes). When no CommunicationSession exists (in-person
+    # session, no call leg), fall back to Session.started_at /
+    # Session.ended_at so the row still renders something.
+    if communication_session is not None:
+        # CommunicationSession.created_at = when the call was initiated
+        # by the backend (closest available timestamp to "call begins").
+        start_utc = getattr(communication_session, "created_at", None)
+    else:
+        start_utc = getattr(session, "started_at", None)
+
+    end_utc = getattr(documentation, "created_at", None) or getattr(
+        session, "ended_at", None
+    )
 
     return BillingCsvRow(
         first_name=first_name,
