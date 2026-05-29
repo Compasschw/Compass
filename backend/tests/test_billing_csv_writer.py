@@ -352,15 +352,18 @@ def test_append_row_initializes_csv_with_header_when_empty(
     # And the new file lands under the v2/ prefix
     assert put_kwargs["Key"].startswith("sandbox/v2/")
 
-    # Header row + one data row
-    lines = body.strip().split("\n")
-    assert len(lines) == 2
+    # Header row + one data row. Parse via csv.reader so a quoted multi-line
+    # Notes value (the [compass-session:<uuid>] marker is appended on a new
+    # line inside the cell) is treated as ONE row, not two.
+    import csv as _csv
+    rows = list(_csv.reader(io.StringIO(body)))
+    assert len(rows) == 2
     # Header matches Pear's v2 spec including the typo
-    assert "Adress 2" in lines[0]
-    assert "Responsible User Email" in lines[0]
+    assert "Adress 2" in rows[0]
+    assert "Responsible User Email" in rows[0]
     # Data row has the Pear sample values
-    assert "Adam" in lines[1]
-    assert "9/20/1991" in lines[1]
+    assert "Adam" in rows[1]
+    assert "9/20/1991" in rows[1]
 
 
 @patch("app.services.billing_csv_writer.get_s3_client")
