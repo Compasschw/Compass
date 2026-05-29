@@ -51,7 +51,8 @@ type Role = 'chw' | 'member';
 type Sex = 'Male' | 'Female' | 'Other';
 
 interface FieldRefs {
-  name: React.RefObject<TextInput | null>;
+  firstName: React.RefObject<TextInput | null>;
+  lastName: React.RefObject<TextInput | null>;
   email: React.RefObject<TextInput | null>;
   password: React.RefObject<TextInput | null>;
   zip: React.RefObject<TextInput | null>;
@@ -112,7 +113,11 @@ export function RegisterScreen(): React.JSX.Element {
   const { register } = useAuth();
 
   const [role, setRole] = useState<Role>('member');
-  const [name, setName] = useState('');
+  // First + Last collected separately. Pear Suite requires both for members;
+  // CHWs are kept consistent so the User.name column always carries a full
+  // name. Combined into "first last" with a single space before submit.
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [zip, setZip] = useState('');
@@ -150,7 +155,8 @@ export function RegisterScreen(): React.JSX.Element {
   const [registeredPhone, setRegisteredPhone] = useState<string>('');
 
   const refs: FieldRefs = {
-    name: useRef<TextInput>(null),
+    firstName: useRef<TextInput>(null),
+    lastName: useRef<TextInput>(null),
     email: useRef<TextInput>(null),
     password: useRef<TextInput>(null),
     zip: useRef<TextInput>(null),
@@ -158,15 +164,19 @@ export function RegisterScreen(): React.JSX.Element {
   };
 
   // Hard-required gate by role:
-  //   - CHW: name + valid email + 8-char password (unchanged from before).
-  //   - Member: name + valid email + 8-char password + valid DOB + Sex
-  //     (everything else is captured optionally and persists to the
-  //     MemberProfile but doesn't block submission).
+  //   - CHW: first + last name + valid email + 8-char password.
+  //   - Member: same as CHW + valid DOB + Sex (everything else is captured
+  //     optionally and persists to the MemberProfile but doesn't block
+  //     submission).
+  // Both first AND last are required at the form layer because the backend
+  // rejects single-token names for members (Pear requires both) and we want
+  // CHW.name to carry a full name too for consistent display.
   // ZIP is no longer required at signup — it's part of the optional
   // address block.  Phone label no longer says "(optional)" but the
   // submit gate still doesn't enforce it.
   const accountBasicsOk =
-    name.trim().length > 1 &&
+    firstName.trim().length > 0 &&
+    lastName.trim().length > 0 &&
     EMAIL_PATTERN.test(email.trim()) &&
     password.length >= 8 &&
     !isSubmitting;
@@ -196,10 +206,11 @@ export function RegisterScreen(): React.JSX.Element {
               medi_cal_id: primaryCin.trim() || undefined,
             }
           : undefined;
+      const fullName = `${firstName.trim()} ${lastName.trim()}`;
       await register(
         email.trim().toLowerCase(),
         password,
-        name.trim(),
+        fullName,
         role,
         trimmedPhone || undefined,
         memberExtras,
@@ -230,7 +241,7 @@ export function RegisterScreen(): React.JSX.Element {
       setIsSubmitting(false);
     }
   }, [
-    canSubmit, email, password, name, role, phone, register,
+    canSubmit, email, password, firstName, lastName, role, phone, register,
     dobIso, sex, addressLine1, addressLine2, city, stateCode, zip,
     insuranceCompany, primaryCin,
   ]);
@@ -292,16 +303,35 @@ export function RegisterScreen(): React.JSX.Element {
               </View>
             )}
 
-            {/* Name */}
-            <FormField label="Full name" icon={<UserIcon size={18} color={colors.mutedForeground} />}>
+            {/* First name */}
+            <FormField label="First name" icon={<UserIcon size={18} color={colors.mutedForeground} />}>
               <TextInput
-                ref={refs.name}
-                value={name}
-                onChangeText={setName}
-                placeholder="Your full name"
+                ref={refs.firstName}
+                value={firstName}
+                onChangeText={setFirstName}
+                placeholder="First name"
                 placeholderTextColor={colors.mutedForeground}
                 autoCapitalize="words"
-                autoComplete="name"
+                autoComplete="name-given"
+                textContentType="givenName"
+                returnKeyType="next"
+                onSubmitEditing={() => refs.lastName.current?.focus()}
+                style={s.input}
+              />
+            </FormField>
+
+            {/* Last name — required for members (Pear rejects without) and
+                enforced at the schema layer too. */}
+            <FormField label="Last name" icon={<UserIcon size={18} color={colors.mutedForeground} />}>
+              <TextInput
+                ref={refs.lastName}
+                value={lastName}
+                onChangeText={setLastName}
+                placeholder="Last name"
+                placeholderTextColor={colors.mutedForeground}
+                autoCapitalize="words"
+                autoComplete="name-family"
+                textContentType="familyName"
                 returnKeyType="next"
                 onSubmitEditing={() => refs.email.current?.focus()}
                 style={s.input}

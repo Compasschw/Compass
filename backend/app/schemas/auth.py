@@ -2,7 +2,7 @@ from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 
 # Sex values accepted by Pear Suite's CreateMember endpoint. Mirrors the
@@ -14,12 +14,18 @@ class RegisterRequest(BaseModel):
     """Body for POST /auth/register.
 
     Hard-required for both roles: email, password, name, role.
+    For members, `name` must include both a first and last name — Pear Suite
+    rejects member creation when last_name is missing, and we split on
+    whitespace downstream to populate Pear's firstName/lastName fields.
+    The model validator below enforces "at least two non-empty whitespace-
+    separated tokens" so a single-token name (e.g. "John") never reaches Pear.
+
     Members may additionally supply demographics + address + insurance
     captured by the expanded signup form.  All member-specific fields are
     optional at the API layer; the frontend enforces its own minimum gate
-    (Full Name + DOB + Sex) before allowing submit.  Anything the client
-    omits is left NULL on member_profiles and can be filled in later via
-    the profile-edit screen.
+    (First + Last Name + DOB + Sex) before allowing submit.  Anything the
+    client omits is left NULL on member_profiles and can be filled in later
+    via the profile-edit screen.
     """
 
     email: EmailStr
@@ -39,6 +45,20 @@ class RegisterRequest(BaseModel):
     insurance_company: str | None = None
     # Medi-Cal CIN — PHI, stored encrypted.  Pear's primaryCIN identifier.
     medi_cal_id: str | None = None
+
+    @model_validator(mode="after")
+    def _require_full_name_for_members(self) -> "RegisterRequest":
+        # Members get pushed to Pear Suite where firstName + lastName are
+        # both required. Reject single-token names at the API boundary so the
+        # error surfaces during signup rather than silently failing the
+        # background Pear sync (which leaves the member un-billable).
+        if self.role == "member":
+            tokens = [t for t in self.name.strip().split() if t]
+            if len(tokens) < 2:
+                raise ValueError(
+                    "Members must provide both first and last name"
+                )
+        return self
 
 
 class LoginRequest(BaseModel):

@@ -160,6 +160,64 @@ async def test_register_chw_auto_creates_chw_profile(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_register_member_rejects_single_token_name(client: AsyncClient):
+    """Members must provide both first and last name — Pear Suite rejects
+    members without lastName and we want the error surfaced at signup, not
+    later via a silent background-sync failure. (#191)
+    """
+    res = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": f"single-name-{uuid.uuid4()}@example.com",
+            "password": "test-password-1234",
+            "name": "Madonna",
+            "role": "member",
+        },
+    )
+    assert res.status_code == 422
+    body = res.json()
+    # Pydantic surfaces the validator error inside the standard 422 envelope.
+    assert any(
+        "first and last name" in str(err).lower()
+        for err in body.get("detail", [])
+    ), body
+
+
+@pytest.mark.asyncio
+async def test_register_member_rejects_whitespace_only_lastname(client: AsyncClient):
+    """Trailing whitespace doesn't satisfy the two-token requirement. (#191)"""
+    res = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": f"trailing-space-{uuid.uuid4()}@example.com",
+            "password": "test-password-1234",
+            "name": "John   ",
+            "role": "member",
+        },
+    )
+    assert res.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_register_chw_allows_single_token_name(client: AsyncClient):
+    """CHWs are not pushed to Pear, so the last-name gate doesn't apply. (#191)
+
+    Keeps the door open for CHWs who go by a single mononym while still
+    enforcing the rule for members.
+    """
+    res = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": f"chw-mono-{uuid.uuid4()}@example.com",
+            "password": "test-password-1234",
+            "name": "Cher",
+            "role": "chw",
+        },
+    )
+    assert res.status_code == 201
+
+
+@pytest.mark.asyncio
 async def test_member_profile_put_creates_row_if_missing(client: AsyncClient, member_tokens):
     """Defensive cover for legacy accounts that registered before the
     signup-time profile provisioning landed: the PUT must upsert.
