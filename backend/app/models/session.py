@@ -29,6 +29,17 @@ class Session(Base):
     request_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("service_requests.id"), nullable=False)
     chw_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
     member_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    # Long-lived chat thread between this CHW and member. Multiple Sessions
+    # share a conversation_id when each Session represents one billable call
+    # within the same ongoing relationship. Nullable for legacy rows from
+    # before the session-per-call refactor; new rows are NOT NULL via the
+    # service-layer create path (see app.services.session_lookup).
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("conversations.id"),
+        nullable=True,
+        index=True,
+    )
     vertical: Mapped[str] = mapped_column(String(50), nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="scheduled", index=True)
     mode: Mapped[str] = mapped_column(String(20), nullable=False)

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -25,11 +25,12 @@ class Conversation(Base):
     """
 
     __tablename__ = "conversations"
-    __table_args__ = (
-        # One session → at most one conversation thread.
-        # NULL session_id (ad-hoc DMs) is excluded from uniqueness in Postgres.
-        UniqueConstraint("session_id", name="uq_conversations_session_id"),
-    )
+    # NOTE: the uq_conversations_session_id UNIQUE constraint that lived here
+    # was dropped in migration f6a7b8c9d0e1 (session-per-call refactor) so a
+    # Conversation can host multiple Sessions over its lifetime. The session_id
+    # column is kept temporarily as "the originating Session" for backward
+    # compat while the rollout flag flips; remove it in a follow-up once the
+    # flag is on in prod and no caller reads it.
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     chw_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
