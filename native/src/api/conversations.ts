@@ -13,6 +13,13 @@ export interface ConversationSummary {
   chw_id: string;
   member_id: string;
   session_id: string | null;
+  /**
+   * Currently in_progress Session for this conversation, if any.
+   * Source-of-truth for End Session / Submit Documentation in the CHW
+   * Messages screen — when null, those buttons should be hidden.
+   * Populated server-side by app.services.session_lookup (added in #193).
+   */
+  active_session_id: string | null;
   created_at: string;
 }
 
