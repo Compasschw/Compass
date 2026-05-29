@@ -161,14 +161,44 @@ def _serialize_message(msg, attachment) -> MessageResponse:
     return MessageResponse.model_validate(response_data)
 
 @router.get("/", response_model=list[ConversationResponse])
-async def list_conversations(current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def list_conversations(
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[ConversationResponse]:
+    """List all conversations for the current user (CHW or member).
+
+    For each conversation, `active_session_id` is resolved server-side by
+    querying for an in_progress Session. The N+1 here is intentional and
+    acceptable — CHW inboxes are bounded to a single CHW's conversations
+    (typically < 50). If inbox sizes grow, replace with a single query using
+    DISTINCT ON (conversation_id) WHERE status='in_progress'.
+    """
     from app.models.conversation import Conversation
+    from app.services.session_lookup import get_active_session_for_conversation
+
     result = await db.execute(
         select(Conversation).where(
             (Conversation.chw_id == current_user.id) | (Conversation.member_id == current_user.id)
         ).order_by(Conversation.created_at.desc())
     )
-    return result.scalars().all()
+    conversations = result.scalars().all()
+
+    # Build response objects manually so we can stamp the computed
+    # active_session_id field (from_attributes=True alone cannot populate it).
+    responses: list[ConversationResponse] = []
+    for conv in conversations:
+        active = await get_active_session_for_conversation(db, conv.id)
+        responses.append(
+            ConversationResponse(
+                id=conv.id,
+                chw_id=conv.chw_id,
+                member_id=conv.member_id,
+                session_id=conv.session_id,
+                active_session_id=active.id if active else None,
+                created_at=conv.created_at,
+            )
+        )
+    return responses
 
 @router.get("/{conversation_id}/messages", response_model=list[MessageResponse])
 async def get_messages(

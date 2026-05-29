@@ -318,3 +318,84 @@ async def test_call_bridge_flag_off_keeps_legacy_behavior(
     assert len(all_sessions) == 1, (
         f"Expected 1 Session on conversation (no new row), found {len(all_sessions)}"
     )
+
+
+@pytest.mark.asyncio
+async def test_conversations_list_returns_active_session_id(
+    client: AsyncClient,
+) -> None:
+    """GET /conversations/ surfaces active_session_id so the FE can drive
+    End Session / Submit Doc off the right ID.
+
+    Setup:
+      - Register CHW + member via the auth endpoint.
+      - Seed a Conversation with one in_progress Session directly via test_session.
+      - Hit GET /api/v1/conversations/ with the CHW's JWT.
+      - Assert the response contains active_session_id matching the seeded Session.
+    """
+    chw_tokens = await _register(client, "conv-list-active-chw@example.com", "chw")
+    member_tokens = await _register(client, "conv-list-active-member@example.com", "member")
+
+    chw_id = UUID(_user_id_from_tokens(chw_tokens))
+    member_id = UUID(_user_id_from_tokens(member_tokens))
+
+    conv_id, session_id = await _seed_in_progress_session(chw_id, member_id)
+
+    res = await client.get(
+        "/api/v1/conversations/",
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 200, f"Expected 200, got {res.status_code}: {res.text}"
+    conversations = res.json()
+
+    # Find the seeded conversation in the response list.
+    matching = [c for c in conversations if c["id"] == str(conv_id)]
+    assert len(matching) == 1, (
+        f"Expected exactly 1 conversation with id={conv_id}, found {len(matching)}"
+    )
+    conv_response = matching[0]
+
+    assert conv_response["active_session_id"] == str(session_id), (
+        f"Expected active_session_id={session_id}, "
+        f"got {conv_response.get('active_session_id')}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_conversations_list_returns_null_active_session_id_when_completed(
+    client: AsyncClient,
+) -> None:
+    """When the conversation's only session is completed, active_session_id is None.
+
+    Setup:
+      - Register CHW + member via the auth endpoint.
+      - Seed a Conversation with one completed Session directly via test_session.
+      - Hit GET /api/v1/conversations/ with the CHW's JWT.
+      - Assert active_session_id is None (null) in the response.
+    """
+    chw_tokens = await _register(client, "conv-list-completed-chw@example.com", "chw")
+    member_tokens = await _register(client, "conv-list-completed-member@example.com", "member")
+
+    chw_id = UUID(_user_id_from_tokens(chw_tokens))
+    member_id = UUID(_user_id_from_tokens(member_tokens))
+
+    conv_id, _session_id = await _seed_completed_session(chw_id, member_id)
+
+    res = await client.get(
+        "/api/v1/conversations/",
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 200, f"Expected 200, got {res.status_code}: {res.text}"
+    conversations = res.json()
+
+    # Find the seeded conversation in the response list.
+    matching = [c for c in conversations if c["id"] == str(conv_id)]
+    assert len(matching) == 1, (
+        f"Expected exactly 1 conversation with id={conv_id}, found {len(matching)}"
+    )
+    conv_response = matching[0]
+
+    assert conv_response["active_session_id"] is None, (
+        f"Expected active_session_id=None for completed session, "
+        f"got {conv_response.get('active_session_id')}"
+    )

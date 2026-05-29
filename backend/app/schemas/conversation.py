@@ -43,6 +43,13 @@ class ConversationResponse(BaseModel):
     chw_id: UUID
     member_id: UUID
     session_id: UUID | None
+    # The conversation's currently in_progress Session, if any. The CHW
+    # Messages screen reads this to know which Session to act on for
+    # End Session / Submit Documentation. None when the conversation has
+    # no active Session (e.g., all prior calls are completed). Always
+    # populated server-side (not pulled from the column) via
+    # app.services.session_lookup.get_active_session_for_conversation.
+    active_session_id: UUID | None = None
     created_at: datetime
 
 
