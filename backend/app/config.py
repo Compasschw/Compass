@@ -37,6 +37,13 @@ class Settings(BaseSettings):
     # fire alongside the CSV write.
     pear_suite_enabled: bool = True
 
+    # When True, /communication/call-bridge auto-creates a fresh Session row
+    # for any bridge after the conversation's prior Session has been completed.
+    # When False (default), call-bridge attaches the CommunicationSession to the
+    # existing Session — i.e., the original 1-Session-per-conversation behavior.
+    # Roll out by flipping to True in sandbox first, verify, then prod.
+    session_per_call_enabled: bool = False
+
     cors_origins: list[str] = [
         "http://localhost:5173",
         "http://localhost:8081",
