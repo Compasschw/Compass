@@ -466,12 +466,20 @@ async def call_bridge(
                     member_user=member_user,
                 )
                 target_session_id = new_session.id
-            except ValueError:
+            except ValueError as exc:
                 # No prior session to clone from — leave target_session_id as
                 # whatever the request provided (possibly None). The caller is
                 # bridging into a brand-new conversation that hasn't gone
                 # through the request→accept→start flow yet; fall back to legacy.
-                pass
+                # WARN-log so ops can detect a flag-on bridge that silently
+                # produced no billable Session — every occurrence here means
+                # the call won't have a CommunicationSession or BillingClaim.
+                logger.warning(
+                    "call-bridge: session_per_call_enabled but conversation %s has "
+                    "no prior Session to clone — falling back to legacy session_id=%s. "
+                    "Reason: %s",
+                    conversation.id, body.session_id, exc,
+                )
 
     provider = get_provider()
     proxy = await provider.create_proxy_session(

@@ -1375,61 +1375,38 @@ async def _get_or_create_session_conversation(
     session: Session,
     db: AsyncSession,
 ):
-    """Return the Conversation tied to this session, creating it if absent.
+    """Return the Conversation for this Session's (chw, member) pair, creating
+    it if absent.
 
-    Uses INSERT ... ON CONFLICT DO NOTHING + a follow-up SELECT to be safe
-    under concurrent requests (e.g. CHW and member both open chat simultaneously
-    for the first time).
+    Post-#193, Conversation is the long-lived chat thread between a CHW and a
+    member — many Sessions belong to one Conversation. This helper delegates
+    to ``find_or_create_conversation_for_pair`` so the (chw, member) lookup is
+    the canonical one. The first time a Conversation is created for a pair we
+    also stamp its ``session_id`` back-link to the Session that opened it —
+    legacy callers still read ``Conversation.session_id`` and we don't want to
+    break them during the rollout. Subsequent Sessions in the same pair don't
+    overwrite that back-link.
+
+    Race note: the underlying helper has a SELECT-then-INSERT pattern with no
+    DB-level lock. Concurrent calls for the same (chw, member) pair can both
+    INSERT, producing a duplicate Conversation row. A follow-up adds
+    ``UNIQUE (chw_id, member_id)`` on ``conversations`` so the insert can be
+    a proper upsert; tracked as a sibling cleanup task to #193.
     """
-    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    from app.services.session_lookup import find_or_create_conversation_for_pair
 
-    from app.models.conversation import Conversation
-
-    # Fast path: conversation already exists.
-    result = await db.execute(
-        select(Conversation).where(Conversation.session_id == session.id)
+    conv = await find_or_create_conversation_for_pair(
+        db, chw_id=session.chw_id, member_id=session.member_id,
     )
-    conv = result.scalar_one_or_none()
-    if conv is not None:
-        # Stamp the back-link so future lookups via Session.conversation_id work.
-        # Legacy callers of this helper relied on Conversation.session_id (UC dropped
-        # in migration f6a7b8c9d0e1); the back-link from Session is the canonical
-        # direction now.
-        session.conversation_id = conv.id
-        return conv
-
-    # Slow path: insert, tolerating a concurrent insert via ON CONFLICT.
-    stmt = (
-        pg_insert(Conversation)
-        .values(
-            chw_id=session.chw_id,
-            member_id=session.member_id,
-            session_id=session.id,
-        )
-        .on_conflict_do_nothing(constraint="uq_conversations_session_id")
-        .returning(Conversation)
-    )
-    insert_result = await db.execute(stmt)
-    inserted = insert_result.scalar_one_or_none()
-    if inserted is not None:
-        # Stamp the back-link so future lookups via Session.conversation_id work.
-        # Legacy callers of this helper relied on Conversation.session_id (UC dropped
-        # in migration f6a7b8c9d0e1); the back-link from Session is the canonical
-        # direction now.
-        session.conversation_id = inserted.id
-        await db.commit()
-        return inserted
-
-    # Another request won the race; fetch the row it created.
-    result = await db.execute(
-        select(Conversation).where(Conversation.session_id == session.id)
-    )
-    conv = result.scalar_one()
-    # Stamp the back-link so future lookups via Session.conversation_id work.
-    # Legacy callers of this helper relied on Conversation.session_id (UC dropped
-    # in migration f6a7b8c9d0e1); the back-link from Session is the canonical
-    # direction now.
+    # Preserve the legacy back-link for callers that still read
+    # Conversation.session_id. Only set it when absent so the originating
+    # Session stays sticky; subsequent calls in the same thread don't
+    # rewrite it.
+    if conv.session_id is None:
+        conv.session_id = session.id
+    # Stamp the canonical post-refactor back-link on the Session.
     session.conversation_id = conv.id
+    await db.flush()
     return conv
 
 
