@@ -32,6 +32,7 @@ from app.schemas.session import (
     TranscriptResponse,
 )
 from app.services.billing_service import calculate_earnings, calculate_units, check_unit_caps, validate_claim
+from app.services.session_lookup import find_or_create_conversation_for_pair
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["sessions"])
 
@@ -256,6 +257,15 @@ async def create_session(
         scheduled_at=data.scheduled_at,
     )
     db.add(session)
+
+    # Stamp the conversation back-link so future session-per-call lookups
+    # (get_active_session_for_conversation) can find this Session by its
+    # conversation. New in #193 — see app.services.session_lookup.
+    conversation = await find_or_create_conversation_for_pair(
+        db, chw_id=session.chw_id, member_id=session.member_id,
+    )
+    session.conversation_id = conversation.id
+
     await db.commit()
     await db.refresh(session)
 
@@ -1381,6 +1391,11 @@ async def _get_or_create_session_conversation(
     )
     conv = result.scalar_one_or_none()
     if conv is not None:
+        # Stamp the back-link so future lookups via Session.conversation_id work.
+        # Legacy callers of this helper relied on Conversation.session_id (UC dropped
+        # in migration f6a7b8c9d0e1); the back-link from Session is the canonical
+        # direction now.
+        session.conversation_id = conv.id
         return conv
 
     # Slow path: insert, tolerating a concurrent insert via ON CONFLICT.
@@ -1397,6 +1412,11 @@ async def _get_or_create_session_conversation(
     insert_result = await db.execute(stmt)
     inserted = insert_result.scalar_one_or_none()
     if inserted is not None:
+        # Stamp the back-link so future lookups via Session.conversation_id work.
+        # Legacy callers of this helper relied on Conversation.session_id (UC dropped
+        # in migration f6a7b8c9d0e1); the back-link from Session is the canonical
+        # direction now.
+        session.conversation_id = inserted.id
         await db.commit()
         return inserted
 
@@ -1404,7 +1424,13 @@ async def _get_or_create_session_conversation(
     result = await db.execute(
         select(Conversation).where(Conversation.session_id == session.id)
     )
-    return result.scalar_one()
+    conv = result.scalar_one()
+    # Stamp the back-link so future lookups via Session.conversation_id work.
+    # Legacy callers of this helper relied on Conversation.session_id (UC dropped
+    # in migration f6a7b8c9d0e1); the back-link from Session is the canonical
+    # direction now.
+    session.conversation_id = conv.id
+    return conv
 
 
 def _to_session_message_response(

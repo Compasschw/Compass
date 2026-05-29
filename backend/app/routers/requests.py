@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies import get_current_user, require_role
+from app.services.session_lookup import find_or_create_conversation_for_pair
 from app.schemas.request import (
     IncomingMemberRequestResponse,
     ServiceRequestCreate,
@@ -272,6 +273,14 @@ async def accept_request(request_id: UUID, current_user=Depends(require_role("ch
     )
     db.add(session)
     await db.flush()  # populate session.id without ending the transaction
+
+    # Stamp the conversation back-link so future session-per-call lookups
+    # (get_active_session_for_conversation) can find this Session by its
+    # conversation. New in #193 — see app.services.session_lookup.
+    conversation = await find_or_create_conversation_for_pair(
+        db, chw_id=session.chw_id, member_id=session.member_id,
+    )
+    session.conversation_id = conversation.id
 
     # ── Calendar events ─────────────────────────────────────────────────────
     end_time_at = scheduled_at + timedelta(minutes=30)
