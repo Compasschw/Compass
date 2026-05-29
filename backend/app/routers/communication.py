@@ -49,6 +49,11 @@ from app.database import get_db
 from app.dependencies import get_current_user
 from app.services.communication import get_provider
 from app.services.communication_touch_log import TouchKind, record_touch
+from app.services.session_lookup import (
+    create_followup_session,
+    find_or_create_conversation_for_pair,
+    get_active_session_for_conversation,
+)
 
 logger = logging.getLogger("compass.communication")
 
@@ -230,6 +235,11 @@ class CallBridgeResponse(BaseModel):
     proxy_number: str
     provider_session_id: str
     expires_at_iso: str | None = None
+    # The Session this bridge attached to. With session_per_call_enabled, this
+    # may be a freshly-minted Session (different from the request's session_id).
+    # The mobile app uses this to drive End Session / Submit Doc on the
+    # active billable Session, not whichever stale Session was clicked into.
+    session_id: UUID | None = None
 
 
 class AdHocCallRequest(BaseModel):
@@ -400,17 +410,18 @@ async def call_bridge(
     # Determine which party is CHW and which is member to use assert_shared_session.
     # If the caller is a CHW and recipient is a member, verify the relationship.
     # Admins are exempt from the relationship check.
+    # Identify CHW/member roles unconditionally so the session-per-call block
+    # (below) can reuse them regardless of whether the admin gate was skipped.
+    chw_id_for_gate: UUID | None = None
+    member_id_for_gate: UUID | None = None
+    if caller.role == "chw" and recipient.role == "member":
+        chw_id_for_gate = caller.id
+        member_id_for_gate = recipient.id
+    elif caller.role == "member" and recipient.role == "chw":
+        chw_id_for_gate = recipient.id
+        member_id_for_gate = caller.id
+
     if current_user.role != "admin":
-        chw_id_for_gate: UUID | None = None
-        member_id_for_gate: UUID | None = None
-
-        if caller.role == "chw" and recipient.role == "member":
-            chw_id_for_gate = caller.id
-            member_id_for_gate = recipient.id
-        elif caller.role == "member" and recipient.role == "chw":
-            chw_id_for_gate = recipient.id
-            member_id_for_gate = caller.id
-
         if chw_id_for_gate is not None and member_id_for_gate is not None:
             from app.services.relationship_guards import assert_shared_session
             await assert_shared_session(
@@ -419,9 +430,52 @@ async def call_bridge(
                 member_id=member_id_for_gate,
             )
 
+    # Resolve the Session this bridge attaches to. With session_per_call_enabled
+    # on (and a CHW↔member call), auto-mint a new Session when the conversation
+    # has no active one; reuse the active one when it exists. Falls back to the
+    # request-provided session_id otherwise — preserves the legacy behavior.
+    target_session_id: UUID | None = body.session_id
+    if (
+        _app_config_module.settings.session_per_call_enabled
+        and chw_id_for_gate is not None
+        and member_id_for_gate is not None
+    ):
+        conversation = await find_or_create_conversation_for_pair(
+            db,
+            chw_id=chw_id_for_gate,
+            member_id=member_id_for_gate,
+        )
+        active = await get_active_session_for_conversation(db, conversation.id)
+        if active is not None:
+            target_session_id = active.id
+        else:
+            # Mint a fresh Session cloning lineage from the conversation's most
+            # recent prior Session. If there's no prior Session, this raises
+            # ValueError — the caller must seed via the ServiceRequest→start
+            # flow first.
+            chw_user, member_user = (
+                (caller, recipient)
+                if caller.role == "chw"
+                else (recipient, caller)
+            )
+            try:
+                new_session = await create_followup_session(
+                    db,
+                    conversation=conversation,
+                    chw_user=chw_user,
+                    member_user=member_user,
+                )
+                target_session_id = new_session.id
+            except ValueError:
+                # No prior session to clone from — leave target_session_id as
+                # whatever the request provided (possibly None). The caller is
+                # bridging into a brand-new conversation that hasn't gone
+                # through the request→accept→start flow yet; fall back to legacy.
+                pass
+
     provider = get_provider()
     proxy = await provider.create_proxy_session(
-        session_id=str(body.session_id or body.recipient_id),
+        session_id=str(target_session_id or body.recipient_id),
         chw_phone=caller.phone,
         member_phone=recipient.phone,
     )
@@ -429,10 +483,10 @@ async def call_bridge(
     # Persist the session so webhook events can correlate back to the
     # compass session. session_id is required by the model — skip DB write
     # for ad-hoc calls that aren't tied to a scheduled session (rare).
-    if body.session_id is not None:
+    if target_session_id is not None:
         db.add(
             CommunicationSession(
-                session_id=body.session_id,
+                session_id=target_session_id,
                 provider=proxy.provider,
                 provider_session_id=proxy.provider_session_id,
                 proxy_number=proxy.proxy_number,
@@ -441,12 +495,13 @@ async def call_bridge(
         await db.commit()
 
     logger.info(
-        "call-bridge initiated: caller=%s recipient=%s session=%s provider_session=%s",
-        caller.id, recipient.id, body.session_id, proxy.provider_session_id,
+        "call-bridge initiated: caller=%s recipient=%s body_session=%s target_session=%s provider_session=%s",
+        caller.id, recipient.id, body.session_id, target_session_id, proxy.provider_session_id,
     )
     return CallBridgeResponse(
         proxy_number=proxy.proxy_number,
         provider_session_id=proxy.provider_session_id,
+        session_id=target_session_id,
     )
 
 
