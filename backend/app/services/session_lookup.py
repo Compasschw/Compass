@@ -146,3 +146,37 @@ async def create_followup_session(
     db.add(new_session)
     await db.flush()
     return new_session
+
+
+async def resolve_active_session_id_for_redirect(
+    db: AsyncSession,
+    *,
+    requested_session_id: UUID,
+) -> UUID:
+    """Transitional resolver for the session-per-call rollout (#193 Task 11
+    server-side stand-in).
+
+    When ``session_per_call_enabled=True`` but the FE hasn't shipped Task 11
+    yet, the FE keeps submitting End Session / Submit Doc against the
+    originally-clicked ``session.id`` (a stale, completed Session that
+    already has a SessionDocumentation row). This helper returns the
+    conversation's currently in_progress Session id so the BE can silently
+    redirect the operation to the freshly-minted followup Session.
+
+    Returns ``requested_session_id`` unchanged when no redirect applies:
+    the session doesn't exist, has no ``conversation_id`` back-link
+    (legacy data pre-migration), or the conversation has no active
+    in_progress Session. Callers can use the result as a drop-in
+    replacement for the URL ``session_id`` without additional gating.
+
+    Becomes a true no-op once Task 11 ships and the FE starts sending the
+    active_session_id directly — the requested id will already equal the
+    active id, so this returns it unchanged.
+    """
+    session = await db.get(Session, requested_session_id)
+    if session is None or session.conversation_id is None:
+        return requested_session_id
+    active = await get_active_session_for_conversation(db, session.conversation_id)
+    if active is None or active.id == requested_session_id:
+        return requested_session_id
+    return active.id

@@ -389,6 +389,23 @@ async def start_session(session_id: UUID, current_user=Depends(get_current_user)
 
 @router.patch("/{session_id}/complete", response_model=SessionResponse)
 async def complete_session(session_id: UUID, current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    # #193 BE redirect (transitional, Task 11 server-side stand-in): when
+    # session_per_call_enabled is on and the URL id is a stale completed
+    # Session, swap to the conversation's active in_progress Session so the
+    # FE-stuck-on-original-id submission still hits the right row.
+    from app.config import settings as _settings
+    from app.services.session_lookup import resolve_active_session_id_for_redirect
+    if _settings.session_per_call_enabled:
+        redirected = await resolve_active_session_id_for_redirect(
+            db, requested_session_id=session_id,
+        )
+        if redirected != session_id:
+            logger.info(
+                "complete_session: #193 BE redirect from %s to active=%s",
+                session_id, redirected,
+            )
+            session_id = redirected
+
     session = await db.get(Session, session_id)
     if not session or session.chw_id != current_user.id:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -491,6 +508,24 @@ async def submit_documentation(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    # #193 BE redirect (transitional, Task 11 server-side stand-in): when
+    # session_per_call_enabled is on and the URL id is a stale Session that
+    # already has a SessionDocumentation row, swap to the conversation's
+    # active in_progress Session so the FE-stuck-on-original-id submission
+    # creates a doc on the right (fresh) Session.
+    from app.config import settings as _settings
+    from app.services.session_lookup import resolve_active_session_id_for_redirect
+    if _settings.session_per_call_enabled:
+        redirected = await resolve_active_session_id_for_redirect(
+            db, requested_session_id=session_id,
+        )
+        if redirected != session_id:
+            logger.info(
+                "submit_documentation: #193 BE redirect from %s to active=%s",
+                session_id, redirected,
+            )
+            session_id = redirected
+
     session = await db.get(Session, session_id)
     if not session or session.chw_id != current_user.id:
         raise HTTPException(status_code=404, detail="Session not found")

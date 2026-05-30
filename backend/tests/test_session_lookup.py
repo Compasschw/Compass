@@ -276,3 +276,121 @@ async def test_create_followup_session_rejects_when_no_prior_session() -> None:
             await create_followup_session(
                 db, conversation=conv, chw_user=chw, member_user=member
             )
+
+
+# ── resolve_active_session_id_for_redirect (#193 BE redirect, transitional) ──
+
+
+@pytest.mark.asyncio
+async def test_resolve_redirects_to_active_when_requested_is_stale() -> None:
+    """The FE submits against the original (completed) Session id; the
+    resolver swaps to the conversation's currently in_progress Session."""
+    from app.services.session_lookup import resolve_active_session_id_for_redirect
+
+    async with test_session() as db:
+        chw, member, req = await _seed_pair(db)
+        conv = Conversation(chw_id=chw.id, member_id=member.id)
+        db.add(conv)
+        await db.flush()
+        stale = Session(
+            request_id=req.id, chw_id=chw.id, member_id=member.id,
+            vertical="health", mode="phone",
+            status="completed", conversation_id=conv.id,
+        )
+        active = Session(
+            request_id=req.id, chw_id=chw.id, member_id=member.id,
+            vertical="health", mode="phone",
+            status="in_progress", conversation_id=conv.id,
+        )
+        db.add_all([stale, active])
+        await db.flush()
+
+        resolved = await resolve_active_session_id_for_redirect(
+            db, requested_session_id=stale.id,
+        )
+        assert resolved == active.id
+
+
+@pytest.mark.asyncio
+async def test_resolve_returns_requested_when_already_active() -> None:
+    """No-op when the requested id IS the active Session — the Task 11
+    future state where the FE sends the right id."""
+    from app.services.session_lookup import resolve_active_session_id_for_redirect
+
+    async with test_session() as db:
+        chw, member, req = await _seed_pair(db)
+        conv = Conversation(chw_id=chw.id, member_id=member.id)
+        db.add(conv)
+        await db.flush()
+        active = Session(
+            request_id=req.id, chw_id=chw.id, member_id=member.id,
+            vertical="health", mode="phone",
+            status="in_progress", conversation_id=conv.id,
+        )
+        db.add(active)
+        await db.flush()
+
+        resolved = await resolve_active_session_id_for_redirect(
+            db, requested_session_id=active.id,
+        )
+        assert resolved == active.id
+
+
+@pytest.mark.asyncio
+async def test_resolve_returns_requested_when_no_active_exists() -> None:
+    """No active in_progress Session → don't redirect; let the caller's
+    normal 409 path fire."""
+    from app.services.session_lookup import resolve_active_session_id_for_redirect
+
+    async with test_session() as db:
+        chw, member, req = await _seed_pair(db)
+        conv = Conversation(chw_id=chw.id, member_id=member.id)
+        db.add(conv)
+        await db.flush()
+        completed = Session(
+            request_id=req.id, chw_id=chw.id, member_id=member.id,
+            vertical="health", mode="phone",
+            status="completed", conversation_id=conv.id,
+        )
+        db.add(completed)
+        await db.flush()
+
+        resolved = await resolve_active_session_id_for_redirect(
+            db, requested_session_id=completed.id,
+        )
+        assert resolved == completed.id
+
+
+@pytest.mark.asyncio
+async def test_resolve_returns_requested_when_no_conversation_link() -> None:
+    """Legacy data without conversation_id back-link → pass through unchanged."""
+    from app.services.session_lookup import resolve_active_session_id_for_redirect
+
+    async with test_session() as db:
+        chw, member, req = await _seed_pair(db)
+        legacy = Session(
+            request_id=req.id, chw_id=chw.id, member_id=member.id,
+            vertical="health", mode="phone",
+            status="completed", conversation_id=None,
+        )
+        db.add(legacy)
+        await db.flush()
+
+        resolved = await resolve_active_session_id_for_redirect(
+            db, requested_session_id=legacy.id,
+        )
+        assert resolved == legacy.id
+
+
+@pytest.mark.asyncio
+async def test_resolve_returns_requested_when_session_missing() -> None:
+    """Nonexistent session id → pass through unchanged (no crash)."""
+    from uuid import uuid4
+    from app.services.session_lookup import resolve_active_session_id_for_redirect
+
+    async with test_session() as db:
+        missing_id = uuid4()
+        resolved = await resolve_active_session_id_for_redirect(
+            db, requested_session_id=missing_id,
+        )
+        assert resolved == missing_id
