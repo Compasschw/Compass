@@ -188,7 +188,35 @@ async def resolve_active_session_id_for_redirect(
     session = await db.get(Session, requested_session_id)
     if session is None or session.conversation_id is None:
         return requested_session_id
+
+    # Step 1: prefer the in_progress Session for this conversation (the
+    # target for End Session). This handles the call → /complete leg.
     active = await get_active_session_for_conversation(db, session.conversation_id)
-    if active is None or active.id == requested_session_id:
-        return requested_session_id
-    return active.id
+    if active is not None and active.id != requested_session_id:
+        return active.id
+
+    # Step 2: fall back to the most recent Session in this conversation
+    # that lacks a SessionDocumentation. This handles the Submit Doc leg
+    # that immediately follows End Session: by then the freshly-completed
+    # Session is no longer in_progress, but it's still the target the FE
+    # wants to document. The user describes the FE workflow as:
+    #   Call ends → tap End Session → tap Submit Doc → done.
+    # Both BE hits arrive with the original (stale) session_id and both
+    # must redirect to the same freshly-minted Session.
+    from app.models.session import SessionDocumentation
+
+    documented_subq = select(SessionDocumentation.session_id).subquery()
+    result = await db.execute(
+        select(Session)
+        .where(
+            Session.conversation_id == session.conversation_id,
+            Session.id.notin_(select(documented_subq.c.session_id)),
+        )
+        .order_by(Session.created_at.desc())
+        .limit(1)
+    )
+    undocumented = result.scalar_one_or_none()
+    if undocumented is not None and undocumented.id != requested_session_id:
+        return undocumented.id
+
+    return requested_session_id

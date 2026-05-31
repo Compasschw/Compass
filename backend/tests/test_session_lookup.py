@@ -427,3 +427,102 @@ async def test_resolve_returns_requested_when_session_missing() -> None:
             db, requested_session_id=missing_id,
         )
         assert resolved == missing_id
+
+
+@pytest.mark.asyncio
+async def test_resolve_redirects_to_undocumented_completed_when_no_in_progress() -> None:
+    """End-Session-then-Submit-Doc flow: by the time /documentation fires,
+    the freshly-minted Session has already been completed by the prior
+    /complete call, so step 1 (in_progress lookup) finds nothing. The
+    resolver must fall back to "most recent Session in conv that lacks
+    a SessionDocumentation" so doc submission lands on the right Session
+    instead of 409'ing on the FE's stale session_id."""
+    from app.models.session import SessionDocumentation
+    from app.services.session_lookup import resolve_active_session_id_for_redirect
+
+    async with test_session() as db:
+        chw, member, req = await _seed_pair(db)
+        conv = Conversation(chw_id=chw.id, member_id=member.id)
+        db.add(conv)
+        await db.flush()
+
+        # Stale (S1) — completed AND has documentation.
+        from datetime import UTC, datetime, timedelta
+        stale = Session(
+            request_id=req.id, chw_id=chw.id, member_id=member.id,
+            vertical="health", mode="phone",
+            status="completed", conversation_id=conv.id,
+            created_at=datetime.now(UTC) - timedelta(hours=2),
+        )
+        db.add(stale)
+        await db.flush()
+        db.add(SessionDocumentation(
+            session_id=stale.id, summary="prior",
+            diagnosis_codes=["Z71.89"], procedure_code="98960", units_to_bill=1,
+        ))
+
+        # Freshly-completed (S2) — completed by the immediately-prior
+        # /complete redirect, no doc yet.
+        fresh_completed = Session(
+            request_id=req.id, chw_id=chw.id, member_id=member.id,
+            vertical="health", mode="phone",
+            status="completed", conversation_id=conv.id,
+        )
+        db.add(fresh_completed)
+        await db.flush()
+
+        # FE submits doc against the stale id. Resolver must redirect to S2.
+        resolved = await resolve_active_session_id_for_redirect(
+            db, requested_session_id=stale.id,
+        )
+        assert resolved == fresh_completed.id, (
+            "End-Session-then-Submit-Doc flow: resolver must fall through "
+            "to the most-recent-undocumented Session when no in_progress "
+            "exists. Without the fallback the 2nd same-thread doc submit "
+            "409s on the FE's stale session_id."
+        )
+
+
+@pytest.mark.asyncio
+async def test_resolve_prefers_in_progress_over_undocumented_when_both_exist() -> None:
+    """When both an in_progress Session and a completed-undocumented one
+    exist, the in_progress takes precedence (the /complete leg). Otherwise
+    /complete would target the wrong Session."""
+    from app.services.session_lookup import resolve_active_session_id_for_redirect
+
+    async with test_session() as db:
+        chw, member, req = await _seed_pair(db)
+        conv = Conversation(chw_id=chw.id, member_id=member.id)
+        db.add(conv)
+        await db.flush()
+
+        from datetime import UTC, datetime, timedelta
+        # Older, completed, no doc.
+        older = Session(
+            request_id=req.id, chw_id=chw.id, member_id=member.id,
+            vertical="health", mode="phone",
+            status="completed", conversation_id=conv.id,
+            created_at=datetime.now(UTC) - timedelta(hours=3),
+        )
+        # Stale FE id — completed and documented.
+        stale = Session(
+            request_id=req.id, chw_id=chw.id, member_id=member.id,
+            vertical="health", mode="phone",
+            status="completed", conversation_id=conv.id,
+            created_at=datetime.now(UTC) - timedelta(hours=2),
+        )
+        # Most recent: in_progress.
+        active = Session(
+            request_id=req.id, chw_id=chw.id, member_id=member.id,
+            vertical="health", mode="phone",
+            status="in_progress", conversation_id=conv.id,
+        )
+        db.add_all([older, stale, active])
+        await db.flush()
+
+        resolved = await resolve_active_session_id_for_redirect(
+            db, requested_session_id=stale.id,
+        )
+        assert resolved == active.id, (
+            "In_progress must win over older undocumented completed Sessions"
+        )
