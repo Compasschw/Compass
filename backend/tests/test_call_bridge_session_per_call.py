@@ -399,3 +399,66 @@ async def test_conversations_list_returns_null_active_session_id_when_completed(
         f"Expected active_session_id=None for completed session, "
         f"got {conv_response.get('active_session_id')}"
     )
+
+
+@pytest.mark.asyncio
+async def test_call_bridge_mints_fresh_when_active_has_documentation(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Auto-heal the skip-End-Session pattern: if the supposedly-active
+    Session already has a SessionDocumentation, the CHW closed it from
+    their perspective even though Session.status is still in_progress.
+    Call-bridge must complete the prior Session and mint a fresh one for
+    THIS call, so the 2nd same-thread doc submit lands on the new Session
+    instead of 409'ing on the prior doc. (#193 same-thread heal.)
+    """
+    monkeypatch.setattr(_app_config_module.settings, "session_per_call_enabled", True)
+
+    chw_tokens = await _register(client, "bridge-chw-heal@example.com", "chw")
+    member_tokens = await _register(client, "bridge-member-heal@example.com", "member")
+    chw_id = UUID(_user_id_from_tokens(chw_tokens))
+    member_id = UUID(_user_id_from_tokens(member_tokens))
+    await _set_phone_via_db(str(chw_id), "+13105550104")
+    await _set_phone_via_db(str(member_id), "+13105550204")
+
+    # Seed: in_progress Session that ALREADY has a SessionDocumentation row.
+    # Mirrors what the prod DB looks like after Doc was submitted but End
+    # Session was never tapped.
+    conv_id, prior_session_id = await _seed_in_progress_session(chw_id, member_id)
+    async with _test_session_factory() as db:
+        from app.models.session import SessionDocumentation
+        db.add(SessionDocumentation(
+            id=uuid.uuid4(),
+            session_id=prior_session_id,
+            summary="prior doc",
+            diagnosis_codes=["Z71.89"],
+            procedure_code="98960",
+            units_to_bill=1,
+        ))
+        await db.commit()
+
+    res = await client.post(
+        "/api/v1/communication/call-bridge",
+        json={"recipient_id": str(member_id)},
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 200, f"Expected 200, got {res.status_code}: {res.text}"
+    body = res.json()
+
+    returned_session_id = UUID(body["session_id"])
+    assert returned_session_id != prior_session_id, (
+        f"Expected fresh Session, but got reused prior {prior_session_id}"
+    )
+
+    # Verify in DB: prior is now completed; new in_progress session exists.
+    async with _test_session_factory() as db:
+        rows = (await db.execute(
+            select(Session).where(Session.conversation_id == conv_id)
+        )).scalars().all()
+        assert len(rows) == 2, f"Expected 2 Sessions on conversation, got {len(rows)}"
+        by_id = {s.id: s for s in rows}
+        assert by_id[prior_session_id].status == "completed", (
+            "Prior Session should be auto-completed by the heal"
+        )
+        assert by_id[returned_session_id].status == "in_progress"

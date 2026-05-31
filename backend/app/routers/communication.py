@@ -446,6 +446,35 @@ async def call_bridge(
             member_id=member_id_for_gate,
         )
         active = await get_active_session_for_conversation(db, conversation.id)
+
+        # Auto-heal the "skip End Session" pattern: if the supposedly-active
+        # session already has a SessionDocumentation, the CHW has already
+        # closed it from their perspective (submit-doc without explicit
+        # End Session). Mark it completed and treat as no-active so a fresh
+        # Session is minted for THIS call. Without this branch the 2nd call
+        # in the same thread would reuse the same Session and the 2nd
+        # documentation submit would 409. (#193 same-thread fix.)
+        if active is not None:
+            from datetime import UTC as _UTC, datetime as _dt
+            from app.models.session import SessionDocumentation
+            existing_doc_row = await db.execute(
+                select(SessionDocumentation.id).where(
+                    SessionDocumentation.session_id == active.id
+                )
+            )
+            if existing_doc_row.scalar_one_or_none() is not None:
+                logger.info(
+                    "call-bridge: prior 'active' session %s already has a "
+                    "SessionDocumentation — auto-completing and minting a "
+                    "fresh Session for this call (#193 skip-End-Session heal)",
+                    active.id,
+                )
+                active.status = "completed"
+                if active.ended_at is None:
+                    active.ended_at = _dt.now(_UTC)
+                await db.flush()
+                active = None
+
         if active is not None:
             target_session_id = active.id
         else:
