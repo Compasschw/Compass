@@ -194,6 +194,39 @@ async def test_find_or_create_creates_when_absent() -> None:
         assert result.member_id == member.id
 
 
+@pytest.mark.asyncio
+async def test_find_or_create_handles_legacy_duplicate_conversations() -> None:
+    """Pre-#193 data may have multiple Conversation rows for the same
+    (chw, member) pair (one per Session under the old 1:1 UC). The helper
+    must return ONE deterministically (the oldest by created_at) instead of
+    raising MultipleResultsFound, which would 500 every Accept Request flow
+    for that pair."""
+    from datetime import UTC, datetime, timedelta
+
+    async with test_session() as db:
+        chw, member, req = await _seed_pair(db)
+
+        # Two Conversation rows for the same pair, distinct created_at.
+        older = Conversation(
+            chw_id=chw.id, member_id=member.id,
+            created_at=datetime.now(UTC) - timedelta(days=2),
+        )
+        newer = Conversation(
+            chw_id=chw.id, member_id=member.id,
+            created_at=datetime.now(UTC) - timedelta(hours=1),
+        )
+        db.add_all([older, newer])
+        await db.flush()
+
+        result = await find_or_create_conversation_for_pair(
+            db, chw_id=chw.id, member_id=member.id
+        )
+        assert result.id == older.id, (
+            "must pick the oldest row deterministically to avoid "
+            "MultipleResultsFound under legacy duplicate data"
+        )
+
+
 # ── create_followup_session ─────────────────────────────────────────────────
 
 

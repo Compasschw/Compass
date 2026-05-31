@@ -68,11 +68,23 @@ async def find_or_create_conversation_for_pair(
     Returns:
         The existing or newly-created Conversation row.
     """
+    # Pick the oldest matching Conversation if duplicates exist. Legacy data
+    # from before the session-per-call refactor had a UC on session_id (not
+    # on the (chw,member) pair), so each prior Session got its own row and
+    # the same pair can have N Conversation rows. scalar_one_or_none() would
+    # raise MultipleResultsFound on those — which surfaces as a 500 in every
+    # Accept Request flow for the pair. ORDER BY + LIMIT 1 makes the lookup
+    # deterministic and safe; the follow-up UNIQUE (chw_id, member_id)
+    # constraint will eventually prevent duplicates from being created at
+    # all (tracked separately).
     result = await db.execute(
-        select(Conversation).where(
+        select(Conversation)
+        .where(
             Conversation.chw_id == chw_id,
             Conversation.member_id == member_id,
         )
+        .order_by(Conversation.created_at.asc())
+        .limit(1)
     )
     conv = result.scalar_one_or_none()
     if conv is not None:
