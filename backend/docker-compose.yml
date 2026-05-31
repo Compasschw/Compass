@@ -26,6 +26,13 @@ services:
         condition: service_healthy
     volumes:
       - ./app:/code/app
+      # Vonage Voice API private key — read-only bind mount from the host so
+      # the key survives container recreates. Without this, every
+      # `docker compose up -d --force-recreate api` wipes the key and the
+      # Vonage client falls back to a placeholder (no calls are placed). The
+      # host file MUST exist at backend/vonage_private.key with 0600 perms;
+      # see DEPLOY.md / OPS_RUNBOOK.md for rotation procedure.
+      - ./vonage_private.key:/code/vonage_private.key:ro
     restart: unless-stopped
     healthcheck:
       # /api/v1/ready returns 503 (not 200) on DB failure so the orchestrator

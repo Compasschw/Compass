@@ -15,6 +15,15 @@ __pycache__/
 .env.local
 .env.production
 
+# Secrets — Vonage Voice API private key + any PEM/PKCS8 material.
+# These live on the prod host and are bind-mounted into the container
+# (see backend/docker-compose.yml). Never commit.
+*.key
+*.pem
+*.pkcs8
+*.pkcs8.bak
+vonage_private*
+
 # IDE
 .vscode/
 .idea/
