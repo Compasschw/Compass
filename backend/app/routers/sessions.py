@@ -1755,6 +1755,7 @@ async def initiate_session_call(
     # when the flag is on and the conversation has no active in_progress
     # one. Without this duplicated block the same-thread multi-call flow
     # silently reuses the original Session and the 2nd doc submit 409s.
+    import logging
     target_session_id: UUID = session_id
     from app.config import settings as _settings
     if _settings.session_per_call_enabled:
@@ -1841,8 +1842,7 @@ async def initiate_session_call(
     )
     await db.commit()
 
-    import logging as _logging
-    _logging.getLogger("compass.communication").info(
+    logging.getLogger("compass.communication").info(
         "session-call initiated: caller=%s url_session=%s target_session=%s provider_session=%s",
         current_user.id, session_id, target_session_id, proxy.provider_session_id,
     )
