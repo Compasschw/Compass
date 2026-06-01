@@ -526,3 +526,54 @@ async def test_resolve_prefers_in_progress_over_undocumented_when_both_exist() -
         assert resolved == active.id, (
             "In_progress must win over older undocumented completed Sessions"
         )
+
+
+@pytest.mark.asyncio
+async def test_resolve_step2_ignores_ancient_undocumented_sessions() -> None:
+    """Prod 2026-05-31 night: the (jemal, jt) conversation contained both
+    today's a2d17d19 (with doc) and ea5fab8b from 27 days earlier (without
+    doc). Step 2 fell back to ea5fab8b and the 2nd doc submit landed on
+    the May-3 ghost session. Step 2 must filter by recency so ancient
+    undocumented siblings don't get redirected to."""
+    from datetime import UTC, datetime, timedelta
+    from app.services.session_lookup import resolve_active_session_id_for_redirect
+    from app.models.session import SessionDocumentation
+
+    async with test_session() as db:
+        chw, member, req = await _seed_pair(db)
+        conv = Conversation(chw_id=chw.id, member_id=member.id)
+        db.add(conv)
+        await db.flush()
+
+        # Ancient completed session WITHOUT a doc — must NOT be picked.
+        ancient = Session(
+            request_id=req.id, chw_id=chw.id, member_id=member.id,
+            vertical="health", mode="phone",
+            status="completed", conversation_id=conv.id,
+            created_at=datetime.now(UTC) - timedelta(days=27),
+            started_at=datetime.now(UTC) - timedelta(days=27),
+            ended_at=datetime.now(UTC) - timedelta(days=27),
+        )
+        # Recent stale (FE's session_id) WITH a doc — has documentation.
+        stale = Session(
+            request_id=req.id, chw_id=chw.id, member_id=member.id,
+            vertical="health", mode="phone",
+            status="scheduled", conversation_id=conv.id,
+        )
+        db.add_all([ancient, stale])
+        await db.flush()
+        db.add(SessionDocumentation(
+            session_id=stale.id, summary="prior",
+            diagnosis_codes=["Z71.89"], procedure_code="98960", units_to_bill=1,
+        ))
+        await db.flush()
+
+        # No in_progress + only undocumented is the ancient one → must
+        # NOT redirect (would have picked ancient pre-fix).
+        resolved = await resolve_active_session_id_for_redirect(
+            db, requested_session_id=stale.id,
+        )
+        assert resolved == stale.id, (
+            f"Resolver should NOT redirect to a 27-day-old undocumented Session — "
+            f"would corrupt billing rows with stale CommunicationSession data."
+        )

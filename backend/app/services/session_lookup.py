@@ -203,16 +203,39 @@ async def resolve_active_session_id_for_redirect(
     #   Call ends → tap End Session → tap Submit Doc → done.
     # Both BE hits arrive with the original (stale) session_id and both
     # must redirect to the same freshly-minted Session.
+    #
+    # RECENCY FILTER: only consider Sessions whose started_at OR ended_at
+    # is within the last hour. The (chw, member) conversation may have
+    # weeks of legacy undocumented Sessions (pre-#193 data had a UC on
+    # Conversation.session_id, so every prior Session got its own
+    # Conversation row; the dedup helper currently returns the OLDEST
+    # such Conversation, which can contain ancient siblings). Without the
+    # recency filter, the resolver picked a 27-day-old Session as the
+    # "current Submit Doc target" — observed in prod the night of
+    # 2026-05-31. Ordering by ended_at DESC NULLS LAST puts the most
+    # recently completed Session first.
+    from datetime import UTC, datetime, timedelta
+    from sqlalchemy import or_
     from app.models.session import SessionDocumentation
 
+    recent_cutoff = datetime.now(UTC) - timedelta(hours=1)
     documented_subq = select(SessionDocumentation.session_id).subquery()
     result = await db.execute(
         select(Session)
         .where(
             Session.conversation_id == session.conversation_id,
             Session.id.notin_(select(documented_subq.c.session_id)),
+            or_(
+                Session.ended_at >= recent_cutoff,
+                Session.started_at >= recent_cutoff,
+                Session.created_at >= recent_cutoff,
+            ),
         )
-        .order_by(Session.created_at.desc())
+        .order_by(
+            Session.ended_at.desc().nulls_last(),
+            Session.started_at.desc().nulls_last(),
+            Session.created_at.desc(),
+        )
         .limit(1)
     )
     undocumented = result.scalar_one_or_none()
