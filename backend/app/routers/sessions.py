@@ -400,7 +400,8 @@ async def complete_session(session_id: UUID, current_user=Depends(get_current_us
             db, requested_session_id=session_id,
         )
         if redirected != session_id:
-            logger.info(
+            import logging
+            logging.getLogger("compass").info(
                 "complete_session: #193 BE redirect from %s to active=%s",
                 session_id, redirected,
             )
@@ -520,7 +521,8 @@ async def submit_documentation(
             db, requested_session_id=session_id,
         )
         if redirected != session_id:
-            logger.info(
+            import logging
+            logging.getLogger("compass").info(
                 "submit_documentation: #193 BE redirect from %s to active=%s",
                 session_id, redirected,
             )
