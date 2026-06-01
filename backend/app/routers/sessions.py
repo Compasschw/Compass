@@ -1750,80 +1750,26 @@ async def initiate_session_call(
         )
 
     # #193 session-per-call: this endpoint is the one the FE actually hits
-    # (NOT /communication/call-bridge — that's a separate path). Mirror the
-    # call-bridge flag-on logic here so each call mints a fresh Session
-    # when the flag is on and the conversation has no active in_progress
-    # one. Without this duplicated block the same-thread multi-call flow
-    # silently reuses the original Session and the 2nd doc submit 409s.
+    # (NOT /communication/call-bridge — that's a separate path). Delegate
+    # to the shared resolver so both endpoints stay in sync.
     import logging
     target_session_id: UUID = session_id
     from app.config import settings as _settings
     if _settings.session_per_call_enabled:
-        from app.services.session_lookup import (
-            create_followup_session,
-            find_or_create_conversation_for_pair,
-            get_active_session_for_conversation,
-        )
-        # Identify CHW + member explicitly so create_followup_session sees
-        # the correct user objects regardless of who initiated the call.
+        from app.services.session_lookup import resolve_target_session_for_call
+
         chw_user_obj = caller if current_user.id == session.chw_id else recipient
         member_user_obj = recipient if current_user.id == session.chw_id else caller
-
-        conversation = await find_or_create_conversation_for_pair(
-            db, chw_id=session.chw_id, member_id=session.member_id,
+        resolved = await resolve_target_session_for_call(
+            db,
+            chw_id=session.chw_id,
+            member_id=session.member_id,
+            chw_user=chw_user_obj,
+            member_user=member_user_obj,
+            fallback_session_id=session_id,
         )
-        active = await get_active_session_for_conversation(db, conversation.id)
-
-        # Heal: if "active" already has documentation, treat it as closed
-        # and mint a fresh Session for this call. Mirrors the heal in
-        # /communication/call-bridge (#193 skip-End-Session fix).
-        if active is not None:
-            from datetime import UTC as _UTC, datetime as _dt
-            from app.models.session import SessionDocumentation
-            doc_row = await db.execute(
-                select(SessionDocumentation.id).where(
-                    SessionDocumentation.session_id == active.id
-                )
-            )
-            if doc_row.scalar_one_or_none() is not None:
-                logging.getLogger("compass.communication").info(
-                    "session-call: prior 'active' session %s already has a "
-                    "SessionDocumentation — auto-completing and minting a "
-                    "fresh Session (#193 skip-End-Session heal)",
-                    active.id,
-                )
-                active.status = "completed"
-                if active.ended_at is None:
-                    active.ended_at = _dt.now(_UTC)
-                await db.flush()
-                active = None
-
-        if active is not None:
-            target_session_id = active.id
-        else:
-            try:
-                new_session = await create_followup_session(
-                    db,
-                    conversation=conversation,
-                    chw_user=chw_user_obj,
-                    member_user=member_user_obj,
-                )
-                target_session_id = new_session.id
-                logging.getLogger("compass.communication").info(
-                    "session-call: #193 minted fresh Session %s for this call "
-                    "(URL session=%s, conv=%s)",
-                    target_session_id, session_id, conversation.id,
-                )
-            except ValueError as exc:
-                # No prior session in this conversation to clone lineage
-                # from. Fall back to the URL session_id so the call still
-                # proceeds, but log loudly — every occurrence here means
-                # the call won't have a fresh billable Session.
-                logging.getLogger("compass.communication").warning(
-                    "session-call: session_per_call_enabled but conv %s has no "
-                    "prior Session to clone — falling back to URL id %s. Reason: %s",
-                    conversation.id, session_id, exc,
-                )
+        if resolved is not None:
+            target_session_id = resolved
 
     provider = get_provider()
     proxy = await provider.create_proxy_session(

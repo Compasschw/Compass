@@ -160,6 +160,109 @@ async def create_followup_session(
     return new_session
 
 
+async def resolve_target_session_for_call(
+    db: AsyncSession,
+    *,
+    chw_id: UUID,
+    member_id: UUID,
+    chw_user,
+    member_user,
+    fallback_session_id: UUID | None,
+) -> UUID | None:
+    """Resolve the Session id a fresh call-bridge should attach its
+    CommunicationSession (and Vonage outbound legs) to.
+
+    Both ``/api/v1/communication/call-bridge`` and ``/api/v1/sessions/{id}/call``
+    need exactly this logic when ``session_per_call_enabled=True``:
+
+      1. Find the (chw, member) Conversation (or create it).
+      2. Look up the Conversation's currently in_progress Session.
+      3. Heal: if that "active" Session already has a
+         ``SessionDocumentation`` row, the CHW has already closed it from
+         their perspective (submit-doc without explicit End Session).
+         Mark it ``completed`` and treat as no-active so a fresh Session
+         gets minted for THIS call.
+      4. If no active Session remains, ``create_followup_session`` mints
+         one cloning lineage (``request_id``, ``vertical``, ``mode``)
+         from the conversation's most recent prior Session.
+      5. If ``create_followup_session`` raises (no prior Session in the
+         conversation), fall back to ``fallback_session_id`` — the URL's
+         id for /sessions/{id}/call, or ``body.session_id`` for
+         /communication/call-bridge — so the call still proceeds.
+
+    Until this helper existed both endpoints carried hand-copied versions
+    of this block. One drifted (the /sessions/{id}/call copy didn't have
+    the flag-on logic at all), every "same-thread multi-call" test
+    silently used the stale Session, and every 2nd doc submit 409'd. The
+    fix took most of a night to track down. Centralizing here so we
+    never paste-then-diverge again.
+
+    Returns the resolved Session id (may be a brand-new uuid or the
+    fallback). Returns ``fallback_session_id`` unchanged when the flag
+    is off — callers should check the flag themselves so this helper
+    isn't paying for the conversation lookup in the legacy path.
+    """
+    import logging
+    log = logging.getLogger("compass.communication")
+
+    conversation = await find_or_create_conversation_for_pair(
+        db, chw_id=chw_id, member_id=member_id,
+    )
+    active = await get_active_session_for_conversation(db, conversation.id)
+
+    if active is not None:
+        from app.models.session import SessionDocumentation
+        existing_doc_row = await db.execute(
+            select(SessionDocumentation.id).where(
+                SessionDocumentation.session_id == active.id
+            )
+        )
+        if existing_doc_row.scalar_one_or_none() is not None:
+            log.info(
+                "resolve_target_session_for_call: prior 'active' session %s "
+                "already has a SessionDocumentation — auto-completing and "
+                "minting a fresh Session (#193 skip-End-Session heal)",
+                active.id,
+            )
+            active.status = "completed"
+            if active.ended_at is None:
+                active.ended_at = datetime.now(UTC)
+            await db.flush()
+            active = None
+
+    if active is not None:
+        return active.id
+
+    try:
+        new_session = await create_followup_session(
+            db,
+            conversation=conversation,
+            chw_user=chw_user,
+            member_user=member_user,
+        )
+        log.info(
+            "resolve_target_session_for_call: #193 minted fresh Session %s "
+            "for this call (fallback was %s, conv=%s)",
+            new_session.id, fallback_session_id, conversation.id,
+        )
+        return new_session.id
+    except ValueError as exc:
+        # No prior Session in the conversation to clone lineage from.
+        # Fall back to whatever the caller had — for /sessions/{id}/call
+        # that's the URL session_id, for /communication/call-bridge it's
+        # body.session_id (possibly None). Logged loudly because each
+        # occurrence here means the call won't have a fresh billable
+        # Session and the BE redirect on submit doc won't have anything
+        # to redirect to.
+        log.warning(
+            "resolve_target_session_for_call: session_per_call_enabled but "
+            "conv %s has no prior Session to clone — falling back to %s. "
+            "Reason: %s",
+            conversation.id, fallback_session_id, exc,
+        )
+        return fallback_session_id
+
+
 async def resolve_active_session_id_for_redirect(
     db: AsyncSession,
     *,

@@ -49,11 +49,7 @@ from app.database import get_db
 from app.dependencies import get_current_user
 from app.services.communication import get_provider
 from app.services.communication_touch_log import TouchKind, record_touch
-from app.services.session_lookup import (
-    create_followup_session,
-    find_or_create_conversation_for_pair,
-    get_active_session_for_conversation,
-)
+from app.services.session_lookup import resolve_target_session_for_call
 
 logger = logging.getLogger("compass.communication")
 
@@ -440,75 +436,18 @@ async def call_bridge(
         and chw_id_for_gate is not None
         and member_id_for_gate is not None
     ):
-        conversation = await find_or_create_conversation_for_pair(
+        chw_user_obj = caller if caller.role == "chw" else recipient
+        member_user_obj = recipient if caller.role == "chw" else caller
+        resolved = await resolve_target_session_for_call(
             db,
             chw_id=chw_id_for_gate,
             member_id=member_id_for_gate,
+            chw_user=chw_user_obj,
+            member_user=member_user_obj,
+            fallback_session_id=body.session_id,
         )
-        active = await get_active_session_for_conversation(db, conversation.id)
-
-        # Auto-heal the "skip End Session" pattern: if the supposedly-active
-        # session already has a SessionDocumentation, the CHW has already
-        # closed it from their perspective (submit-doc without explicit
-        # End Session). Mark it completed and treat as no-active so a fresh
-        # Session is minted for THIS call. Without this branch the 2nd call
-        # in the same thread would reuse the same Session and the 2nd
-        # documentation submit would 409. (#193 same-thread fix.)
-        if active is not None:
-            from datetime import UTC as _UTC, datetime as _dt
-            from app.models.session import SessionDocumentation
-            existing_doc_row = await db.execute(
-                select(SessionDocumentation.id).where(
-                    SessionDocumentation.session_id == active.id
-                )
-            )
-            if existing_doc_row.scalar_one_or_none() is not None:
-                logger.info(
-                    "call-bridge: prior 'active' session %s already has a "
-                    "SessionDocumentation — auto-completing and minting a "
-                    "fresh Session for this call (#193 skip-End-Session heal)",
-                    active.id,
-                )
-                active.status = "completed"
-                if active.ended_at is None:
-                    active.ended_at = _dt.now(_UTC)
-                await db.flush()
-                active = None
-
-        if active is not None:
-            target_session_id = active.id
-        else:
-            # Mint a fresh Session cloning lineage from the conversation's most
-            # recent prior Session. If there's no prior Session, this raises
-            # ValueError — the caller must seed via the ServiceRequest→start
-            # flow first.
-            chw_user, member_user = (
-                (caller, recipient)
-                if caller.role == "chw"
-                else (recipient, caller)
-            )
-            try:
-                new_session = await create_followup_session(
-                    db,
-                    conversation=conversation,
-                    chw_user=chw_user,
-                    member_user=member_user,
-                )
-                target_session_id = new_session.id
-            except ValueError as exc:
-                # No prior session to clone from — leave target_session_id as
-                # whatever the request provided (possibly None). The caller is
-                # bridging into a brand-new conversation that hasn't gone
-                # through the request→accept→start flow yet; fall back to legacy.
-                # WARN-log so ops can detect a flag-on bridge that silently
-                # produced no billable Session — every occurrence here means
-                # the call won't have a CommunicationSession or BillingClaim.
-                logger.warning(
-                    "call-bridge: session_per_call_enabled but conversation %s has "
-                    "no prior Session to clone — falling back to legacy session_id=%s. "
-                    "Reason: %s",
-                    conversation.id, body.session_id, exc,
-                )
+        if resolved is not None:
+            target_session_id = resolved
 
     provider = get_provider()
     proxy = await provider.create_proxy_session(
