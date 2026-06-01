@@ -25,6 +25,68 @@ logger = logging.getLogger("compass.auth")
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
 
+async def _append_new_member_to_csv(user_id: UUID) -> None:
+    """Best-effort background task: append a freshly-registered member to
+    the Pear Member-Import rolling monthly CSV in S3.
+
+    Mirrors the pattern of ``_sync_new_member_to_pear`` — opens its own
+    DB session because the request session is closed by the time this
+    fires, logs any failure but never re-raises (admin can re-run the
+    backfill script later).  Idempotent on
+    ``MemberProfile.member_csv_exported_at``: skips if it's already
+    populated, sets it to ``NOW()`` after a successful S3 append.
+    """
+    from datetime import UTC, datetime as _dt
+
+    from app.config import settings as _settings
+    from app.database import async_session
+    from app.models.user import MemberProfile, User as _User
+    from app.services.member_csv_writer import append_row, build_row_from_models
+    from sqlalchemy import select
+
+    if not getattr(_settings, "member_csv_enabled", False):
+        return
+
+    async with async_session() as db:
+        try:
+            user = await db.get(_User, user_id)
+            if user is None or user.role != "member":
+                return
+            result = await db.execute(
+                select(MemberProfile).where(MemberProfile.user_id == user_id)
+            )
+            profile = result.scalar_one_or_none()
+            if profile is None:
+                logger.warning(
+                    "register: skipped member CSV — no MemberProfile for user=%s",
+                    user_id,
+                )
+                return
+            if profile.member_csv_exported_at is not None:
+                logger.info(
+                    "register: member CSV already exported user=%s at %s — skipping",
+                    user_id, profile.member_csv_exported_at,
+                )
+                return
+
+            row = build_row_from_models(user=user, member_profile=profile)
+            env_prefix = "prod" if _settings.pear_suite_enabled else "sandbox"
+            append_row(row, environment=env_prefix)
+
+            profile.member_csv_exported_at = _dt.now(UTC)
+            await db.commit()
+            logger.info(
+                "register: member CSV appended user=%s env=%s",
+                user_id, env_prefix,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "register: member CSV append failed user=%s (non-fatal, "
+                "retryable via scripts/backfill_member_csv.py)",
+                user_id,
+            )
+
+
 async def _sync_new_member_to_pear(user_id: UUID) -> None:
     """Best-effort background task: sync a freshly-registered member to Pear.
 
@@ -114,6 +176,7 @@ async def register(
     # admin can re-trigger the sync at that point.
     if user.role == "member":
         background_tasks.add_task(_sync_new_member_to_pear, user.id)
+        background_tasks.add_task(_append_new_member_to_csv, user.id)
 
     return TokenResponse(access_token=access, refresh_token=refresh, role=user.role, name=user.name)
 

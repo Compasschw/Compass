@@ -30,6 +30,16 @@ class Settings(BaseSettings):
     billing_csv_enabled: bool = False
     s3_bucket_billing_csv: str = "compass-sandbox-billing-csv"
 
+    # Pear Member-Import CSV workaround. When enabled, every successful
+    # /auth/register for role=member appends a row to a monthly rolling
+    # CSV in ``s3_bucket_member_csv`` shaped to Pear's Member Import
+    # template (see backend/app/services/member_csv_writer.py).
+    # Idempotency is enforced via MemberProfile.member_csv_exported_at
+    # so retries / restart-recovery don't produce duplicate rows.
+    # Default OFF so prod stays Pear-API-only until ops promotes this flag.
+    member_csv_enabled: bool = False
+    s3_bucket_member_csv: str = "compass-sandbox-member-csv"
+
     # Sandbox / cofounder-testing toggle for the live PearSuite API.
     # When False, ensure_member_synced + submit_claim short-circuit cleanly
     # so the sandbox backend never posts to api.pearsuite.com. Production

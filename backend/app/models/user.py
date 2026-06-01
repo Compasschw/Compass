@@ -124,6 +124,16 @@ class MemberProfile(Base):
     # member has been synced. Indexed for fast existence check in ensure_member_synced.
     pear_suite_member_id: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
 
+    # Pear bulk-upload Member-Import CSV idempotency stamp. Set to NOW()
+    # by auth/register (and the backfill script) after a successful row
+    # is written to s3_bucket_member_csv. The writer has no in-CSV marker
+    # column (Pear's Member template is 12 cols, no Notes), so retries
+    # must be gated on this column or they produce duplicate rows.
+    # NULL = "never exported"; non-NULL = "exported at this UTC moment".
+    member_csv_exported_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     rewards_balance: Mapped[int] = mapped_column(Integer, default=0)
     preferred_mode: Mapped[str | None] = mapped_column(String(20))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
