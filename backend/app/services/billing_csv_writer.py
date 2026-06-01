@@ -315,7 +315,9 @@ def _row_to_csv_cells(row: BillingCsvRow) -> list[str]:
 # ─── S3 read-modify-write append ──────────────────────────────────────────────
 
 
-def _s3_key_for_month(now_utc: datetime, environment: str = "sandbox") -> str:
+def _s3_key_for_month(
+    when_utc: datetime, environment: str = "sandbox"
+) -> str:
     """Build the S3 key for the rolling monthly CSV.
 
     Layout: ``{environment}/v2/{YYYY-MM}.csv``.  The ``v2/`` segment
@@ -323,8 +325,17 @@ def _s3_key_for_month(now_utc: datetime, environment: str = "sandbox") -> str:
     ``{environment}/{YYYY-MM}.csv``, so a redeploy doesn't try to glue
     new-format rows onto an old-format header (Pear's parser would reject
     the whole file on column-count mismatch).
+
+    Bucket the file by ``when_utc`` converted to **LA local time** — billing
+    month for Pear and US-based ops is determined by when the activity
+    happened locally, not by UTC. Without the conversion, a session
+    submitted at 5pm PT on May 31 lands in ``2026-06.csv`` because UTC has
+    already rolled to June 1. Callers should pass the row's
+    ``activity_start_utc`` (the "when the call connected" moment) so the
+    file groups by service month rather than write moment.
     """
-    return f"{environment}/v2/{now_utc.year:04d}-{now_utc.month:02d}.csv"
+    when_la = when_utc.astimezone(_PEAR_TIMEZONE)
+    return f"{environment}/v2/{when_la.year:04d}-{when_la.month:02d}.csv"
 
 
 def _read_existing_csv(bucket: str, key: str) -> str:
@@ -406,8 +417,13 @@ def append_row(row: BillingCsvRow, *, environment: str = "sandbox") -> None:
         return
 
     from datetime import UTC, datetime as _dt
-    now_utc = _dt.now(UTC)
-    key = _s3_key_for_month(now_utc, environment=environment)
+    # Bucket the row by its Activity Start (LA local) — see _s3_key_for_month
+    # docstring for why this matters. Fall back to "now" when the row is
+    # missing activity_start_utc (rare: in-person visit with no call leg and
+    # no doc-submit timestamp), which keeps the writer functional even on
+    # degraded data.
+    when_for_bucket = row.activity_start_utc or _dt.now(UTC)
+    key = _s3_key_for_month(when_for_bucket, environment=environment)
 
     existing_body = _read_existing_csv(bucket, key)
     if row.session_id and _session_id_already_present(existing_body, row.session_id):

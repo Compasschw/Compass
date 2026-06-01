@@ -315,9 +315,25 @@ def test_session_id_already_present_handles_empty_csv() -> None:
 def test_s3_key_includes_v2_prefix_to_isolate_from_legacy_files() -> None:
     """Layout flip from 17→22 cols would corrupt the v1 files if appended;
     the v2 segment forces a fresh path."""
-    now = datetime(2026, 6, 15, 17, 0, 0, tzinfo=UTC)
-    assert _s3_key_for_month(now, environment="prod") == "prod/v2/2026-06.csv"
-    assert _s3_key_for_month(now, environment="sandbox") == "sandbox/v2/2026-06.csv"
+    # Midday UTC is unambiguous (LA local stays in the same month).
+    when = datetime(2026, 6, 15, 17, 0, 0, tzinfo=UTC)
+    assert _s3_key_for_month(when, environment="prod") == "prod/v2/2026-06.csv"
+    assert _s3_key_for_month(when, environment="sandbox") == "sandbox/v2/2026-06.csv"
+
+
+def test_s3_key_buckets_by_la_local_not_utc() -> None:
+    """Activity at 5pm PT on May 31 = 00:04 UTC June 1. Bucket must follow
+    the LA-local month (May) so US-based ops aren't surprised by a session
+    landing in next month's CSV. Was the source of split files in prod."""
+    # 2026-06-01 00:04 UTC == 2026-05-31 17:04 PDT (UTC-7 in May/June)
+    when = datetime(2026, 6, 1, 0, 4, 0, tzinfo=UTC)
+    assert _s3_key_for_month(when, environment="prod") == "prod/v2/2026-05.csv"
+
+
+def test_s3_key_uses_la_month_when_utc_is_next_year() -> None:
+    """New Year's Eve at 7pm PT = 03:00 UTC Jan 1. Bucket must still be Dec."""
+    when = datetime(2027, 1, 1, 3, 0, 0, tzinfo=UTC)
+    assert _s3_key_for_month(when, environment="prod") == "prod/v2/2026-12.csv"
 
 
 # ─── append_row with mocked S3 ───────────────────────────────────────────────
