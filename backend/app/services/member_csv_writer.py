@@ -313,6 +313,34 @@ def build_csv_bytes(rows: list[MemberCsvRow]) -> bytes:
     return buf.getvalue().encode("utf-8")
 
 
+def is_export_eligible(user: Any) -> bool:
+    """Return True iff this user should be included in the Pear member CSV.
+
+    Excludes:
+      - Non-members (role != "member") — only members go to Pear's Member Import.
+      - Soft-deleted accounts (email ends with @deleted.compasschw.local).
+        The account-deletion flow nulls the name + rewrites the email to that
+        sentinel; uploading the PHI residue to Pear would be a privacy +
+        compliance issue.
+      - Smoke-test + synthetic accounts (@example.com, you+sim- prefix).
+        Standard patterns used by load tests and dev sims; never billable.
+
+    Centralized here so the live auth-hook AND the backfill script apply
+    the same eligibility rule. Both call this before
+    ``build_row_from_models`` / ``append_row``.
+    """
+    if getattr(user, "role", None) != "member":
+        return False
+    email = (getattr(user, "email", "") or "").lower()
+    if email.endswith("@deleted.compasschw.local"):
+        return False
+    if email.endswith("@example.com"):
+        return False
+    if email.startswith("you+sim-"):
+        return False
+    return True
+
+
 def build_row_from_models(*, user: Any, member_profile: Any) -> MemberCsvRow:
     """Map ``User`` + ``MemberProfile`` SQLAlchemy rows to a ``MemberCsvRow``.
 

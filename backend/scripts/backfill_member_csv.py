@@ -31,7 +31,11 @@ from sqlalchemy import select
 from app.config import settings
 from app.database import async_session
 from app.models.user import MemberProfile, User
-from app.services.member_csv_writer import append_row, build_row_from_models
+from app.services.member_csv_writer import (
+    append_row,
+    build_row_from_models,
+    is_export_eligible,
+)
 
 logger = logging.getLogger("compass.member.csv_backfill")
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -62,7 +66,14 @@ async def main(dry_run: bool) -> int:
             )
             .order_by(User.created_at.asc())
         )
-        rows = result.all()
+        # SQL pre-filter doesn't know about deleted-sentinel / smoke-test
+        # patterns; apply the shared eligibility filter in Python so the
+        # backfill matches the live-auth-hook rules exactly.
+        rows = [
+            (user, profile)
+            for user, profile in result.all()
+            if is_export_eligible(user)
+        ]
 
     logger.info(
         "Backfill candidates: %d member(s) without member_csv_exported_at "

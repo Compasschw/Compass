@@ -274,3 +274,50 @@ def test_build_csv_bytes_two_rows_matches_pear_sample() -> None:
 def csv_reader_rows(body: str) -> list[list[str]]:
     import csv as _csv
     return list(_csv.reader(io.StringIO(body)))
+
+
+# ─── is_export_eligible ──────────────────────────────────────────────────────
+
+
+def _user(role: str = "member", email: str = "real@example.com") -> SimpleNamespace:
+    return SimpleNamespace(role=role, email=email)
+
+
+def test_export_eligible_real_member() -> None:
+    from app.services.member_csv_writer import is_export_eligible
+    assert is_export_eligible(_user(role="member", email="akram@gmail.com")) is True
+    assert is_export_eligible(_user(role="member", email="jt@joincompasschw.com")) is True
+
+
+def test_export_eligible_excludes_non_members() -> None:
+    from app.services.member_csv_writer import is_export_eligible
+    assert is_export_eligible(_user(role="chw", email="chw@example.org")) is False
+    assert is_export_eligible(_user(role="admin", email="admin@example.org")) is False
+
+
+def test_export_eligible_excludes_soft_deleted() -> None:
+    """Account-deletion flow rewrites email to @deleted.compasschw.local.
+    Uploading PHI residue to Pear would be a compliance issue."""
+    from app.services.member_csv_writer import is_export_eligible
+    deleted_email = "deleted-abc-123@deleted.compasschw.local"
+    assert is_export_eligible(_user(role="member", email=deleted_email)) is False
+
+
+def test_export_eligible_excludes_example_com() -> None:
+    """Smoke-test domain — never billable."""
+    from app.services.member_csv_writer import is_export_eligible
+    assert is_export_eligible(_user(role="member", email="smoke-test-123@example.com")) is False
+
+
+def test_export_eligible_excludes_you_sim_prefix() -> None:
+    """Dev sim accounts use you+sim- prefix; never billable."""
+    from app.services.member_csv_writer import is_export_eligible
+    assert is_export_eligible(_user(role="member", email="you+sim-2026-05-05@gmail.com")) is False
+    assert is_export_eligible(_user(role="member", email="you+sim-3@gmail.com")) is False
+
+
+def test_export_eligible_case_insensitive() -> None:
+    """Email matching is case-insensitive (DB sometimes stores mixed case)."""
+    from app.services.member_csv_writer import is_export_eligible
+    assert is_export_eligible(_user(role="member", email="Test@EXAMPLE.com")) is False
+    assert is_export_eligible(_user(role="member", email="deleted-x@DELETED.compasschw.local")) is False

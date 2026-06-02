@@ -41,7 +41,11 @@ async def _append_new_member_to_csv(user_id: UUID) -> None:
     from app.config import settings as _settings
     from app.database import async_session
     from app.models.user import MemberProfile, User as _User
-    from app.services.member_csv_writer import append_row, build_row_from_models
+    from app.services.member_csv_writer import (
+        append_row,
+        build_row_from_models,
+        is_export_eligible,
+    )
     from sqlalchemy import select
 
     if not getattr(_settings, "member_csv_enabled", False):
@@ -50,7 +54,7 @@ async def _append_new_member_to_csv(user_id: UUID) -> None:
     async with async_session() as db:
         try:
             user = await db.get(_User, user_id)
-            if user is None or user.role != "member":
+            if user is None or not is_export_eligible(user):
                 return
             result = await db.execute(
                 select(MemberProfile).where(MemberProfile.user_id == user_id)
