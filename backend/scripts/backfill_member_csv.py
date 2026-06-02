@@ -35,6 +35,7 @@ from app.services.member_csv_writer import (
     append_row,
     build_row_from_models,
     is_export_eligible,
+    is_pear_complete,
 )
 
 logger = logging.getLogger("compass.member.csv_backfill")
@@ -83,7 +84,17 @@ async def main(dry_run: bool) -> int:
     if not rows:
         return 0
 
+    incomplete = 0
     for user, profile in rows:
+        if not is_pear_complete(user, profile):
+            incomplete += 1
+            logger.info(
+                "[skip-incomplete] user=%s email=%s — profile missing "
+                "Pear-required fields; not exported, will retry next run",
+                user.id, user.email,
+            )
+            continue
+
         try:
             csv_row = build_row_from_models(user=user, member_profile=profile)
         except Exception as exc:  # noqa: BLE001
@@ -125,8 +136,8 @@ async def main(dry_run: bool) -> int:
         logger.info("Exported user=%s email=%s", user.id, user.email)
 
     logger.info(
-        "Done — succeeded=%d failed=%d skipped(dry-run)=%d",
-        succeeded, failed, skipped,
+        "Done — succeeded=%d failed=%d skipped(dry-run)=%d incomplete=%d",
+        succeeded, failed, skipped, incomplete,
     )
     return exit_code
 

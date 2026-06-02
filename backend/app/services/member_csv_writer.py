@@ -313,6 +313,61 @@ def build_csv_bytes(rows: list[MemberCsvRow]) -> bytes:
     return buf.getvalue().encode("utf-8")
 
 
+def is_pear_complete(user: Any, member_profile: Any) -> bool:
+    """Return True iff the (user, profile) row has every field Pear's
+    Member Import parser requires.
+
+    Pear's Data Dictionary (Member Import Template - Compass CHW.xlsx)
+    marks every column except "Adress 2" (sic) as required for Member
+    Imports.  Uploading a row missing any of them gets the row silently
+    dropped by Pear at parse time — sometimes the whole file.  Better
+    to skip incomplete rows entirely so ops doesn't pay for a Pear
+    upload pass that produces zero billable members.
+
+    Incomplete rows do NOT get stamped with member_csv_exported_at, so
+    the next backfill run picks them up automatically once the member
+    finishes their profile.
+
+    Required (per Pear):
+      - First Name + Last Name (covered by signup form; #191 gates them)
+      - Phone (User.phone)
+      - Birthdate (MemberProfile.date_of_birth)
+      - Sex (MemberProfile.gender)
+      - Insurance (MemberProfile.insurance_company)
+      - CIN (MemberProfile.medi_cal_id) — Pear marks "Both Imports"
+      - Address 1 (MemberProfile.address_line1)
+      - City (MemberProfile.city)
+      - State (MemberProfile.state)
+      - Zipcode (MemberProfile.zip_code)
+
+    "Adress 2" is the only column genuinely optional in Pear's spec.
+    """
+    if not (getattr(user, "name", None) or "").strip():
+        return False
+    name_parts = (user.name or "").strip().split()
+    if len(name_parts) < 2:
+        # Need both First + Last; #191 enforces this at signup but legacy
+        # rows from before the rule landed may have single-token names.
+        return False
+    required_user = [getattr(user, "phone", None)]
+    required_profile = [
+        getattr(member_profile, "date_of_birth", None),
+        getattr(member_profile, "gender", None),
+        getattr(member_profile, "insurance_company", None),
+        getattr(member_profile, "medi_cal_id", None),
+        getattr(member_profile, "address_line1", None),
+        getattr(member_profile, "city", None),
+        getattr(member_profile, "state", None),
+        getattr(member_profile, "zip_code", None),
+    ]
+    for value in (*required_user, *required_profile):
+        if value is None:
+            return False
+        if isinstance(value, str) and not value.strip():
+            return False
+    return True
+
+
 def is_export_eligible(user: Any) -> bool:
     """Return True iff this user should be included in the Pear member CSV.
 

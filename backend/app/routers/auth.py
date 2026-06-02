@@ -45,6 +45,7 @@ async def _append_new_member_to_csv(user_id: UUID) -> None:
         append_row,
         build_row_from_models,
         is_export_eligible,
+        is_pear_complete,
     )
     from sqlalchemy import select
 
@@ -70,6 +71,16 @@ async def _append_new_member_to_csv(user_id: UUID) -> None:
                 logger.info(
                     "register: member CSV already exported user=%s at %s — skipping",
                     user_id, profile.member_csv_exported_at,
+                )
+                return
+            if not is_pear_complete(user, profile):
+                # Profile is missing one or more Pear-required fields.
+                # Leave member_csv_exported_at NULL so the next backfill
+                # run picks them up once their profile is complete.
+                logger.info(
+                    "register: member CSV skipped user=%s — profile missing "
+                    "Pear-required fields; will retry via backfill",
+                    user_id,
                 )
                 return
 
