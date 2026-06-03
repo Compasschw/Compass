@@ -66,7 +66,8 @@ import {
   Pin as PinIcon,
   Archive as ArchiveIcon,
 } from 'lucide-react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
+import type { CHWSessionsStackParamList } from '../../navigation/CHWTabNavigator';
 import { OpenQuestionsDrawer } from '../../components/chw/OpenQuestionsDrawer';
 
 import { AppShell, Card, Pill } from '../../components/ui';
@@ -355,12 +356,26 @@ interface ConversationPaneProps {
   session: SessionData;
   onBack?: () => void;
   showBackButton: boolean;
+  /**
+   * When true, fire the masked-number call sequence as soon as this
+   * conversation mounts. Used by the navigate-and-call flow from the
+   * CHW Member Profile screen — the parent forwards
+   * ``route.params.autoCall`` here and clears it after the call fires
+   * so a subsequent re-render doesn't retrigger.
+   *
+   * The pane invokes ``onAutoCallConsumed`` after the call request lands
+   * (or errors) so the parent can ack the one-shot.
+   */
+  autoCallOnMount?: boolean;
+  onAutoCallConsumed?: () => void;
 }
 
 function ConversationPane({
   session,
   onBack,
   showBackButton,
+  autoCallOnMount,
+  onAutoCallConsumed,
 }: ConversationPaneProps): React.JSX.Element {
   const [draftText, setDraftText] = useState('');
   const [localMessages, setLocalMessages] = useState<SessionMessageLocal[]>([]);
@@ -427,6 +442,31 @@ function ConversationPane({
       );
     }
   }, [callInitiating, session.id, session.memberName, startCall, showToast]);
+
+  // Auto-call on mount: when the parent navigated here from a Member
+  // Profile "Call" button with route.params.autoCall=true, fire the call
+  // sequence immediately (the user already confirmed intent on the
+  // previous screen — no need for a second confirm). The one-shot
+  // ack via onAutoCallConsumed clears the flag in the parent so a
+  // subsequent re-render doesn't retrigger.
+  useEffect(() => {
+    if (!autoCallOnMount) return;
+    if (callInitiating) return;
+    setCallInitiating(true);
+    void (async () => {
+      try {
+        await startCall.mutateAsync(session.id);
+        showToast('Call requested — your phone should ring shortly.', false);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Call failed.';
+        showToast(message, true);
+      } finally {
+        setCallInitiating(false);
+        onAutoCallConsumed?.();
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoCallOnMount, session.id]);
 
   const memberName = session.memberName ?? 'Unknown Member';
   const initials = getInitials(memberName);
@@ -1400,12 +1440,32 @@ export function CHWMessagesScreen(): React.JSX.Element {
     return list;
   }, [allSessions, searchQuery]);
 
-  // Auto-select first thread when list loads (desktop behaviour)
+  // Route params — when navigated from a Member Profile screen, the caller
+  // can pass {memberId, autoCall} to pre-select that member's thread and
+  // optionally fire the call sequence as soon as the thread mounts.
+  const route = useRoute<RouteProp<CHWSessionsStackParamList, 'Messages'>>();
+  const targetMemberId = route.params?.memberId;
+  const shouldAutoCall = route.params?.autoCall === true;
+  // One-shot: auto-call must only fire once per nav even if the screen
+  // re-renders. Tracked separately from selectedSession because the user
+  // might tap into another thread while the auto-call is in flight.
+  const autoCallFiredRef = useRef(false);
+
+  // Auto-select first thread when list loads (desktop behaviour) OR the
+  // specific member's thread when route params point at one.
   useEffect(() => {
-    if (filteredSessions.length > 0 && !selectedSession) {
+    if (filteredSessions.length === 0) return;
+    if (targetMemberId) {
+      const match = filteredSessions.find((s) => s.memberId === targetMemberId);
+      if (match && selectedSession?.id !== match.id) {
+        setSelectedSession(match);
+        return;
+      }
+    }
+    if (!selectedSession) {
       setSelectedSession(filteredSessions[0] ?? null);
     }
-  }, [filteredSessions, selectedSession]);
+  }, [filteredSessions, selectedSession, targetMemberId]);
 
   const handleSelectSession = useCallback((session: SessionData) => {
     setSelectedSession(session);
@@ -1566,6 +1626,14 @@ export function CHWMessagesScreen(): React.JSX.Element {
               session={selectedSession}
               onBack={handleBack}
               showBackButton={hideList}
+              autoCallOnMount={
+                shouldAutoCall
+                && !autoCallFiredRef.current
+                && selectedSession.memberId === targetMemberId
+              }
+              onAutoCallConsumed={() => {
+                autoCallFiredRef.current = true;
+              }}
             />
           </View>
         ) : shouldShowConv ? (

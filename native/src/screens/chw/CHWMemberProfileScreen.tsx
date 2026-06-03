@@ -1358,26 +1358,31 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
   );
 
   // ── Navigate to in-app conversation ─────────────────────────────────────────
-  // Called by ProfileContactButtons after find-or-create resolves a conversation id.
+  // Called by ProfileContactButtons after the Message button tap. Deep-link
+  // straight into the Messages screen with this member's id so the thread
+  // is pre-selected on mount — the previous version just navigated to the
+  // generic Sessions tab and showed a "go find the thread" alert, which
+  // forced the CHW to scan the inbox manually.
   const handleNavigateToConversation = useCallback(
-    (conversationId: string): void => {
-      navigation.navigate('Sessions');
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.alert(
-          `Conversation opened (id: ${conversationId.slice(0, 8)}…). ` +
-            'Navigate to the Messages tab to view it.',
-        );
-      } else {
-        Alert.alert(
-          'Conversation Ready',
-          `Your message thread with ${profile ? `${profile.firstName}` : 'this member'} is ready. ` +
-            'Go to the Messages tab to view it.',
-          [{ text: 'OK' }],
-        );
-      }
+    (_conversationId: string): void => {
+      // _conversationId is provided by /conversations/find-or-create but
+      // CHWMessagesScreen pre-selects threads by memberId (the SessionData
+      // shape's memberId field), so we navigate by memberId here. The
+      // conversation id is still useful for analytics + the eventual
+      // active_session_id wire-up (#193 Task 11) but isn't needed for nav.
+      navigation.navigate('Messages', { memberId });
     },
-    [navigation, profile],
+    [navigation, memberId],
   );
+
+  // Called by ProfileContactButtons after the Call button tap. Same as
+  // above but also flags ``autoCall=true`` so CHWMessagesScreen fires the
+  // masked-number call sequence as soon as the thread mounts. The CHW
+  // sees the chat UI with the call already initiated rather than waiting
+  // on a separate confirm dialog.
+  const handleNavigateAndCall = useCallback((): void => {
+    navigation.navigate('Messages', { memberId, autoCall: true });
+  }, [navigation, memberId]);
 
   // ── Loading skeleton ─────────────────────────────────────────────────────────
 
@@ -1627,6 +1632,7 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
               sharedSessionCount={profile.sessionCount}
               targetDisplayName={displayName}
               onNavigateToConversation={handleNavigateToConversation}
+              onNavigateAndCall={handleNavigateAndCall}
             />
 
             {/* ── MID ROW: Insights (9/12) + Compass Insights AI panel (3/12) ── */}
@@ -2017,6 +2023,10 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
               onNavigateToConversation={(convId) => {
                 setMessageDrawerOpen(false);
                 handleNavigateToConversation(convId);
+              }}
+              onNavigateAndCall={() => {
+                setMessageDrawerOpen(false);
+                handleNavigateAndCall();
               }}
             />
           </View>

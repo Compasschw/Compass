@@ -67,13 +67,29 @@ export interface ProfileContactButtonsProps {
    */
   targetDisplayName?: string;
   /**
-   * Callback fired when the "Message" tap resolves a conversation id.
-   * The parent screen is responsible for navigating to the conversation
-   * (this keeps the component stack-agnostic).
+   * Callback fired when the "Message" tap is ready to navigate to the
+   * target's thread. The parent is responsible for navigating (keeps the
+   * component stack-agnostic).
    *
-   * @param conversationId UUID string of the found/created conversation.
+   * The legacy variant accepts the resolved conversation id (from
+   * /conversations/find-or-create); the new variant passes the target
+   * user id directly so the parent can deep-link into the thread filter
+   * by member without an extra round trip. Implementations should
+   * prefer using ``targetUserId`` (already in scope on the parent) when
+   * the destination screen can locate the thread by member id.
    */
   onNavigateToConversation: (conversationId: string) => void;
+  /**
+   * Optional override for the Call button. When provided, the Call tap
+   * skips the inline confirm dialog + the ad-hoc /chw/members/{id}/call
+   * endpoint and instead just invokes this callback (typically
+   * ``navigation.navigate('Messages', { memberId, autoCall: true })``).
+   *
+   * Used by CHWMemberProfileScreen so the call lands on the same
+   * /sessions/{id}/call path the #193 session-per-call work validated,
+   * and the CHW sees the thread UI while the call rings.
+   */
+  onNavigateAndCall?: () => void;
 }
 
 // ─── API response shapes ──────────────────────────────────────────────────────
@@ -138,6 +154,7 @@ export function ProfileContactButtons({
   sharedSessionCount,
   targetDisplayName = 'this person',
   onNavigateToConversation,
+  onNavigateAndCall,
 }: ProfileContactButtonsProps): React.JSX.Element {
   const [callLoading, setCallLoading] = useState(false);
   const [messageLoading, setMessageLoading] = useState(false);
@@ -151,6 +168,17 @@ export function ProfileContactButtons({
       _showToast(
         'Calling is only available after your first session together. Schedule a session to unlock direct contact.',
       );
+      return;
+    }
+
+    // When the parent provides a navigate-and-call callback, defer to
+    // it (lets the parent deep-link into the messages thread where the
+    // session-per-call sequence will fire on mount). The parent's
+    // CHWMessagesScreen pane uses the same /sessions/{id}/call path
+    // validated under #193 — no inline confirm needed because the user
+    // already tapped Call here.
+    if (onNavigateAndCall) {
+      onNavigateAndCall();
       return;
     }
 
@@ -195,7 +223,7 @@ export function ProfileContactButtons({
         },
       ],
     );
-  }, [isRelationshipEstablished, targetUserId, targetUserRole, targetDisplayName]);
+  }, [isRelationshipEstablished, targetUserId, targetUserRole, targetDisplayName, onNavigateAndCall]);
 
   // ── Message handler ───────────────────────────────────────────────────────────
 

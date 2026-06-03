@@ -112,8 +112,19 @@ type EarningsStackParamList = {
  * the tab context.
  */
 export type CHWSessionsStackParamList = {
-  /** New 3-pane Messages inbox — web root. */
-  Messages: undefined;
+  /**
+   * New 3-pane Messages inbox — web root.
+   *
+   * Optional params let other screens (e.g. CHWMemberProfileScreen) deep-link
+   * into a specific member's thread, and optionally auto-trigger a call as
+   * soon as the thread loads.  Both are nullable so existing
+   * ``navigation.navigate('Messages')`` calls without params keep working.
+   *
+   * - ``memberId``: pre-select the thread whose member matches this UUID.
+   * - ``autoCall``: when ``true`` (and a thread was matched), kick off the
+   *   masked-number call sequence immediately after the thread mounts.
+   */
+  Messages: { memberId?: string; autoCall?: boolean } | undefined;
   /** Legacy per-session list — native root; reachable from web via push. */
   Sessions: undefined;
   /**
