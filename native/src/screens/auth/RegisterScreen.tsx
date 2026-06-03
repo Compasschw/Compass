@@ -61,6 +61,11 @@ interface FieldRefs {
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// Medi-Cal CIN format: 8 digits followed by 1 letter (case-insensitive at
+// input — normalized to uppercase before submit). Backend enforces the
+// same pattern in app.schemas.auth.RegisterRequest.
+const CIN_PATTERN = /^\d{8}[A-Z]$/;
+
 // DOB input format: MM/DD/YYYY entered, ISO YYYY-MM-DD sent to backend.
 // Inline format because adding a native date-picker library risks the
 // Expo-managed web build; plain TextInput + parse is the lighter path.
@@ -171,16 +176,35 @@ export function RegisterScreen(): React.JSX.Element {
   // Both first AND last are required at the form layer because the backend
   // rejects single-token names for members (Pear requires both) and we want
   // CHW.name to carry a full name too for consistent display.
-  // ZIP is no longer required at signup — it's part of the optional
-  // address block.  Phone label no longer says "(optional)" but the
-  // submit gate still doesn't enforce it.
+  //
+  // For members, every field Pear's Member Import requires is now hard-
+  // gated on submit so we never produce a member who can't be billed:
+  // Phone, DOB, Sex, Insurance, CIN (8 digits + 1 letter), Address line 1,
+  // City, State (2-letter USPS), ZIP. Address line 2 is the only optional
+  // field per Pear's spec.
   const accountBasicsOk =
     firstName.trim().length > 0 &&
     lastName.trim().length > 0 &&
     EMAIL_PATTERN.test(email.trim()) &&
     password.length >= 8 &&
     !isSubmitting;
-  const memberProfileOk = role !== 'member' || (dobIso !== null && sex !== null);
+  const cinIsValid = useMemo(
+    () => CIN_PATTERN.test(primaryCin.trim().toUpperCase()),
+    [primaryCin],
+  );
+  const memberProfileOk =
+    role !== 'member' ||
+    (
+      phone.trim().length > 0 &&
+      dobIso !== null &&
+      sex !== null &&
+      insuranceCompany.trim().length > 0 &&
+      cinIsValid &&
+      addressLine1.trim().length > 0 &&
+      city.trim().length > 0 &&
+      stateCode.trim().length === 2 &&
+      zip.trim().length >= 5
+    );
   const canSubmit = accountBasicsOk && memberProfileOk;
 
   const handleSubmit = useCallback(async (): Promise<void> => {
@@ -465,11 +489,12 @@ export function RegisterScreen(): React.JSX.Element {
                 <FormField label="Primary CIN (Medi-Cal ID)" icon={<IdCard size={18} color={colors.mutedForeground} />}>
                   <TextInput
                     value={primaryCin}
-                    onChangeText={setPrimaryCin}
-                    placeholder="9-character Medi-Cal CIN"
+                    onChangeText={(v) => setPrimaryCin(v.toUpperCase())}
+                    placeholder="8 digits + 1 letter (e.g. 12345678A)"
                     placeholderTextColor={colors.mutedForeground}
                     autoCapitalize="characters"
                     autoCorrect={false}
+                    maxLength={9}
                     style={s.input}
                   />
                 </FormField>

@@ -1,3 +1,4 @@
+import re
 from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
@@ -10,22 +11,33 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 SexEnum = Literal["Male", "Female", "Other"]
 
 
+# Medi-Cal CIN format: 8 digits followed by 1 letter (e.g. "12345678A").
+# Pear Suite's parser is case-insensitive but we normalize to uppercase
+# in the validator for storage consistency.
+_CIN_PATTERN = re.compile(r"^\d{8}[A-Z]$")
+
+
 class RegisterRequest(BaseModel):
     """Body for POST /auth/register.
 
     Hard-required for both roles: email, password, name, role.
-    For members, `name` must include both a first and last name — Pear Suite
-    rejects member creation when last_name is missing, and we split on
-    whitespace downstream to populate Pear's firstName/lastName fields.
-    The model validator below enforces "at least two non-empty whitespace-
-    separated tokens" so a single-token name (e.g. "John") never reaches Pear.
 
-    Members may additionally supply demographics + address + insurance
-    captured by the expanded signup form.  All member-specific fields are
-    optional at the API layer; the frontend enforces its own minimum gate
-    (First + Last Name + DOB + Sex) before allowing submit.  Anything the
-    client omits is left NULL on member_profiles and can be filled in later
-    via the profile-edit screen.
+    Members additionally must provide every field Pear's Member Import
+    parser requires (see ``app.services.member_csv_writer.is_pear_complete``).
+    Without all of them the member can't be pushed to Pear via either the
+    bulk-upload CSV or the live API sync, leaving an un-billable Compass
+    account.  Required for members at the API boundary:
+      - First + Last name (≥2 whitespace tokens)
+      - phone (non-blank)
+      - date_of_birth, gender
+      - address_line1, city, state (2-letter USPS), zip_code
+      - insurance_company, medi_cal_id (CIN: 8 digits + 1 letter)
+
+    The model validator below enforces all of the above.  ``address_line2``
+    is the only genuinely-optional column in Pear's spec.
+
+    CHWs are unaffected — only basic auth fields plus name (which we relax
+    to allow single-token mononyms).
     """
 
     email: EmailStr
@@ -47,17 +59,62 @@ class RegisterRequest(BaseModel):
     medi_cal_id: str | None = None
 
     @model_validator(mode="after")
-    def _require_full_name_for_members(self) -> "RegisterRequest":
-        # Members get pushed to Pear Suite where firstName + lastName are
-        # both required. Reject single-token names at the API boundary so the
-        # error surfaces during signup rather than silently failing the
-        # background Pear sync (which leaves the member un-billable).
-        if self.role == "member":
-            tokens = [t for t in self.name.strip().split() if t]
-            if len(tokens) < 2:
-                raise ValueError(
-                    "Members must provide both first and last name"
-                )
+    def _enforce_member_pear_required_fields(self) -> "RegisterRequest":
+        # CHWs bypass every Pear-required check; only validate when
+        # role == "member".  Anything that 422s here would otherwise show
+        # up later as a silently-dropped Pear row or a failed background
+        # sync, so we'd rather block at the signup boundary.
+        if self.role != "member":
+            return self
+
+        # First + Last name (≥2 whitespace tokens).
+        tokens = [t for t in self.name.strip().split() if t]
+        if len(tokens) < 2:
+            raise ValueError(
+                "Members must provide both first and last name"
+            )
+
+        # Phone — Pear's Member Import requires it; we don't enforce a
+        # specific format here because the billing_csv_writer's _fmt_phone
+        # normalizes to 10 digits, but the value must be present.
+        if not self.phone or not self.phone.strip():
+            raise ValueError("Phone is required for members")
+
+        # Required member profile fields.
+        if self.date_of_birth is None:
+            raise ValueError("Date of birth is required for members")
+        if self.gender is None:
+            raise ValueError("Sex is required for members")
+        if not self.insurance_company or not self.insurance_company.strip():
+            raise ValueError("Insurance is required for members")
+
+        # CIN format: 8 digits + 1 letter (Medi-Cal standard).
+        cin = (self.medi_cal_id or "").strip().upper()
+        if not cin:
+            raise ValueError("CIN (Medi-Cal ID) is required for members")
+        if not _CIN_PATTERN.match(cin):
+            raise ValueError(
+                "CIN must be 8 digits followed by 1 letter (e.g. 12345678A)"
+            )
+        self.medi_cal_id = cin  # normalize to uppercase for storage
+
+        # Address: Pear requires Address 1, City, State, Zipcode.  Address 2
+        # (the "Adress 2" sic column) is genuinely optional.
+        if not self.address_line1 or not self.address_line1.strip():
+            raise ValueError("Address line 1 is required for members")
+        if not self.city or not self.city.strip():
+            raise ValueError("City is required for members")
+        if not self.state or not self.state.strip():
+            raise ValueError("State is required for members")
+        normalized_state = self.state.strip().upper()
+        if len(normalized_state) != 2 or not normalized_state.isalpha():
+            raise ValueError(
+                "State must be a 2-letter USPS code (e.g. CA)"
+            )
+        self.state = normalized_state
+        if not self.zip_code or not self.zip_code.strip():
+            raise ValueError("ZIP code is required for members")
+
         return self
 
 

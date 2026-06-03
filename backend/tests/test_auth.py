@@ -217,6 +217,109 @@ async def test_register_chw_allows_single_token_name(client: AsyncClient):
     assert res.status_code == 201
 
 
+# ── Mandatory Pear-required member fields (#14) ──────────────────────────────
+
+
+def _complete_member_payload(email: str) -> dict:
+    """A member-signup body with every Pear-required field populated."""
+    return {
+        "email": email,
+        "password": "test-password-1234",
+        "name": "Jane Doe",
+        "role": "member",
+        "phone": "+13105550101",
+        "date_of_birth": "1993-01-05",
+        "gender": "Female",
+        "insurance_company": "Health Net",
+        "medi_cal_id": "12345678A",
+        "address_line1": "1 Main St",
+        "city": "Los Angeles",
+        "state": "CA",
+        "zip_code": "90001",
+    }
+
+
+@pytest.mark.asyncio
+async def test_register_member_with_all_required_fields_succeeds(client: AsyncClient):
+    """Sanity: a member who provides every Pear-required field can sign up."""
+    res = await client.post(
+        "/api/v1/auth/register",
+        json=_complete_member_payload(f"complete-{uuid.uuid4()}@example.com"),
+    )
+    assert res.status_code == 201, res.text
+
+
+@pytest.mark.parametrize(
+    "missing_field",
+    [
+        "phone",
+        "date_of_birth",
+        "gender",
+        "insurance_company",
+        "medi_cal_id",
+        "address_line1",
+        "city",
+        "state",
+        "zip_code",
+    ],
+)
+@pytest.mark.asyncio
+async def test_register_member_rejects_missing_pear_required_field(
+    client: AsyncClient,
+    missing_field: str,
+):
+    """Each Pear-required member field must 422 on signup if absent. (#14)"""
+    payload = _complete_member_payload(
+        f"missing-{missing_field}-{uuid.uuid4()}@example.com"
+    )
+    payload[missing_field] = None
+    res = await client.post("/api/v1/auth/register", json=payload)
+    assert res.status_code == 422, f"Expected 422 missing={missing_field}: {res.text}"
+
+
+@pytest.mark.asyncio
+async def test_register_member_rejects_invalid_cin_format(client: AsyncClient):
+    """CIN must be 8 digits + 1 letter — invalid format is 422. (#14)"""
+    payload = _complete_member_payload(f"bad-cin-{uuid.uuid4()}@example.com")
+    payload["medi_cal_id"] = "ABCDEFGHI"  # all letters, no digits
+    res = await client.post("/api/v1/auth/register", json=payload)
+    assert res.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_register_member_normalizes_cin_to_uppercase(client: AsyncClient):
+    """Lowercase CIN trailing letter is normalized before storage. (#14)"""
+    payload = _complete_member_payload(f"lower-cin-{uuid.uuid4()}@example.com")
+    payload["medi_cal_id"] = "12345678a"  # lowercase trailing
+    res = await client.post("/api/v1/auth/register", json=payload)
+    assert res.status_code == 201, res.text
+
+
+@pytest.mark.asyncio
+async def test_register_member_rejects_3_letter_state(client: AsyncClient):
+    """State must be exactly 2 letters (USPS code). (#14)"""
+    payload = _complete_member_payload(f"bad-state-{uuid.uuid4()}@example.com")
+    payload["state"] = "CAL"
+    res = await client.post("/api/v1/auth/register", json=payload)
+    assert res.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_register_chw_unaffected_by_member_pear_gate(client: AsyncClient):
+    """CHWs aren't pushed to Pear and therefore don't need any of these
+    fields. They can still sign up with the minimal payload. (#14)"""
+    res = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": f"chw-bare-{uuid.uuid4()}@example.com",
+            "password": "test-password-1234",
+            "name": "CHW Tester",
+            "role": "chw",
+        },
+    )
+    assert res.status_code == 201, res.text
+
+
 @pytest.mark.asyncio
 async def test_member_profile_put_creates_row_if_missing(client: AsyncClient, member_tokens):
     """Defensive cover for legacy accounts that registered before the

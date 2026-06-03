@@ -113,13 +113,56 @@ async def chw_tokens(client: AsyncClient) -> dict:
 
 @pytest.fixture
 async def member_tokens(client: AsyncClient) -> dict:
+    # Members must now provide every Pear-required field at signup
+    # (#14). Tests that need only basic member auth use this fixture; if
+    # a test needs a member with an INCOMPLETE profile (legacy data
+    # shape), it should bypass the API and seed the row directly.
     res = await client.post("/api/v1/auth/register", json={
-        "email": "testmember@example.com", "password": "testpass123",
-        "name": "Test Member", "role": "member",
+        "email": "testmember@example.com",
+        "password": "testpass123",
+        "name": "Test Member",
+        "role": "member",
+        "phone": "+13105550100",
+        "date_of_birth": "1993-01-05",
+        "gender": "Female",
+        "insurance_company": "Health Net",
+        "medi_cal_id": "12345678A",
+        "address_line1": "1 Main St",
+        "city": "Los Angeles",
+        "state": "CA",
+        "zip_code": "90001",
     })
-    assert res.status_code == 201
+    assert res.status_code == 201, f"Register failed: {res.text}"
     return res.json()
 
 
 def auth_header(tokens: dict) -> dict:
     return {"Authorization": f"Bearer {tokens['access_token']}"}
+
+
+def complete_member_signup_payload(
+    *,
+    email: str,
+    name: str = "Member Tester",
+    password: str = "test-password-1234",
+) -> dict:
+    """Build a /auth/register body with every Pear-required member field
+    populated.  Use in tests that need to register a member via the API
+    after #14 added the mandatory-field gate.  Tests that need an
+    INCOMPLETE profile should seed the row directly via SQL instead.
+    """
+    return {
+        "email": email,
+        "password": password,
+        "name": name,
+        "role": "member",
+        "phone": "+13105550100",
+        "date_of_birth": "1993-01-05",
+        "gender": "Female",
+        "insurance_company": "Health Net",
+        "medi_cal_id": "12345678A",
+        "address_line1": "1 Main St",
+        "city": "Los Angeles",
+        "state": "CA",
+        "zip_code": "90001",
+    }
