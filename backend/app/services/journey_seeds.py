@@ -4,11 +4,24 @@ Call ``seed_default_journey_templates(db)`` once at startup or from a
 management script. The function is idempotent — it skips any template whose
 slug already exists in the database.
 
-Templates included:
-  - food_assistance  (6 steps)
-  - housing          (6 steps)
-  - mental_health    (6 steps)
-  - maternal_health  (5 steps)
+All 10 templates share the same standardized 6-step roadmap defined in
+``STANDARD_STEPS``. Point values are identical across all templates so that
+the wellness-points system is consistent regardless of which pathway a member
+is assigned to.
+
+Templates included (10 total):
+  Existing 4 (preserved slugs):
+    - food_assistance
+    - housing
+    - mental_health
+    - maternal_health
+  New 6:
+    - rent_payment_assistance
+    - utility_support
+    - calfresh_enrollment
+    - healthcare_appointment
+    - food_pantry
+    - health_education
 """
 
 from __future__ import annotations
@@ -20,218 +33,147 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.journeys import JourneyTemplate, JourneyTemplateStep
 
-# ─── Seed definitions ──────────────────────────────────────────────────────────
+# ─── Standardized 6-step roadmap ───────────────────────────────────────────────
+#
+# Every template uses exactly these 6 steps, in this order, with these exact
+# point values. The step names must not diverge — the frontend roadmap and the
+# data migration in j0e1f2g3h4i5 both key on these exact strings.
+
+STANDARD_STEPS: list[dict] = [
+    {
+        "order": 1,
+        "name": "Need Identified",
+        "description": "CHW confirms the member's active need for this pathway.",
+        "points_on_completion": 10,
+        "required_documents": [],
+    },
+    {
+        "order": 2,
+        "name": "Eligibility Screening",
+        "description": "Member completes eligibility screening for the relevant program.",
+        "points_on_completion": 25,
+        "required_documents": [],
+    },
+    {
+        "order": 3,
+        "name": "Upload Documents",
+        "description": "Member uploads required supporting documents.",
+        "points_on_completion": 30,
+        "required_documents": [],
+    },
+    {
+        "order": 4,
+        "name": "Follow Up",
+        "description": "CHW follows up to confirm progress and next actions.",
+        "points_on_completion": 10,
+        "required_documents": [],
+    },
+    {
+        "order": 5,
+        "name": "Resource Connection",
+        "description": "Member is connected to the appropriate resource or provider.",
+        "points_on_completion": 25,
+        "required_documents": [],
+    },
+    {
+        "order": 6,
+        "name": "Journey Complete",
+        "description": "Member's need has been addressed. Journey closed.",
+        "points_on_completion": 50,
+        "required_documents": [],
+    },
+]
+
+# ─── Template definitions ───────────────────────────────────────────────────────
+#
+# ``steps`` is intentionally omitted here — all templates use STANDARD_STEPS.
+# Template-specific step descriptions can be added in a future enhancement
+# without altering the canonical 6-step structure.
 
 _TEMPLATES: list[dict] = [
+    # ── Existing 4 (slugs preserved) ───────────────────────────────────────────
     {
         "slug": "food_assistance",
         "name": "Food Assistance",
         "category": "food",
         "icon": "utensils",
-        "steps": [
-            {
-                "order": 1,
-                "name": "Need Identified",
-                "description": "CHW confirms the member has an active food-security need.",
-                "points_on_completion": 10,
-                "required_documents": [],
-            },
-            {
-                "order": 2,
-                "name": "Eligibility Screening",
-                "description": "Member completes CalFresh/SNAP eligibility screening.",
-                "points_on_completion": 15,
-                "required_documents": [],
-            },
-            {
-                "order": 3,
-                "name": "Upload Documents",
-                "description": "Member uploads proof of income and residency.",
-                "points_on_completion": 20,
-                "required_documents": ["proof_of_income", "proof_of_residency"],
-            },
-            {
-                "order": 4,
-                "name": "Follow Up",
-                "description": "CHW follows up to confirm application was submitted.",
-                "points_on_completion": 10,
-                "required_documents": [],
-            },
-            {
-                "order": 5,
-                "name": "Resource Connection",
-                "description": "Member connected to a local food bank or CalFresh benefits.",
-                "points_on_completion": 25,
-                "required_documents": [],
-            },
-            {
-                "order": 6,
-                "name": "Journey Complete",
-                "description": "Member has consistent food access. Journey closed.",
-                "points_on_completion": 50,
-                "required_documents": [],
-            },
-        ],
     },
     {
         "slug": "housing",
         "name": "Housing",
         "category": "housing",
         "icon": "home",
-        "steps": [
-            {
-                "order": 1,
-                "name": "Need Identified",
-                "description": "CHW confirms the member has an active housing need.",
-                "points_on_completion": 10,
-                "required_documents": [],
-            },
-            {
-                "order": 2,
-                "name": "Eligibility Screening",
-                "description": "Member completes screening for housing assistance programs.",
-                "points_on_completion": 15,
-                "required_documents": [],
-            },
-            {
-                "order": 3,
-                "name": "Application",
-                "description": "Member submits housing assistance application.",
-                "points_on_completion": 20,
-                "required_documents": [],
-            },
-            {
-                "order": 4,
-                "name": "Documents Uploaded",
-                "description": "Member uploads ID, income verification, and lease documents.",
-                "points_on_completion": 20,
-                "required_documents": ["photo_id", "proof_of_income", "current_lease"],
-            },
-            {
-                "order": 5,
-                "name": "Application Submitted",
-                "description": "CHW confirms the application has been formally submitted.",
-                "points_on_completion": 15,
-                "required_documents": [],
-            },
-            {
-                "order": 6,
-                "name": "Placed",
-                "description": "Member secured stable housing. Journey closed.",
-                "points_on_completion": 50,
-                "required_documents": [],
-            },
-        ],
     },
     {
         "slug": "mental_health",
         "name": "Mental Health",
         "category": "mental_health",
         "icon": "brain",
-        "steps": [
-            {
-                "order": 1,
-                "name": "Need Identified",
-                "description": "CHW identifies member's mental health support need.",
-                "points_on_completion": 10,
-                "required_documents": [],
-            },
-            {
-                "order": 2,
-                "name": "Screened",
-                "description": "Member completes PHQ-9 / GAD-7 initial screening.",
-                "points_on_completion": 15,
-                "required_documents": [],
-            },
-            {
-                "order": 3,
-                "name": "Referred",
-                "description": "CHW refers member to a licensed mental health provider.",
-                "points_on_completion": 15,
-                "required_documents": [],
-            },
-            {
-                "order": 4,
-                "name": "Intake Completed",
-                "description": "Member completes intake appointment with the provider.",
-                "points_on_completion": 25,
-                "required_documents": [],
-            },
-            {
-                "order": 5,
-                "name": "First Session",
-                "description": "Member attends first therapy or counseling session.",
-                "points_on_completion": 30,
-                "required_documents": [],
-            },
-            {
-                "order": 6,
-                "name": "Engaged in Care",
-                "description": "Member is consistently attending care. Journey closed.",
-                "points_on_completion": 50,
-                "required_documents": [],
-            },
-        ],
     },
     {
         "slug": "maternal_health",
         "name": "Maternal Health",
         "category": "maternal_health",
         "icon": "baby",
-        "steps": [
-            {
-                "order": 1,
-                "name": "Need Identified",
-                "description": "CHW identifies maternal health support need.",
-                "points_on_completion": 10,
-                "required_documents": [],
-            },
-            {
-                "order": 2,
-                "name": "Provider Match",
-                "description": "Member matched with an OB/GYN or midwife accepting Medi-Cal.",
-                "points_on_completion": 20,
-                "required_documents": [],
-            },
-            {
-                "order": 3,
-                "name": "First Visit",
-                "description": "Member attends first prenatal or postpartum visit.",
-                "points_on_completion": 30,
-                "required_documents": [],
-            },
-            {
-                "order": 4,
-                "name": "WIC Enrolled",
-                "description": "Member enrolled in WIC for nutritional support.",
-                "points_on_completion": 20,
-                "required_documents": ["proof_of_pregnancy_or_postpartum"],
-            },
-            {
-                "order": 5,
-                "name": "Engaged in Care",
-                "description": "Member is consistently attending prenatal/postpartum care. Journey closed.",
-                "points_on_completion": 50,
-                "required_documents": [],
-            },
-        ],
+    },
+    # ── New 6 ───────────────────────────────────────────────────────────────────
+    {
+        "slug": "rent_payment_assistance",
+        "name": "Rent Payment Assistance",
+        "category": "housing",
+        "icon": "building-2",
+    },
+    {
+        "slug": "utility_support",
+        "name": "Utility Support",
+        "category": "housing",
+        "icon": "zap",
+    },
+    {
+        "slug": "calfresh_enrollment",
+        "name": "CalFresh Enrollment",
+        "category": "food",
+        "icon": "shopping-basket",
+    },
+    {
+        "slug": "healthcare_appointment",
+        "name": "Healthcare Appointment",
+        "category": "health",
+        "icon": "stethoscope",
+    },
+    {
+        "slug": "food_pantry",
+        "name": "Food Pantry",
+        "category": "food",
+        "icon": "package",
+    },
+    {
+        "slug": "health_education",
+        "name": "Health Education",
+        "category": "health",
+        "icon": "book-open",
     },
 ]
 
 
 async def seed_default_journey_templates(db: AsyncSession) -> None:
-    """Create the four default JourneyTemplates if they do not already exist.
+    """Create all 10 default JourneyTemplates if they do not already exist.
 
     Idempotent: any template whose slug is already present in the database is
     skipped entirely. This makes the function safe to call at application
     startup or from a management script without duplicating data.
+
+    All seeded templates receive the standardized 6-step roadmap from
+    ``STANDARD_STEPS``. The Alembic migration j0e1f2g3h4i5 handles remapping
+    existing MemberJourneyStepState rows for the original 4 templates — this
+    seed function only creates new rows for slugs not yet present.
 
     Args:
         db: An active async database session. The caller is responsible for
             committing the transaction after this function returns.
     """
     for template_def in _TEMPLATES:
-        # Check if the template already exists by slug.
+        # Guard: skip if the template already exists by slug.
         existing_result = await db.execute(
             select(JourneyTemplate).where(JourneyTemplate.slug == template_def["slug"])
         )
@@ -250,7 +192,7 @@ async def seed_default_journey_templates(db: AsyncSession) -> None:
         # Flush to obtain the PK before creating child step rows.
         await db.flush()
 
-        for step_def in template_def["steps"]:
+        for step_def in STANDARD_STEPS:
             step = JourneyTemplateStep(
                 id=uuid.uuid4(),
                 template_id=template.id,
