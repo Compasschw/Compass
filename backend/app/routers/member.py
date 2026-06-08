@@ -8,7 +8,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.dependencies import require_role
 from app.schemas.followup import RoadmapItemResponse
-from app.schemas.member import CHWMemberFacingProfile
+from app.schemas.member import (
+    CHWMemberFacingProfile,
+    FlagNoteCreate,
+    FlagNoteResponse,
+    InsuranceCINResponse,
+    InsuranceCINUpdate,
+    ServicesConsentResponse,
+    ServicesConsentUpdate,
+)
 from app.schemas.user import MemberProfileResponse, MemberProfileUpdate
 
 router = APIRouter(prefix="/api/v1/member", tags=["member"])
@@ -368,3 +376,275 @@ async def get_chw_member_facing_profile(
         available_days=available_days,
         shared_session_count=shared_session_count,
     )
+
+
+# ── Services Consent (T03) ──────────────────────────────────────────
+
+
+@router.get(
+    "/services-consent",
+    response_model=ServicesConsentResponse,
+    summary="Get the member's current services-consent status",
+)
+async def get_services_consent(
+    current_user=Depends(require_role("member")),
+    db: AsyncSession = Depends(get_db),
+) -> ServicesConsentResponse:
+    """Return the services-consent state for the authenticated member.
+
+    Response fields:
+        status:     "consent_to_services" | "refuse_services"
+        changed_at: ISO-8601 UTC timestamp of the last explicit change, or
+                    None for rows that have only ever held the server default.
+        changed_by: UUID of the user who made the last change, or None.
+
+    Used by the Member Profile screen to render the toggle in its current
+    state without a full profile round-trip.
+    """
+    from app.models.user import MemberProfile
+
+    result = await db.execute(
+        select(MemberProfile).where(MemberProfile.user_id == current_user.id)
+    )
+    profile = result.scalar_one_or_none()
+    if profile is None:
+        raise HTTPException(status_code=404, detail="Member profile not found.")
+
+    return ServicesConsentResponse(
+        status=profile.services_consent,
+        changed_at=profile.services_consent_changed_at,
+        changed_by=profile.services_consent_changed_by,
+    )
+
+
+@router.patch(
+    "/services-consent",
+    response_model=ServicesConsentResponse,
+    summary="Update the member's services-consent status",
+)
+async def update_services_consent(
+    data: ServicesConsentUpdate,
+    current_user=Depends(require_role("member")),
+    db: AsyncSession = Depends(get_db),
+) -> ServicesConsentResponse:
+    """Flip the member's services-consent toggle.
+
+    Accepts ``{"status": "consent_to_services" | "refuse_services"}``.
+    Stamps ``changed_at = NOW()`` and ``changed_by = current_user.id`` so
+    every flip is auditable for compliance.
+
+    Effects when status becomes "refuse_services":
+        - POST /communication/call-bridge → 403 MEMBER_REFUSED_SERVICES
+        - POST /sessions/{id}/messages   → 403 MEMBER_REFUSED_SERVICES
+        - POST /conversations/{id}/messages → 403 MEMBER_REFUSED_SERVICES
+        - PATCH /requests/{id}/accept    → 403 MEMBER_REFUSED_SERVICES
+        (Existing in-progress sessions are NOT terminated.)
+
+    Effects when status reverts to "consent_to_services":
+        - All of the above unblock immediately on next request.
+    """
+    from app.models.user import MemberProfile
+
+    result = await db.execute(
+        select(MemberProfile).where(MemberProfile.user_id == current_user.id)
+    )
+    profile = result.scalar_one_or_none()
+    if profile is None:
+        raise HTTPException(status_code=404, detail="Member profile not found.")
+
+    profile.services_consent = data.status
+    profile.services_consent_changed_at = datetime.now(UTC)
+    profile.services_consent_changed_by = current_user.id
+
+    await db.commit()
+    await db.refresh(profile)
+
+    return ServicesConsentResponse(
+        status=profile.services_consent,
+        changed_at=profile.services_consent_changed_at,
+        changed_by=profile.services_consent_changed_by,
+    )
+
+
+@router.patch(
+    "/profile/insurance-cin",
+    response_model=InsuranceCINResponse,
+    summary="Member updates their insurance company and Medi-Cal CIN",
+)
+async def update_insurance_cin(
+    data: InsuranceCINUpdate,
+    current_user=Depends(require_role("member")),
+    db: AsyncSession = Depends(get_db),
+) -> InsuranceCINResponse:
+    """Allow a member to edit their own insurance_company and medi_cal_id.
+
+    CHWs are NOT permitted to use this endpoint — they should use the
+    CHW-facing admin endpoints to update member insurance data under a
+    relationship-gated operation.
+
+    CIN is validated against ``^\\d{8}[A-Z]$`` (case-insensitive input,
+    normalized to uppercase before storage) so mismatched capitalisation
+    from user input doesn't create duplicate or invalid records.
+
+    Both fields are required together: the editing flow always presents
+    insurance company + CIN as a pair.
+    """
+    from app.models.user import MemberProfile
+
+    result = await db.execute(
+        select(MemberProfile).where(MemberProfile.user_id == current_user.id)
+    )
+    profile = result.scalar_one_or_none()
+    if profile is None:
+        raise HTTPException(status_code=404, detail="Member profile not found.")
+
+    profile.insurance_company = data.insurance_company
+    profile.medi_cal_id = data.medi_cal_id  # already normalized to uppercase by validator
+
+    await db.commit()
+    await db.refresh(profile)
+
+    return InsuranceCINResponse(
+        insurance_company=profile.insurance_company,
+        medi_cal_id=profile.medi_cal_id,
+    )
+
+
+# ── Flag Notes (T04) ──────────────────────────────────────────────────────────
+#
+# A separate router is required here because flag-note endpoints live at
+# /api/v1/members/{member_id}/flag-note (plural "members", CHW-scoped) while
+# the existing `router` above uses /api/v1/member (singular, member-self-scoped).
+# This router is registered in app/main.py as `members_flag_note_router`.
+
+members_router = APIRouter(prefix="/api/v1/members", tags=["flag-notes"])
+
+
+@members_router.get(
+    "/{member_id}/flag-note",
+    response_model=FlagNoteResponse | None,
+    summary="Get the currently active flag note for a member (CHW-only)",
+)
+async def get_flag_note(
+    member_id: UUID,
+    current_user=Depends(require_role("chw")),
+    db: AsyncSession = Depends(get_db),
+) -> FlagNoteResponse | None:
+    """Return the currently active flag note for the given member.
+
+    Returns the ``FlagNoteResponse`` JSON object when an active note exists,
+    or ``null`` (HTTP 200) when the member has no active flag note.
+
+    Authorization:
+        - Caller must be a CHW (role check via ``require_role("chw")``).
+        - CHW must have at least one shared session with the member
+          (``assert_shared_session``).  Returns 403 when no relationship exists.
+
+    HIPAA minimum-necessary (45 CFR §164.514(d)):
+        The ``body`` field is PHI.  This endpoint must never be called from
+        member-facing screens — only CHW-authenticated requests are accepted.
+    """
+    from app.models.flag_note import FlagNote  # noqa: PLC0415
+    from app.services.relationship_guards import assert_shared_session  # noqa: PLC0415
+
+    await assert_shared_session(db, chw_id=current_user.id, member_id=member_id)
+
+    result = await db.execute(
+        select(FlagNote)
+        .where(FlagNote.member_id == member_id)
+        .where(FlagNote.is_active.is_(True))
+        .limit(1)
+    )
+    flag_note = result.scalar_one_or_none()
+    return flag_note  # FastAPI serialises None as JSON null with response_model=... | None
+
+
+@members_router.post(
+    "/{member_id}/flag-note",
+    response_model=FlagNoteResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create (or replace) the active flag note for a member (CHW-only)",
+)
+async def create_flag_note(
+    member_id: UUID,
+    data: FlagNoteCreate,
+    current_user=Depends(require_role("chw")),
+    db: AsyncSession = Depends(get_db),
+) -> FlagNoteResponse:
+    """Create a new active flag note for the given member.
+
+    If an active flag note already exists it is soft-deleted (``is_active=False``)
+    before the new note is inserted.  This ensures the one-active-note-per-member
+    invariant is maintained at the service layer.
+
+    Both operations (deactivation + insertion) run in a single transaction so
+    there is no window where the member has zero active notes mid-operation.
+
+    Authorization:
+        - Caller must be a CHW (role check via ``require_role("chw")``).
+        - CHW must have at least one shared session with the member.
+
+    Request body:
+        ``body`` (str, required): 1–2000 characters, whitespace stripped.
+    """
+    from app.models.flag_note import FlagNote  # noqa: PLC0415
+    from app.services.relationship_guards import assert_shared_session  # noqa: PLC0415
+
+    await assert_shared_session(db, chw_id=current_user.id, member_id=member_id)
+
+    # Soft-delete any existing active note in the same transaction.
+    existing_result = await db.execute(
+        select(FlagNote)
+        .where(FlagNote.member_id == member_id)
+        .where(FlagNote.is_active.is_(True))
+    )
+    for existing_note in existing_result.scalars():
+        existing_note.is_active = False
+
+    new_note = FlagNote(
+        member_id=member_id,
+        author_chw_id=current_user.id,
+        body=data.body,
+        is_active=True,
+    )
+    db.add(new_note)
+    await db.commit()
+    await db.refresh(new_note)
+    return new_note
+
+
+@members_router.delete(
+    "/{member_id}/flag-note",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete (soft) the active flag note for a member (CHW-only)",
+)
+async def delete_flag_note(
+    member_id: UUID,
+    current_user=Depends(require_role("chw")),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Soft-delete the currently active flag note for the given member.
+
+    Sets ``is_active=False`` on the active note.  A subsequent GET returns
+    ``null``.  If no active note exists the endpoint still returns 204 —
+    delete is idempotent.
+
+    Authorization:
+        - Caller must be a CHW (role check via ``require_role("chw")``).
+        - CHW must have at least one shared session with the member.
+    """
+    from app.models.flag_note import FlagNote  # noqa: PLC0415
+    from app.services.relationship_guards import assert_shared_session  # noqa: PLC0415
+
+    await assert_shared_session(db, chw_id=current_user.id, member_id=member_id)
+
+    result = await db.execute(
+        select(FlagNote)
+        .where(FlagNote.member_id == member_id)
+        .where(FlagNote.is_active.is_(True))
+    )
+    for note in result.scalars():
+        note.is_active = False
+
+    await db.commit()
+    return None

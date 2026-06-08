@@ -253,6 +253,12 @@ async def send_message(conversation_id: UUID, data: MessageCreate, current_user=
     if conv.chw_id != current_user.id and conv.member_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not a participant")
 
+    # T03: block messaging when the member has refused services.
+    # Checked after the participant gate so non-participants cannot probe
+    # the consent status of arbitrary members.
+    from app.services.relationship_guards import assert_member_consents_to_services
+    await assert_member_consents_to_services(db, member_id=conv.member_id)
+
     # Validate attachment completeness: all four fields must be present together
     attachment_fields = [
         data.attachment_s3_key,

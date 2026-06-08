@@ -134,6 +134,32 @@ class MemberProfile(Base):
         DateTime(timezone=True), nullable=True
     )
 
+    # ── Services Consent (T03) ───────────────────────────────────────────────
+    # Member-controlled toggle that gates ALL CHW↔member communication on the
+    # platform. Two values:
+    #   "consent_to_services"  — default; communication enabled
+    #   "refuse_services"      — member opt-out; call-bridge, messages, and
+    #                            new session acceptance all return 403
+    #
+    # When a member flips to "refuse_services" after a confirm modal:
+    #   - ALL CHWs cannot call them (call-bridge 403)
+    #   - ALL CHWs cannot message them (message-send 403)
+    #   - No new sessions can be accepted for this member
+    #   - Existing in-flight sessions complete normally (not killed)
+    #   - Reverting to "consent_to_services" re-enables everything immediately
+    #
+    # changed_at + changed_by provide an audit trail — required for
+    # compliance (consent record must be timestamped and attributed).
+    services_consent: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default="consent_to_services"
+    )
+    services_consent_changed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    services_consent_changed_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+
     rewards_balance: Mapped[int] = mapped_column(Integer, default=0)
     preferred_mode: Mapped[str | None] = mapped_column(String(20))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

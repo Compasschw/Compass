@@ -14,9 +14,11 @@ Fields deliberately excluded:
 - Any PHI from the CHW's own member caseload
 """
 
+import re
+from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class CHWMemberFacingProfile(BaseModel):
@@ -85,3 +87,147 @@ class CHWMemberFacingProfile(BaseModel):
 
     shared_session_count: int
     """Sessions this calling member has had with this CHW (any status)."""
+
+
+# ── Services Consent schemas (T03) ────────────────────────────────────────────
+
+_VALID_CONSENT_STATUSES = frozenset({"consent_to_services", "refuse_services"})
+
+_CIN_PATTERN = re.compile(r"^\d{8}[A-Za-z]$")
+
+
+class ServicesConsentResponse(BaseModel):
+    """Response body for GET/PATCH /api/v1/member/services-consent.
+
+    Fields:
+        status:     Current consent value — "consent_to_services" or
+                    "refuse_services".
+        changed_at: ISO-8601 UTC timestamp of the last flip, or None when
+                    the field has never been explicitly set (legacy rows that
+                    have only ever held the server default).
+        changed_by: UUID of the user who last changed the status, or None
+                    for rows that have never been explicitly set.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    status: str
+    changed_at: datetime | None = None
+    changed_by: UUID | None = None
+
+
+class ServicesConsentUpdate(BaseModel):
+    """Request body for PATCH /api/v1/member/services-consent.
+
+    Only ``status`` is accepted — the server stamps ``changed_at`` and
+    ``changed_by`` from the request context so the client cannot forge them.
+    """
+
+    status: str = Field(
+        ...,
+        description='Must be "consent_to_services" or "refuse_services".',
+    )
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, value: str) -> str:
+        """Reject values outside the two-value enum."""
+        if value not in _VALID_CONSENT_STATUSES:
+            raise ValueError(
+                f"status must be one of {sorted(_VALID_CONSENT_STATUSES)!r}, "
+                f"got {value!r}"
+            )
+        return value
+
+
+class InsuranceCINUpdate(BaseModel):
+    """Request body for PATCH /api/v1/member/profile/insurance-cin.
+
+    Both fields are required together — the member always provides insurance
+    company and CIN in the same editing flow.  CIN is normalized to uppercase
+    before storage.
+
+    CIN format: 8 digits followed by exactly one letter (case-insensitive
+    on input).  Examples: ``12345678A``, ``00000001Z``.
+    """
+
+    insurance_company: str = Field(
+        ...,
+        min_length=1,
+        max_length=80,
+        description="Insurance company name from the approved dropdown.",
+    )
+    medi_cal_id: str = Field(
+        ...,
+        description="Medi-Cal CIN in format ^\\d{8}[A-Z]$ (case-insensitive input).",
+    )
+
+    @field_validator("medi_cal_id")
+    @classmethod
+    def validate_and_normalize_cin(cls, value: str) -> str:
+        """Validate CIN format and normalize to uppercase."""
+        normalized = value.strip().upper()
+        if not _CIN_PATTERN.match(normalized):
+            raise ValueError(
+                "medi_cal_id must match pattern ^\\d{8}[A-Z]$ "
+                f"(8 digits followed by one letter). Got: {value!r}"
+            )
+        return normalized
+
+
+class InsuranceCINResponse(BaseModel):
+    """Response body for PATCH /api/v1/member/profile/insurance-cin."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    insurance_company: str | None
+    medi_cal_id: str | None
+
+
+# ── Flag Notes (T04) ──────────────────────────────────────────────────────────
+
+
+class FlagNoteResponse(BaseModel):
+    """Response body for GET /api/v1/members/{member_id}/flag-note.
+
+    Returns the currently active flag note for a member, or null when none
+    exists.  This schema intentionally omits ``is_active`` (always True for
+    a returned note) and ``updated_at`` (not yet exposed in Phase 1).
+
+    HIPAA note: ``body`` is PHI.  This response must only be returned to an
+    authenticated CHW who has an active care relationship with the member.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    member_id: UUID
+    author_chw_id: UUID
+    body: str
+    created_at: datetime
+
+
+class FlagNoteCreate(BaseModel):
+    """Request body for POST /api/v1/members/{member_id}/flag-note.
+
+    Validation:
+        body must be non-empty after stripping whitespace and must not exceed
+        2 000 characters — long enough for any practical note, short enough to
+        prevent abuse.
+    """
+
+    body: str = Field(
+        ...,
+        min_length=1,
+        max_length=2000,
+        description="Free-form CHW note about the member (PHI — CHW-visible only).",
+    )
+
+    @field_validator("body")
+    @classmethod
+    def body_not_blank(cls, value: str) -> str:
+        """Reject whitespace-only bodies."""
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("body must not be blank or whitespace-only.")
+        return stripped

@@ -419,12 +419,19 @@ async def call_bridge(
 
     if current_user.role != "admin":
         if chw_id_for_gate is not None and member_id_for_gate is not None:
-            from app.services.relationship_guards import assert_shared_session
+            from app.services.relationship_guards import (
+                assert_member_consents_to_services,
+                assert_shared_session,
+            )
             await assert_shared_session(
                 db,
                 chw_id=chw_id_for_gate,
                 member_id=member_id_for_gate,
             )
+            # T03: block call-bridge when the member has refused services.
+            # Checked AFTER assert_shared_session so we don't reveal the
+            # services-consent status to users without a care relationship.
+            await assert_member_consents_to_services(db, member_id=member_id_for_gate)
 
     # Resolve the Session this bridge attaches to. With session_per_call_enabled
     # on (and a CHW↔member call), auto-mint a new Session when the conversation

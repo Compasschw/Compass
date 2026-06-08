@@ -1563,6 +1563,14 @@ async def send_session_message(
     from app.models.conversation import FileAttachment, Message
 
     session = await _get_session_and_assert_participant(session_id, current_user, db)
+
+    # T03: block messaging when the member has refused services.
+    # The check is on the member party regardless of who is sending — both
+    # CHW→member and member→CHW messages are blocked when services_consent
+    # is "refuse_services".
+    from app.services.relationship_guards import assert_member_consents_to_services
+    await assert_member_consents_to_services(db, member_id=session.member_id)
+
     conv = await _get_or_create_session_conversation(session, db)
 
     has_attachment = bool(data.attachment_s3_key)

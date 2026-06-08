@@ -26,6 +26,56 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+# ── Services Consent gate (T03) ───────────────────────────────────────────────
+_REFUSED_SERVICES_DETAIL = (
+    "This member has refused services. Communication is blocked."
+)
+_REFUSED_SERVICES_CODE = "MEMBER_REFUSED_SERVICES"
+
+
+async def assert_member_consents_to_services(
+    db: AsyncSession,
+    member_id: UUID,
+) -> None:
+    """Raise HTTP 403 when the member has opted out of CHW services.
+
+    Call from any endpoint that enables CHW↔member communication or new
+    session creation.  A member with ``services_consent == 'refuse_services'``
+    is allowed to flip back via PATCH /member/services-consent, but no other
+    communication channel is accessible until they do.
+
+    This check is intentionally platform-wide — it is NOT scoped to a
+    particular CHW.  Any CHW↔member communication is blocked regardless of
+    which CHW is involved.
+
+    Args:
+        db:        Active async database session.
+        member_id: UUID of the member whose consent status is being verified.
+
+    Raises:
+        HTTPException(403): with ``detail`` set to
+            ``_REFUSED_SERVICES_DETAIL`` and a JSON body containing
+            ``{"detail": "...", "code": "MEMBER_REFUSED_SERVICES"}`` when
+            the member has ``services_consent == 'refuse_services'``.
+    """
+    from app.models.user import MemberProfile
+
+    result = await db.execute(
+        select(MemberProfile.services_consent).where(
+            MemberProfile.user_id == member_id
+        )
+    )
+    row = result.scalar_one_or_none()
+    # When no MemberProfile exists (e.g. CHW account used as member in a test),
+    # treat as consenting — the missing-profile case is caught by other guards.
+    if row is None:
+        return
+    if row == "refuse_services":
+        raise HTTPException(
+            status_code=403,
+            detail={"detail": _REFUSED_SERVICES_DETAIL, "code": _REFUSED_SERVICES_CODE},
+        )
+
 
 async def assert_shared_session(
     db: AsyncSession,

@@ -244,6 +244,12 @@ async def accept_request(request_id: UUID, current_user=Depends(require_role("ch
             detail="This request is reserved for another CHW until the 24h window expires",
         )
 
+    # T03: block new session creation when the requesting member has refused
+    # services.  Existing in-progress sessions are NOT affected — only the
+    # creation of a new Session (which happens on accept) is blocked.
+    from app.services.relationship_guards import assert_member_consents_to_services
+    await assert_member_consents_to_services(db, member_id=req.member_id)
+
     req.status = "matched"
     req.matched_chw_id = current_user.id
     # Clear the target lock now that the request is claimed — the relationship
