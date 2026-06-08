@@ -22,19 +22,17 @@ class RegisterRequest(BaseModel):
 
     Hard-required for both roles: email, password, name, role.
 
-    Members additionally must provide every field Pear's Member Import
-    parser requires (see ``app.services.member_csv_writer.is_pear_complete``).
-    Without all of them the member can't be pushed to Pear via either the
-    bulk-upload CSV or the live API sync, leaving an un-billable Compass
-    account.  Required for members at the API boundary:
+    Members additionally must provide every field Pear's billing pipeline
+    requires at the API boundary:
       - First + Last name (≥2 whitespace tokens)
-      - phone (non-blank)
       - date_of_birth, gender
-      - address_line1, city, state (2-letter USPS), zip_code
       - insurance_company, medi_cal_id (CIN: 8 digits + 1 letter)
+      - zip_code
 
-    The model validator below enforces all of the above.  ``address_line2``
-    is the only genuinely-optional column in Pear's spec.
+    Address fields (address_line1, address_line2, city, state) and phone
+    are OPTIONAL at signup — they can be filled in via PUT /member/profile
+    before the first Pear sync.  State and ZIP are still format-validated
+    when provided (2-letter USPS code; ZIP ≤10 chars).
 
     CHWs are unaffected — only basic auth fields plus name (which we relax
     to allow single-token mononyms).
@@ -74,11 +72,8 @@ class RegisterRequest(BaseModel):
                 "Members must provide both first and last name"
             )
 
-        # Phone — Pear's Member Import requires it; we don't enforce a
-        # specific format here because the billing_csv_writer's _fmt_phone
-        # normalizes to 10 digits, but the value must be present.
-        if not self.phone or not self.phone.strip():
-            raise ValueError("Phone is required for members")
+        # Phone is OPTIONAL — Pear prefers it but the billing pipeline can
+        # proceed without it.  No required-check here.
 
         # Required member profile fields.
         if self.date_of_birth is None:
@@ -98,20 +93,18 @@ class RegisterRequest(BaseModel):
             )
         self.medi_cal_id = cin  # normalize to uppercase for storage
 
-        # Address: Pear requires Address 1, City, State, Zipcode.  Address 2
-        # (the "Adress 2" sic column) is genuinely optional.
-        if not self.address_line1 or not self.address_line1.strip():
-            raise ValueError("Address line 1 is required for members")
-        if not self.city or not self.city.strip():
-            raise ValueError("City is required for members")
-        if not self.state or not self.state.strip():
-            raise ValueError("State is required for members")
-        normalized_state = self.state.strip().upper()
-        if len(normalized_state) != 2 or not normalized_state.isalpha():
-            raise ValueError(
-                "State must be a 2-letter USPS code (e.g. CA)"
-            )
-        self.state = normalized_state
+        # Address fields are OPTIONAL — can be completed via
+        # PUT /member/profile before the first Pear sync.
+        # State is format-validated (2-letter USPS) only when provided.
+        if self.state is not None and self.state.strip():
+            normalized_state = self.state.strip().upper()
+            if len(normalized_state) != 2 or not normalized_state.isalpha():
+                raise ValueError(
+                    "State must be a 2-letter USPS code (e.g. CA)"
+                )
+            self.state = normalized_state
+
+        # ZIP is still required for Pear's billing pipeline.
         if not self.zip_code or not self.zip_code.strip():
             raise ValueError("ZIP code is required for members")
 

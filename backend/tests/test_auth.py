@@ -252,14 +252,10 @@ async def test_register_member_with_all_required_fields_succeeds(client: AsyncCl
 @pytest.mark.parametrize(
     "missing_field",
     [
-        "phone",
         "date_of_birth",
         "gender",
         "insurance_company",
         "medi_cal_id",
-        "address_line1",
-        "city",
-        "state",
         "zip_code",
     ],
 )
@@ -268,7 +264,11 @@ async def test_register_member_rejects_missing_pear_required_field(
     client: AsyncClient,
     missing_field: str,
 ):
-    """Each Pear-required member field must 422 on signup if absent. (#14)"""
+    """Each Pear-billing-required member field must 422 on signup if absent.
+
+    phone / address_line1 / city / state are now optional — removed from
+    this parametrize list per cofounder spec (T07). (#14)
+    """
     payload = _complete_member_payload(
         f"missing-{missing_field}-{uuid.uuid4()}@example.com"
     )
@@ -315,6 +315,115 @@ async def test_register_chw_unaffected_by_member_pear_gate(client: AsyncClient):
             "password": "test-password-1234",
             "name": "CHW Tester",
             "role": "chw",
+        },
+    )
+    assert res.status_code == 201, res.text
+
+
+# ── T07: address/phone now optional, format checks still fire ────────────────
+
+
+@pytest.mark.asyncio
+async def test_register_member_succeeds_with_only_minimum_fields(client: AsyncClient):
+    """A member with only the Pear-billing-required minimum fields (name, DOB,
+    sex, insurance, CIN, zip) must be accepted — no phone or address needed.
+    (T07)
+    """
+    res = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": f"min-fields-{uuid.uuid4()}@example.com",
+            "password": "test-password-1234",
+            "name": "Jane Doe",
+            "role": "member",
+            "date_of_birth": "1993-01-05",
+            "gender": "Female",
+            "insurance_company": "Health Net",
+            "medi_cal_id": "12345678A",
+            "zip_code": "90001",
+            # Intentionally omitted: phone, address_line1, city, state
+        },
+    )
+    assert res.status_code == 201, res.text
+
+
+@pytest.mark.parametrize(
+    "missing_field",
+    [
+        "date_of_birth",
+        "gender",
+        "insurance_company",
+        "medi_cal_id",
+        "zip_code",
+    ],
+)
+@pytest.mark.asyncio
+async def test_register_member_still_rejects_missing_dob_sex_insurance_cin_zip(
+    client: AsyncClient,
+    missing_field: str,
+):
+    """DOB, sex, insurance, CIN, and ZIP remain hard-required for members —
+    they are needed for the Pear billing pipeline. (T07)
+    """
+    payload = {
+        "email": f"still-required-{missing_field}-{uuid.uuid4()}@example.com",
+        "password": "test-password-1234",
+        "name": "Jane Doe",
+        "role": "member",
+        "date_of_birth": "1993-01-05",
+        "gender": "Female",
+        "insurance_company": "Health Net",
+        "medi_cal_id": "12345678A",
+        "zip_code": "90001",
+    }
+    payload[missing_field] = None
+    res = await client.post("/api/v1/auth/register", json=payload)
+    assert res.status_code == 422, (
+        f"Expected 422 when {missing_field} is null: {res.text}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_register_member_invalid_state_format_rejected_if_provided(
+    client: AsyncClient,
+):
+    """State format check still fires when a value is provided — 5-char code
+    must 422 even though state is no longer required. (T07)
+    """
+    res = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": f"bad-state-long-{uuid.uuid4()}@example.com",
+            "password": "test-password-1234",
+            "name": "Jane Doe",
+            "role": "member",
+            "date_of_birth": "1993-01-05",
+            "gender": "Female",
+            "insurance_company": "Health Net",
+            "medi_cal_id": "12345678A",
+            "zip_code": "90001",
+            "state": "CALIF",  # 5 chars — must still 422
+        },
+    )
+    assert res.status_code == 422, res.text
+
+
+@pytest.mark.asyncio
+async def test_register_member_null_state_accepted(client: AsyncClient):
+    """Omitting state entirely must succeed — it is no longer required. (T07)"""
+    res = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": f"null-state-{uuid.uuid4()}@example.com",
+            "password": "test-password-1234",
+            "name": "Jane Doe",
+            "role": "member",
+            "date_of_birth": "1993-01-05",
+            "gender": "Female",
+            "insurance_company": "Health Net",
+            "medi_cal_id": "12345678A",
+            "zip_code": "90001",
+            # state omitted
         },
     )
     assert res.status_code == 201, res.text
