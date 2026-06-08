@@ -123,6 +123,7 @@ from app.routers.credentials import router as credentials_router
 from app.routers.devices import router as devices_router
 from app.routers.health import router as health_router
 from app.routers.matching import router as matching_router
+from app.routers.member import members_router as members_flag_note_router
 from app.routers.member import router as member_router
 from app.routers.payments import router as payments_router
 from app.routers.phone_verification import router as phone_verification_router
@@ -152,6 +153,7 @@ app.include_router(phone_verification_router)
 app.include_router(chw_router)
 app.include_router(chw_intake_router)
 app.include_router(member_router)
+app.include_router(members_flag_note_router)
 app.include_router(sessions_router)
 app.include_router(consent_request_router)
 app.include_router(transcript_router)

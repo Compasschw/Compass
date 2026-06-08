@@ -1,4 +1,5 @@
 from app.models.admin_totp import AdminTotpSecret
+from app.models.flag_note import FlagNote
 from app.models.assessment import MemberAssessment, MemberAssessmentResponse
 from app.models.audit import AuditLog
 from app.models.auth import RefreshToken
@@ -47,4 +48,5 @@ __all__ = [
     "ResourceSuggestion",
     "SessionFollowup",
     "Testimonial",
+    "FlagNote",
 ]
