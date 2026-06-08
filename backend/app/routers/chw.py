@@ -1,5 +1,6 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from uuid import UUID, uuid5, NAMESPACE_URL
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import HTTPBearer
@@ -1219,3 +1220,85 @@ async def get_chw_member_full_profile(
         consent_status=consent_status,
         recent_sessions=recent_sessions,
     )
+
+
+# ─── Billable Units aggregation (per-member cap widget) ───────────────────────
+
+# Medi-Cal per-member daily and yearly unit caps.
+# Source: cofounder spec (Phase 1 Second Run, T05).
+DAILY_CAP: int = 4
+YEARLY_CAP: int = 10
+
+# California wall-clock timezone — used for all service_date comparisons.
+# Mirrors the pattern in app/services/billing_csv_writer.py.
+_LA_TZ: ZoneInfo = ZoneInfo("America/Los_Angeles")
+
+
+@router.get("/members/{member_id}/billable-units")
+async def get_billable_units(
+    member_id: UUID,
+    current_user=Depends(require_role("chw")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Return daily and yearly Medi-Cal billable-unit counts for a CHW↔member pair.
+
+    The response drives the "Billable Units (Medi-Cal)" widget on the CHW Member
+    Profile screen, which shows:
+      - Today: N used / (DAILY_CAP − N) remaining
+      - This Year: N used / (YEARLY_CAP − N) remaining
+
+    Counting rules:
+    - Only claims where ``chw_id == current_user.id`` AND ``member_id == path param``
+      are counted. Each CHW's cap is independent per Medi-Cal billing rules.
+    - ``service_date`` (the calendar date the service was delivered) is the
+      authoritative date field. Falls back to the date component of ``created_at``
+      for legacy rows where ``service_date`` is NULL (via ``billing_service.check_unit_caps``).
+    - The "current day" and "current year" are computed in **America/Los_Angeles**
+      wall-clock time (not UTC) so the widget reflects the California billing day.
+
+    Authorization: CHW must have at least one session linked to the member.
+    Uses ``assert_shared_session`` from ``relationship_guards``, which raises 403
+    when no shared session exists.
+
+    Args:
+        member_id: Path parameter — UUID of the member whose caps are queried.
+        current_user: Authenticated CHW (injected by ``require_role("chw")``).
+        db: Async database session.
+
+    Returns:
+        A dict with keys ``daily``, ``yearly``, and ``as_of_la_local_date``.
+
+    Raises:
+        HTTPException(403): No care relationship (no shared session).
+    """
+    from app.services.billing_service import check_unit_caps
+    from app.services.relationship_guards import assert_shared_session
+
+    # Authorization: CHW must have a shared session with this member.
+    await assert_shared_session(db, chw_id=current_user.id, member_id=member_id)
+
+    # Compute the current date in LA wall-clock time.
+    # datetime.now(_LA_TZ).date() gives the correct California billing date
+    # regardless of the server's UTC offset — critical for late-night sessions.
+    today_la_date: date = datetime.now(_LA_TZ).date()  # California billing date
+
+    caps = await check_unit_caps(
+        db,
+        chw_id=current_user.id,
+        member_id=member_id,
+        session_date=today_la_date,
+    )
+
+    return {
+        "daily": {
+            "used": caps["daily_used"],
+            "limit": DAILY_CAP,
+            "remaining": caps["daily_remaining"],
+        },
+        "yearly": {
+            "used": caps["yearly_used"],
+            "limit": YEARLY_CAP,
+            "remaining": caps["yearly_remaining"],
+        },
+        "as_of_la_local_date": today_la_date.isoformat(),
+    }
