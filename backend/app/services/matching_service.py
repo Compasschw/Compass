@@ -156,13 +156,34 @@ def score_chw(
 ) -> MatchResult | None:
     """Score a single CHW candidate.
 
-    Returns None if the CHW doesn't offer the requested vertical (hard filter).
-    """
-    if vertical not in (chw.specializations or []):
-        return None
+    Previously returned None when the CHW's specializations didn't include the
+    requested vertical (hard filter).  That caused fresh CHW signups — whose
+    specializations array is empty until they complete their profile — to be
+    completely invisible in member search.
 
+    The filter is now a score penalty instead of a hard exclusion:
+      - vertical in specializations → no penalty (qualified match)
+      - specializations empty/None  → -15 (recently signed up; still surfaced)
+      - non-empty but wrong vertical → -30 (wrong specialty; ranks below empty)
+
+    Returns None only if the caller explicitly passes an invalid CHW object
+    (defensive guard; ordinary DB rows always reach the scoring block).
+    """
     reasons: list[str] = []
     score = 0.0
+
+    specs = chw.specializations or []
+    if vertical in specs:
+        # No penalty — CHW explicitly covers the requested vertical.
+        pass
+    elif not specs:
+        # CHW hasn't set specializations yet (fresh signup).
+        score -= 15
+        reasons.append("no specializations set")
+    else:
+        # CHW has specializations but the requested vertical isn't among them.
+        score -= 30
+        reasons.append(f"primarily specializes in {specs[0]}")
 
     # Geographic proximity (up to 40)
     distance = None
