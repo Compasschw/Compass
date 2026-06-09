@@ -10,9 +10,16 @@
  * Confirmed items with owner == "member" | "both" that have showOnRoadmap==true
  * automatically appear on the MemberRoadmapScreen for the member to track.
  *
- * Navigation param: { sessionId: string; memberName: string }
+ * Navigation param: { sessionId: string; memberName: string; memberId?: string }
  *
  * HIPAA: followup description values are never written to console.
+ *
+ * Layout: single-column with Card-wrapped sections.
+ * Rationale: this is a sequential review flow — each item is an interactive
+ * action card (confirm / dismiss / edit). A 3-column layout would fragment the
+ * reading order and bury action buttons in narrow columns. Single-column with a
+ * maxWidth cap (960px on web) matches the admin aesthetic while keeping the
+ * review flow linear and scannable.
  */
 
 import React, {
@@ -27,9 +34,6 @@ import {
   KeyboardAvoidingView,
   Modal,
   Platform,
-  Pressable,
-  ScrollView,
-  StatusBar,
   StyleSheet,
   Switch,
   Text,
@@ -45,7 +49,6 @@ import {
   CheckCircle,
   XCircle,
   Edit2,
-  ChevronDown,
   User,
   Users,
   Briefcase,
@@ -53,10 +56,19 @@ import {
   CalendarDays,
   AlertCircle,
   CheckCheck,
+  ClipboardCheck,
+  ListTodo,
+  Clock,
 } from 'lucide-react-native';
 
-import { colors } from '../../theme/colors';
-import { typography, fonts } from '../../theme/typography';
+import { colors as tokens, spacing, radius, shadows } from '../../theme/tokens';
+import { fonts } from '../../theme/typography';
+import {
+  Card,
+  SectionHeader,
+  StatTile,
+  Pill,
+} from '../../components/ui';
 import {
   useSessionFollowups,
   useUpdateFollowup,
@@ -83,52 +95,63 @@ const KIND_LABELS: Record<FollowupKind, string> = {
   member_goal: 'Goal',
 };
 
-const KIND_COLORS: Record<FollowupKind, string> = {
-  action_item: '#3B82F6',
-  follow_up_task: '#F59E0B',
-  resource_referral: '#06B6D4',
-  member_goal: colors.primary,
+/**
+ * Maps follow-up kind to a Pill variant so item-type chips use the shared
+ * design-system token pairs instead of arbitrary hex values.
+ */
+const KIND_PILL_VARIANT: Record<FollowupKind, 'blue' | 'amber' | 'emerald' | 'purple'> = {
+  action_item:       'blue',
+  follow_up_task:    'amber',
+  resource_referral: 'emerald',
+  member_goal:       'purple',
 };
 
 const OWNER_LABELS: Record<FollowupOwner, string> = {
-  chw: 'CHW',
+  chw:    'CHW',
   member: 'Member',
-  both: 'Both',
+  both:   'Both',
 };
 
 const VERTICAL_LABELS: Record<FollowupVertical, string> = {
-  housing: 'Housing',
-  food: 'Food Security',
+  housing:       'Housing',
+  food:          'Food Security',
   mental_health: 'Mental Health',
-  rehab: 'Rehab',
-  healthcare: 'Healthcare',
+  rehab:         'Rehab',
+  healthcare:    'Healthcare',
 };
 
 const PRIORITY_LABELS: Record<FollowupPriority, string> = {
-  low: 'Low',
+  low:    'Low',
   medium: 'Medium',
-  high: 'High',
+  high:   'High',
 };
 
-const PRIORITY_COLORS: Record<FollowupPriority, string> = {
-  low: colors.secondary,
-  medium: colors.compassGold,
-  high: colors.destructive,
+/**
+ * Maps priority level to a Pill variant, replacing the previous inline
+ * hex-literal approach with canonical design-system semantic pairs.
+ */
+const PRIORITY_PILL_VARIANT: Record<FollowupPriority, 'gray' | 'amber-dark' | 'red'> = {
+  low:    'gray',
+  medium: 'amber-dark',
+  high:   'red',
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+/**
+ * Formats an ISO date string as a short human-readable date (e.g. "Jun 12, 2026").
+ */
 function formatDueDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-US', {
     month: 'short',
-    day: 'numeric',
-    year: 'numeric',
+    day:   'numeric',
+    year:  'numeric',
   });
 }
 
 /**
- * Compute the default showOnRoadmap value for a followup.
- * True if owner involves the member, otherwise false.
+ * Returns true when the follow-up owner indicates the member should see it
+ * on their roadmap. Defaults showOnRoadmap to true for member-facing items.
  */
 function defaultShowOnRoadmap(owner: FollowupOwner | null): boolean {
   return owner === 'member' || owner === 'both';
@@ -141,12 +164,27 @@ interface OwnerPickerProps {
   onChange: (owner: FollowupOwner) => void;
 }
 
+/**
+ * Three-chip radio group for selecting who owns the follow-up action:
+ * CHW, Member, or Both. Selected chip fills with the primary brand green.
+ */
 function OwnerPicker({ current, onChange }: OwnerPickerProps): React.JSX.Element {
   const options: FollowupOwner[] = ['chw', 'member', 'both'];
+
   return (
     <View style={ownerStyles.row} accessibilityRole="radiogroup" accessibilityLabel="Owner">
       {options.map((opt) => {
         const selected = current === opt;
+
+        const icon =
+          opt === 'chw' ? (
+            <Briefcase size={12} color={selected ? '#FFFFFF' : tokens.textSecondary} />
+          ) : opt === 'member' ? (
+            <User size={12} color={selected ? '#FFFFFF' : tokens.textSecondary} />
+          ) : (
+            <Users size={12} color={selected ? '#FFFFFF' : tokens.textSecondary} />
+          );
+
         return (
           <TouchableOpacity
             key={opt}
@@ -156,13 +194,7 @@ function OwnerPicker({ current, onChange }: OwnerPickerProps): React.JSX.Element
             accessibilityState={{ selected }}
             accessibilityLabel={OWNER_LABELS[opt]}
           >
-            {opt === 'chw' ? (
-              <Briefcase size={12} color={selected ? colors.primaryForeground : colors.mutedForeground} />
-            ) : opt === 'member' ? (
-              <User size={12} color={selected ? colors.primaryForeground : colors.mutedForeground} />
-            ) : (
-              <Users size={12} color={selected ? colors.primaryForeground : colors.mutedForeground} />
-            )}
+            {icon}
             <Text style={[ownerStyles.chipText, selected && ownerStyles.chipTextSelected]}>
               {OWNER_LABELS[opt]}
             </Text>
@@ -174,41 +206,49 @@ function OwnerPicker({ current, onChange }: OwnerPickerProps): React.JSX.Element
 }
 
 const ownerStyles = StyleSheet.create({
-  row: { flexDirection: 'row', gap: 6 },
-  chip: {
+  row: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 100,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
+    gap: spacing.sm,
+  },
+  chip: {
+    flexDirection:  'row',
+    alignItems:     'center',
+    gap:            spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical:   6,
+    borderRadius:   radius.pill,
+    borderWidth:    1,
+    borderColor:    tokens.cardBorder,
+    backgroundColor: tokens.cardBg,
   },
   chipSelected: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
+    backgroundColor: tokens.primary,
+    borderColor:     tokens.primary,
   },
   chipText: {
     fontFamily: fonts.bodySemibold,
-    fontSize: 12,
-    color: colors.mutedForeground,
+    fontSize:   12,
+    color:      tokens.textSecondary,
   },
   chipTextSelected: {
-    color: colors.primaryForeground,
+    color: '#FFFFFF',
   },
 });
 
 // ─── EditDescriptionModal ─────────────────────────────────────────────────────
 
 interface EditDescriptionModalProps {
-  visible: boolean;
+  visible:      boolean;
   initialValue: string;
-  onSave: (text: string) => void;
-  onClose: () => void;
+  onSave:       (text: string) => void;
+  onClose:      () => void;
 }
 
+/**
+ * Bottom-sheet modal for editing a follow-up item's description inline.
+ * Resets the draft text each time the modal opens to prevent stale state.
+ * HIPAA: draft text is never logged.
+ */
 function EditDescriptionModal({
   visible,
   initialValue,
@@ -217,12 +257,13 @@ function EditDescriptionModal({
 }: EditDescriptionModalProps): React.JSX.Element {
   const [draft, setDraft] = useState(initialValue);
 
-  // Reset draft whenever modal opens with a new value
+  // Sync draft to the current initialValue whenever the modal re-opens.
   const prevVisible = useRef(false);
   if (visible && !prevVisible.current) {
     prevVisible.current = true;
-    // Sync draft to current value on open
-    if (draft !== initialValue) setDraft(initialValue);
+    if (draft !== initialValue) {
+      setDraft(initialValue);
+    }
   } else if (!visible) {
     prevVisible.current = false;
   }
@@ -260,7 +301,7 @@ function EditDescriptionModal({
             value={draft}
             onChangeText={setDraft}
             placeholder="Describe the follow-up item…"
-            placeholderTextColor={colors.mutedForeground}
+            placeholderTextColor={tokens.textMuted}
             multiline
             autoFocus
             maxLength={500}
@@ -291,408 +332,402 @@ const editModalStyles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   sheet: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 20,
-    gap: 16,
+    backgroundColor: tokens.cardBg,
+    borderTopLeftRadius:  radius.xl,
+    borderTopRightRadius: radius.xl,
+    padding: spacing.xl,
+    gap: spacing.lg,
     ...Platform.select({
       ios: {
-        shadowColor: colors.primary,
-        shadowOffset: { width: 0, height: -4 },
-        shadowOpacity: 0.1,
-        shadowRadius: 16,
+        shadowColor:   '#000',
+        shadowOffset:  { width: 0, height: -4 },
+        shadowOpacity: 0.08,
+        shadowRadius:  16,
       },
       android: { elevation: 16 },
     }),
   },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection:  'row',
+    alignItems:     'center',
     justifyContent: 'space-between',
   },
   headerTitle: {
     fontFamily: fonts.display,
-    fontSize: 18,
-    color: colors.foreground,
+    fontSize:   18,
+    color:      tokens.textPrimary,
   },
   cancelText: {
     fontFamily: fonts.bodySemibold,
-    fontSize: 14,
-    color: colors.mutedForeground,
+    fontSize:   14,
+    color:      tokens.textSecondary,
   },
   input: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 14,
-    padding: 14,
-    fontFamily: fonts.body,
-    fontSize: 15,
-    color: colors.foreground,
-    minHeight: 96,
+    borderWidth:       1,
+    borderColor:       tokens.cardBorder,
+    borderRadius:      radius.lg,
+    padding:           spacing.md,
+    fontFamily:        fonts.body,
+    fontSize:          15,
+    color:             tokens.textPrimary,
+    minHeight:         96,
     textAlignVertical: 'top',
   },
   saveBtn: {
-    backgroundColor: colors.primary,
-    borderRadius: 14,
+    backgroundColor: tokens.primary,
+    borderRadius:    radius.lg,
     paddingVertical: 14,
-    alignItems: 'center',
-    marginBottom: Platform.OS === 'ios' ? 8 : 0,
+    alignItems:      'center',
+    marginBottom:    Platform.OS === 'ios' ? spacing.sm : 0,
   },
-  saveBtnDisabled: { backgroundColor: colors.border },
+  saveBtnDisabled: {
+    backgroundColor: tokens.cardBorder,
+  },
   saveBtnText: {
     fontFamily: fonts.bodySemibold,
-    fontSize: 15,
-    color: colors.primaryForeground,
+    fontSize:   15,
+    color:      '#FFFFFF',
   },
-  saveBtnTextDisabled: { color: colors.mutedForeground },
+  saveBtnTextDisabled: {
+    color: tokens.textSecondary,
+  },
 });
 
-// ─── FollowupCard ─────────────────────────────────────────────────────────────
+// ─── FollowupItemCard ─────────────────────────────────────────────────────────
 
-interface FollowupCardProps {
-  item: SessionFollowup;
-  onConfirm: (id: string) => void;
-  onDismiss: (id: string) => void;
-  onEdit: (id: string) => void;
-  onOwnerChange: (id: string, owner: FollowupOwner) => void;
-  onRoadmapToggle: (id: string, show: boolean) => void;
+interface FollowupItemCardProps {
+  item:           SessionFollowup;
+  onConfirm:      (id: string) => void;
+  onDismiss:      (id: string) => void;
+  onEdit:         (id: string) => void;
+  onOwnerChange:  (id: string, owner: FollowupOwner) => void;
+  onRoadmapToggle:(id: string, show: boolean) => void;
 }
 
-function FollowupCard({
+/**
+ * Single-item review card. Renders item type, description, metadata (vertical /
+ * priority / due date), owner picker, roadmap toggle, and confirm/edit/dismiss
+ * action buttons. Uses Card primitive for surface + token-aligned colors.
+ *
+ * All fields and payload shape are unchanged from the original screen — this
+ * is a visual/token redesign only.
+ */
+function FollowupItemCard({
   item,
   onConfirm,
   onDismiss,
   onEdit,
   onOwnerChange,
   onRoadmapToggle,
-}: FollowupCardProps): React.JSX.Element {
-  const kindColor = KIND_COLORS[item.kind];
+}: FollowupItemCardProps): React.JSX.Element {
   const isConfirmed = item.status === 'confirmed';
   const isDismissed = item.status === 'dismissed';
-  const isReviewed = isConfirmed || isDismissed;
+  const isReviewed  = isConfirmed || isDismissed;
 
-  const cardBg = isConfirmed
-    ? `${colors.primary}08`
+  // Card background and border tint based on review state.
+  const cardOverrideStyle = isConfirmed
+    ? { backgroundColor: `${tokens.primary}08`, borderColor: `${tokens.primary}40` }
     : isDismissed
-    ? colors.muted
-    : '#FFFFFF';
-
-  const borderColor = isConfirmed
-    ? `${colors.primary}40`
-    : isDismissed
-    ? colors.border
-    : colors.border;
+    ? { backgroundColor: tokens.pageBg, borderColor: tokens.cardBorder }
+    : {};
 
   return (
-    <View
-      style={[cardS.card, { backgroundColor: cardBg, borderColor }]}
-      accessible
+    <Card
+      style={[itemCardStyles.card, cardOverrideStyle]}
+      // @ts-expect-error — accessibilityLabel is valid on View (RN 0.74+)
       accessibilityLabel={`Follow-up item: ${KIND_LABELS[item.kind]}. Status: ${item.status}`}
     >
-      {/* Kind chip + status overlay */}
-      <View style={cardS.topRow}>
-        <View style={[cardS.kindChip, { backgroundColor: `${kindColor}18` }]}>
-          <Text style={[cardS.kindChipText, { color: kindColor }]}>
-            {KIND_LABELS[item.kind]}
-          </Text>
-        </View>
+      {/* ── Top row: kind pill + status badge ───────────────────────────── */}
+      <View style={itemCardStyles.topRow}>
+        <Pill variant={KIND_PILL_VARIANT[item.kind]} size="sm">
+          {KIND_LABELS[item.kind]}
+        </Pill>
 
         {isConfirmed && (
-          <View style={cardS.confirmedBadge}>
-            <CheckCircle size={12} color={colors.primary} />
-            <Text style={cardS.confirmedBadgeText}>Confirmed</Text>
+          <View style={itemCardStyles.statusBadge}>
+            <CheckCircle size={12} color={tokens.primary} />
+            <Text style={[itemCardStyles.statusBadgeText, { color: tokens.primary }]}>
+              Confirmed
+            </Text>
           </View>
         )}
         {isDismissed && (
-          <View style={cardS.dismissedBadge}>
-            <XCircle size={12} color={colors.mutedForeground} />
-            <Text style={cardS.dismissedBadgeText}>Dismissed</Text>
+          <View style={itemCardStyles.statusBadge}>
+            <XCircle size={12} color={tokens.textSecondary} />
+            <Text style={[itemCardStyles.statusBadgeText, { color: tokens.textSecondary }]}>
+              Dismissed
+            </Text>
           </View>
         )}
       </View>
 
-      {/* Description */}
+      {/* ── Description ─────────────────────────────────────────────────── */}
       <Text
-        style={[cardS.description, isDismissed && cardS.descriptionDimmed]}
+        style={[
+          itemCardStyles.description,
+          isDismissed && itemCardStyles.descriptionDimmed,
+        ]}
         accessibilityLabel="Item description"
       >
         {item.description}
       </Text>
 
-      {/* Meta row — vertical, priority, due date */}
-      {(item.vertical || item.priority || item.dueDate) ? (
-        <View style={cardS.metaRow}>
-          {item.vertical ? (
-            <View style={cardS.metaChip}>
-              <Text style={cardS.metaChipText}>{VERTICAL_LABELS[item.vertical]}</Text>
-            </View>
-          ) : null}
-          {item.priority ? (
-            <View style={[cardS.metaChip, { borderColor: `${PRIORITY_COLORS[item.priority]}50` }]}>
-              <Flag size={10} color={PRIORITY_COLORS[item.priority]} />
-              <Text style={[cardS.metaChipText, { color: PRIORITY_COLORS[item.priority] }]}>
-                {PRIORITY_LABELS[item.priority]}
+      {/* ── Metadata chips: vertical / priority / due date ──────────────── */}
+      {(item.vertical !== null || item.priority !== null || item.dueDate !== null) && (
+        <View style={itemCardStyles.metaRow}>
+          {item.vertical !== null && (
+            <View style={itemCardStyles.metaChip}>
+              <Text style={itemCardStyles.metaChipText}>
+                {VERTICAL_LABELS[item.vertical]}
               </Text>
             </View>
-          ) : null}
-          {item.dueDate ? (
-            <View style={cardS.metaChip}>
-              <CalendarDays size={10} color={colors.mutedForeground} />
-              <Text style={cardS.metaChipText}>{formatDueDate(item.dueDate)}</Text>
+          )}
+          {item.priority !== null && (
+            <Pill variant={PRIORITY_PILL_VARIANT[item.priority]} size="sm">
+              <View style={itemCardStyles.priorityInner}>
+                <Flag size={9} color="inherit" />
+                <Text> {PRIORITY_LABELS[item.priority]}</Text>
+              </View>
+            </Pill>
+          )}
+          {item.dueDate !== null && (
+            <View style={itemCardStyles.metaChip}>
+              <CalendarDays size={10} color={tokens.textSecondary} />
+              <Text style={itemCardStyles.metaChipText}>
+                {formatDueDate(item.dueDate)}
+              </Text>
             </View>
-          ) : null}
+          )}
         </View>
-      ) : null}
+      )}
 
-      {/* Owner picker — hidden when dismissed */}
-      {!isDismissed ? (
-        <View style={cardS.ownerSection}>
-          <Text style={cardS.fieldLabel}>Owner</Text>
+      {/* ── Owner picker (hidden when dismissed) ────────────────────────── */}
+      {!isDismissed && (
+        <View style={itemCardStyles.ownerSection}>
+          <Text style={itemCardStyles.fieldLabel}>Owner</Text>
           <OwnerPicker
             current={item.owner}
             onChange={(owner) => onOwnerChange(item.id, owner)}
           />
         </View>
-      ) : null}
+      )}
 
-      {/* Show on roadmap toggle — only visible when owner involves member */}
-      {!isDismissed && (item.owner === 'member' || item.owner === 'both') ? (
-        <View style={cardS.roadmapRow}>
-          <Text style={cardS.roadmapLabel}>Show on member's roadmap</Text>
+      {/* ── Roadmap toggle (member-facing items only) ────────────────────── */}
+      {!isDismissed && (item.owner === 'member' || item.owner === 'both') && (
+        <View style={itemCardStyles.roadmapRow}>
+          <Text style={itemCardStyles.roadmapLabel}>Show on member's roadmap</Text>
           <Switch
             value={item.showOnRoadmap}
             onValueChange={(val) => onRoadmapToggle(item.id, val)}
-            trackColor={{ false: colors.border, true: `${colors.primary}60` }}
-            thumbColor={item.showOnRoadmap ? colors.primary : colors.muted}
+            trackColor={{ false: tokens.cardBorder, true: `${tokens.primary}60` }}
+            thumbColor={item.showOnRoadmap ? tokens.primary : '#e5e7eb'}
             accessibilityRole="switch"
             accessibilityLabel="Show on member's roadmap"
             accessibilityState={{ checked: item.showOnRoadmap }}
           />
         </View>
-      ) : null}
+      )}
 
-      {/* Action buttons */}
+      {/* ── Action buttons / undo ────────────────────────────────────────── */}
       {!isReviewed ? (
-        <View style={cardS.actionRow}>
+        <View style={itemCardStyles.actionRow}>
           <TouchableOpacity
-            style={cardS.confirmBtn}
+            style={itemCardStyles.confirmBtn}
             onPress={() => onConfirm(item.id)}
             accessibilityRole="button"
             accessibilityLabel="Confirm this item"
           >
-            <CheckCircle size={14} color={colors.primaryForeground} />
-            <Text style={cardS.confirmBtnText}>Confirm</Text>
+            <CheckCircle size={14} color="#FFFFFF" />
+            <Text style={itemCardStyles.confirmBtnText}>Confirm</Text>
           </TouchableOpacity>
+
           <TouchableOpacity
-            style={cardS.editBtn}
+            style={itemCardStyles.editBtn}
             onPress={() => onEdit(item.id)}
             accessibilityRole="button"
             accessibilityLabel="Edit this item"
           >
-            <Edit2 size={14} color={colors.primary} />
-            <Text style={cardS.editBtnText}>Edit</Text>
+            <Edit2 size={14} color={tokens.primary} />
+            <Text style={itemCardStyles.editBtnText}>Edit</Text>
           </TouchableOpacity>
+
           <TouchableOpacity
-            style={cardS.dismissBtn}
+            style={itemCardStyles.dismissBtn}
             onPress={() => onDismiss(item.id)}
             accessibilityRole="button"
             accessibilityLabel="Dismiss this item"
           >
-            <XCircle size={14} color={colors.mutedForeground} />
-            <Text style={cardS.dismissBtnText}>Dismiss</Text>
+            <XCircle size={14} color={tokens.textSecondary} />
+            <Text style={itemCardStyles.dismissBtnText}>Dismiss</Text>
           </TouchableOpacity>
         </View>
       ) : (
         <TouchableOpacity
-          style={cardS.undoBtn}
+          style={itemCardStyles.undoBtn}
           onPress={() => {
-            // Revert to pending so the CHW can change their mind
-            onConfirm(item.id); // flip back — parent handles toggling
+            // Toggling via the same handler: confirmed → pending, dismissed → pending.
+            if (isConfirmed) {
+              onConfirm(item.id);
+            } else {
+              onDismiss(item.id);
+            }
           }}
           accessibilityRole="button"
           accessibilityLabel="Undo — return to pending"
         >
-          <Text style={cardS.undoBtnText}>
+          <Text style={itemCardStyles.undoBtnText}>
             {isConfirmed ? 'Undo confirm' : 'Undo dismiss'}
           </Text>
         </TouchableOpacity>
       )}
-    </View>
+    </Card>
   );
 }
 
-const cardS = StyleSheet.create({
+const itemCardStyles = StyleSheet.create({
   card: {
-    borderRadius: 16,
-    borderWidth: 1,
-    padding: 16,
-    marginBottom: 12,
-    gap: 12,
-    ...Platform.select({
-      ios: {
-        shadowColor: colors.primary,
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.06,
-        shadowRadius: 16,
-      },
-      android: { elevation: 2 },
-    }),
+    marginBottom: spacing.md,
+    padding:      spacing.xl,
+    gap:          spacing.md,
   },
   topRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+    alignItems:    'center',
+    gap:           spacing.sm,
   },
-  kindChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 100,
-  },
-  kindChipText: {
-    fontFamily: fonts.bodySemibold,
-    fontSize: 11,
-    letterSpacing: 0.3,
-  },
-  confirmedBadge: {
+  statusBadge: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    marginLeft: 'auto',
+    alignItems:    'center',
+    gap:           spacing.xs,
+    marginLeft:    'auto' as unknown as number,
   },
-  confirmedBadgeText: {
+  statusBadgeText: {
     fontFamily: fonts.bodySemibold,
-    fontSize: 11,
-    color: colors.primary,
-  },
-  dismissedBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    marginLeft: 'auto',
-  },
-  dismissedBadgeText: {
-    fontFamily: fonts.bodySemibold,
-    fontSize: 11,
-    color: colors.mutedForeground,
+    fontSize:   11,
   },
   description: {
     fontFamily: fonts.body,
-    fontSize: 14,
+    fontSize:   14,
     lineHeight: 22,
-    color: colors.foreground,
+    color:      tokens.textPrimary,
   },
   descriptionDimmed: {
-    color: colors.mutedForeground,
+    color: tokens.textMuted,
   },
   metaRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
+    flexWrap:      'wrap',
+    gap:           spacing.sm,
+    alignItems:    'center',
   },
   metaChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.background,
+    flexDirection:     'row',
+    alignItems:        'center',
+    gap:               spacing.xs,
+    paddingHorizontal: spacing.sm,
+    paddingVertical:   3,
+    borderRadius:      radius.sm,
+    borderWidth:       1,
+    borderColor:       tokens.cardBorder,
+    backgroundColor:   tokens.pageBg,
   },
   metaChipText: {
     fontFamily: fonts.bodySemibold,
-    fontSize: 11,
-    color: colors.mutedForeground,
+    fontSize:   11,
+    color:      tokens.textSecondary,
+  },
+  priorityInner: {
+    flexDirection: 'row',
+    alignItems:    'center',
+    gap:           3,
   },
   ownerSection: {
-    gap: 8,
+    gap: spacing.sm,
   },
   fieldLabel: {
-    fontFamily: fonts.bodySemibold,
-    fontSize: 12,
-    color: colors.mutedForeground,
-    letterSpacing: 0.5,
+    fontFamily:    fonts.bodySemibold,
+    fontSize:      11,
+    color:         tokens.textMuted,
+    letterSpacing: 0.8,
     textTransform: 'uppercase',
   },
   roadmapRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection:  'row',
+    alignItems:     'center',
     justifyContent: 'space-between',
-    paddingTop: 4,
+    paddingTop:     spacing.sm,
     borderTopWidth: 1,
-    borderTopColor: colors.border,
+    borderTopColor: tokens.cardBorder,
   },
   roadmapLabel: {
     fontFamily: fonts.body,
-    fontSize: 13,
-    color: colors.foreground,
-    flex: 1,
+    fontSize:   13,
+    color:      tokens.textPrimary,
+    flex:       1,
   },
   actionRow: {
-    flexDirection: 'row',
-    gap: 8,
-    paddingTop: 4,
+    flexDirection:  'row',
+    gap:            spacing.sm,
+    paddingTop:     spacing.sm,
     borderTopWidth: 1,
-    borderTopColor: colors.border,
+    borderTopColor: tokens.cardBorder,
   },
   confirmBtn: {
-    flex: 2,
-    flexDirection: 'row',
-    alignItems: 'center',
+    flex:           2,
+    flexDirection:  'row',
+    alignItems:     'center',
     justifyContent: 'center',
-    gap: 6,
-    backgroundColor: colors.primary,
+    gap:            6,
+    backgroundColor: tokens.primary,
     paddingVertical: 10,
-    borderRadius: 10,
+    borderRadius:    radius.md,
   },
   confirmBtnText: {
     fontFamily: fonts.bodySemibold,
-    fontSize: 13,
-    color: colors.primaryForeground,
+    fontSize:   13,
+    color:      '#FFFFFF',
   },
   editBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
+    flex:           1,
+    flexDirection:  'row',
+    alignItems:     'center',
     justifyContent: 'center',
-    gap: 6,
-    borderWidth: 1,
-    borderColor: colors.primary,
+    gap:            6,
+    borderWidth:    1,
+    borderColor:    tokens.primary,
     paddingVertical: 10,
-    borderRadius: 10,
+    borderRadius:    radius.md,
   },
   editBtnText: {
     fontFamily: fonts.bodySemibold,
-    fontSize: 13,
-    color: colors.primary,
+    fontSize:   13,
+    color:      tokens.primary,
   },
   dismissBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
+    flex:           1,
+    flexDirection:  'row',
+    alignItems:     'center',
     justifyContent: 'center',
-    gap: 6,
-    borderWidth: 1,
-    borderColor: colors.border,
+    gap:            6,
+    borderWidth:    1,
+    borderColor:    tokens.cardBorder,
     paddingVertical: 10,
-    borderRadius: 10,
-    backgroundColor: colors.card,
+    borderRadius:    radius.md,
+    backgroundColor: tokens.pageBg,
   },
   dismissBtnText: {
     fontFamily: fonts.bodySemibold,
-    fontSize: 13,
-    color: colors.mutedForeground,
+    fontSize:   13,
+    color:      tokens.textSecondary,
   },
   undoBtn: {
-    alignItems: 'center',
-    paddingVertical: 8,
+    alignItems:      'center',
+    paddingVertical: spacing.sm,
   },
   undoBtnText: {
-    fontFamily: fonts.bodySemibold,
-    fontSize: 12,
-    color: colors.mutedForeground,
+    fontFamily:     fonts.bodySemibold,
+    fontSize:       12,
+    color:          tokens.textSecondary,
     textDecorationLine: 'underline',
   },
 });
@@ -702,31 +737,34 @@ const cardS = StyleSheet.create({
 /**
  * CHWSessionReviewScreen
  *
- * Route params: { sessionId, memberName }
+ * Route params: { sessionId, memberName, memberId? }
  * Reads from followupQueryKeys.extraction(sessionId) — populated by
  * useExtractSessionFollowups before navigation.
  *
- * The member name in the header is rendered as a tappable link that navigates
- * to CHWMemberProfileScreen when the route carries a memberId. The route type
- * is extended to accept an optional memberId for this purpose; callers that
- * don't have a memberId (e.g. legacy navigation) still work since the link is
- * only rendered when the param is present.
+ * The member name in the header subtitle is tappable when the route carries
+ * a memberId, navigating to CHWMemberProfileScreen.
  */
 export function CHWSessionReviewScreen(): React.JSX.Element {
-  const route = useRoute<ReviewRouteProp>();
+  const route      = useRoute<ReviewRouteProp>();
   const navigation = useNavigation<ReviewNavProp>();
   const { sessionId, memberName } = route.params;
-  // Optional memberId — present when navigation originated from a session card
-  // that carries a member_id. Used to make the header name tappable.
+
+  // Optional — present when navigation originated from a session card that
+  // carries a member_id. Makes the subtitle name tappable (HIPAA-gated).
   const memberId = (route.params as { memberId?: string }).memberId;
 
   const { data: extractionResult, isLoading, error } = useSessionFollowups(sessionId);
   const updateFollowup = useUpdateFollowup(sessionId);
 
-  // Track which item's description is being edited
+  // Track which item's description is being edited in the bottom-sheet modal.
   const [editingId, setEditingId] = useState<string | null>(null);
 
   const followups = extractionResult?.followups ?? [];
+
+  const confirmedCount = useMemo(
+    () => followups.filter((f) => f.status === 'confirmed').length,
+    [followups],
+  );
 
   const pendingCount = useMemo(
     () => followups.filter((f) => f.status === 'pending').length,
@@ -740,13 +778,13 @@ export function CHWSessionReviewScreen(): React.JSX.Element {
   const handleConfirm = useCallback(
     (id: string) => {
       const item = followups.find((f) => f.id === id);
-      if (!item) return;
+      if (!item) { return; }
 
-      // If already confirmed, revert to pending (undo)
+      // Toggle: confirmed → pending (undo), or pending/dismissed → confirmed.
       const newStatus = item.status === 'confirmed' ? 'pending' : 'confirmed';
       const patch: PatchFollowupPayload = { status: newStatus };
 
-      // Auto-set showOnRoadmap on first confirm if owner involves member
+      // Auto-set showOnRoadmap on first confirm when owner involves the member.
       if (newStatus === 'confirmed' && item.owner !== null) {
         patch.showOnRoadmap = defaultShowOnRoadmap(item.owner);
       }
@@ -759,7 +797,9 @@ export function CHWSessionReviewScreen(): React.JSX.Element {
   const handleDismiss = useCallback(
     (id: string) => {
       const item = followups.find((f) => f.id === id);
-      if (!item) return;
+      if (!item) { return; }
+
+      // Toggle: dismissed → pending (undo), or pending → dismissed.
       const newStatus = item.status === 'dismissed' ? 'pending' : 'dismissed';
       updateFollowup.mutate({
         followupId: id,
@@ -786,26 +826,27 @@ export function CHWSessionReviewScreen(): React.JSX.Element {
 
   const handleEditSave = useCallback(
     (description: string) => {
-      if (!editingId) return;
+      if (!editingId) { return; }
       updateFollowup.mutate({ followupId: editingId, patch: { description } });
       setEditingId(null);
     },
     [editingId, updateFollowup],
   );
 
-  // Bulk actions
+  // Bulk: confirm all pending items, auto-setting roadmap visibility.
   const handleConfirmAll = useCallback(() => {
     followups
       .filter((f) => f.status === 'pending')
       .forEach((f) => {
         const patch: PatchFollowupPayload = {
-          status: 'confirmed',
+          status:       'confirmed',
           showOnRoadmap: f.owner !== null ? defaultShowOnRoadmap(f.owner) : false,
         };
         updateFollowup.mutate({ followupId: f.id, patch });
       });
   }, [followups, updateFollowup]);
 
+  // Bulk: dismiss all pending items, stripping roadmap visibility.
   const handleDismissAll = useCallback(() => {
     followups
       .filter((f) => f.status === 'pending')
@@ -817,109 +858,112 @@ export function CHWSessionReviewScreen(): React.JSX.Element {
       });
   }, [followups, updateFollowup]);
 
-  // ── Edit modal data ─────────────────────────────────────────────────────────
+  // ── Edit modal ──────────────────────────────────────────────────────────────
 
-  const editingItem = editingId
-    ? followups.find((f) => f.id === editingId)
-    : null;
+  const editingItem = editingId ? followups.find((f) => f.id === editingId) : null;
 
-  // ── Render ──────────────────────────────────────────────────────────────────
+  // ── Loading state ───────────────────────────────────────────────────────────
 
   if (isLoading) {
     return (
-      <SafeAreaView style={s.safeArea} edges={['top']}>
-        <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
-        <View style={s.header}>
-          <TouchableOpacity
-            onPress={() => navigation.goBack()}
-            style={s.backBtn}
-            accessibilityRole="button"
-            accessibilityLabel="Go back"
-          >
-            <ArrowLeft size={20} color={colors.foreground} />
-          </TouchableOpacity>
-          <Text style={s.headerTitle} numberOfLines={1}>
-            Review Items
-          </Text>
-          <View style={{ width: 40 }} />
-        </View>
-        <View style={s.centered}>
-          <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={s.loadingText}>Extracting follow-ups…</Text>
+      <SafeAreaView style={screenStyles.safeArea} edges={['top']}>
+        <View style={screenStyles.pageWrap}>
+          <View style={screenStyles.navBar}>
+            <TouchableOpacity
+              onPress={() => navigation.goBack()}
+              style={screenStyles.backBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Go back"
+            >
+              <ArrowLeft size={20} color={tokens.textPrimary} />
+            </TouchableOpacity>
+            <Text style={screenStyles.navTitle}>Complete Session</Text>
+            <View style={{ width: 40 }} />
+          </View>
+          <View style={screenStyles.centered}>
+            <ActivityIndicator size="large" color={tokens.primary} />
+            <Text style={screenStyles.stateBodyText}>Extracting follow-ups…</Text>
+          </View>
         </View>
       </SafeAreaView>
     );
   }
 
-  if (error || !extractionResult) {
+  // ── Error state ─────────────────────────────────────────────────────────────
+
+  if (error !== null && error !== undefined || !extractionResult) {
     return (
-      <SafeAreaView style={s.safeArea} edges={['top']}>
-        <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
-        <View style={s.header}>
-          <TouchableOpacity
-            onPress={() => navigation.goBack()}
-            style={s.backBtn}
-            accessibilityRole="button"
-            accessibilityLabel="Go back"
-          >
-            <ArrowLeft size={20} color={colors.foreground} />
-          </TouchableOpacity>
-          <Text style={s.headerTitle}>Review Items</Text>
-          <View style={{ width: 40 }} />
-        </View>
-        <View style={s.centered}>
-          <AlertCircle size={40} color={colors.destructive} />
-          <Text style={s.errorTitle}>Could not load follow-ups</Text>
-          <Text style={s.errorSub}>
-            Check your connection and try again.
-          </Text>
+      <SafeAreaView style={screenStyles.safeArea} edges={['top']}>
+        <View style={screenStyles.pageWrap}>
+          <View style={screenStyles.navBar}>
+            <TouchableOpacity
+              onPress={() => navigation.goBack()}
+              style={screenStyles.backBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Go back"
+            >
+              <ArrowLeft size={20} color={tokens.textPrimary} />
+            </TouchableOpacity>
+            <Text style={screenStyles.navTitle}>Complete Session</Text>
+            <View style={{ width: 40 }} />
+          </View>
+          <View style={screenStyles.centered}>
+            <AlertCircle size={40} color={tokens.red700} />
+            <Text style={screenStyles.stateHeading}>Could not load follow-ups</Text>
+            <Text style={screenStyles.stateBodyText}>
+              Check your connection and try again.
+            </Text>
+          </View>
         </View>
       </SafeAreaView>
     );
   }
+
+  // ── Empty state (no items extracted from transcript) ────────────────────────
 
   if (followups.length === 0) {
     return (
-      <SafeAreaView style={s.safeArea} edges={['top']}>
-        <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
-        <View style={s.header}>
-          <TouchableOpacity
-            onPress={() => navigation.goBack()}
-            style={s.backBtn}
-            accessibilityRole="button"
-            accessibilityLabel="Go back"
-          >
-            <ArrowLeft size={20} color={colors.foreground} />
-          </TouchableOpacity>
-          <Text style={s.headerTitle} numberOfLines={1}>
-            Review — {memberName}
-          </Text>
-          <View style={{ width: 40 }} />
-        </View>
-        <View style={s.centered}>
-          <CheckCheck size={40} color={colors.mutedForeground} />
-          <Text style={s.emptyTitle}>No items extracted</Text>
-          <Text style={s.emptySub}>
-            No action items or goals were found in this session transcript.
-          </Text>
-          <TouchableOpacity
-            style={s.doneBtn}
-            onPress={() => navigation.goBack()}
-            accessibilityRole="button"
-            accessibilityLabel="Return to sessions"
-          >
-            <Text style={s.doneBtnText}>Back to Sessions</Text>
-          </TouchableOpacity>
+      <SafeAreaView style={screenStyles.safeArea} edges={['top']}>
+        <View style={screenStyles.pageWrap}>
+          <View style={screenStyles.navBar}>
+            <TouchableOpacity
+              onPress={() => navigation.goBack()}
+              style={screenStyles.backBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Go back"
+            >
+              <ArrowLeft size={20} color={tokens.textPrimary} />
+            </TouchableOpacity>
+            <Text style={screenStyles.navTitle} numberOfLines={1}>
+              Complete Session — {memberName}
+            </Text>
+            <View style={{ width: 40 }} />
+          </View>
+          <View style={screenStyles.centered}>
+            <CheckCheck size={40} color={tokens.textSecondary} />
+            <Text style={screenStyles.stateHeading}>No items extracted</Text>
+            <Text style={screenStyles.stateBodyText}>
+              No action items or goals were found in this session's transcript.
+            </Text>
+            <TouchableOpacity
+              style={screenStyles.primaryBtn}
+              onPress={() => navigation.goBack()}
+              accessibilityRole="button"
+              accessibilityLabel="Return to sessions"
+            >
+              <Text style={screenStyles.primaryBtnText}>Back to Sessions</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </SafeAreaView>
     );
   }
 
-  return (
-    <SafeAreaView style={s.safeArea} edges={['top']}>
-      <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
+  // ── Main render ─────────────────────────────────────────────────────────────
 
-      {/* Edit description modal */}
+  return (
+    <SafeAreaView style={screenStyles.safeArea} edges={['top']}>
+      {/* Edit description bottom-sheet */}
       <EditDescriptionModal
         visible={editingId !== null}
         initialValue={editingItem?.description ?? ''}
@@ -927,302 +971,352 @@ export function CHWSessionReviewScreen(): React.JSX.Element {
         onClose={() => setEditingId(null)}
       />
 
-      <View style={s.pageWrap}>
-      {/* Header */}
-      <View style={s.header}>
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          style={s.backBtn}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-        >
-          <ArrowLeft size={20} color={colors.foreground} />
-        </TouchableOpacity>
-        <View style={s.headerCenter}>
-          <Text style={s.headerTitle} numberOfLines={1}>
-            Review Session Items
-          </Text>
-          {/* Member name is tappable when a memberId is available in route params.
-              Navigates to CHWMemberProfileScreen (HIPAA-gated). */}
-          {memberId ? (
-            <TouchableOpacity
-              onPress={() => navigation.navigate('MemberProfile', { memberId })}
-              accessibilityRole="link"
-              accessibilityLabel={`View profile for ${memberName}`}
-              hitSlop={4}
-            >
-              <Text style={[s.headerSub, s.headerSubLink]} numberOfLines={1}>
-                {memberName}
-              </Text>
-            </TouchableOpacity>
-          ) : (
-            <Text style={s.headerSub} numberOfLines={1}>
-              {memberName}
+      <View style={screenStyles.pageWrap}>
+        {/* ── Navigation bar ─────────────────────────────────────────────── */}
+        <View style={screenStyles.navBar}>
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            style={screenStyles.backBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+          >
+            <ArrowLeft size={20} color={tokens.textPrimary} />
+          </TouchableOpacity>
+
+          <View style={screenStyles.navCenter}>
+            <Text style={screenStyles.navTitle} numberOfLines={1}>
+              Complete Session
             </Text>
-          )}
-        </View>
-        <View style={{ width: 40 }} />
-      </View>
-
-      {/* Summary strip */}
-      <View style={s.summaryStrip}>
-        <Text style={s.summaryText}>
-          {followups.length} item{followups.length !== 1 ? 's' : ''}
-          {pendingCount > 0 ? ` · ${pendingCount} pending` : ' · all reviewed'}
-        </Text>
-      </View>
-
-      {/* Bulk actions — only shown when pending items remain */}
-      {pendingCount > 0 ? (
-        <View style={s.bulkRow}>
-          <TouchableOpacity
-            style={s.bulkConfirmBtn}
-            onPress={handleConfirmAll}
-            accessibilityRole="button"
-            accessibilityLabel="Confirm all pending items"
-          >
-            <CheckCheck size={14} color={colors.primaryForeground} />
-            <Text style={s.bulkConfirmText}>Confirm All</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={s.bulkDismissBtn}
-            onPress={handleDismissAll}
-            accessibilityRole="button"
-            accessibilityLabel="Dismiss all pending items"
-          >
-            <XCircle size={14} color={colors.mutedForeground} />
-            <Text style={s.bulkDismissText}>Dismiss All</Text>
-          </TouchableOpacity>
-        </View>
-      ) : null}
-
-      {/* Item list */}
-      <FlatList
-        data={followups}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={s.listContent}
-        showsVerticalScrollIndicator={false}
-        accessibilityRole="list"
-        accessibilityLabel="Follow-up items"
-        renderItem={({ item }) => (
-          <FollowupCard
-            item={item}
-            onConfirm={handleConfirm}
-            onDismiss={handleDismiss}
-            onEdit={(id) => setEditingId(id)}
-            onOwnerChange={handleOwnerChange}
-            onRoadmapToggle={handleRoadmapToggle}
-          />
-        )}
-        ListFooterComponent={
-          allReviewed ? (
-            <View style={s.allReviewedCard}>
-              <CheckCheck size={28} color={colors.primary} />
-              <Text style={s.allReviewedTitle}>All items reviewed</Text>
-              <Text style={s.allReviewedSub}>
-                Confirmed items with member ownership will appear on{' '}
-                {memberName}&apos;s roadmap.
-              </Text>
+            {/* Member name — tappable link when memberId is present in route params */}
+            {memberId !== undefined ? (
               <TouchableOpacity
-                style={s.doneBtn}
-                onPress={() => navigation.goBack()}
-                accessibilityRole="button"
-                accessibilityLabel={`Mark session complete and notify ${memberName}`}
+                onPress={() => navigation.navigate('MemberProfile', { memberId })}
+                accessibilityRole="link"
+                accessibilityLabel={`View profile for ${memberName}`}
+                hitSlop={4}
               >
-                <Text style={s.doneBtnText}>
-                  Done — Notify {memberName}
+                <Text style={[screenStyles.navSubtitle, screenStyles.navSubtitleLink]} numberOfLines={1}>
+                  {memberName}
                 </Text>
               </TouchableOpacity>
-            </View>
-          ) : null
-        }
-      />
+            ) : (
+              <Text style={screenStyles.navSubtitle} numberOfLines={1}>
+                {memberName}
+              </Text>
+            )}
+          </View>
+
+          <View style={{ width: 40 }} />
+        </View>
+
+        {/* ── Scrollable content ──────────────────────────────────────────── */}
+        <FlatList
+          data={followups}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={screenStyles.listContent}
+          showsVerticalScrollIndicator={false}
+          accessibilityRole="list"
+          accessibilityLabel="Follow-up items"
+          ListHeaderComponent={(
+            <>
+              {/* ── Summary StatTile row ──────────────────────────────────── */}
+              <View style={screenStyles.statRow}>
+                <StatTile
+                  icon={<ListTodo size={18} color={tokens.emerald700} />}
+                  iconBg={tokens.emerald100}
+                  label="Total Items"
+                  value={followups.length}
+                  style={screenStyles.statTile}
+                  accessibilityLabel={`${followups.length} total items`}
+                />
+                <StatTile
+                  icon={<ClipboardCheck size={18} color={tokens.emerald700} />}
+                  iconBg={tokens.emerald100}
+                  label="Confirmed"
+                  value={confirmedCount}
+                  delta={confirmedCount > 0 ? `${confirmedCount} done` : undefined}
+                  deltaColor={tokens.emerald700}
+                  deltaBg={tokens.emerald100}
+                  style={screenStyles.statTile}
+                  accessibilityLabel={`${confirmedCount} confirmed`}
+                />
+                <StatTile
+                  icon={<Clock size={18} color={pendingCount > 0 ? tokens.amber700 : tokens.textMuted} />}
+                  iconBg={pendingCount > 0 ? tokens.amber100 : tokens.gray100}
+                  label="Pending"
+                  value={pendingCount}
+                  delta={pendingCount > 0 ? 'Needs review' : undefined}
+                  deltaColor={tokens.amber700}
+                  deltaBg={tokens.amber100}
+                  style={screenStyles.statTile}
+                  accessibilityLabel={`${pendingCount} pending`}
+                />
+              </View>
+
+              {/* ── Bulk actions (only while pending items remain) ─────────── */}
+              {pendingCount > 0 && (
+                <Card style={screenStyles.bulkCard}>
+                  <SectionHeader
+                    title="Quick Actions"
+                    subtitle="Apply to all pending items at once"
+                    marginBottom={spacing.md}
+                  />
+                  <View style={screenStyles.bulkRow}>
+                    <TouchableOpacity
+                      style={screenStyles.bulkConfirmBtn}
+                      onPress={handleConfirmAll}
+                      accessibilityRole="button"
+                      accessibilityLabel="Confirm all pending items"
+                    >
+                      <CheckCheck size={14} color="#FFFFFF" />
+                      <Text style={screenStyles.bulkConfirmText}>Confirm All</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={screenStyles.bulkDismissBtn}
+                      onPress={handleDismissAll}
+                      accessibilityRole="button"
+                      accessibilityLabel="Dismiss all pending items"
+                    >
+                      <XCircle size={14} color={tokens.textSecondary} />
+                      <Text style={screenStyles.bulkDismissText}>Dismiss All</Text>
+                    </TouchableOpacity>
+                  </View>
+                </Card>
+              )}
+
+              {/* ── Items section header ──────────────────────────────────── */}
+              <SectionHeader
+                title="Extracted Follow-ups"
+                subtitle={
+                  pendingCount > 0
+                    ? `${pendingCount} item${pendingCount !== 1 ? 's' : ''} awaiting review`
+                    : 'All items reviewed'
+                }
+                marginBottom={spacing.md}
+              />
+            </>
+          )}
+          renderItem={({ item }) => (
+            <FollowupItemCard
+              item={item}
+              onConfirm={handleConfirm}
+              onDismiss={handleDismiss}
+              onEdit={(id) => setEditingId(id)}
+              onOwnerChange={handleOwnerChange}
+              onRoadmapToggle={handleRoadmapToggle}
+            />
+          )}
+          ListFooterComponent={
+            allReviewed ? (
+              <Card style={screenStyles.completionCard}>
+                <View style={screenStyles.completionIconWrap}>
+                  <CheckCheck size={28} color={tokens.primary} />
+                </View>
+                <Text style={screenStyles.completionTitle}>All items reviewed</Text>
+                <Text style={screenStyles.completionBody}>
+                  Confirmed items with member ownership will appear on{' '}
+                  {memberName}&apos;s roadmap.
+                </Text>
+                <TouchableOpacity
+                  style={screenStyles.primaryBtn}
+                  onPress={() => navigation.goBack()}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Mark complete and notify ${memberName}`}
+                >
+                  <Text style={screenStyles.primaryBtnText}>
+                    Done — Notify {memberName}
+                  </Text>
+                </TouchableOpacity>
+              </Card>
+            ) : null
+          }
+        />
       </View>
     </SafeAreaView>
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
+// ─── Screen-level styles ──────────────────────────────────────────────────────
 
-const s = StyleSheet.create({
+const screenStyles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: tokens.pageBg,
   },
-  // Constrains the review flow to a readable column on desktop web.
-  // 960 px lets the follow-up item cards breathe while staying focused.
+
+  // Centers the review flow on wide displays (web/tablet).
+  // 960px lets the follow-up cards breathe while keeping the layout focused.
   pageWrap: {
-    width: '100%',
-    maxWidth: 960,
+    width:     '100%',
+    maxWidth:  960,
     alignSelf: 'center',
-    flex: 1,
+    flex:      1,
   },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+
+  // ── Navigation bar ────────────────────────────────────────────────────────
+  navBar: {
+    flexDirection:   'row',
+    alignItems:      'center',
+    paddingHorizontal: spacing.lg,
+    paddingVertical:   spacing.md,
     borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    backgroundColor: colors.card,
-    gap: 8,
+    borderBottomColor: tokens.cardBorder,
+    backgroundColor:   tokens.cardBg,
+    gap: spacing.sm,
   },
   backBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: colors.background,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
+    width:           40,
+    height:          40,
+    borderRadius:    radius.lg,
+    backgroundColor: tokens.pageBg,
+    borderWidth:     1,
+    borderColor:     tokens.cardBorder,
+    alignItems:      'center',
+    justifyContent:  'center',
   },
-  headerCenter: {
-    flex: 1,
+  navCenter: {
+    flex:       1,
     alignItems: 'center',
   },
-  headerTitle: {
+  navTitle: {
     fontFamily: fonts.display,
-    fontSize: 17,
-    color: colors.foreground,
+    fontSize:   17,
+    color:      tokens.textPrimary,
   },
-  headerSub: {
+  navSubtitle: {
     fontFamily: fonts.body,
-    fontSize: 12,
-    color: colors.mutedForeground,
-    marginTop: 1,
+    fontSize:   12,
+    color:      tokens.textSecondary,
+    marginTop:  2,
   },
-  headerSubLink: {
-    color: colors.primary,
+  navSubtitleLink: {
+    color:              tokens.primary,
     textDecorationLine: 'underline',
   },
-  summaryStrip: {
-    backgroundColor: colors.card,
-    paddingHorizontal: 20,
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+
+  // ── List layout ────────────────────────────────────────────────────────────
+  listContent: {
+    padding:       spacing.lg,
+    paddingBottom: spacing.xxxl,
   },
-  summaryText: {
-    fontFamily: fonts.bodySemibold,
-    fontSize: 12,
-    color: colors.mutedForeground,
-    letterSpacing: 0.5,
+
+  // ── StatTile summary row ──────────────────────────────────────────────────
+  statRow: {
+    flexDirection: 'row',
+    gap:           spacing.md,
+    marginBottom:  spacing.lg,
+  },
+  statTile: {
+    flex:     1,
+    // Compact tile variant: no delta layout shifts on small tiles.
+    minWidth: 88,
+  },
+
+  // ── Bulk actions card ──────────────────────────────────────────────────────
+  bulkCard: {
+    padding:      spacing.xl,
+    marginBottom: spacing.lg,
   },
   bulkRow: {
     flexDirection: 'row',
-    gap: 10,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: colors.card,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    gap:           spacing.md,
   },
   bulkConfirmBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
+    flex:           1,
+    flexDirection:  'row',
+    alignItems:     'center',
     justifyContent: 'center',
-    gap: 6,
-    backgroundColor: colors.primary,
+    gap:            6,
+    backgroundColor: tokens.primary,
     paddingVertical: 10,
-    borderRadius: 10,
+    borderRadius:    radius.md,
   },
   bulkConfirmText: {
     fontFamily: fonts.bodySemibold,
-    fontSize: 13,
-    color: colors.primaryForeground,
+    fontSize:   13,
+    color:      '#FFFFFF',
   },
   bulkDismissBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
+    flex:           1,
+    flexDirection:  'row',
+    alignItems:     'center',
     justifyContent: 'center',
-    gap: 6,
-    borderWidth: 1,
-    borderColor: colors.border,
+    gap:            6,
+    borderWidth:    1,
+    borderColor:    tokens.cardBorder,
     paddingVertical: 10,
-    borderRadius: 10,
-    backgroundColor: '#FFFFFF',
+    borderRadius:    radius.md,
+    backgroundColor: tokens.pageBg,
   },
   bulkDismissText: {
     fontFamily: fonts.bodySemibold,
-    fontSize: 13,
-    color: colors.mutedForeground,
+    fontSize:   13,
+    color:      tokens.textSecondary,
   },
-  listContent: {
-    padding: 16,
-    paddingBottom: 32,
+
+  // ── Completion state card ─────────────────────────────────────────────────
+  completionCard: {
+    padding:      spacing.xxl,
+    alignItems:   'center',
+    gap:          spacing.md,
+    marginBottom: spacing.lg,
+    backgroundColor: `${tokens.primary}06`,
+    borderColor:     `${tokens.primary}30`,
   },
-  allReviewedCard: {
-    alignItems: 'center',
-    backgroundColor: `${colors.primary}08`,
-    borderWidth: 1,
-    borderColor: `${colors.primary}30`,
-    borderRadius: 16,
-    padding: 24,
-    gap: 10,
-    marginBottom: 16,
+  completionIconWrap: {
+    width:           56,
+    height:          56,
+    borderRadius:    radius.pill,
+    backgroundColor: tokens.emerald100,
+    alignItems:      'center',
+    justifyContent:  'center',
   },
-  allReviewedTitle: {
+  completionTitle: {
     fontFamily: fonts.display,
-    fontSize: 18,
-    color: colors.foreground,
+    fontSize:   20,
+    color:      tokens.textPrimary,
   },
-  allReviewedSub: {
+  completionBody: {
     fontFamily: fonts.body,
-    fontSize: 13,
-    color: colors.mutedForeground,
-    textAlign: 'center',
+    fontSize:   13,
+    color:      tokens.textSecondary,
+    textAlign:  'center',
     lineHeight: 20,
   },
-  doneBtn: {
-    backgroundColor: colors.primary,
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    alignItems: 'center',
-    marginTop: 4,
+
+  // ── Shared button ─────────────────────────────────────────────────────────
+  primaryBtn: {
+    backgroundColor: tokens.primary,
+    borderRadius:    radius.lg,
+    paddingVertical:   12,
+    paddingHorizontal: spacing.xxl,
+    alignItems:      'center',
+    marginTop:       spacing.xs,
   },
-  doneBtnText: {
+  primaryBtnText: {
     fontFamily: fonts.bodySemibold,
-    fontSize: 14,
-    color: colors.primaryForeground,
+    fontSize:   14,
+    color:      '#FFFFFF',
   },
+
+  // ── State screens (loading / error / empty) ───────────────────────────────
   centered: {
-    flex: 1,
-    alignItems: 'center',
+    flex:           1,
+    alignItems:     'center',
     justifyContent: 'center',
-    padding: 32,
-    gap: 12,
+    padding:        spacing.xxxl,
+    gap:            spacing.md,
   },
-  loadingText: {
-    fontFamily: fonts.body,
-    fontSize: 14,
-    color: colors.mutedForeground,
-    marginTop: 8,
-  },
-  errorTitle: {
+  stateHeading: {
     fontFamily: fonts.display,
-    fontSize: 18,
-    color: colors.foreground,
+    fontSize:   18,
+    color:      tokens.textPrimary,
   },
-  errorSub: {
+  stateBodyText: {
     fontFamily: fonts.body,
-    fontSize: 14,
-    color: colors.mutedForeground,
-    textAlign: 'center',
-  },
-  emptyTitle: {
-    fontFamily: fonts.display,
-    fontSize: 18,
-    color: colors.foreground,
-  },
-  emptySub: {
-    fontFamily: fonts.body,
-    fontSize: 14,
-    color: colors.mutedForeground,
-    textAlign: 'center',
+    fontSize:   14,
+    color:      tokens.textSecondary,
+    textAlign:  'center',
     lineHeight: 22,
   },
 });
