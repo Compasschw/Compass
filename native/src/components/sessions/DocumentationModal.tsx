@@ -1,14 +1,18 @@
 /**
  * DocumentationModal — full-screen modal for documenting a completed session.
  *
+ * Visual language: shared design-system tokens (theme/tokens) + ui/ primitives
+ * (Card, SectionHeader, Pill). Legacy beige/cream theme/colors palette removed.
+ *
  * Sections:
  *  - Diagnosis Codes (Z-Codes): expandable categories with tap-to-select codes
  *  - Procedure Code: picker from procedureCodes mock data
- *  - Units to Bill: number stepper (+/- buttons) with billing estimate
+ *  - Units to Bill: read-only billing summary (StatTile-style 3-column layout)
  *  - Member Goals: multi-select from predefinedMemberGoals
  *  - Resources Referred: multi-select pill buttons from predefinedResources
  *  - Follow-up Needed: Yes/No toggle + date input when Yes
  *  - Session Notes: multiline TextInput (200 char limit with counter)
+ *  - AI Summary: read-only card generated from transcript
  *  - Submit Documentation button
  */
 
@@ -17,6 +21,7 @@ import {
   Alert,
   Modal,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -32,11 +37,13 @@ import {
   FileText,
   Sparkles,
   RefreshCw,
+  DollarSign,
 } from 'lucide-react-native';
 import { ResourceMentionInput } from '../resources/ResourceMentionInput';
 
-import { colors } from '../../theme/colors';
+import { colors as tokens, spacing, radius, shadows } from '../../theme/tokens';
 import { typography } from '../../theme/typography';
+import { Card, SectionHeader, Pill } from '../ui';
 import { useGenerateAISummary } from '../../hooks/useApiQueries';
 import {
   diagnosisCodes,
@@ -160,8 +167,8 @@ function DiagnosisCodeSection({
   }
 
   return (
-    <View style={ds.section}>
-      <Text style={ds.sectionTitle}>Diagnosis Codes (Z-Codes)</Text>
+    <View style={sh.section}>
+      <SectionHeader title="Diagnosis Codes (Z-Codes)" marginBottom={spacing.md} />
 
       {Z_CODE_CATEGORIES.map((category) => {
         const codes = codesByCategory.get(category) ?? [];
@@ -169,108 +176,97 @@ function DiagnosisCodeSection({
         const selectedInCategory = codes.filter((c) => selectedCodes.includes(c.code)).length;
 
         return (
-          <View key={category} style={ds.categoryCard}>
+          <Card key={category} style={sh.categoryCard}>
             <TouchableOpacity
-              style={ds.categoryHeader}
+              style={sh.categoryHeader}
               onPress={() => toggleCategory(category)}
               accessibilityRole="button"
               accessibilityState={{ expanded: isExpanded }}
               accessibilityLabel={`${zCodeCategoryLabels[category]}${selectedInCategory > 0 ? `, ${selectedInCategory} selected` : ''}`}
               activeOpacity={0.7}
             >
-              <Text style={ds.categoryLabel}>{zCodeCategoryLabels[category]}</Text>
-              <View style={ds.categoryRightRow}>
+              <Text style={sh.categoryLabel}>{zCodeCategoryLabels[category]}</Text>
+              <View style={sh.categoryRightRow}>
                 {selectedInCategory > 0 && (
-                  <View style={ds.categoryBadge}>
-                    <Text style={ds.categoryBadgeText}>{selectedInCategory}</Text>
+                  <View style={sh.categoryBadge}>
+                    <Text style={sh.categoryBadgeText}>{selectedInCategory}</Text>
                   </View>
                 )}
                 {isExpanded ? (
-                  <ChevronDown size={16} color={colors.mutedForeground} />
+                  <ChevronDown size={16} color={tokens.textMuted} />
                 ) : (
-                  <ChevronRight size={16} color={colors.mutedForeground} />
+                  <ChevronRight size={16} color={tokens.textMuted} />
                 )}
               </View>
             </TouchableOpacity>
 
             {isExpanded && (
-              <View style={ds.codeList}>
+              <View style={sh.codeList}>
                 {codes.map((code) => {
                   const isSelected = selectedCodes.includes(code.code);
                   return (
                     <TouchableOpacity
                       key={code.code}
-                      style={[ds.codeRow, isSelected && ds.codeRowSelected]}
+                      style={[sh.codeRow, isSelected && sh.codeRowSelected]}
                       onPress={() => onToggle(code.code)}
                       accessibilityRole="checkbox"
                       accessibilityState={{ checked: isSelected }}
                       accessibilityLabel={`${code.code}: ${code.description}`}
                       activeOpacity={0.7}
                     >
-                      <View style={[ds.codeCheckbox, isSelected && ds.codeCheckboxChecked]}>
+                      <View style={[sh.codeCheckbox, isSelected && sh.codeCheckboxChecked]}>
                         {isSelected && <Check size={9} color="#FFFFFF" strokeWidth={3} />}
                       </View>
                       <View style={{ flex: 1, gap: 2 }}>
-                        <Text style={[ds.codeText, isSelected && ds.codeTextSelected]}>
+                        <Text style={[sh.codeText, isSelected && sh.codeTextSelected]}>
                           {code.code}
                         </Text>
-                        <Text style={ds.codeDesc}>{code.description}</Text>
+                        <Text style={sh.codeDesc}>{code.description}</Text>
                       </View>
                     </TouchableOpacity>
                   );
                 })}
               </View>
             )}
-          </View>
+          </Card>
         );
       })}
     </View>
   );
 }
 
-const ds = StyleSheet.create({
+const sh = StyleSheet.create({
   section: {
-    marginBottom: 20,
-  },
-  sectionTitle: {
-    ...typography.label,
-    fontWeight: '700',
-    color: colors.foreground,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-    marginBottom: 10,
+    marginBottom: spacing.xl,
   },
   categoryCard: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 12,
-    marginBottom: 6,
+    marginBottom: spacing.xs,
     overflow: 'hidden',
   },
   categoryHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    backgroundColor: colors.card,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    backgroundColor: tokens.cardBg,
   },
   categoryLabel: {
     ...typography.bodySm,
     fontWeight: '600',
-    color: colors.foreground,
+    color: tokens.textPrimary,
     flex: 1,
   },
   categoryRightRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: spacing.sm,
   },
   categoryBadge: {
     width: 20,
     height: 20,
     borderRadius: 10,
-    backgroundColor: colors.primary,
+    backgroundColor: tokens.primary,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -281,48 +277,49 @@ const ds = StyleSheet.create({
   },
   codeList: {
     borderTopWidth: 1,
-    borderTopColor: colors.border,
-    backgroundColor: colors.background,
+    borderTopColor: tokens.cardBorder,
+    backgroundColor: tokens.pageBg,
   },
   codeRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    gap: spacing.sm + 2,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md - 2,
     borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    borderBottomColor: tokens.cardBorder,
   },
   codeRowSelected: {
-    backgroundColor: colors.primary + '06',
+    backgroundColor: tokens.emerald100,
   },
   codeCheckbox: {
     width: 16,
     height: 16,
-    borderRadius: 4,
+    borderRadius: radius.sm - 2,
     borderWidth: 2,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
+    borderColor: tokens.cardBorder,
+    backgroundColor: tokens.cardBg,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 2,
     flexShrink: 0,
   },
   codeCheckboxChecked: {
-    borderColor: colors.primary,
-    backgroundColor: colors.primary,
+    borderColor: tokens.primary,
+    backgroundColor: tokens.primary,
   },
   codeText: {
     ...typography.bodySm,
     fontWeight: '700',
-    color: colors.foreground,
+    color: tokens.textPrimary,
   },
   codeTextSelected: {
-    color: colors.primary,
+    color: tokens.primary,
   },
   codeDesc: {
     ...typography.label,
-    color: colors.mutedForeground,
+    letterSpacing: 0,
+    color: tokens.textSecondary,
     lineHeight: 16,
   },
 });
@@ -339,128 +336,141 @@ function ProcedureCodePicker({ value, onChange }: ProcedureCodePickerProps): Rea
   const selected = procedureCodes.find((pc) => pc.code === value);
 
   return (
-    <View style={ds.section}>
-      <Text style={ds.sectionTitle}>
-        Procedure and Modifiers <Text style={{ color: colors.destructive }}>*</Text>
-      </Text>
-
-      <TouchableOpacity
-        style={p.trigger}
-        onPress={() => setOpen((prev) => !prev)}
-        accessibilityRole="combobox"
-        accessibilityState={{ expanded: open }}
-        accessibilityLabel={
-          selected
-            ? `Selected: ${selected.code} ${selected.modifier} — ${selected.description}`
-            : 'Select procedure code'
+    <View style={sh.section}>
+      <SectionHeader
+        title="Procedure and Modifiers"
+        marginBottom={spacing.md}
+        right={
+          <Text style={pc.requiredStar}>Required</Text>
         }
-        activeOpacity={0.7}
-      >
-        <Text style={[p.triggerText, !selected && p.triggerPlaceholder]} numberOfLines={1}>
-          {selected
-            ? `${selected.code} ${selected.modifier} — ${selected.description} (${selected.groupSize})`
-            : 'Select procedure code'}
-        </Text>
-        <ChevronDown size={16} color={colors.mutedForeground} />
-      </TouchableOpacity>
+      />
 
-      {open && (
-        <View style={p.dropdown}>
-          {procedureCodes.map((pc) => {
-            const isSelected = value === pc.code;
-            return (
-              <TouchableOpacity
-                key={pc.code}
-                style={[p.option, isSelected && p.optionSelected]}
-                onPress={() => {
-                  onChange(pc.code);
-                  setOpen(false);
-                }}
-                accessibilityRole="menuitem"
-                accessibilityState={{ selected: isSelected }}
-                accessibilityLabel={`${pc.code} ${pc.modifier} — ${pc.description}`}
-              >
-                <View style={{ flex: 1 }}>
-                  <Text style={[p.optionCode, isSelected && p.optionCodeSelected]}>
-                    {pc.code} {pc.modifier}
-                  </Text>
-                  <Text style={p.optionDesc}>
-                    {pc.description} · {pc.groupSize}
-                  </Text>
-                </View>
-                {isSelected && <Check size={14} color={colors.primary} />}
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-      )}
+      <Card>
+        <TouchableOpacity
+          style={pc.trigger}
+          onPress={() => setOpen((prev) => !prev)}
+          accessibilityRole="combobox"
+          accessibilityState={{ expanded: open }}
+          accessibilityLabel={
+            selected
+              ? `Selected: ${selected.code} ${selected.modifier} — ${selected.description}`
+              : 'Select procedure code'
+          }
+          activeOpacity={0.7}
+        >
+          <Text style={[pc.triggerText, !selected && pc.triggerPlaceholder]} numberOfLines={1}>
+            {selected
+              ? `${selected.code} ${selected.modifier} — ${selected.description} (${selected.groupSize})`
+              : 'Select procedure code'}
+          </Text>
+          <ChevronDown size={16} color={tokens.textMuted} />
+        </TouchableOpacity>
 
-      <Text style={p.hint}>
+        {open && (
+          <View style={pc.dropdown}>
+            {procedureCodes.map((item) => {
+              const isSelected = value === item.code;
+              return (
+                <TouchableOpacity
+                  key={item.code}
+                  style={[pc.option, isSelected && pc.optionSelected]}
+                  onPress={() => {
+                    onChange(item.code);
+                    setOpen(false);
+                  }}
+                  accessibilityRole="menuitem"
+                  accessibilityState={{ selected: isSelected }}
+                  accessibilityLabel={`${item.code} ${item.modifier} — ${item.description}`}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={[pc.optionCode, isSelected && pc.optionCodeSelected]}>
+                      {item.code} {item.modifier}
+                    </Text>
+                    <Text style={pc.optionDesc}>
+                      {item.description} · {item.groupSize}
+                    </Text>
+                  </View>
+                  {isSelected && <Check size={14} color={tokens.primary} />}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        )}
+      </Card>
+
+      <Text style={pc.hint}>
         Select service type based on number of people served in this session.
       </Text>
     </View>
   );
 }
 
-const p = StyleSheet.create({
+const pc = StyleSheet.create({
+  requiredStar: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: tokens.red700,
+    letterSpacing: 0.3,
+  },
   trigger: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-    backgroundColor: colors.card,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.lg - 2,
+    backgroundColor: tokens.cardBg,
+    borderRadius: radius.xl,
   },
   triggerText: {
     ...typography.bodyMd,
-    color: colors.foreground,
+    color: tokens.textPrimary,
     flex: 1,
-    marginRight: 8,
+    marginRight: spacing.sm,
   },
   triggerPlaceholder: {
-    color: colors.mutedForeground,
+    color: tokens.textMuted,
   },
   dropdown: {
-    marginTop: 4,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 12,
-    backgroundColor: colors.card,
+    borderTopWidth: 1,
+    borderTopColor: tokens.cardBorder,
+    backgroundColor: tokens.cardBg,
+    borderBottomLeftRadius: radius.xl,
+    borderBottomRightRadius: radius.xl,
     overflow: 'hidden',
   },
   option: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    gap: spacing.sm + 2,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
     borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    borderBottomColor: tokens.cardBorder,
   },
   optionSelected: {
-    backgroundColor: colors.primary + '08',
+    backgroundColor: tokens.emerald100,
   },
   optionCode: {
     ...typography.bodySm,
     fontWeight: '700',
-    color: colors.foreground,
+    color: tokens.textPrimary,
   },
   optionCodeSelected: {
-    color: colors.primary,
+    color: tokens.primary,
   },
   optionDesc: {
     ...typography.label,
-    color: colors.mutedForeground,
+    letterSpacing: 0,
+    color: tokens.textSecondary,
     marginTop: 1,
   },
   hint: {
     ...typography.label,
-    color: colors.mutedForeground,
-    marginTop: 6,
+    letterSpacing: 0,
+    color: tokens.textMuted,
+    marginTop: spacing.xs,
     lineHeight: 16,
+    paddingHorizontal: spacing.xs,
   },
 });
 
@@ -474,10 +484,12 @@ interface UnitsSummaryProps {
 }
 
 /**
- * Read-only billing summary. Replaces the legacy interactive +/- stepper —
- * the units value is now derived authoritatively from the session's duration
- * (see ``computeUnitsFromDuration``) so CHWs cannot upcode at the form. The
- * server recomputes from the same bracket and ignores any client-sent units.
+ * Read-only billing summary. The units value is derived authoritatively from
+ * the session's duration (see ``computeUnitsFromDuration``) so CHWs cannot
+ * upcode at the form. The server recomputes from the same bracket and ignores
+ * any client-sent units.
+ *
+ * Layout: hero unit count above a 3-column Gross / Net / Rate stat row.
  */
 function UnitsSummary({ value, durationMinutes }: UnitsSummaryProps): React.JSX.Element {
   const grossAmount = value * MEDI_CAL_RATE;
@@ -486,94 +498,98 @@ function UnitsSummary({ value, durationMinutes }: UnitsSummaryProps): React.JSX.
     durationMinutes != null ? `${durationMinutes} min session` : 'Session duration unavailable';
 
   return (
-    <View style={ds.section}>
-      <Text style={ds.sectionTitle}>Units to Bill</Text>
+    <View style={sh.section}>
+      <SectionHeader title="Units to Bill" marginBottom={spacing.md} />
 
-      <View style={u.summaryRow}>
-        <View style={u.valueDisplay}>
-          <Text style={u.valueText}>{value}</Text>
-          <Text style={u.valueLabel}>{value === 1 ? 'unit' : 'units'}</Text>
+      {/* Hero unit count */}
+      <Card style={us.heroCard}>
+        <View style={us.heroInner}>
+          <View style={[us.iconBadge, { backgroundColor: tokens.emerald100 }]}>
+            <DollarSign size={18} color={tokens.emerald700} />
+          </View>
+          <View style={us.heroText}>
+            <Text style={us.heroValue}>
+              {value} {value === 1 ? 'unit' : 'units'}
+            </Text>
+            <Text style={us.heroFootnote}>Auto-calculated · {durationLabel}</Text>
+          </View>
         </View>
-        <Text style={u.derivedFootnote}>
-          Auto-calculated from {durationLabel}
-        </Text>
-      </View>
+      </Card>
 
-      <View style={u.billingRow}>
-        <View style={u.billingItem}>
-          <Text style={u.billingKey}>Gross</Text>
-          <Text style={u.billingValue}>{formatCurrency(grossAmount)}</Text>
-        </View>
-        <View style={u.billingDivider} />
-        <View style={u.billingItem}>
-          <Text style={u.billingKey}>Net (85%)</Text>
-          <Text style={[u.billingValue, { color: colors.primary }]}>{formatCurrency(netAmount)}</Text>
-        </View>
-        <View style={u.billingDivider} />
-        <View style={u.billingItem}>
-          <Text style={u.billingKey}>Rate</Text>
-          <Text style={u.billingValue}>{formatCurrency(MEDI_CAL_RATE)}/unit</Text>
-        </View>
+      {/* 3-column billing stat tiles */}
+      <View style={us.statRow}>
+        <Card style={us.statCell}>
+          <Text style={us.statLabel}>Gross</Text>
+          <Text style={us.statValue}>{formatCurrency(grossAmount)}</Text>
+        </Card>
+        <Card style={us.statCell}>
+          <Text style={us.statLabel}>Net (85%)</Text>
+          <Text style={[us.statValue, { color: tokens.primary }]}>{formatCurrency(netAmount)}</Text>
+        </Card>
+        <Card style={us.statCell}>
+          <Text style={us.statLabel}>Rate</Text>
+          <Text style={us.statValue}>{formatCurrency(MEDI_CAL_RATE)}/unit</Text>
+        </Card>
       </View>
     </View>
   );
 }
 
-const u = StyleSheet.create({
-  summaryRow: {
-    flexDirection: 'column',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 12,
+const us = StyleSheet.create({
+  heroCard: {
+    padding: spacing.lg,
+    marginBottom: spacing.sm,
   },
-  derivedFootnote: {
-    ...typography.label,
-    color: colors.mutedForeground,
-    fontStyle: 'italic',
-  },
-  valueDisplay: {
-    alignItems: 'center',
-    minWidth: 64,
-  },
-  valueText: {
-    ...typography.displaySm,
-    color: colors.foreground,
-    fontWeight: '700',
-  },
-  valueLabel: {
-    ...typography.label,
-    color: colors.mutedForeground,
-    marginTop: 2,
-  },
-  billingRow: {
+  heroInner: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 12,
-    padding: 12,
-    backgroundColor: colors.background,
-    gap: 0,
+    gap: spacing.md,
   },
-  billingItem: {
-    flex: 1,
+  iconBadge: {
+    width: 40,
+    height: 40,
+    borderRadius: radius.lg,
     alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  heroText: {
+    flex: 1,
     gap: 2,
   },
-  billingDivider: {
-    width: 1,
-    height: 28,
-    backgroundColor: colors.border,
+  heroValue: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: tokens.textPrimary,
+    lineHeight: 28,
   },
-  billingKey: {
+  heroFootnote: {
     ...typography.label,
-    color: colors.mutedForeground,
+    letterSpacing: 0,
+    color: tokens.textMuted,
+    fontStyle: 'italic',
   },
-  billingValue: {
-    ...typography.bodySm,
+  statRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  statCell: {
+    flex: 1,
+    padding: spacing.md,
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  statLabel: {
+    ...typography.label,
+    letterSpacing: 0.3,
+    color: tokens.textSecondary,
+    textAlign: 'center',
+  },
+  statValue: {
+    fontSize: 15,
     fontWeight: '700',
-    color: colors.foreground,
+    color: tokens.textPrimary,
+    textAlign: 'center',
   },
 });
 
@@ -593,74 +609,82 @@ function MultiSelectList({
   onToggle,
 }: MultiSelectListProps): React.JSX.Element {
   return (
-    <View style={ds.section}>
-      <Text style={ds.sectionTitle}>{title}</Text>
-      <View style={ml.list}>
-        {items.map((item) => {
+    <View style={sh.section}>
+      <SectionHeader title={title} marginBottom={spacing.md} />
+      <Card style={ms.listCard}>
+        {items.map((item, index) => {
           const isChecked = selected.includes(item);
+          const isLast = index === items.length - 1;
           return (
-            <TouchableOpacity
+            <Pressable
               key={item}
-              style={[ml.item, isChecked && ml.itemChecked]}
+              style={({ hovered }: { hovered?: boolean }) => [
+                ms.item,
+                !isLast && ms.itemBorder,
+                isChecked && ms.itemChecked,
+                hovered && !isChecked && ms.itemHovered,
+              ]}
               onPress={() => onToggle(item)}
               accessibilityRole="checkbox"
               accessibilityState={{ checked: isChecked }}
               accessibilityLabel={item}
-              activeOpacity={0.7}
             >
-              <View style={[ml.checkbox, isChecked && ml.checkboxChecked]}>
+              <View style={[ms.checkbox, isChecked && ms.checkboxChecked]}>
                 {isChecked && <Check size={9} color="#FFFFFF" strokeWidth={3} />}
               </View>
-              <Text style={[ml.itemText, isChecked && ml.itemTextChecked]}>{item}</Text>
-            </TouchableOpacity>
+              <Text style={[ms.itemText, isChecked && ms.itemTextChecked]}>{item}</Text>
+            </Pressable>
           );
         })}
-      </View>
+      </Card>
     </View>
   );
 }
 
-const ml = StyleSheet.create({
-  list: {
-    gap: 6,
+const ms = StyleSheet.create({
+  listCard: {
+    overflow: 'hidden',
   },
   item: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    backgroundColor: colors.card,
+    gap: spacing.sm + 2,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md - 2,
+    backgroundColor: tokens.cardBg,
+  },
+  itemBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: tokens.cardBorder,
   },
   itemChecked: {
-    borderColor: colors.primary,
-    backgroundColor: colors.primary + '06',
+    backgroundColor: tokens.emerald100,
+  },
+  itemHovered: {
+    backgroundColor: tokens.slate100,
   },
   checkbox: {
     width: 16,
     height: 16,
-    borderRadius: 4,
+    borderRadius: radius.sm - 2,
     borderWidth: 2,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
+    borderColor: tokens.cardBorder,
+    backgroundColor: tokens.cardBg,
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
   },
   checkboxChecked: {
-    borderColor: colors.primary,
-    backgroundColor: colors.primary,
+    borderColor: tokens.primary,
+    backgroundColor: tokens.primary,
   },
   itemText: {
     flex: 1,
     ...typography.bodySm,
-    color: colors.foreground,
+    color: tokens.textPrimary,
   },
   itemTextChecked: {
-    color: colors.primary,
+    color: tokens.emerald700,
     fontWeight: '600',
   },
 });
@@ -674,8 +698,8 @@ interface ResourcePillsProps {
 
 function ResourcePills({ selected, onToggle }: ResourcePillsProps): React.JSX.Element {
   return (
-    <View style={ds.section}>
-      <Text style={ds.sectionTitle}>Resources Referred</Text>
+    <View style={sh.section}>
+      <SectionHeader title="Resources Referred" marginBottom={spacing.md} />
       <View style={rp.pillContainer}>
         {predefinedResources.map((resource) => {
           const isSelected = selected.includes(resource);
@@ -689,7 +713,7 @@ function ResourcePills({ selected, onToggle }: ResourcePillsProps): React.JSX.El
               accessibilityLabel={resource}
               activeOpacity={0.7}
             >
-              {isSelected && <Check size={10} color={colors.primary} strokeWidth={3} />}
+              {isSelected && <Check size={10} color={tokens.emerald700} strokeWidth={3} />}
               <Text style={[rp.pillText, isSelected && rp.pillTextSelected]}>
                 {resource}
               </Text>
@@ -705,29 +729,30 @@ const rp = StyleSheet.create({
   pillContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
+    gap: spacing.sm,
   },
   pill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 100,
+    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.pill,
     borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
+    borderColor: tokens.cardBorder,
+    backgroundColor: tokens.cardBg,
   },
   pillSelected: {
-    borderColor: colors.primary,
-    backgroundColor: colors.primary + '14',
+    borderColor: tokens.primary,
+    backgroundColor: tokens.emerald100,
   },
   pillText: {
     ...typography.label,
-    color: colors.mutedForeground,
+    letterSpacing: 0.2,
+    color: tokens.textSecondary,
   },
   pillTextSelected: {
-    color: colors.primary,
+    color: tokens.emerald700,
     fontWeight: '600',
   },
 });
@@ -748,17 +773,20 @@ function FollowUpSection({
   onDateChange,
 }: FollowUpSectionProps): React.JSX.Element {
   return (
-    <View style={ds.section}>
-      <Text style={ds.sectionTitle}>Follow-Up Needed?</Text>
+    <View style={sh.section}>
+      <SectionHeader title="Follow-Up Needed?" marginBottom={spacing.md} />
 
       <View style={fu.toggleRow}>
-        <TouchableOpacity
-          style={[fu.toggleButton, followUpNeeded === true && fu.toggleButtonYes]}
+        <Pressable
+          style={({ pressed }: { pressed?: boolean }) => [
+            fu.toggleButton,
+            followUpNeeded === true && fu.toggleButtonYes,
+            pressed && fu.toggleButtonPressed,
+          ]}
           onPress={() => onToggle(true)}
           accessibilityRole="radio"
           accessibilityState={{ checked: followUpNeeded === true }}
           accessibilityLabel="Follow-up needed: Yes"
-          activeOpacity={0.7}
         >
           <Text
             style={[
@@ -768,40 +796,43 @@ function FollowUpSection({
           >
             Yes
           </Text>
-        </TouchableOpacity>
+        </Pressable>
 
-        <TouchableOpacity
-          style={[fu.toggleButton, followUpNeeded === false && fu.toggleButtonNo]}
+        <Pressable
+          style={({ pressed }: { pressed?: boolean }) => [
+            fu.toggleButton,
+            followUpNeeded === false && fu.toggleButtonNo,
+            pressed && fu.toggleButtonPressed,
+          ]}
           onPress={() => onToggle(false)}
           accessibilityRole="radio"
           accessibilityState={{ checked: followUpNeeded === false }}
           accessibilityLabel="Follow-up needed: No"
-          activeOpacity={0.7}
         >
           <Text
             style={[
               fu.toggleButtonText,
-              followUpNeeded === false && fu.toggleButtonTextNo,
+              followUpNeeded === false && fu.toggleButtonTextActive,
             ]}
           >
             No
           </Text>
-        </TouchableOpacity>
+        </Pressable>
       </View>
 
       {followUpNeeded === true && (
-        <View style={fu.dateGroup}>
+        <Card style={fu.dateCard}>
           <Text style={fu.dateLabel}>Follow-up date</Text>
           <TextInput
             style={fu.dateInput}
             value={followUpDate}
             onChangeText={onDateChange}
             placeholder="YYYY-MM-DD"
-            placeholderTextColor={colors.mutedForeground}
+            placeholderTextColor={tokens.textMuted}
             keyboardType={Platform.OS === 'ios' ? 'numbers-and-punctuation' : 'default'}
             accessibilityLabel="Follow-up date"
           />
-        </View>
+        </Card>
       )}
     </View>
   );
@@ -810,54 +841,56 @@ function FollowUpSection({
 const fu = StyleSheet.create({
   toggleRow: {
     flexDirection: 'row',
-    gap: 10,
-    marginBottom: 12,
+    gap: spacing.sm + 2,
+    marginBottom: spacing.md,
   },
   toggleButton: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 12,
-    borderRadius: 12,
+    paddingVertical: spacing.md,
+    borderRadius: radius.xl,
     borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
+    borderColor: tokens.cardBorder,
+    backgroundColor: tokens.cardBg,
   },
   toggleButtonYes: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
+    backgroundColor: tokens.primary,
+    borderColor: tokens.primary,
   },
   toggleButtonNo: {
-    backgroundColor: colors.mutedForeground,
-    borderColor: colors.mutedForeground,
+    backgroundColor: tokens.textSecondary,
+    borderColor: tokens.textSecondary,
+  },
+  toggleButtonPressed: {
+    opacity: 0.75,
   },
   toggleButtonText: {
     ...typography.bodySm,
     fontWeight: '600',
-    color: colors.mutedForeground,
+    color: tokens.textSecondary,
   },
   toggleButtonTextActive: {
     color: '#FFFFFF',
   },
-  toggleButtonTextNo: {
-    color: '#FFFFFF',
-  },
-  dateGroup: {
-    gap: 6,
+  dateCard: {
+    padding: spacing.lg,
+    gap: spacing.sm,
   },
   dateLabel: {
     ...typography.label,
-    color: colors.mutedForeground,
+    letterSpacing: 0.3,
+    color: tokens.textSecondary,
   },
   dateInput: {
     borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 12,
-    backgroundColor: colors.card,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
+    borderColor: tokens.cardBorder,
+    borderRadius: radius.lg,
+    backgroundColor: tokens.pageBg,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
     ...typography.bodyMd,
-    color: colors.foreground,
+    color: tokens.textPrimary,
   },
 });
 
@@ -885,7 +918,7 @@ export function DocumentationModal({
     procedureCodes[0]?.code ?? '',
   );
   // Units are derived authoritatively from the session duration — no manual
-  // override.  The backend recomputes from the same formula and ignores any
+  // override. The backend recomputes from the same formula and ignores any
   // client-supplied value (see app/services/billing_service.calculate_units).
   const unitsToBill = computeUnitsFromDuration(durationMinutes);
   const [selectedGoals, setSelectedGoals] = useState<string[]>([]);
@@ -899,6 +932,8 @@ export function DocumentationModal({
   const [aiGeneratedAt, setAiGeneratedAt] = useState<string | null>(null);
   const [aiExcluded, setAiExcluded] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Tracks whether the notes TextInput is focused, for focus-ring styling.
+  const [notesFocused, setNotesFocused] = useState(false);
 
   const generateAISummary = useGenerateAISummary();
 
@@ -1151,27 +1186,29 @@ export function DocumentationModal({
       accessible
       accessibilityViewIsModal
     >
-      <View style={m.container}>
-        {/* Header */}
-        <View style={m.header}>
-          <View>
-            <Text style={m.headerTitle}>Document Session</Text>
-            <Text style={m.headerSubtitle}>Session {sessionId}</Text>
+      <View style={mo.container}>
+        {/* ── Header ───────────────────────────────────────────────────────── */}
+        <View style={mo.header}>
+          <View style={mo.headerText}>
+            <Text style={mo.headerTitle}>Complete Session</Text>
+            <Text style={mo.headerSubtitle}>
+              {sessionId}
+            </Text>
           </View>
           <TouchableOpacity
-            style={m.closeButton}
+            style={mo.closeButton}
             onPress={onClose}
             accessibilityRole="button"
             accessibilityLabel="Close documentation modal"
           >
-            <X size={20} color={colors.foreground} />
+            <X size={20} color={tokens.textPrimary} />
           </TouchableOpacity>
         </View>
 
-        {/* Scrollable content */}
+        {/* ── Scrollable content ───────────────────────────────────────────── */}
         <ScrollView
           style={{ flex: 1 }}
-          contentContainerStyle={m.scrollContent}
+          contentContainerStyle={mo.scrollContent}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
@@ -1209,134 +1246,134 @@ export function DocumentationModal({
             onDateChange={setFollowUpDate}
           />
 
-          {/* ── A) CHW Notes — authored, required ──────────────────────── */}
-          <View
-            style={ds.section}
-            accessible={false}
-            accessibilityLabel="Your Notes"
-          >
-            <View style={m.notesHeader}>
-              <Text style={ds.sectionTitle}>
-                Your Notes <Text style={m.requiredStar}>*</Text>
-              </Text>
-              <Text style={m.charCounter}>
-                {chwNotes.length}/{NOTES_MAX}
-              </Text>
-            </View>
-            <Text style={m.notesHelper}>
-              Visible to billing/audit as CHW-authored
-            </Text>
-            <ResourceMentionInput
-              style={m.notesInput}
-              value={chwNotes}
-              onChangeText={(v) => {
-                if (v.length <= NOTES_MAX) setChwNotes(v);
-              }}
-              placeholder="What did you discuss? Type @ to mention a community resource…"
-              placeholderTextColor={colors.mutedForeground}
-              multiline
-              numberOfLines={4}
-              textAlignVertical="top"
-              maxLength={NOTES_MAX}
-              accessibilityLabel="Your notes — CHW-authored. Type @ to mention a resource."
+          {/* ── A) CHW Notes — authored, required ──────────────────────────── */}
+          <View style={sh.section}>
+            <SectionHeader
+              title="Your Notes"
+              marginBottom={4}
+              right={
+                <Text style={mo.charCounter}>{chwNotes.length}/{NOTES_MAX}</Text>
+              }
             />
+            <Text style={mo.notesHelper}>Visible to billing/audit as CHW-authored</Text>
+            <Card
+              style={[
+                mo.notesCard,
+                notesFocused && mo.notesCardFocused,
+              ]}
+            >
+              <ResourceMentionInput
+                style={mo.notesInput}
+                value={chwNotes}
+                onChangeText={(v) => {
+                  if (v.length <= NOTES_MAX) setChwNotes(v);
+                }}
+                onFocus={() => setNotesFocused(true)}
+                onBlur={() => setNotesFocused(false)}
+                placeholder="What did you discuss? Type @ to mention a community resource…"
+                placeholderTextColor={tokens.textMuted}
+                multiline
+                numberOfLines={4}
+                textAlignVertical="top"
+                maxLength={NOTES_MAX}
+                accessibilityLabel="Your notes — CHW-authored. Type @ to mention a resource."
+              />
+            </Card>
           </View>
 
-          {/* ── B) AI Summary — read-only card ─────────────────────────── */}
-          <View
-            accessible={false}
-            accessibilityLabel="AI Summary"
-            style={m.aiCardSection}
-          >
-            <Text style={ds.sectionTitle}>AI Summary</Text>
+          {/* ── B) AI Summary — read-only card ─────────────────────────────── */}
+          <View style={sh.section}>
+            <SectionHeader title="AI Summary" marginBottom={spacing.md} />
 
             {isAiLoading ? (
               /* Loading skeleton */
-              <View style={m.aiCard} accessible accessibilityLabel="Generating AI summary">
-                <View style={m.aiCardHeaderRow}>
-                  <Sparkles size={14} color={colors.secondary} />
-                  <Text style={m.aiCardHeaderText}>Generating summary from session transcript…</Text>
+              <Card
+                style={ai.card}
+                accessible
+                accessibilityLabel="Generating AI summary"
+              >
+                <View style={ai.headerRow}>
+                  <Sparkles size={14} color={tokens.cyan600} />
+                  <Text style={ai.headerText}>Generating summary from session transcript…</Text>
                 </View>
-                <View style={m.shimmerLine} />
-                <View style={[m.shimmerLine, m.shimmerLineMid]} />
-                <View style={[m.shimmerLine, m.shimmerLineShort]} />
-              </View>
+                <View style={ai.shimmerLine} />
+                <View style={[ai.shimmerLine, ai.shimmerLineMid]} />
+                <View style={[ai.shimmerLine, ai.shimmerLineShort]} />
+              </Card>
             ) : hasDisplayableAiSummary ? (
               /* Populated AI card */
-              <View
-                style={[m.aiCard, aiExcluded && m.aiCardExcluded]}
+              <Card
+                style={[ai.card, aiExcluded && ai.cardExcluded]}
                 accessible
                 accessibilityLabel="AI-generated summary, read only"
                 accessibilityHint="This summary was generated from the session transcript and is not editable"
               >
                 {/* Header row */}
-                <View style={m.aiCardHeaderRow}>
-                  <Sparkles size={14} color={aiExcluded ? colors.mutedForeground : colors.secondary} />
-                  <Text style={[m.aiCardHeaderText, aiExcluded && m.aiCardHeaderTextDimmed]}>
+                <View style={ai.headerRow}>
+                  <Sparkles size={14} color={aiExcluded ? tokens.textMuted : tokens.cyan600} />
+                  <Text style={[ai.headerText, aiExcluded && ai.headerTextDimmed]}>
                     AI Summary
                   </Text>
-                  <View style={m.aiGeneratedBadge}>
-                    <Text style={m.aiGeneratedBadgeText}>Generated from transcript</Text>
-                  </View>
-                  <Text style={m.aiTimestamp}>
+                  <Pill variant="blue" size="sm">Generated from transcript</Pill>
+                  <Text style={ai.timestamp}>
                     {formatAITimestamp(aiGeneratedAt!)}
                   </Text>
                 </View>
 
                 {/* Body — read-only, italic styling */}
                 <Text
-                  style={[m.aiBodyText, aiExcluded && m.aiBodyTextExcluded]}
+                  style={[ai.bodyText, aiExcluded && ai.bodyTextExcluded]}
                   selectable
                 >
                   {aiSummary}
                 </Text>
 
                 {/* Footer row */}
-                <View style={m.aiCardFooter}>
+                <View style={ai.footer}>
                   <TouchableOpacity
-                    style={m.regenerateButton}
+                    style={ai.regenerateButton}
                     onPress={handleRegenerateAISummary}
                     disabled={isAiLoading}
                     accessibilityRole="button"
                     accessibilityLabel="Regenerate AI summary from transcript"
                     accessibilityState={{ disabled: isAiLoading }}
                   >
-                    <RefreshCw size={12} color={colors.secondary} />
-                    <Text style={m.regenerateButtonText}>Regenerate</Text>
+                    <RefreshCw size={12} color={tokens.cyan600} />
+                    <Text style={ai.regenerateText}>Regenerate</Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    style={m.excludeRow}
+                    style={ai.excludeRow}
                     onPress={() => setAiExcluded((prev) => !prev)}
                     accessibilityRole="checkbox"
                     accessibilityState={{ checked: aiExcluded }}
                     accessibilityLabel="Don't include AI summary in documentation"
                     activeOpacity={0.7}
                   >
-                    <View style={[m.excludeCheckbox, aiExcluded && m.excludeCheckboxChecked]}>
+                    <View style={[ai.excludeCheckbox, aiExcluded && ai.excludeCheckboxChecked]}>
                       {aiExcluded && <Check size={9} color="#FFFFFF" strokeWidth={3} />}
                     </View>
-                    <Text style={[m.excludeLabel, aiExcluded && m.excludeLabelChecked]}>
+                    <Text style={[ai.excludeLabel, aiExcluded && ai.excludeLabelChecked]}>
                       Don&apos;t include in documentation
                     </Text>
                   </TouchableOpacity>
                 </View>
-              </View>
+              </Card>
             ) : (
               /* Unavailable state */
-              <View style={m.aiUnavailable}>
-                <Text style={m.aiUnavailableText}>
+              <Card style={ai.unavailableCard}>
+                <Text style={ai.unavailableText}>
                   AI summary unavailable — transcript was too short or audio capture failed.
                 </Text>
-              </View>
+              </Card>
             )}
           </View>
         </ScrollView>
 
-        {/* Fixed footer */}
-        <View style={m.footer}>
+        {/* ── Fixed footer ──────────────────────────────────────────────────── */}
+        <View style={mo.footer}>
           {!isValid && (
-            <Text style={m.validationHint}>
+            <Text style={mo.validationHint}>
               {selectedDiagnosisCodes.length === 0
                 ? 'Select at least one diagnosis code to submit.'
                 : !selectedProcedureCode
@@ -1344,216 +1381,241 @@ export function DocumentationModal({
                 : 'Your notes are required before submitting.'}
             </Text>
           )}
-          <TouchableOpacity
-            style={[m.submitButton, (!isValid || isSubmitting) && m.submitButtonDisabled]}
+          <Pressable
+            style={({ pressed }: { pressed?: boolean }) => [
+              mo.submitButton,
+              (!isValid || isSubmitting) && mo.submitButtonDisabled,
+              pressed && isValid && !isSubmitting && mo.submitButtonPressed,
+            ]}
             onPress={handleSubmit}
             disabled={!isValid || isSubmitting}
             accessibilityRole="button"
             accessibilityLabel="Submit documentation and billing"
             accessibilityState={{ disabled: !isValid || isSubmitting }}
-            activeOpacity={0.85}
           >
             <FileText size={16} color="#FFFFFF" />
-            <Text style={m.submitButtonText}>
+            <Text style={mo.submitButtonText}>
               {isSubmitting ? 'Submitting...' : 'Submit Documentation & Billing'}
             </Text>
-          </TouchableOpacity>
+          </Pressable>
         </View>
       </View>
     </Modal>
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
+// ─── Styles (main modal shell) ────────────────────────────────────────────────
 
-const m = StyleSheet.create({
+const mo = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: tokens.pageBg,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 16,
+    paddingHorizontal: spacing.xl,
+    paddingTop: spacing.xl,
+    paddingBottom: spacing.lg,
     borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    backgroundColor: colors.card,
+    borderBottomColor: tokens.cardBorder,
+    backgroundColor: tokens.cardBg,
+    ...(shadows.card as object),
+  },
+  headerText: {
+    gap: 2,
   },
   headerTitle: {
-    ...typography.displaySm,
-    color: colors.foreground,
+    fontSize: 20,
+    fontWeight: '700',
+    color: tokens.textPrimary,
+    lineHeight: 26,
   },
   headerSubtitle: {
-    ...typography.label,
-    color: colors.mutedForeground,
+    fontSize: 11,
+    fontFamily: 'monospace',
+    color: tokens.textMuted,
+    letterSpacing: 0.5,
     marginTop: 2,
   },
   closeButton: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: colors.background,
+    backgroundColor: tokens.pageBg,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: tokens.cardBorder,
   },
   scrollContent: {
-    padding: 20,
-    paddingBottom: 16,
-  },
-  notesHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 4,
-  },
-  requiredStar: {
-    color: colors.destructive,
-  },
-  notesHelper: {
-    ...typography.label,
-    color: colors.mutedForeground,
-    marginBottom: 8,
+    padding: spacing.xl,
+    paddingBottom: spacing.lg,
   },
   charCounter: {
-    ...typography.label,
-    color: colors.mutedForeground,
+    fontSize: 12,
+    fontWeight: '400',
+    color: tokens.textMuted,
+  },
+  notesHelper: {
+    fontSize: 12,
+    color: tokens.textMuted,
+    marginBottom: spacing.sm,
+    paddingHorizontal: spacing.xs,
+  },
+  notesCard: {
+    overflow: 'hidden',
+  },
+  notesCardFocused: {
+    borderColor: tokens.primary + '66', // primary @ 40% opacity
   },
   notesInput: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 12,
-    backgroundColor: colors.card,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
     minHeight: 96,
     ...typography.bodyMd,
-    color: colors.foreground,
+    color: tokens.textPrimary,
+    backgroundColor: tokens.cardBg,
   },
-  // ── AI Summary card styles ────────────────────────────────────────────────
-  aiCardSection: {
-    marginBottom: 20,
+  footer: {
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.lg,
+    paddingBottom: Platform.OS === 'ios' ? 32 : spacing.lg,
+    borderTopWidth: 1,
+    borderTopColor: tokens.cardBorder,
+    backgroundColor: tokens.cardBg,
+    gap: spacing.sm,
   },
-  aiCard: {
-    borderWidth: 1,
-    borderColor: '#C8D8E4',
-    borderRadius: 14,
-    backgroundColor: '#EDF4F8',
-    padding: 14,
-    gap: 10,
-    marginTop: 2,
+  validationHint: {
+    fontSize: 12,
+    color: tokens.textMuted,
+    textAlign: 'center',
   },
-  aiCardExcluded: {
+  submitButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    backgroundColor: tokens.primary,
+    borderRadius: radius.xl,
+    paddingVertical: spacing.lg,
+  },
+  submitButtonDisabled: {
+    opacity: 0.4,
+  },
+  submitButtonPressed: {
+    backgroundColor: tokens.primaryHover,
+  },
+  submitButtonText: {
+    ...typography.bodyMd,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+});
+
+// ─── Styles (AI Summary card) ─────────────────────────────────────────────────
+
+const ai = StyleSheet.create({
+  card: {
+    padding: spacing.lg,
+    gap: spacing.sm + 2,
+    backgroundColor: tokens.blue100,
+    borderColor: '#bfdbfe', // blue-200 — matches the blue100 card tint
+  },
+  cardExcluded: {
     opacity: 0.55,
-    backgroundColor: colors.muted,
-    borderColor: colors.border,
+    backgroundColor: tokens.slate100,
+    borderColor: tokens.cardBorder,
   },
-  aiCardHeaderRow: {
+  headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     flexWrap: 'wrap',
-    gap: 6,
+    gap: spacing.sm - 2,
   },
-  aiCardHeaderText: {
-    ...typography.label,
+  headerText: {
+    fontSize: 12,
     fontWeight: '700',
-    color: colors.secondary,
-    letterSpacing: 0.5,
-    textTransform: 'uppercase',
+    color: tokens.cyan700,
+    letterSpacing: 0.4,
   },
-  aiCardHeaderTextDimmed: {
-    color: colors.mutedForeground,
+  headerTextDimmed: {
+    color: tokens.textMuted,
   },
-  aiGeneratedBadge: {
-    backgroundColor: colors.secondary + '20',
-    borderRadius: 100,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-  },
-  aiGeneratedBadgeText: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: colors.secondary,
-    letterSpacing: 0.3,
-  },
-  aiTimestamp: {
-    ...typography.label,
-    color: colors.mutedForeground,
+  timestamp: {
+    fontSize: 11,
+    color: tokens.textMuted,
     marginLeft: 'auto' as unknown as number,
   },
-  aiBodyText: {
+  bodyText: {
     ...typography.bodySm,
     fontStyle: 'italic',
-    color: colors.foreground,
+    color: tokens.textPrimary,
     lineHeight: 22,
     letterSpacing: 0.1,
   },
-  aiBodyTextExcluded: {
+  bodyTextExcluded: {
     textDecorationLine: 'line-through',
-    color: colors.mutedForeground,
+    color: tokens.textMuted,
   },
-  aiCardFooter: {
+  footer: {
     flexDirection: 'row',
     alignItems: 'center',
     flexWrap: 'wrap',
-    gap: 12,
-    paddingTop: 8,
+    gap: spacing.md,
+    paddingTop: spacing.sm,
     borderTopWidth: 1,
-    borderTopColor: '#C8D8E4',
+    borderTopColor: '#bfdbfe',
   },
   regenerateButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
+    gap: spacing.xs,
+    paddingHorizontal: spacing.sm + 2,
+    paddingVertical: spacing.xs + 2,
+    borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: colors.secondary + '60',
-    backgroundColor: colors.secondary + '12',
+    borderColor: tokens.cyan600 + '60',
+    backgroundColor: tokens.cyan100,
   },
-  regenerateButtonText: {
+  regenerateText: {
     fontSize: 12,
     fontWeight: '600',
-    color: colors.secondary,
+    color: tokens.cyan600,
   },
   excludeRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: spacing.sm,
   },
   excludeCheckbox: {
     width: 16,
     height: 16,
-    borderRadius: 4,
+    borderRadius: radius.sm - 2,
     borderWidth: 2,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
+    borderColor: tokens.cardBorder,
+    backgroundColor: tokens.cardBg,
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
   },
   excludeCheckboxChecked: {
-    borderColor: colors.mutedForeground,
-    backgroundColor: colors.mutedForeground,
+    borderColor: tokens.textSecondary,
+    backgroundColor: tokens.textSecondary,
   },
   excludeLabel: {
-    ...typography.label,
-    color: colors.mutedForeground,
+    fontSize: 12,
+    color: tokens.textMuted,
   },
   excludeLabelChecked: {
-    color: colors.foreground,
+    color: tokens.textPrimary,
     fontWeight: '600',
   },
-  // Loading shimmer lines
   shimmerLine: {
     height: 10,
-    borderRadius: 5,
-    backgroundColor: '#C8D8E4',
+    borderRadius: radius.sm - 1,
+    backgroundColor: '#bfdbfe',
     width: '100%',
   },
   shimmerLineMid: {
@@ -1562,49 +1624,12 @@ const m = StyleSheet.create({
   shimmerLineShort: {
     width: '55%',
   },
-  aiUnavailable: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 12,
-    backgroundColor: colors.background,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    marginTop: 2,
+  unavailableCard: {
+    padding: spacing.lg,
   },
-  aiUnavailableText: {
+  unavailableText: {
     ...typography.bodySm,
-    color: colors.mutedForeground,
+    color: tokens.textMuted,
     fontStyle: 'italic',
-  },
-  footer: {
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    paddingBottom: Platform.OS === 'ios' ? 32 : 16,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    backgroundColor: colors.card,
-    gap: 8,
-  },
-  validationHint: {
-    ...typography.label,
-    color: colors.mutedForeground,
-    textAlign: 'center',
-  },
-  submitButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: colors.primary,
-    borderRadius: 14,
-    paddingVertical: 16,
-  },
-  submitButtonDisabled: {
-    opacity: 0.4,
-  },
-  submitButtonText: {
-    ...typography.bodyMd,
-    fontWeight: '700',
-    color: '#FFFFFF',
   },
 });
