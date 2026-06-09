@@ -40,3 +40,6 @@ export type { SectionHeaderProps } from './SectionHeader';
 
 export { PageWrap } from './PageWrap';
 export type { PageWrapProps } from './PageWrap';
+
+export { ResizableDivider } from './ResizableDivider';
+export type { ResizableDividerProps } from './ResizableDivider';

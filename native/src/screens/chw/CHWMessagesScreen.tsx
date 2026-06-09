@@ -57,7 +57,7 @@ import {
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { CHWSessionsStackParamList } from '../../navigation/CHWTabNavigator';
 
-import { AppShell, Card, Pill, SectionHeader } from '../../components/ui';
+import { AppShell, Card, Pill, SectionHeader, ResizableDivider } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
 import {
   useSessions,
@@ -93,6 +93,46 @@ const BP_HIDE_LIST = 900;
 
 const THREAD_LIST_WIDTH = 320;
 const CONTEXT_RAIL_WIDTH = 288;
+
+/** Min/max bounds for each draggable pane — tuned for CHW screen. */
+const CHW_LEFT_MIN = 200;
+const CHW_LEFT_MAX = 500;
+const CHW_RIGHT_MIN = 200;
+const CHW_RIGHT_MAX = 450;
+
+/** localStorage keys for persisted pane widths. */
+const LS_KEY_CHW_LEFT = 'compass:chwMessages:leftWidth';
+const LS_KEY_CHW_RIGHT = 'compass:chwMessages:rightWidth';
+
+/**
+ * Reads a numeric pane width from localStorage.
+ * Returns the provided fallback when running in SSR context or when the key
+ * is absent / holds a non-numeric value.
+ */
+function readStoredWidth(key: string, fallback: number): number {
+  if (typeof window === 'undefined') return fallback;
+  try {
+    const stored = window.localStorage.getItem(key);
+    if (stored === null) return fallback;
+    const parsed = Number(stored);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * Persists a pane width to localStorage.
+ * Silently swallows errors (e.g. private-browsing quota exceptions).
+ */
+function writeStoredWidth(key: string, value: number): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(key, String(value));
+  } catch {
+    // Storage unavailable — ignore.
+  }
+}
 
 // ─── Avatar palette ───────────────────────────────────────────────────────────
 
@@ -1205,6 +1245,24 @@ export function CHWMessagesScreen(): React.JSX.Element {
   const hideRail = width < BP_HIDE_RAIL;
   const hideList = width < BP_HIDE_LIST;
 
+  // ── Resizable pane widths (web only, persisted via localStorage) ─────────────
+  const [leftWidth, setLeftWidth] = useState<number>(() =>
+    readStoredWidth(LS_KEY_CHW_LEFT, THREAD_LIST_WIDTH),
+  );
+  const [rightWidth, setRightWidth] = useState<number>(() =>
+    readStoredWidth(LS_KEY_CHW_RIGHT, CONTEXT_RAIL_WIDTH),
+  );
+
+  const handleLeftWidthChange = useCallback((next: number): void => {
+    setLeftWidth(next);
+    writeStoredWidth(LS_KEY_CHW_LEFT, next);
+  }, []);
+
+  const handleRightWidthChange = useCallback((next: number): void => {
+    setRightWidth(next);
+    writeStoredWidth(LS_KEY_CHW_RIGHT, next);
+  }, []);
+
   const allSessions: SessionData[] = sessionsQuery.data ?? [];
 
   // Auto-select the target member's thread (from route params) or the first thread
@@ -1287,13 +1345,23 @@ export function CHWMessagesScreen(): React.JSX.Element {
       <View style={styles.root}>
         {/* Left: thread list */}
         {shouldShowList ? (
-          <View style={[styles.threadListWrap, { width: THREAD_LIST_WIDTH }]}>
+          <View style={[styles.threadListWrap, { width: !hideRail ? leftWidth : THREAD_LIST_WIDTH }]}>
             <ThreadListPane
               sessions={allSessions}
               selectedSessionId={selectedSession?.id ?? null}
               onSelectSession={handleSelectSession}
             />
           </View>
+        ) : null}
+
+        {/* Divider between left and center — drag-resizes left pane (web ≥1280 only) */}
+        {shouldShowList && shouldShowConv ? (
+          <ResizableDivider
+            width={leftWidth}
+            onChange={handleLeftWidthChange}
+            min={CHW_LEFT_MIN}
+            max={CHW_LEFT_MAX}
+          />
         ) : null}
 
         {/* Center: conversation */}
@@ -1322,9 +1390,19 @@ export function CHWMessagesScreen(): React.JSX.Element {
           </View>
         ) : null}
 
+        {/* Divider between center and right — drag-resizes right pane (web ≥1280 only) */}
+        {!hideRail && selectedSession ? (
+          <ResizableDivider
+            width={rightWidth}
+            onChange={handleRightWidthChange}
+            min={CHW_RIGHT_MIN}
+            max={CHW_RIGHT_MAX}
+          />
+        ) : null}
+
         {/* Right: member context rail */}
         {!hideRail && selectedSession ? (
-          <View style={[styles.railWrap, { width: CONTEXT_RAIL_WIDTH }]}>
+          <View style={[styles.railWrap, { width: rightWidth }]}>
             <MemberContextRail session={selectedSession} />
           </View>
         ) : null}

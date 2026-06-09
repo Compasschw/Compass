@@ -76,7 +76,7 @@ import {
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 
 import type { MemberTabParamList } from '../../navigation/MemberTabNavigator';
-import { AppShell, Card, PageWrap, SectionHeader, Pill } from '../../components/ui';
+import { AppShell, Card, PageWrap, SectionHeader, Pill, ResizableDivider } from '../../components/ui';
 import { colors, spacing, radius } from '../../theme/tokens';
 import { useAuth } from '../../context/AuthContext';
 import {
@@ -103,6 +103,55 @@ import { ErrorState } from '../../components/shared/ErrorState';
 const BP_HIDE_RAIL = 960;
 /** Thread list hidden below this viewport width (mobile-web). */
 const BP_HIDE_LIST = 640;
+
+// ─── Pane width constants ─────────────────────────────────────────────────────
+
+/** Default fixed width of the left thread-list pane in pixels. */
+const THREAD_LIST_WIDTH = 280;
+/** Default fixed width of the right context-rail pane in pixels. */
+const CONTEXT_RAIL_WIDTH = 260;
+
+// ─── Pane width constraints ───────────────────────────────────────────────────
+
+/** Min/max bounds for each draggable pane — tuned for Member screen. */
+const MEMBER_LEFT_MIN = 200;
+const MEMBER_LEFT_MAX = 500;
+const MEMBER_RIGHT_MIN = 200;
+const MEMBER_RIGHT_MAX = 450;
+
+/** localStorage keys for persisted pane widths. */
+const LS_KEY_MEMBER_LEFT = 'compass:memberMessages:leftWidth';
+const LS_KEY_MEMBER_RIGHT = 'compass:memberMessages:rightWidth';
+
+/**
+ * Reads a numeric pane width from localStorage.
+ * Returns the provided fallback when running in SSR context or when the key
+ * is absent / holds a non-numeric value.
+ */
+function readStoredWidth(key: string, fallback: number): number {
+  if (typeof window === 'undefined') return fallback;
+  try {
+    const stored = window.localStorage.getItem(key);
+    if (stored === null) return fallback;
+    const parsed = Number(stored);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * Persists a pane width to localStorage.
+ * Silently swallows errors (e.g. private-browsing quota exceptions).
+ */
+function writeStoredWidth(key: string, value: number): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(key, String(value));
+  } catch {
+    // Storage unavailable — ignore.
+  }
+}
 
 // ─── Quick replies ────────────────────────────────────────────────────────────
 
@@ -578,6 +627,8 @@ interface ContextRailProps {
   memberId: string;
   onSchedule: () => void;
   onViewCHWProfile: () => void;
+  /** Optional dynamic width override (web drag-resize). Defaults to stylesheet value. */
+  style?: { width: number };
 }
 
 /**
@@ -589,6 +640,7 @@ function ContextRail({
   memberId,
   onSchedule,
   onViewCHWProfile,
+  style: widthOverride,
 }: ContextRailProps): React.JSX.Element {
   const chwName = session.chwName ?? 'Your CHW';
   const chwInitials = getInitials(chwName);
@@ -616,7 +668,7 @@ function ContextRail({
 
   return (
     <ScrollView
-      style={styles.railOuter}
+      style={widthOverride != null ? [styles.railOuter, widthOverride] : styles.railOuter}
       contentContainerStyle={styles.railContent}
       showsVerticalScrollIndicator={false}
       accessibilityRole="complementary"
@@ -1154,6 +1206,24 @@ export function MemberMessagesScreen(): React.JSX.Element {
   const hideRail = width < BP_HIDE_RAIL;
   const hideList = width < BP_HIDE_LIST;
 
+  // ── Resizable pane widths (web only, persisted via localStorage) ─────────────
+  const [leftWidth, setLeftWidth] = useState<number>(() =>
+    readStoredWidth(LS_KEY_MEMBER_LEFT, THREAD_LIST_WIDTH),
+  );
+  const [rightWidth, setRightWidth] = useState<number>(() =>
+    readStoredWidth(LS_KEY_MEMBER_RIGHT, CONTEXT_RAIL_WIDTH),
+  );
+
+  const handleLeftWidthChange = useCallback((next: number): void => {
+    setLeftWidth(next);
+    writeStoredWidth(LS_KEY_MEMBER_LEFT, next);
+  }, []);
+
+  const handleRightWidthChange = useCallback((next: number): void => {
+    setRightWidth(next);
+    writeStoredWidth(LS_KEY_MEMBER_RIGHT, next);
+  }, []);
+
   const [showThreadList, setShowThreadList] = useState(true);
   const [selectedSession, setSelectedSession] = useState<SessionData | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -1285,7 +1355,11 @@ export function MemberMessagesScreen(): React.JSX.Element {
       <View style={styles.root}>
         {/* ── Left pane: thread list ── */}
         {shouldShowList ? (
-          <View style={styles.threadList} accessibilityRole="navigation" accessibilityLabel="Message threads">
+          <View
+            style={[styles.threadList, { width: !hideRail ? leftWidth : THREAD_LIST_WIDTH }]}
+            accessibilityRole="navigation"
+            accessibilityLabel="Message threads"
+          >
             {/* List header */}
             <View style={styles.threadListHeader}>
               <Text style={styles.threadListTitle}>Messages</Text>
@@ -1326,9 +1400,14 @@ export function MemberMessagesScreen(): React.JSX.Element {
           </View>
         ) : null}
 
-        {/* ── Divider ── */}
+        {/* ── Divider between left and center — drag-resizes left pane (web ≥960 only) ── */}
         {shouldShowList && shouldShowConv ? (
-          <View style={styles.divider} />
+          <ResizableDivider
+            width={leftWidth}
+            onChange={handleLeftWidthChange}
+            min={MEMBER_LEFT_MIN}
+            max={MEMBER_LEFT_MAX}
+          />
         ) : null}
 
         {/* ── Center pane: conversation ── */}
@@ -1358,27 +1437,33 @@ export function MemberMessagesScreen(): React.JSX.Element {
           )
         ) : null}
 
+        {/* ── Divider between center and right — drag-resizes right pane (web ≥960 only) ── */}
+        {!hideRail && selectedSession != null ? (
+          <ResizableDivider
+            width={rightWidth}
+            onChange={handleRightWidthChange}
+            min={MEMBER_RIGHT_MIN}
+            max={MEMBER_RIGHT_MAX}
+          />
+        ) : null}
+
         {/* ── Right pane: context rail ── */}
         {!hideRail && selectedSession != null ? (
-          <>
-            <View style={styles.divider} />
-            <ContextRail
-              session={selectedSession}
-              memberId={memberId}
-              onSchedule={handleGoToCalendar}
-              onViewCHWProfile={handleViewCHWProfile}
-            />
-          </>
+          <ContextRail
+            session={selectedSession}
+            memberId={memberId}
+            onSchedule={handleGoToCalendar}
+            onViewCHWProfile={handleViewCHWProfile}
+            style={{ width: rightWidth }}
+          />
         ) : null}
+
       </View>
     </AppShell>
   );
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
-
-const THREAD_LIST_WIDTH = 280;
-const CONTEXT_RAIL_WIDTH = 260;
 
 const styles = StyleSheet.create({
   // Root 3-pane container
