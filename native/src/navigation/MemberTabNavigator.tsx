@@ -77,7 +77,15 @@ export type MemberFindStackParamList = {
 export type MemberTabParamList = {
   Home: undefined;
   FindCHW: undefined;
-  Sessions: undefined;
+  /**
+   * Optional route params supported by MemberMessagesScreen (T20).
+   * - `chwId`: when provided the thread for that CHW is pre-selected.
+   * - `autoCall`: when true + chwId is set, the masked-number call sequence
+   *   fires on mount (mirrors the CHW-side T15 autoCall contract).
+   * Both params are optional so callers that navigate without params continue
+   * to work exactly as before.
+   */
+  Sessions: { chwId?: string; autoCall?: boolean } | undefined;
   Calendar: undefined;
   Roadmap: undefined;
   Profile: undefined;
