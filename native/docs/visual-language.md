@@ -510,7 +510,34 @@ This screen has the most inline hex literals (`#16a34a`, `#f3f4f6`, etc.) and do
 
 ---
 
-## 10. What to Import — Quick Reference for Wave 3
+## 10. Member-screen page wrap
+
+**File:** `src/components/ui/PageWrap.tsx`
+
+On web (`Platform.OS === 'web'`), constrains content to `maxWidth: 560` and centers it with `alignSelf: 'center'`. On native mobile, the component is a transparent `flex: 1` pass-through — no visual change.
+
+> **Wave 3 Member screens MUST wrap their root content in `PageWrap`. CHW screens do not use this** — they are admin-style and go full-width.
+
+```tsx
+import { PageWrap, PageHeader } from '../../components/ui';
+
+function MemberDashboardScreen(): React.JSX.Element {
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: tokens.pageBg }} edges={['top']}>
+      <ScrollView contentContainerStyle={{ flexGrow: 1 }} showsVerticalScrollIndicator={false}>
+        <PageWrap style={{ padding: spacing.xl, paddingBottom: 48 }}>
+          <PageHeader title="Hello, Maria" subtitle="Your care summary" />
+          {/* screen content */}
+        </PageWrap>
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+```
+
+---
+
+## 12. What to Import — Quick Reference for Wave 3
 
 ```tsx
 // 1. Token primitives (ALWAYS use tokens.ts, never colors.ts)
@@ -535,14 +562,14 @@ import { Badge } from '../../components/shared/Badge'; // only if you need verti
 
 ---
 
-## 11. Open Questions Before Wave 3 Dispatches
+## 13. Open Questions Before Wave 3 Dispatches
 
 1. **Member AppShell role:** CHW screens pass `role="chw"`. Member screens should pass `role="member"`. Confirm the `AppShell` renders the correct sidebar items for `role="member"` — check `sidebarItems.ts`.
 
-2. **Member screens max-width:** The cofounders' prior feedback (in MEMORY.md) says "Mobile screens need max-width on web" — wrap Member screen page content in a centered `maxWidth: 560` container on web, unlike CHW screens which go full-width. This is a deliberate difference from CHW screens.
+2. ~~**Member screens max-width**~~ **RESOLVED (T17 follow-up):** `PageWrap` primitive added — see §10. Wave 3 agents: use `PageWrap` on all Member screens.
 
 3. **Mixed-import screens:** `CHWMemberProfileScreen` and `CHWSessionsScreen` import from both `theme/colors.ts` and `theme/tokens.ts`. Member screens should use `tokens.ts` only. Flag if you find Member screens that import from `theme/colors` — those will need a targeted update.
 
-4. **`LoadingSkeleton` uses `colors.card` from `theme/colors.ts`** (legacy warm-cream, `#F7F5F1`) rather than `tokens.cardBg` (`#ffffff`). The skeleton tiles will look slightly warm instead of pure white. This is a minor visual divergence. Wave 4 can fix; Wave 3 agents should use `LoadingSkeleton` as-is.
+4. ~~**`LoadingSkeleton` uses `colors.card`**~~ **RESOLVED (T17 follow-up):** Patched to import from `theme/tokens` and use `tokens.cardBg` (`#ffffff`) + `tokens.cardBorder`. Skeleton tiles now match the `Card` surface exactly.
 
 5. **`SectionHeader` margin-bottom default:** Currently `spacing.lg` (16). If a screen needs tighter spacing (e.g. list items immediately below the header), pass `marginBottom={spacing.sm}` explicitly.

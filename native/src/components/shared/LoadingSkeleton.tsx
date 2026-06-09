@@ -20,7 +20,7 @@ import Animated, {
   Easing,
   type SharedValue,
 } from 'react-native-reanimated';
-import { colors } from '../../theme/colors';
+import { colors as tokens } from '../../theme/tokens';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -156,9 +156,9 @@ const styles = StyleSheet.create({
     gap: 12,
   } as ViewStyle,
   rowCard: {
-    backgroundColor: colors.card,
+    backgroundColor: tokens.cardBg,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: tokens.cardBorder,
     borderRadius: 16,
     padding: 20,
     gap: 10,
@@ -211,9 +211,9 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   } as ViewStyle,
   statTile: {
-    backgroundColor: colors.card,
+    backgroundColor: tokens.cardBg,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: tokens.cardBorder,
     borderRadius: 16,
     padding: 16,
     width: '47%',

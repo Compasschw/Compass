@@ -37,3 +37,6 @@ export type { AppShellProps, AppShellRole } from './AppShell';
 
 export { SectionHeader } from './SectionHeader';
 export type { SectionHeaderProps } from './SectionHeader';
+
+export { PageWrap } from './PageWrap';
+export type { PageWrapProps } from './PageWrap';
