@@ -34,3 +34,6 @@ export type { DashboardSidebarProps, UserBlock } from './DashboardSidebar';
 
 export { AppShell } from './AppShell';
 export type { AppShellProps, AppShellRole } from './AppShell';
+
+export { SectionHeader } from './SectionHeader';
+export type { SectionHeaderProps } from './SectionHeader';
