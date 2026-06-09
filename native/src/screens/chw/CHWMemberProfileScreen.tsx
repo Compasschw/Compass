@@ -1,29 +1,29 @@
 /**
  * CHWMemberProfileScreen — Full member context view for CHW/admin users.
  *
- * Re-skinned to the new design system. Behavior, hooks, mutations, and
- * navigation are identical to the original.
- *
- * New layout (web):
- *   - Top header card (full width): identity column (avatar + name + pills) ·
- *     contact column (DOB/Phone/Address/Insurance) · Resource Needs column
- *   - Mid row: 4-column insights card (9/12) + Compass Insights AI panel (3/12 RightRail)
- *   - Journey section: 9/12 horizontal step roadmap + 3/12 Quick Access RightRail
- *   - (StickyActionBar removed — entry points live in the contact section
- *     and Quick Access rail; Schedule Session is reachable from tab nav.)
- *   - RightDrawer: Open Questions (static suggested questions v1)
- *   - RightDrawer: Message Member (inline thread via ProfileContactButtons)
+ * Layout (T08 Phase 1 Second Run redesign):
+ *   - 3-column top card:
+ *       Left  — Demographics (READ-ONLY): name, phone, address/ZIP, language,
+ *               insurance/MCO, email.
+ *       Center — Services Consent status (READ-ONLY on CHW side). When the
+ *               member has refused services, the Call/Message CTAs in the right
+ *               column are dimmed and a caption is shown.
+ *       Right  — Active Journeys list + Member rewards balance + Call/Message CTAs.
+ *   - Member Journey roadmap (6-step horizontal scroll with points).
+ *   - Quick Access row — Add Note, Flag Member, Schedule Session, Document Session.
+ *   - Billable Units widget (today vs daily cap; this year vs yearly cap).
+ *   - Sessions table — paginated (20 rows/page).
  *
  * HIPAA minimum-necessary (45 CFR §164.514(d)):
- *   medi_cal_id, insurance_provider, notes from other CHWs, transcripts are
- *   explicitly NOT rendered.
+ *   Raw medi_cal_id, insurance_provider (surfaced only as MCO label), notes from
+ *   other CHWs, and session transcripts are NOT rendered here.
  *
  * Access gate:
  *   CHW: backend returns 403 when no active relationship exists.
  *   Admin: unrestricted access.
  */
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -32,6 +32,7 @@ import {
   StatusBar,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
   type ViewStyle,
@@ -42,31 +43,35 @@ import { useNavigation, useRoute, type RouteProp } from '@react-navigation/nativ
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
   ArrowLeft,
+  ArrowRight,
   Calendar,
   CheckCircle,
   Clock,
+  Flag,
   Globe,
   Heart,
   MapPin,
+  MessageSquare,
+  NotebookPen,
   Phone,
+  Shield,
   ShieldCheck,
   ShieldOff,
   ShieldX,
   Sparkles,
+  Star,
   User,
-  NotebookPen,
-  FileText,
-  ClipboardList,
   CheckSquare,
   UploadCloud,
   RadioTower,
   ChevronRight,
+  ClipboardList,
 } from 'lucide-react-native';
 import { useQuery } from '@tanstack/react-query';
 
-import { colors } from '../../theme/colors';
+import { colors as legacyColors } from '../../theme/colors';
 import { fonts } from '../../theme/typography';
-import { colors as tokens } from '../../theme/tokens';
+import { colors as tokens, spacing, radius } from '../../theme/tokens';
 import { api } from '../../api/client';
 import { transformKeys } from '../../utils/caseTransform';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
@@ -75,14 +80,26 @@ import type { CHWSessionsStackParamList } from '../../navigation/CHWTabNavigator
 
 import {
   AppShell,
-  PageHeader,
   Card,
+  PageHeader,
   Pill,
-  RightRail,
   RightDrawer,
+  RightRail,
+  SectionHeader,
 } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
 import { OpenQuestionsDrawer } from '../../components/chw/OpenQuestionsDrawer';
+import {
+  useMemberServicesConsent,
+  useFlagNote,
+  useCreateFlagNote,
+  useDeleteFlagNote,
+  useChwBillableUnits,
+  useMemberJourneys,
+  useMemberRewardsBalance,
+  type ServicesConsentValue,
+  type MemberJourneyResponse,
+} from '../../hooks/useApiQueries';
 
 // ─── Navigation types ─────────────────────────────────────────────────────────
 
@@ -93,13 +110,6 @@ type MemberProfileNavProp = NativeStackNavigationProp<
 >;
 
 // ─── API types ────────────────────────────────────────────────────────────────
-
-interface BillingUnitsData {
-  todayUsed: number;
-  todayRemaining: number;
-  yearlyUsed: number;
-  yearlyRemaining: number;
-}
 
 interface OpenGoalItem {
   text: string;
@@ -127,6 +137,13 @@ interface RecentSessionItem {
   unitsBilled: number | null;
 }
 
+interface BillingUnitsLegacy {
+  todayUsed: number;
+  todayRemaining: number;
+  yearlyUsed: number;
+  yearlyRemaining: number;
+}
+
 interface CHWMemberProfileDetail {
   id: string;
   firstName: string;
@@ -141,7 +158,7 @@ interface CHWMemberProfileDetail {
   mco: string | null;
   ecmEligible: boolean;
   primaryCategories: string[];
-  billingUnits: BillingUnitsData;
+  billingUnits: BillingUnitsLegacy;
   sessionCount: number;
   lastSessionAt: string | null;
   openGoals: OpenGoalItem[];
@@ -149,8 +166,6 @@ interface CHWMemberProfileDetail {
   consentStatus: ConsentStatusData;
   recentSessions: RecentSessionItem[];
 }
-
-// ─── Assessment stub type (parallel agent owns the real shape) ────────────────
 
 interface AssessmentLatest {
   completedAt: string;
@@ -219,11 +234,7 @@ function useAssessmentLatest(memberId: string) {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const MAX_UNITS_PER_DAY = 4;
-const MAX_UNITS_PER_YEAR = 10;
-
-const CAP_WARNING_THRESHOLD_DAY = 1;
-const CAP_WARNING_THRESHOLD_YEAR = 2;
+const SESSIONS_PAGE_SIZE = 20;
 
 const SESSION_STATUS_LABELS: Record<string, string> = {
   scheduled: 'Scheduled',
@@ -246,27 +257,15 @@ const CATEGORY_LABELS: Record<string, string> = {
   healthcare: 'Healthcare',
 };
 
-const CATEGORY_COLORS: Record<string, string> = {
-  housing: '#7C3AED',
-  food: '#D97706',
-  mental_health: '#0EA5E9',
-  rehab: '#059669',
-  healthcare: '#DC2626',
+/** Points awarded per step in the 6-step journey roadmap. */
+const JOURNEY_STEP_POINTS: Record<string, number> = {
+  'Need Identified': 10,
+  'Eligibility Screening': 25,
+  'Upload Documents': 30,
+  'Follow Up': 10,
+  'Resource Connection': 25,
+  'Journey Complete': 50,
 };
-
-/**
- * Maps a category key to a Pill variant for the new design system.
- */
-function categoryToPillVariant(cat: string): 'purple' | 'amber' | 'blue' | 'emerald' | 'red' | 'gray' {
-  switch (cat) {
-    case 'housing':       return 'purple';
-    case 'food':          return 'amber';
-    case 'mental_health': return 'blue';
-    case 'rehab':         return 'emerald';
-    case 'healthcare':    return 'red';
-    default:              return 'gray';
-  }
-}
 
 // ─── Static suggested questions for Open Questions drawer (v1 — no backend) ──
 
@@ -328,14 +327,6 @@ function formatDateTime(iso: string | null | undefined): string {
   });
 }
 
-function formatDueDate(iso: string | null | undefined): string | null {
-  if (!iso) return null;
-  return new Date(iso).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-  });
-}
-
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 interface InfoRowProps {
@@ -345,6 +336,10 @@ interface InfoRowProps {
   placeholder?: boolean;
 }
 
+/**
+ * A single labeled data row in the Demographics column.
+ * Renders a small icon, a muted label, and the data value beneath it.
+ */
 function InfoRow({
   icon,
   label,
@@ -370,9 +365,8 @@ const infoRowStyles = StyleSheet.create({
   container: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 12,
+    gap: 10,
     paddingVertical: 6,
-    marginBottom: 4,
   } as ViewStyle,
   iconBox: {
     width: 16,
@@ -385,14 +379,15 @@ const infoRowStyles = StyleSheet.create({
   textBox: { flex: 1 } as ViewStyle,
   label: {
     fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 12,
+    fontSize: 11,
     color: '#9CA3AF',
     marginBottom: 1,
   } as TextStyle,
   value: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 14,
+    fontSize: 13,
     color: '#111827',
+    lineHeight: 18,
   } as TextStyle,
   valuePlaceholder: {
     color: '#A0A6AB',
@@ -400,57 +395,40 @@ const infoRowStyles = StyleSheet.create({
   } as TextStyle,
 });
 
-interface SectionCardProps {
-  title: string;
-  children: React.ReactNode;
-  titleRight?: React.ReactNode;
+interface ColumnHeadingProps {
+  text: string;
+  sub?: string;
 }
 
-function SectionCard({
-  title,
-  children,
-  titleRight,
-}: SectionCardProps): React.JSX.Element {
+function ColumnHeading({ text, sub }: ColumnHeadingProps): React.JSX.Element {
   return (
-    <Card style={sectionCardStyles.container}>
-      <View style={sectionCardStyles.titleRow}>
-        <Text style={sectionCardStyles.title}>{title}</Text>
-        {titleRight}
-      </View>
-      <View style={sectionCardStyles.body}>{children}</View>
-    </Card>
+    <View style={colHeadingStyles.row}>
+      <Text style={colHeadingStyles.text}>{text}</Text>
+      {sub ? <Text style={colHeadingStyles.sub}>{sub}</Text> : null}
+    </View>
   );
 }
 
-const sectionCardStyles = StyleSheet.create({
-  container: {
-    marginBottom: 20,
-    overflow: 'hidden',
-  } as ViewStyle,
-  titleRow: {
+const colHeadingStyles = StyleSheet.create({
+  row: {
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 8,
+    alignItems: 'baseline',
+    gap: 5,
+    marginBottom: 12,
   } as ViewStyle,
-  title: {
+  text: {
     fontFamily: 'DMSans_700Bold',
-    fontSize: 14,
+    fontSize: 13,
     color: '#111827',
   } as TextStyle,
-  body: {
-    paddingHorizontal: 20,
-    paddingBottom: 16,
-  } as ViewStyle,
+  sub: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: '#9CA3AF',
+  } as TextStyle,
 });
 
-function EmptySectionState({
-  message,
-}: {
-  message: string;
-}): React.JSX.Element {
+function EmptySectionState({ message }: { message: string }): React.JSX.Element {
   return (
     <View style={emptyStyles.container}>
       <Text style={emptyStyles.text}>{message}</Text>
@@ -461,7 +439,7 @@ function EmptySectionState({
 const emptyStyles = StyleSheet.create({
   container: {
     alignItems: 'center',
-    paddingVertical: 16,
+    paddingVertical: 14,
   } as ViewStyle,
   text: {
     fontFamily: 'PlusJakartaSans_400Regular',
@@ -471,97 +449,1173 @@ const emptyStyles = StyleSheet.create({
   } as TextStyle,
 });
 
-// ─── BillingUnitsCard ─────────────────────────────────────────────────────────
+// ─── DemographicsColumn ───────────────────────────────────────────────────────
 
-interface BillingUnitsCardProps {
-  units: BillingUnitsData;
+interface DemographicsColumnProps {
+  profile: CHWMemberProfileDetail;
 }
 
-function BillingUnitsCard({ units }: BillingUnitsCardProps): React.JSX.Element {
-  const todayAtCap = units.todayRemaining <= CAP_WARNING_THRESHOLD_DAY;
-  const yearAtCap = units.yearlyRemaining <= CAP_WARNING_THRESHOLD_YEAR;
+/**
+ * Left column of the 3-column top card.
+ * Renders avatar + name banner, then demographic data rows (all read-only).
+ */
+function DemographicsColumn({ profile }: DemographicsColumnProps): React.JSX.Element {
+  const initials = getInitials(profile.firstName, profile.lastName);
+  const displayName = `${profile.firstName} ${profile.lastName}`.trim();
+
+  const addressLabel = profile.address
+    ? [profile.address, profile.city, profile.zipCode].filter(Boolean).join(', ')
+    : profile.zipCode
+    ? `ZIP ${profile.zipCode}`
+    : 'Not provided';
+
+  const languageValue = [profile.primaryLanguage, ...profile.additionalLanguages]
+    .filter(Boolean)
+    .join(', ');
 
   return (
-    <View style={billingStyles.card}>
-      {/* Today */}
-      <View style={billingStyles.halfBlock}>
-        <Text style={billingStyles.periodLabel}>Today</Text>
-        <View style={billingStyles.barTrack}>
-          <View
-            style={[
-              billingStyles.barFill,
-              {
-                width: `${(units.todayUsed / MAX_UNITS_PER_DAY) * 100}%` as `${number}%`,
-                backgroundColor: todayAtCap ? '#DC2626' : colors.primary,
-              },
-            ]}
-          />
+    <View style={demoColStyles.container}>
+      {/* Banner + avatar hero */}
+      <View style={demoColStyles.banner} />
+      <View style={demoColStyles.heroSection}>
+        <View style={demoColStyles.avatarWrapper}>
+          <View style={demoColStyles.avatar}>
+            <Text style={demoColStyles.avatarText}>{initials}</Text>
+          </View>
         </View>
-        <View style={billingStyles.statsRow}>
-          <Text
-            style={[
-              billingStyles.usedLabel,
-              todayAtCap && billingStyles.usedLabelDanger,
-            ]}
-          >
-            {units.todayUsed} used
-          </Text>
-          <Text style={billingStyles.remainingLabel}>
-            {units.todayRemaining} left
-          </Text>
+        <Text style={demoColStyles.displayName}>{displayName}</Text>
+        <View style={demoColStyles.badgesRow}>
+          <Pill variant="emerald" size="sm">Active</Pill>
+          {profile.ecmEligible && (
+            <Pill variant="blue" size="sm">ECM Eligible</Pill>
+          )}
         </View>
       </View>
 
-      <View style={billingStyles.verticalDivider} />
-
-      {/* This year */}
-      <View style={billingStyles.halfBlock}>
-        <Text style={billingStyles.periodLabel}>This Year</Text>
-        <View style={billingStyles.barTrack}>
-          <View
-            style={[
-              billingStyles.barFill,
-              {
-                width: `${(units.yearlyUsed / MAX_UNITS_PER_YEAR) * 100}%` as `${number}%`,
-                backgroundColor: yearAtCap ? '#DC2626' : colors.primary,
-              },
-            ]}
+      {/* Demographics rows */}
+      <View style={demoColStyles.rows}>
+        <ColumnHeading text="Demographics" sub="(CHW read-only)" />
+        <InfoRow
+          icon={<Phone size={13} color={tokens.primary} />}
+          label="Phone"
+          value={profile.phoneE164 ?? 'Not provided'}
+          placeholder={!profile.phoneE164}
+        />
+        <InfoRow
+          icon={<MapPin size={13} color={tokens.primary} />}
+          label={profile.address ? 'Address' : 'ZIP Code'}
+          value={addressLabel}
+          placeholder={!profile.address && !profile.zipCode}
+        />
+        <InfoRow
+          icon={<Globe size={13} color={tokens.primary} />}
+          label="Language"
+          value={languageValue}
+        />
+        <InfoRow
+          icon={<Heart size={13} color={tokens.primary} />}
+          label="MCO / Insurance"
+          value={profile.mco ?? 'Not provided'}
+          placeholder={!profile.mco}
+        />
+        {profile.email ? (
+          <InfoRow
+            icon={<User size={13} color={tokens.primary} />}
+            label="Email"
+            value={profile.email}
           />
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+const demoColStyles = StyleSheet.create({
+  container: {
+    flex: Platform.OS === 'web' ? 3 : undefined,
+    borderRightWidth: Platform.OS === 'web' ? 1 : 0,
+    borderRightColor: '#F3F4F6',
+    overflow: 'hidden',
+  } as ViewStyle,
+  banner: {
+    height: 64,
+    backgroundColor: '#3D5A3E',
+  } as ViewStyle,
+  heroSection: {
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingBottom: 16,
+    gap: 6,
+  } as ViewStyle,
+  avatarWrapper: {
+    marginTop: -40,
+    marginBottom: 4,
+  } as ViewStyle,
+  avatar: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#CBD5E1',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 3,
+    borderColor: '#FFFFFF',
+  } as ViewStyle,
+  avatarText: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 22,
+    color: '#FFFFFF',
+  } as TextStyle,
+  displayName: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 16,
+    color: '#111827',
+    textAlign: 'center',
+  } as TextStyle,
+  badgesRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+  } as ViewStyle,
+  rows: {
+    paddingHorizontal: 16,
+    paddingBottom: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+    paddingTop: 12,
+  } as ViewStyle,
+});
+
+// ─── ServicesConsentColumn ────────────────────────────────────────────────────
+
+type ServicesConsentStatus = ServicesConsentValue | null;
+
+interface ServicesConsentColumnProps {
+  memberId: string;
+}
+
+/**
+ * Center column of the 3-column top card.
+ * Renders the member's Services Consent status read-only on the CHW side.
+ * When status is 'refuse_services', shows a red warning banner.
+ */
+function ServicesConsentColumn({ memberId }: ServicesConsentColumnProps): React.JSX.Element {
+  const { data: consentData, isLoading } = useMemberServicesConsent(memberId);
+  const consentValue: ServicesConsentStatus = consentData?.value ?? null;
+  const isRefused = consentValue === 'refuse_services';
+
+  return (
+    <View style={consentColStyles.container}>
+      <ColumnHeading text="Services Consent" sub="(read-only)" />
+
+      {isLoading ? (
+        <View style={consentColStyles.loadingRow}>
+          <ActivityIndicator size="small" color={tokens.textMuted} />
+          <Text style={consentColStyles.loadingText}>Loading…</Text>
         </View>
-        <View style={billingStyles.statsRow}>
-          <Text
+      ) : consentValue === null ? (
+        <View style={[consentColStyles.statusBlock, consentColStyles.statusNeutral]}>
+          <ShieldOff size={18} color="#A0A6AB" />
+          <Text style={[consentColStyles.statusLabel, { color: '#A0A6AB' }]}>
+            Status unavailable
+          </Text>
+          <Text style={consentColStyles.statusSub}>
+            Consent data not yet available for this member.
+          </Text>
+        </View>
+      ) : isRefused ? (
+        <View style={[consentColStyles.statusBlock, consentColStyles.statusRefused]}>
+          <ShieldX size={18} color="#B91C1C" />
+          <Text style={[consentColStyles.statusLabel, { color: '#B91C1C' }]}>
+            Refused Services
+          </Text>
+          <Text style={[consentColStyles.statusSub, { color: '#DC2626' }]}>
+            Member has refused services. Call and Message actions are disabled.
+          </Text>
+        </View>
+      ) : (
+        <View style={[consentColStyles.statusBlock, consentColStyles.statusGranted]}>
+          <ShieldCheck size={18} color="#15803D" />
+          <Text style={[consentColStyles.statusLabel, { color: '#15803D' }]}>
+            Consented to Services
+          </Text>
+          <Text style={consentColStyles.statusSub}>
+            Member has consented to receive CHW services.
+          </Text>
+        </View>
+      )}
+
+      {consentData?.changedAt ? (
+        <Text style={consentColStyles.changedAt}>
+          Last updated: {formatDate(consentData.changedAt)}
+        </Text>
+      ) : null}
+
+      {/* Policy notice */}
+      <View style={consentColStyles.noticeBox}>
+        <Shield size={11} color="#9CA3AF" />
+        <Text style={consentColStyles.noticeText}>
+          This consent is member-controlled and cannot be changed from the CHW side.
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+const consentColStyles = StyleSheet.create({
+  container: {
+    flex: Platform.OS === 'web' ? 3 : undefined,
+    padding: 20,
+    borderRightWidth: Platform.OS === 'web' ? 1 : 0,
+    borderRightColor: '#F3F4F6',
+    borderTopWidth: Platform.OS === 'web' ? 0 : 1,
+    borderTopColor: '#F3F4F6',
+  } as ViewStyle,
+  loadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 16,
+  } as ViewStyle,
+  loadingText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: tokens.textMuted,
+  } as TextStyle,
+  statusBlock: {
+    borderRadius: radius.md,
+    padding: 12,
+    gap: 6,
+    marginBottom: 10,
+  } as ViewStyle,
+  statusGranted: {
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBFBCA',
+  } as ViewStyle,
+  statusRefused: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  } as ViewStyle,
+  statusNeutral: {
+    backgroundColor: '#F9FAFB',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  } as ViewStyle,
+  statusLabel: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 13,
+  } as TextStyle,
+  statusSub: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 12,
+    color: '#6B7280',
+    lineHeight: 18,
+  } as TextStyle,
+  changedAt: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: '#9CA3AF',
+    marginBottom: 10,
+  } as TextStyle,
+  noticeBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    backgroundColor: '#F9FAFB',
+    borderRadius: radius.sm,
+    padding: 8,
+    marginTop: 4,
+  } as ViewStyle,
+  noticeText: {
+    flex: 1,
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: '#9CA3AF',
+    lineHeight: 16,
+  } as TextStyle,
+});
+
+// ─── ActiveJourneysAndCTAColumn ───────────────────────────────────────────────
+
+interface ActiveJourneysAndCTAColumnProps {
+  memberId: string;
+  displayName: string;
+  sessionCount: number;
+  servicesConsentRefused: boolean;
+  onNavigateToConversation: (conversationId: string) => void;
+  onNavigateAndCall: () => void;
+}
+
+/**
+ * Right column of the 3-column top card.
+ * Shows: Active Journeys list, Member wellness points balance, Call/Message CTAs.
+ * CTAs are dimmed + disabled when the member has refused services.
+ */
+function ActiveJourneysAndCTAColumn({
+  memberId,
+  displayName,
+  sessionCount,
+  servicesConsentRefused,
+  onNavigateToConversation,
+  onNavigateAndCall,
+}: ActiveJourneysAndCTAColumnProps): React.JSX.Element {
+  const { data: journeys, isLoading: journeysLoading } = useMemberJourneys(memberId);
+  const { data: rewardsBalance } = useMemberRewardsBalance(memberId);
+
+  const activeJourneys = useMemo(
+    () => journeys?.filter((j) => j.status === 'active') ?? [],
+    [journeys],
+  );
+
+  const ctaDisabled = servicesConsentRefused;
+  const ctaOpacity = ctaDisabled ? 0.45 : 1;
+
+  return (
+    <View style={ctaColStyles.container}>
+      <ColumnHeading text="Active Journeys" />
+
+      {/* Journeys list */}
+      {journeysLoading ? (
+        <View style={ctaColStyles.loadingRow}>
+          <ActivityIndicator size="small" color={tokens.textMuted} />
+          <Text style={ctaColStyles.loadingText}>Loading journeys…</Text>
+        </View>
+      ) : activeJourneys.length === 0 ? (
+        <Text style={ctaColStyles.emptyJourneys}>No active journeys.</Text>
+      ) : (
+        <View style={ctaColStyles.journeyList}>
+          {activeJourneys.slice(0, 3).map((journey) => (
+            <JourneyListRow key={journey.id} journey={journey} />
+          ))}
+          {activeJourneys.length > 3 && (
+            <Text style={ctaColStyles.moreJourneys}>
+              +{activeJourneys.length - 3} more
+            </Text>
+          )}
+        </View>
+      )}
+
+      {/* Rewards balance */}
+      {rewardsBalance !== undefined && (
+        <View style={ctaColStyles.rewardsBadge}>
+          <Star size={12} color="#D97706" />
+          <Text style={ctaColStyles.rewardsText}>
+            {rewardsBalance.currentBalance.toLocaleString()} wellness pts
+          </Text>
+        </View>
+      )}
+
+      {/* Services refused caption */}
+      {servicesConsentRefused && (
+        <View style={ctaColStyles.refusedCaption}>
+          <ShieldX size={11} color="#B91C1C" />
+          <Text style={ctaColStyles.refusedCaptionText}>
+            Member has refused services
+          </Text>
+        </View>
+      )}
+
+      {/* Call / Message CTAs */}
+      <View style={[ctaColStyles.ctaRow, { opacity: ctaOpacity }]}>
+        <TouchableOpacity
+          style={[ctaColStyles.ctaBtn, ctaColStyles.callBtn]}
+          onPress={ctaDisabled ? undefined : onNavigateAndCall}
+          disabled={ctaDisabled}
+          accessibilityRole="button"
+          accessibilityLabel={ctaDisabled ? 'Call disabled — member has refused services' : `Call ${displayName}`}
+          accessibilityState={{ disabled: ctaDisabled }}
+        >
+          <Phone size={14} color="#FFFFFF" />
+          <Text style={ctaColStyles.ctaBtnText}>Call</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[ctaColStyles.ctaBtn, ctaColStyles.messageBtn]}
+          onPress={
+            ctaDisabled
+              ? undefined
+              : () => onNavigateToConversation('')
+          }
+          disabled={ctaDisabled}
+          accessibilityRole="button"
+          accessibilityLabel={ctaDisabled ? 'Message disabled — member has refused services' : `Message ${displayName}`}
+          accessibilityState={{ disabled: ctaDisabled }}
+        >
+          <MessageSquare size={14} color={tokens.primary} />
+          <Text style={[ctaColStyles.ctaBtnText, { color: tokens.primary }]}>
+            Message
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Session count chip */}
+      {sessionCount > 0 && (
+        <View style={ctaColStyles.sessionCountRow}>
+          <Text style={ctaColStyles.sessionCountText}>
+            {sessionCount} session{sessionCount !== 1 ? 's' : ''} completed
+          </Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+interface JourneyListRowProps {
+  journey: MemberJourneyResponse;
+}
+
+function JourneyListRow({ journey }: JourneyListRowProps): React.JSX.Element {
+  const currentStepName = journey.currentStep?.stepName ?? null;
+  const progressPercent = Math.round(journey.progressPercent);
+
+  return (
+    <View style={journeyRowStyles.container}>
+      <View style={journeyRowStyles.header}>
+        <Text style={journeyRowStyles.name} numberOfLines={1}>
+          {journey.template.name}
+        </Text>
+        <Text style={journeyRowStyles.percent}>{progressPercent}%</Text>
+      </View>
+      {currentStepName ? (
+        <Text style={journeyRowStyles.step} numberOfLines={1}>
+          {currentStepName}
+        </Text>
+      ) : null}
+      {/* Progress bar */}
+      <View style={journeyRowStyles.barTrack}>
+        <View
+          style={[
+            journeyRowStyles.barFill,
+            { width: `${progressPercent}%` as `${number}%` },
+          ]}
+        />
+      </View>
+    </View>
+  );
+}
+
+const journeyRowStyles = StyleSheet.create({
+  container: {
+    gap: 4,
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  } as ViewStyle,
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  } as ViewStyle,
+  name: {
+    flex: 1,
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12,
+    color: '#111827',
+  } as TextStyle,
+  percent: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 11,
+    color: tokens.primary,
+    marginLeft: 6,
+  } as TextStyle,
+  step: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: '#6B7280',
+  } as TextStyle,
+  barTrack: {
+    height: 4,
+    backgroundColor: '#E5E7EB',
+    borderRadius: 2,
+    overflow: 'hidden',
+  } as ViewStyle,
+  barFill: {
+    height: '100%',
+    backgroundColor: tokens.primary,
+    borderRadius: 2,
+  } as ViewStyle,
+});
+
+const ctaColStyles = StyleSheet.create({
+  container: {
+    flex: Platform.OS === 'web' ? 3 : undefined,
+    padding: 20,
+    borderTopWidth: Platform.OS === 'web' ? 0 : 1,
+    borderTopColor: '#F3F4F6',
+    gap: 8,
+  } as ViewStyle,
+  loadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+  } as ViewStyle,
+  loadingText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 12,
+    color: tokens.textMuted,
+  } as TextStyle,
+  emptyJourneys: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 12,
+    color: '#A0A6AB',
+    fontStyle: 'italic',
+  } as TextStyle,
+  journeyList: {
+    gap: 0,
+  } as ViewStyle,
+  moreJourneys: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: '#9CA3AF',
+    paddingTop: 4,
+  } as TextStyle,
+  rewardsBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#FFFBEB',
+    borderRadius: radius.pill,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  } as ViewStyle,
+  rewardsText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 11,
+    color: '#D97706',
+  } as TextStyle,
+  refusedCaption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#FEF2F2',
+    borderRadius: radius.sm,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  } as ViewStyle,
+  refusedCaptionText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 11,
+    color: '#B91C1C',
+  } as TextStyle,
+  ctaRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 4,
+  } as ViewStyle,
+  ctaBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 9,
+    borderRadius: radius.md,
+  } as ViewStyle,
+  callBtn: {
+    backgroundColor: tokens.primary,
+  } as ViewStyle,
+  messageBtn: {
+    backgroundColor: tokens.primary + '12',
+    borderWidth: 1,
+    borderColor: tokens.primary + '40',
+  } as ViewStyle,
+  ctaBtnText: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 13,
+    color: '#FFFFFF',
+  } as TextStyle,
+  sessionCountRow: {
+    alignItems: 'center',
+  } as ViewStyle,
+  sessionCountText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: '#9CA3AF',
+  } as TextStyle,
+});
+
+// ─── JourneyRoadmap ───────────────────────────────────────────────────────────
+
+/**
+ * Maps a MemberJourneyResponse to the 6-step roadmap display data.
+ * Derives step state from the backend step.status values.
+ */
+function buildRoadmapSteps(journey: MemberJourneyResponse | undefined) {
+  const standardStepKeys = [
+    'Need Identified',
+    'Eligibility Screening',
+    'Upload Documents',
+    'Follow Up',
+    'Resource Connection',
+    'Journey Complete',
+  ];
+
+  if (!journey) {
+    return standardStepKeys.map((key) => ({
+      key,
+      label: key,
+      state: 'upcoming' as const,
+      points: JOURNEY_STEP_POINTS[key] ?? 0,
+    }));
+  }
+
+  return standardStepKeys.map((key) => {
+    const backendStep = journey.steps.find((s) => s.stepName === key);
+    const state = backendStep?.status ?? ('upcoming' as const);
+    return {
+      key,
+      label: key,
+      state,
+      points: backendStep?.pointsOnCompletion ?? JOURNEY_STEP_POINTS[key] ?? 0,
+    };
+  });
+}
+
+type RoadmapStepState = 'completed' | 'in_progress' | 'missed' | 'upcoming';
+
+interface RoadmapStep {
+  key: string;
+  label: string;
+  state: RoadmapStepState;
+  points: number;
+}
+
+interface JourneyRoadmapProps {
+  memberId: string;
+}
+
+/**
+ * Horizontal 6-step journey roadmap.
+ * Fetches the member's active journey and renders step states with points.
+ * Falls back to all-upcoming display when no journey data is available.
+ */
+function JourneyRoadmap({ memberId }: JourneyRoadmapProps): React.JSX.Element {
+  const { data: journeys, isLoading } = useMemberJourneys(memberId);
+  const activeJourney = useMemo(
+    () => journeys?.find((j) => j.status === 'active'),
+    [journeys],
+  );
+  const roadmapSteps: RoadmapStep[] = useMemo(
+    () => buildRoadmapSteps(activeJourney),
+    [activeJourney],
+  );
+
+  if (isLoading) {
+    return (
+      <View style={roadmapStyles.loadingRow}>
+        <ActivityIndicator size="small" color={tokens.textMuted} />
+        <Text style={roadmapStyles.loadingText}>Loading journey…</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={roadmapStyles.container}>
+      {activeJourney && (
+        <View style={roadmapStyles.templateBadge}>
+          <Text style={roadmapStyles.templateName}>
+            {activeJourney.template.name}
+          </Text>
+          <Text style={roadmapStyles.templateProgress}>
+            {Math.round(activeJourney.progressPercent)}% complete
+          </Text>
+        </View>
+      )}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={roadmapStyles.row}
+      >
+        {roadmapSteps.map((step, index) => {
+          const isLast = index === roadmapSteps.length - 1;
+          const isCompleted = step.state === 'completed';
+          const isInProgress = step.state === 'in_progress';
+          const isMissed = step.state === 'missed';
+          const isUpcoming = step.state === 'upcoming';
+
+          const dotBg = isCompleted || isInProgress
+            ? '#16A34A'
+            : isMissed
+            ? '#F59E0B'
+            : '#E5E7EB';
+
+          const lineBg = isCompleted ? '#16A34A' : '#E5E7EB';
+
+          const subLabelText = isCompleted
+            ? 'Completed'
+            : isInProgress
+            ? 'In Progress'
+            : isMissed
+            ? 'Missed'
+            : '';
+
+          const subLabelColor = isCompleted
+            ? '#6B7280'
+            : isInProgress
+            ? '#16A34A'
+            : isMissed
+            ? '#EF4444'
+            : '#9CA3AF';
+
+          return (
+            <View key={step.key} style={roadmapStyles.stepWrapper}>
+              {/* Circle + outer ring for in-progress/missed */}
+              <View
+                style={[
+                  roadmapStyles.circleOuter,
+                  isInProgress && roadmapStyles.circleInProgress,
+                  isMissed && roadmapStyles.circleMissed,
+                ]}
+              >
+                <View style={[roadmapStyles.dot, { backgroundColor: dotBg }]}>
+                  {isCompleted || isInProgress ? (
+                    <CheckCircle size={20} color="#FFFFFF" />
+                  ) : isMissed ? (
+                    <Clock size={20} color="#FFFFFF" />
+                  ) : (
+                    <View style={roadmapStyles.dotInner} />
+                  )}
+                </View>
+              </View>
+
+              {/* Connector line */}
+              {!isLast && (
+                <View style={[roadmapStyles.connector, { backgroundColor: lineBg }]} />
+              )}
+
+              {/* Labels */}
+              <Text
+                style={[
+                  roadmapStyles.label,
+                  !isUpcoming && roadmapStyles.labelActive,
+                ]}
+              >
+                {step.label}
+              </Text>
+              {subLabelText ? (
+                <Text style={[roadmapStyles.subLabel, { color: subLabelColor }]}>
+                  {subLabelText}
+                </Text>
+              ) : null}
+              <Text
+                style={[
+                  roadmapStyles.points,
+                  isUpcoming && roadmapStyles.pointsMuted,
+                ]}
+              >
+                +{step.points} pts
+              </Text>
+            </View>
+          );
+        })}
+      </ScrollView>
+    </View>
+  );
+}
+
+const roadmapStyles = StyleSheet.create({
+  container: { paddingHorizontal: 4 } as ViewStyle,
+  loadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 20,
+  } as ViewStyle,
+  loadingText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: tokens.textMuted,
+  } as TextStyle,
+  templateBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 12,
+    paddingHorizontal: 4,
+  } as ViewStyle,
+  templateName: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 13,
+    color: '#111827',
+  } as TextStyle,
+  templateProgress: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 12,
+    color: tokens.textSecondary,
+  } as TextStyle,
+  row: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingVertical: 4,
+    paddingBottom: 8,
+  } as ViewStyle,
+  stepWrapper: {
+    alignItems: 'center',
+    position: 'relative',
+    width: 104,
+    flexShrink: 0,
+  } as ViewStyle,
+  circleOuter: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+    marginBottom: 8,
+    zIndex: 1,
+  } as ViewStyle,
+  circleInProgress: {
+    borderWidth: 3,
+    borderColor: '#FCD34D',
+  } as ViewStyle,
+  circleMissed: {
+    borderWidth: 3,
+    borderColor: '#FCA5A5',
+  } as ViewStyle,
+  dot: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+  dotInner: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: '#9CA3AF',
+  } as ViewStyle,
+  connector: {
+    position: 'absolute',
+    top: 25,
+    left: '50%',
+    right: '-50%',
+    height: 3,
+    zIndex: 0,
+  } as ViewStyle,
+  label: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 10,
+    color: '#9CA3AF',
+    textAlign: 'center',
+    maxWidth: 90,
+  } as TextStyle,
+  labelActive: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    color: '#111827',
+  } as TextStyle,
+  subLabel: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 10,
+    textAlign: 'center',
+    marginTop: 1,
+  } as TextStyle,
+  points: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 10,
+    color: '#047857',
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 999,
+    marginTop: 3,
+    textAlign: 'center',
+    overflow: 'hidden',
+  } as TextStyle,
+  pointsMuted: {
+    color: '#6B7280',
+    backgroundColor: '#F3F4F6',
+  } as TextStyle,
+});
+
+// ─── QuickAccessRow ───────────────────────────────────────────────────────────
+
+interface QuickAccessRowProps {
+  memberId: string;
+  displayName: string;
+  onAddNote: () => void;
+  onFlagMember: () => void;
+  onScheduleSession: () => void;
+  onDocumentSession: () => void;
+}
+
+/**
+ * Horizontal row of 4 frequently-used CHW actions for this member.
+ * Each button is tappable and routes to the appropriate action.
+ */
+function QuickAccessRow({
+  onAddNote,
+  onFlagMember,
+  onScheduleSession,
+  onDocumentSession,
+}: QuickAccessRowProps): React.JSX.Element {
+  const quickActions: Array<{
+    icon: React.ReactNode;
+    label: string;
+    iconBg: string;
+    onPress: () => void;
+  }> = [
+    {
+      icon: <NotebookPen size={16} color="#2563EB" />,
+      label: 'Add Note',
+      iconBg: '#EFF6FF',
+      onPress: onAddNote,
+    },
+    {
+      icon: <Flag size={16} color="#DC2626" />,
+      label: 'Flag Member',
+      iconBg: '#FEF2F2',
+      onPress: onFlagMember,
+    },
+    {
+      icon: <Calendar size={16} color="#7C3AED" />,
+      label: 'Schedule Session',
+      iconBg: '#F5F3FF',
+      onPress: onScheduleSession,
+    },
+    {
+      icon: <ClipboardList size={16} color="#D97706" />,
+      label: 'Document Session',
+      iconBg: '#FFFBEB',
+      onPress: onDocumentSession,
+    },
+  ];
+
+  return (
+    <Card style={quickRowStyles.card}>
+      <View style={quickRowStyles.row}>
+        {quickActions.map((action, index) => (
+          <TouchableOpacity
+            key={action.label}
             style={[
-              billingStyles.usedLabel,
-              yearAtCap && billingStyles.usedLabelDanger,
+              quickRowStyles.actionBtn,
+              index < quickActions.length - 1 && quickRowStyles.actionBtnBorder,
             ]}
+            onPress={action.onPress}
+            accessibilityRole="button"
+            accessibilityLabel={action.label}
           >
-            {units.yearlyUsed} used
+            <View style={[quickRowStyles.iconCircle, { backgroundColor: action.iconBg }]}>
+              {action.icon}
+            </View>
+            <Text style={quickRowStyles.actionLabel}>{action.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+    </Card>
+  );
+}
+
+const quickRowStyles = StyleSheet.create({
+  card: {
+    marginBottom: 20,
+    overflow: 'hidden',
+  } as ViewStyle,
+  row: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+  } as ViewStyle,
+  actionBtn: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 16,
+    paddingHorizontal: 8,
+  } as ViewStyle,
+  actionBtnBorder: {
+    borderRightWidth: 1,
+    borderRightColor: '#F3F4F6',
+  } as ViewStyle,
+  iconCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+  actionLabel: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 11,
+    color: '#374151',
+    textAlign: 'center',
+  } as TextStyle,
+});
+
+// ─── BillableUnitsWidget ──────────────────────────────────────────────────────
+
+interface BillableUnitsWidgetProps {
+  memberId: string;
+}
+
+/**
+ * Billable Units widget sourced from GET /chw/members/{id}/billable-units.
+ * Shows today's count vs daily cap and this year's count vs yearly cap.
+ * Renders a disabled-style banner when can_bill is false (daily cap reached).
+ */
+function BillableUnitsWidget({ memberId }: BillableUnitsWidgetProps): React.JSX.Element {
+  const { data: units, isLoading } = useChwBillableUnits(memberId);
+
+  if (isLoading) {
+    return (
+      <View style={billingWidgetStyles.loadingRow}>
+        <ActivityIndicator size="small" color={tokens.textMuted} />
+        <Text style={billingWidgetStyles.loadingText}>Loading billing data…</Text>
+      </View>
+    );
+  }
+
+  if (units === null || units === undefined) {
+    return (
+      <View style={billingWidgetStyles.unavailable}>
+        <Text style={billingWidgetStyles.unavailableText}>
+          Billing data not available — requires an active care relationship.
+        </Text>
+      </View>
+    );
+  }
+
+  const dailyAtCap = units.daily.remaining === 0;
+  const yearlyAtCap = units.yearly.remaining === 0;
+  const canBill = !dailyAtCap;
+
+  return (
+    <View>
+      {!canBill && (
+        <View style={billingWidgetStyles.capBanner}>
+          <Text style={billingWidgetStyles.capBannerText}>
+            Daily billing cap reached — no additional units can be billed today.
           </Text>
-          <Text style={billingStyles.remainingLabel}>
-            {units.yearlyRemaining} left
-          </Text>
+        </View>
+      )}
+      <View style={billingWidgetStyles.grid}>
+        {/* Today */}
+        <View style={billingWidgetStyles.cell}>
+          <Text style={billingWidgetStyles.periodLabel}>Today</Text>
+          <View style={billingWidgetStyles.barTrack}>
+            <View
+              style={[
+                billingWidgetStyles.barFill,
+                {
+                  width: `${(units.daily.used / units.daily.limit) * 100}%` as `${number}%`,
+                  backgroundColor: dailyAtCap ? '#DC2626' : tokens.primary,
+                },
+              ]}
+            />
+          </View>
+          <View style={billingWidgetStyles.statsRow}>
+            <Text
+              style={[
+                billingWidgetStyles.usedLabel,
+                dailyAtCap && billingWidgetStyles.usedLabelDanger,
+              ]}
+            >
+              {units.daily.used} / {units.daily.limit} used
+            </Text>
+            <Text style={billingWidgetStyles.remainingLabel}>
+              {units.daily.remaining} left
+            </Text>
+          </View>
+        </View>
+
+        <View style={billingWidgetStyles.divider} />
+
+        {/* This year */}
+        <View style={billingWidgetStyles.cell}>
+          <Text style={billingWidgetStyles.periodLabel}>This Year</Text>
+          <View style={billingWidgetStyles.barTrack}>
+            <View
+              style={[
+                billingWidgetStyles.barFill,
+                {
+                  width: `${(units.yearly.used / units.yearly.limit) * 100}%` as `${number}%`,
+                  backgroundColor: yearlyAtCap ? '#DC2626' : tokens.primary,
+                },
+              ]}
+            />
+          </View>
+          <View style={billingWidgetStyles.statsRow}>
+            <Text
+              style={[
+                billingWidgetStyles.usedLabel,
+                yearlyAtCap && billingWidgetStyles.usedLabelDanger,
+              ]}
+            >
+              {units.yearly.used} / {units.yearly.limit} used
+            </Text>
+            <Text style={billingWidgetStyles.remainingLabel}>
+              {units.yearly.remaining} left
+            </Text>
+          </View>
         </View>
       </View>
     </View>
   );
 }
 
-const billingStyles = StyleSheet.create({
-  card: {
+const billingWidgetStyles = StyleSheet.create({
+  loadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 12,
+  } as ViewStyle,
+  loadingText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: tokens.textMuted,
+  } as TextStyle,
+  unavailable: {
+    backgroundColor: '#F9FAFB',
+    borderRadius: radius.md,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  } as ViewStyle,
+  unavailableText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: '#6B7280',
+    fontStyle: 'italic',
+  } as TextStyle,
+  capBanner: {
+    backgroundColor: '#FEF2F2',
+    borderRadius: radius.md,
+    padding: 10,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  } as ViewStyle,
+  capBannerText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12,
+    color: '#B91C1C',
+    textAlign: 'center',
+  } as TextStyle,
+  grid: {
     flexDirection: 'row',
     alignItems: 'stretch',
     backgroundColor: '#F4F1ED',
-    borderRadius: 12,
+    borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: '#DDD6CC',
     overflow: 'hidden',
   } as ViewStyle,
-  halfBlock: {
+  cell: {
     flex: 1,
     padding: 12,
     gap: 8,
   } as ViewStyle,
-  verticalDivider: {
+  divider: {
     width: 1,
     backgroundColor: '#DDD6CC',
   } as ViewStyle,
@@ -602,722 +1656,523 @@ const billingStyles = StyleSheet.create({
   } as TextStyle,
 });
 
-// ─── AssessmentSection ────────────────────────────────────────────────────────
+// ─── SessionsTable ────────────────────────────────────────────────────────────
 
-interface AssessmentSectionProps {
-  memberId: string;
+interface SessionsTableProps {
+  sessions: RecentSessionItem[];
+  totalCount: number;
+  onViewSession: (sessionId: string) => void;
 }
 
-function AssessmentSection({ memberId }: AssessmentSectionProps): React.JSX.Element {
-  const { data: assessment, isLoading } = useAssessmentLatest(memberId);
+/**
+ * Paginated sessions table.
+ * Columns: Date & Time / Type / Status / Duration / Modality / Actions (View notes).
+ * 20 rows per page with previous/next pagination controls.
+ */
+function SessionsTable({
+  sessions,
+  totalCount,
+  onViewSession,
+}: SessionsTableProps): React.JSX.Element {
+  const [currentPage, setCurrentPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(sessions.length / SESSIONS_PAGE_SIZE));
+
+  const pageSlice = useMemo(() => {
+    const startIndex = (currentPage - 1) * SESSIONS_PAGE_SIZE;
+    return sessions.slice(startIndex, startIndex + SESSIONS_PAGE_SIZE);
+  }, [sessions, currentPage]);
+
+  const handlePreviousPage = useCallback((): void => {
+    setCurrentPage((prev) => Math.max(1, prev - 1));
+  }, []);
+
+  const handleNextPage = useCallback((): void => {
+    setCurrentPage((prev) => Math.min(totalPages, prev + 1));
+  }, [totalPages]);
+
+  if (sessions.length === 0) {
+    return <EmptySectionState message="No sessions with this member yet." />;
+  }
 
   return (
-    <SectionCard
-      title="Latest Assessment"
-      titleRight={
-        <View style={assessmentStyles.badge}>
-          <Sparkles size={10} color={colors.secondary} />
-          <Text style={assessmentStyles.badgeText}>Beta</Text>
-        </View>
-      }
-    >
-      {isLoading ? (
-        <View style={assessmentStyles.loadingRow}>
-          <ActivityIndicator size="small" color={colors.mutedForeground} />
-          <Text style={assessmentStyles.loadingText}>Loading assessment...</Text>
-        </View>
-      ) : assessment ? (
-        <View style={assessmentStyles.present}>
-          <View style={assessmentStyles.metaRow}>
-            <Calendar size={14} color={colors.primary} />
-            <Text style={assessmentStyles.completedAt}>
-              Completed {formatDate(assessment.completedAt)}
-            </Text>
-          </View>
-          {Object.entries(assessment.responseCounts).map(([category, count]) => (
-            <View key={category} style={assessmentStyles.categoryRow}>
-              <Text style={assessmentStyles.categoryLabel}>{category}</Text>
-              <Text style={assessmentStyles.categoryCount}>{count} responses</Text>
-            </View>
-          ))}
-        </View>
-      ) : (
-        <EmptySectionState message="No assessment recorded yet." />
-      )}
-    </SectionCard>
-  );
-}
-
-const assessmentStyles = StyleSheet.create({
-  badge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: colors.secondary + '20',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 100,
-  } as ViewStyle,
-  badgeText: {
-    fontFamily: fonts.bodySemibold,
-    fontSize: 10,
-    color: colors.secondary,
-  } as TextStyle,
-  loadingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 12,
-  } as ViewStyle,
-  loadingText: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 13,
-    color: colors.mutedForeground,
-  } as TextStyle,
-  present: { gap: 8 } as ViewStyle,
-  metaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  } as ViewStyle,
-  completedAt: {
-    fontFamily: fonts.bodySemibold,
-    fontSize: 13,
-    color: '#1E3320',
-  } as TextStyle,
-  categoryRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#F4F1ED',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  } as ViewStyle,
-  categoryLabel: {
-    fontFamily: fonts.bodySemibold,
-    fontSize: 12,
-    color: '#1E3320',
-    textTransform: 'capitalize',
-  } as TextStyle,
-  categoryCount: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 12,
-    color: '#6B7280',
-  } as TextStyle,
-});
-
-// ─── SessionHistoryItem ───────────────────────────────────────────────────────
-
-interface SessionHistoryItemProps {
-  session: RecentSessionItem;
-  onView: (sessionId: string) => void;
-}
-
-function SessionHistoryItem({
-  session,
-  onView,
-}: SessionHistoryItemProps): React.JSX.Element {
-  const statusLabel = SESSION_STATUS_LABELS[session.status] ?? session.status;
-  const modeLabel = SESSION_MODE_LABELS[session.mode] ?? session.mode;
-  const isCompleted = session.status === 'completed';
-
-  const statusColor =
-    session.status === 'in_progress'
-      ? colors.compassGold
-      : session.status === 'completed'
-      ? colors.primary
-      : session.status === 'cancelled'
-      ? colors.mutedForeground
-      : colors.secondary;
-
-  return (
-    <View style={sessionItemStyles.container}>
-      <View style={sessionItemStyles.left}>
-        <Text style={sessionItemStyles.date}>
-          {formatDateTime(session.scheduledAt ?? session.startedAt)}
-        </Text>
-        <View style={sessionItemStyles.badgeRow}>
-          <View style={sessionItemStyles.modeBadge}>
-            <Text style={sessionItemStyles.modeText}>{modeLabel}</Text>
-          </View>
-          <View
-            style={[
-              sessionItemStyles.statusBadge,
-              { backgroundColor: statusColor + '18' },
-            ]}
-          >
-            <Text
-              style={[sessionItemStyles.statusText, { color: statusColor }]}
-            >
-              {statusLabel}
-            </Text>
-          </View>
-        </View>
-        {isCompleted && (
-          <View style={sessionItemStyles.statsRow}>
-            {session.durationMinutes != null && (
-              <View style={sessionItemStyles.statChip}>
-                <Clock size={10} color={colors.mutedForeground} />
-                <Text style={sessionItemStyles.statText}>
-                  {session.durationMinutes} min
-                </Text>
-              </View>
-            )}
-            {session.unitsBilled != null && (
-              <View style={sessionItemStyles.statChip}>
-                <Text style={sessionItemStyles.statText}>
-                  {session.unitsBilled} unit{session.unitsBilled !== 1 ? 's' : ''}
-                </Text>
-              </View>
-            )}
-          </View>
-        )}
+    <View>
+      {/* Table header */}
+      <View style={tableStyles.header}>
+        <Text style={[tableStyles.headerCell, tableStyles.colDate]}>Date & Time</Text>
+        <Text style={[tableStyles.headerCell, tableStyles.colStatus]}>Status</Text>
+        <Text style={[tableStyles.headerCell, tableStyles.colModality]}>Modality</Text>
+        <Text style={[tableStyles.headerCell, tableStyles.colDuration]}>Duration</Text>
+        <Text style={[tableStyles.headerCell, tableStyles.colActions]}>Actions</Text>
       </View>
-      <TouchableOpacity
-        style={sessionItemStyles.viewBtn}
-        onPress={() => onView(session.id)}
-        accessibilityRole="button"
-        accessibilityLabel={`View session from ${formatDateTime(session.scheduledAt)}`}
-      >
-        <Text style={sessionItemStyles.viewBtnText}>View</Text>
-      </TouchableOpacity>
+
+      {/* Table rows */}
+      {pageSlice.map((session) => {
+        const statusLabel = SESSION_STATUS_LABELS[session.status] ?? session.status;
+        const modeLabel = SESSION_MODE_LABELS[session.mode] ?? session.mode;
+        const statusColor =
+          session.status === 'completed'
+            ? tokens.primary
+            : session.status === 'in_progress'
+            ? '#D97706'
+            : session.status === 'cancelled'
+            ? '#9CA3AF'
+            : '#6B7280';
+
+        return (
+          <View key={session.id} style={tableStyles.row}>
+            <Text style={[tableStyles.cell, tableStyles.colDate, tableStyles.dateText]}>
+              {formatDateTime(session.scheduledAt ?? session.startedAt)}
+            </Text>
+            <View style={tableStyles.colStatus}>
+              <View style={[tableStyles.statusPill, { backgroundColor: statusColor + '18' }]}>
+                <Text style={[tableStyles.statusText, { color: statusColor }]}>
+                  {statusLabel}
+                </Text>
+              </View>
+            </View>
+            <Text style={[tableStyles.cell, tableStyles.colModality]}>
+              {modeLabel}
+            </Text>
+            <Text style={[tableStyles.cell, tableStyles.colDuration]}>
+              {session.durationMinutes != null
+                ? `${session.durationMinutes} min`
+                : '—'}
+            </Text>
+            <View style={tableStyles.colActions}>
+              <TouchableOpacity
+                style={tableStyles.viewBtn}
+                onPress={() => onViewSession(session.id)}
+                accessibilityRole="button"
+                accessibilityLabel={`View notes for session on ${formatDateTime(session.scheduledAt)}`}
+              >
+                <Text style={tableStyles.viewBtnText}>View notes</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        );
+      })}
+
+      {/* Pagination controls */}
+      <View style={tableStyles.pagination}>
+        <Text style={tableStyles.pageInfo}>
+          {sessions.length} session{sessions.length !== 1 ? 's' : ''}
+          {totalCount > sessions.length ? ` (showing ${sessions.length})` : ''}
+          {' · '}Page {currentPage} of {totalPages}
+        </Text>
+        <View style={tableStyles.pageButtons}>
+          <TouchableOpacity
+            style={[tableStyles.pageBtn, currentPage === 1 && tableStyles.pageBtnDisabled]}
+            onPress={handlePreviousPage}
+            disabled={currentPage === 1}
+            accessibilityRole="button"
+            accessibilityLabel="Previous page"
+            accessibilityState={{ disabled: currentPage === 1 }}
+          >
+            <ArrowLeft size={14} color={currentPage === 1 ? '#9CA3AF' : tokens.primary} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[tableStyles.pageBtn, currentPage === totalPages && tableStyles.pageBtnDisabled]}
+            onPress={handleNextPage}
+            disabled={currentPage === totalPages}
+            accessibilityRole="button"
+            accessibilityLabel="Next page"
+            accessibilityState={{ disabled: currentPage === totalPages }}
+          >
+            <ArrowRight size={14} color={currentPage === totalPages ? '#9CA3AF' : tokens.primary} />
+          </TouchableOpacity>
+        </View>
+      </View>
     </View>
   );
 }
 
-const sessionItemStyles = StyleSheet.create({
-  container: {
+const tableStyles = StyleSheet.create({
+  header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#DDD6CC',
-    gap: 10,
+    paddingVertical: 8,
+    borderBottomWidth: 2,
+    borderBottomColor: '#E5E7EB',
+    marginBottom: 2,
   } as ViewStyle,
-  left: {
-    flex: 1,
-    gap: 4,
-  } as ViewStyle,
-  date: {
-    fontFamily: fonts.bodySemibold,
-    fontSize: 13,
-    color: '#1E3320',
-  } as TextStyle,
-  badgeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    flexWrap: 'wrap',
-  } as ViewStyle,
-  modeBadge: {
-    backgroundColor: '#F4F1ED',
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-  } as ViewStyle,
-  modeText: {
-    fontFamily: 'PlusJakartaSans_400Regular',
+  headerCell: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 11,
     color: '#6B7280',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   } as TextStyle,
-  statusBadge: {
-    borderRadius: 6,
-    paddingHorizontal: 8,
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  } as ViewStyle,
+  cell: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: '#374151',
+  } as TextStyle,
+  // Column width distribution
+  colDate: { flex: 3 } as ViewStyle,
+  colStatus: { flex: 2 } as ViewStyle,
+  colModality: { flex: 2 } as ViewStyle,
+  colDuration: { flex: 1.5 } as ViewStyle,
+  colActions: { flex: 2, alignItems: 'flex-end' } as ViewStyle,
+  dateText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12,
+    color: '#111827',
+  } as TextStyle,
+  statusPill: {
+    borderRadius: radius.sm,
+    paddingHorizontal: 7,
     paddingVertical: 2,
+    alignSelf: 'flex-start',
   } as ViewStyle,
   statusText: {
     fontFamily: fonts.bodySemibold,
     fontSize: 11,
   } as TextStyle,
-  statsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  } as ViewStyle,
-  statChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    backgroundColor: '#F4F1ED',
-    borderRadius: 6,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  } as ViewStyle,
-  statText: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 11,
-    color: colors.mutedForeground,
-  } as TextStyle,
   viewBtn: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    backgroundColor: colors.primary + '15',
-    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: tokens.primary + '12',
+    borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: colors.primary + '40',
-    flexShrink: 0,
+    borderColor: tokens.primary + '35',
   } as ViewStyle,
   viewBtnText: {
     fontFamily: fonts.bodySemibold,
-    fontSize: 12,
-    color: colors.primary,
-  } as TextStyle,
-});
-
-// ─── GoalItem / FollowupItem ──────────────────────────────────────────────────
-
-interface ActionItemProps {
-  text: string;
-  dueDate: string | null;
-}
-
-function ActionItem({ text, dueDate }: ActionItemProps): React.JSX.Element {
-  const due = formatDueDate(dueDate);
-  const isOverdue =
-    dueDate != null && new Date(dueDate) < new Date();
-
-  return (
-    <View style={actionItemStyles.container}>
-      <View style={actionItemStyles.bullet} />
-      <View style={actionItemStyles.content}>
-        <Text style={actionItemStyles.text}>{text}</Text>
-        {due && (
-          <Text
-            style={[
-              actionItemStyles.due,
-              isOverdue && actionItemStyles.dueOverdue,
-            ]}
-          >
-            Due {due}
-            {isOverdue ? ' · Overdue' : ''}
-          </Text>
-        )}
-      </View>
-    </View>
-  );
-}
-
-const actionItemStyles = StyleSheet.create({
-  container: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#DDD6CC',
-  } as ViewStyle,
-  bullet: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: colors.primary,
-    marginTop: 6,
-    flexShrink: 0,
-  } as ViewStyle,
-  content: {
-    flex: 1,
-    gap: 2,
-  } as ViewStyle,
-  text: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 13,
-    color: '#1E3320',
-    lineHeight: 20,
-  } as TextStyle,
-  due: {
-    fontFamily: fonts.bodySemibold,
     fontSize: 11,
-    color: colors.mutedForeground,
+    color: tokens.primary,
   } as TextStyle,
-  dueOverdue: {
-    color: '#DC2626',
-  } as TextStyle,
-});
-
-// ─── ConsentStatusRow ─────────────────────────────────────────────────────────
-
-type ConsentValue = 'granted' | 'denied' | 'none';
-
-interface ConsentRowProps {
-  label: string;
-  value: ConsentValue;
-}
-
-function ConsentRow({ label, value }: ConsentRowProps): React.JSX.Element {
-  const consentMeta: Record<ConsentValue, { icon: React.ReactNode; text: string; color: string }> = {
-    granted: {
-      icon: <ShieldCheck size={16} color="#16A34A" />,
-      text: 'Granted',
-      color: '#16A34A',
-    },
-    denied: {
-      icon: <ShieldX size={16} color="#DC2626" />,
-      text: 'Denied',
-      color: '#DC2626',
-    },
-    none: {
-      icon: <ShieldOff size={16} color="#A0A6AB" />,
-      text: 'Not asked',
-      color: '#A0A6AB',
-    },
-  };
-  const meta = consentMeta[value];
-
-  return (
-    <View style={consentRowStyles.container}>
-      <Text style={consentRowStyles.label}>{label}</Text>
-      <View style={consentRowStyles.right}>
-        {meta.icon}
-        <Text style={[consentRowStyles.value, { color: meta.color }]}>
-          {meta.text}
-        </Text>
-      </View>
-    </View>
-  );
-}
-
-const consentRowStyles = StyleSheet.create({
-  container: {
+  pagination: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#DDD6CC',
+    paddingTop: 12,
+    marginTop: 4,
   } as ViewStyle,
-  label: {
-    fontFamily: fonts.bodySemibold,
-    fontSize: 13,
-    color: '#1E3320',
-    flex: 1,
+  pageInfo: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: '#9CA3AF',
   } as TextStyle,
-  right: {
+  pageButtons: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
   } as ViewStyle,
-  value: {
-    fontFamily: fonts.bodySemibold,
-    fontSize: 13,
-  } as TextStyle,
+  pageBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  } as ViewStyle,
+  pageBtnDisabled: {
+    backgroundColor: '#F9FAFB',
+    borderColor: '#F3F4F6',
+  } as ViewStyle,
 });
 
-// ─── Journey step roadmap ─────────────────────────────────────────────────────
-//
-// 6-step horizontal roadmap matching the mockup:
-//   Step 1+2: completed (emerald bg, check icon)
-//   Step 3:   in-progress (emerald bg + amber ring outer)
-//   Step 4:   missed (amber bg, clock icon, red ring)
-//   Step 5+6: upcoming (gray bg, grey icon)
+// ─── FlagMemberModal ──────────────────────────────────────────────────────────
 
-type StepState = 'completed' | 'in_progress' | 'missed' | 'upcoming';
+interface FlagMemberModalProps {
+  memberId: string;
+  visible: boolean;
+  onClose: () => void;
+}
 
-const JOURNEY_STEPS_V2: ReadonlyArray<{
-  key: string;
-  label: string;
-  subLabel: string;
-  state: StepState;
-  points: string;
-}> = [
-  { key: 'identified',  label: 'Need Identified',     subLabel: 'Completed',   state: 'completed',   points: '+10 pts' },
-  { key: 'screening',   label: 'Eligibility Screening', subLabel: 'Completed',  state: 'completed',   points: '+25 pts' },
-  { key: 'documents',   label: 'Upload Documents',     subLabel: 'In Progress', state: 'in_progress', points: '+30 pts' },
-  { key: 'followup',    label: 'Follow Up',            subLabel: 'Missed',      state: 'missed',      points: '+0 pts'  },
-  { key: 'resource',    label: 'Resource Connection',  subLabel: 'Upcoming',    state: 'upcoming',    points: '+25 pts' },
-  { key: 'complete',    label: 'Journey Complete',     subLabel: '',            state: 'upcoming',    points: '+50 pts' },
-] as const;
+/**
+ * Modal for creating or deleting a flag note.
+ * Reads the existing flag note and allows the CHW to write a new one or remove it.
+ */
+function FlagMemberModal({ memberId, visible, onClose }: FlagMemberModalProps): React.JSX.Element {
+  const { data: existingNote, isLoading: noteLoading } = useFlagNote(memberId);
+  const createNote = useCreateFlagNote(memberId);
+  const deleteNote = useDeleteFlagNote(memberId);
 
-function JourneyRoadmap(): React.JSX.Element {
+  const [noteText, setNoteText] = useState('');
+
+  const handleSave = useCallback(async (): Promise<void> => {
+    const trimmed = noteText.trim();
+    if (trimmed.length === 0) return;
+    await createNote.mutateAsync(trimmed);
+    setNoteText('');
+    onClose();
+  }, [noteText, createNote, onClose]);
+
+  const handleDelete = useCallback(async (): Promise<void> => {
+    await deleteNote.mutateAsync();
+    onClose();
+  }, [deleteNote, onClose]);
+
+  if (!visible) return <></>;
+
   return (
-    <View style={journeyStyles.container}>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={journeyStyles.row}
-      >
-        {JOURNEY_STEPS_V2.map((step, index) => {
-          const isLast = index === JOURNEY_STEPS_V2.length - 1;
-          const isCompleted = step.state === 'completed';
-          const isInProgress = step.state === 'in_progress';
-          const isMissed = step.state === 'missed';
-          const isUpcoming = step.state === 'upcoming';
+    <RightDrawer
+      isOpen={visible}
+      onClose={onClose}
+      title="Flag Member"
+      subtitle="CHW-only note attached to this member's profile"
+      footer={
+        <View style={flagModalStyles.footer}>
+          <TouchableOpacity
+            style={flagModalStyles.cancelBtn}
+            onPress={onClose}
+            accessibilityRole="button"
+            accessibilityLabel="Cancel"
+          >
+            <Text style={flagModalStyles.cancelBtnText}>Cancel</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={flagModalStyles.saveBtn}
+            onPress={() => { void handleSave(); }}
+            disabled={createNote.isPending || noteText.trim().length === 0}
+            accessibilityRole="button"
+            accessibilityLabel="Save flag note"
+          >
+            {createNote.isPending ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <Text style={flagModalStyles.saveBtnText}>Save Flag</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      }
+    >
+      <View style={flagModalStyles.content}>
+        {noteLoading ? (
+          <View style={flagModalStyles.loadingRow}>
+            <ActivityIndicator size="small" color={tokens.textMuted} />
+            <Text style={flagModalStyles.loadingText}>Loading existing flag…</Text>
+          </View>
+        ) : null}
 
-          const dotBg = isCompleted || isInProgress ? '#16A34A'
-            : isMissed ? '#F59E0B'
-            : '#E5E7EB';
-
-          const lineBg = isCompleted ? '#16A34A' : '#E5E7EB';
-
-          const subLabelColor = isCompleted ? '#6B7280'
-            : isInProgress ? '#16A34A'
-            : isMissed ? '#EF4444'
-            : '#9CA3AF';
-
-          return (
-            <View key={step.key} style={journeyStyles.stepWrapper}>
-              {/* Circle */}
-              <View style={[
-                journeyStyles.stepCircleOuter,
-                isInProgress && journeyStyles.stepCircleInProgress,
-                isMissed && journeyStyles.stepCircleMissed,
-              ]}>
-                <View style={[journeyStyles.stepDot, { backgroundColor: dotBg }]}>
-                  {isCompleted || isInProgress ? (
-                    <CheckCircle size={22} color="#FFFFFF" />
-                  ) : isMissed ? (
-                    <Clock size={22} color="#FFFFFF" />
-                  ) : (
-                    <View style={journeyStyles.stepInner} />
-                  )}
-                </View>
-              </View>
-
-              {/* Connector line to next step */}
-              {!isLast && (
-                <View style={[journeyStyles.connector, { backgroundColor: lineBg }]} />
-              )}
-
-              {/* Labels */}
-              <Text style={[journeyStyles.stepLabel, !isUpcoming && journeyStyles.stepLabelActive]}>
-                {step.label}
-              </Text>
-              {step.subLabel ? (
-                <Text style={[journeyStyles.stepSubLabel, { color: subLabelColor }]}>
-                  {step.subLabel}
-                </Text>
-              ) : null}
-              <Text style={[journeyStyles.stepPoints, isUpcoming && journeyStyles.stepPointsMuted]}>
-                {step.points}
-              </Text>
+        {existingNote && !noteLoading ? (
+          <View style={flagModalStyles.existingNote}>
+            <View style={flagModalStyles.existingNoteHeader}>
+              <Flag size={14} color="#DC2626" />
+              <Text style={flagModalStyles.existingNoteTitle}>Current Flag Note</Text>
             </View>
-          );
-        })}
-      </ScrollView>
-    </View>
+            <Text style={flagModalStyles.existingNoteBody}>{existingNote.body}</Text>
+            <Text style={flagModalStyles.existingNoteDate}>
+              Added {formatDate(existingNote.createdAt)}
+            </Text>
+            <TouchableOpacity
+              style={flagModalStyles.removeBtn}
+              onPress={() => { void handleDelete(); }}
+              disabled={deleteNote.isPending}
+              accessibilityRole="button"
+              accessibilityLabel="Remove existing flag note"
+            >
+              {deleteNote.isPending ? (
+                <ActivityIndicator size="small" color="#B91C1C" />
+              ) : (
+                <Text style={flagModalStyles.removeBtnText}>Remove Flag</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
+        <Text style={flagModalStyles.inputLabel}>
+          {existingNote ? 'Replace with a new note:' : 'Add a flag note:'}
+        </Text>
+        <TextInput
+          style={flagModalStyles.textInput}
+          value={noteText}
+          onChangeText={setNoteText}
+          placeholder="e.g. Prefers evening appointments, transportation assistance needed…"
+          placeholderTextColor="#A0A6AB"
+          multiline
+          numberOfLines={4}
+          maxLength={2000}
+          textAlignVertical="top"
+          accessibilityLabel="Flag note text input"
+        />
+        <Text style={flagModalStyles.charCount}>{noteText.length}/2000</Text>
+
+        <View style={flagModalStyles.hipaaNotice}>
+          <Text style={flagModalStyles.hipaaNoticeText}>
+            This note is CHW-visible only and is never shown to the member (HIPAA minimum-necessary).
+          </Text>
+        </View>
+      </View>
+    </RightDrawer>
   );
 }
 
-const journeyStyles = StyleSheet.create({
-  container: {
-    paddingHorizontal: 8,
-  } as ViewStyle,
-  row: {
+const flagModalStyles = StyleSheet.create({
+  content: { gap: 14 } as ViewStyle,
+  loadingRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
+    gap: 8,
     paddingVertical: 8,
   } as ViewStyle,
-  stepWrapper: {
+  loadingText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: tokens.textMuted,
+  } as TextStyle,
+  existingNote: {
+    backgroundColor: '#FEF2F2',
+    borderRadius: radius.md,
+    padding: 12,
+    gap: 6,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  } as ViewStyle,
+  existingNoteHeader: {
+    flexDirection: 'row',
     alignItems: 'center',
-    position: 'relative',
-    width: 112,
-    flexShrink: 0,
+    gap: 6,
   } as ViewStyle,
-  // Outer ring for in-progress (amber) and missed (red) states
-  stepCircleOuter: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'transparent',
-    marginBottom: 8,
-    zIndex: 1,
-  } as ViewStyle,
-  stepCircleInProgress: {
-    borderWidth: 4,
-    borderColor: '#FCD34D',
-  } as ViewStyle,
-  stepCircleMissed: {
-    borderWidth: 4,
-    borderColor: '#FCA5A5',
-  } as ViewStyle,
-  stepDot: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-  } as ViewStyle,
-  stepInner: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    backgroundColor: '#9CA3AF',
-  } as ViewStyle,
-  stepLabel: {
+  existingNoteTitle: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 13,
+    color: '#B91C1C',
+  } as TextStyle,
+  existingNoteBody: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: '#111827',
+    lineHeight: 20,
+  } as TextStyle,
+  existingNoteDate: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 11,
     color: '#9CA3AF',
-    textAlign: 'center',
-    maxWidth: 96,
   } as TextStyle,
-  stepLabelActive: {
-    color: '#111827',
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 11,
-  } as TextStyle,
-  stepSubLabel: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 11,
-    textAlign: 'center',
-    marginTop: 2,
-  } as TextStyle,
-  stepPoints: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 11,
-    color: '#047857',
-    backgroundColor: '#ECFDF5',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 999,
-    marginTop: 4,
-    textAlign: 'center',
-    overflow: 'hidden',
-  } as TextStyle,
-  stepPointsMuted: {
-    color: '#6B7280',
-    backgroundColor: '#F3F4F6',
-  } as TextStyle,
-  connector: {
-    position: 'absolute',
-    top: 27,    // half of stepDot height (56/2=28) minus half connector height
-    left: '50%',
-    right: '-50%',
-    height: 3,
-    zIndex: 0,
-  } as ViewStyle,
-  connectorDone: {
-    backgroundColor: '#16A34A',
-  } as ViewStyle,
-});
-
-// ─── Quick Access rail items ──────────────────────────────────────────────────
-
-interface QuickAccessItemProps {
-  icon: React.ReactNode;
-  label: string;
-  sublabel?: string;
-  iconBg?: string;
-  onPress: () => void;
-}
-
-function QuickAccessItem({ icon, label, sublabel, iconBg = '#EFF6FF', onPress }: QuickAccessItemProps): React.JSX.Element {
-  return (
-    <TouchableOpacity
-      style={quickAccessStyles.item}
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-    >
-      <View style={[quickAccessStyles.iconWrap, { backgroundColor: iconBg }]}>{icon}</View>
-      <View style={quickAccessStyles.labelWrap}>
-        <Text style={quickAccessStyles.label}>{label}</Text>
-        {sublabel ? <Text style={quickAccessStyles.sublabel}>{sublabel}</Text> : null}
-      </View>
-      <ChevronRight size={14} color="#D1D5DB" />
-    </TouchableOpacity>
-  );
-}
-
-const quickAccessStyles = StyleSheet.create({
-  item: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingVertical: 11,
+  removeBtn: {
+    alignSelf: 'flex-start',
     paddingHorizontal: 12,
-    borderRadius: 10,
+    paddingVertical: 6,
+    backgroundColor: '#FEE2E2',
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    marginTop: 4,
   } as ViewStyle,
-  iconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  } as ViewStyle,
-  labelWrap: {
-    flex: 1,
-    gap: 1,
-  } as ViewStyle,
-  label: {
+  removeBtnText: {
     fontFamily: 'DMSans_700Bold',
-    fontSize: 14,
-    color: '#111827',
-  } as TextStyle,
-  sublabel: {
-    fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 12,
+    color: '#B91C1C',
+  } as TextStyle,
+  inputLabel: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 13,
+    color: '#374151',
+  } as TextStyle,
+  textInput: {
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    borderRadius: radius.md,
+    padding: 12,
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: '#111827',
+    minHeight: 100,
+    backgroundColor: '#FFFFFF',
+  } as TextStyle,
+  charCount: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: '#9CA3AF',
+    textAlign: 'right',
+    marginTop: -8,
+  } as TextStyle,
+  hipaaNotice: {
+    backgroundColor: '#F4F1ED',
+    borderRadius: radius.sm,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#DDD6CC',
+  } as ViewStyle,
+  hipaaNoticeText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
     color: '#6B7280',
+    lineHeight: 16,
+  } as TextStyle,
+  footer: {
+    flexDirection: 'row',
+    gap: 8,
+    justifyContent: 'flex-end',
+  } as ViewStyle,
+  cancelBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: '#F4F1ED',
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: '#DDD6CC',
+  } as ViewStyle,
+  cancelBtnText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 13,
+    color: '#6B7280',
+  } as TextStyle,
+  saveBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: tokens.primary,
+    borderRadius: radius.md,
+    minWidth: 96,
+    alignItems: 'center',
+  } as ViewStyle,
+  saveBtnText: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 13,
+    color: '#FFFFFF',
   } as TextStyle,
 });
 
-// ─── Open Questions drawer content ────────────────────────────────────────────
+// ─── SectionCard wrapper ──────────────────────────────────────────────────────
 
-function OpenQuestionsContent(): React.JSX.Element {
+interface SectionCardProps {
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+  titleRight?: React.ReactNode;
+}
+
+function SectionCard({
+  title,
+  subtitle,
+  children,
+  titleRight,
+}: SectionCardProps): React.JSX.Element {
   return (
-    <View style={openQStyles.container}>
-      <Text style={openQStyles.intro}>
-        These questions are suggested based on this member's care plan and recent session history.
-        Use them as conversation starters — adapt freely.
-      </Text>
-      {SUGGESTED_QUESTIONS.map((section) => (
-        <View key={section.category} style={openQStyles.section}>
-          <Text style={openQStyles.categoryLabel}>{section.category}</Text>
-          {section.questions.map((q, i) => (
-            <View key={i} style={openQStyles.questionRow}>
-              <View style={openQStyles.qBullet} />
-              <Text style={openQStyles.questionText}>{q}</Text>
-            </View>
-          ))}
-        </View>
-      ))}
-    </View>
+    <Card style={sectionCardStyles.card}>
+      <View style={sectionCardStyles.header}>
+        <SectionHeader title={title} subtitle={subtitle} right={titleRight} />
+      </View>
+      <View style={sectionCardStyles.body}>{children}</View>
+    </Card>
   );
 }
 
-const openQStyles = StyleSheet.create({
-  container: { gap: 20 } as ViewStyle,
-  intro: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 13,
-    color: '#6B7280',
-    lineHeight: 20,
-    backgroundColor: '#F4F1ED',
-    borderRadius: 10,
-    padding: 12,
-  } as TextStyle,
-  section: { gap: 8 } as ViewStyle,
-  categoryLabel: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 13,
-    color: '#1E3320',
-    marginBottom: 2,
-  } as TextStyle,
-  questionRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
+const sectionCardStyles = StyleSheet.create({
+  card: {
+    marginBottom: 20,
+    overflow: 'hidden',
   } as ViewStyle,
-  qBullet: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#3D5A3E',
-    marginTop: 7,
-    flexShrink: 0,
+  header: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 8,
   } as ViewStyle,
-  questionText: {
-    flex: 1,
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 13,
-    color: '#1E3320',
-    lineHeight: 20,
-  } as TextStyle,
+  body: {
+    paddingHorizontal: 20,
+    paddingBottom: 16,
+  } as ViewStyle,
 });
 
 // ─── Main screen component ────────────────────────────────────────────────────
@@ -1334,16 +2189,24 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
 
   const { userName } = useAuth();
   const chwInitials = userName
-    ? userName.split(' ').map((n) => n[0] ?? '').join('').toUpperCase().slice(0, 2)
+    ? userName
+        .split(' ')
+        .map((n) => n[0] ?? '')
+        .join('')
+        .toUpperCase()
+        .slice(0, 2)
     : 'CW';
 
   const { data: profile, isLoading, error } = useMemberDetail(memberId);
+  const { data: servicesConsentData } = useMemberServicesConsent(memberId);
+  const servicesConsentRefused = servicesConsentData?.value === 'refuse_services';
 
-  // ── Drawer state
+  // ── Drawer / modal state ─────────────────────────────────────────────────────
   const [openQuestionsOpen, setOpenQuestionsOpen] = useState(false);
-  const [messageDrawerOpen, setMessageDrawerOpen] = useState(false);
+  const [flagModalOpen, setFlagModalOpen] = useState(false);
 
-  // ── Navigate to session detail ───────────────────────────────────────────────
+  // ── Navigation helpers ───────────────────────────────────────────────────────
+
   const handleViewSession = useCallback(
     (sessionId: string): void => {
       navigation.navigate('SessionReview', {
@@ -1357,39 +2220,23 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
     [navigation, profile, memberId],
   );
 
-  // ── Navigate to in-app conversation ─────────────────────────────────────────
-  // Called by ProfileContactButtons after the Message button tap. Deep-link
-  // straight into the Messages screen with this member's id so the thread
-  // is pre-selected on mount — the previous version just navigated to the
-  // generic Sessions tab and showed a "go find the thread" alert, which
-  // forced the CHW to scan the inbox manually.
   const handleNavigateToConversation = useCallback(
     (_conversationId: string): void => {
-      // _conversationId is provided by /conversations/find-or-create but
-      // CHWMessagesScreen pre-selects threads by memberId (the SessionData
-      // shape's memberId field), so we navigate by memberId here. The
-      // conversation id is still useful for analytics + the eventual
-      // active_session_id wire-up (#193 Task 11) but isn't needed for nav.
       navigation.navigate('Messages', { memberId });
     },
     [navigation, memberId],
   );
 
-  // Called by ProfileContactButtons after the Call button tap. Same as
-  // above but also flags ``autoCall=true`` so CHWMessagesScreen fires the
-  // masked-number call sequence as soon as the thread mounts. The CHW
-  // sees the chat UI with the call already initiated rather than waiting
-  // on a separate confirm dialog.
   const handleNavigateAndCall = useCallback((): void => {
     navigation.navigate('Messages', { memberId, autoCall: true });
   }, [navigation, memberId]);
 
-  // ── Loading skeleton ─────────────────────────────────────────────────────────
+  // ── Loading state ────────────────────────────────────────────────────────────
 
   if (isLoading) {
     return (
       <SafeAreaView style={s.safeArea} edges={['top']}>
-        <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
+        <StatusBar barStyle="dark-content" backgroundColor={tokens.pageBg} />
         <View style={s.header}>
           <TouchableOpacity
             style={s.backBtn}
@@ -1397,7 +2244,7 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
             accessibilityRole="button"
             accessibilityLabel="Go back"
           >
-            <ArrowLeft size={20} color={colors.foreground} />
+            <ArrowLeft size={20} color={legacyColors.foreground} />
           </TouchableOpacity>
           <Text style={s.headerTitle}>Member Profile</Text>
           <View style={{ width: 40 }} />
@@ -1410,7 +2257,7 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
     );
   }
 
-  // ── 403 / access denied state ────────────────────────────────────────────────
+  // ── 403 / error state ────────────────────────────────────────────────────────
 
   const is403 =
     error != null &&
@@ -1421,7 +2268,7 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
   if (is403 || (error != null && !profile)) {
     return (
       <SafeAreaView style={s.safeArea} edges={['top']}>
-        <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
+        <StatusBar barStyle="dark-content" backgroundColor={tokens.pageBg} />
         <View style={s.header}>
           <TouchableOpacity
             style={s.backBtn}
@@ -1429,14 +2276,14 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
             accessibilityRole="button"
             accessibilityLabel="Go back"
           >
-            <ArrowLeft size={20} color={colors.foreground} />
+            <ArrowLeft size={20} color={legacyColors.foreground} />
           </TouchableOpacity>
           <Text style={s.headerTitle}>Member Profile</Text>
           <View style={{ width: 40 }} />
         </View>
         <View style={s.emptyState}>
           <View style={s.emptyIconCircle}>
-            <ShieldOff size={28} color={colors.mutedForeground} />
+            <ShieldOff size={28} color={legacyColors.mutedForeground} />
           </View>
           <Text style={s.emptyTitle}>
             {is403 ? 'Profile not accessible' : 'Could not load profile'}
@@ -1461,21 +2308,21 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
 
   if (!profile) return <></>;
 
-  const initials = getInitials(profile.firstName, profile.lastName);
   const displayName = `${profile.firstName} ${profile.lastName}`.trim();
+  const initials = getInitials(profile.firstName, profile.lastName);
 
-  // ── Main render ───────────────────────────────────────────────────────────────
+  // ── Main render ──────────────────────────────────────────────────────────────
 
   return (
     <SafeAreaView style={s.safeArea} edges={['top']}>
-      <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
+      <StatusBar barStyle="dark-content" backgroundColor={tokens.pageBg} />
 
       <AppShell
         role="chw"
         activeKey="memberProfile"
         userBlock={{ initials: chwInitials, name: userName ?? 'CHW', role: 'CHW' }}
       >
-        {/* ── Screen header (back button row — kept for native; web has sidebar) */}
+        {/* Native-only back header */}
         {Platform.OS !== 'web' && (
           <View style={s.header}>
             <TouchableOpacity
@@ -1484,7 +2331,7 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
               accessibilityRole="button"
               accessibilityLabel="Go back"
             >
-              <ArrowLeft size={20} color={colors.foreground} />
+              <ArrowLeft size={20} color={legacyColors.foreground} />
             </TouchableOpacity>
             <Text style={s.headerTitle} numberOfLines={1}>
               Member Profile
@@ -1497,12 +2344,11 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
           style={s.scroll}
           contentContainerStyle={s.scrollContent}
           showsVerticalScrollIndicator={false}
-          // Add bottom padding so StickyActionBar doesn't overlap content
           contentInsetAdjustmentBehavior="automatic"
         >
           <View style={s.pageWrap}>
 
-            {/* Web: back button / page header */}
+            {/* Web: back link + page header */}
             {Platform.OS === 'web' && (
               <View style={s.webHeader}>
                 <TouchableOpacity
@@ -1511,7 +2357,7 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                   accessibilityRole="button"
                   accessibilityLabel="Back to members"
                 >
-                  <ArrowLeft size={16} color={colors.primary} />
+                  <ArrowLeft size={16} color={tokens.primary} />
                   <Text style={s.backLinkText}>Back to Members</Text>
                 </TouchableOpacity>
                 <PageHeader
@@ -1521,415 +2367,197 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
               </View>
             )}
 
-            {/* ── TOP HEADER CARD: identity + contact + resource needs ── */}
-            <Card style={s.headerCard}>
-              <View style={s.headerCardRow}>
+            {/* ───────────────────────────────────────────────────────────────
+                TOP CARD: 3 columns — Demographics / Consent / Journeys+CTAs
+            ─────────────────────────────────────────────────────────────── */}
+            <Card style={s.topCard}>
+              <View style={s.topCardRow}>
 
-                {/* Identity column — avatar + name + pills */}
-                <View style={s.identityCol}>
-                  <View style={s.bannerContainer}>
-                    <View style={s.banner} />
-                    <View style={s.heroSection}>
-                      <View style={s.avatarWrapper}>
-                        <View style={s.avatar}>
-                          <Text style={s.avatarText}>{initials}</Text>
-                        </View>
-                      </View>
-                      <Text style={s.displayName}>{displayName}</Text>
-                      <View style={s.heroBadgesRow}>
-                        <Pill variant="emerald" size="sm">Active</Pill>
-                        {profile.ecmEligible && (
-                          <Pill variant="blue" size="sm">ECM Eligible</Pill>
-                        )}
-                        <Pill variant="gray" size="sm">
-                          {profile.primaryLanguage}
-                        </Pill>
-                      </View>
-                    </View>
-                  </View>
-                </View>
+                {/* LEFT: Demographics */}
+                <DemographicsColumn profile={profile} />
 
-                {/* Contact column */}
-                <View style={s.contactCol}>
-                  <Text style={s.colHeading}>Contact</Text>
-                  <InfoRow
-                    icon={<Phone size={14} color={colors.primary} />}
-                    label="Phone"
-                    value={profile.phoneE164 ?? 'Not provided'}
-                    placeholder={!profile.phoneE164}
-                  />
-                  <InfoRow
-                    icon={<MapPin size={14} color={colors.primary} />}
-                    label={profile.address ? 'Address' : 'ZIP Code'}
-                    value={
-                      profile.address
-                        ? [profile.address, profile.city, profile.zipCode]
-                            .filter(Boolean)
-                            .join(', ')
-                        : profile.zipCode
-                        ? `ZIP ${profile.zipCode}`
-                        : 'Not provided'
-                    }
-                    placeholder={!profile.address && !profile.zipCode}
-                  />
-                  <InfoRow
-                    icon={<Globe size={14} color={colors.primary} />}
-                    label="Language"
-                    value={[profile.primaryLanguage, ...profile.additionalLanguages].join(', ')}
-                  />
-                  <InfoRow
-                    icon={<Heart size={14} color={colors.primary} />}
-                    label="MCO / Insurance"
-                    value={profile.mco ?? 'Not provided'}
-                    placeholder={!profile.mco}
-                  />
-                  {profile.email ? (
-                    <InfoRow
-                      icon={<User size={14} color={colors.primary} />}
-                      label="Email"
-                      value={profile.email}
-                    />
-                  ) : null}
-                </View>
+                {/* CENTER: Services Consent */}
+                <ServicesConsentColumn memberId={memberId} />
 
-                {/* Resource Needs column — priority-ranked: 1-2 red, 3-4 amber, 5+ emerald */}
-                <View style={s.needsCol}>
-                  <View style={s.needsColHeader}>
-                    <Text style={s.colHeading}>Resource Needs <Text style={s.colHeadingSub}>(Priority)</Text></Text>
-                  </View>
-                  {profile.primaryCategories.length === 0 ? (
-                    <Text style={s.needsEmpty}>No categories recorded.</Text>
-                  ) : (
-                    profile.primaryCategories.map((cat, index) => {
-                      const rank = index + 1;
-                      const isHigh = rank <= 2;
-                      const isMed = rank === 3 || rank === 4;
-                      const rankBg = isHigh ? '#FEE2E2' : isMed ? '#FEF3C7' : '#DCFCE7';
-                      const rankColor = isHigh ? '#B91C1C' : isMed ? '#B45309' : '#15803D';
-                      const badgeLabel = isHigh ? 'High' : isMed ? 'Medium' : 'Low';
-                      const badgeVariant: 'red' | 'amber' | 'emerald' = isHigh ? 'red' : isMed ? 'amber' : 'emerald';
-                      const label = CATEGORY_LABELS[cat] ?? cat;
-                      return (
-                        <View key={cat} style={s.needItem}>
-                          <View style={[s.needRank, { backgroundColor: rankBg }]}>
-                            <Text style={[s.needRankText, { color: rankColor }]}>{rank}</Text>
-                          </View>
-                          <Text style={s.needItemLabel}>{label}</Text>
-                          <Pill variant={badgeVariant} size="sm">{badgeLabel}</Pill>
-                        </View>
-                      );
-                    })
-                  )}
-                </View>
+                {/* RIGHT: Active Journeys + Rewards + Call/Message */}
+                <ActiveJourneysAndCTAColumn
+                  memberId={memberId}
+                  displayName={displayName}
+                  sessionCount={profile.sessionCount}
+                  servicesConsentRefused={servicesConsentRefused}
+                  onNavigateToConversation={handleNavigateToConversation}
+                  onNavigateAndCall={handleNavigateAndCall}
+                />
 
               </View>
             </Card>
 
-            {/* ── Quick actions — bidirectional masked call + in-app messaging ── */}
-            <ProfileContactButtons
-              targetUserId={memberId}
-              targetUserRole="member"
-              sharedSessionCount={profile.sessionCount}
-              targetDisplayName={displayName}
-              onNavigateToConversation={handleNavigateToConversation}
-              onNavigateAndCall={handleNavigateAndCall}
+            {/* ───────────────────────────────────────────────────────────────
+                QUICK ACCESS ROW — 4 common actions
+            ─────────────────────────────────────────────────────────────── */}
+            <QuickAccessRow
+              memberId={memberId}
+              displayName={displayName}
+              onAddNote={() =>
+                Alert.alert(
+                  'Case Notes',
+                  'Per-member case notes are scoped to each session today. Open a session card below to view or add notes. A dedicated case-notes timeline ships next sprint.',
+                )
+              }
+              onFlagMember={() => setFlagModalOpen(true)}
+              onScheduleSession={() =>
+                Alert.alert(
+                  'Schedule Session',
+                  'Use the Calendar tab to schedule a new session with this member.',
+                )
+              }
+              onDocumentSession={() =>
+                Alert.alert(
+                  'Document Session',
+                  'Documentation is submitted from within an active session. Start or open a session with this member to document it.',
+                )
+              }
             />
 
-            {/* ── MID ROW: Insights (9/12) + Compass Insights AI panel (3/12) ── */}
-            <View style={s.midRow}>
+            {/* Main content + optional sidebar */}
+            <View style={s.contentRow}>
+              <View style={s.mainCol}>
 
-              {/* Left: 4-column insights card */}
-              <View style={s.midMain}>
-                <Card style={s.insightsCard}>
-                  <Text style={s.insightsTitle}>Compass Insights</Text>
-                  <View style={s.insightsGrid}>
-                    <View style={s.insightCell}>
-                      <Text style={s.insightCellLabel}>Last Interaction Summary</Text>
-                      <Text style={s.insightCellBody}>
-                        {profile.lastSessionAt
-                          ? `Last session ${formatDate(profile.lastSessionAt)}. ${profile.sessionCount} total sessions completed.`
-                          : 'No sessions recorded yet.'}
-                      </Text>
-                    </View>
-                    <View style={s.insightCell}>
-                      <Text style={s.insightCellLabel}>What to Focus On</Text>
-                      <Text style={s.insightCellBody}>
-                        {profile.openGoals.length > 0
-                          ? `${profile.openGoals.length} open goal${profile.openGoals.length !== 1 ? 's' : ''}: ${profile.openGoals[0]?.text ?? ''}`
-                          : 'No open goals. Great opportunity to set new targets.'}
-                      </Text>
-                    </View>
-                    <View style={s.insightCell}>
-                      <Text style={s.insightCellLabel}>Recommended Next Best Action</Text>
-                      <Text style={s.insightCellBody}>
-                        {profile.openFollowups.length > 0
-                          ? `Follow up on: ${profile.openFollowups[0]?.text ?? 'pending item'}`
-                          : 'Schedule a check-in session to review member progress.'}
-                      </Text>
-                    </View>
-                    <View style={[s.insightCell, s.insightCellLast]}>
-                      <Text style={s.insightCellLabel}>Alerts &amp; Reminders</Text>
-                      <Text style={s.insightCellBody}>
-                        {profile.billingUnits.todayRemaining <= CAP_WARNING_THRESHOLD_DAY
-                          ? `Billing cap alert: only ${profile.billingUnits.todayRemaining} unit(s) remaining today.`
-                          : profile.billingUnits.yearlyRemaining <= CAP_WARNING_THRESHOLD_YEAR
-                          ? `Approaching yearly cap: ${profile.billingUnits.yearlyRemaining} unit(s) left.`
-                          : 'No active alerts.'}
-                      </Text>
-                    </View>
-                  </View>
-                </Card>
-              </View>
-
-              {/* Right rail: Compass Insights AI panel */}
-              {Platform.OS === 'web' && (
-                <RightRail width={240}>
-                  <Card style={s.aiPanelCard}>
-                    <View style={s.aiPanelHeader}>
-                      <Sparkles size={14} color={colors.secondary} />
-                      <Text style={s.aiPanelTitle}>AI Suggestions</Text>
-                      <View style={s.aiBetaBadge}>
-                        <Text style={s.aiBetaText}>Beta</Text>
-                      </View>
-                    </View>
-                    <Text style={s.aiPanelBody}>
-                      AI-generated suggestions will appear here as you build session history
-                      with this member.
-                    </Text>
-                    <Text style={[s.aiPanelBody, { marginTop: 8 }]}>
-                      Consent for AI Transcription:{' '}
-                      <Text style={[
-                        s.aiConsentValue,
-                        profile.consentStatus.aiTranscription === 'granted'
-                          ? s.aiConsentGranted
-                          : profile.consentStatus.aiTranscription === 'denied'
-                          ? s.aiConsentDenied
-                          : s.aiConsentNone,
-                      ]}>
-                        {profile.consentStatus.aiTranscription === 'granted'
-                          ? 'Granted'
-                          : profile.consentStatus.aiTranscription === 'denied'
-                          ? 'Denied'
-                          : 'Not asked'}
-                      </Text>
-                    </Text>
-                  </Card>
-                </RightRail>
-              )}
-            </View>
-
-            {/* ── JOURNEY SECTION: roadmap (9/12) + Quick Access (3/12) ── */}
-            <View style={s.journeyRow}>
-
-              {/* Left: horizontal step roadmap */}
-              <View style={s.journeyMain}>
-                <SectionCard title="Member Journey">
-                  <JourneyRoadmap />
+                {/* ─────────────────────────────────────────────────────────
+                    MEMBER JOURNEY ROADMAP
+                ─────────────────────────────────────────────────────── */}
+                <SectionCard
+                  title="Member Journey"
+                  subtitle="6-step roadmap with wellness points"
+                >
+                  <JourneyRoadmap memberId={memberId} />
                 </SectionCard>
 
-                {/* ── Assessment ── */}
-                <AssessmentSection memberId={memberId} />
-
-                {/* ── Billable Units ── */}
+                {/* ─────────────────────────────────────────────────────────
+                    BILLABLE UNITS WIDGET
+                ─────────────────────────────────────────────────────── */}
                 <SectionCard
                   title="Billable Units (Medi-Cal)"
-                  titleRight={
-                    <Text style={s.billingCapNote}>
-                      {MAX_UNITS_PER_DAY}/day · {MAX_UNITS_PER_YEAR}/year cap
-                    </Text>
-                  }
+                  subtitle="4/day · 10/year cap"
                 >
-                  <BillingUnitsCard units={profile.billingUnits} />
+                  <BillableUnitsWidget memberId={memberId} />
                 </SectionCard>
 
-                {/* ── Session History ── */}
+                {/* ─────────────────────────────────────────────────────────
+                    SESSIONS TABLE (paginated, 20/page)
+                ─────────────────────────────────────────────────────── */}
                 <SectionCard
                   title="Sessions"
                   titleRight={
                     profile.sessionCount > 0 ? (
                       <View style={s.countBadge}>
-                        <Text style={s.countBadgeText}>{profile.sessionCount} completed</Text>
-                      </View>
-                    ) : undefined
-                  }
-                >
-                  {profile.recentSessions.length > 0 ? (
-                    <>
-                      {profile.recentSessions.map((session, index) => (
-                        <View
-                          key={session.id}
-                          style={
-                            index === profile.recentSessions.length - 1
-                              ? s.sessionItemLast
-                              : undefined
-                          }
-                        >
-                          <SessionHistoryItem
-                            session={session}
-                            onView={handleViewSession}
-                          />
-                        </View>
-                      ))}
-                    </>
-                  ) : (
-                    <EmptySectionState message="No sessions with this member yet." />
-                  )}
-                </SectionCard>
-
-                {/* ── Open Goals & Follow-ups ── */}
-                <SectionCard
-                  title="Open Goals & Follow-ups"
-                  titleRight={
-                    profile.openGoals.length + profile.openFollowups.length > 0 ? (
-                      <View style={s.countBadge}>
                         <Text style={s.countBadgeText}>
-                          {profile.openGoals.length + profile.openFollowups.length} open
+                          {profile.sessionCount} total
                         </Text>
                       </View>
                     ) : undefined
                   }
                 >
-                  {profile.openGoals.length === 0 && profile.openFollowups.length === 0 ? (
-                    <EmptySectionState message="No open goals or follow-ups." />
-                  ) : (
-                    <>
-                      {profile.openGoals.length > 0 && (
-                        <>
-                          <Text style={s.subSectionLabel}>Goals</Text>
-                          {profile.openGoals.map((goal, i) => (
-                            <ActionItem
-                              key={`goal-${i}`}
-                              text={goal.text}
-                              dueDate={goal.dueDate}
-                            />
-                          ))}
-                        </>
-                      )}
-                      {profile.openFollowups.length > 0 && (
-                        <>
-                          <Text
-                            style={[
-                              s.subSectionLabel,
-                              profile.openGoals.length > 0 && { marginTop: 12 },
-                            ]}
-                          >
-                            Follow-ups
-                          </Text>
-                          {profile.openFollowups.map((fu, i) => (
-                            <ActionItem
-                              key={`fu-${i}`}
-                              text={fu.text}
-                              dueDate={fu.dueDate}
-                            />
-                          ))}
-                        </>
-                      )}
-                    </>
-                  )}
-                </SectionCard>
-
-                {/* ── Consent ── */}
-                <SectionCard title="Consent">
-                  <ConsentRow
-                    label="AI Transcription"
-                    value={profile.consentStatus.aiTranscription}
+                  <SessionsTable
+                    sessions={profile.recentSessions}
+                    totalCount={profile.sessionCount}
+                    onViewSession={handleViewSession}
                   />
-                  <View style={s.consentLastRow}>
-                    <ConsentRow
-                      label="Session Recording"
-                      value={profile.consentStatus.sessionRecording}
-                    />
-                  </View>
                 </SectionCard>
 
-                {/* ── HIPAA disclosure notice ── */}
+                {/* ─────────────────────────────────────────────────────────
+                    HIPAA notice
+                ─────────────────────────────────────────────────────── */}
                 <View style={s.hipaaNotice}>
                   <Text style={s.hipaaNoticeText}>
                     This view shows only the information needed for care delivery.
-                    Member identifiers, insurance details, notes from other CHWs, and
-                    session transcripts are not displayed (HIPAA minimum necessary —
-                    45 CFR §164.514(d)).
+                    Member identifiers, raw insurance details, notes from other CHWs,
+                    and session transcripts are not displayed
+                    (HIPAA minimum necessary — 45 CFR §164.514(d)).
                   </Text>
                 </View>
 
               </View>
 
-              {/* Right rail: Quick Access */}
+              {/* ── Web right rail: Quick Access + Open Questions ── */}
               {Platform.OS === 'web' && (
                 <RightRail width={240}>
-                  <Card style={s.quickAccessCard}>
-                    <Text style={s.quickAccessTitle}>Quick Access</Text>
-                    <QuickAccessItem
-                      icon={<NotebookPen size={16} color="#2563EB" />}
+                  {/* Open Questions card */}
+                  <Card style={s.railCard}>
+                    <Text style={s.railCardTitle}>Quick Access</Text>
+                    <RailAccessItem
+                      icon={<NotebookPen size={14} color="#2563EB" />}
                       iconBg="#EFF6FF"
                       label="Case Notes"
                       sublabel="View all notes"
                       onPress={() =>
                         Alert.alert(
                           'Coming soon',
-                          'Per-member case notes are scoped to each session today — open a session card below to view or add notes. A dedicated case-notes timeline ships next sprint.',
+                          'Per-member case notes are scoped to each session today. A dedicated timeline ships next sprint.',
                         )
                       }
                     />
-                    <QuickAccessItem
-                      icon={<ClipboardList size={16} color="#7C3AED" />}
-                      iconBg="#F5F3FF"
-                      label="Assessments"
-                      sublabel="Latest: view history"
-                      onPress={() =>
-                        Alert.alert(
-                          'Coming soon',
-                          'Health assessments are started from inside a session today. A member-level assessment history view is planned for the next sprint.',
-                        )
-                      }
+                    <RailAccessItem
+                      icon={<Flag size={14} color="#DC2626" />}
+                      iconBg="#FEF2F2"
+                      label="Flag Member"
+                      sublabel="Add/edit flag note"
+                      onPress={() => setFlagModalOpen(true)}
                     />
-                    <QuickAccessItem
-                      icon={<CheckSquare size={16} color="#EA580C" />}
+                    <RailAccessItem
+                      icon={<CheckSquare size={14} color="#EA580C" />}
                       iconBg="#FFF7ED"
                       label="Screening Results"
                       sublabel="View history"
                       onPress={() =>
                         Alert.alert(
                           'Coming soon',
-                          'Screening results tracking is not yet available. This feature is planned for an upcoming sprint.',
+                          'Screening results tracking is planned for an upcoming sprint.',
                         )
                       }
                     />
-                    <QuickAccessItem
-                      icon={<CheckCircle size={16} color="#16A34A" />}
+                    <RailAccessItem
+                      icon={<CheckCircle size={14} color="#16A34A" />}
                       iconBg="#F0FDF4"
-                      label="Eligibility Verification"
-                      sublabel="CalFresh pending"
+                      label="Eligibility"
+                      sublabel="Verification status"
                       onPress={() =>
                         Alert.alert(
                           'Coming soon',
-                          'Eligibility verification tracking is not yet available. This feature is planned for an upcoming sprint.',
+                          'Eligibility verification is planned for an upcoming sprint.',
                         )
                       }
                     />
-                    <QuickAccessItem
-                      icon={<UploadCloud size={16} color="#64748B" />}
+                    <RailAccessItem
+                      icon={<UploadCloud size={14} color="#64748B" />}
                       iconBg="#F8FAFC"
-                      label="Uploaded Documents"
-                      sublabel="3 documents"
+                      label="Documents"
+                      sublabel="Member uploads"
                       onPress={() =>
                         Alert.alert(
                           'Coming soon',
-                          'CHW-scoped document review is not yet available. Member-uploaded documents will be accessible here in an upcoming sprint.',
+                          'CHW-scoped document review ships in an upcoming sprint.',
                         )
                       }
                     />
-                    <QuickAccessItem
-                      icon={<RadioTower size={16} color="#D97706" />}
+                    <RailAccessItem
+                      icon={<RadioTower size={14} color="#D97706" />}
                       iconBg="#FFFBEB"
                       label="Outreach History"
-                      sublabel="View all interactions"
+                      sublabel="All interactions"
                       onPress={() =>
                         Alert.alert(
                           'Coming soon',
-                          'Outreach history tracking is not yet available. This feature is planned for an upcoming sprint.',
+                          'Outreach history tracking is planned for an upcoming sprint.',
                         )
                       }
+                    />
+                    <RailAccessItem
+                      icon={<Sparkles size={14} color={legacyColors.secondary} />}
+                      iconBg={legacyColors.secondary + '18'}
+                      label="Open Questions"
+                      sublabel="AI-suggested prompts"
+                      onPress={() => setOpenQuestionsOpen(true)}
                     />
                   </Card>
                 </RightRail>
@@ -1939,11 +2567,12 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
           </View>
         </ScrollView>
 
-        {/* StickyActionBar removed — it duplicated entry points already
-            provided elsewhere (Schedule Session in tab nav, Message/Call
-            inline in the contact section, Open Questions in the Quick
-            Access rail). Reintroduce only if a real net-new entry point
-            for the profile becomes necessary. */}
+        {/* ── Flag Member drawer/modal ── */}
+        <FlagMemberModal
+          memberId={memberId}
+          visible={flagModalOpen}
+          onClose={() => setFlagModalOpen(false)}
+        />
 
         {/* ── Open Questions drawer ── */}
         <OpenQuestionsDrawer
@@ -1959,9 +2588,9 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
           journey={
             profile.primaryCategories.length > 0
               ? {
-                  templateName:    `${CATEGORY_LABELS[profile.primaryCategories[0]!] ?? profile.primaryCategories[0]!} Journey`,
+                  templateName: `${CATEGORY_LABELS[profile.primaryCategories[0]!] ?? profile.primaryCategories[0]!} Journey`,
                   currentStepName: 'Upload Documents',
-                  vertical:        profile.primaryCategories[0]!,
+                  vertical: profile.primaryCategories[0]!,
                 }
               : undefined
           }
@@ -1988,54 +2617,95 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
           }}
         />
 
-        {/* ── Message Member drawer ──
-            ProfileContactButtons handles the actual find-or-create flow.
-            The drawer surfaces a short message-composition UI using the same
-            onNavigateToConversation callback for navigation. Full inline thread
-            UI is pending the standalone Messages screen from Agent C. */}
-        <RightDrawer
-          isOpen={messageDrawerOpen}
-          onClose={() => setMessageDrawerOpen(false)}
-          title="Message Member"
-          subtitle={displayName}
-          footer={
-            <TouchableOpacity
-              style={s.messageFooterBtn}
-              onPress={() => setMessageDrawerOpen(false)}
-              accessibilityRole="button"
-              accessibilityLabel="Close message drawer"
-            >
-              <Text style={s.messageFooterBtnText}>Close</Text>
-            </TouchableOpacity>
-          }
-        >
-          <View style={s.messageDrawerContent}>
-            <Text style={s.messageDrawerBody}>
-              Use the contact buttons below to initiate a message thread with{' '}
-              {displayName}. A full inline message thread will be available here
-              once the standalone Messages screen ships.
-            </Text>
+        {/* ProfileContactButtons drives the masked-call + conversation
+            find-or-create flow. On mobile it renders inline in the
+            sheet; on web the Call/Message buttons in the top card are
+            the primary entry point and these are rendered invisibly for
+            the find-or-create side-effect only. */}
+        {!servicesConsentRefused && (
+          <View style={{ height: 0, overflow: 'hidden' }}>
             <ProfileContactButtons
               targetUserId={memberId}
               targetUserRole="member"
               sharedSessionCount={profile.sessionCount}
               targetDisplayName={displayName}
-              onNavigateToConversation={(convId) => {
-                setMessageDrawerOpen(false);
-                handleNavigateToConversation(convId);
-              }}
-              onNavigateAndCall={() => {
-                setMessageDrawerOpen(false);
-                handleNavigateAndCall();
-              }}
+              onNavigateToConversation={handleNavigateToConversation}
+              onNavigateAndCall={handleNavigateAndCall}
             />
           </View>
-        </RightDrawer>
+        )}
 
       </AppShell>
     </SafeAreaView>
   );
 }
+
+// ─── RailAccessItem (web right-rail only) ────────────────────────────────────
+
+interface RailAccessItemProps {
+  icon: React.ReactNode;
+  label: string;
+  sublabel?: string;
+  iconBg?: string;
+  onPress: () => void;
+}
+
+function RailAccessItem({
+  icon,
+  label,
+  sublabel,
+  iconBg = '#EFF6FF',
+  onPress,
+}: RailAccessItemProps): React.JSX.Element {
+  return (
+    <TouchableOpacity
+      style={railItemStyles.item}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+    >
+      <View style={[railItemStyles.iconWrap, { backgroundColor: iconBg }]}>{icon}</View>
+      <View style={railItemStyles.labelWrap}>
+        <Text style={railItemStyles.label}>{label}</Text>
+        {sublabel ? <Text style={railItemStyles.sublabel}>{sublabel}</Text> : null}
+      </View>
+      <ChevronRight size={12} color="#D1D5DB" />
+    </TouchableOpacity>
+  );
+}
+
+const railItemStyles = StyleSheet.create({
+  item: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 9,
+    paddingHorizontal: 4,
+    borderRadius: radius.md,
+  } as ViewStyle,
+  iconWrap: {
+    width: 30,
+    height: 30,
+    borderRadius: radius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  } as ViewStyle,
+  labelWrap: {
+    flex: 1,
+    gap: 1,
+  } as ViewStyle,
+  label: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 12,
+    color: '#111827',
+  } as TextStyle,
+  sublabel: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 10,
+    color: '#6B7280',
+  } as TextStyle,
+});
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
@@ -2045,7 +2715,7 @@ const s = StyleSheet.create({
     backgroundColor: tokens.pageBg,
   } as ViewStyle,
 
-  // ── Header (native only)
+  // Native back header
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2074,10 +2744,8 @@ const s = StyleSheet.create({
     justifyContent: 'center',
   } as ViewStyle,
 
-  // ── Web header
-  webHeader: {
-    marginBottom: 8,
-  } as ViewStyle,
+  // Web header
+  webHeader: { marginBottom: 8 } as ViewStyle,
   backLinkWeb: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2087,14 +2755,12 @@ const s = StyleSheet.create({
   backLinkText: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 13,
-    color: colors.primary,
+    color: tokens.primary,
   } as TextStyle,
 
-  // ── Scroll
+  // Scroll
   scroll: { flex: 1 } as ViewStyle,
-  scrollContent: {
-    flexGrow: 1,
-  } as ViewStyle,
+  scrollContent: { flexGrow: 1 } as ViewStyle,
   pageWrap: {
     width: '100%',
     maxWidth: 1100,
@@ -2110,275 +2776,39 @@ const s = StyleSheet.create({
     paddingTop: 16,
   } as ViewStyle,
 
-  // ── Top header card — mockup: p-6 (24px), 12-col grid, identity 5/contact 3/needs 4
-  headerCard: {
-    marginBottom: 24,
+  // 3-column top card
+  topCard: {
+    marginBottom: 20,
     padding: 0,
     overflow: 'hidden',
   } as ViewStyle,
-  headerCardRow: {
+  topCardRow: {
     flexDirection: Platform.OS === 'web' ? 'row' : 'column',
-    gap: 0,
   } as ViewStyle,
 
-  // Identity column — col-span-5
-  identityCol: {
-    flex: Platform.OS === 'web' ? 5 : undefined,
-    borderRightWidth: Platform.OS === 'web' ? 1 : 0,
-    borderRightColor: '#F3F4F6',
+  // Content row (main + right rail)
+  contentRow: {
+    flexDirection: Platform.OS === 'web' ? 'row' : 'column',
+    gap: 24,
+    alignItems: 'flex-start',
   } as ViewStyle,
-  bannerContainer: {} as ViewStyle,
-  banner: {
-    height: 80,
-    backgroundColor: '#3D5A3E',
+  mainCol: { flex: 1 } as ViewStyle,
+
+  // Web right rail card
+  railCard: {
+    padding: 16,
+    gap: 2,
   } as ViewStyle,
-  heroSection: {
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingBottom: 20,
-    gap: 8,
-  } as ViewStyle,
-  avatarWrapper: {
-    marginTop: -56,
-    marginBottom: 8,
-  } as ViewStyle,
-  avatar: {
-    width: 112,
-    height: 112,
-    borderRadius: 56,
-    backgroundColor: '#CBD5E1',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 4,
-    borderColor: '#FFFFFF',
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.15,
-        shadowRadius: 12,
-      },
-      android: { elevation: 4 },
-    }),
-  } as ViewStyle,
-  avatarText: {
+  railCardTitle: {
     fontFamily: 'DMSans_700Bold',
-    fontSize: 30,
-    color: '#FFFFFF',
-  } as TextStyle,
-  displayName: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 22,
+    fontSize: 13,
     color: '#111827',
-    textAlign: 'center',
-  } as TextStyle,
-  heroBadgesRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-  } as ViewStyle,
-
-  // Contact column — col-span-3, mockup: border-l border-gray-100 pl-6 space-y-2.5
-  contactCol: {
-    flex: Platform.OS === 'web' ? 3 : undefined,
-    padding: 24,
-    borderLeftWidth: Platform.OS === 'web' ? 1 : 0,
-    borderLeftColor: '#F3F4F6',
-    borderRightWidth: Platform.OS === 'web' ? 1 : 0,
-    borderRightColor: '#F3F4F6',
-  } as ViewStyle,
-
-  // Needs column — col-span-4
-  needsCol: {
-    flex: Platform.OS === 'web' ? 4 : undefined,
-    padding: 24,
-  } as ViewStyle,
-  needsColHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
     marginBottom: 10,
-  } as ViewStyle,
-  colHeading: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 14,
-    color: '#111827',
-  } as TextStyle,
-  colHeadingSub: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 14,
-    color: '#9CA3AF',
-  } as TextStyle,
-  // Resource need row: rank circle + label + priority badge
-  needItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingVertical: 6,
-    paddingHorizontal: 8,
-    borderRadius: 10,
-  } as ViewStyle,
-  needRank: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  } as ViewStyle,
-  needRankText: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 11,
-  } as TextStyle,
-  needItemLabel: {
-    flex: 1,
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 13,
-    color: '#111827',
-  } as TextStyle,
-  needsEmpty: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 13,
-    color: '#A0A6AB',
-    fontStyle: 'italic',
   } as TextStyle,
 
-  // ── Mid row (insights + AI panel) — mockup: grid-cols-12 gap-6 mt-6, 9/3 split
-  midRow: {
-    flexDirection: Platform.OS === 'web' ? 'row' : 'column',
-    gap: 24,
-    marginBottom: 24,
-    alignItems: 'flex-start',
-  } as ViewStyle,
-  midMain: {
-    flex: 1,
-  } as ViewStyle,
-  // Insights card — mockup: p-5 (20px), 4-col grid gap-5 (20px)
-  insightsCard: {
-    padding: 20,
-  } as ViewStyle,
-  insightsTitle: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 14,
-    color: '#111827',
-    marginBottom: 16,
-  } as TextStyle,
-  insightsGrid: {
-    flexDirection: Platform.OS === 'web' ? 'row' : 'column',
-    flexWrap: 'wrap',
-    gap: 20,
-  } as ViewStyle,
-  insightCell: {
-    flex: 1,
-    minWidth: 160,
-    gap: 6,
-  } as ViewStyle,
-  insightCellLast: {} as ViewStyle,
-  insightCellLabel: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 12,
-    color: '#111827',
-    marginBottom: 6,
-  } as TextStyle,
-  insightCellBody: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 14,
-    color: '#374151',
-    lineHeight: 20,
-  } as TextStyle,
-
-  // ── AI panel card — mockup: p-5, gradient from-emerald-50/50 to-white
-  aiPanelCard: {
-    padding: 20,
-    gap: 10,
-    backgroundColor: '#F0FDF4',
-  } as ViewStyle,
-  aiPanelHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 8,
-  } as ViewStyle,
-  aiPanelTitle: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 14,
-    color: '#111827',
-    flex: 1,
-  } as TextStyle,
-  aiBetaBadge: {
-    backgroundColor: colors.secondary + '20',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 100,
-  } as ViewStyle,
-  aiBetaText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 10,
-    color: colors.secondary,
-  } as TextStyle,
-  aiPanelBody: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 12,
-    color: '#6B7280',
-    lineHeight: 18,
-  } as TextStyle,
-  aiConsentValue: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 12,
-  } as TextStyle,
-  aiConsentGranted: { color: '#16A34A' } as TextStyle,
-  aiConsentDenied: { color: '#DC2626' } as TextStyle,
-  aiConsentNone: { color: '#A0A6AB' } as TextStyle,
-
-  // ── Journey row — mockup: grid-cols-12 gap-6 mt-6, 9/3 split
-  journeyRow: {
-    flexDirection: Platform.OS === 'web' ? 'row' : 'column',
-    gap: 24,
-    alignItems: 'flex-start',
-  } as ViewStyle,
-  journeyMain: {
-    flex: 1,
-  } as ViewStyle,
-
-  // ── Quick Access card — mockup: p-5 (20px), title font-semibold text-sm
-  quickAccessCard: {
-    padding: 20,
-  } as ViewStyle,
-  quickAccessTitle: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 14,
-    color: '#111827',
-    marginBottom: 8,
-  } as TextStyle,
-
-  // ── Billing caption
-  billingCapNote: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 10,
-    color: colors.mutedForeground,
-  } as TextStyle,
-
-  // ── Session last item
-  sessionItemLast: {} as ViewStyle,
-
-  // ── Goals subsection label
-  subSectionLabel: {
-    fontFamily: fonts.bodySemibold,
-    fontSize: 11,
-    color: '#6B7280',
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    marginBottom: 2,
-  } as TextStyle,
-
-  // ── Consent last row
-  consentLastRow: {} as ViewStyle,
-
-  // ── Shared count badge
+  // Count badge (sessions header)
   countBadge: {
-    backgroundColor: colors.primary + '15',
+    backgroundColor: tokens.primary + '15',
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 100,
@@ -2386,10 +2816,10 @@ const s = StyleSheet.create({
   countBadgeText: {
     fontFamily: fonts.bodySemibold,
     fontSize: 10,
-    color: colors.primary,
+    color: tokens.primary,
   } as TextStyle,
 
-  // ── HIPAA notice
+  // HIPAA notice
   hipaaNotice: {
     backgroundColor: '#F4F1ED',
     borderRadius: 12,
@@ -2407,7 +2837,7 @@ const s = StyleSheet.create({
     textAlign: 'center',
   } as TextStyle,
 
-  // ── Access denied / error state
+  // Error / 403 state
   emptyState: {
     flex: 1,
     alignItems: 'center',
@@ -2448,32 +2878,5 @@ const s = StyleSheet.create({
     fontFamily: fonts.bodySemibold,
     fontSize: 14,
     color: '#FFFFFF',
-  } as TextStyle,
-
-  // ── Message drawer
-  messageDrawerContent: {
-    gap: 16,
-  } as ViewStyle,
-  messageDrawerBody: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 13,
-    color: '#6B7280',
-    lineHeight: 20,
-    backgroundColor: '#F4F1ED',
-    borderRadius: 10,
-    padding: 12,
-  } as TextStyle,
-  messageFooterBtn: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    backgroundColor: '#F4F1ED',
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-  } as ViewStyle,
-  messageFooterBtnText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 14,
-    color: '#6B7280',
   } as TextStyle,
 });
