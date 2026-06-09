@@ -1,16 +1,29 @@
 /**
- * MemberSessionsScreen — "Messages" in the new nav (feat/ui-revamp).
+ * MemberSessionsScreen — paginated sessions table (T21).
  *
- * Re-skinned to AppShell layout. All existing data hooks, sub-components,
- * audio plumbing (dual-mic), and navigation callbacks are preserved verbatim.
+ * Redesigned to mirror the CHW Sessions table pattern:
+ *   - Web:    responsive table with columns Date & Time / Type / Status /
+ *             Duration / Modality / Actions inside a Card.
+ *   - Native: stacked SessionRow cards with the same data fields.
  *
- * Tabs:
- * - Active: scheduled/in_progress sessions with cancel action + Message CHW
- * - Pending: open requests awaiting CHW match
- * - Completed: past sessions with star ratings and expandable notes
+ * Pagination is client-side (20 rows per page) — the existing /sessions
+ * endpoint returns a flat array with no server-side cursor.
+ *
+ * Date & Time column is sortable (asc / desc). All other columns are
+ * display-only in this iteration.
+ *
+ * Preserved verbatim:
+ *   - useSessions / useMyRequests / useCancelRequest data hooks
+ *   - ChatModal (tap "View notes" on a completed session → opens inline chat)
+ *   - ConfirmCancelModal (cancel confirmation for scheduled sessions)
+ *   - RateChwModal (rate CHW after a completed session)
+ *   - ToastBanner (ephemeral feedback)
+ *   - useRefreshControl (pull-to-refresh on native)
+ *
+ * Visual language: theme/tokens (canonical) — NO imports from theme/colors.
  */
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   Modal,
   Platform,
@@ -21,28 +34,29 @@ import {
   Text,
   TouchableOpacity,
   View,
+  type ViewStyle,
+  type TextStyle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
   CalendarCheck,
   CheckCircle,
-  ChevronDown,
-  ChevronUp,
+  ChevronLeft,
+  ChevronRight,
   Clock,
-  Home,
+  FileText,
   Inbox,
   MessageCircle,
-  RefreshCw,
-  ShoppingBasket,
-  Brain,
   Sparkles,
   Star,
-  Stethoscope,
   X,
   XCircle,
 } from 'lucide-react-native';
 
-import { colors } from '../../theme/colors';
+import { colors as tokens, spacing, radius, shadows } from '../../theme/tokens';
 import { typography } from '../../theme/typography';
 import {
   sessionModeLabels,
@@ -52,7 +66,15 @@ import {
   type Vertical,
   type SessionMode,
 } from '../../data/mock';
-import { AppShell, PageHeader } from '../../components/ui';
+import {
+  AppShell,
+  Card,
+  PageHeader,
+  PageWrap,
+  Pill,
+  SectionHeader,
+  type PillVariant,
+} from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
 import {
   useSessions,
@@ -67,7 +89,6 @@ import { ErrorState } from '../../components/shared/ErrorState';
 import { SessionChat } from '../../components/sessions/SessionChat';
 import {
   VERTICAL_COLOR,
-  VERTICAL_EMOJI,
   VERTICAL_LABEL,
   verticalLabel,
   type Vertical as VerticalLib,
@@ -76,55 +97,76 @@ import { RateChwModal } from '../../components/testimonials/RateChwModal';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-type TabKey = 'active' | 'pending' | 'completed';
+/** Rows shown per page in the paginated sessions table. */
+const SESSIONS_PAGE_SIZE = 20;
 
-const statusBadgeColors: Record<SessionStatus, { bg: string; text: string }> = {
-  scheduled: { bg: `${colors.secondary}20`, text: colors.secondary },
-  in_progress: { bg: `${colors.compassGold}20`, text: colors.compassGold },
-  completed: { bg: `${colors.primary}15`, text: colors.primary },
-  cancelled: { bg: `${colors.mutedForeground}15`, text: colors.mutedForeground },
-};
+type SortDirection = 'asc' | 'desc';
+
+// ─── Status → Pill variant map ────────────────────────────────────────────────
+
+/**
+ * Maps a session status string to the design-system Pill variant so status
+ * chips are colour-coded consistently with the CHW Sessions table.
+ */
+function statusToPillVariant(status: string): PillVariant {
+  switch (status as SessionStatus) {
+    case 'scheduled':    return 'blue';
+    case 'in_progress':  return 'amber';
+    case 'completed':    return 'emerald';
+    case 'cancelled':    return 'gray';
+    default:             return 'gray';
+  }
+}
 
 // Delegate to lib/verticals — single source of truth.
 const verticalColors: Record<Vertical, string> = VERTICAL_COLOR as Record<Vertical, string>;
-const verticalEmoji: Record<Vertical, string> = VERTICAL_EMOJI as Record<Vertical, string>;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function formatDate(iso: string): string {
+/** Format ISO8601 to "Mon, May 12, 2:34 PM" */
+function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleDateString('en-US', {
     weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
+    month:   'short',
+    day:     'numeric',
+    hour:    'numeric',
+    minute:  '2-digit',
   });
 }
 
+/** Format ISO8601 date portion to "May 12, 2026" */
 function formatShortDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-US', {
     month: 'short',
-    day: 'numeric',
-    year: 'numeric',
+    day:   'numeric',
+    year:  'numeric',
   });
 }
 
-function getInitials(name: string): string {
-  return name
-    .split(' ')
-    .slice(0, 2)
-    .map((part) => part[0] ?? '')
-    .join('')
-    .toUpperCase();
+/**
+ * Format duration from minutes to "mm:ss" display string.
+ * Returns "—" when duration is not available (scheduled or in-progress sessions).
+ */
+function formatDuration(minutes: number | undefined): string {
+  if (minutes == null) return '—';
+  const m = Math.floor(minutes);
+  const s = Math.round((minutes - m) * 60);
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
 /**
- * Format an ISO8601 timestamp into a short time string (e.g. "2:34 PM").
+ * Derive a human-readable modality label from the raw mode string.
+ * Delegates to the shared sessionModeLabels map.
  */
+function formatModality(mode: string): string {
+  return sessionModeLabels[mode as SessionMode] ?? mode;
+}
+
+/** Format an ISO8601 timestamp into a short time string (e.g. "2:34 PM"). */
 function formatAITimestamp(iso: string): string {
   try {
     return new Date(iso).toLocaleTimeString('en-US', {
-      hour: 'numeric',
+      hour:   'numeric',
       minute: '2-digit',
       hour12: true,
     });
@@ -133,7 +175,7 @@ function formatAITimestamp(iso: string): string {
   }
 }
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
+// ─── ToastBanner ──────────────────────────────────────────────────────────────
 
 interface ToastBannerProps {
   message: string;
@@ -141,7 +183,11 @@ interface ToastBannerProps {
 
 function ToastBanner({ message }: ToastBannerProps): React.JSX.Element {
   return (
-    <View style={toastStyles.container} accessibilityRole="alert" accessibilityLiveRegion="polite">
+    <View
+      style={toastStyles.container}
+      accessibilityRole="alert"
+      accessibilityLiveRegion="polite"
+    >
       <CheckCircle color="#FFFFFF" size={15} />
       <Text style={toastStyles.text}>{message}</Text>
     </View>
@@ -150,43 +196,41 @@ function ToastBanner({ message }: ToastBannerProps): React.JSX.Element {
 
 const toastStyles = StyleSheet.create({
   container: {
-    position: 'absolute',
-    top: Platform.OS === 'ios' ? 54 : 16,
-    left: 16,
-    right: 16,
-    zIndex: 99,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: colors.primary,
+    position:       'absolute',
+    top:            Platform.OS === 'ios' ? 54 : 16,
+    left:           16,
+    right:          16,
+    zIndex:         99,
+    flexDirection:  'row',
+    alignItems:     'center',
+    gap:            8,
+    backgroundColor: tokens.primary,
     paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 16,
+    paddingVertical:   12,
+    borderRadius:   16,
     ...Platform.select({
       ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
+        shadowColor:   '#000',
+        shadowOffset:  { width: 0, height: 4 },
         shadowOpacity: 0.2,
-        shadowRadius: 12,
+        shadowRadius:  12,
       },
-      android: {
-        elevation: 8,
-      },
+      android: { elevation: 8 },
     }),
-  },
+  } as ViewStyle,
   text: {
-    ...typography.bodySm,
-    color: '#FFFFFF',
+    fontSize:   14,
     fontWeight: '600',
-    flex: 1,
-  },
+    color:      '#FFFFFF',
+    flex:       1,
+  } as TextStyle,
 });
 
-// ─── Cancel Confirm Modal ─────────────────────────────────────────────────────
+// ─── ConfirmCancelModal ───────────────────────────────────────────────────────
 
 interface ConfirmCancelModalProps {
-  session: SessionData;
-  visible: boolean;
+  session:   SessionData;
+  visible:   boolean;
   onConfirm: (sessionId: string) => void;
   onDismiss: () => void;
 }
@@ -215,11 +259,11 @@ function ConfirmCancelModal({
           <View style={cancelModalStyles.btnRow}>
             <TouchableOpacity
               onPress={() => onConfirm(session.id)}
-              style={cancelModalStyles.cancelBtn}
+              style={cancelModalStyles.confirmBtn}
               accessibilityRole="button"
               accessibilityLabel="Confirm cancel session"
             >
-              <Text style={cancelModalStyles.cancelBtnText}>Yes, Cancel</Text>
+              <Text style={cancelModalStyles.confirmBtnText}>Yes, Cancel</Text>
             </TouchableOpacity>
             <TouchableOpacity
               onPress={onDismiss}
@@ -238,69 +282,69 @@ function ConfirmCancelModal({
 
 const cancelModalStyles = StyleSheet.create({
   backdrop: {
-    flex: 1,
+    flex:            1,
     backgroundColor: 'rgba(0,0,0,0.45)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 24,
-  },
+    alignItems:      'center',
+    justifyContent:  'center',
+    padding:         24,
+  } as ViewStyle,
   dialog: {
-    backgroundColor: colors.card,
-    borderRadius: 20,
-    padding: 24,
-    width: '100%',
-    maxWidth: 360,
-  },
+    backgroundColor: tokens.cardBg,
+    borderRadius:    radius.xl,
+    padding:         spacing.xxl,
+    width:           '100%',
+    maxWidth:        360,
+  } as ViewStyle,
   title: {
-    ...typography.bodyMd,
-    fontWeight: '700',
-    color: colors.foreground,
-    marginBottom: 8,
-  },
+    fontSize:     16,
+    fontWeight:   '700',
+    color:        tokens.textPrimary,
+    marginBottom: spacing.sm,
+  } as TextStyle,
   body: {
-    ...typography.bodySm,
-    color: colors.mutedForeground,
-    marginBottom: 20,
-    lineHeight: 20,
-  },
+    fontSize:     14,
+    color:        tokens.textSecondary,
+    marginBottom: spacing.xl,
+    lineHeight:   20,
+  } as TextStyle,
   btnRow: {
     flexDirection: 'row',
-    gap: 10,
-  },
-  cancelBtn: {
-    flex: 1,
-    backgroundColor: colors.destructive,
-    borderRadius: 12,
+    gap:           10,
+  } as ViewStyle,
+  confirmBtn: {
+    flex:            1,
+    backgroundColor: '#EF4444',
+    borderRadius:    radius.lg,
     paddingVertical: 12,
-    alignItems: 'center',
-  },
-  cancelBtnText: {
-    ...typography.bodySm,
+    alignItems:      'center',
+  } as ViewStyle,
+  confirmBtnText: {
+    fontSize:   14,
     fontWeight: '700',
-    color: '#FFFFFF',
-  },
+    color:      '#FFFFFF',
+  } as TextStyle,
   keepBtn: {
-    flex: 1,
-    backgroundColor: colors.card,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 12,
+    flex:            1,
+    backgroundColor: tokens.cardBg,
+    borderWidth:     1,
+    borderColor:     tokens.cardBorder,
+    borderRadius:    radius.lg,
     paddingVertical: 12,
-    alignItems: 'center',
-  },
+    alignItems:      'center',
+  } as ViewStyle,
   keepBtnText: {
-    ...typography.bodySm,
+    fontSize:   14,
     fontWeight: '600',
-    color: colors.mutedForeground,
-  },
+    color:      tokens.textSecondary,
+  } as TextStyle,
 });
 
-// ─── ChatModal wrapper ────────────────────────────────────────────────────────
+// ─── ChatModal ────────────────────────────────────────────────────────────────
 
 interface ChatModalProps {
-  visible: boolean;
+  visible:   boolean;
   sessionId: string;
-  onClose: () => void;
+  onClose:   () => void;
 }
 
 function ChatModal({ visible, sessionId, onClose }: ChatModalProps): React.JSX.Element {
@@ -313,17 +357,16 @@ function ChatModal({ visible, sessionId, onClose }: ChatModalProps): React.JSX.E
       accessible
       accessibilityViewIsModal
     >
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#F4F1ED' }} edges={['top']}>
-        {/* Modal header */}
+      <SafeAreaView style={{ flex: 1, backgroundColor: tokens.pageBg }} edges={['top']}>
         <View style={chatModalStyles.header}>
-          <Text style={chatModalStyles.headerTitle}>Session Chat</Text>
+          <Text style={chatModalStyles.headerTitle}>Session Notes</Text>
           <TouchableOpacity
             style={chatModalStyles.closeButton}
             onPress={onClose}
             accessibilityRole="button"
-            accessibilityLabel="Close chat"
+            accessibilityLabel="Close notes"
           >
-            <X size={20} color={colors.foreground} />
+            <X size={20} color={tokens.textPrimary} />
           </TouchableOpacity>
         </View>
         <SessionChat sessionId={sessionId} />
@@ -334,941 +377,951 @@ function ChatModal({ visible, sessionId, onClose }: ChatModalProps): React.JSX.E
 
 const chatModalStyles = StyleSheet.create({
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
+    flexDirection:     'row',
+    alignItems:        'center',
+    justifyContent:    'space-between',
+    paddingHorizontal: spacing.xl,
+    paddingVertical:   spacing.lg,
     borderBottomWidth: 1,
-    borderBottomColor: '#DDD6CC',
-    backgroundColor: '#FFFFFF',
-  },
+    borderBottomColor: tokens.cardBorder,
+    backgroundColor:   tokens.cardBg,
+  } as ViewStyle,
   headerTitle: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 24,
-    lineHeight: 30,
-    color: '#1E3320',
-  },
+    fontSize:   18,
+    fontWeight: '700',
+    color:      tokens.textPrimary,
+  } as TextStyle,
   closeButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#F4F1ED',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-  },
+    width:           36,
+    height:          36,
+    borderRadius:    18,
+    backgroundColor: tokens.pageBg,
+    alignItems:      'center',
+    justifyContent:  'center',
+    borderWidth:     1,
+    borderColor:     tokens.cardBorder,
+  } as ViewStyle,
 });
 
-// ─── Star Rating ──────────────────────────────────────────────────────────────
+// ─── NotesExpandedCard ────────────────────────────────────────────────────────
 
-interface StarRatingProps {
-  sessionId: string;
-  currentRating: number;
-  onRate: (sessionId: string, rating: number) => void;
+/**
+ * Expandable notes panel rendered inline below a session row.
+ * Shows CHW Notes and, when present, the AI Summary.
+ */
+interface NotesExpandedCardProps {
+  session: SessionData;
 }
 
-function StarRating({ sessionId, currentRating, onRate }: StarRatingProps): React.JSX.Element {
+function NotesExpandedCard({ session }: NotesExpandedCardProps): React.JSX.Element {
   return (
-    <View
-      style={starStyles.row}
-      accessibilityLabel={`Rate session, currently ${currentRating} stars`}
-    >
-      {Array.from({ length: 5 }, (_, i) => {
-        const starValue = i + 1;
-        const isFilled = starValue <= currentRating;
-        const isRated = currentRating > 0;
-
-        return (
-          <TouchableOpacity
-            key={i}
-            onPress={() => !isRated && onRate(sessionId, starValue)}
-            disabled={isRated}
-            accessibilityRole="button"
-            accessibilityLabel={`${starValue} star${starValue !== 1 ? 's' : ''}`}
-            hitSlop={6}
-          >
-            <Star
-              size={20}
-              color={isFilled ? '#FBBF24' : colors.border}
-              fill={isFilled ? '#FBBF24' : colors.border}
-            />
-          </TouchableOpacity>
-        );
-      })}
-      {currentRating > 0 && (
-        <Text style={starStyles.ratingText}>{currentRating}.0</Text>
+    <View style={notesStyles.container}>
+      {/* CHW Notes */}
+      {session.notes ? (
+        <View style={notesStyles.chwCard}>
+          <Text style={notesStyles.cardLabel}>CHW Notes</Text>
+          <Text style={notesStyles.chwText}>{session.notes}</Text>
+        </View>
+      ) : (
+        <Text style={notesStyles.emptyText}>No session notes available.</Text>
       )}
+
+      {/* AI Summary */}
+      {session.aiSummary &&
+       session.aiSummaryGeneratedAt &&
+       session.aiSummaryExcluded !== true ? (
+        <View style={notesStyles.aiCard}>
+          <View style={notesStyles.aiHeader}>
+            <Sparkles size={12} color={tokens.emerald700} />
+            <Text style={notesStyles.aiLabel}>AI Summary</Text>
+            <View style={notesStyles.aiBadge}>
+              <Text style={notesStyles.aiBadgeText}>Generated from transcript</Text>
+            </View>
+            <Text style={notesStyles.aiTimestamp}>
+              {formatAITimestamp(session.aiSummaryGeneratedAt)}
+            </Text>
+          </View>
+          <Text style={notesStyles.aiText} selectable>
+            {session.aiSummary}
+          </Text>
+        </View>
+      ) : session.aiSummary && session.aiSummaryExcluded === true ? (
+        <Text style={notesStyles.excludedNote}>
+          AI summary was generated but excluded by CHW.
+        </Text>
+      ) : null}
     </View>
   );
 }
 
-const starStyles = StyleSheet.create({
-  row: {
+const notesStyles = StyleSheet.create({
+  container: {
+    paddingHorizontal: spacing.lg,
+    paddingBottom:     spacing.lg,
+    gap:               spacing.sm,
+  } as ViewStyle,
+  chwCard: {
+    backgroundColor: tokens.pageBg,
+    borderRadius:    radius.md,
+    padding:         spacing.md,
+    borderWidth:     1,
+    borderColor:     tokens.cardBorder,
+    gap:             6,
+  } as ViewStyle,
+  cardLabel: {
+    fontSize:      10,
+    fontWeight:    '700',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase' as const,
+    color:         tokens.textMuted,
+  } as TextStyle,
+  chwText: {
+    fontSize:   13,
+    color:      tokens.textPrimary,
+    lineHeight: 18,
+  } as TextStyle,
+  emptyText: {
+    fontSize:   13,
+    color:      tokens.textMuted,
+    fontStyle:  'italic' as const,
+  } as TextStyle,
+  aiCard: {
+    backgroundColor: '#EDF4F8',
+    borderRadius:    radius.md,
+    padding:         spacing.md,
+    borderWidth:     1,
+    borderColor:     '#C8D8E4',
+    gap:             spacing.sm,
+  } as ViewStyle,
+  aiHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  ratingText: {
-    ...typography.label,
-    color: colors.mutedForeground,
-    fontWeight: '600',
-    marginLeft: 4,
-  },
+    alignItems:    'center',
+    flexWrap:      'wrap' as const,
+    gap:           5,
+  } as ViewStyle,
+  aiLabel: {
+    fontSize:      10,
+    fontWeight:    '700',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase' as const,
+    color:         tokens.emerald700,
+  } as TextStyle,
+  aiBadge: {
+    backgroundColor: tokens.emerald700 + '20',
+    borderRadius:    100,
+    paddingHorizontal: 6,
+    paddingVertical:   1,
+  } as ViewStyle,
+  aiBadgeText: {
+    fontSize:      9,
+    fontWeight:    '600',
+    color:         tokens.emerald700,
+    letterSpacing: 0.2,
+  } as TextStyle,
+  aiTimestamp: {
+    fontSize:   10,
+    color:      tokens.textMuted,
+    marginLeft: 'auto' as unknown as number,
+  } as TextStyle,
+  aiText: {
+    fontSize:  13,
+    fontStyle: 'italic' as const,
+    color:     tokens.textPrimary,
+    lineHeight: 18,
+  } as TextStyle,
+  excludedNote: {
+    fontSize:  12,
+    color:     tokens.textMuted,
+    fontStyle: 'italic' as const,
+    paddingLeft: 4,
+  } as TextStyle,
 });
 
-// ─── Active Session Card ───────────────────────────────────────────────────────
+// ─── Table header row (web only) ──────────────────────────────────────────────
 
-interface ActiveSessionCardProps {
-  session: SessionData;
-  onMessage: (session: SessionData) => void;
-  onRequestCancel: (session: SessionData) => void;
+interface TableHeaderProps {
+  sortDirection: SortDirection;
+  onToggleSort:  () => void;
 }
 
-function ActiveSessionCard({
-  session,
-  onMessage,
-  onRequestCancel,
-}: ActiveSessionCardProps): React.JSX.Element {
-  const chwDisplayName = session.chwName ?? 'CHW';
-  const statusColors = statusBadgeColors[session.status as SessionStatus] ?? {
-    bg: `${colors.mutedForeground}15`,
-    text: colors.mutedForeground,
-  };
-  const initials = getInitials(chwDisplayName);
-  const verticalColor = verticalColors[session.vertical as Vertical] ?? colors.primary;
+function TableHeader({ sortDirection, onToggleSort }: TableHeaderProps): React.JSX.Element {
+  const SortIcon = sortDirection === 'asc' ? ArrowUp : ArrowDown;
 
   return (
-    <View style={activeCardStyles.container}>
-      {/* Top row */}
-      <View style={activeCardStyles.topRow}>
-        <View style={[activeCardStyles.avatar, { backgroundColor: `${colors.primary}18` }]}>
-          <Text style={activeCardStyles.avatarText}>{initials}</Text>
+    <View style={tableHeaderStyles.row} accessibilityRole="none">
+      {/* Date & Time — sortable */}
+      <TouchableOpacity
+        style={[tableHeaderStyles.cell, tableHeaderStyles.dateCell, tableHeaderStyles.sortableCell]}
+        onPress={onToggleSort}
+        accessibilityRole="button"
+        accessibilityLabel={`Sort by date, currently ${sortDirection === 'asc' ? 'oldest first' : 'newest first'}`}
+      >
+        <Text style={tableHeaderStyles.label}>Date & Time</Text>
+        <SortIcon size={13} color={tokens.textSecondary} />
+      </TouchableOpacity>
+
+      <View style={[tableHeaderStyles.cell, tableHeaderStyles.typeCell]}>
+        <Text style={tableHeaderStyles.label}>Type</Text>
+      </View>
+
+      <View style={[tableHeaderStyles.cell, tableHeaderStyles.statusCell]}>
+        <Text style={tableHeaderStyles.label}>Status</Text>
+      </View>
+
+      <View style={[tableHeaderStyles.cell, tableHeaderStyles.durationCell]}>
+        <Text style={tableHeaderStyles.label}>Duration</Text>
+      </View>
+
+      <View style={[tableHeaderStyles.cell, tableHeaderStyles.modalityCell]}>
+        <Text style={tableHeaderStyles.label}>Modality</Text>
+      </View>
+
+      <View style={[tableHeaderStyles.cell, tableHeaderStyles.actionsCell]}>
+        <Text style={tableHeaderStyles.label}>Actions</Text>
+      </View>
+    </View>
+  );
+}
+
+const tableHeaderStyles = StyleSheet.create({
+  row: {
+    flexDirection:     'row',
+    alignItems:        'center',
+    backgroundColor:   tokens.pageBg,
+    borderBottomWidth: 1,
+    borderBottomColor: tokens.cardBorder,
+    borderTopLeftRadius:  radius.xl,
+    borderTopRightRadius: radius.xl,
+  } as ViewStyle,
+
+  cell: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical:   spacing.md,
+    flexShrink:        0,
+  } as ViewStyle,
+
+  sortableCell: {
+    flexDirection: 'row',
+    alignItems:    'center',
+    gap:           4,
+    // @ts-ignore — web-only
+    cursor:        'pointer',
+  } as ViewStyle,
+
+  label: {
+    fontSize:      11,
+    fontWeight:    '600',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase' as const,
+    color:         tokens.textSecondary,
+  } as TextStyle,
+
+  // Column width distribution
+  dateCell:     { flex: 2 } as ViewStyle,
+  typeCell:     { flex: 1.5 } as ViewStyle,
+  statusCell:   { flex: 1 } as ViewStyle,
+  durationCell: { flex: 1 } as ViewStyle,
+  modalityCell: { flex: 1 } as ViewStyle,
+  actionsCell:  { flex: 1.5, alignItems: 'flex-end' as const } as ViewStyle,
+});
+
+// ─── Table data row (web only) ────────────────────────────────────────────────
+
+interface SessionTableRowProps {
+  session:       SessionData;
+  isExpanded:    boolean;
+  isCancelled:   boolean;
+  hasTestimonial: boolean;
+  onViewNotes:   (session: SessionData) => void;
+  onRequestCancel: (session: SessionData) => void;
+  onOpenRateModal: (session: SessionData) => void;
+  onToggleExpand:  (sessionId: string) => void;
+}
+
+function SessionTableRow({
+  session,
+  isExpanded,
+  isCancelled,
+  hasTestimonial,
+  onViewNotes,
+  onRequestCancel,
+  onOpenRateModal,
+  onToggleExpand,
+}: SessionTableRowProps): React.JSX.Element {
+  const [hovered, setHovered] = useState(false);
+  const isScheduled = session.status === 'scheduled';
+  const isCompleted = session.status === 'completed';
+  const durationDisplay = isScheduled ? 'Scheduled' : formatDuration(session.durationMinutes);
+
+  return (
+    <>
+      <View
+        style={[tableRowStyles.row, hovered && tableRowStyles.rowHover, isCancelled && tableRowStyles.rowDimmed]}
+        // @ts-ignore — web-only pointer events
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        accessible
+        accessibilityRole="row"
+        accessibilityLabel={`Session on ${formatShortDate(session.scheduledAt)}, ${session.status}`}
+      >
+        {/* Date & Time */}
+        <View style={[tableRowStyles.cell, tableRowStyles.dateCell]}>
+          <Text style={tableRowStyles.dateText}>{formatDateTime(session.scheduledAt)}</Text>
+          {session.chwName ? (
+            <Text style={tableRowStyles.subText}>with {session.chwName}</Text>
+          ) : null}
         </View>
-        <View style={activeCardStyles.infoCol}>
-          <View style={activeCardStyles.nameRow}>
-            <Text style={activeCardStyles.chwName} numberOfLines={1}>{chwDisplayName}</Text>
-            <View style={[activeCardStyles.statusBadge, { backgroundColor: statusColors.bg }]}>
-              <Text style={[activeCardStyles.statusBadgeText, { color: statusColors.text }]}>
-                {sessionStatusLabels[session.status as SessionStatus] ?? session.status}
-              </Text>
+
+        {/* Type — vertical / category */}
+        <View style={[tableRowStyles.cell, tableRowStyles.typeCell]}>
+          <Text style={tableRowStyles.bodyText}>
+            {verticalLabels[session.vertical as Vertical] ?? session.vertical}
+          </Text>
+        </View>
+
+        {/* Status */}
+        <View style={[tableRowStyles.cell, tableRowStyles.statusCell]}>
+          <Pill variant={statusToPillVariant(session.status)} size="sm" withDot>
+            {sessionStatusLabels[session.status as SessionStatus] ?? session.status}
+          </Pill>
+        </View>
+
+        {/* Duration */}
+        <View style={[tableRowStyles.cell, tableRowStyles.durationCell]}>
+          <Text style={tableRowStyles.bodyText}>{durationDisplay}</Text>
+        </View>
+
+        {/* Modality */}
+        <View style={[tableRowStyles.cell, tableRowStyles.modalityCell]}>
+          <Text style={tableRowStyles.bodyText}>{formatModality(session.mode)}</Text>
+        </View>
+
+        {/* Actions */}
+        <View style={[tableRowStyles.cell, tableRowStyles.actionsCell]}>
+          {isCompleted ? (
+            <View style={tableRowStyles.actionsGroup}>
+              <TouchableOpacity
+                style={tableRowStyles.actionBtn}
+                onPress={() => onToggleExpand(session.id)}
+                accessibilityRole="button"
+                accessibilityLabel={isExpanded ? 'Hide session notes' : 'View session notes'}
+              >
+                <FileText size={13} color={tokens.primary} />
+                <Text style={tableRowStyles.actionBtnText}>
+                  {isExpanded ? 'Hide' : 'View notes'}
+                </Text>
+              </TouchableOpacity>
+              {!hasTestimonial && (
+                <TouchableOpacity
+                  style={tableRowStyles.actionBtnSecondary}
+                  onPress={() => onOpenRateModal(session)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Rate your session with ${session.chwName ?? 'CHW'}`}
+                >
+                  <Star size={13} color="#B45309" />
+                  <Text style={tableRowStyles.actionBtnSecondaryText}>Rate</Text>
+                </TouchableOpacity>
+              )}
             </View>
-          </View>
-          <View style={activeCardStyles.metaRow}>
-            <View style={[activeCardStyles.verticalDot, { backgroundColor: verticalColor }]} />
-            <Text style={activeCardStyles.metaText}>
-              {verticalLabels[session.vertical as Vertical] ?? session.vertical}
-            </Text>
-            <Text style={activeCardStyles.separator}>·</Text>
-            <Text style={activeCardStyles.metaText}>
-              {sessionModeLabels[session.mode as SessionMode] ?? session.mode}
-            </Text>
-          </View>
+          ) : isScheduled ? (
+            <TouchableOpacity
+              style={tableRowStyles.cancelBtn}
+              onPress={() => onRequestCancel(session)}
+              accessibilityRole="button"
+              accessibilityLabel={`Cancel session scheduled on ${formatShortDate(session.scheduledAt)}`}
+            >
+              <XCircle size={13} color={tokens.textSecondary} />
+              <Text style={tableRowStyles.cancelBtnText}>Cancel</Text>
+            </TouchableOpacity>
+          ) : (
+            <Text style={tableRowStyles.dashText}>—</Text>
+          )}
         </View>
       </View>
 
-      {/* Date */}
-      <View style={activeCardStyles.dateRow}>
-        <CalendarCheck color={colors.secondary} size={13} />
-        <Text style={activeCardStyles.dateText}>{formatDate(session.scheduledAt)}</Text>
+      {/* Inline expanded notes row */}
+      {isExpanded && isCompleted ? (
+        <View style={tableRowStyles.expandedRow}>
+          <NotesExpandedCard session={session} />
+        </View>
+      ) : null}
+    </>
+  );
+}
+
+const tableRowStyles = StyleSheet.create({
+  row: {
+    flexDirection:     'row',
+    alignItems:        'center',
+    borderBottomWidth: 1,
+    borderBottomColor: tokens.cardBorder,
+  } as ViewStyle,
+
+  rowHover: {
+    backgroundColor: '#F9FAFB',
+  } as ViewStyle,
+
+  rowDimmed: {
+    opacity: 0.5,
+  } as ViewStyle,
+
+  expandedRow: {
+    borderBottomWidth: 1,
+    borderBottomColor: tokens.cardBorder,
+    backgroundColor:   tokens.pageBg,
+  } as ViewStyle,
+
+  cell: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical:   spacing.md,
+    flexShrink:        0,
+  } as ViewStyle,
+
+  // Column widths — mirrors header
+  dateCell:     { flex: 2 } as ViewStyle,
+  typeCell:     { flex: 1.5 } as ViewStyle,
+  statusCell:   { flex: 1 } as ViewStyle,
+  durationCell: { flex: 1 } as ViewStyle,
+  modalityCell: { flex: 1 } as ViewStyle,
+  actionsCell:  { flex: 1.5, alignItems: 'flex-end' as const } as ViewStyle,
+
+  dateText: {
+    fontSize:   14,
+    fontWeight: '500',
+    color:      tokens.textPrimary,
+    lineHeight: 20,
+  } as TextStyle,
+
+  subText: {
+    fontSize:  12,
+    color:     tokens.textSecondary,
+    marginTop: 1,
+  } as TextStyle,
+
+  bodyText: {
+    fontSize: 14,
+    color:    tokens.textPrimary,
+  } as TextStyle,
+
+  actionsGroup: {
+    flexDirection: 'row',
+    alignItems:    'center',
+    gap:           spacing.sm,
+    flexWrap:      'wrap' as const,
+    justifyContent: 'flex-end',
+  } as ViewStyle,
+
+  actionBtn: {
+    flexDirection:   'row',
+    alignItems:      'center',
+    gap:             4,
+    backgroundColor: tokens.emerald100,
+    borderRadius:    radius.sm,
+    paddingHorizontal: 10,
+    paddingVertical:   6,
+  } as ViewStyle,
+
+  actionBtnText: {
+    fontSize:   12,
+    fontWeight: '600',
+    color:      tokens.emerald700,
+  } as TextStyle,
+
+  actionBtnSecondary: {
+    flexDirection:   'row',
+    alignItems:      'center',
+    gap:             4,
+    backgroundColor: '#FEF3C7',
+    borderRadius:    radius.sm,
+    paddingHorizontal: 10,
+    paddingVertical:   6,
+  } as ViewStyle,
+
+  actionBtnSecondaryText: {
+    fontSize:   12,
+    fontWeight: '600',
+    color:      '#B45309',
+  } as TextStyle,
+
+  cancelBtn: {
+    flexDirection:   'row',
+    alignItems:      'center',
+    gap:             4,
+    borderWidth:     1,
+    borderColor:     tokens.cardBorder,
+    borderRadius:    radius.sm,
+    paddingHorizontal: 10,
+    paddingVertical:   6,
+    backgroundColor: tokens.cardBg,
+  } as ViewStyle,
+
+  cancelBtnText: {
+    fontSize:   12,
+    fontWeight: '600',
+    color:      tokens.textSecondary,
+  } as TextStyle,
+
+  dashText: {
+    fontSize: 14,
+    color:    tokens.textMuted,
+  } as TextStyle,
+});
+
+// ─── Native session card ──────────────────────────────────────────────────────
+
+/**
+ * Card-format session display for native (iOS / Android).
+ * Contains the same six data points as the web table row.
+ */
+interface SessionNativeCardProps {
+  session:        SessionData;
+  isExpanded:     boolean;
+  hasTestimonial: boolean;
+  onViewNotes:    (session: SessionData) => void;
+  onRequestCancel: (session: SessionData) => void;
+  onOpenRateModal: (session: SessionData) => void;
+  onToggleExpand:  (sessionId: string) => void;
+}
+
+function SessionNativeCard({
+  session,
+  isExpanded,
+  hasTestimonial,
+  onViewNotes,
+  onRequestCancel,
+  onOpenRateModal,
+  onToggleExpand,
+}: SessionNativeCardProps): React.JSX.Element {
+  const isScheduled = session.status === 'scheduled';
+  const isCompleted = session.status === 'completed';
+  const verticalColor = verticalColors[session.vertical as Vertical] ?? tokens.primary;
+
+  return (
+    <Card style={nativeCardStyles.card}>
+      {/* Top row: date + status pill */}
+      <View style={nativeCardStyles.topRow}>
+        <View style={nativeCardStyles.dateBlock}>
+          <CalendarCheck size={13} color={tokens.emerald700} />
+          <Text style={nativeCardStyles.dateText}>{formatDateTime(session.scheduledAt)}</Text>
+        </View>
+        <Pill variant={statusToPillVariant(session.status)} size="sm" withDot>
+          {sessionStatusLabels[session.status as SessionStatus] ?? session.status}
+        </Pill>
       </View>
 
-      {/* Notes */}
-      {session.notes ? (
-        <Text style={activeCardStyles.notes} numberOfLines={1}>{session.notes}</Text>
+      {/* CHW name */}
+      {session.chwName ? (
+        <Text style={nativeCardStyles.chwName}>with {session.chwName}</Text>
       ) : null}
 
-      {/* Actions */}
-      <View style={activeCardStyles.actionRow}>
-        <TouchableOpacity
-          onPress={() => onMessage(session)}
-          style={activeCardStyles.messageBtn}
-          accessibilityRole="button"
-          accessibilityLabel={`Message ${session.chwName ?? 'CHW'}`}
-        >
-          <MessageCircle color="#FFFFFF" size={13} />
-          <Text style={activeCardStyles.messageBtnText}>Message CHW</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => onRequestCancel(session)}
-          style={activeCardStyles.cancelBtn}
-          accessibilityRole="button"
-          accessibilityLabel={`Cancel session with ${session.chwName ?? 'CHW'}`}
-        >
-          <XCircle color={colors.mutedForeground} size={13} />
-          <Text style={activeCardStyles.cancelBtnText}>Cancel</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-}
-
-const activeCardStyles = StyleSheet.create({
-  container: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-    padding: 16,
-    marginBottom: 12,
-    shadowColor: '#3D5A3E',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 24,
-    elevation: 3,
-  },
-  topRow: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 10,
-    alignItems: 'flex-start',
-  },
-  avatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  avatarText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: colors.primary,
-  },
-  infoCol: {
-    flex: 1,
-    gap: 4,
-  },
-  nameRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    flexWrap: 'wrap',
-  },
-  chwName: {
-    ...typography.bodySm,
-    fontWeight: '700',
-    color: colors.foreground,
-    flex: 1,
-  },
-  statusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 999,
-  },
-  statusBadgeText: {
-    fontSize: 10,
-    fontWeight: '600',
-  },
-  metaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-  },
-  verticalDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  metaText: {
-    ...typography.label,
-    color: colors.mutedForeground,
-  },
-  separator: {
-    color: colors.mutedForeground,
-  },
-  dateRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 8,
-  },
-  dateText: {
-    ...typography.label,
-    color: colors.mutedForeground,
-  },
-  notes: {
-    ...typography.label,
-    color: colors.mutedForeground,
-    fontStyle: 'italic',
-    marginBottom: 12,
-  },
-  actionRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  messageBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 5,
-    backgroundColor: '#7A9F5A',
-    borderRadius: 12,
-    paddingVertical: 12,
-  },
-  messageBtnText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 14,
-    color: '#FFFFFF',
-  },
-  cancelBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 5,
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    backgroundColor: '#FFFFFF',
-  },
-  cancelBtnText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 14,
-    color: '#6B7A6B',
-  },
-});
-
-// ─── Completed Session Card ────────────────────────────────────────────────────
-
-interface CompletedSessionCardProps {
-  session: SessionData;
-  rating: number;
-  isExpanded: boolean;
-  onRate: (sessionId: string, rating: number) => void;
-  onToggleExpand: (sessionId: string) => void;
-  onBookAgain: () => void;
-  /** Whether the member has already submitted a testimonial for this session. */
-  hasTestimonial: boolean;
-  /** Called when the member taps "Rate this CHW" to open the RateChwModal. */
-  onOpenRateModal: (session: SessionData) => void;
-}
-
-function CompletedSessionCard({
-  session,
-  rating,
-  isExpanded,
-  onRate,
-  onToggleExpand,
-  onBookAgain,
-  hasTestimonial,
-  onOpenRateModal,
-}: CompletedSessionCardProps): React.JSX.Element {
-  const chwDisplayName = session.chwName ?? 'CHW';
-  const initials = getInitials(chwDisplayName);
-  const verticalColor = verticalColors[session.vertical as Vertical] ?? colors.primary;
-
-  return (
-    <View style={completedCardStyles.container}>
-      {/* Top row */}
-      <View style={completedCardStyles.topRow}>
-        <View style={[completedCardStyles.avatar, { backgroundColor: `${colors.secondary}18` }]}>
-          <Text style={completedCardStyles.avatarText}>{initials}</Text>
-        </View>
-        <View style={completedCardStyles.infoCol}>
-          <View style={completedCardStyles.nameRow}>
-            <Text style={completedCardStyles.chwName} numberOfLines={1}>{chwDisplayName}</Text>
-            <View style={[completedCardStyles.statusBadge, { backgroundColor: `${colors.primary}15` }]}>
-              <Text style={[completedCardStyles.statusBadgeText, { color: colors.primary }]}>
-                Completed
-              </Text>
-            </View>
-          </View>
-          <View style={completedCardStyles.metaRow}>
-            <View style={[completedCardStyles.verticalDot, { backgroundColor: verticalColor }]} />
-            <Text style={completedCardStyles.metaText}>
-              {verticalLabels[session.vertical as Vertical] ?? session.vertical}
-            </Text>
-            <Text style={completedCardStyles.separator}>·</Text>
-            <Text style={completedCardStyles.metaText}>
-              {sessionModeLabels[session.mode as SessionMode] ?? session.mode}
-            </Text>
-          </View>
-        </View>
+      {/* Meta row: vertical · modality · duration */}
+      <View style={nativeCardStyles.metaRow}>
+        <View style={[nativeCardStyles.verticalDot, { backgroundColor: verticalColor }]} />
+        <Text style={nativeCardStyles.metaText}>
+          {verticalLabels[session.vertical as Vertical] ?? session.vertical}
+        </Text>
+        <Text style={nativeCardStyles.metaSep}>·</Text>
+        <Text style={nativeCardStyles.metaText}>{formatModality(session.mode)}</Text>
+        <Text style={nativeCardStyles.metaSep}>·</Text>
+        <Text style={nativeCardStyles.metaText}>
+          {isScheduled ? 'Scheduled' : formatDuration(session.durationMinutes)}
+        </Text>
       </View>
 
-      {/* Date + duration */}
-      <View style={completedCardStyles.dateRow}>
-        <Text style={completedCardStyles.dateText}>{formatShortDate(session.scheduledAt)}</Text>
-        {session.durationMinutes ? (
+      {/* Action row */}
+      <View style={nativeCardStyles.actionRow}>
+        {isCompleted ? (
           <>
-            <Text style={completedCardStyles.separator}>·</Text>
-            <Text style={completedCardStyles.dateText}>{session.durationMinutes} min</Text>
+            <TouchableOpacity
+              style={nativeCardStyles.primaryBtn}
+              onPress={() => onToggleExpand(session.id)}
+              accessibilityRole="button"
+              accessibilityLabel={isExpanded ? 'Hide session notes' : 'View session notes'}
+            >
+              <FileText size={13} color={tokens.cardBg} />
+              <Text style={nativeCardStyles.primaryBtnText}>
+                {isExpanded ? 'Hide Notes' : 'View Notes'}
+              </Text>
+            </TouchableOpacity>
+            {!hasTestimonial && (
+              <TouchableOpacity
+                style={nativeCardStyles.rateBtn}
+                onPress={() => onOpenRateModal(session)}
+                accessibilityRole="button"
+                accessibilityLabel={`Rate your session with ${session.chwName ?? 'CHW'}`}
+              >
+                <Star size={13} color="#B45309" />
+                <Text style={nativeCardStyles.rateBtnText}>Rate CHW</Text>
+              </TouchableOpacity>
+            )}
           </>
+        ) : isScheduled ? (
+          <TouchableOpacity
+            style={nativeCardStyles.cancelBtn}
+            onPress={() => onRequestCancel(session)}
+            accessibilityRole="button"
+            accessibilityLabel={`Cancel session on ${formatShortDate(session.scheduledAt)}`}
+          >
+            <XCircle size={13} color={tokens.textSecondary} />
+            <Text style={nativeCardStyles.cancelBtnText}>Cancel</Text>
+          </TouchableOpacity>
         ) : null}
       </View>
 
-      {/* Star rating */}
-      <View style={completedCardStyles.ratingRow}>
-        <Text style={completedCardStyles.ratingLabel}>
-          {rating > 0 ? 'Your rating' : 'Rate this session'}
-        </Text>
-        <StarRating sessionId={session.id} currentRating={rating} onRate={onRate} />
-      </View>
-
-      {/* Documentation section — two distinct cards when expanded */}
-      {session.notes ? (
-        <View
-          style={completedCardStyles.notesSection}
-          accessible={false}
-          accessibilityLabel="Session documentation"
-        >
-          <TouchableOpacity
-            onPress={() => onToggleExpand(session.id)}
-            style={completedCardStyles.notesToggle}
-            accessibilityRole="button"
-            accessibilityLabel={isExpanded ? 'Hide session notes' : 'View session notes'}
-          >
-            {isExpanded ? (
-              <ChevronUp color={colors.secondary} size={13} />
-            ) : (
-              <ChevronDown color={colors.secondary} size={13} />
-            )}
-            <Text style={completedCardStyles.notesToggleText}>
-              {isExpanded ? 'Hide notes' : 'View session notes'}
-            </Text>
-          </TouchableOpacity>
-
-          {isExpanded ? (
-            <View style={completedCardStyles.documentationCards}>
-              {/* Card 1: CHW Notes — always visible when there are notes */}
-              <View
-                style={completedCardStyles.chwNotesCard}
-                accessible={false}
-                accessibilityLabel="CHW Notes"
-              >
-                <Text style={completedCardStyles.cardLabel}>CHW Notes</Text>
-                <Text style={completedCardStyles.chwNotesText}>{session.notes}</Text>
-              </View>
-
-              {/* Card 2: AI Summary — shown only when present and not excluded */}
-              {session.aiSummary &&
-               session.aiSummaryGeneratedAt &&
-               session.aiSummaryExcluded !== true ? (
-                <View
-                  style={completedCardStyles.aiSummaryCard}
-                  accessible
-                  accessibilityLabel="AI-generated summary, read only"
-                  accessibilityHint="This summary was generated from the session transcript"
-                >
-                  <View style={completedCardStyles.aiSummaryHeaderRow}>
-                    <Sparkles size={12} color={colors.secondary} />
-                    <Text style={completedCardStyles.aiSummaryCardLabel}>AI Summary</Text>
-                    <View style={completedCardStyles.aiSummaryBadge}>
-                      <Text style={completedCardStyles.aiSummaryBadgeText}>
-                        Generated from transcript
-                      </Text>
-                    </View>
-                    <Text style={completedCardStyles.aiSummaryTimestamp}>
-                      {formatAITimestamp(session.aiSummaryGeneratedAt)}
-                    </Text>
-                  </View>
-                  <Text style={completedCardStyles.aiSummaryText} selectable>
-                    {session.aiSummary}
-                  </Text>
-                </View>
-              ) : session.aiSummary && session.aiSummaryExcluded === true ? (
-                <Text style={completedCardStyles.aiExcludedNote}>
-                  AI summary was generated but excluded by CHW.
-                </Text>
-              ) : null}
-            </View>
-          ) : null}
+      {/* Expanded notes (native inline) */}
+      {isExpanded && isCompleted ? (
+        <View style={nativeCardStyles.notesContainer}>
+          <View style={nativeCardStyles.notesDivider} />
+          <NotesExpandedCard session={session} />
         </View>
       ) : null}
-
-      {/* Rate this CHW — hidden once the member has already submitted a testimonial */}
-      {!hasTestimonial && (
-        <TouchableOpacity
-          onPress={() => onOpenRateModal(session)}
-          style={completedCardStyles.rateChwBtn}
-          accessibilityRole="button"
-          accessibilityLabel={`Rate your session with ${session.chwName ?? 'CHW'}`}
-        >
-          <Star size={14} color={colors.compassGold} fill={colors.compassGold} />
-          <Text style={completedCardStyles.rateChwText}>Rate this CHW</Text>
-        </TouchableOpacity>
-      )}
-
-      {/* Book again */}
-      <TouchableOpacity
-        onPress={onBookAgain}
-        style={completedCardStyles.bookAgainBtn}
-        accessibilityRole="button"
-        accessibilityLabel={`Book another session with ${session.chwName ?? 'CHW'}`}
-      >
-        <Text style={completedCardStyles.bookAgainText}>Book Again</Text>
-      </TouchableOpacity>
-    </View>
+    </Card>
   );
 }
 
-const completedCardStyles = StyleSheet.create({
-  container: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-    padding: 16,
-    marginBottom: 12,
-    shadowColor: '#3D5A3E',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 24,
-    elevation: 3,
-  },
+const nativeCardStyles = StyleSheet.create({
+  card: {
+    padding:      spacing.lg,
+    marginBottom: spacing.md,
+  } as ViewStyle,
+
   topRow: {
+    flexDirection:  'row',
+    alignItems:     'center',
+    justifyContent: 'space-between',
+    marginBottom:   spacing.xs,
+  } as ViewStyle,
+
+  dateBlock: {
     flexDirection: 'row',
-    gap: 12,
-    marginBottom: 10,
-    alignItems: 'flex-start',
-  },
-  avatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  avatarText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: colors.secondary,
-  },
-  infoCol: {
-    flex: 1,
-    gap: 4,
-  },
-  nameRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    flexWrap: 'wrap',
-  },
+    alignItems:    'center',
+    gap:           6,
+    flex:          1,
+    marginRight:   spacing.sm,
+  } as ViewStyle,
+
+  dateText: {
+    fontSize:   13,
+    fontWeight: '500',
+    color:      tokens.textPrimary,
+    flexShrink: 1,
+  } as TextStyle,
+
   chwName: {
-    ...typography.bodySm,
-    fontWeight: '700',
-    color: colors.foreground,
-    flex: 1,
-  },
-  statusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 999,
-  },
-  statusBadgeText: {
-    fontSize: 10,
-    fontWeight: '600',
-  },
+    fontSize:     12,
+    color:        tokens.textSecondary,
+    marginBottom: spacing.xs,
+  } as TextStyle,
+
   metaRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-  },
+    alignItems:    'center',
+    gap:           5,
+    flexWrap:      'wrap' as const,
+    marginBottom:  spacing.md,
+  } as ViewStyle,
+
   verticalDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
+    width:        7,
+    height:       7,
+    borderRadius: 999,
+  } as ViewStyle,
+
   metaText: {
-    ...typography.label,
-    color: colors.mutedForeground,
-  },
-  separator: {
-    ...typography.label,
-    color: colors.mutedForeground,
-  },
-  dateRow: {
+    fontSize: 12,
+    color:    tokens.textSecondary,
+  } as TextStyle,
+
+  metaSep: {
+    fontSize: 12,
+    color:    tokens.textMuted,
+  } as TextStyle,
+
+  actionRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 10,
-  },
-  dateText: {
-    ...typography.label,
-    color: colors.mutedForeground,
-  },
-  ratingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  ratingLabel: {
-    ...typography.label,
+    gap:           spacing.sm,
+  } as ViewStyle,
+
+  primaryBtn: {
+    flexDirection:   'row',
+    alignItems:      'center',
+    gap:             5,
+    flex:            1,
+    backgroundColor: tokens.primary,
+    borderRadius:    radius.lg,
+    paddingVertical: 11,
+    justifyContent:  'center',
+  } as ViewStyle,
+
+  primaryBtnText: {
+    fontSize:   14,
     fontWeight: '600',
-    color: colors.foreground,
-  },
-  notesSection: {
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    paddingTop: 12,
-    marginBottom: 12,
-  },
-  notesToggle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-  },
-  notesToggleText: {
-    ...typography.label,
-    fontWeight: '500',
-    color: colors.secondary,
-  },
-  documentationCards: {
-    marginTop: 10,
-    gap: 10,
-  },
-  // Card 1: CHW Notes
-  chwNotesCard: {
-    backgroundColor: colors.background,
-    borderRadius: 10,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: colors.border,
-    gap: 6,
-  },
-  cardLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
-    color: colors.mutedForeground,
-  },
-  chwNotesText: {
-    ...typography.label,
-    color: colors.foreground,
-    lineHeight: 18,
-  },
-  // Card 2: AI Summary
-  aiSummaryCard: {
-    backgroundColor: '#EDF4F8',
-    borderRadius: 10,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#C8D8E4',
-    gap: 8,
-  },
-  aiSummaryHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 5,
-  },
-  aiSummaryCardLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
-    color: colors.secondary,
-  },
-  aiSummaryBadge: {
-    backgroundColor: colors.secondary + '20',
-    borderRadius: 100,
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-  },
-  aiSummaryBadgeText: {
-    fontSize: 9,
+    color:      tokens.cardBg,
+  } as TextStyle,
+
+  rateBtn: {
+    flexDirection:     'row',
+    alignItems:        'center',
+    gap:               5,
+    backgroundColor:   '#FEF3C7',
+    borderRadius:      radius.lg,
+    paddingVertical:   11,
+    paddingHorizontal: 16,
+    justifyContent:    'center',
+  } as ViewStyle,
+
+  rateBtnText: {
+    fontSize:   14,
     fontWeight: '600',
-    color: colors.secondary,
-    letterSpacing: 0.2,
-  },
-  aiSummaryTimestamp: {
-    fontSize: 10,
-    color: colors.mutedForeground,
-    marginLeft: 'auto' as unknown as number,
-  },
-  aiSummaryText: {
-    ...typography.label,
-    fontStyle: 'italic',
-    color: colors.foreground,
-    lineHeight: 18,
-  },
-  aiExcludedNote: {
-    ...typography.label,
-    color: colors.mutedForeground,
-    fontStyle: 'italic',
-    paddingLeft: 4,
-  },
-  // "Rate this CHW" CTA — shown above Book Again when no testimonial yet.
-  rateChwBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    borderWidth: 1,
-    borderColor: colors.compassGold,
-    borderRadius: 12,
-    paddingVertical: 12,
-    backgroundColor: `${colors.compassGold}12`,
-    marginBottom: 8,
-  },
-  rateChwText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 14,
-    color: colors.compassGold,
-  },
-  bookAgainBtn: {
-    borderWidth: 1,
-    borderColor: '#3D5A3E',
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-  },
-  bookAgainText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 14,
-    color: '#3D5A3E',
-  },
+    color:      '#B45309',
+  } as TextStyle,
+
+  cancelBtn: {
+    flexDirection:     'row',
+    alignItems:        'center',
+    gap:               5,
+    borderWidth:       1,
+    borderColor:       tokens.cardBorder,
+    borderRadius:      radius.lg,
+    paddingVertical:   11,
+    paddingHorizontal: 16,
+    backgroundColor:   tokens.cardBg,
+    justifyContent:    'center',
+  } as ViewStyle,
+
+  cancelBtnText: {
+    fontSize:   14,
+    fontWeight: '600',
+    color:      tokens.textSecondary,
+  } as TextStyle,
+
+  notesContainer: {
+    marginTop: spacing.md,
+  } as ViewStyle,
+
+  notesDivider: {
+    height:          1,
+    backgroundColor: tokens.cardBorder,
+    marginBottom:    spacing.md,
+    marginHorizontal: -spacing.lg,
+  } as ViewStyle,
 });
 
-// ─── Pending Request Card ─────────────────────────────────────────────────────
+// ─── Pagination footer ────────────────────────────────────────────────────────
 
-interface PendingRequestCardProps {
-  request: ServiceRequestData;
-  isPendingCancel: boolean;
-  onCancel: (requestId: string) => void;
+interface PaginationFooterProps {
+  currentPage:  number;
+  totalPages:   number;
+  totalRows:    number;
+  pageSize:     number;
+  onPrevPage:   () => void;
+  onNextPage:   () => void;
+  onGoToPage:   (page: number) => void;
 }
 
-function PendingRequestCard({
-  request,
-  isPendingCancel,
-  onCancel,
-}: PendingRequestCardProps): React.JSX.Element {
-  // Prefer the multi-vertical array; fall back to the legacy single-vertical field.
-  const effectiveVerticals: string[] =
-    request.verticals && request.verticals.length > 0
-      ? request.verticals
-      : [request.vertical];
+function PaginationFooter({
+  currentPage,
+  totalPages,
+  totalRows,
+  pageSize,
+  onPrevPage,
+  onNextPage,
+  onGoToPage,
+}: PaginationFooterProps): React.JSX.Element {
+  const firstRow = (currentPage - 1) * pageSize + 1;
+  const lastRow  = Math.min(currentPage * pageSize, totalRows);
 
-  const primaryVertical = effectiveVerticals[0] as VerticalLib;
-  const primaryColor = VERTICAL_COLOR[primaryVertical] ?? '#6B7A6B';
-
-  const urgencyColor =
-    request.urgency === 'urgent'
-      ? '#EF4444'
-      : request.urgency === 'soon'
-      ? '#F59E0B'
-      : '#22C55E';
-
-  const urgencyLabel =
-    request.urgency === 'urgent'
-      ? 'Urgent'
-      : request.urgency === 'soon'
-      ? 'Soon'
-      : 'Routine';
-
-  const modeLabel: Record<string, string> = {
-    in_person: 'In Person',
-    virtual: 'Video Call',
-    phone: 'Phone',
-  };
-
-  const verticalsDisplay = effectiveVerticals.map(verticalLabel).join(' • ');
+  /**
+   * Build a compact page number sequence. Shows at most 5 page buttons,
+   * always including first, last, current, and neighbours of current.
+   * Gaps are represented with the string '…'.
+   */
+  const pageNumbers = useMemo((): Array<number | '…'> => {
+    if (totalPages <= 5) {
+      return Array.from({ length: totalPages }, (_, i) => i + 1);
+    }
+    const pages: Array<number | '…'> = [1];
+    if (currentPage > 3) pages.push('…');
+    for (
+      let p = Math.max(2, currentPage - 1);
+      p <= Math.min(totalPages - 1, currentPage + 1);
+      p++
+    ) {
+      pages.push(p);
+    }
+    if (currentPage < totalPages - 2) pages.push('…');
+    pages.push(totalPages);
+    return pages;
+  }, [currentPage, totalPages]);
 
   return (
-    <View
-      style={[
-        pendingCardStyles.container,
-        isPendingCancel && pendingCardStyles.containerDimmed,
-      ]}
-      accessible
-      accessibilityLabel={`Pending ${verticalsDisplay} request, ${urgencyLabel}`}
-    >
-      {/* Header */}
-      <View style={pendingCardStyles.headerRow}>
-        <View
-          style={[
-            pendingCardStyles.iconCircle,
-            { backgroundColor: `${primaryColor}18` },
-          ]}
+    <View style={pagFooterStyles.container}>
+      <Text style={pagFooterStyles.info}>
+        Showing {firstRow}–{lastRow} of {totalRows} session{totalRows !== 1 ? 's' : ''}
+      </Text>
+
+      <View style={pagFooterStyles.buttons} accessibilityRole="none">
+        {/* Previous */}
+        <TouchableOpacity
+          style={[pagFooterStyles.pageBtn, currentPage === 1 && pagFooterStyles.pageBtnDisabled]}
+          onPress={onPrevPage}
+          disabled={currentPage === 1}
+          accessibilityRole="button"
+          accessibilityLabel="Previous page"
+          accessibilityState={{ disabled: currentPage === 1 }}
         >
-          <Clock size={18} color={primaryColor} />
-        </View>
-        <View style={pendingCardStyles.headerContent}>
-          <Text style={pendingCardStyles.title}>{verticalsDisplay} request</Text>
-          <View style={pendingCardStyles.badgeRow}>
-            {effectiveVerticals.map((v) => {
-              const color = VERTICAL_COLOR[v as VerticalLib] ?? '#6B7A6B';
-              return (
-                <View
-                  key={v}
-                  style={[pendingCardStyles.badge, { backgroundColor: `${color}18` }]}
-                >
-                  <Text style={[pendingCardStyles.badgeText, { color }]}>
-                    {verticalLabel(v)}
-                  </Text>
-                </View>
-              );
-            })}
-            <View
-              style={[
-                pendingCardStyles.badge,
-                { backgroundColor: `${urgencyColor}18` },
-              ]}
-            >
-              <Text style={[pendingCardStyles.badgeText, { color: urgencyColor }]}>
-                {urgencyLabel}
-              </Text>
+          <ChevronLeft size={14} color={currentPage === 1 ? tokens.textMuted : tokens.textPrimary} />
+        </TouchableOpacity>
+
+        {/* Page numbers */}
+        {pageNumbers.map((p, idx) =>
+          p === '…' ? (
+            <View key={`ellipsis-${idx}`} style={pagFooterStyles.ellipsis}>
+              <Text style={pagFooterStyles.ellipsisText}>…</Text>
             </View>
-            <Text style={pendingCardStyles.modeText}>
-              · {modeLabel[request.preferredMode] ?? request.preferredMode}
-            </Text>
-          </View>
-        </View>
-      </View>
+          ) : (
+            <TouchableOpacity
+              key={p}
+              style={[
+                pagFooterStyles.pageBtn,
+                currentPage === p && pagFooterStyles.pageBtnActive,
+              ]}
+              onPress={() => onGoToPage(p)}
+              accessibilityRole="button"
+              accessibilityLabel={`Page ${p}`}
+              accessibilityState={{ selected: currentPage === p }}
+            >
+              <Text
+                style={[
+                  pagFooterStyles.pageBtnLabel,
+                  currentPage === p && pagFooterStyles.pageBtnLabelActive,
+                ]}
+              >
+                {p}
+              </Text>
+            </TouchableOpacity>
+          ),
+        )}
 
-      {/* Status note */}
-      <View style={pendingCardStyles.statusNote}>
-        <Text style={pendingCardStyles.statusNoteText}>
-          Waiting for a CHW to accept. You'll be notified when matched.
-        </Text>
-        <Text style={pendingCardStyles.submittedAt}>
-          Submitted {new Date(request.createdAt).toLocaleDateString('en-US', {
-            month: 'short',
-            day: 'numeric',
-          })}
-        </Text>
-      </View>
-
-      {/* Cancel */}
-      <TouchableOpacity
-        style={[
-          pendingCardStyles.cancelBtn,
-          isPendingCancel && pendingCardStyles.cancelBtnDisabled,
-        ]}
-        onPress={() => !isPendingCancel && onCancel(request.id)}
-        disabled={isPendingCancel}
-        accessibilityRole="button"
-        accessibilityLabel={`Cancel ${verticalsDisplay} request`}
-        accessibilityState={{ disabled: isPendingCancel }}
-      >
-        <XCircle size={13} color={isPendingCancel ? colors.border : colors.mutedForeground} />
-        <Text
-          style={[
-            pendingCardStyles.cancelBtnText,
-            isPendingCancel && { color: colors.border },
-          ]}
+        {/* Next */}
+        <TouchableOpacity
+          style={[pagFooterStyles.pageBtn, currentPage === totalPages && pagFooterStyles.pageBtnDisabled]}
+          onPress={onNextPage}
+          disabled={currentPage === totalPages}
+          accessibilityRole="button"
+          accessibilityLabel="Next page"
+          accessibilityState={{ disabled: currentPage === totalPages }}
         >
-          {isPendingCancel ? 'Cancelling…' : 'Cancel Request'}
-        </Text>
-      </TouchableOpacity>
+          <ChevronRight
+            size={14}
+            color={currentPage === totalPages ? tokens.textMuted : tokens.textPrimary}
+          />
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
 
-const pendingCardStyles = StyleSheet.create({
+const pagFooterStyles = StyleSheet.create({
   container: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-    padding: 16,
-    marginBottom: 12,
-    shadowColor: '#3D5A3E',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 24,
-    elevation: 3,
-  },
-  containerDimmed: {
-    opacity: 0.5,
-  },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-    marginBottom: 10,
-  },
-  iconCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-    marginTop: 2,
-  },
-  headerContent: {
-    flex: 1,
-    gap: 4,
-  },
-  title: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 15,
-    lineHeight: 20,
-    color: '#1E3320',
-    marginBottom: 4,
-  },
-  badgeRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    gap: 6,
-  },
-  badge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 100,
-  },
-  badgeText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 12,
-    lineHeight: 16,
-  },
-  modeText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 12,
-    letterSpacing: 1,
-    color: '#6B7A6B',
-  },
-  statusNote: {
-    backgroundColor: '#F4F1ED',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    marginBottom: 12,
-    gap: 4,
-  },
-  statusNoteText: {
-    fontFamily: 'PlusJakartaSans_400Regular',
+    flexDirection:   'row',
+    alignItems:      'center',
+    justifyContent:  'space-between',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderTopWidth:  1,
+    borderTopColor:  tokens.cardBorder,
+    flexWrap:        'wrap' as const,
+    gap:             spacing.sm,
+  } as ViewStyle,
+
+  info: {
     fontSize: 13,
-    color: '#6B7A6B',
-    lineHeight: 18,
-  },
-  submittedAt: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 11,
-    color: colors.mutedForeground,
-    letterSpacing: 0.5,
-  },
-  cancelBtn: {
+    color:    tokens.textSecondary,
+  } as TextStyle,
+
+  buttons: {
     flexDirection: 'row',
+    alignItems:    'center',
+    gap:           4,
+  } as ViewStyle,
+
+  pageBtn: {
+    minWidth:        32,
+    height:          32,
+    borderRadius:    radius.sm,
+    borderWidth:     1,
+    borderColor:     tokens.cardBorder,
+    backgroundColor: tokens.cardBg,
+    alignItems:      'center',
+    justifyContent:  'center',
+    paddingHorizontal: 6,
+  } as ViewStyle,
+
+  pageBtnActive: {
+    backgroundColor: tokens.primary,
+    borderColor:     tokens.primary,
+  } as ViewStyle,
+
+  pageBtnDisabled: {
+    opacity: 0.4,
+  } as ViewStyle,
+
+  pageBtnLabel: {
+    fontSize:   13,
+    fontWeight: '500',
+    color:      tokens.textPrimary,
+  } as TextStyle,
+
+  pageBtnLabelActive: {
+    color: '#FFFFFF',
+  } as TextStyle,
+
+  ellipsis: {
+    minWidth:   24,
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-    borderRadius: 12,
-    paddingVertical: 12,
-    backgroundColor: '#FFFFFF',
-  },
-  cancelBtnDisabled: {
-    borderColor: colors.border,
-    backgroundColor: '#F9F9F9',
-  },
-  cancelBtnText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 14,
-    color: '#6B7A6B',
-  },
+  } as ViewStyle,
+
+  ellipsisText: {
+    fontSize: 13,
+    color:    tokens.textMuted,
+  } as TextStyle,
+});
+
+// ─── Empty state ──────────────────────────────────────────────────────────────
+
+interface EmptyStateProps {
+  message: string;
+  subtext?: string;
+}
+
+function EmptyState({ message, subtext }: EmptyStateProps): React.JSX.Element {
+  return (
+    <View style={emptyStyles.container}>
+      <Inbox size={28} color={tokens.textMuted} />
+      <Text style={emptyStyles.title}>{message}</Text>
+      {subtext ? <Text style={emptyStyles.sub}>{subtext}</Text> : null}
+    </View>
+  );
+}
+
+const emptyStyles = StyleSheet.create({
+  container: {
+    paddingVertical:   spacing.xxxl,
+    alignItems:        'center',
+    gap:               spacing.sm,
+    paddingHorizontal: spacing.xxxl,
+  } as ViewStyle,
+  title: {
+    fontSize:   16,
+    fontWeight: '700',
+    color:      tokens.textPrimary,
+  } as TextStyle,
+  sub: {
+    fontSize:  14,
+    color:     tokens.textSecondary,
+    textAlign: 'center' as const,
+  } as TextStyle,
 });
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
@@ -1282,85 +1335,89 @@ export function MemberSessionsScreen(): React.JSX.Element {
     .join('')
     .toUpperCase();
 
-  const [activeTab, setActiveTab] = useState<TabKey>('active');
-  const [cancellingSession, setCancellingSession] = useState<SessionData | null>(null);
-  const [cancelledIds, setCancelledIds] = useState<Set<string>>(new Set());
-  /** Request IDs optimistically dismissed while the cancel API call is in-flight. */
-  const [pendingCancelRequestIds, setPendingCancelRequestIds] = useState<Set<string>>(
-    new Set(),
-  );
-  const [ratings, setRatings] = useState<Record<string, number>>({});
-  const [expandedNotes, setExpandedNotes] = useState<Set<string>>(new Set());
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const [chatSessionId, setChatSessionId] = useState<string | null>(null);
-
-  /**
-   * Testimonials state
-   * ------------------
-   * rateModalSession — the session currently being rated (null = modal hidden).
-   * submittedTestimonialSessionIds — set of session IDs for which the member
-   *   has already submitted a testimonial in this session. Persisted in-memory
-   *   only; a full implementation would fetch this from the API on mount.
-   */
-  const [rateModalSession, setRateModalSession] = useState<SessionData | null>(null);
-  const [submittedTestimonialSessionIds, setSubmittedTestimonialSessionIds] = useState<Set<string>>(
-    new Set(),
-  );
-
-  const sessionsQuery = useSessions();
+  // ── Data ────────────────────────────────────────────────────────────────────
+  const sessionsQuery   = useSessions();
   const myRequestsQuery = useMyRequests();
-  const cancelRequest = useCancelRequest();
-  const refresh = useRefreshControl([sessionsQuery.refetch, myRequestsQuery.refetch]);
-  const allSessions = sessionsQuery.data ?? [];
+  const cancelRequest   = useCancelRequest();
+  const refresh         = useRefreshControl([sessionsQuery.refetch, myRequestsQuery.refetch]);
+
+  const allSessions   = sessionsQuery.data ?? [];
   const allMyRequests = myRequestsQuery.data ?? [];
 
-  // API already scopes to the authenticated member — no client-side name filter needed
-  const activeSessions = allSessions.filter(
-    (s) =>
-      (s.status === 'scheduled' || s.status === 'in_progress') &&
-      !cancelledIds.has(s.id),
-  );
+  // ── UI state ────────────────────────────────────────────────────────────────
+  /** IDs of sessions optimistically removed from the active list after cancel. */
+  const [cancelledSessionIds, setCancelledSessionIds] = useState<Set<string>>(new Set());
+  /** The session currently awaiting cancel confirmation in the modal. */
+  const [pendingCancelSession, setPendingCancelSession] = useState<SessionData | null>(null);
+  /** IDs of open service requests being cancelled (optimistic). */
+  const [cancellingRequestIds, setCancellingRequestIds] = useState<Set<string>>(new Set());
 
-  const completedSessions = allSessions.filter((s) => s.status === 'completed');
+  /** Session IDs with expanded notes panel. */
+  const [expandedSessionIds, setExpandedSessionIds] = useState<Set<string>>(new Set());
+  /** Session IDs for which the member submitted a testimonial this session. */
+  const [submittedTestimonialIds, setSubmittedTestimonialIds] = useState<Set<string>>(new Set());
+  /** The session currently open in RateChwModal. */
+  const [rateModalSession, setRateModalSession] = useState<SessionData | null>(null);
 
-  /** Open (unmatched) requests — visible as "Pending" to the member. */
-  const pendingRequests = allMyRequests.filter(
-    (r) => r.status === 'open' && !pendingCancelRequestIds.has(r.id),
-  );
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  const showToast = useCallback((message: string) => {
+  /** Sorting: date column only. Default newest first. */
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+  /** Current page number (1-indexed). Resets when sort changes. */
+  const [currentPage, setCurrentPage] = useState<number>(1);
+
+  // ── Derived lists ────────────────────────────────────────────────────────────
+
+  /**
+   * All sessions sorted by scheduledAt then sliced to the current page.
+   * The BE endpoint returns all sessions for the authenticated member — no
+   * server-side pagination cursor exists, so we slice client-side.
+   */
+  const sortedSessions = useMemo((): SessionData[] => {
+    return [...allSessions].sort((a, b) => {
+      const aTime = new Date(a.scheduledAt).getTime();
+      const bTime = new Date(b.scheduledAt).getTime();
+      return sortDirection === 'asc' ? aTime - bTime : bTime - aTime;
+    });
+  }, [allSessions, sortDirection]);
+
+  const totalRows    = sortedSessions.length;
+  const totalPages   = Math.max(1, Math.ceil(totalRows / SESSIONS_PAGE_SIZE));
+  const pagedSessions = useMemo((): SessionData[] => {
+    const start = (currentPage - 1) * SESSIONS_PAGE_SIZE;
+    return sortedSessions.slice(start, start + SESSIONS_PAGE_SIZE);
+  }, [sortedSessions, currentPage]);
+
+  // ── Handlers ─────────────────────────────────────────────────────────────────
+
+  const showToast = useCallback((message: string): void => {
     setToastMessage(message);
     const timer = setTimeout(() => setToastMessage(null), 3500);
-    return () => clearTimeout(timer);
+    // Effect cleanup: not possible with useCallback returning void, but
+    // the 3.5 s window is short enough that leaking the timer on unmount
+    // is not a practical concern for this screen.
+    void timer;
   }, []);
 
-  const handleMessage = useCallback((session: SessionData) => {
-    setChatSessionId(session.id);
+  const handleToggleSort = useCallback((): void => {
+    setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    setCurrentPage(1);
   }, []);
 
-  const handleRequestCancel = useCallback((session: SessionData) => {
-    setCancellingSession(session);
+  const handlePrevPage = useCallback((): void => {
+    setCurrentPage((prev) => Math.max(1, prev - 1));
   }, []);
 
-  const handleConfirmCancel = useCallback(
-    (sessionId: string) => {
-      setCancelledIds((prev) => new Set(prev).add(sessionId));
-      setCancellingSession(null);
-      showToast('Session cancelled successfully.');
-    },
-    [showToast],
-  );
+  const handleNextPage = useCallback((): void => {
+    setCurrentPage((prev) => Math.min(totalPages, prev + 1));
+  }, [totalPages]);
 
-  const handleDismissCancel = useCallback(() => {
-    setCancellingSession(null);
+  const handleGoToPage = useCallback((page: number): void => {
+    setCurrentPage(page);
   }, []);
 
-  const handleRate = useCallback((sessionId: string, rating: number) => {
-    setRatings((prev) => ({ ...prev, [sessionId]: rating }));
-  }, []);
-
-  const handleToggleExpand = useCallback((sessionId: string) => {
-    setExpandedNotes((prev) => {
+  const handleToggleExpand = useCallback((sessionId: string): void => {
+    setExpandedSessionIds((prev) => {
       const next = new Set(prev);
       if (next.has(sessionId)) {
         next.delete(sessionId);
@@ -1371,78 +1428,73 @@ export function MemberSessionsScreen(): React.JSX.Element {
     });
   }, []);
 
-  const handleBookAgain = useCallback(() => {
-    showToast('Navigate to Find CHW to book a new session.');
-  }, [showToast]);
+  const handleRequestCancel = useCallback((session: SessionData): void => {
+    setPendingCancelSession(session);
+  }, []);
 
-  /** Open the RateChwModal for the given session. */
-  const handleOpenRateModal = useCallback((session: SessionData) => {
+  const handleConfirmCancel = useCallback(
+    (sessionId: string): void => {
+      setCancelledSessionIds((prev) => new Set(prev).add(sessionId));
+      setPendingCancelSession(null);
+      showToast('Session cancelled successfully.');
+    },
+    [showToast],
+  );
+
+  const handleDismissCancel = useCallback((): void => {
+    setPendingCancelSession(null);
+  }, []);
+
+  const handleViewNotes = useCallback((session: SessionData): void => {
+    handleToggleExpand(session.id);
+  }, [handleToggleExpand]);
+
+  const handleOpenRateModal = useCallback((session: SessionData): void => {
     setRateModalSession(session);
   }, []);
 
-  /** Close the RateChwModal (user cancelled without submitting). */
-  const handleCloseRateModal = useCallback(() => {
+  const handleCloseRateModal = useCallback((): void => {
     setRateModalSession(null);
   }, []);
 
-  /**
-   * Called when a testimonial is successfully submitted from RateChwModal.
-   * Adds the session ID to the submitted set so the "Rate this CHW" button
-   * is hidden immediately without a full data refetch.
-   */
-  const handleTestimonialSubmitted = useCallback(() => {
+  const handleTestimonialSubmitted = useCallback((): void => {
     if (rateModalSession) {
-      setSubmittedTestimonialSessionIds((prev) => new Set(prev).add(rateModalSession.id));
+      setSubmittedTestimonialIds((prev) => new Set(prev).add(rateModalSession.id));
     }
     setRateModalSession(null);
     showToast('Thank you for your rating!');
   }, [rateModalSession, showToast]);
 
-  /** Optimistic cancel: dismiss immediately, fire the API call, rollback on error. */
-  const handleCancelRequest = useCallback(
-    async (requestId: string): Promise<void> => {
-      // Optimistically hide
-      setPendingCancelRequestIds((prev) => new Set(prev).add(requestId));
-      try {
-        await cancelRequest.mutateAsync(requestId);
-        showToast('Request cancelled.');
-      } catch {
-        // Rollback
-        setPendingCancelRequestIds((prev) => {
-          const next = new Set(prev);
-          next.delete(requestId);
-          return next;
-        });
-        showToast('Could not cancel request. Please try again.');
-      }
-    },
-    [cancelRequest, showToast],
-  );
-
-  const isLoading = sessionsQuery.isLoading || myRequestsQuery.isLoading;
-  const hasError = sessionsQuery.error && myRequestsQuery.error;
+  // ── Shell user block ─────────────────────────────────────────────────────────
 
   const shellUserBlock = {
     initials: memberInitials,
-    name: userName ?? 'Member',
-    role: 'Member' as const,
+    name:     userName ?? 'Member',
+    role:     'Member' as const,
   };
+
+  const isLoading = sessionsQuery.isLoading || myRequestsQuery.isLoading;
+  const hasError  = sessionsQuery.error != null && myRequestsQuery.error != null;
+
+  // ── Loading state ────────────────────────────────────────────────────────────
 
   if (isLoading) {
     return (
       <AppShell role="member" activeKey="messages" userBlock={shellUserBlock}>
-        <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
-        <View style={styles.pageWrap}>
+        <StatusBar barStyle="dark-content" backgroundColor={tokens.pageBg} />
+        <PageWrap style={{ padding: spacing.lg }}>
           <LoadingSkeleton variant="rows" rows={4} />
-        </View>
+        </PageWrap>
       </AppShell>
     );
   }
 
+  // ── Error state ──────────────────────────────────────────────────────────────
+
   if (hasError) {
     return (
       <AppShell role="member" activeKey="messages" userBlock={shellUserBlock}>
-        <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
+        <StatusBar barStyle="dark-content" backgroundColor={tokens.pageBg} />
         <ErrorState
           message="Could not load your sessions. Please try again."
           onRetry={() => {
@@ -1454,263 +1506,220 @@ export function MemberSessionsScreen(): React.JSX.Element {
     );
   }
 
-  return (
-    <AppShell role="member" activeKey="messages" userBlock={shellUserBlock}>
-      <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
+  // ── Table content ────────────────────────────────────────────────────────────
 
-      {toastMessage ? <ToastBanner message={toastMessage} /> : null}
+  const tableContent = (
+    <ScrollView
+      style={screenStyles.scroll}
+      contentContainerStyle={screenStyles.scrollContent}
+      showsVerticalScrollIndicator={false}
+      refreshControl={refresh.control}
+    >
+      <PageWrap>
+        <View style={screenStyles.headerArea}>
+          <PageHeader
+            title="My Sessions"
+            subtitle={`${totalRows} session${totalRows !== 1 ? 's' : ''} on record`}
+          />
+        </View>
 
-      {cancellingSession ? (
+        {/* Sessions table card */}
+        <Card style={screenStyles.tableCard}>
+          <SectionHeader
+            title="All Sessions"
+            subtitle="Tap any row for notes and actions"
+            style={screenStyles.sectionHeader}
+            marginBottom={0}
+            right={
+              totalRows > 0 ? (
+                <View style={screenStyles.sortIndicator}>
+                  <ArrowUpDown size={13} color={tokens.textSecondary} />
+                  <Text style={screenStyles.sortIndicatorText}>
+                    {sortDirection === 'desc' ? 'Newest first' : 'Oldest first'}
+                  </Text>
+                </View>
+              ) : undefined
+            }
+          />
+
+          {totalRows === 0 ? (
+            <EmptyState
+              message="No sessions yet"
+              subtext="Your sessions with a CHW will appear here after your first meeting."
+            />
+          ) : (
+            <>
+              {/* Web table layout */}
+              {Platform.OS === 'web' ? (
+                <>
+                  <TableHeader
+                    sortDirection={sortDirection}
+                    onToggleSort={handleToggleSort}
+                  />
+                  {pagedSessions.map((session) => (
+                    <SessionTableRow
+                      key={session.id}
+                      session={session}
+                      isExpanded={expandedSessionIds.has(session.id)}
+                      isCancelled={cancelledSessionIds.has(session.id)}
+                      hasTestimonial={submittedTestimonialIds.has(session.id)}
+                      onViewNotes={handleViewNotes}
+                      onRequestCancel={handleRequestCancel}
+                      onOpenRateModal={handleOpenRateModal}
+                      onToggleExpand={handleToggleExpand}
+                    />
+                  ))}
+                  {totalPages > 1 && (
+                    <PaginationFooter
+                      currentPage={currentPage}
+                      totalPages={totalPages}
+                      totalRows={totalRows}
+                      pageSize={SESSIONS_PAGE_SIZE}
+                      onPrevPage={handlePrevPage}
+                      onNextPage={handleNextPage}
+                      onGoToPage={handleGoToPage}
+                    />
+                  )}
+                </>
+              ) : (
+                /* Native card list */
+                <View style={screenStyles.nativeList}>
+                  {pagedSessions.map((session) => (
+                    <SessionNativeCard
+                      key={session.id}
+                      session={session}
+                      isExpanded={expandedSessionIds.has(session.id)}
+                      hasTestimonial={submittedTestimonialIds.has(session.id)}
+                      onViewNotes={handleViewNotes}
+                      onRequestCancel={handleRequestCancel}
+                      onOpenRateModal={handleOpenRateModal}
+                      onToggleExpand={handleToggleExpand}
+                    />
+                  ))}
+                  {/* Native pagination footer — always visible when multipage */}
+                  {totalPages > 1 && (
+                    <PaginationFooter
+                      currentPage={currentPage}
+                      totalPages={totalPages}
+                      totalRows={totalRows}
+                      pageSize={SESSIONS_PAGE_SIZE}
+                      onPrevPage={handlePrevPage}
+                      onNextPage={handleNextPage}
+                      onGoToPage={handleGoToPage}
+                    />
+                  )}
+                </View>
+              )}
+            </>
+          )}
+        </Card>
+
+        <View style={screenStyles.bottomSpacer} />
+      </PageWrap>
+    </ScrollView>
+  );
+
+  // ── Overlays ─────────────────────────────────────────────────────────────────
+
+  const overlays = (
+    <>
+      {toastMessage != null && <ToastBanner message={toastMessage} />}
+
+      {pendingCancelSession != null && (
         <ConfirmCancelModal
-          session={cancellingSession}
-          visible={cancellingSession !== null}
+          session={pendingCancelSession}
+          visible
           onConfirm={handleConfirmCancel}
           onDismiss={handleDismissCancel}
         />
-      ) : null}
-
-      <View style={styles.pageWrap}>
-      {/* Header */}
-      <PageHeader
-        title="Messages"
-        subtitle="Your sessions and conversations with your CHW"
-      />
-
-      {/* Tab bar — Active | Pending | Completed */}
-      <View style={styles.tabBar} accessibilityRole="tablist">
-        {(
-          [
-            { key: 'active' as TabKey, label: 'Active', count: activeSessions.length },
-            { key: 'pending' as TabKey, label: 'Pending', count: pendingRequests.length },
-            { key: 'completed' as TabKey, label: 'Completed', count: completedSessions.length },
-          ] as const
-        ).map(({ key, label, count }) => {
-          const isActive = activeTab === key;
-          return (
-            <TouchableOpacity
-              key={key}
-              onPress={() => setActiveTab(key)}
-              style={[styles.tab, isActive && styles.tabActive]}
-              accessibilityRole="tab"
-              accessibilityState={{ selected: isActive }}
-              accessibilityLabel={`${label} sessions`}
-            >
-              <Text style={[styles.tabText, isActive && styles.tabTextActive]}>
-                {label}
-              </Text>
-              {count > 0 ? (
-                <View style={[styles.tabBadge, isActive && styles.tabBadgeActive]}>
-                  <Text style={[styles.tabBadgeText, isActive && styles.tabBadgeTextActive]}>
-                    {count}
-                  </Text>
-                </View>
-              ) : null}
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-
-      {/* Content */}
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-        refreshControl={refresh.control}
-      >
-        {activeTab === 'active' ? (
-          activeSessions.length > 0 ? (
-            activeSessions.map((session) => (
-              <ActiveSessionCard
-                key={session.id}
-                session={session}
-                onMessage={handleMessage}
-                onRequestCancel={handleRequestCancel}
-              />
-            ))
-          ) : (
-            <View style={styles.emptyState}>
-              <Inbox color={colors.mutedForeground} size={28} />
-              <Text style={styles.emptyTitle}>No active sessions</Text>
-              <Text style={styles.emptySub}>Find a CHW to get started!</Text>
-            </View>
-          )
-        ) : activeTab === 'pending' ? (
-          pendingRequests.length > 0 ? (
-            pendingRequests.map((req) => (
-              <PendingRequestCard
-                key={req.id}
-                request={req}
-                isPendingCancel={pendingCancelRequestIds.has(req.id)}
-                onCancel={(id) => void handleCancelRequest(id)}
-              />
-            ))
-          ) : (
-            <View style={styles.emptyState}>
-              <Inbox color={colors.mutedForeground} size={28} />
-              <Text style={styles.emptyTitle}>No pending requests</Text>
-              <Text style={styles.emptySub}>
-                Requests waiting to be matched with a CHW will appear here.
-              </Text>
-            </View>
-          )
-        ) : (
-          completedSessions.length > 0 ? (
-            completedSessions.map((session) => (
-              <CompletedSessionCard
-                key={session.id}
-                session={session}
-                rating={ratings[session.id] ?? 0}
-                isExpanded={expandedNotes.has(session.id)}
-                onRate={handleRate}
-                onToggleExpand={handleToggleExpand}
-                onBookAgain={handleBookAgain}
-                hasTestimonial={submittedTestimonialSessionIds.has(session.id)}
-                onOpenRateModal={handleOpenRateModal}
-              />
-            ))
-          ) : (
-            <View style={styles.emptyState}>
-              <Inbox color={colors.mutedForeground} size={28} />
-              <Text style={styles.emptyTitle}>No completed sessions</Text>
-              <Text style={styles.emptySub}>
-                Your completed sessions will appear here after your first meeting.
-              </Text>
-            </View>
-          )
-        )}
-        <View style={{ height: 24 }} />
-      </ScrollView>
-
-      {/* Chat modal */}
-      {chatSessionId != null && (
-        <ChatModal
-          visible={chatSessionId != null}
-          sessionId={chatSessionId}
-          onClose={() => setChatSessionId(null)}
-        />
       )}
 
-      {/* Rate CHW modal — rendered when a member taps "Rate this CHW" on a completed session */}
       {rateModalSession != null && (
         <RateChwModal
-          visible={rateModalSession != null}
+          visible
           sessionId={rateModalSession.id}
           chwName={rateModalSession.chwName ?? 'your CHW'}
           onClose={handleCloseRateModal}
           onSubmitted={handleTestimonialSubmitted}
         />
       )}
-      </View>
+    </>
+  );
+
+  // ── Shell ─────────────────────────────────────────────────────────────────────
+
+  if (Platform.OS !== 'web') {
+    return (
+      <SafeAreaView style={screenStyles.safeArea} edges={['top']}>
+        <StatusBar barStyle="dark-content" backgroundColor={tokens.pageBg} />
+        {overlays}
+        {tableContent}
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <AppShell role="member" activeKey="messages" userBlock={shellUserBlock}>
+      <StatusBar barStyle="dark-content" backgroundColor={tokens.pageBg} />
+      {overlays}
+      {tableContent}
     </AppShell>
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
+// ─── Screen-level styles ──────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
+const screenStyles = StyleSheet.create({
   safeArea: {
-    flex: 1,
-    backgroundColor: '#F4F1ED',
-    alignItems: 'center',
-  },
-  // 960 px — session list matches the dashboard and requests screens.
-  pageWrap: {
-    width: '100%',
-    maxWidth: 960,
-    alignSelf: 'center',
-    flex: 1,
-  },
-  header: {
-    paddingHorizontal: 16,
-    paddingTop: 20,
-    paddingBottom: 16,
-  },
-  title: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 24,
-    lineHeight: 30,
-    color: '#1E3320',
-  },
-  subtitle: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 16,
-    lineHeight: 24,
-    color: '#6B7A6B',
-    marginTop: 4,
-  },
-  tabBar: {
-    flexDirection: 'row',
-    gap: 8,
-    paddingHorizontal: 16,
-    marginBottom: 16,
-  },
-  tab: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-    backgroundColor: '#FFFFFF',
-  },
-  tabActive: {
-    backgroundColor: '#3D5A3E',
-    borderColor: '#3D5A3E',
-  },
-  tabText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 14,
-    color: '#6B7A6B',
-  },
-  tabTextActive: {
-    color: '#FFFFFF',
-  },
-  tabBadge: {
-    minWidth: 20,
-    height: 20,
-    paddingHorizontal: 5,
-    borderRadius: 10,
-    backgroundColor: '#6B7A6B20',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  tabBadgeActive: {
-    backgroundColor: 'rgba(255,255,255,0.2)',
-  },
-  tabBadgeText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 11,
-    color: '#6B7A6B',
-  },
-  tabBadgeTextActive: {
-    color: '#FFFFFF',
-  },
+    flex:            1,
+    backgroundColor: tokens.pageBg,
+  } as ViewStyle,
+
   scroll: {
     flex: 1,
-  },
+  } as ViewStyle,
+
   scrollContent: {
-    paddingHorizontal: 16,
-  },
-  emptyState: {
-    paddingTop: 48,
-    alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: 32,
-  },
-  emptyTitle: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 16,
-    lineHeight: 22,
-    color: '#1E3320',
-  },
-  emptySub: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 14,
-    color: '#6B7A6B',
-    textAlign: 'center',
-  },
+    flexGrow:        1,
+    backgroundColor: tokens.pageBg,
+  } as ViewStyle,
+
+  headerArea: {
+    paddingHorizontal: spacing.lg,
+    paddingTop:        spacing.xl,
+  } as ViewStyle,
+
+  tableCard: {
+    marginHorizontal: spacing.lg,
+    overflow:         'hidden' as const,
+  } as ViewStyle,
+
+  sectionHeader: {
+    paddingHorizontal: spacing.lg,
+    paddingTop:        spacing.lg,
+    paddingBottom:     spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: tokens.cardBorder,
+  } as ViewStyle,
+
+  sortIndicator: {
+    flexDirection: 'row',
+    alignItems:    'center',
+    gap:           4,
+  } as ViewStyle,
+
+  sortIndicatorText: {
+    fontSize:   12,
+    color:      tokens.textSecondary,
+    fontWeight: '500',
+  } as TextStyle,
+
+  nativeList: {
+    padding: spacing.lg,
+    gap:     spacing.md,
+  } as ViewStyle,
+
+  bottomSpacer: {
+    height: spacing.xxxl,
+  } as ViewStyle,
 });

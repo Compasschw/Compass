@@ -775,6 +775,52 @@ export function useCreateRequest() {
   });
 }
 
+// ─── Create Session ───────────────────────────────────────────────────────────
+
+export interface CreateSessionPayload {
+  /** Accepted ServiceRequest.id that this session is fulfilling. */
+  requestId: string;
+  /** ISO-8601 datetime string for the scheduled start. */
+  scheduledAt: string;
+  /** Session delivery modality — mirrors backend SessionMode enum. */
+  mode: 'in_person' | 'virtual';
+}
+
+/**
+ * CHW mutation — create a new scheduled session from an accepted service request.
+ *
+ * POST /api/v1/sessions/
+ *
+ * Requires a `request_id` from an already-accepted ServiceRequest.
+ * The backend derives `chw_id`, `member_id`, and `vertical` from the request row.
+ *
+ * On success, invalidates the sessions list so the calendar and dashboard
+ * reflect the newly scheduled session without a manual refresh.
+ */
+export function useCreateSession() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: CreateSessionPayload): Promise<SessionData> => {
+      const raw = await api<unknown>('/sessions/', {
+        method: 'POST',
+        body: JSON.stringify({
+          request_id: payload.requestId,
+          scheduled_at: payload.scheduledAt,
+          mode: payload.mode,
+        }),
+      });
+      return transformKeys<SessionData>(raw);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.sessions });
+      void qc.invalidateQueries({ queryKey: queryKeys.requests });
+    },
+    onError: (error: Error) => {
+      Alert.alert('Failed to schedule session', error?.message ?? 'Please try again.');
+    },
+  });
+}
+
 export function useStartSession() {
   const qc = useQueryClient();
   return useMutation({
@@ -1467,6 +1513,113 @@ export function useConsentRequestStatus(
       return CONSENT_TERMINAL_STATUSES.has(data.status) ? false : 3_000;
     },
     staleTime: 0,
+  });
+}
+
+// ─── Member Services Consent (T03) ───────────────────────────────────────────
+
+/**
+ * Union of the two values returned by GET /api/v1/member/services-consent.
+ *
+ * consent_to_services — member accepts CHW services (default state)
+ * refuse_services     — member has refused; blocks call/message/session creation
+ */
+export type ServicesConsentValue = 'consent_to_services' | 'refuse_services';
+
+/** Shape returned by GET /api/v1/member/services-consent (camelCase post-transform). */
+export interface MemberServicesConsentData {
+  value: ServicesConsentValue;
+  /** ISO timestamp of the last flip, or null when never changed from default. */
+  changedAt: string | null;
+  /** User ID of whoever last recorded the change (member self or admin). */
+  lastChangedBy: string | null;
+}
+
+/** Feature flag: set to false to skip the services-consent fetch entirely.
+ *
+ *  T03 added the endpoint (commit 20a0e23) but the DB migration may not be
+ *  applied in prod during the rollout window. When false, the hook returns
+ *  `null` data without hitting the network so the UI renders a neutral state
+ *  instead of crashing. Flip to true once prod migration is confirmed live.
+ */
+const SERVICES_CONSENT_FEATURE_ENABLED = true;
+
+/**
+ * Fetch the authenticated member's own services-consent status.
+ *
+ * Endpoint: GET /api/v1/member/services-consent (no query params — the
+ * backend resolves the record from the JWT, not a memberId param).
+ *
+ * Feature-flagged identically to the CHW-side hook: when
+ * SERVICES_CONSENT_FEATURE_ENABLED is false, or the server returns a 5xx
+ * (migration not yet applied), the hook resolves with null so the member-
+ * facing UI renders a neutral/permissive state instead of crashing.
+ *
+ * Used by MemberMessagesScreen to gate the composer: if the value is
+ * 'refuse_services', the composer is hidden and a status banner is shown.
+ */
+export function useOwnServicesConsent() {
+  return useQuery({
+    queryKey: ['member', 'own', 'services-consent'] as const,
+    queryFn: async (): Promise<MemberServicesConsentData | null> => {
+      if (!SERVICES_CONSENT_FEATURE_ENABLED) return null;
+      try {
+        const raw = await api<unknown>('/member/services-consent');
+        return transformKeys<MemberServicesConsentData>(raw);
+      } catch (err) {
+        const isServerError =
+          err instanceof Error &&
+          'status' in err &&
+          typeof (err as { status: unknown }).status === 'number' &&
+          (err as { status: number }).status >= 500;
+        if (isServerError) return null;
+        throw err;
+      }
+    },
+    enabled: SERVICES_CONSENT_FEATURE_ENABLED,
+    staleTime: 30_000,
+    retry: false,
+  });
+}
+
+/**
+ * Fetch the services-consent status for a given member from the CHW side.
+ *
+ * Endpoint: GET /api/v1/member/services-consent
+ * (The spec targets the member's own consent endpoint; CHW reads it on behalf
+ * of the selected member by passing the memberId as a query param.)
+ *
+ * Feature-flagged: when SERVICES_CONSENT_FEATURE_ENABLED is false, or when
+ * the server returns 503 / 500 (migration not yet applied), the hook resolves
+ * with null rather than throwing so callers render a neutral state.
+ *
+ * @param memberId — the member whose consent status to fetch. Empty string
+ *   disables the query (callers guard on !!selectedSession.memberId).
+ */
+export function useMemberServicesConsent(memberId: string) {
+  return useQuery({
+    queryKey: ['member', memberId, 'services-consent'] as const,
+    queryFn: async (): Promise<MemberServicesConsentData | null> => {
+      if (!SERVICES_CONSENT_FEATURE_ENABLED) return null;
+      try {
+        const raw = await api<unknown>(`/member/services-consent?member_id=${memberId}`);
+        return transformKeys<MemberServicesConsentData>(raw);
+      } catch (err) {
+        // Treat any 5xx as a soft rollout failure — return null so the UI
+        // shows a neutral "consent status unavailable" state instead of
+        // surfacing an error that would block the CHW's workflow.
+        const isServerError =
+          err instanceof Error &&
+          'status' in err &&
+          typeof (err as { status: unknown }).status === 'number' &&
+          (err as { status: number }).status >= 500;
+        if (isServerError) return null;
+        throw err;
+      }
+    },
+    enabled: SERVICES_CONSENT_FEATURE_ENABLED && memberId.length > 0,
+    staleTime: 30_000,
+    retry: false, // do not retry on server errors during rollout window
   });
 }
 
