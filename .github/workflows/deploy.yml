@@ -83,7 +83,9 @@ jobs:
               echo "::group::Step 4/5 — alembic upgrade heads"
               # `heads` (plural) advances every head — required because we have
               # multi-head divergence in prod (5 heads as of 2026-06-09).
-              docker compose exec -T api alembic upgrade heads
+              # PYTHONPATH=/code is required because env.py imports `app.database`;
+              # `docker compose exec` doesn't inherit it from uvicorn's env.
+              docker compose exec -T -e PYTHONPATH=/code api alembic upgrade heads
               echo "::endgroup::"
             fi
 
