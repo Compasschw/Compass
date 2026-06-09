@@ -40,8 +40,11 @@ jobs:
           port:       22
           # 15 min cap — covers a slow `docker compose build` on a t3.medium.
           command_timeout: 15m
-          # Fail loudly: any non-zero exit from the script aborts the action.
-          script_stop: true
+          # script_stop intentionally OFF: it intercepts non-zero returns from
+          # `[ ]` test conditions inside `if` blocks (false-positive abort).
+          # Strict-mode is still enforced by `set -euo pipefail` at the top of
+          # the embedded script, so true failures abort correctly.
+          script_stop: false
           # Pass the manual-dispatch input through to the remote shell.
           envs: SKIP_MIGRATIONS
           script: |
