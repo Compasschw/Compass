@@ -3,7 +3,7 @@
  *
  * Returns null on iOS/Android — the native app uses the existing drawer
  * navigator. On web, renders a full-height fixed sidebar with:
- *   - Brand block (compasschw + role tagline)
+ *   - Brand block (compasschw + role tagline + collapse toggle)
  *   - Navigation items with active highlight and badge support
  *   - Optional "Switch to X view" link
  *   - User avatar block at the bottom
@@ -14,9 +14,14 @@
  * Navigation is performed by calling `useNavigation()` from
  * `@react-navigation/native` — this component MUST be rendered inside a
  * navigation context on web.
+ *
+ * The sidebar supports a collapsible mode driven by the parent (AppShell).
+ * When `collapsed` is true the sidebar animates off-screen to the left via
+ * `Animated.timing` on `translateX`. The parent handles the edge flap that
+ * lets the user re-expand.
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -24,6 +29,7 @@ import {
   ScrollView,
   Platform,
   StyleSheet,
+  Animated,
   type ViewStyle,
   type TextStyle,
 } from 'react-native';
@@ -48,6 +54,7 @@ import {
   Home,
   Gift,
   ArrowRightLeft,
+  ChevronLeft,
   ChevronUp,
   ChevronDown,
   LogOut,
@@ -91,6 +98,16 @@ export interface DashboardSidebarProps {
   switchViewLabel?: string;
   /** Route name to navigate when the switch link is pressed. */
   switchViewRoute?: string;
+  /**
+   * When true the sidebar animates off-screen to the left.
+   * Web only — has no effect on native. Defaults to false (expanded).
+   */
+  collapsed?: boolean;
+  /**
+   * Called when the user presses the collapse/expand toggle button inside
+   * the brand block (chevron-left icon). Web only.
+   */
+  onToggleCollapse?: () => void;
 }
 
 // ─── Icon resolver ────────────────────────────────────────────────────────────
@@ -138,6 +155,8 @@ export function DashboardSidebar({
   userBlock,
   switchViewLabel,
   switchViewRoute,
+  collapsed = false,
+  onToggleCollapse,
 }: DashboardSidebarProps): React.JSX.Element | null {
   // Guard: sidebar renders on web only.
   if (Platform.OS !== 'web') {
@@ -153,6 +172,8 @@ export function DashboardSidebar({
       userBlock={userBlock}
       switchViewLabel={switchViewLabel}
       switchViewRoute={switchViewRoute}
+      collapsed={collapsed}
+      onToggleCollapse={onToggleCollapse}
     />
   );
 }
@@ -167,6 +188,8 @@ function SidebarContent({
   userBlock,
   switchViewLabel,
   switchViewRoute,
+  collapsed = false,
+  onToggleCollapse,
 }: DashboardSidebarProps): React.JSX.Element {
   const navigation = useNavigation<NavigationProp<ParamListBase>>();
 
@@ -177,8 +200,21 @@ function SidebarContent({
     role ?? (items === chwSidebarItems ? 'chw' : 'member');
   const roleTagline = detectedRole === 'chw' ? 'CHW Portal' : 'Member Portal';
 
+  // Animation: translateX from 0 (expanded) to -SIDEBAR_WIDTH (collapsed).
+  // useNativeDriver must be false for RN Web — translateX on DOM elements
+  // is not handled by the native thread.
+  const translateX = useRef(new Animated.Value(collapsed ? -SIDEBAR_WIDTH : 0)).current;
+
+  useEffect(() => {
+    Animated.timing(translateX, {
+      toValue:         collapsed ? -SIDEBAR_WIDTH : 0,
+      duration:        200,
+      useNativeDriver: false,
+    }).start();
+  }, [collapsed, translateX]);
+
   return (
-    <View style={styles.sidebar}>
+    <Animated.View style={[styles.sidebar, { transform: [{ translateX }] }]}>
       {/* Brand block — compass icon badge + wordmark, mirrors mock px-2 mb-8 layout */}
       <View style={styles.brandBlock}>
         <View style={styles.brandIconBadge}>
@@ -188,6 +224,12 @@ function SidebarContent({
           <Text style={styles.brandName}>compasschw</Text>
           <Text style={styles.brandTagline}>{roleTagline}</Text>
         </View>
+
+        {/* Collapse toggle button — web only, rendered to the right of the
+         *  role-subtitle text. Pressing it calls the parent's toggle handler. */}
+        {onToggleCollapse !== undefined && (
+          <CollapseToggleButton onPress={onToggleCollapse} />
+        )}
       </View>
 
       {/* Nav items */}
@@ -231,7 +273,38 @@ function SidebarContent({
 
       {/* User avatar block */}
       <UserAvatarBlock userBlock={userBlock} />
-    </View>
+    </Animated.View>
+  );
+}
+
+// ─── Collapse toggle button ───────────────────────────────────────────────────
+
+interface CollapseToggleButtonProps {
+  onPress: () => void;
+}
+
+/**
+ * Small chevron-left button shown in the brand block header to the right of
+ * the role tagline. 32×32 hit area, transparent background with a subtle
+ * hover overlay.
+ */
+function CollapseToggleButton({ onPress }: CollapseToggleButtonProps): React.JSX.Element {
+  const [hovered, setHovered] = useState(false);
+
+  return (
+    <Pressable
+      onPress={onPress}
+      onHoverIn={() => setHovered(true)}
+      onHoverOut={() => setHovered(false)}
+      accessibilityRole="button"
+      accessibilityLabel="Collapse sidebar"
+      style={[
+        styles.collapseBtn,
+        hovered && styles.collapseBtnHover,
+      ]}
+    >
+      <ChevronLeft color={tokens.emerald100} size={18} strokeWidth={2} />
+    </Pressable>
   );
 }
 
@@ -477,7 +550,8 @@ const styles = StyleSheet.create({
   } as ViewStyle,
 
   brandText: {
-    flexShrink: 1,
+    flex: 1,
+    minWidth: 0,
   } as ViewStyle,
 
   // text-white font-bold text-lg leading-tight — 18px weight 700
@@ -497,6 +571,24 @@ const styles = StyleSheet.create({
     marginTop:  1,
     lineHeight: 16,
   } as TextStyle,
+
+  // ── Collapse toggle button ──
+
+  /** 32×32 hit area to the right of the role tagline. */
+  collapseBtn: {
+    width:           32,
+    height:          32,
+    borderRadius:    6,
+    alignItems:      'center',
+    justifyContent:  'center',
+    flexShrink:      0,
+    backgroundColor: 'transparent',
+    cursor:          'pointer' as unknown as undefined,
+  } as ViewStyle,
+
+  collapseBtnHover: {
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  } as ViewStyle,
 
   // ── Nav scroll ──
 
