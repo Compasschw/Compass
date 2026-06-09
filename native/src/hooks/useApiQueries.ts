@@ -100,6 +100,11 @@ export interface ChwProfile {
    * Null means the stored phone number has not been SMS-verified.
    */
   phoneVerifiedAt?: string | null;
+  /**
+   * S3 public-bucket URL for the CHW's profile photo.
+   * Null when no photo has been uploaded.
+   */
+  profilePictureUrl?: string | null;
 }
 
 export interface MemberProfile {
@@ -120,6 +125,11 @@ export interface MemberProfile {
    * Null / absent means the stored phone number has not been SMS-verified.
    */
   phoneVerifiedAt?: string | null;
+  /**
+   * S3 public-bucket URL for the member's profile photo.
+   * Null when no photo has been uploaded.
+   */
+  profilePictureUrl?: string | null;
 }
 
 export interface ChwBrowseItem {
@@ -966,6 +976,114 @@ export function useUpdateMemberProfile() {
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.memberProfile });
+    },
+  });
+}
+
+// ─── Profile picture upload ───────────────────────────────────────────────────
+
+/** Role determines which profile PUT endpoint to call after the S3 upload. */
+export type ProfilePictureRole = 'chw' | 'member';
+
+/**
+ * Hook: upload a profile picture for the authenticated user.
+ *
+ * Flow (called by ProfilePictureEditor):
+ *   1. POST /upload/presigned-url with purpose=profile_image → {upload_url, s3_key}
+ *   2. PUT <upload_url> with the image blob (no auth header — it's a presigned S3 URL)
+ *   3. Build the public S3 URL from s3_key + bucket env var
+ *   4. PUT /chw/profile or /member/profile with {profile_picture_url}
+ *   5. Invalidate the relevant profile query
+ *
+ * Returns the new public URL so the editor can show an optimistic preview.
+ *
+ * The S3 public base URL is the standard virtual-hosted S3 URL:
+ *   https://<bucket>.s3.<region>.amazonaws.com/<key>
+ * We derive it from the s3_key returned by the presigned-URL endpoint.
+ * In production the bucket is publicly readable (profile images are not PHI).
+ */
+export function useUploadProfilePicture(role: ProfilePictureRole) {
+  const qc = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      blob,
+      filename,
+      contentType,
+    }: {
+      blob: Blob;
+      filename: string;
+      contentType: 'image/jpeg' | 'image/png';
+    }): Promise<string> => {
+      // Step 1 — get presigned URL from backend
+      const presignedRaw = await api<unknown>('/upload/presigned-url', {
+        method: 'POST',
+        body: JSON.stringify({
+          filename,
+          content_type: contentType,
+          purpose: 'profile_image',
+          size_bytes: blob.size,
+        }),
+      });
+
+      const { uploadUrl, s3Key } = transformKeys<{
+        uploadUrl: string;
+        s3Key: string;
+      }>(presignedRaw);
+
+      // Step 2 — PUT blob directly to S3 (no auth header — presigned URL already encodes credentials)
+      const s3Response = await fetch(uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': contentType },
+        body: blob,
+      });
+
+      if (!s3Response.ok) {
+        throw new Error(`S3 upload failed with status ${s3Response.status}`);
+      }
+
+      // Step 3 — derive public URL from the s3_key
+      // The upload endpoint routes profile_image purpose to the public bucket.
+      // Public URL format: https://<bucket>.s3.<region>.amazonaws.com/<key>
+      // We use the presigned URL's origin (scheme + host) as the base —
+      // that avoids hard-coding the bucket/region in the frontend.
+      const s3Origin = new URL(uploadUrl).origin;
+      const publicUrl = `${s3Origin}/${s3Key}`;
+
+      // Step 4 — update the user's profile with the new URL
+      const profilePath = role === 'chw' ? '/chw/profile' : '/member/profile';
+      await api(profilePath, {
+        method: 'PUT',
+        body: JSON.stringify({ profile_picture_url: publicUrl }),
+      });
+
+      return publicUrl;
+    },
+    onSuccess: () => {
+      const key = role === 'chw' ? queryKeys.chwProfile : queryKeys.memberProfile;
+      void qc.invalidateQueries({ queryKey: key });
+    },
+  });
+}
+
+/**
+ * Hook: remove the authenticated user's profile picture.
+ * PATCHes profile_picture_url to null via the profile PUT endpoint.
+ */
+export function useRemoveProfilePicture(role: ProfilePictureRole) {
+  const qc = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (): Promise<void> => {
+      const profilePath = role === 'chw' ? '/chw/profile' : '/member/profile';
+      await api(profilePath, {
+        method: 'PUT',
+        body: JSON.stringify({ profile_picture_url: null }),
+      });
+    },
+    onSuccess: () => {
+      const key = role === 'chw' ? queryKeys.chwProfile : queryKeys.memberProfile;
+      void qc.invalidateQueries({ queryKey: key });
     },
   });
 }
@@ -2292,6 +2410,74 @@ export function useChwResources(params: { category?: string; q?: string } = {}) 
       return transformKeys<ChwResourceItem[]>(raw);
     },
     staleTime: 300_000,
+  });
+}
+
+// ─── Journey templates + create-member-journey ───────────────────────────────
+
+/** Query key for GET /journeys/templates. */
+export const journeyTemplatesKey = ['journeys', 'templates'] as const;
+
+/**
+ * Fetch all active journey templates.
+ *
+ * GET /api/v1/journeys/templates — returns JourneyTemplateResponse[].
+ * Available to any authenticated user (CHW or member). Stale after 10 min;
+ * the template catalog changes rarely.
+ */
+export function useJourneyTemplates() {
+  return useQuery({
+    queryKey: journeyTemplatesKey,
+    queryFn: async (): Promise<JourneyTemplateResponse[]> => {
+      const raw = await api<unknown[]>('/journeys/templates');
+      return transformKeys<JourneyTemplateResponse[]>(raw);
+    },
+    staleTime: 600_000, // 10 min — template catalog is slow-moving
+  });
+}
+
+/** Input shape for POST /members/{member_id}/journeys. */
+export interface CreateMemberJourneyPayload {
+  memberId: string;
+  templateSlug: string;
+}
+
+/**
+ * CHW mutation — start a new journey for a member.
+ *
+ * POST /api/v1/members/{member_id}/journeys
+ * Body: { member_id, template_slug }
+ *
+ * Backend guards:
+ *   - 403 if the CHW has no active relationship with the member.
+ *   - 409 if the member already has an active journey for this template.
+ *   - 404 if the template_slug does not exist or is inactive.
+ *
+ * On success, invalidates the member journeys query so the Active Journeys
+ * list and Roadmap in CHWMemberProfileScreen refresh immediately.
+ *
+ * @param memberId — The member's User.id. Used to scope the cache invalidation.
+ */
+export function useCreateMemberJourney(memberId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: CreateMemberJourneyPayload): Promise<MemberJourneyResponse> => {
+      const raw = await api<unknown>(`/members/${payload.memberId}/journeys`, {
+        method: 'POST',
+        body: JSON.stringify({
+          member_id: payload.memberId,
+          template_slug: payload.templateSlug,
+        }),
+      });
+      return transformKeys<MemberJourneyResponse>(raw);
+    },
+    onSuccess: () => {
+      // Invalidate the member journey list so Active Journeys + Roadmap refresh.
+      void qc.invalidateQueries({ queryKey: memberJourneysKey(memberId) });
+    },
+    onError: (_error: unknown) => {
+      // Callers handle errors inline — no silent failures.
+    },
   });
 }
 

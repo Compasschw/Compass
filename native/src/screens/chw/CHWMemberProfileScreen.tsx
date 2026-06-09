@@ -23,11 +23,13 @@
  *   Admin: unrestricted access.
  */
 
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Modal,
   Platform,
+  Pressable,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -54,6 +56,7 @@ import {
   MessageSquare,
   NotebookPen,
   Phone,
+  Plus,
   Shield,
   ShieldCheck,
   ShieldOff,
@@ -95,8 +98,12 @@ import {
   useCreateFlagNote,
   useDeleteFlagNote,
   useChwBillableUnits,
+  useCreateMemberJourney,
+  useJourneyTemplates,
   useMemberJourneys,
   useMemberRewardsBalance,
+  type CreateMemberJourneyPayload,
+  type JourneyTemplateResponse,
   type ServicesConsentValue,
   type MemberJourneyResponse,
 } from '../../hooks/useApiQueries';
@@ -739,6 +746,543 @@ const consentColStyles = StyleSheet.create({
   } as TextStyle,
 });
 
+// ─── TEMPLATE_CATEGORY_ICONS / DESCRIPTIONS ──────────────────────────────────
+
+/** Friendly human-readable descriptions for the 10 standardized template slugs. */
+const TEMPLATE_DESCRIPTIONS: Record<string, string> = {
+  food_assistance:         'Connect member with food banks, pantries, and meal programs.',
+  housing:                 'Address housing instability, transitional housing, and shelter.',
+  mental_health:           'Link member to mental health services and crisis support.',
+  maternal_health:         'Support prenatal/postnatal care, WIC, and family health.',
+  rent_payment_assistance: 'Navigate emergency rental aid programs and tenant services.',
+  utility_support:         'Access utility shut-off prevention and payment assistance.',
+  calfresh_enrollment:     'Guide member through CalFresh / SNAP enrollment process.',
+  healthcare_appointment:  'Schedule and track specialty or primary care appointments.',
+  food_pantry:             'Connect member to local food pantry distribution services.',
+  health_education:        'Provide chronic-disease education and wellness coaching.',
+};
+
+/** Icon + background colour for each template category. */
+const CATEGORY_STYLE: Record<string, { iconColor: string; iconBg: string }> = {
+  food:           { iconColor: '#D97706', iconBg: '#FEF3C7' },
+  housing:        { iconColor: '#2563EB', iconBg: '#DBEAFE' },
+  mental_health:  { iconColor: '#7C3AED', iconBg: '#EDE9FE' },
+  maternal_health:{ iconColor: '#BE185D', iconBg: '#FCE7F3' },
+  benefits:       { iconColor: '#15803D', iconBg: '#DCFCE7' },
+  utilities:      { iconColor: '#EA580C', iconBg: '#FFEDD5' },
+  healthcare:     { iconColor: '#0D9488', iconBg: '#CCFBF1' },
+  education:      { iconColor: '#4338CA', iconBg: '#E0E7FF' },
+};
+
+function templateCategoryStyle(category: string) {
+  return CATEGORY_STYLE[category] ?? { iconColor: '#6B7280', iconBg: '#F3F4F6' };
+}
+
+// ─── AddJourneyModal ──────────────────────────────────────────────────────────
+
+interface AddJourneyModalProps {
+  memberId: string;
+  memberName: string;
+  visible: boolean;
+  /** Slugs of templates the member already has an active journey for. */
+  existingActiveSlugs: Set<string>;
+  onClose: () => void;
+  /** Called after a journey is successfully created. */
+  onCreated: () => void;
+}
+
+/**
+ * Modal that lets a CHW pick from all 10 active journey templates and
+ * start a new MemberJourney.
+ *
+ * Dedup guard: templates whose slug is already in `existingActiveSlugs` are
+ * rendered greyed-out and unselectable — the backend would return 409, so we
+ * block at the form boundary for a better UX.
+ *
+ * Platform:
+ *   - Web: fixed overlay + animated slide-up panel with backdrop dismiss.
+ *   - Native: React Native Modal (form-sheet style, same as RightDrawer).
+ *
+ * Esc / backdrop tap closes the modal without submitting.
+ */
+function AddJourneyModal({
+  memberId,
+  memberName,
+  visible,
+  existingActiveSlugs,
+  onClose,
+  onCreated,
+}: AddJourneyModalProps): React.JSX.Element {
+  const { data: templates, isLoading: templatesLoading } = useJourneyTemplates();
+  const createJourney = useCreateMemberJourney(memberId);
+
+  const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // Reset selection whenever the modal opens.
+  useEffect(() => {
+    if (visible) {
+      setSelectedSlug(null);
+      setSubmitError(null);
+    }
+  }, [visible]);
+
+  // Esc key closes on web.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !visible) return;
+    const handler = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [visible, onClose]);
+
+  const handleSubmit = useCallback(async (): Promise<void> => {
+    if (!selectedSlug) return;
+    setSubmitError(null);
+
+    // Guard: client-side dedup check before hitting the network.
+    if (existingActiveSlugs.has(selectedSlug)) {
+      setSubmitError('This member already has an active journey for the selected template.');
+      return;
+    }
+
+    try {
+      const payload: CreateMemberJourneyPayload = {
+        memberId,
+        templateSlug: selectedSlug,
+      };
+      await createJourney.mutateAsync(payload);
+      onCreated();
+      onClose();
+    } catch (err: unknown) {
+      const message =
+        err != null &&
+        typeof err === 'object' &&
+        'message' in err &&
+        typeof (err as { message: unknown }).message === 'string'
+          ? (err as { message: string }).message
+          : 'Failed to start journey. Please try again.';
+      setSubmitError(message);
+    }
+  }, [selectedSlug, existingActiveSlugs, memberId, createJourney, onCreated, onClose]);
+
+  const canSubmit = selectedSlug !== null && !createJourney.isPending;
+
+  const bodyContent = (
+    <View style={addJourneyStyles.body}>
+      {/* Header */}
+      <View style={addJourneyStyles.modalHeader}>
+        <View style={addJourneyStyles.modalHeaderText}>
+          <Text style={addJourneyStyles.modalTitle}>Start a new journey</Text>
+          <Text style={addJourneyStyles.modalSubtitle} numberOfLines={1}>
+            for {memberName}
+          </Text>
+        </View>
+        <TouchableOpacity
+          style={addJourneyStyles.closeBtn}
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Close"
+        >
+          <Text style={addJourneyStyles.closeBtnText}>✕</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Template list */}
+      <ScrollView
+        style={addJourneyStyles.listScroll}
+        contentContainerStyle={addJourneyStyles.listContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {templatesLoading ? (
+          <View style={addJourneyStyles.loadingRow}>
+            <ActivityIndicator size="small" color={tokens.textMuted} />
+            <Text style={addJourneyStyles.loadingText}>Loading templates…</Text>
+          </View>
+        ) : (templates ?? []).length === 0 ? (
+          <Text style={addJourneyStyles.emptyText}>No templates available.</Text>
+        ) : (
+          (templates ?? []).map((template) => {
+            const alreadyActive = existingActiveSlugs.has(template.slug);
+            const isSelected = selectedSlug === template.slug;
+            const catStyle = templateCategoryStyle(template.category);
+            const description =
+              TEMPLATE_DESCRIPTIONS[template.slug] ??
+              `${template.name} journey — 6-step care pathway.`;
+
+            return (
+              <TouchableOpacity
+                key={template.id}
+                style={[
+                  addJourneyStyles.templateRow,
+                  isSelected && addJourneyStyles.templateRowSelected,
+                  alreadyActive && addJourneyStyles.templateRowDisabled,
+                ]}
+                onPress={alreadyActive ? undefined : () => setSelectedSlug(template.slug)}
+                disabled={alreadyActive}
+                accessibilityRole="radio"
+                accessibilityState={{ checked: isSelected, disabled: alreadyActive }}
+                accessibilityLabel={`${template.name}${alreadyActive ? ' — already active' : ''}`}
+              >
+                {/* Category icon circle */}
+                <View
+                  style={[
+                    addJourneyStyles.templateIcon,
+                    { backgroundColor: alreadyActive ? '#F3F4F6' : catStyle.iconBg },
+                  ]}
+                >
+                  <Heart
+                    size={14}
+                    color={alreadyActive ? '#D1D5DB' : catStyle.iconColor}
+                  />
+                </View>
+
+                {/* Template text */}
+                <View style={addJourneyStyles.templateTextBlock}>
+                  <Text
+                    style={[
+                      addJourneyStyles.templateName,
+                      alreadyActive && addJourneyStyles.templateNameDisabled,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {template.name}
+                  </Text>
+                  <Text
+                    style={[
+                      addJourneyStyles.templateDescription,
+                      alreadyActive && addJourneyStyles.templateDescriptionDisabled,
+                    ]}
+                    numberOfLines={2}
+                  >
+                    {alreadyActive ? 'Already active for this member' : description}
+                  </Text>
+                </View>
+
+                {/* Selection indicator */}
+                <View
+                  style={[
+                    addJourneyStyles.radioOuter,
+                    isSelected && addJourneyStyles.radioOuterSelected,
+                    alreadyActive && addJourneyStyles.radioOuterDisabled,
+                  ]}
+                >
+                  {isSelected && <View style={addJourneyStyles.radioDot} />}
+                </View>
+              </TouchableOpacity>
+            );
+          })
+        )}
+      </ScrollView>
+
+      {/* Error banner */}
+      {submitError !== null && (
+        <View style={addJourneyStyles.errorBanner}>
+          <Text style={addJourneyStyles.errorText}>{submitError}</Text>
+        </View>
+      )}
+
+      {/* Footer */}
+      <View style={addJourneyStyles.footer}>
+        <TouchableOpacity
+          style={addJourneyStyles.cancelBtn}
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Cancel"
+        >
+          <Text style={addJourneyStyles.cancelBtnText}>Cancel</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[addJourneyStyles.submitBtn, !canSubmit && addJourneyStyles.submitBtnDisabled]}
+          onPress={() => { void handleSubmit(); }}
+          disabled={!canSubmit}
+          accessibilityRole="button"
+          accessibilityLabel="Start journey"
+          accessibilityState={{ disabled: !canSubmit }}
+        >
+          {createJourney.isPending ? (
+            <ActivityIndicator size="small" color="#FFFFFF" />
+          ) : (
+            <Text style={addJourneyStyles.submitBtnText}>Start Journey</Text>
+          )}
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
+  if (Platform.OS !== 'web') {
+    // Native: use a standard RN Modal (form-sheet).
+    return (
+      <Modal
+        visible={visible}
+        animationType="slide"
+        presentationStyle="formSheet"
+        onRequestClose={onClose}
+      >
+        <View style={addJourneyStyles.nativeContainer}>{bodyContent}</View>
+      </Modal>
+    );
+  }
+
+  // Web: fixed overlay with animated panel + backdrop dismiss.
+  if (!visible) return <></>;
+
+  return (
+    <View style={addJourneyStyles.webOverlay}>
+      <Pressable
+        style={addJourneyStyles.webBackdrop}
+        onPress={onClose}
+        accessibilityRole="button"
+        accessibilityLabel="Close modal"
+      />
+      <View style={addJourneyStyles.webPanel}>{bodyContent}</View>
+    </View>
+  );
+}
+
+const addJourneyStyles = StyleSheet.create({
+  // Web overlay
+  webOverlay: {
+    position: 'fixed' as 'absolute',
+    inset: 0,
+    zIndex: 200,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+  webBackdrop: {
+    position: 'absolute' as 'absolute',
+    inset: 0,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+  } as ViewStyle,
+  webPanel: {
+    width: '100%',
+    maxWidth: 560,
+    maxHeight: '80vh' as unknown as number,
+    backgroundColor: '#FFFFFF',
+    borderRadius: radius.xl,
+    overflow: 'hidden',
+    zIndex: 1,
+  } as ViewStyle,
+
+  // Native container
+  nativeContainer: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  } as ViewStyle,
+
+  // Shared body
+  body: {
+    flex: 1,
+    flexDirection: 'column',
+  } as ViewStyle,
+
+  // Header
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+    gap: 12,
+  } as ViewStyle,
+  modalHeaderText: {
+    flex: 1,
+    gap: 2,
+  } as ViewStyle,
+  modalTitle: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 17,
+    color: '#111827',
+    lineHeight: 24,
+  } as TextStyle,
+  modalSubtitle: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: tokens.textSecondary,
+  } as TextStyle,
+  closeBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F3F4F6',
+    flexShrink: 0,
+  } as ViewStyle,
+  closeBtnText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 14,
+    color: '#6B7280',
+  } as TextStyle,
+
+  // Template list
+  listScroll: {
+    flex: 1,
+    maxHeight: Platform.OS === 'web' ? (400 as unknown as number) : undefined,
+  } as ViewStyle,
+  listContent: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    gap: 6,
+  } as ViewStyle,
+  loadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 20,
+    justifyContent: 'center',
+  } as ViewStyle,
+  loadingText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: tokens.textMuted,
+  } as TextStyle,
+  emptyText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: '#A0A6AB',
+    fontStyle: 'italic',
+    textAlign: 'center',
+    paddingVertical: 20,
+  } as TextStyle,
+
+  // Template row
+  templateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 12,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: '#F3F4F6',
+    backgroundColor: '#FFFFFF',
+  } as ViewStyle,
+  templateRowSelected: {
+    borderColor: tokens.primary,
+    backgroundColor: '#F0FDF4',
+  } as ViewStyle,
+  templateRowDisabled: {
+    backgroundColor: '#FAFAFA',
+    borderColor: '#F3F4F6',
+    opacity: 0.65,
+  } as ViewStyle,
+  templateIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  } as ViewStyle,
+  templateTextBlock: {
+    flex: 1,
+    gap: 2,
+  } as ViewStyle,
+  templateName: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 13,
+    color: '#111827',
+    lineHeight: 18,
+  } as TextStyle,
+  templateNameDisabled: {
+    color: '#9CA3AF',
+  } as TextStyle,
+  templateDescription: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: '#6B7280',
+    lineHeight: 16,
+  } as TextStyle,
+  templateDescriptionDisabled: {
+    color: '#C4C9CE',
+  } as TextStyle,
+  radioOuter: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 2,
+    borderColor: '#D1D5DB',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  } as ViewStyle,
+  radioOuterSelected: {
+    borderColor: tokens.primary,
+  } as ViewStyle,
+  radioOuterDisabled: {
+    borderColor: '#E5E7EB',
+  } as ViewStyle,
+  radioDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: tokens.primary,
+  } as ViewStyle,
+
+  // Error
+  errorBanner: {
+    marginHorizontal: 16,
+    marginBottom: 8,
+    backgroundColor: '#FEF2F2',
+    borderRadius: radius.md,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  } as ViewStyle,
+  errorText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12,
+    color: '#B91C1C',
+    lineHeight: 18,
+  } as TextStyle,
+
+  // Footer
+  footer: {
+    flexDirection: 'row',
+    gap: 8,
+    justifyContent: 'flex-end',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+  } as ViewStyle,
+  cancelBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: '#F4F1ED',
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: '#DDD6CC',
+  } as ViewStyle,
+  cancelBtnText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 13,
+    color: '#6B7280',
+  } as TextStyle,
+  submitBtn: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    backgroundColor: tokens.primary,
+    borderRadius: radius.md,
+    minWidth: 110,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+  submitBtnDisabled: {
+    backgroundColor: '#D1D5DB',
+  } as ViewStyle,
+  submitBtnText: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 13,
+    color: '#FFFFFF',
+  } as TextStyle,
+});
+
 // ─── ActiveJourneysAndCTAColumn ───────────────────────────────────────────────
 
 interface ActiveJourneysAndCTAColumnProps {
@@ -752,7 +1296,8 @@ interface ActiveJourneysAndCTAColumnProps {
 
 /**
  * Right column of the 3-column top card.
- * Shows: Active Journeys list, Member wellness points balance, Call/Message CTAs.
+ * Shows: Active Journeys list (with "+ Add Journey" button), Member wellness
+ * points balance, Call/Message CTAs.
  * CTAs are dimmed + disabled when the member has refused services.
  */
 function ActiveJourneysAndCTAColumn({
@@ -765,10 +1310,21 @@ function ActiveJourneysAndCTAColumn({
 }: ActiveJourneysAndCTAColumnProps): React.JSX.Element {
   const { data: journeys, isLoading: journeysLoading } = useMemberJourneys(memberId);
   const { data: rewardsBalance } = useMemberRewardsBalance(memberId);
+  const [addJourneyOpen, setAddJourneyOpen] = useState(false);
 
   const activeJourneys = useMemo(
     () => journeys?.filter((j) => j.status === 'active') ?? [],
     [journeys],
+  );
+
+  /**
+   * Set of template slugs for which the member already has an active journey.
+   * Passed to AddJourneyModal so it can grey-out already-enrolled templates
+   * before the POST, avoiding a 409 round-trip.
+   */
+  const existingActiveSlugs = useMemo<Set<string>>(
+    () => new Set(activeJourneys.map((j) => j.template.slug)),
+    [activeJourneys],
   );
 
   const ctaDisabled = servicesConsentRefused;
@@ -776,7 +1332,19 @@ function ActiveJourneysAndCTAColumn({
 
   return (
     <View style={ctaColStyles.container}>
-      <ColumnHeading text="Active Journeys" />
+      {/* Section heading row + "+ Add Journey" button */}
+      <View style={ctaColStyles.journeyHeadRow}>
+        <ColumnHeading text="Active Journeys" />
+        <TouchableOpacity
+          style={ctaColStyles.addJourneyBtn}
+          onPress={() => setAddJourneyOpen(true)}
+          accessibilityRole="button"
+          accessibilityLabel="Add a new journey for this member"
+        >
+          <Plus size={12} color={tokens.primary} />
+          <Text style={ctaColStyles.addJourneyBtnText}>Add Journey</Text>
+        </TouchableOpacity>
+      </View>
 
       {/* Journeys list */}
       {journeysLoading ? (
@@ -798,6 +1366,19 @@ function ActiveJourneysAndCTAColumn({
           )}
         </View>
       )}
+
+      {/* Add Journey modal — renders here so it has access to local state */}
+      <AddJourneyModal
+        memberId={memberId}
+        memberName={displayName}
+        visible={addJourneyOpen}
+        existingActiveSlugs={existingActiveSlugs}
+        onClose={() => setAddJourneyOpen(false)}
+        onCreated={() => {
+          /* useMemberJourneys is invalidated by the mutation's onSuccess;
+             the query refetches automatically — no extra action needed here. */
+        }}
+      />
 
       {/* Rewards balance */}
       {rewardsBalance !== undefined && (
@@ -947,6 +1528,28 @@ const ctaColStyles = StyleSheet.create({
     borderTopColor: '#F3F4F6',
     gap: 8,
   } as ViewStyle,
+  journeyHeadRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: -4,
+  } as ViewStyle,
+  addJourneyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    backgroundColor: tokens.primary + '12',
+    borderWidth: 1,
+    borderColor: tokens.primary + '40',
+  } as ViewStyle,
+  addJourneyBtnText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 11,
+    color: tokens.primary,
+  } as TextStyle,
   loadingRow: {
     flexDirection: 'row',
     alignItems: 'center',
