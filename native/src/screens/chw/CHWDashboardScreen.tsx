@@ -2,11 +2,11 @@
  * CHWDashboardScreen — Rewritten to match dashboard.html 1:1 visually,
  * with every visible data point wired to live backend hooks.
  *
- * Layout mirrors the HTML mockup exactly:
+ * Layout:
  *   - Full-width page (maxWidth 1280 on web, no artificial 560px cap)
- *   - Page header row: greeting + subtitle + search + "+ New Session" button
+ *   - Page header row: greeting + subtitle + search + "Add New Member" button
  *   - KPI row: 4 tiles (sessions today, overdue follow-ups, messages, earnings)
- *   - 2-column mid row: Today's Schedule (7/12) + Needs Your Attention (5/12)
+ *   - Mid row: Today's Schedule (full-width)
  *   - Bottom row: Weekly Snapshot (5/12) + Recent Activity (7/12)
  *
  * Data wiring:
@@ -15,7 +15,6 @@
  *   - Messages awaiting   → useSessions()  heuristic: in_progress count
  *   - Earnings this week  → useChwClaims() sum grossAmount current ISO week
  *   - Today's schedule    → useSessions()  today's scheduled sessions, sorted
- *   - Needs attention     → useRequests()  overdue matched + in_progress sessions
  *   - Weekly snapshot     → useSessions()  + useChwClaims() this-week counts
  *   - Recent activity     → useSessions()  + useChwClaims() + useRequests() merged
  *   - Active member count → useChwMembers() total length (best available proxy)
@@ -46,14 +45,10 @@ import {
   AlertTriangle,
   MessageSquare,
   DollarSign,
-  AlertCircle,
-  Sparkles,
-  PhoneMissed,
-  ClipboardCheck,
   CheckCircle2,
   ClipboardList,
   Search,
-  Plus,
+  UserPlus,
 } from 'lucide-react-native';
 
 import { colors as tokens, spacing, radius } from '../../theme/tokens';
@@ -368,76 +363,6 @@ function ScheduleRow({
   );
 }
 
-/**
- * One alert card in the "Needs your attention" section.
- *
- * When ``memberId`` + ``memberName`` are passed, the title is rendered as a
- * pressable name prefix + the rest of the title text — tapping the name
- * navigates to the member's profile, while tapping the action button on the
- * right still fires ``onPress`` (typically opening the request/session list).
- */
-function AttentionCard({
-  variant,
-  icon,
-  title,
-  subtitle,
-  actionLabel,
-  onPress,
-  memberId,
-  memberName,
-}: {
-  variant:     'red' | 'amber' | 'blue' | 'emerald';
-  icon:        React.ReactNode;
-  title:       string;
-  subtitle:    string;
-  actionLabel: string;
-  onPress:     () => void;
-  memberId?:   string;
-  memberName?: string;
-}): React.JSX.Element {
-  const borders: Record<string, { borderColor: string; backgroundColor: string }> = {
-    red:     { borderColor: '#fecaca', backgroundColor: 'rgba(254,242,242,0.5)' },
-    amber:   { borderColor: '#fde68a', backgroundColor: 'rgba(255,251,235,0.5)' },
-    blue:    { borderColor: '#bfdbfe', backgroundColor: 'rgba(239,246,255,0.5)' },
-    emerald: { borderColor: '#a7f3d0', backgroundColor: 'rgba(236,253,245,0.5)' },
-  };
-  const style = borders[variant] ?? borders.amber!;
-
-  // Split the title at the first occurrence of the member name so the prefix
-  // can be rendered inside a PressableMember while the rest stays plain text.
-  const renderTitle = () => {
-    if (!memberId || !memberName || !title.startsWith(memberName)) {
-      return <Text style={styles.attentionTitle}>{title}</Text>;
-    }
-    const rest = title.slice(memberName.length);
-    return (
-      <View style={styles.attentionTitleRow}>
-        <PressableMember memberId={memberId} displayName={memberName}>
-          <Text style={[styles.attentionTitle, styles.attentionTitleLink]}>
-            {memberName}
-          </Text>
-        </PressableMember>
-        {rest.length > 0 ? (
-          <Text style={styles.attentionTitle}>{rest}</Text>
-        ) : null}
-      </View>
-    );
-  };
-
-  return (
-    <View style={[styles.attentionCard, { borderColor: style.borderColor, backgroundColor: style.backgroundColor }]}>
-      <View style={styles.attentionIcon}>{icon}</View>
-      <View style={{ flex: 1 }}>
-        {renderTitle()}
-        <Text style={styles.attentionSub}>{subtitle}</Text>
-      </View>
-      <TouchableOpacity onPress={onPress} accessibilityRole="button" accessibilityLabel={actionLabel}>
-        <Text style={styles.attentionAction}>{actionLabel}</Text>
-      </TouchableOpacity>
-    </View>
-  );
-}
-
 /** One row in the Weekly Snapshot 2×2 grid. */
 function SnapshotBox({
   label,
@@ -610,24 +535,6 @@ export function CHWDashboardScreen(): React.JSX.Element {
     return todaySessions.filter((s) => s.status === 'scheduled');
   }, [todaySessions]);
 
-  // ── Needs your attention ─────────────────────────────────────────────────────
-
-  /** Overdue matched service requests (> 48h). */
-  const overdueRequests = useMemo<ServiceRequestData[]>(() => {
-    const cutoff = Date.now() - 48 * 60 * 60 * 1000;
-    return allRequests
-      .filter((r) => r.status === 'matched' && new Date(r.createdAt).getTime() < cutoff)
-      .slice(0, 3);
-  }, [allRequests]);
-
-  /**
-   * Sessions currently in_progress — shown as "Follow-up needed".
-   * TODO: replace with real pending-documentation count when /chw/sessions/undocumented ships.
-   */
-  const inProgressSessionCount = useMemo<number>(() => {
-    return allSessions.filter((s) => s.status === 'in_progress').length;
-  }, [allSessions]);
-
   // ── Weekly snapshot ──────────────────────────────────────────────────────────
 
   const weekStart = useMemo(() => isoWeekStart(new Date()), []);
@@ -723,16 +630,16 @@ export function CHWDashboardScreen(): React.JSX.Element {
                 </View>
               )}
 
-              {/* + New Session */}
+              {/* Add New Member */}
               <TouchableOpacity
                 style={styles.newSessionBtn}
-                onPress={() => navigation.navigate('Calendar' as never)}
+                onPress={() => navigation.navigate('CHWMembers' as never)}
                 activeOpacity={0.85}
                 accessibilityRole="button"
-                accessibilityLabel="Start a new session"
+                accessibilityLabel="Add a new member"
               >
-                <Plus size={14} color="#fff" />
-                <Text style={styles.newSessionText}>New Session</Text>
+                <UserPlus size={14} color="#fff" />
+                <Text style={styles.newSessionText}>Add New Member</Text>
               </TouchableOpacity>
             </View>
           }
@@ -799,11 +706,11 @@ export function CHWDashboardScreen(): React.JSX.Element {
           />
         </View>
 
-        {/* ── Mid row: Today's Schedule (7/12) + Needs attention (5/12) ──── */}
+        {/* ── Mid row: Today's Schedule (full-width) ──────────────────────── */}
         <View style={styles.midRow}>
 
-          {/* Left — Today's Schedule */}
-          <Card style={[styles.midLeft, styles.card]}>
+          {/* Today's Schedule — spans the full row */}
+          <Card style={[styles.midFull, styles.card]}>
             <View style={styles.cardHeaderRow}>
               <Text style={styles.cardTitle}>Today's Schedule</Text>
               <TouchableOpacity
@@ -833,82 +740,6 @@ export function CHWDashboardScreen(): React.JSX.Element {
                 ))}
               </View>
             )}
-          </Card>
-
-          {/* Right — Needs your attention */}
-          <Card style={[styles.midRight, styles.card]}>
-            <View style={styles.cardHeaderRow}>
-              <View style={styles.attentionHeading}>
-                <AlertCircle size={14} color={tokens.amber700} />
-                <Text style={styles.cardTitle}>Needs your attention</Text>
-              </View>
-            </View>
-
-            <View style={styles.attentionList}>
-              {/* Overdue matched requests — one card per overdue request */}
-              {overdueRequests.map((req) => {
-                const daysOverdue = Math.floor(
-                  (Date.now() - new Date(req.createdAt).getTime()) / 86_400_000,
-                );
-                const memberName = req.memberName ?? 'Member';
-                return (
-                  <AttentionCard
-                    key={req.id}
-                    variant="red"
-                    icon={<AlertTriangle size={14} color="#dc2626" />}
-                    title={`${memberName} · ${daysOverdue}d overdue`}
-                    memberId={req.memberId}
-                    memberName={memberName}
-                    subtitle={req.description}
-                    actionLabel="Open →"
-                    onPress={() => navigation.navigate('Requests' as never)}
-                  />
-                );
-              })}
-
-              {/* Fallback amber card when no individual overdue requests */}
-              {overdueRequests.length === 0 && overdueFollowupsCount > 0 && (
-                <AttentionCard
-                  variant="amber"
-                  icon={<PhoneMissed size={14} color={tokens.amber700} />}
-                  title={`${overdueFollowupsCount} follow-up calls overdue`}
-                  subtitle="Review your matched requests to action."
-                  actionLabel="Review →"
-                  onPress={() => navigation.navigate('Requests' as never)}
-                />
-              )}
-
-              {/* Sessions awaiting documentation */}
-              {inProgressSessionCount > 0 && (
-                <AttentionCard
-                  variant="blue"
-                  icon={<ClipboardCheck size={14} color={tokens.blue700} />}
-                  title={`${inProgressSessionCount} ${inProgressSessionCount === 1 ? 'session' : 'sessions'} awaiting documentation`}
-                  subtitle="Submit notes within 24h to bill."
-                  actionLabel="Document →"
-                  onPress={() => navigation.navigate('SessionsStack' as never)}
-                />
-              )}
-
-              {/* Compass Insight — static Beta placeholder */}
-              <AttentionCard
-                variant="emerald"
-                icon={<Sparkles size={14} color={tokens.emerald700} />}
-                title="Compass Insight — Beta"
-                subtitle="3 of your members typically respond best to evening outreach."
-                actionLabel="View →"
-                onPress={() => { /* TODO: link to insight detail when /chw/insights ships */ }}
-              />
-
-              {/* All clear empty state */}
-              {overdueRequests.length === 0 &&
-                overdueFollowupsCount === 0 &&
-                inProgressSessionCount === 0 && (
-                  <Text style={[styles.emptyText, { marginBottom: 8 }]}>
-                    All caught up — no pending items.
-                  </Text>
-                )}
-            </View>
           </Card>
         </View>
 
@@ -1098,22 +929,16 @@ const styles = StyleSheet.create({
     flexGrow:  1,
   } as ViewStyle,
 
-  // ── Mid row (schedule + attention) ────────────────────────────────────────
-  // grid-cols-12 gap-6 on web; stacked on native
+  // ── Mid row (schedule — full width) ───────────────────────────────────────
   midRow: {
-    flexDirection: Platform.OS === 'web' ? 'row' : 'column',
+    flexDirection: 'row',
     gap:           spacing.xxl,
     marginBottom:  spacing.xxl,
   } as ViewStyle,
 
-  midLeft: {
-    // col-span-7 out of 12 → flex ratio 7:5
-    flex: Platform.OS === 'web' ? 7 : undefined,
-  } as ViewStyle,
-
-  midRight: {
-    // col-span-5 out of 12
-    flex: Platform.OS === 'web' ? 5 : undefined,
+  midFull: {
+    // Single card that spans the entire row
+    flex: 1,
   } as ViewStyle,
 
   // ── Bottom row (snapshot + activity) ─────────────────────────────────────
@@ -1250,63 +1075,6 @@ const styles = StyleSheet.create({
 
   scheduleActionTextPrep: {
     color: '#374151',
-  } as TextStyle,
-
-  // ── Needs your attention ───────────────────────────────────────────────────
-  attentionHeading: {
-    flexDirection: 'row',
-    alignItems:    'center',
-    gap:           6,
-  } as ViewStyle,
-
-  attentionList: {
-    gap: spacing.md,
-  } as ViewStyle,
-
-  attentionCard: {
-    flexDirection: 'row',
-    alignItems:    'flex-start',
-    gap:           spacing.md,
-    padding:       spacing.md,
-    borderRadius:  radius.lg,
-    borderWidth:   1,
-  } as ViewStyle,
-
-  attentionIcon: {
-    paddingTop: 2,
-    flexShrink: 0,
-  } as ViewStyle,
-
-  attentionTitle: {
-    fontSize:   14,
-    fontWeight: '600',
-    color:      '#111827',
-  } as TextStyle,
-
-  attentionTitleRow: {
-    flexDirection: 'row',
-    flexWrap:      'wrap',
-    alignItems:    'baseline',
-  } as ViewStyle,
-
-  attentionTitleLink: {
-    textDecorationLine: 'underline',
-    textDecorationStyle: 'dotted',
-  } as TextStyle,
-
-  attentionSub: {
-    fontSize:   12,
-    fontWeight: '400',
-    color:      '#4b5563',
-    marginTop:  2,
-    lineHeight: 16,
-  } as TextStyle,
-
-  attentionAction: {
-    fontSize:   12,
-    fontWeight: '600',
-    color:      '#16a34a',
-    flexShrink: 0,
   } as TextStyle,
 
   // ── Weekly snapshot 2×2 grid ───────────────────────────────────────────────
