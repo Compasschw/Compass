@@ -467,6 +467,158 @@ async def complete_session(session_id: UUID, current_user=Depends(get_current_us
     return session
 
 
+@router.post("/{session_id}/end", response_model=SessionResponse)
+async def end_session(
+    session_id: UUID,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SessionResponse:
+    """POST /api/v1/sessions/{session_id}/end
+
+    Terminates the active Vonage call bridge (if any) and transitions the
+    session from ``in_progress`` → ``awaiting_documentation``, signalling the
+    frontend to open the DocumentationModal.
+
+    This is DISTINCT from ``/complete`` which finalises the documentation and
+    billing claim.  The lifecycle is:
+
+        scheduled → in_progress → awaiting_documentation → completed
+
+    Relationship gate: only the CHW who owns the session may call this endpoint.
+    Status guard: only ``in_progress`` sessions may be ended.
+
+    Idempotency: calling this on a session already in ``awaiting_documentation``
+    returns 200 with the current state rather than an error (the CHW may tap
+    End Session more than once while offline/reconnecting).
+
+    Vonage termination: the active ``CommunicationSession`` row is looked up and
+    ``provider.end_proxy_session`` is called.  If no active comm session exists
+    (the call ended naturally before the CHW tapped End Session) we log a
+    warning and proceed — the status transition is still made.
+
+    Errors:
+      404 — session not found or caller is not the owning CHW
+      409 — session is in a terminal state that cannot be ended
+            (``completed`` or ``cancelled``)
+    """
+    import logging as _logging
+
+    from app.models.audit import AuditLog
+    from app.models.communication import CommunicationSession
+    from app.services.communication import get_provider
+
+    _log = _logging.getLogger("compass.sessions.end")
+
+    # Relationship gate: reuse the existing CHW-ownership helper so we return
+    # 404 (not 403) for both "not found" and "not your session" cases — this
+    # avoids leaking the existence of sessions the caller cannot see.
+    session = await _load_chw_session_or_404(
+        session_id=session_id, db=db, current_user=current_user
+    )
+
+    # Idempotency: already in awaiting_documentation → return current state.
+    if session.status == "awaiting_documentation":
+        chw = await db.get(User, session.chw_id)
+        member = await db.get(User, session.member_id)
+        return SessionResponse.model_validate({
+            **session.__dict__,
+            "chw_name": chw.name if chw else None,
+            "member_name": member.name if member else None,
+        })
+
+    # Terminal-state guard: completed/cancelled sessions cannot be ended.
+    if session.status in ("completed", "cancelled"):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Cannot end session with status '{session.status}'. "
+                "Only 'in_progress' sessions can be ended."
+            ),
+        )
+
+    # Status guard: reject anything that isn't in_progress (e.g. scheduled).
+    if session.status != "in_progress":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Cannot end session with status '{session.status}'. "
+                "Session must be 'in_progress' to be ended."
+            ),
+        )
+
+    # ── Vonage termination ────────────────────────────────────────────────────
+    # Look up the active CommunicationSession row.  We deliberately wrap the
+    # entire Vonage interaction in try/except — a provider outage or stale call
+    # UUID must never block the status transition below.
+    try:
+        comm_result = await db.execute(
+            select(CommunicationSession)
+            .where(CommunicationSession.session_id == session_id)
+            .where(CommunicationSession.status == "active")
+            .order_by(CommunicationSession.created_at.desc())
+            .limit(1)
+        )
+        comm_session = comm_result.scalar_one_or_none()
+
+        if comm_session is not None:
+            provider = get_provider()
+            await provider.end_proxy_session(comm_session.provider_session_id)
+            comm_session.status = "closed"
+            comm_session.closed_at = datetime.now(UTC)
+            _log.info(
+                "end_session: terminated comm_session=%s provider_session=%s for session=%s",
+                comm_session.id,
+                comm_session.provider_session_id,
+                session_id,
+            )
+        else:
+            _log.warning(
+                "end_session: no active CommunicationSession found for session=%s "
+                "— call may have ended naturally; proceeding with status transition",
+                session_id,
+            )
+    except Exception as vonage_err:  # noqa: BLE001
+        _log.warning(
+            "end_session: Vonage termination failed for session=%s (non-fatal): %s",
+            session_id,
+            vonage_err,
+        )
+
+    # ── Status transition ─────────────────────────────────────────────────────
+    session.status = "awaiting_documentation"
+    session.ended_at = datetime.now(UTC)
+    if session.started_at:
+        session.duration_minutes = int(
+            (session.ended_at - session.started_at).total_seconds() / 60
+        )
+        from app.services.billing_service import calculate_units
+        session.suggested_units = calculate_units(session.duration_minutes)
+
+    db.add(
+        AuditLog(
+            user_id=current_user.id,
+            action="session_end",
+            resource="session",
+            resource_id=str(session_id),
+            details={
+                "previous_status": "in_progress",
+                "new_status": "awaiting_documentation",
+            },
+        )
+    )
+
+    await db.commit()
+    await db.refresh(session)
+
+    chw = await db.get(User, session.chw_id)
+    member = await db.get(User, session.member_id)
+    return SessionResponse.model_validate({
+        **session.__dict__,
+        "chw_name": chw.name if chw else None,
+        "member_name": member.name if member else None,
+    })
+
+
 async def _run_extraction_in_background(session_id: UUID) -> None:
     """Run LLM follow-up extraction in a fresh DB session, fire-and-forget.
 

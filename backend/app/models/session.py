@@ -41,7 +41,8 @@ class Session(Base):
         index=True,
     )
     vertical: Mapped[str] = mapped_column(String(50), nullable=False)
-    status: Mapped[str] = mapped_column(String(20), default="scheduled", index=True)
+    # VARCHAR(30) — must accommodate "awaiting_documentation" (22 chars).
+    status: Mapped[str] = mapped_column(String(30), default="scheduled", index=True)
     mode: Mapped[str] = mapped_column(String(20), nullable=False)
     scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

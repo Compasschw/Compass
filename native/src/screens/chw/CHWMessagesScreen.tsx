@@ -27,13 +27,12 @@
  *   - Do NOT claim TLS+at-rest is E2E encryption.
  *
  * STUB NOTES:
- *   - "Add Case Note" → Alert stub. No POST /case-notes endpoint confirmed at time of write.
- *     Wire when backend agent ships the endpoint.
+ *   - "Add Case Note" → Wired to POST /api/v1/case-notes (shipped 2026-06-09).
+ *     Opens CaseNoteModal (RightDrawer) in MemberContextRail.
  *   - "Request Recording Consent" → uses existing useCreateConsentRequest (consent-requests
  *     endpoint exists). Wired to POST /sessions/{id}/consent-requests.
- *   - "End Session" → POST /sessions/{id}/end — this endpoint DOES NOT EXIST in the
- *     current backend. The hook useEndSession in this file hits that path optimistically.
- *     See the NEEDS_CONTEXT note at the hook definition.
+ *   - "End Session" → POST /sessions/{id}/end — backend shipped 2026-06-09.
+ *     Transitions session to awaiting_documentation and opens DocumentationModal.
  */
 
 import React, {
@@ -98,6 +97,8 @@ import {
   useCreateFlagNote,
   useDeleteFlagNote,
   useFlagNote,
+  useCreateCaseNote,
+  useEndSession as useEndSessionHook,
   type SessionData,
   type SessionMessageLocal,
   type SessionMessageData,
@@ -115,8 +116,6 @@ import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 import { PressableMember } from '../../components/shared/PressableMember';
 import { colors as tokens, spacing, radius } from '../../theme/tokens';
-import { api } from '../../api/client';
-import { useQueryClient } from '@tanstack/react-query';
 
 // ─── Breakpoints ──────────────────────────────────────────────────────────────
 
@@ -313,47 +312,6 @@ function severityPillVariant(severity: ResourceSeverity): SeverityPillVariant {
   if (severity === 'High') return 'red';
   if (severity === 'Medium') return 'amber-dark';
   return 'amber';
-}
-
-// ─── End session mutation ─────────────────────────────────────────────────────
-
-/**
- * useEndSession — POST /sessions/{id}/end
- *
- * NEEDS_CONTEXT: This endpoint does NOT exist in the current backend codebase.
- * The nearest analogues are POST /sessions/{id}/complete and
- * PATCH /sessions/{id}/start. The "End Session" concept (session moves to
- * awaiting_documentation state, Vonage call terminates) requires a dedicated
- * backend route.
- *
- * TODO(backend): Add POST /api/v1/sessions/{id}/end that:
- *   1. Transitions session.status → 'awaiting_documentation'.
- *   2. Terminates any active Vonage call bridge for the session.
- *   3. Returns the updated SessionData row.
- * Until this route exists, the button is wired and will receive a 404/405.
- * The UI shows a clear error toast so CHWs know to use the existing flow.
- */
-function useEndSession() {
-  const qc = useQueryClient();
-  const [isPending, setIsPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const mutateAsync = useCallback(async (sessionId: string): Promise<void> => {
-    setIsPending(true);
-    setError(null);
-    try {
-      await api(`/sessions/${sessionId}/end`, { method: 'POST' });
-      void qc.invalidateQueries({ queryKey: ['sessions'] });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to end session.';
-      setError(message);
-      throw err;
-    } finally {
-      setIsPending(false);
-    }
-  }, [qc]);
-
-  return { mutateAsync, isPending, error };
 }
 
 // ─── Inline toast ─────────────────────────────────────────────────────────────
@@ -1441,6 +1399,209 @@ const flagModalStyles = StyleSheet.create({
   } as TextStyle,
 });
 
+// ─── Case Note Modal ──────────────────────────────────────────────────────────
+
+interface CaseNoteModalProps {
+  readonly memberId: string;
+  readonly sessionId: string;
+  readonly visible: boolean;
+  readonly onClose: () => void;
+}
+
+/**
+ * RightDrawer modal for adding a clinical case note for the member.
+ *
+ * POSTs to POST /api/v1/case-notes via ``useCreateCaseNote``.
+ * On success shows a brief "Case note saved" inline toast (via Alert on native)
+ * then closes.  The note is optionally attached to the current session.
+ *
+ * Note: not exported — internal to this screen.
+ */
+function CaseNoteModal({
+  memberId,
+  sessionId,
+  visible,
+  onClose,
+}: CaseNoteModalProps): React.JSX.Element {
+  const [noteBody, setNoteBody] = useState('');
+  const [isPinned, setIsPinned] = useState(false);
+  const createNote = useCreateCaseNote();
+
+  const handleSave = useCallback(async (): Promise<void> => {
+    const trimmed = noteBody.trim();
+    if (!trimmed) return;
+    await createNote.mutateAsync({
+      memberId,
+      body: trimmed,
+      sessionId,
+      isPinned,
+    });
+    setNoteBody('');
+    setIsPinned(false);
+    onClose();
+    // Brief feedback on native after close.
+    Alert.alert('Case note saved', 'Your note has been added to this member.');
+  }, [noteBody, isPinned, memberId, sessionId, createNote, onClose]);
+
+  const handleClose = useCallback((): void => {
+    setNoteBody('');
+    setIsPinned(false);
+    onClose();
+  }, [onClose]);
+
+  if (!visible) return <></>;
+
+  return (
+    <RightDrawer
+      isOpen={visible}
+      onClose={handleClose}
+      title="Add Case Note"
+      subtitle="Attach a clinical note to this member's record"
+      footer={
+        <View style={caseNoteModalStyles.footer}>
+          <TouchableOpacity
+            style={caseNoteModalStyles.cancelBtn}
+            onPress={handleClose}
+            accessibilityRole="button"
+            accessibilityLabel="Cancel"
+          >
+            <Text style={caseNoteModalStyles.cancelBtnText}>Cancel</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              caseNoteModalStyles.saveBtn,
+              (createNote.isPending || noteBody.trim().length === 0) &&
+                caseNoteModalStyles.saveBtnDisabled,
+            ]}
+            onPress={() => {
+              void handleSave();
+            }}
+            disabled={createNote.isPending || noteBody.trim().length === 0}
+            accessibilityRole="button"
+            accessibilityLabel="Save case note"
+          >
+            {createNote.isPending ? (
+              <ActivityIndicator size="small" color="#ffffff" />
+            ) : (
+              <Text style={caseNoteModalStyles.saveBtnText}>Save Note</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      }
+    >
+      <View style={caseNoteModalStyles.content}>
+        <Text style={caseNoteModalStyles.inputLabel}>Note</Text>
+        <TextInput
+          style={caseNoteModalStyles.noteInput}
+          value={noteBody}
+          onChangeText={setNoteBody}
+          placeholder="Clinical observations, follow-up actions, member updates…"
+          placeholderTextColor={tokens.textMuted}
+          multiline
+          numberOfLines={5}
+          accessibilityLabel="Case note body"
+          autoFocus
+        />
+        <TouchableOpacity
+          style={caseNoteModalStyles.pinRow}
+          onPress={() => setIsPinned((v) => !v)}
+          accessibilityRole="checkbox"
+          accessibilityLabel={isPinned ? 'Unpin note' : 'Pin note to top'}
+        >
+          <View
+            style={[
+              caseNoteModalStyles.checkbox,
+              isPinned && caseNoteModalStyles.checkboxActive,
+            ]}
+          >
+            {isPinned ? (
+              <CheckCircle2 size={14} color="#ffffff" />
+            ) : null}
+          </View>
+          <Text style={caseNoteModalStyles.pinLabel}>Pin to top of notes</Text>
+        </TouchableOpacity>
+      </View>
+    </RightDrawer>
+  );
+}
+
+const caseNoteModalStyles = StyleSheet.create({
+  content: {
+    gap: spacing.md,
+    padding: spacing.lg,
+  } as ViewStyle,
+  inputLabel: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: tokens.textSecondary,
+  } as TextStyle,
+  noteInput: {
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: radius.md,
+    padding: spacing.md,
+    fontSize: 14,
+    color: tokens.textPrimary,
+    minHeight: 120,
+    textAlignVertical: 'top',
+  } as unknown as TextStyle,
+  pinRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  } as ViewStyle,
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 1.5,
+    borderColor: '#D1D5DB',
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+  checkboxActive: {
+    backgroundColor: tokens.primary,
+    borderColor: tokens.primary,
+  } as ViewStyle,
+  pinLabel: {
+    fontSize: 13,
+    color: tokens.textSecondary,
+  } as TextStyle,
+  footer: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    padding: spacing.lg,
+  } as ViewStyle,
+  cancelBtn: {
+    flex: 1,
+    paddingVertical: 11,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: radius.md,
+    alignItems: 'center',
+  } as ViewStyle,
+  cancelBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: tokens.textSecondary,
+  } as TextStyle,
+  saveBtn: {
+    flex: 1,
+    paddingVertical: 11,
+    backgroundColor: tokens.primary,
+    borderRadius: radius.md,
+    alignItems: 'center',
+  } as ViewStyle,
+  saveBtnDisabled: {
+    opacity: 0.5,
+  } as ViewStyle,
+  saveBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#ffffff',
+  } as TextStyle,
+});
+
 // ─── Member context rail ──────────────────────────────────────────────────────
 
 interface MemberContextRailProps {
@@ -1467,9 +1628,10 @@ function MemberContextRail({
 
   const [questionsDrawerOpen, setQuestionsDrawerOpen] = useState(false);
   const [flagModalOpen, setFlagModalOpen] = useState(false);
+  const [caseNoteModalOpen, setCaseNoteModalOpen] = useState(false);
   const [endSessionPending, setEndSessionPending] = useState(false);
 
-  const endSession = useEndSession();
+  const endSession = useEndSessionHook();
   const consentRequestMutation = useCreateConsentRequest(session.id);
   const messagesQuery = useSessionMessages(session.id);
 
@@ -1695,14 +1857,10 @@ function MemberContextRail({
             <Text style={styles.quickActionBtnText}>Open Suggested Questions</Text>
           </Pressable>
 
-          {/* Add Case Note — STUB: no confirmed BE endpoint */}
+          {/* Add Case Note */}
           <Pressable
             style={({ pressed }) => [styles.quickActionBtn, pressed && styles.quickActionBtnPressed]}
-            onPress={() => {
-              // TODO(backend): Wire to POST /api/v1/case-notes once the endpoint ships.
-              // Tracked in Compass backend work queue.
-              Alert.alert('Coming soon', 'Case notes will be available after the backend endpoint ships.');
-            }}
+            onPress={() => setCaseNoteModalOpen(true)}
             accessibilityRole="button"
             accessibilityLabel="Add case note"
           >
@@ -1807,6 +1965,15 @@ function MemberContextRail({
           memberId={session.memberId}
           visible={flagModalOpen}
           onClose={() => setFlagModalOpen(false)}
+        />
+      ) : null}
+
+      {session.memberId ? (
+        <CaseNoteModal
+          memberId={session.memberId}
+          sessionId={session.id}
+          visible={caseNoteModalOpen}
+          onClose={() => setCaseNoteModalOpen(false)}
         />
       ) : null}
     </ScrollView>

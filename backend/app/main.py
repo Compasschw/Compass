@@ -139,6 +139,7 @@ from app.routers.testimonials import (
     member_router as testimonials_member_router,
     public_router as testimonials_public_router,
 )
+from app.routers.case_notes import router as case_notes_router
 from app.routers.sessions import _consent_request_router as consent_request_router
 from app.routers.sessions import router as sessions_router
 from app.routers.transcript import router as transcript_router
@@ -156,6 +157,7 @@ app.include_router(member_router)
 app.include_router(members_flag_note_router)
 app.include_router(sessions_router)
 app.include_router(consent_request_router)
+app.include_router(case_notes_router)
 app.include_router(transcript_router)
 app.include_router(requests_router)
 app.include_router(matching_router)

@@ -349,6 +349,33 @@ export interface MembersRosterItem {
   topNeed: string | null;
 }
 
+// ─── Case Notes types ────────────────────────────────────────────────────────
+
+/**
+ * A single case note authored by the authenticated CHW.
+ *
+ * ``body`` is PHI — it is only returned to the authorised author or admin.
+ * All fields are camelCase (auto-transformed by the api client).
+ */
+export interface CaseNoteData {
+  id: string;
+  memberId: string;
+  chwId: string;
+  sessionId: string | null;
+  body: string;
+  isPinned: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Paginated response from GET /members/{id}/case-notes. */
+export interface CaseNoteListData {
+  items: CaseNoteData[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export const queryKeys = {
   sessions: ['sessions'] as const,
   session: (id: string) => ['sessions', id] as const,
@@ -379,6 +406,9 @@ export const queryKeys = {
   /** CHW resource-folder search results, scoped by category + free-text query. */
   chwResources: (category?: string, q?: string) =>
     ['chw', 'resources', category ?? 'all', q ?? ''] as const,
+  /** Case notes for a member, scoped to the authenticated CHW. */
+  caseNotes: (memberId: string, limit?: number, offset?: number) =>
+    ['case-notes', memberId, limit ?? 50, offset ?? 0] as const,
 };
 
 /** Re-export so callers don't need a second import from api/sessions. */
@@ -928,6 +958,189 @@ export function useDeleteSession() {
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.sessions });
+    },
+  });
+}
+
+// ─── End Session ─────────────────────────────────────────────────────────────
+
+/**
+ * POST /api/v1/sessions/{sessionId}/end
+ *
+ * Terminates the active Vonage call bridge and transitions the session from
+ * ``in_progress`` → ``awaiting_documentation``.  The FE listens for the
+ * ``awaiting_documentation`` status to open the DocumentationModal automatically.
+ *
+ * Invalidates the sessions cache on success so the inbox reflects the new
+ * status without a manual pull-to-refresh.
+ *
+ * Idempotent: calling /end on an already-ended session returns 200 with the
+ * current state — no error is surfaced.
+ */
+export function useEndSession() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (sessionId: string): Promise<SessionData> => {
+      const raw = await api<unknown>(`/sessions/${sessionId}/end`, {
+        method: 'POST',
+      });
+      return transformKeys<SessionData>(raw);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.sessions });
+    },
+    onError: (error: Error) => {
+      Alert.alert('Could not end session', error?.message ?? 'Please try again.');
+    },
+  });
+}
+
+// ─── Case Notes ──────────────────────────────────────────────────────────────
+
+/**
+ * Fetch paginated case notes for a member authored by the authenticated CHW.
+ *
+ * GET /api/v1/members/{memberId}/case-notes
+ *
+ * Relationship-gated: only the CHW with an active care relationship can read.
+ * Results are scoped to the calling CHW — notes from other CHWs are never
+ * returned.
+ *
+ * Stale after 30 s — case notes are low-frequency but important.  Callers
+ * should invalidate the query key after a successful create/update/delete to
+ * get an immediate refresh.
+ */
+export function useCaseNotes(
+  memberId: string,
+  options?: { limit?: number; offset?: number; enabled?: boolean },
+) {
+  const limit = options?.limit ?? 50;
+  const offset = options?.offset ?? 0;
+  return useQuery({
+    queryKey: queryKeys.caseNotes(memberId, limit, offset),
+    queryFn: async (): Promise<CaseNoteListData> => {
+      const qs = `?limit=${limit}&offset=${offset}`;
+      const raw = await api<unknown>(`/members/${memberId}/case-notes${qs}`);
+      return transformKeys<CaseNoteListData>(raw);
+    },
+    enabled: (options?.enabled ?? true) && memberId.length > 0,
+    staleTime: 30_000,
+  });
+}
+
+export interface CreateCaseNotePayload {
+  memberId: string;
+  body: string;
+  sessionId?: string | null;
+  isPinned?: boolean;
+}
+
+/**
+ * Create a case note for a member.
+ *
+ * POST /api/v1/case-notes
+ *
+ * On success invalidates the member's case-note list so the new note appears
+ * immediately.
+ */
+export function useCreateCaseNote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: CreateCaseNotePayload): Promise<CaseNoteData> => {
+      const raw = await api<unknown>('/case-notes', {
+        method: 'POST',
+        body: JSON.stringify(toSnakeCase(payload)),
+      });
+      return transformKeys<CaseNoteData>(raw);
+    },
+    onSuccess: (_data, variables) => {
+      // Invalidate all pages of the member's case-note list.
+      void qc.invalidateQueries({
+        predicate: (query) => {
+          const key = query.queryKey;
+          return (
+            Array.isArray(key) &&
+            key[0] === 'case-notes' &&
+            key[1] === variables.memberId
+          );
+        },
+      });
+    },
+    onError: (error: Error) => {
+      Alert.alert('Could not save note', error?.message ?? 'Please try again.');
+    },
+  });
+}
+
+export interface UpdateCaseNotePayload {
+  noteId: string;
+  memberId: string; // used only for cache invalidation
+  body?: string;
+  isPinned?: boolean;
+}
+
+/**
+ * Edit a case note's body or pin state.
+ *
+ * PATCH /api/v1/case-notes/{noteId}
+ *
+ * Author-only on the backend — only the CHW who created the note may edit it.
+ */
+export function useUpdateCaseNote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: UpdateCaseNotePayload): Promise<CaseNoteData> => {
+      const { noteId, memberId: _memberId, ...rest } = payload;
+      const raw = await api<unknown>(`/case-notes/${noteId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(toSnakeCase(rest)),
+      });
+      return transformKeys<CaseNoteData>(raw);
+    },
+    onSuccess: (_data, variables) => {
+      void qc.invalidateQueries({
+        predicate: (query) => {
+          const key = query.queryKey;
+          return (
+            Array.isArray(key) &&
+            key[0] === 'case-notes' &&
+            key[1] === variables.memberId
+          );
+        },
+      });
+    },
+  });
+}
+
+/**
+ * Soft-delete a case note.
+ *
+ * DELETE /api/v1/case-notes/{noteId}
+ *
+ * Author-only on the backend.  Idempotent — calling twice returns 204 both times.
+ */
+export function useDeleteCaseNote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      noteId,
+    }: {
+      noteId: string;
+      memberId: string;
+    }): Promise<void> => {
+      await api(`/case-notes/${noteId}`, { method: 'DELETE' });
+    },
+    onSuccess: (_data, variables) => {
+      void qc.invalidateQueries({
+        predicate: (query) => {
+          const key = query.queryKey;
+          return (
+            Array.isArray(key) &&
+            key[0] === 'case-notes' &&
+            key[1] === variables.memberId
+          );
+        },
+      });
     },
   });
 }

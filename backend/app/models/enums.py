@@ -16,6 +16,7 @@ class Vertical(str, enum.Enum):
 class SessionStatus(str, enum.Enum):
     scheduled = "scheduled"
     in_progress = "in_progress"
+    awaiting_documentation = "awaiting_documentation"
     completed = "completed"
     cancelled = "cancelled"
 

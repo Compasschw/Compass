@@ -1,4 +1,5 @@
 from app.models.admin_totp import AdminTotpSecret
+from app.models.case_note import CaseNote
 from app.models.flag_note import FlagNote
 from app.models.assessment import MemberAssessment, MemberAssessmentResponse
 from app.models.audit import AuditLog
@@ -49,4 +50,5 @@ __all__ = [
     "SessionFollowup",
     "Testimonial",
     "FlagNote",
+    "CaseNote",
 ]
