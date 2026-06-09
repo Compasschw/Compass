@@ -931,6 +931,13 @@ export function DocumentationModal({
   const [aiSummary, setAiSummary] = useState<string | null>(null);
   const [aiGeneratedAt, setAiGeneratedAt] = useState<string | null>(null);
   const [aiExcluded, setAiExcluded] = useState(false);
+  /**
+   * Tracks a network/server error from the AI summary endpoint.
+   * Distinct from ``aiSummary === null``, which means the endpoint succeeded
+   * but returned an empty/unavailable summary (e.g. no transcript).
+   * When true, the UI shows "Could not generate summary" + Retry button.
+   */
+  const [aiError, setAiError] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   // Tracks whether the notes TextInput is focused, for focus-ring styling.
   const [notesFocused, setNotesFocused] = useState(false);
@@ -951,6 +958,7 @@ export function DocumentationModal({
 
     generateAISummary.mutate(sessionId, {
       onSuccess: (result) => {
+        setAiError(false);
         const text = (result.ai_summary ?? '').trim();
         const ts = result.generated_at ?? null;
         // Hide section when summary is empty or timestamp is null.
@@ -963,7 +971,8 @@ export function DocumentationModal({
         }
       },
       onError: () => {
-        // Network or server error — treat as unavailable, not a hard failure.
+        // Network or server error — surface a retryable error card.
+        setAiError(true);
         setAiSummary(null);
         setAiGeneratedAt(null);
       },
@@ -979,6 +988,7 @@ export function DocumentationModal({
       setAiSummary(null);
       setAiGeneratedAt(null);
       setAiExcluded(false);
+      setAiError(false);
       setSelectedDiagnosisCodes([]);
       setSelectedProcedureCode(procedureCodes[0]?.code ?? '');
       // unitsToBill is derived from durationMinutes prop — no reset needed.
@@ -994,8 +1004,10 @@ export function DocumentationModal({
    * Called only when the CHW taps the "Regenerate" button.
    */
   const handleRegenerateAISummary = useCallback((): void => {
+    setAiError(false);
     generateAISummary.mutate(sessionId, {
       onSuccess: (result) => {
+        setAiError(false);
         const text = (result.ai_summary ?? '').trim();
         const ts = result.generated_at ?? null;
         if (text.length > 0 && ts !== null) {
@@ -1008,6 +1020,7 @@ export function DocumentationModal({
         }
       },
       onError: () => {
+        setAiError(true);
         setAiSummary(null);
         setAiGeneratedAt(null);
       },
@@ -1299,6 +1312,27 @@ export function DocumentationModal({
                 <View style={ai.shimmerLine} />
                 <View style={[ai.shimmerLine, ai.shimmerLineMid]} />
                 <View style={[ai.shimmerLine, ai.shimmerLineShort]} />
+              </Card>
+            ) : aiError ? (
+              /* Error state — retryable */
+              <Card
+                style={ai.errorCard}
+                accessible
+                accessibilityLabel="AI summary error"
+              >
+                <View style={ai.errorRow}>
+                  <Sparkles size={14} color={tokens.red700} />
+                  <Text style={ai.errorText}>Could not generate summary</Text>
+                </View>
+                <TouchableOpacity
+                  style={ai.retryButton}
+                  onPress={handleRegenerateAISummary}
+                  accessibilityRole="button"
+                  accessibilityLabel="Retry generating AI summary"
+                >
+                  <RefreshCw size={12} color={tokens.red700} />
+                  <Text style={ai.retryText}>Retry</Text>
+                </TouchableOpacity>
               </Card>
             ) : hasDisplayableAiSummary ? (
               /* Populated AI card */
@@ -1631,5 +1665,38 @@ const ai = StyleSheet.create({
     ...typography.bodySm,
     color: tokens.textMuted,
     fontStyle: 'italic',
+  },
+  errorCard: {
+    padding: spacing.lg,
+    gap: spacing.sm,
+    backgroundColor: tokens.red100,
+    borderColor: tokens.red700 + '40',
+  },
+  errorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm - 2,
+  },
+  errorText: {
+    ...typography.bodySm,
+    fontWeight: '600',
+    color: tokens.red700,
+  },
+  retryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    alignSelf: 'flex-start' as const,
+    paddingHorizontal: spacing.sm + 2,
+    paddingVertical: spacing.xs + 2,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: tokens.red700 + '60',
+    backgroundColor: tokens.cardBg,
+  },
+  retryText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: tokens.red700,
   },
 });
