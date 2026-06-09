@@ -37,6 +37,7 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  useWindowDimensions,
   type ViewStyle,
   type TextStyle,
 } from 'react-native';
@@ -91,7 +92,10 @@ import {
   SectionHeader,
 } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
-import { OpenQuestionsDrawer } from '../../components/chw/OpenQuestionsDrawer';
+import {
+  OpenQuestionsDrawer,
+  OPEN_QUESTIONS_INLINE_BREAKPOINT,
+} from '../../components/chw/OpenQuestionsDrawer';
 import {
   useMemberServicesConsent,
   useFlagNote,
@@ -2790,6 +2794,16 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
   const navigation = useNavigation<MemberProfileNavProp>();
   const { memberId } = route.params;
 
+  const { width: windowWidth } = useWindowDimensions();
+
+  /**
+   * When true, OpenQuestionsDrawer renders as an inline side panel inside the
+   * content flex-row — no backdrop, content compresses. When false it renders
+   * as a fixed overlay (mobile/narrow viewports).
+   */
+  const isOpenQuestionsInline =
+    Platform.OS === 'web' && windowWidth >= OPEN_QUESTIONS_INLINE_BREAKPOINT;
+
   const { userName } = useAuth();
   const chwInitials = userName
     ? userName
@@ -3023,6 +3037,20 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
             />
 
             {/* Main content + optional sidebar */}
+            {/*
+              Layout strategy for the Open Questions inline panel:
+              ─────────────────────────────────────────────────────
+              On viewports >= 1024px (isOpenQuestionsInline = true):
+                contentRow is a flex-row. When the drawer is open, it renders
+                as a flex sibling of mainCol — the Quick Access rail is hidden
+                to avoid crowding three columns. The drawer occupies
+                OPEN_QUESTIONS_INLINE_WIDTH px on the right, mainCol takes the
+                remaining flex:1 space.
+
+              On narrower viewports / native:
+                The drawer renders as a fixed overlay outside the ScrollView
+                (see below). The Quick Access rail is always shown.
+            */}
             <View style={s.contentRow}>
               <View style={s.mainCol}>
 
@@ -3082,8 +3110,57 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
 
               </View>
 
-              {/* ── Web right rail: Quick Access + Open Questions ── */}
-              {Platform.OS === 'web' && (
+              {/*
+                Inline Open Questions panel — only in the flex-row when the
+                drawer is open AND we're on a wide viewport. This replaces
+                the Quick Access rail while open so the layout stays 2-column.
+              */}
+              {isOpenQuestionsInline && (
+                <OpenQuestionsDrawer
+                  visible={openQuestionsOpen}
+                  onClose={() => setOpenQuestionsOpen(false)}
+                  member={{
+                    name: displayName,
+                    age: null,
+                    initials,
+                    primaryLanguage: profile.primaryLanguage,
+                    engagementLabel: 'Highly Engaged',
+                  }}
+                  journey={
+                    profile.primaryCategories.length > 0
+                      ? {
+                          templateName: `${CATEGORY_LABELS[profile.primaryCategories[0]!] ?? profile.primaryCategories[0]!} Journey`,
+                          currentStepName: 'Upload Documents',
+                          vertical: profile.primaryCategories[0]!,
+                        }
+                      : undefined
+                  }
+                  onMarkComplete={() => {
+                    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                      window.alert('Call marked as completed.');
+                    } else {
+                      Alert.alert('Call Completed', 'This call has been marked as completed.');
+                    }
+                  }}
+                  onCopyScript={() => {
+                    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                      window.alert('Script copied — paste into your notes.');
+                    } else {
+                      Alert.alert('Copied', 'Script copied to clipboard.');
+                    }
+                  }}
+                  onSaveNote={() => {
+                    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                      window.alert('Note saved — coming soon.');
+                    } else {
+                      Alert.alert('Save Note', 'Notes feature coming soon.');
+                    }
+                  }}
+                />
+              )}
+
+              {/* ── Web right rail: Quick Access (hidden when inline drawer is open) ── */}
+              {Platform.OS === 'web' && !(isOpenQuestionsInline && openQuestionsOpen) && (
                 <RightRail width={240}>
                   {/* Open Questions card */}
                   <Card style={s.railCard}>
@@ -3177,48 +3254,54 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
           onClose={() => setFlagModalOpen(false)}
         />
 
-        {/* ── Open Questions drawer ── */}
-        <OpenQuestionsDrawer
-          visible={openQuestionsOpen}
-          onClose={() => setOpenQuestionsOpen(false)}
-          member={{
-            name: displayName,
-            age: null,
-            initials,
-            primaryLanguage: profile.primaryLanguage,
-            engagementLabel: 'Highly Engaged',
-          }}
-          journey={
-            profile.primaryCategories.length > 0
-              ? {
-                  templateName: `${CATEGORY_LABELS[profile.primaryCategories[0]!] ?? profile.primaryCategories[0]!} Journey`,
-                  currentStepName: 'Upload Documents',
-                  vertical: profile.primaryCategories[0]!,
-                }
-              : undefined
-          }
-          onMarkComplete={() => {
-            if (Platform.OS === 'web' && typeof window !== 'undefined') {
-              window.alert('Call marked as completed.');
-            } else {
-              Alert.alert('Call Completed', 'This call has been marked as completed.');
+        {/*
+          ── Open Questions drawer — overlay mode (narrow viewports / native) ──
+          Only render here when NOT in inline mode. On wide web viewports the
+          drawer lives inside the contentRow flex-row above (inline panel).
+        */}
+        {!isOpenQuestionsInline && (
+          <OpenQuestionsDrawer
+            visible={openQuestionsOpen}
+            onClose={() => setOpenQuestionsOpen(false)}
+            member={{
+              name: displayName,
+              age: null,
+              initials,
+              primaryLanguage: profile.primaryLanguage,
+              engagementLabel: 'Highly Engaged',
+            }}
+            journey={
+              profile.primaryCategories.length > 0
+                ? {
+                    templateName: `${CATEGORY_LABELS[profile.primaryCategories[0]!] ?? profile.primaryCategories[0]!} Journey`,
+                    currentStepName: 'Upload Documents',
+                    vertical: profile.primaryCategories[0]!,
+                  }
+                : undefined
             }
-          }}
-          onCopyScript={() => {
-            if (Platform.OS === 'web' && typeof window !== 'undefined') {
-              window.alert('Script copied — paste into your notes.');
-            } else {
-              Alert.alert('Copied', 'Script copied to clipboard.');
-            }
-          }}
-          onSaveNote={() => {
-            if (Platform.OS === 'web' && typeof window !== 'undefined') {
-              window.alert('Note saved — coming soon.');
-            } else {
-              Alert.alert('Save Note', 'Notes feature coming soon.');
-            }
-          }}
-        />
+            onMarkComplete={() => {
+              if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                window.alert('Call marked as completed.');
+              } else {
+                Alert.alert('Call Completed', 'This call has been marked as completed.');
+              }
+            }}
+            onCopyScript={() => {
+              if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                window.alert('Script copied — paste into your notes.');
+              } else {
+                Alert.alert('Copied', 'Script copied to clipboard.');
+              }
+            }}
+            onSaveNote={() => {
+              if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                window.alert('Note saved — coming soon.');
+              } else {
+                Alert.alert('Save Note', 'Notes feature coming soon.');
+              }
+            }}
+          />
+        )}
 
         {/* ProfileContactButtons drives the masked-call + conversation
             find-or-create flow. On mobile it renders inline in the

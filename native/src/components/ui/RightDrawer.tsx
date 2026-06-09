@@ -45,6 +45,23 @@ export interface RightDrawerProps {
   children?: React.ReactNode;
   /** Optional sticky footer row — typically action buttons. */
   footer?: React.ReactNode;
+  /**
+   * Web-only. When true the drawer renders as an inline flex-column panel
+   * (no backdrop, no `position: fixed`) so it participates in normal document
+   * flow and compresses sibling content rather than overlaying it.
+   *
+   * The parent is responsible for placing the drawer as a flex sibling of the
+   * main content area. When false (default) the drawer uses the original
+   * fixed overlay + backdrop behaviour.
+   *
+   * On native this prop is ignored — the Modal sheet is always used.
+   */
+  inline?: boolean;
+  /**
+   * Fixed pixel width used when `inline` is true.
+   * @default 360
+   */
+  inlineWidth?: number;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -73,6 +90,8 @@ export function RightDrawer({
   subtitle,
   children,
   footer,
+  inline = false,
+  inlineWidth = 360,
 }: RightDrawerProps): React.JSX.Element {
   if (Platform.OS !== 'web') {
     return (
@@ -85,6 +104,21 @@ export function RightDrawer({
       >
         {children}
       </NativeDrawer>
+    );
+  }
+
+  if (inline) {
+    return (
+      <WebInlineDrawer
+        isOpen={isOpen}
+        onClose={onClose}
+        title={title}
+        subtitle={subtitle}
+        footer={footer}
+        inlineWidth={inlineWidth}
+      >
+        {children}
+      </WebInlineDrawer>
     );
   }
 
@@ -103,7 +137,10 @@ export function RightDrawer({
 
 // ─── Web implementation ───────────────────────────────────────────────────────
 
-interface DrawerInternalProps extends RightDrawerProps {}
+interface DrawerInternalProps extends RightDrawerProps {
+  /** Width used by the inline variant. */
+  inlineWidth?: number;
+}
 
 function WebDrawer({
   isOpen,
@@ -178,6 +215,118 @@ function WebDrawer({
     </View>
   );
 }
+
+// ─── Web inline (side-panel) implementation ───────────────────────────────────
+
+/**
+ * Inline variant of the web drawer.
+ *
+ * Renders as a fixed-width flex-column panel with no backdrop and no
+ * `position: fixed`. The parent must place this component as a flex sibling
+ * of the main content so the layout adjusts naturally.
+ *
+ * Visibility is controlled by `isOpen`:
+ *   - Open: panel is rendered at `inlineWidth` px wide.
+ *   - Closed: panel is not mounted (`display:none` equivalent via null return).
+ *
+ * Keyboard: Esc is handled by the consumer (`OpenQuestionsDrawer`) to avoid
+ * double-listener registration. Tap-outside-to-dismiss is intentionally
+ * disabled in inline mode — only the X button closes (WCAG: non-modal
+ * region, user may interact with adjacent content while panel is open).
+ */
+function WebInlineDrawer({
+  isOpen,
+  onClose,
+  title,
+  subtitle,
+  children,
+  footer,
+  inlineWidth = 360,
+}: DrawerInternalProps): React.JSX.Element {
+  const [mounted, setMounted] = useState(isOpen);
+  const translateX = useRef(new Animated.Value(isOpen ? 0 : inlineWidth)).current;
+
+  useEffect(() => {
+    if (isOpen) {
+      setMounted(true);
+      Animated.spring(translateX, {
+        toValue:         0,
+        useNativeDriver: true,
+        tension:         300,
+        friction:        30,
+      }).start();
+    } else {
+      Animated.timing(translateX, {
+        toValue:         inlineWidth,
+        duration:        200,
+        useNativeDriver: true,
+      }).start(() => setMounted(false));
+    }
+  }, [isOpen, translateX, inlineWidth]);
+
+  if (!mounted) {
+    return <View style={{ width: 0 }} />;
+  }
+
+  return (
+    <Animated.View
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      accessibilityRole={'complementary' as any}
+      style={[
+        webInlineStyles.panel,
+        { width: inlineWidth },
+        shadows.card as ViewStyle,
+        { transform: [{ translateX }] },
+      ]}
+    >
+      <DrawerHeader
+        title={title}
+        subtitle={subtitle}
+        onClose={onClose}
+      />
+
+      <ScrollView
+        style={webInlineStyles.body}
+        contentContainerStyle={webInlineStyles.bodyContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {children}
+      </ScrollView>
+
+      {footer !== undefined && (
+        <View style={webInlineStyles.footer}>{footer}</View>
+      )}
+    </Animated.View>
+  );
+}
+
+const webInlineStyles = StyleSheet.create({
+  panel: {
+    flexDirection:   'column',
+    backgroundColor: colors.cardBg,
+    borderLeftWidth: 1,
+    borderLeftColor: colors.cardBorder,
+    // Prevent the panel from growing beyond its declared width.
+    flexShrink:      0,
+    // Stretch the full height of its flex-row parent.
+    alignSelf:       'stretch',
+  } as ViewStyle,
+
+  body: {
+    flex: 1,
+  } as ViewStyle,
+
+  bodyContent: {
+    padding: spacing.xl,
+  } as ViewStyle,
+
+  footer: {
+    borderTopWidth:  1,
+    borderTopColor:  colors.cardBorder,
+    padding:         spacing.lg,
+    gap:             spacing.sm,
+  } as ViewStyle,
+});
 
 // ─── Native implementation ────────────────────────────────────────────────────
 

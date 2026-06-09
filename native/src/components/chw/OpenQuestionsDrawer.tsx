@@ -26,6 +26,7 @@ import {
   ScrollView,
   StyleSheet,
   Platform,
+  useWindowDimensions,
   type ViewStyle,
   type TextStyle,
 } from 'react-native';
@@ -346,16 +347,18 @@ const stripStyles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical:  spacing.sm + 2,
     borderRadius:     radius.lg,
-    backgroundColor:  '#ecfdf5',
+    // emerald-50 / emerald-100 equivalent — closest tokens are teal100/emerald100
+    backgroundColor:  colors.teal100,
     borderWidth:      1,
-    borderColor:      '#d1fae5',
+    borderColor:      colors.emerald100,
   } as ViewStyle,
 
   avatar: {
     width:           32,
     height:          32,
     borderRadius:    16,
-    backgroundColor: '#a7f3d0',
+    // emerald-200 — use emerald300 (closest lighter token)
+    backgroundColor: colors.emerald300,
     alignItems:      'center',
     justifyContent:  'center',
     flexShrink:      0,
@@ -364,7 +367,7 @@ const stripStyles = StyleSheet.create({
   avatarText: {
     fontSize:   12,
     fontWeight: '700',
-    color:      '#065f46',
+    color:      colors.emerald900,
   } as TextStyle,
 
   info: {
@@ -411,7 +414,7 @@ function QuestionRow({
     >
       {/* Checkbox indicator */}
       <View style={[qRowStyles.checkbox, checked && qRowStyles.checkboxChecked]}>
-        {checked && <Check size={11} color="#fff" strokeWidth={3} />}
+        {checked && <Check size={11} color={colors.cardBg} strokeWidth={3} />}
       </View>
 
       {/* Question text */}
@@ -433,7 +436,7 @@ const qRowStyles = StyleSheet.create({
   } as ViewStyle,
 
   rowChecked: {
-    backgroundColor: '#ecfdf5',
+    backgroundColor: colors.teal100,
   } as ViewStyle,
 
   checkbox: {
@@ -441,7 +444,7 @@ const qRowStyles = StyleSheet.create({
     height:         18,
     borderRadius:   5,
     borderWidth:    2,
-    borderColor:    '#d1d5db',
+    borderColor:    colors.cardBorder,
     flexShrink:     0,
     marginTop:      1,
     alignItems:     'center',
@@ -449,8 +452,8 @@ const qRowStyles = StyleSheet.create({
   } as ViewStyle,
 
   checkboxChecked: {
-    backgroundColor: '#10b981',
-    borderColor:     '#10b981',
+    backgroundColor: colors.emerald500,
+    borderColor:     colors.emerald500,
   } as ViewStyle,
 
   text: {
@@ -461,7 +464,7 @@ const qRowStyles = StyleSheet.create({
   } as TextStyle,
 
   textChecked: {
-    color: '#374151',
+    color: colors.gray700,
   } as TextStyle,
 });
 
@@ -510,7 +513,7 @@ const sectionStyles = StyleSheet.create({
     fontWeight:      '700',
     textTransform:   'uppercase',
     letterSpacing:   0.6,
-    color:           '#10b981',
+    color:           colors.emerald500,
     paddingLeft:     4,
   } as TextStyle,
 
@@ -534,7 +537,7 @@ function InsightFooter({ vertical }: InsightFooterProps): React.JSX.Element {
   return (
     <View style={insightStyles.container}>
       <View style={insightStyles.header}>
-        <Sparkles size={14} color="#16a34a" />
+        <Sparkles size={14} color={colors.primary} />
         <Text style={insightStyles.title}>Compass Insight</Text>
         <Pill variant="emerald" size="sm">BETA</Pill>
       </View>
@@ -551,9 +554,9 @@ const insightStyles = StyleSheet.create({
   container: {
     padding:         spacing.lg,
     borderRadius:    radius.lg,
-    backgroundColor: '#f0fdf4',
+    backgroundColor: colors.teal100,
     borderWidth:     1,
-    borderColor:     '#d1fae5',
+    borderColor:     colors.emerald100,
     gap:             spacing.xs,
   } as ViewStyle,
 
@@ -573,7 +576,7 @@ const insightStyles = StyleSheet.create({
 
   body: {
     fontSize:   12,
-    color:      '#374151',
+    color:      colors.gray700,
     lineHeight: 18,
   } as TextStyle,
 
@@ -607,7 +610,7 @@ function DrawerFooter({
           accessibilityRole="button"
           accessibilityLabel="Copy script"
         >
-          <Copy size={15} color="#374151" />
+          <Copy size={15} color={colors.gray700} />
           <Text style={footerStyles.secondaryBtnText}>Copy Script</Text>
         </TouchableOpacity>
 
@@ -617,7 +620,7 @@ function DrawerFooter({
           accessibilityRole="button"
           accessibilityLabel="Save as note"
         >
-          <NotebookPen size={15} color="#374151" />
+          <NotebookPen size={15} color={colors.gray700} />
           <Text style={footerStyles.secondaryBtnText}>Save as Note</Text>
         </TouchableOpacity>
       </View>
@@ -632,7 +635,7 @@ function DrawerFooter({
         accessibilityRole="button"
         accessibilityLabel="Mark call completed"
       >
-        <CheckCircle2 size={18} color="#fff" />
+        <CheckCircle2 size={18} color={colors.cardBg} />
         <Text style={footerStyles.primaryBtnText}>Mark Call Completed</Text>
       </TouchableOpacity>
     </View>
@@ -650,38 +653,38 @@ const footerStyles = StyleSheet.create({
   } as ViewStyle,
 
   secondaryBtn: {
-    flex:           1,
-    flexDirection:  'row',
-    alignItems:     'center',
-    justifyContent: 'center',
-    gap:            6,
+    flex:            1,
+    flexDirection:   'row',
+    alignItems:      'center',
+    justifyContent:  'center',
+    gap:             6,
     paddingVertical: spacing.sm + 2,
-    borderWidth:    1,
-    borderColor:    '#e5e7eb',
-    borderRadius:   radius.md,
-    backgroundColor: '#fff',
+    borderWidth:     1,
+    borderColor:     colors.cardBorder,
+    borderRadius:    radius.md,
+    backgroundColor: colors.cardBg,
   } as ViewStyle,
 
   secondaryBtnText: {
     fontSize:   13,
     fontWeight: '600',
-    color:      '#374151',
+    color:      colors.gray700,
   } as TextStyle,
 
   primaryBtn: {
-    flexDirection:  'row',
-    alignItems:     'center',
-    justifyContent: 'center',
-    gap:            8,
+    flexDirection:   'row',
+    alignItems:      'center',
+    justifyContent:  'center',
+    gap:             8,
     paddingVertical: spacing.md,
-    borderRadius:   radius.lg,
-    backgroundColor: '#059669',
+    borderRadius:    radius.lg,
+    backgroundColor: colors.primary,
   } as ViewStyle,
 
   primaryBtnText: {
     fontSize:   15,
     fontWeight: '700',
-    color:      '#fff',
+    color:      colors.cardBg,
   } as TextStyle,
 });
 
@@ -704,6 +707,21 @@ const footerStyles = StyleSheet.create({
  * />
  * ```
  */
+/**
+ * Viewport breakpoint (px) above which the drawer renders inline (no backdrop)
+ * rather than as a fixed overlay. Matches the CHWMessages 3-pane threshold.
+ *
+ * Exported so consumer screens can use the same value to conditionally place
+ * the drawer inside the content flex-row vs outside the scroll.
+ */
+export const OPEN_QUESTIONS_INLINE_BREAKPOINT = 1024;
+
+/**
+ * Fixed pixel width of the inline panel on wide viewports.
+ * Exported so consumer screens can reserve space in their flex layout.
+ */
+export const OPEN_QUESTIONS_INLINE_WIDTH = 360;
+
 export function OpenQuestionsDrawer({
   visible,
   onClose,
@@ -713,6 +731,16 @@ export function OpenQuestionsDrawer({
   onCopyScript,
   onSaveNote,
 }: OpenQuestionsDrawerProps): React.JSX.Element {
+  const { width: windowWidth } = useWindowDimensions();
+
+  /**
+   * On web viewports >= 1024px the drawer is an inline side panel with no
+   * backdrop. Below 1024px (or on native) it falls back to the modal/overlay
+   * behaviour so mobile users get the conventional sheet UX.
+   */
+  const isInline =
+    Platform.OS === 'web' && windowWidth >= OPEN_QUESTIONS_INLINE_BREAKPOINT;
+
   // Checked question ids. Key = `${section}::${question}`.
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
 
@@ -723,7 +751,10 @@ export function OpenQuestionsDrawer({
     }
   }, [visible, member.name, journey?.vertical]);
 
-  /** Dismiss on Escape key (web only). */
+  /**
+   * Dismiss on Escape key (web only).
+   * Works in both inline and overlay modes — the user explicitly presses Esc.
+   */
   useEffect(() => {
     if (Platform.OS !== 'web') return;
 
@@ -764,6 +795,8 @@ export function OpenQuestionsDrawer({
       onClose={onClose}
       title="Suggested Questions for Today's Call"
       subtitle={subtitle}
+      inline={isInline}
+      inlineWidth={OPEN_QUESTIONS_INLINE_WIDTH}
       footer={
         <DrawerFooter
           onCopyScript={onCopyScript}
@@ -801,7 +834,7 @@ export function OpenQuestionsDrawer({
           // v1 placeholder — custom question UI is deferred.
         }}
       >
-        <Plus size={15} color="#9ca3af" />
+        <Plus size={15} color={colors.textMuted} />
         <Text style={bodyStyles.addCustomText}>Add Custom Question</Text>
       </TouchableOpacity>
 
@@ -822,22 +855,22 @@ const bodyStyles = StyleSheet.create({
   } as ViewStyle,
 
   addCustomBtn: {
-    flexDirection:  'row',
-    alignItems:     'center',
-    justifyContent: 'center',
-    gap:            spacing.sm,
-    marginTop:      spacing.xl,
-    marginBottom:   spacing.xl,
+    flexDirection:   'row',
+    alignItems:      'center',
+    justifyContent:  'center',
+    gap:             spacing.sm,
+    marginTop:       spacing.xl,
+    marginBottom:    spacing.xl,
     paddingVertical: spacing.md,
-    borderWidth:    2,
-    borderStyle:    'dashed',
-    borderColor:    '#d1d5db',
-    borderRadius:   radius.lg,
+    borderWidth:     2,
+    borderStyle:     'dashed',
+    borderColor:     colors.cardBorder,
+    borderRadius:    radius.lg,
   } as ViewStyle,
 
   addCustomText: {
     fontSize:   13,
     fontWeight: '500',
-    color:      '#9ca3af',
+    color:      colors.textMuted,
   } as TextStyle,
 });
