@@ -129,7 +129,15 @@ class ConsentStatusView(BaseModel):
 
 
 class CHWMemberProfileDetail(BaseModel):
-    """Full HIPAA-scoped member profile for the CHW Member Profile screen."""
+    """Full HIPAA-scoped member profile for the CHW Member Profile screen.
+
+    PHI fields added 2026-06-09 (HIPAA minimum-necessary, 45 CFR §164.514(d)):
+    - date_of_birth: Required for age-appropriate referrals and Medi-Cal eligibility.
+    - gender: Required for clinical context and Pear Suite billing (sex enum).
+    - medi_cal_id: Full CIN for billing verification and identity confirmation on calls.
+      Decrypted automatically by the EncryptedString SQLAlchemy descriptor on read.
+      Access is gated by assert_chw_member_relationship in the route handler.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -153,6 +161,17 @@ class CHWMemberProfileDetail(BaseModel):
     open_followups: list[OpenFollowupItem]
     consent_status: ConsentStatusView
     recent_sessions: list[SessionSummaryItem]
+
+    # ── PHI Demographics (minimum-necessary for care delivery) ────────────────
+    date_of_birth: date | None = None
+    """Date of birth. Used for age-appropriate referrals and eligibility verification."""
+
+    gender: Literal["Male", "Female", "Other"] | None = None
+    """Biological sex enum matching Pear Suite: 'Male' | 'Female' | 'Other'."""
+
+    medi_cal_id: str | None = None
+    """Full Medi-Cal CIN (8 digits + 1 letter). Returned in plain text — the
+    EncryptedString descriptor decrypts on read. Required for billing verification."""
 
 
 # ─── Members Roster ───────────────────────────────────────────────────────────

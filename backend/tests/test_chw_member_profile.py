@@ -7,6 +7,9 @@ Coverage:
 4. Admin (bearer of admin key) can fetch any member's profile.
 5. Missing member → 404 (only when the CHW has a relationship, otherwise 403 fires first).
 6. Billing units default to zero when no claims have been filed.
+7. (NEW) DOB, gender, and medi_cal_id are returned for a member with complete demographics.
+8. (NEW) DOB, gender, and medi_cal_id return null when the member has no demographics set.
+9. (NEW) A phi_read audit log row is written on every successful fetch.
 """
 
 import pytest
@@ -260,3 +263,302 @@ async def test_primary_categories_derived_from_sessions(
     assert res.status_code == 200, res.text
     categories = res.json()["primary_categories"]
     assert "housing" in categories
+
+
+# ─── PHI demographics tests (DOB / gender / medi_cal_id) ──────────────────────
+
+
+@pytest.mark.asyncio
+async def test_dob_gender_cin_returned_for_complete_member_profile() -> None:
+    """DOB, gender, and medi_cal_id are present and correct when the member has a
+    complete profile.
+
+    Seeds rows directly via ORM with known values to avoid the conversations
+    ON CONFLICT issue in the test DB schema that breaks the HTTP accept-request flow.
+
+    Known values: date_of_birth = '1993-01-05', gender = 'Female', medi_cal_id = '12345678A'
+    """
+    import uuid as _uuid
+    from datetime import date as _date
+
+    from app.models.request import ServiceRequest as _ServiceRequest
+    from app.models.user import MemberProfile, User
+    from app.utils.security import create_access_token
+    from tests.conftest import test_session as _test_session_factory
+
+    chw_id = _uuid.uuid4()
+    member_id = _uuid.uuid4()
+
+    async with _test_session_factory() as db:
+        chw_user = User(
+            id=chw_id,
+            email=f"chw_complete_{chw_id.hex[:6]}@example.com",
+            password_hash="x",
+            name="CHW Complete Test",
+            role="chw",
+            is_active=True,
+        )
+        member_user = User(
+            id=member_id,
+            email=f"member_complete_{member_id.hex[:6]}@example.com",
+            password_hash="x",
+            name="Test Member",
+            role="member",
+            is_active=True,
+        )
+        db.add(chw_user)
+        db.add(member_user)
+        await db.flush()
+
+        member_profile = MemberProfile(
+            id=_uuid.uuid4(),
+            user_id=member_id,
+            primary_language="English",
+            zip_code="90001",
+            rewards_balance=0,
+            date_of_birth=_date(1993, 1, 5),
+            gender="Female",
+            medi_cal_id="12345678A",
+            insurance_provider="Health Net",
+        )
+        db.add(member_profile)
+
+        service_req = _ServiceRequest(
+            id=_uuid.uuid4(),
+            member_id=member_id,
+            matched_chw_id=chw_id,
+            vertical="housing",
+            status="accepted",
+            urgency="routine",
+            description="Complete demographics test — seeded directly",
+            preferred_mode="in_person",
+            estimated_units=1,
+        )
+        db.add(service_req)
+        await db.commit()
+
+    chw_access_token = create_access_token({"sub": str(chw_id), "role": "chw"})
+
+    from httpx import ASGITransport, AsyncClient
+    from app.main import app
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        res = await c.get(
+            f"/api/v1/chw/members/{member_id}",
+            headers={"Authorization": f"Bearer {chw_access_token}"},
+        )
+
+    assert res.status_code == 200, res.text
+    data = res.json()
+
+    assert data["date_of_birth"] == "1993-01-05", (
+        f"Expected '1993-01-05', got {data['date_of_birth']!r}"
+    )
+    assert data["gender"] == "Female", (
+        f"Expected 'Female', got {data['gender']!r}"
+    )
+    assert data["medi_cal_id"] == "12345678A", (
+        f"Expected '12345678A', got {data['medi_cal_id']!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_dob_gender_cin_null_when_member_profile_incomplete() -> None:
+    """When a member's MemberProfile has no DOB/gender/medi_cal_id, the three
+    PHI fields return null rather than 500-ing.
+
+    This test seeds a member row directly via the ORM (bypassing registration
+    validation) to simulate legacy data that predates the #14 mandatory-field gate.
+    """
+    import uuid as _uuid
+    from datetime import date as _date
+
+    from app.models.user import MemberProfile, User
+    from tests.conftest import test_session as _test_session_factory
+
+    # ── Seed a CHW user ────────────────────────────────────────────────────────
+    chw_id = _uuid.uuid4()
+    member_id = _uuid.uuid4()
+
+    async with _test_session_factory() as db:
+        chw_user = User(
+            id=chw_id,
+            email=f"chw_incomplete_{chw_id.hex[:6]}@example.com",
+            password_hash="x",
+            name="CHW Incomplete Test",
+            role="chw",
+            is_active=True,
+        )
+        member_user = User(
+            id=member_id,
+            email=f"member_incomplete_{member_id.hex[:6]}@example.com",
+            password_hash="x",
+            name="Member Incomplete Test",
+            role="member",
+            is_active=True,
+        )
+        db.add(chw_user)
+        db.add(member_user)
+        await db.flush()
+
+        # MemberProfile with NO DOB, gender, or medi_cal_id — legacy shape.
+        member_profile = MemberProfile(
+            id=_uuid.uuid4(),
+            user_id=member_id,
+            primary_language="English",
+            zip_code="90001",
+            rewards_balance=0,
+            # date_of_birth, gender, medi_cal_id intentionally omitted (default None)
+        )
+        db.add(member_profile)
+        await db.commit()
+
+    # ── Seed a ServiceRequest (accepted) to satisfy the relationship gate ──────
+    # Using a matched service_request avoids the Session.request_id NOT NULL
+    # constraint and the conversation ON CONFLICT issue seen in the full suite.
+    from app.models.request import ServiceRequest as _ServiceRequest
+
+    request_id = _uuid.uuid4()
+    async with _test_session_factory() as db:
+        service_req = _ServiceRequest(
+            id=request_id,
+            member_id=member_id,
+            matched_chw_id=chw_id,
+            vertical="health",
+            status="accepted",
+            urgency="routine",
+            description="Null demographics test — seeded directly",
+            preferred_mode="video",
+            estimated_units=1,
+        )
+        db.add(service_req)
+        await db.commit()
+
+    # ── Call the endpoint via ASGI with a manually-minted JWT ─────────────────
+    # Mint a CHW token for the seeded CHW user, bypassing registration.
+    from app.utils.security import create_access_token
+    chw_access_token = create_access_token({"sub": str(chw_id), "role": "chw"})
+
+    from httpx import ASGITransport, AsyncClient
+    from app.main import app
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        res = await c.get(
+            f"/api/v1/chw/members/{member_id}",
+            headers={"Authorization": f"Bearer {chw_access_token}"},
+        )
+
+    assert res.status_code == 200, res.text
+    data = res.json()
+    assert data["date_of_birth"] is None, f"Expected null, got {data['date_of_birth']!r}"
+    assert data["gender"] is None, f"Expected null, got {data['gender']!r}"
+    assert data["medi_cal_id"] is None, f"Expected null, got {data['medi_cal_id']!r}"
+
+
+@pytest.mark.asyncio
+async def test_phi_read_audit_log_written_on_member_profile_fetch() -> None:
+    """Fetching a member's full profile must produce a phi_read audit log row
+    with action='phi_read', resource='member_demographics', and the correct
+    resource_id (the member's UUID).
+
+    This test seeds all rows directly via ORM to avoid the conversations
+    ON CONFLICT constraint issue present in the test DB schema for the
+    _create_and_accept_request helper flow.
+    """
+    import uuid as _uuid
+    from datetime import date as _date
+
+    from sqlalchemy import select as _select
+
+    from app.models.audit import AuditLog as _AuditLog
+    from app.models.request import ServiceRequest as _ServiceRequest
+    from app.models.user import MemberProfile, User
+    from app.utils.security import create_access_token
+    from tests.conftest import test_session as _test_session_factory
+
+    chw_id = _uuid.uuid4()
+    member_id = _uuid.uuid4()
+
+    # ── Seed CHW user ─────────────────────────────────────────────────────────
+    async with _test_session_factory() as db:
+        chw_user = User(
+            id=chw_id,
+            email=f"chw_audit_{chw_id.hex[:6]}@example.com",
+            password_hash="x",
+            name="CHW Audit Test",
+            role="chw",
+            is_active=True,
+        )
+        member_user = User(
+            id=member_id,
+            email=f"member_audit_{member_id.hex[:6]}@example.com",
+            password_hash="x",
+            name="Member Audit Test",
+            role="member",
+            is_active=True,
+        )
+        db.add(chw_user)
+        db.add(member_user)
+        await db.flush()
+
+        member_profile = MemberProfile(
+            id=_uuid.uuid4(),
+            user_id=member_id,
+            primary_language="English",
+            zip_code="90001",
+            rewards_balance=0,
+            date_of_birth=_date(1990, 3, 15),
+            gender="Male",
+            medi_cal_id="99887766A",
+        )
+        db.add(member_profile)
+
+        # Accepted service_request — satisfies the CHW relationship gate.
+        service_req = _ServiceRequest(
+            id=_uuid.uuid4(),
+            member_id=member_id,
+            matched_chw_id=chw_id,
+            vertical="health",
+            status="accepted",
+            urgency="routine",
+            description="Audit log test — seeded directly",
+            preferred_mode="video",
+            estimated_units=1,
+        )
+        db.add(service_req)
+        await db.commit()
+
+    # ── Call the endpoint via ASGI ────────────────────────────────────────────
+    chw_access_token = create_access_token({"sub": str(chw_id), "role": "chw"})
+
+    from httpx import ASGITransport, AsyncClient
+    from app.main import app
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        res = await c.get(
+            f"/api/v1/chw/members/{member_id}",
+            headers={"Authorization": f"Bearer {chw_access_token}"},
+        )
+
+    assert res.status_code == 200, res.text
+
+    # ── Verify the phi_read audit row was committed ───────────────────────────
+    async with _test_session_factory() as db:
+        result = await db.execute(
+            _select(_AuditLog).where(
+                _AuditLog.action == "phi_read",
+                _AuditLog.resource == "member_demographics",
+                _AuditLog.resource_id == str(member_id),
+            )
+        )
+        audit_rows = result.scalars().all()
+
+    assert len(audit_rows) >= 1, (
+        f"Expected at least one phi_read audit row for member {member_id}, found none"
+    )
+    row = audit_rows[0]
+    assert row.details is not None
+    assert "date_of_birth" in row.details.get("fields", [])
+    assert "gender" in row.details.get("fields", [])
+    assert "medi_cal_id" in row.details.get("fields", [])
+    assert row.details.get("actor_role") == "chw"

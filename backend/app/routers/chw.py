@@ -1214,6 +1214,37 @@ async def get_chw_member_full_profile(
     if not primary_categories and member_profile.primary_need:
         primary_categories = [member_profile.primary_need]
 
+    # ── PHI read audit log (45 CFR §164.312(b) — Audit Controls) ─────────────
+    # A targeted phi_read row supplements the request-level AuditMiddleware row
+    # with structured resource context (member_id, fields accessed, actor role).
+    # Uses an independent session (same pattern as AuditMiddleware) so the commit
+    # is guaranteed regardless of whether the endpoint's own session is committed.
+    # Never fails the request — exceptions are logged and swallowed.
+    from app.database import async_session as _async_session
+    from app.models.audit import AuditLog as _AuditLog
+
+    try:
+        actor_id = caller_user.id if caller_role != "admin" else None
+        async with _async_session() as _audit_session:
+            _audit_session.add(_AuditLog(
+                user_id=actor_id,
+                action="phi_read",
+                resource="member_demographics",
+                resource_id=str(member_user.id),
+                details={
+                    "fields": ["date_of_birth", "gender", "medi_cal_id"],
+                    "actor_role": caller_role,
+                },
+            ))
+            await _audit_session.commit()
+    except Exception as _audit_exc:  # noqa: BLE001
+        import logging as _logging
+        _logging.getLogger("compass.audit").error(
+            "phi_read audit log insert failed for member %s: %s",
+            member_user.id,
+            _audit_exc,
+        )
+
     return CHWMemberProfileDetail(
         id=member_user.id,
         first_name=first_name,
@@ -1235,6 +1266,10 @@ async def get_chw_member_full_profile(
         open_followups=open_followups,
         consent_status=consent_status,
         recent_sessions=recent_sessions,
+        # PHI demographics — decrypted / read from MemberProfile
+        date_of_birth=member_profile.date_of_birth,
+        gender=member_profile.gender,
+        medi_cal_id=member_profile.medi_cal_id,  # EncryptedString decrypts on access
     )
 
 

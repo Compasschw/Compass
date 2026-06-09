@@ -3,16 +3,24 @@
  *
  * Layout (T08 Phase 1 Second Run redesign):
  *   - 3-column top card:
- *       Left  — Demographics (READ-ONLY): name, phone, address/ZIP, language,
- *               insurance/MCO, email.
- *       Center — Services Consent status (READ-ONLY on CHW side). When the
- *               member has refused services, the Call/Message CTAs in the right
- *               column are dimmed and a caption is shown.
- *       Right  — Active Journeys list + Member rewards balance + Call/Message CTAs.
- *   - Member Journey roadmap (6-step horizontal scroll with points).
+ *       Left   — Demographics (READ-ONLY): name, phone, address/ZIP, language,
+ *                insurance/MCO, email, DOB, gender, Medi-Cal CIN.
+ *       Center — TWO stacked cards:
+ *                  1. Flag Note card (amber/cream background, edit pencil).
+ *                  2. Billing Consent card (green background, View Consent CTA).
+ *       Right  — Resource Needs (Priority) card: top-3 active journeys ranked
+ *                by severity heuristic (progressPercent thresholds), plus
+ *                Call/Message CTAs and rewards balance.
+ *   - Member Journey section: multi-track horizontal timeline (top 3 active
+ *     journeys in rank order, 6 steps each, with per-step state + points).
  *   - Quick Access row — Add Note, Flag Member, Schedule Session, Document Session.
  *   - Billable Units widget (today vs daily cap; this year vs yearly cap).
  *   - Sessions table — paginated (20 rows/page).
+ *
+ * Severity heuristic (client-side, no backend change):
+ *   progressPercent < 33   → High   (red)
+ *   33 ≤ progress < 67     → Medium (amber)
+ *   progress ≥ 67          → Low    (yellow)
  *
  * HIPAA minimum-necessary (45 CFR §164.514(d)):
  *   Raw medi_cal_id, insurance_provider (surfaced only as MCO label), notes from
@@ -48,8 +56,9 @@ import {
   ArrowLeft,
   ArrowRight,
   Calendar,
+  Check,
   CheckCircle,
-  Clock,
+  Edit2,
   Flag,
   Globe,
   Heart,
@@ -70,12 +79,12 @@ import {
   RadioTower,
   ChevronRight,
   ClipboardList,
+  X,
 } from 'lucide-react-native';
 import { useQuery } from '@tanstack/react-query';
 
-import { colors as legacyColors } from '../../theme/colors';
 import { fonts } from '../../theme/typography';
-import { colors as tokens, spacing, radius } from '../../theme/tokens';
+import { colors as tokens, radius } from '../../theme/tokens';
 import { api } from '../../api/client';
 import { transformKeys } from '../../utils/caseTransform';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
@@ -176,6 +185,13 @@ interface CHWMemberProfileDetail {
   openFollowups: OpenFollowupItem[];
   consentStatus: ConsentStatusData;
   recentSessions: RecentSessionItem[];
+  // PHI demographics — exposed 2026-06-09 (HIPAA minimum-necessary for care delivery)
+  /** ISO date string e.g. '1993-01-05'. Null when not recorded. */
+  dateOfBirth: string | null;
+  /** Biological sex: 'Male' | 'Female' | 'Other'. Null when not recorded. */
+  gender: 'Male' | 'Female' | 'Other' | null;
+  /** Full Medi-Cal CIN e.g. '12345678A'. Null when not recorded. */
+  mediCalId: string | null;
 }
 
 interface AssessmentLatest {
@@ -336,6 +352,33 @@ function formatDateTime(iso: string | null | undefined): string {
     hour: 'numeric',
     minute: '2-digit',
   });
+}
+
+/**
+ * Format a date-of-birth ISO string as "MMM DD, YYYY (AGE yrs)".
+ * Uses UTC parsing of the date-only string to avoid timezone shifts that
+ * would push the date one day backward in negative-offset locales.
+ *
+ * Example: "1993-01-05" → "Jan 05, 1993 (33 yrs)"
+ */
+function formatDob(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  // Parse as UTC noon to avoid DST/timezone off-by-one-day issues.
+  const [year, month, day] = iso.split('-').map(Number);
+  const dob = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+  const formatted = dob.toLocaleDateString('en-US', {
+    month: 'short',
+    day: '2-digit',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+  const now = new Date();
+  let age = now.getUTCFullYear() - year;
+  const hadBirthdayThisYear =
+    now.getUTCMonth() + 1 > month ||
+    (now.getUTCMonth() + 1 === month && now.getUTCDate() >= day);
+  if (!hadBirthdayThisYear) age -= 1;
+  return `${formatted} (${age} yrs)`;
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -536,6 +579,24 @@ function DemographicsColumn({ profile }: DemographicsColumnProps): React.JSX.Ele
             value={profile.email}
           />
         ) : null}
+        <InfoRow
+          icon={<Calendar size={13} color={tokens.primary} />}
+          label="Date of Birth"
+          value={formatDob(profile.dateOfBirth)}
+          placeholder={!profile.dateOfBirth}
+        />
+        <InfoRow
+          icon={<User size={13} color={tokens.primary} />}
+          label="Gender"
+          value={profile.gender ?? 'Not provided'}
+          placeholder={!profile.gender}
+        />
+        <InfoRow
+          icon={<Shield size={13} color={tokens.primary} />}
+          label="Medi-Cal ID (CIN)"
+          value={profile.mediCalId ?? 'Not provided'}
+          placeholder={!profile.mediCalId}
+        />
       </View>
     </View>
   );
@@ -599,154 +660,296 @@ const demoColStyles = StyleSheet.create({
   } as ViewStyle,
 });
 
-// ─── ServicesConsentColumn ────────────────────────────────────────────────────
+// ─── CenterColumn: FlagNoteCard + BillingConsentCard ─────────────────────────
 
 type ServicesConsentStatus = ServicesConsentValue | null;
 
-interface ServicesConsentColumnProps {
+interface CenterColumnProps {
   memberId: string;
+  /** Opens the Flag Member edit drawer (re-uses FlagMemberModal). */
+  onEditFlag: () => void;
+  /** Opens the Billing Consent view — placeholder, no behavior yet. */
+  onViewConsent: () => void;
 }
 
 /**
  * Center column of the 3-column top card.
- * Renders the member's Services Consent status read-only on the CHW side.
- * When status is 'refuse_services', shows a red warning banner.
+ * Stacks two sub-cards vertically:
+ *   1. FlagNoteCard — shows the current flag (if any) on an amber/cream
+ *      background.  Edit pencil top-right opens the existing FlagMemberModal.
+ *   2. BillingConsentCard — shows services-consent status on a light-green
+ *      background with a "View Consent" button.
  */
-function ServicesConsentColumn({ memberId }: ServicesConsentColumnProps): React.JSX.Element {
-  const { data: consentData, isLoading } = useMemberServicesConsent(memberId);
-  const consentValue: ServicesConsentStatus = consentData?.value ?? null;
-  const isRefused = consentValue === 'refuse_services';
-
+function CenterColumn({
+  memberId,
+  onEditFlag,
+  onViewConsent,
+}: CenterColumnProps): React.JSX.Element {
   return (
-    <View style={consentColStyles.container}>
-      <ColumnHeading text="Services Consent" sub="(read-only)" />
-
-      {isLoading ? (
-        <View style={consentColStyles.loadingRow}>
-          <ActivityIndicator size="small" color={tokens.textMuted} />
-          <Text style={consentColStyles.loadingText}>Loading…</Text>
-        </View>
-      ) : consentValue === null ? (
-        <View style={[consentColStyles.statusBlock, consentColStyles.statusNeutral]}>
-          <ShieldOff size={18} color="#A0A6AB" />
-          <Text style={[consentColStyles.statusLabel, { color: '#A0A6AB' }]}>
-            Status unavailable
-          </Text>
-          <Text style={consentColStyles.statusSub}>
-            Consent data not yet available for this member.
-          </Text>
-        </View>
-      ) : isRefused ? (
-        <View style={[consentColStyles.statusBlock, consentColStyles.statusRefused]}>
-          <ShieldX size={18} color="#B91C1C" />
-          <Text style={[consentColStyles.statusLabel, { color: '#B91C1C' }]}>
-            Refused Services
-          </Text>
-          <Text style={[consentColStyles.statusSub, { color: '#DC2626' }]}>
-            Member has refused services. Call and Message actions are disabled.
-          </Text>
-        </View>
-      ) : (
-        <View style={[consentColStyles.statusBlock, consentColStyles.statusGranted]}>
-          <ShieldCheck size={18} color="#15803D" />
-          <Text style={[consentColStyles.statusLabel, { color: '#15803D' }]}>
-            Consented to Services
-          </Text>
-          <Text style={consentColStyles.statusSub}>
-            Member has consented to receive CHW services.
-          </Text>
-        </View>
-      )}
-
-      {consentData?.changedAt ? (
-        <Text style={consentColStyles.changedAt}>
-          Last updated: {formatDate(consentData.changedAt)}
-        </Text>
-      ) : null}
-
-      {/* Policy notice */}
-      <View style={consentColStyles.noticeBox}>
-        <Shield size={11} color="#9CA3AF" />
-        <Text style={consentColStyles.noticeText}>
-          This consent is member-controlled and cannot be changed from the CHW side.
-        </Text>
-      </View>
+    <View style={centerColStyles.container}>
+      <FlagNoteCard memberId={memberId} onEditFlag={onEditFlag} />
+      <BillingConsentCard memberId={memberId} onViewConsent={onViewConsent} />
     </View>
   );
 }
 
-const consentColStyles = StyleSheet.create({
+const centerColStyles = StyleSheet.create({
   container: {
     flex: Platform.OS === 'web' ? 3 : undefined,
-    padding: 20,
     borderRightWidth: Platform.OS === 'web' ? 1 : 0,
     borderRightColor: '#F3F4F6',
     borderTopWidth: Platform.OS === 'web' ? 0 : 1,
     borderTopColor: '#F3F4F6',
+    gap: 0,
+  } as ViewStyle,
+});
+
+// ── FlagNoteCard ──────────────────────────────────────────────────────────────
+
+interface FlagNoteCardProps {
+  memberId: string;
+  onEditFlag: () => void;
+}
+
+/**
+ * Amber/cream card showing the current flag note (if any).
+ * Edit pencil top-right opens FlagMemberModal for CHW edits.
+ */
+function FlagNoteCard({ memberId, onEditFlag }: FlagNoteCardProps): React.JSX.Element {
+  const { data: flagNote, isLoading } = useFlagNote(memberId);
+
+  return (
+    <View style={flagNoteCardStyles.container}>
+      {/* Header row */}
+      <View style={flagNoteCardStyles.headerRow}>
+        <View style={flagNoteCardStyles.titleRow}>
+          <Flag size={13} color="#92400E" />
+          <Text style={flagNoteCardStyles.title}>Flag Note</Text>
+        </View>
+        <TouchableOpacity
+          style={flagNoteCardStyles.editBtn}
+          onPress={onEditFlag}
+          accessibilityRole="button"
+          accessibilityLabel="Edit flag note"
+        >
+          <Edit2 size={12} color="#92400E" />
+        </TouchableOpacity>
+      </View>
+
+      {/* Body */}
+      {isLoading ? (
+        <View style={flagNoteCardStyles.loadingRow}>
+          <ActivityIndicator size="small" color="#92400E" />
+          <Text style={flagNoteCardStyles.loadingText}>Loading…</Text>
+        </View>
+      ) : flagNote ? (
+        <View>
+          <Text style={flagNoteCardStyles.noteBody} numberOfLines={3}>
+            {flagNote.body}
+          </Text>
+          <Text style={flagNoteCardStyles.noteDate}>
+            {formatDate(flagNote.createdAt)}
+          </Text>
+        </View>
+      ) : (
+        <Text style={flagNoteCardStyles.emptyText}>No flag on this member.</Text>
+      )}
+    </View>
+  );
+}
+
+const flagNoteCardStyles = StyleSheet.create({
+  container: {
+    backgroundColor: '#FFFBEB',
+    borderBottomWidth: 1,
+    borderBottomColor: '#FDE68A',
+    padding: 16,
+    gap: 8,
+    flex: 1,
+  } as ViewStyle,
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  } as ViewStyle,
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  } as ViewStyle,
+  title: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 12,
+    color: '#92400E',
+  } as TextStyle,
+  editBtn: {
+    width: 26,
+    height: 26,
+    borderRadius: radius.sm,
+    backgroundColor: '#FDE68A',
+    alignItems: 'center',
+    justifyContent: 'center',
   } as ViewStyle,
   loadingRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    paddingVertical: 16,
+    gap: 6,
+    paddingVertical: 4,
   } as ViewStyle,
   loadingText: {
     fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 13,
-    color: tokens.textMuted,
+    fontSize: 11,
+    color: '#92400E',
   } as TextStyle,
-  statusBlock: {
-    borderRadius: radius.md,
-    padding: 12,
-    gap: 6,
-    marginBottom: 10,
-  } as ViewStyle,
-  statusGranted: {
-    backgroundColor: '#F0FDF4',
-    borderWidth: 1,
-    borderColor: '#BBFBCA',
-  } as ViewStyle,
-  statusRefused: {
-    backgroundColor: '#FEF2F2',
-    borderWidth: 1,
-    borderColor: '#FECACA',
-  } as ViewStyle,
-  statusNeutral: {
-    backgroundColor: '#F9FAFB',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  } as ViewStyle,
-  statusLabel: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 13,
-  } as TextStyle,
-  statusSub: {
+  noteBody: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 12,
-    color: '#6B7280',
+    color: '#78350F',
     lineHeight: 18,
+  } as TextStyle,
+  noteDate: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 10,
+    color: '#A16207',
+    marginTop: 4,
+  } as TextStyle,
+  emptyText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 12,
+    color: '#A16207',
+    fontStyle: 'italic',
+  } as TextStyle,
+});
+
+// ── BillingConsentCard ────────────────────────────────────────────────────────
+
+interface BillingConsentCardProps {
+  memberId: string;
+  onViewConsent: () => void;
+}
+
+/**
+ * Light-green card showing the member's services consent status.
+ * "View Consent" button placeholder — opens full consent detail (no behavior yet).
+ */
+function BillingConsentCard({
+  memberId,
+  onViewConsent,
+}: BillingConsentCardProps): React.JSX.Element {
+  const { data: consentData, isLoading } = useMemberServicesConsent(memberId);
+  const consentValue: ServicesConsentStatus = consentData?.value ?? null;
+  const isRefused = consentValue === 'refuse_services';
+
+  const statusLabel = isRefused
+    ? 'Refused Services'
+    : consentValue === 'consent_to_services'
+    ? 'Consented'
+    : 'Unknown';
+
+  const statusColor = isRefused ? '#B91C1C' : '#15803D';
+  const statusIcon = isRefused
+    ? <ShieldX size={13} color={statusColor} />
+    : consentValue === 'consent_to_services'
+    ? <ShieldCheck size={13} color={statusColor} />
+    : <ShieldOff size={13} color="#9CA3AF" />;
+
+  return (
+    <View style={billingConsentCardStyles.container}>
+      {/* Header */}
+      <View style={billingConsentCardStyles.headerRow}>
+        <Text style={billingConsentCardStyles.title}>Billing Consent</Text>
+      </View>
+
+      {/* Status indicator */}
+      {isLoading ? (
+        <View style={billingConsentCardStyles.loadingRow}>
+          <ActivityIndicator size="small" color="#15803D" />
+          <Text style={billingConsentCardStyles.loadingText}>Loading…</Text>
+        </View>
+      ) : (
+        <View style={billingConsentCardStyles.statusRow}>
+          {statusIcon}
+          <Text style={[billingConsentCardStyles.statusLabel, { color: statusColor }]}>
+            {statusLabel}
+          </Text>
+        </View>
+      )}
+
+      {consentData?.changedAt && (
+        <Text style={billingConsentCardStyles.changedAt}>
+          Updated {formatDate(consentData.changedAt)}
+        </Text>
+      )}
+
+      {/* View Consent CTA */}
+      <TouchableOpacity
+        style={billingConsentCardStyles.viewBtn}
+        onPress={onViewConsent}
+        accessibilityRole="button"
+        accessibilityLabel="View full consent details"
+      >
+        <Text style={billingConsentCardStyles.viewBtnText}>View Consent</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+const billingConsentCardStyles = StyleSheet.create({
+  container: {
+    backgroundColor: '#F0FDF4',
+    padding: 16,
+    gap: 8,
+    flex: 1,
+  } as ViewStyle,
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  } as ViewStyle,
+  title: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 12,
+    color: '#15803D',
+  } as TextStyle,
+  loadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 4,
+  } as ViewStyle,
+  loadingText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: '#15803D',
+  } as TextStyle,
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  } as ViewStyle,
+  statusLabel: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12,
   } as TextStyle,
   changedAt: {
     fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 11,
-    color: '#9CA3AF',
-    marginBottom: 10,
+    fontSize: 10,
+    color: '#6B7280',
   } as TextStyle,
-  noticeBox: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 6,
-    backgroundColor: '#F9FAFB',
-    borderRadius: radius.sm,
-    padding: 8,
+  viewBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radius.md,
+    backgroundColor: '#DCFCE7',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    alignSelf: 'flex-start',
     marginTop: 4,
   } as ViewStyle,
-  noticeText: {
-    flex: 1,
-    fontFamily: 'PlusJakartaSans_400Regular',
+  viewBtnText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 11,
-    color: '#9CA3AF',
-    lineHeight: 16,
+    color: '#15803D',
   } as TextStyle,
 });
 
@@ -1287,9 +1490,41 @@ const addJourneyStyles = StyleSheet.create({
   } as TextStyle,
 });
 
-// ─── ActiveJourneysAndCTAColumn ───────────────────────────────────────────────
+// ─── Severity helpers ─────────────────────────────────────────────────────────
 
-interface ActiveJourneysAndCTAColumnProps {
+/**
+ * Derive severity level from journey progressPercent.
+ *
+ * Heuristic (client-side, no backend change required):
+ *   progressPercent < 33   → 'high'   — red ring, red Pill
+ *   33 ≤ progress < 67     → 'medium' — amber ring, amber Pill
+ *   progress ≥ 67          → 'low'    — yellow ring, yellow Pill
+ */
+type JourneySeverity = 'high' | 'medium' | 'low';
+
+function deriveSeverity(progressPercent: number): JourneySeverity {
+  if (progressPercent < 33) return 'high';
+  if (progressPercent < 67) return 'medium';
+  return 'low';
+}
+
+/** Chip background for each priority rank (1 = most urgent). */
+const RANK_CHIP_BG: Record<number, string> = {
+  1: tokens.red100,
+  2: tokens.amber100,
+  3: '#FEF9C3', // yellow-100 — not in tokens but consistent with palette
+};
+
+/** Chip text color per rank. */
+const RANK_CHIP_COLOR: Record<number, string> = {
+  1: tokens.red700,
+  2: tokens.amber700,
+  3: '#A16207', // yellow-800
+};
+
+// ─── ResourceNeedsColumn ─────────────────────────────────────────────────────
+
+interface ResourceNeedsColumnProps {
   memberId: string;
   displayName: string;
   sessionCount: number;
@@ -1300,21 +1535,27 @@ interface ActiveJourneysAndCTAColumnProps {
 
 /**
  * Right column of the 3-column top card.
- * Shows: Active Journeys list (with "+ Add Journey" button), Member wellness
- * points balance, Call/Message CTAs.
- * CTAs are dimmed + disabled when the member has refused services.
+ *
+ * Shows:
+ *   - "Resource Needs (Priority)" card — top-3 active journeys ranked by
+ *     severity (low progressPercent = highest priority).
+ *   - Rewards balance badge.
+ *   - Call / Message CTAs (dimmed when services refused).
+ *   - Session count chip.
+ *
+ * Adds Journey modal state lives here so AddJourneyModal is available to the
+ * Member Journey section header via a passed-down trigger callback.
  */
-function ActiveJourneysAndCTAColumn({
+function ResourceNeedsColumn({
   memberId,
   displayName,
   sessionCount,
   servicesConsentRefused,
   onNavigateToConversation,
   onNavigateAndCall,
-}: ActiveJourneysAndCTAColumnProps): React.JSX.Element {
+}: ResourceNeedsColumnProps): React.JSX.Element {
   const { data: journeys, isLoading: journeysLoading } = useMemberJourneys(memberId);
   const { data: rewardsBalance } = useMemberRewardsBalance(memberId);
-  const [addJourneyOpen, setAddJourneyOpen] = useState(false);
 
   const activeJourneys = useMemo(
     () => journeys?.filter((j) => j.status === 'active') ?? [],
@@ -1322,12 +1563,14 @@ function ActiveJourneysAndCTAColumn({
   );
 
   /**
-   * Set of template slugs for which the member already has an active journey.
-   * Passed to AddJourneyModal so it can grey-out already-enrolled templates
-   * before the POST, avoiding a 409 round-trip.
+   * Top-3 active journeys sorted by severity — lowest progressPercent first
+   * (most urgent need at rank 1).
    */
-  const existingActiveSlugs = useMemo<Set<string>>(
-    () => new Set(activeJourneys.map((j) => j.template.slug)),
+  const top3 = useMemo(
+    () =>
+      [...activeJourneys]
+        .sort((a, b) => a.progressPercent - b.progressPercent)
+        .slice(0, 3),
     [activeJourneys],
   );
 
@@ -1335,60 +1578,77 @@ function ActiveJourneysAndCTAColumn({
   const ctaOpacity = ctaDisabled ? 0.45 : 1;
 
   return (
-    <View style={ctaColStyles.container}>
-      {/* Section heading row + "+ Add Journey" button */}
-      <View style={ctaColStyles.journeyHeadRow}>
-        <ColumnHeading text="Active Journeys" />
+    <View style={resourceColStyles.container}>
+      {/* Resource Needs heading */}
+      <View style={resourceColStyles.headRow}>
+        <View>
+          <Text style={resourceColStyles.headTitle}>Resource Needs</Text>
+          <Text style={resourceColStyles.headSub}>(Priority)</Text>
+        </View>
+        {/* Edit pencil — no behavior yet (future edit modal) */}
         <TouchableOpacity
-          style={ctaColStyles.addJourneyBtn}
-          onPress={() => setAddJourneyOpen(true)}
+          style={resourceColStyles.editBtn}
+          onPress={() => {
+            // TODO: opens resource-needs edit modal (future sprint)
+          }}
           accessibilityRole="button"
-          accessibilityLabel="Add a new journey for this member"
+          accessibilityLabel="Edit resource needs priority"
         >
-          <Plus size={12} color={tokens.primary} />
-          <Text style={ctaColStyles.addJourneyBtnText}>Add Journey</Text>
+          <Edit2 size={12} color={tokens.textMuted} />
         </TouchableOpacity>
       </View>
 
-      {/* Journeys list */}
+      {/* Priority items */}
       {journeysLoading ? (
-        <View style={ctaColStyles.loadingRow}>
+        <View style={resourceColStyles.loadingRow}>
           <ActivityIndicator size="small" color={tokens.textMuted} />
-          <Text style={ctaColStyles.loadingText}>Loading journeys…</Text>
+          <Text style={resourceColStyles.loadingText}>Loading…</Text>
         </View>
-      ) : activeJourneys.length === 0 ? (
-        <Text style={ctaColStyles.emptyJourneys}>No active journeys.</Text>
+      ) : top3.length === 0 ? (
+        <Text style={resourceColStyles.emptyText}>No active journeys.</Text>
       ) : (
-        <View style={ctaColStyles.journeyList}>
-          {activeJourneys.slice(0, 3).map((journey) => (
-            <JourneyListRow key={journey.id} journey={journey} />
-          ))}
-          {activeJourneys.length > 3 && (
-            <Text style={ctaColStyles.moreJourneys}>
-              +{activeJourneys.length - 3} more
-            </Text>
-          )}
+        <View style={resourceColStyles.priorityList}>
+          {top3.map((journey, index) => {
+            const rank = index + 1;
+            const severity = deriveSeverity(journey.progressPercent);
+            const chipBg = RANK_CHIP_BG[rank] ?? '#F3F4F6';
+            const chipColor = RANK_CHIP_COLOR[rank] ?? tokens.textMuted;
+            const pillVariant =
+              severity === 'high'
+                ? 'red'
+                : severity === 'medium'
+                ? 'amber'
+                : ('amber-dark' as const);
+            const pillLabel =
+              severity === 'high' ? 'High' : severity === 'medium' ? 'Medium' : 'Low';
+
+            return (
+              <View key={journey.id} style={resourceColStyles.priorityItem}>
+                {/* Rank chip */}
+                <View style={[resourceColStyles.rankChip, { backgroundColor: chipBg }]}>
+                  <Text style={[resourceColStyles.rankText, { color: chipColor }]}>
+                    {rank}
+                  </Text>
+                </View>
+
+                {/* Journey name */}
+                <Text style={resourceColStyles.journeyName} numberOfLines={2}>
+                  {journey.template.name}
+                </Text>
+
+                {/* Severity pill */}
+                <Pill variant={pillVariant} size="sm">{pillLabel}</Pill>
+              </View>
+            );
+          })}
         </View>
       )}
 
-      {/* Add Journey modal — renders here so it has access to local state */}
-      <AddJourneyModal
-        memberId={memberId}
-        memberName={displayName}
-        visible={addJourneyOpen}
-        existingActiveSlugs={existingActiveSlugs}
-        onClose={() => setAddJourneyOpen(false)}
-        onCreated={() => {
-          /* useMemberJourneys is invalidated by the mutation's onSuccess;
-             the query refetches automatically — no extra action needed here. */
-        }}
-      />
-
       {/* Rewards balance */}
       {rewardsBalance !== undefined && (
-        <View style={ctaColStyles.rewardsBadge}>
+        <View style={resourceColStyles.rewardsBadge}>
           <Star size={12} color="#D97706" />
-          <Text style={ctaColStyles.rewardsText}>
+          <Text style={resourceColStyles.rewardsText}>
             {rewardsBalance.currentBalance.toLocaleString()} wellness pts
           </Text>
         </View>
@@ -1396,41 +1656,45 @@ function ActiveJourneysAndCTAColumn({
 
       {/* Services refused caption */}
       {servicesConsentRefused && (
-        <View style={ctaColStyles.refusedCaption}>
+        <View style={resourceColStyles.refusedCaption}>
           <ShieldX size={11} color="#B91C1C" />
-          <Text style={ctaColStyles.refusedCaptionText}>
+          <Text style={resourceColStyles.refusedCaptionText}>
             Member has refused services
           </Text>
         </View>
       )}
 
       {/* Call / Message CTAs */}
-      <View style={[ctaColStyles.ctaRow, { opacity: ctaOpacity }]}>
+      <View style={[resourceColStyles.ctaRow, { opacity: ctaOpacity }]}>
         <TouchableOpacity
-          style={[ctaColStyles.ctaBtn, ctaColStyles.callBtn]}
+          style={[resourceColStyles.ctaBtn, resourceColStyles.callBtn]}
           onPress={ctaDisabled ? undefined : onNavigateAndCall}
           disabled={ctaDisabled}
           accessibilityRole="button"
-          accessibilityLabel={ctaDisabled ? 'Call disabled — member has refused services' : `Call ${displayName}`}
+          accessibilityLabel={
+            ctaDisabled
+              ? 'Call disabled — member has refused services'
+              : `Call ${displayName}`
+          }
           accessibilityState={{ disabled: ctaDisabled }}
         >
           <Phone size={14} color="#FFFFFF" />
-          <Text style={ctaColStyles.ctaBtnText}>Call</Text>
+          <Text style={resourceColStyles.ctaBtnText}>Call</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[ctaColStyles.ctaBtn, ctaColStyles.messageBtn]}
-          onPress={
-            ctaDisabled
-              ? undefined
-              : () => onNavigateToConversation('')
-          }
+          style={[resourceColStyles.ctaBtn, resourceColStyles.messageBtn]}
+          onPress={ctaDisabled ? undefined : () => onNavigateToConversation('')}
           disabled={ctaDisabled}
           accessibilityRole="button"
-          accessibilityLabel={ctaDisabled ? 'Message disabled — member has refused services' : `Message ${displayName}`}
+          accessibilityLabel={
+            ctaDisabled
+              ? 'Message disabled — member has refused services'
+              : `Message ${displayName}`
+          }
           accessibilityState={{ disabled: ctaDisabled }}
         >
           <MessageSquare size={14} color={tokens.primary} />
-          <Text style={[ctaColStyles.ctaBtnText, { color: tokens.primary }]}>
+          <Text style={[resourceColStyles.ctaBtnText, { color: tokens.primary }]}>
             Message
           </Text>
         </TouchableOpacity>
@@ -1438,8 +1702,8 @@ function ActiveJourneysAndCTAColumn({
 
       {/* Session count chip */}
       {sessionCount > 0 && (
-        <View style={ctaColStyles.sessionCountRow}>
-          <Text style={ctaColStyles.sessionCountText}>
+        <View style={resourceColStyles.sessionCountRow}>
+          <Text style={resourceColStyles.sessionCountText}>
             {sessionCount} session{sessionCount !== 1 ? 's' : ''} completed
           </Text>
         </View>
@@ -1448,112 +1712,39 @@ function ActiveJourneysAndCTAColumn({
   );
 }
 
-interface JourneyListRowProps {
-  journey: MemberJourneyResponse;
-}
-
-function JourneyListRow({ journey }: JourneyListRowProps): React.JSX.Element {
-  const currentStepName = journey.currentStep?.stepName ?? null;
-  const progressPercent = Math.round(journey.progressPercent);
-
-  return (
-    <View style={journeyRowStyles.container}>
-      <View style={journeyRowStyles.header}>
-        <Text style={journeyRowStyles.name} numberOfLines={1}>
-          {journey.template.name}
-        </Text>
-        <Text style={journeyRowStyles.percent}>{progressPercent}%</Text>
-      </View>
-      {currentStepName ? (
-        <Text style={journeyRowStyles.step} numberOfLines={1}>
-          {currentStepName}
-        </Text>
-      ) : null}
-      {/* Progress bar */}
-      <View style={journeyRowStyles.barTrack}>
-        <View
-          style={[
-            journeyRowStyles.barFill,
-            { width: `${progressPercent}%` as `${number}%` },
-          ]}
-        />
-      </View>
-    </View>
-  );
-}
-
-const journeyRowStyles = StyleSheet.create({
-  container: {
-    gap: 4,
-    paddingVertical: 6,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
-  } as ViewStyle,
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  } as ViewStyle,
-  name: {
-    flex: 1,
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 12,
-    color: '#111827',
-  } as TextStyle,
-  percent: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 11,
-    color: tokens.primary,
-    marginLeft: 6,
-  } as TextStyle,
-  step: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 11,
-    color: '#6B7280',
-  } as TextStyle,
-  barTrack: {
-    height: 4,
-    backgroundColor: '#E5E7EB',
-    borderRadius: 2,
-    overflow: 'hidden',
-  } as ViewStyle,
-  barFill: {
-    height: '100%',
-    backgroundColor: tokens.primary,
-    borderRadius: 2,
-  } as ViewStyle,
-});
-
-const ctaColStyles = StyleSheet.create({
+const resourceColStyles = StyleSheet.create({
   container: {
     flex: Platform.OS === 'web' ? 3 : undefined,
     padding: 20,
     borderTopWidth: Platform.OS === 'web' ? 0 : 1,
     borderTopColor: '#F3F4F6',
-    gap: 8,
+    gap: 10,
   } as ViewStyle,
-  journeyHeadRow: {
+  headRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
-    marginBottom: -4,
+    marginBottom: -2,
   } as ViewStyle,
-  addJourneyBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: radius.pill,
-    backgroundColor: tokens.primary + '12',
-    borderWidth: 1,
-    borderColor: tokens.primary + '40',
-  } as ViewStyle,
-  addJourneyBtnText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 11,
-    color: tokens.primary,
+  headTitle: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 13,
+    color: tokens.textPrimary,
   } as TextStyle,
+  headSub: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: tokens.textMuted,
+    marginTop: 1,
+  } as TextStyle,
+  editBtn: {
+    width: 26,
+    height: 26,
+    borderRadius: radius.sm,
+    backgroundColor: tokens.gray100,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
   loadingRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1565,20 +1756,39 @@ const ctaColStyles = StyleSheet.create({
     fontSize: 12,
     color: tokens.textMuted,
   } as TextStyle,
-  emptyJourneys: {
+  emptyText: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 12,
     color: '#A0A6AB',
     fontStyle: 'italic',
   } as TextStyle,
-  journeyList: {
-    gap: 0,
+  priorityList: {
+    gap: 6,
   } as ViewStyle,
-  moreJourneys: {
-    fontFamily: 'PlusJakartaSans_400Regular',
+  priorityItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  } as ViewStyle,
+  rankChip: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  } as ViewStyle,
+  rankText: {
+    fontFamily: 'DMSans_700Bold',
     fontSize: 11,
-    color: '#9CA3AF',
-    paddingTop: 4,
+    lineHeight: 13,
+  } as TextStyle,
+  journeyName: {
+    flex: 1,
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12,
+    color: tokens.textPrimary,
+    lineHeight: 16,
   } as TextStyle,
   rewardsBadge: {
     flexDirection: 'row',
@@ -1650,11 +1860,12 @@ const ctaColStyles = StyleSheet.create({
   } as TextStyle,
 });
 
-// ─── JourneyRoadmap ───────────────────────────────────────────────────────────
+// ─── Multi-track Journey Timeline ─────────────────────────────────────────────
 
 /**
  * Maps a MemberJourneyResponse to the 6-step roadmap display data.
  * Derives step state from the backend step.status values.
+ * Uses actual pointsOnCompletion from the API (post-T06: 10/25/30/10/25/50).
  */
 function buildRoadmapSteps(journey: MemberJourneyResponse | undefined) {
   const standardStepKeys = [
@@ -1696,141 +1907,510 @@ interface RoadmapStep {
   points: number;
 }
 
-interface JourneyRoadmapProps {
-  memberId: string;
+// Timeline responsive breakpoints
+const TIMELINE_WIDE_BP = 1024;
+const TIMELINE_MID_BP = 768;
+
+interface StepCircleProps {
+  step: RoadmapStep;
+  isLast: boolean;
 }
 
 /**
- * Horizontal 6-step journey roadmap.
- * Fetches the member's active journey and renders step states with points.
- * Falls back to all-upcoming display when no journey data is available.
+ * Single step node in the horizontal timeline.
+ * Completed → filled green + check icon.
+ * In Progress → filled green + outer glow ring + check icon.
+ * Missed → filled amber + X icon.
+ * Upcoming → empty gray circle.
+ * Connector line: emerald-300 if LEFT step is completed, gray otherwise.
  */
-function JourneyRoadmap({ memberId }: JourneyRoadmapProps): React.JSX.Element {
+const StepCircle = React.memo(function StepCircle({
+  step,
+  isLast,
+}: StepCircleProps): React.JSX.Element {
+  const isCompleted = step.state === 'completed';
+  const isInProgress = step.state === 'in_progress';
+  const isMissed = step.state === 'missed';
+  const isUpcoming = step.state === 'upcoming';
+
+  const dotBg = isCompleted || isInProgress ? '#16A34A' : isMissed ? '#F59E0B' : '#E5E7EB';
+  const lineBg = isCompleted ? '#34D399' : '#E5E7EB';
+
+  const subLabelText = isCompleted
+    ? 'Completed'
+    : isInProgress
+    ? 'In Progress'
+    : isMissed
+    ? 'Missed'
+    : 'Upcoming';
+
+  const subLabelColor = isCompleted || isInProgress
+    ? '#16A34A'
+    : isMissed
+    ? '#D97706'
+    : tokens.textMuted;
+
+  return (
+    <View
+      style={timelineStyles.stepWrapper}
+      accessibilityLabel={`${step.label}: ${subLabelText}, ${step.points} points on completion`}
+      accessibilityRole="text"
+    >
+      {/* Circle + connector */}
+      <View style={timelineStyles.circleRow}>
+        <View
+          style={[
+            timelineStyles.circleOuter,
+            isInProgress && timelineStyles.circleInProgressRing,
+          ]}
+        >
+          <View style={[timelineStyles.dot, { backgroundColor: dotBg }]}>
+            {isCompleted || isInProgress ? (
+              <Check size={10} color="#FFFFFF" strokeWidth={3} />
+            ) : isMissed ? (
+              <X size={10} color="#FFFFFF" strokeWidth={3} />
+            ) : (
+              <View style={timelineStyles.dotInner} />
+            )}
+          </View>
+        </View>
+        {!isLast && (
+          <View style={[timelineStyles.connector, { backgroundColor: lineBg }]} />
+        )}
+      </View>
+
+      {/* Step name */}
+      <Text
+        style={isUpcoming ? timelineStyles.stepLabelMuted : timelineStyles.stepLabelActive}
+        numberOfLines={2}
+      >
+        {step.label}
+      </Text>
+      {/* Status */}
+      <Text style={[timelineStyles.subLabel, { color: subLabelColor }]}>
+        {subLabelText}
+      </Text>
+      {/* Points */}
+      <Text style={isUpcoming ? timelineStyles.pointsMuted : timelineStyles.pointsActive}>
+        +{step.points} pts
+      </Text>
+    </View>
+  );
+});
+
+interface VerticalStepRowProps {
+  step: RoadmapStep;
+}
+
+/**
+ * Single step card for the narrow (<768px) vertical layout.
+ */
+const VerticalStepRow = React.memo(function VerticalStepRow({
+  step,
+}: VerticalStepRowProps): React.JSX.Element {
+  const isCompleted = step.state === 'completed';
+  const isInProgress = step.state === 'in_progress';
+  const isMissed = step.state === 'missed';
+  const isUpcoming = step.state === 'upcoming';
+
+  const dotBg = isCompleted || isInProgress ? '#16A34A' : isMissed ? '#F59E0B' : '#E5E7EB';
+  const subLabelText = isCompleted
+    ? 'Completed'
+    : isInProgress
+    ? 'In Progress'
+    : isMissed
+    ? 'Missed'
+    : 'Upcoming';
+  const subLabelColor = isCompleted || isInProgress
+    ? '#16A34A'
+    : isMissed
+    ? '#D97706'
+    : tokens.textMuted;
+
+  return (
+    <View
+      style={verticalStepStyles.row}
+      accessibilityLabel={`${step.label}: ${subLabelText}, ${step.points} points`}
+      accessibilityRole="text"
+    >
+      <View
+        style={[
+          verticalStepStyles.dot,
+          { backgroundColor: dotBg },
+          isInProgress && verticalStepStyles.dotInProgress,
+        ]}
+      >
+        {isCompleted || isInProgress ? (
+          <Check size={9} color="#FFFFFF" strokeWidth={3} />
+        ) : isMissed ? (
+          <X size={9} color="#FFFFFF" strokeWidth={3} />
+        ) : null}
+      </View>
+      <View style={verticalStepStyles.textBlock}>
+        <Text
+          style={[
+            verticalStepStyles.stepName,
+            isUpcoming && verticalStepStyles.stepNameMuted,
+          ]}
+        >
+          {step.label}
+        </Text>
+        <View style={verticalStepStyles.metaRow}>
+          <Text style={[verticalStepStyles.statusText, { color: subLabelColor }]}>
+            {subLabelText}
+          </Text>
+          <Text style={verticalStepStyles.pointsText}>+{step.points} pts</Text>
+        </View>
+      </View>
+    </View>
+  );
+});
+
+const verticalStepStyles = StyleSheet.create({
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  } as ViewStyle,
+  dot: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  } as ViewStyle,
+  dotInProgress: {
+    borderWidth: 2,
+    borderColor: '#34D399',
+  } as ViewStyle,
+  textBlock: { flex: 1, gap: 2 } as ViewStyle,
+  stepName: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12,
+    color: tokens.textPrimary,
+  } as TextStyle,
+  stepNameMuted: {
+    color: tokens.textMuted,
+    fontFamily: 'PlusJakartaSans_400Regular',
+  } as TextStyle,
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  } as ViewStyle,
+  statusText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+  } as TextStyle,
+  pointsText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 10,
+    color: tokens.textMuted,
+  } as TextStyle,
+});
+
+interface SingleJourneyTrackProps {
+  journey: MemberJourneyResponse;
+  rank: number;
+  windowWidth: number;
+}
+
+/**
+ * A single journey track row: rank chip + name + severity pill in the header,
+ * then the 6-step timeline below.
+ *
+ * Responsive:
+ *   ≥ 1024px — evenly-spaced flex row (wideRow).
+ *   768–1023px — horizontal ScrollView (overflowable swipe).
+ *   < 768px  — vertical VerticalStepRow list.
+ */
+const SingleJourneyTrack = React.memo(function SingleJourneyTrack({
+  journey,
+  rank,
+  windowWidth,
+}: SingleJourneyTrackProps): React.JSX.Element {
+  const steps = useMemo(() => buildRoadmapSteps(journey), [journey]);
+  const severity = deriveSeverity(journey.progressPercent);
+  const chipBg = RANK_CHIP_BG[rank] ?? '#F3F4F6';
+  const chipColor = RANK_CHIP_COLOR[rank] ?? tokens.textMuted;
+
+  const isNarrow = windowWidth < TIMELINE_MID_BP;
+  const isMid = windowWidth >= TIMELINE_MID_BP && windowWidth < TIMELINE_WIDE_BP;
+
+  const pillVariant =
+    severity === 'high' ? 'red' : severity === 'medium' ? 'amber' : ('amber-dark' as const);
+  const pillLabel =
+    severity === 'high' ? 'High' : severity === 'medium' ? 'Medium' : 'Low';
+
+  return (
+    <View style={trackStyles.container}>
+      {/* Header row */}
+      <View style={trackStyles.header}>
+        <View style={[trackStyles.rankChip, { backgroundColor: chipBg }]}>
+          <Text style={[trackStyles.rankText, { color: chipColor }]}>{rank}</Text>
+        </View>
+        <Text style={trackStyles.journeyName} numberOfLines={1}>
+          {journey.template.name}
+        </Text>
+        <Pill variant={pillVariant} size="sm">{pillLabel}</Pill>
+        <Text style={trackStyles.progressLabel}>
+          {Math.round(journey.progressPercent)}%
+        </Text>
+      </View>
+
+      {/* Step layout by viewport */}
+      {isNarrow ? (
+        <View style={trackStyles.verticalList}>
+          {steps.map((step) => (
+            <VerticalStepRow key={step.key} step={step} />
+          ))}
+        </View>
+      ) : isMid ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={timelineStyles.scrollRow}
+        >
+          {steps.map((step, index) => (
+            <StepCircle
+              key={step.key}
+              step={step}
+              isLast={index === steps.length - 1}
+            />
+          ))}
+        </ScrollView>
+      ) : (
+        <View style={timelineStyles.wideRow}>
+          {steps.map((step, index) => (
+            <StepCircle
+              key={step.key}
+              step={step}
+              isLast={index === steps.length - 1}
+            />
+          ))}
+        </View>
+      )}
+    </View>
+  );
+});
+
+const trackStyles = StyleSheet.create({
+  container: {
+    gap: 12,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  } as ViewStyle,
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  } as ViewStyle,
+  rankChip: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  } as ViewStyle,
+  rankText: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 12,
+  } as TextStyle,
+  journeyName: {
+    flex: 1,
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 15,
+    color: tokens.textPrimary,
+    lineHeight: 20,
+  } as TextStyle,
+  progressLabel: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 11,
+    color: tokens.textMuted,
+  } as TextStyle,
+  verticalList: { gap: 0 } as ViewStyle,
+});
+
+const timelineStyles = StyleSheet.create({
+  stepWrapper: {
+    flex: 1,
+    alignItems: 'center',
+    minWidth: 76,
+    flexShrink: 0,
+    position: 'relative',
+    paddingHorizontal: 2,
+  } as ViewStyle,
+  circleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: '100%',
+    justifyContent: 'center',
+    marginBottom: 6,
+    position: 'relative',
+  } as ViewStyle,
+  circleOuter: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+    zIndex: 1,
+  } as ViewStyle,
+  circleInProgressRing: {
+    borderWidth: 2,
+    borderColor: '#34D399',
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+  } as ViewStyle,
+  dot: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+  dotInner: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#D1D5DB',
+  } as ViewStyle,
+  connector: {
+    position: 'absolute',
+    left: '50%',
+    right: '-50%',
+    top: '50%',
+    height: 2,
+    zIndex: 0,
+    marginTop: -1,
+  } as ViewStyle,
+  stepLabelActive: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 11,
+    color: tokens.textPrimary,
+    textAlign: 'center',
+    maxWidth: 80,
+    lineHeight: 14,
+  } as TextStyle,
+  stepLabelMuted: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: tokens.textMuted,
+    textAlign: 'center',
+    maxWidth: 80,
+    lineHeight: 14,
+  } as TextStyle,
+  subLabel: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 10,
+    textAlign: 'center',
+    marginTop: 2,
+  } as TextStyle,
+  pointsActive: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 10,
+    color: '#047857',
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 999,
+    marginTop: 3,
+    textAlign: 'center',
+    overflow: 'hidden',
+  } as TextStyle,
+  pointsMuted: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 10,
+    color: tokens.textMuted,
+    backgroundColor: '#F3F4F6',
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 999,
+    marginTop: 3,
+    textAlign: 'center',
+    overflow: 'hidden',
+  } as TextStyle,
+  scrollRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingVertical: 4,
+    paddingBottom: 8,
+  } as ViewStyle,
+  wideRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingVertical: 4,
+  } as ViewStyle,
+});
+
+interface MemberJourneyTimelineProps {
+  memberId: string;
+  onAddJourney: () => void;
+  windowWidth: number;
+}
+
+/**
+ * Multi-track Member Journey section body.
+ * Shows up to 3 active journeys in severity-rank order (ascending progressPercent).
+ * onAddJourney is passed from the section header to preserve the existing modal trigger.
+ */
+function MemberJourneyTimeline({
+  memberId,
+  onAddJourney: _onAddJourney,
+  windowWidth,
+}: MemberJourneyTimelineProps): React.JSX.Element {
   const { data: journeys, isLoading } = useMemberJourneys(memberId);
-  const activeJourney = useMemo(
-    () => journeys?.find((j) => j.status === 'active'),
-    [journeys],
-  );
-  const roadmapSteps: RoadmapStep[] = useMemo(
-    () => buildRoadmapSteps(activeJourney),
-    [activeJourney],
-  );
+
+  /**
+   * Top-3 active journeys sorted ascending by progressPercent.
+   * Lowest progress = highest priority = rank 1.
+   */
+  const top3Active = useMemo(() => {
+    const active = journeys?.filter((j) => j.status === 'active') ?? [];
+    return [...active]
+      .sort((a, b) => a.progressPercent - b.progressPercent)
+      .slice(0, 3);
+  }, [journeys]);
 
   if (isLoading) {
     return (
-      <View style={roadmapStyles.loadingRow}>
+      <View style={mjStyles.loadingRow}>
         <ActivityIndicator size="small" color={tokens.textMuted} />
-        <Text style={roadmapStyles.loadingText}>Loading journey…</Text>
+        <Text style={mjStyles.loadingText}>Loading journeys…</Text>
       </View>
     );
   }
 
+  if (top3Active.length === 0) {
+    return (
+      <EmptySectionState message="No active journeys. Use 'Add Journey' to start one." />
+    );
+  }
+
   return (
-    <View style={roadmapStyles.container}>
-      {activeJourney && (
-        <View style={roadmapStyles.templateBadge}>
-          <Text style={roadmapStyles.templateName}>
-            {activeJourney.template.name}
-          </Text>
-          <Text style={roadmapStyles.templateProgress}>
-            {Math.round(activeJourney.progressPercent)}% complete
-          </Text>
-        </View>
-      )}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={roadmapStyles.row}
-      >
-        {roadmapSteps.map((step, index) => {
-          const isLast = index === roadmapSteps.length - 1;
-          const isCompleted = step.state === 'completed';
-          const isInProgress = step.state === 'in_progress';
-          const isMissed = step.state === 'missed';
-          const isUpcoming = step.state === 'upcoming';
-
-          const dotBg = isCompleted || isInProgress
-            ? '#16A34A'
-            : isMissed
-            ? '#F59E0B'
-            : '#E5E7EB';
-
-          const lineBg = isCompleted ? '#16A34A' : '#E5E7EB';
-
-          const subLabelText = isCompleted
-            ? 'Completed'
-            : isInProgress
-            ? 'In Progress'
-            : isMissed
-            ? 'Missed'
-            : '';
-
-          const subLabelColor = isCompleted
-            ? '#6B7280'
-            : isInProgress
-            ? '#16A34A'
-            : isMissed
-            ? '#EF4444'
-            : '#9CA3AF';
-
-          return (
-            <View key={step.key} style={roadmapStyles.stepWrapper}>
-              {/* Circle + outer ring for in-progress/missed */}
-              <View
-                style={[
-                  roadmapStyles.circleOuter,
-                  isInProgress && roadmapStyles.circleInProgress,
-                  isMissed && roadmapStyles.circleMissed,
-                ]}
-              >
-                <View style={[roadmapStyles.dot, { backgroundColor: dotBg }]}>
-                  {isCompleted || isInProgress ? (
-                    <CheckCircle size={20} color="#FFFFFF" />
-                  ) : isMissed ? (
-                    <Clock size={20} color="#FFFFFF" />
-                  ) : (
-                    <View style={roadmapStyles.dotInner} />
-                  )}
-                </View>
-              </View>
-
-              {/* Connector line */}
-              {!isLast && (
-                <View style={[roadmapStyles.connector, { backgroundColor: lineBg }]} />
-              )}
-
-              {/* Labels */}
-              <Text
-                style={[
-                  roadmapStyles.label,
-                  !isUpcoming && roadmapStyles.labelActive,
-                ]}
-              >
-                {step.label}
-              </Text>
-              {subLabelText ? (
-                <Text style={[roadmapStyles.subLabel, { color: subLabelColor }]}>
-                  {subLabelText}
-                </Text>
-              ) : null}
-              <Text
-                style={[
-                  roadmapStyles.points,
-                  isUpcoming && roadmapStyles.pointsMuted,
-                ]}
-              >
-                +{step.points} pts
-              </Text>
-            </View>
-          );
-        })}
-      </ScrollView>
+    <View style={mjStyles.container}>
+      {top3Active.map((journey, index) => (
+        <SingleJourneyTrack
+          key={journey.id}
+          journey={journey}
+          rank={index + 1}
+          windowWidth={windowWidth}
+        />
+      ))}
     </View>
   );
 }
 
-const roadmapStyles = StyleSheet.create({
-  container: { paddingHorizontal: 4 } as ViewStyle,
+const mjStyles = StyleSheet.create({
+  container: { gap: 0 } as ViewStyle,
   loadingRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1841,107 +2421,6 @@ const roadmapStyles = StyleSheet.create({
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 13,
     color: tokens.textMuted,
-  } as TextStyle,
-  templateBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 12,
-    paddingHorizontal: 4,
-  } as ViewStyle,
-  templateName: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 13,
-    color: '#111827',
-  } as TextStyle,
-  templateProgress: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 12,
-    color: tokens.textSecondary,
-  } as TextStyle,
-  row: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    paddingVertical: 4,
-    paddingBottom: 8,
-  } as ViewStyle,
-  stepWrapper: {
-    alignItems: 'center',
-    position: 'relative',
-    width: 104,
-    flexShrink: 0,
-  } as ViewStyle,
-  circleOuter: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'transparent',
-    marginBottom: 8,
-    zIndex: 1,
-  } as ViewStyle,
-  circleInProgress: {
-    borderWidth: 3,
-    borderColor: '#FCD34D',
-  } as ViewStyle,
-  circleMissed: {
-    borderWidth: 3,
-    borderColor: '#FCA5A5',
-  } as ViewStyle,
-  dot: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: 'center',
-    justifyContent: 'center',
-  } as ViewStyle,
-  dotInner: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: '#9CA3AF',
-  } as ViewStyle,
-  connector: {
-    position: 'absolute',
-    top: 25,
-    left: '50%',
-    right: '-50%',
-    height: 3,
-    zIndex: 0,
-  } as ViewStyle,
-  label: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 10,
-    color: '#9CA3AF',
-    textAlign: 'center',
-    maxWidth: 90,
-  } as TextStyle,
-  labelActive: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    color: '#111827',
-  } as TextStyle,
-  subLabel: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 10,
-    textAlign: 'center',
-    marginTop: 1,
-  } as TextStyle,
-  points: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 10,
-    color: '#047857',
-    backgroundColor: '#ECFDF5',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 999,
-    marginTop: 3,
-    textAlign: 'center',
-    overflow: 'hidden',
-  } as TextStyle,
-  pointsMuted: {
-    color: '#6B7280',
-    backgroundColor: '#F3F4F6',
   } as TextStyle,
 });
 
@@ -2821,6 +3300,19 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
   // ── Drawer / modal state ─────────────────────────────────────────────────────
   const [openQuestionsOpen, setOpenQuestionsOpen] = useState(false);
   const [flagModalOpen, setFlagModalOpen] = useState(false);
+  const [addJourneyOpen, setAddJourneyOpen] = useState(false);
+
+  // Journeys data used both by ResourceNeedsColumn and AddJourneyModal dedup guard.
+  const { data: journeysForModal } = useMemberJourneys(memberId);
+  const existingActiveSlugs = useMemo<Set<string>>(
+    () =>
+      new Set(
+        (journeysForModal ?? [])
+          .filter((j) => j.status === 'active')
+          .map((j) => j.template.slug),
+      ),
+    [journeysForModal],
+  );
 
   // ── Navigation helpers ───────────────────────────────────────────────────────
 
@@ -2861,7 +3353,7 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
             accessibilityRole="button"
             accessibilityLabel="Go back"
           >
-            <ArrowLeft size={20} color={legacyColors.foreground} />
+            <ArrowLeft size={20} color={tokens.textPrimary} />
           </TouchableOpacity>
           <Text style={s.headerTitle}>Member Profile</Text>
           <View style={{ width: 40 }} />
@@ -2893,14 +3385,14 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
             accessibilityRole="button"
             accessibilityLabel="Go back"
           >
-            <ArrowLeft size={20} color={legacyColors.foreground} />
+            <ArrowLeft size={20} color={tokens.textPrimary} />
           </TouchableOpacity>
           <Text style={s.headerTitle}>Member Profile</Text>
           <View style={{ width: 40 }} />
         </View>
         <View style={s.emptyState}>
           <View style={s.emptyIconCircle}>
-            <ShieldOff size={28} color={legacyColors.mutedForeground} />
+            <ShieldOff size={28} color={tokens.textMuted} />
           </View>
           <Text style={s.emptyTitle}>
             {is403 ? 'Profile not accessible' : 'Could not load profile'}
@@ -2948,7 +3440,7 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
               accessibilityRole="button"
               accessibilityLabel="Go back"
             >
-              <ArrowLeft size={20} color={legacyColors.foreground} />
+              <ArrowLeft size={20} color={tokens.textPrimary} />
             </TouchableOpacity>
             <Text style={s.headerTitle} numberOfLines={1}>
               Member Profile
@@ -2985,7 +3477,10 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
             )}
 
             {/* ───────────────────────────────────────────────────────────────
-                TOP CARD: 3 columns — Demographics / Consent / Journeys+CTAs
+                TOP CARD: 3 columns
+                  Left   — Demographics
+                  Center — Flag Note card (amber) + Billing Consent card (green)
+                  Right  — Resource Needs (Priority) + Call/Message CTAs
             ─────────────────────────────────────────────────────────────── */}
             <Card style={s.topCard}>
               <View style={s.topCardRow}>
@@ -2993,11 +3488,20 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                 {/* LEFT: Demographics */}
                 <DemographicsColumn profile={profile} />
 
-                {/* CENTER: Services Consent */}
-                <ServicesConsentColumn memberId={memberId} />
+                {/* CENTER: Flag Note + Billing Consent */}
+                <CenterColumn
+                  memberId={memberId}
+                  onEditFlag={() => setFlagModalOpen(true)}
+                  onViewConsent={() =>
+                    Alert.alert(
+                      'Billing Consent',
+                      'Full consent details are managed by the member. This status reflects their current choice.',
+                    )
+                  }
+                />
 
-                {/* RIGHT: Active Journeys + Rewards + Call/Message */}
-                <ActiveJourneysAndCTAColumn
+                {/* RIGHT: Resource Needs (Priority) + Call/Message */}
+                <ResourceNeedsColumn
                   memberId={memberId}
                   displayName={displayName}
                   sessionCount={profile.sessionCount}
@@ -3055,14 +3559,58 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
               <View style={s.mainCol}>
 
                 {/* ─────────────────────────────────────────────────────────
-                    MEMBER JOURNEY ROADMAP
+                    MEMBER JOURNEY — multi-track horizontal timeline
                 ─────────────────────────────────────────────────────── */}
                 <SectionCard
                   title="Member Journey"
-                  subtitle="6-step roadmap with wellness points"
+                  subtitle="Progress for Top Resource Needs"
+                  titleRight={
+                    <View style={s.journeyHeaderRight}>
+                      {/* Edit pencil — no-op placeholder for future reorder modal */}
+                      <TouchableOpacity
+                        style={s.journeyEditBtn}
+                        onPress={() => {
+                          // TODO: opens journey reorder modal (future sprint)
+                        }}
+                        accessibilityRole="button"
+                        accessibilityLabel="Edit member journey order"
+                      >
+                        <Edit2 size={12} color={tokens.textMuted} />
+                      </TouchableOpacity>
+                      {/* Add Journey — wired to the existing AddJourneyModal */}
+                      <TouchableOpacity
+                        style={s.addJourneyBtn}
+                        onPress={() => setAddJourneyOpen(true)}
+                        accessibilityRole="button"
+                        accessibilityLabel="Add a new journey for this member"
+                      >
+                        <Plus size={12} color={tokens.primary} />
+                        <Text style={s.addJourneyBtnText}>Add Journey</Text>
+                      </TouchableOpacity>
+                    </View>
+                  }
                 >
-                  <JourneyRoadmap memberId={memberId} />
+                  <MemberJourneyTimeline
+                    memberId={memberId}
+                    onAddJourney={() => setAddJourneyOpen(true)}
+                    windowWidth={windowWidth}
+                  />
                 </SectionCard>
+
+                {/* AddJourneyModal — triggered from both the section header and
+                    the empty-state CTA. Dedup guard uses existingActiveSlugs
+                    computed from the same useMemberJourneys query. */}
+                <AddJourneyModal
+                  memberId={memberId}
+                  memberName={displayName}
+                  visible={addJourneyOpen}
+                  existingActiveSlugs={existingActiveSlugs}
+                  onClose={() => setAddJourneyOpen(false)}
+                  onCreated={() => {
+                    /* useMemberJourneys is invalidated by the mutation's onSuccess;
+                       the query refetches automatically — no extra action needed. */
+                  }}
+                />
 
                 {/* ─────────────────────────────────────────────────────────
                     BILLABLE UNITS WIDGET
@@ -3233,8 +3781,8 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                       }
                     />
                     <RailAccessItem
-                      icon={<Sparkles size={14} color={legacyColors.secondary} />}
-                      iconBg={legacyColors.secondary + '18'}
+                      icon={<Sparkles size={14} color={tokens.emerald500} />}
+                      iconBg={tokens.emerald500 + '18'}
                       label="Open Questions"
                       sublabel="AI-suggested prompts"
                       onPress={() => setOpenQuestionsOpen(true)}
@@ -3502,6 +4050,37 @@ const s = StyleSheet.create({
   countBadgeText: {
     fontFamily: fonts.bodySemibold,
     fontSize: 10,
+    color: tokens.primary,
+  } as TextStyle,
+
+  // Member Journey section header right slot
+  journeyHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  } as ViewStyle,
+  journeyEditBtn: {
+    width: 26,
+    height: 26,
+    borderRadius: radius.sm,
+    backgroundColor: tokens.gray100,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+  addJourneyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    backgroundColor: tokens.primary + '12',
+    borderWidth: 1,
+    borderColor: tokens.primary + '40',
+  } as ViewStyle,
+  addJourneyBtnText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 11,
     color: tokens.primary,
   } as TextStyle,
 
