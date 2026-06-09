@@ -83,6 +83,7 @@ import { PageWrap } from '../../components/ui/PageWrap';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { SectionHeader } from '../../components/ui/SectionHeader';
 import { Pill } from '../../components/ui/Pill';
+import { ProfilePictureEditor } from '../../components/ui/ProfilePictureEditor';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 import { DeleteAccountModal } from '../../components/profile/DeleteAccountModal';
@@ -739,11 +740,15 @@ interface DemographicsCardProps {
   insuranceProvider: string;
   isPhoneVerified: boolean;
   onEditInsuranceCin: () => void;
+  /** Current profile picture URL (null = none). Passed from the parent query. */
+  profilePictureUrl: string | null | undefined;
+  /** Called after a successful upload or removal so the parent can sync state. */
+  onPhotoChange: (newUrl: string | null) => void;
 }
 
 /**
  * Left card: read-only demographics display with pencil-icon action
- * to open the Insurance/CIN edit modal.
+ * to open the Insurance/CIN edit modal. Profile photo is editable inline.
  */
 function DemographicsCard({
   name,
@@ -751,6 +756,8 @@ function DemographicsCard({
   insuranceProvider,
   isPhoneVerified,
   onEditInsuranceCin,
+  profilePictureUrl,
+  onPhotoChange,
 }: DemographicsCardProps): React.JSX.Element {
   const initials = getInitials(name);
 
@@ -772,9 +779,14 @@ function DemographicsCard({
 
       {/* Avatar + name */}
       <View style={demoCardStyles.avatarBlock}>
-        <View style={demoCardStyles.avatar}>
-          <Text style={demoCardStyles.avatarText}>{initials}</Text>
-        </View>
+        <ProfilePictureEditor
+          currentUrl={profilePictureUrl}
+          role="member"
+          size={56}
+          initials={initials}
+          initialsBackground={`${tokens.primary}18`}
+          onChange={onPhotoChange}
+        />
         <Text style={demoCardStyles.displayName} numberOfLines={2}>{name}</Text>
         <View style={demoCardStyles.memberBadge}>
           <Text style={demoCardStyles.memberBadgeText}>Member</Text>
@@ -2034,6 +2046,11 @@ export function MemberProfileScreen(): React.JSX.Element {
               insuranceProvider={apiProfile?.insuranceProvider ?? ''}
               isPhoneVerified={!!apiProfile?.phoneVerifiedAt}
               onEditInsuranceCin={() => setIsInsuranceCinModalVisible(true)}
+              profilePictureUrl={apiProfile?.profilePictureUrl}
+              onPhotoChange={() => {
+                // The useUploadProfilePicture hook invalidates the memberProfile
+                // query on success, causing profileQuery to refetch automatically.
+              }}
             />
 
             {/* Center: Services Consent */}

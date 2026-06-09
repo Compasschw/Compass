@@ -69,7 +69,7 @@ import {
   useDeleteAccount,
 } from '../../hooks/useApiQueries';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
-import { AppShell, PageHeader, Card } from '../../components/ui';
+import { AppShell, PageHeader, Card, ProfilePictureEditor } from '../../components/ui';
 import { colors as tokens } from '../../theme/tokens';
 
 // ─── Types & constants ────────────────────────────────────────────────────────
@@ -787,22 +787,17 @@ export function CHWProfileScreen(): React.JSX.Element {
                   <View style={profileStyles.grid}>
                     {/* Avatar column */}
                     <View style={profileStyles.avatarCol}>
-                      <View style={profileStyles.avatar}>
-                        <Text style={profileStyles.avatarInitials}>{chwInitials}</Text>
-                      </View>
-                      <Pressable
-                        onPress={() =>
-                          Alert.alert(
-                            'Coming soon',
-                            'Photo upload is rolling out next release.',
-                          )
-                        }
-                        accessibilityRole="button"
-                        accessibilityLabel="Change profile photo"
-                        style={profileStyles.changePhotoBtn}
-                      >
-                        <Text style={profileStyles.changePhotoText}>Change photo</Text>
-                      </Pressable>
+                      <ProfilePictureEditor
+                        currentUrl={profile?.profilePictureUrl ?? null}
+                        role="chw"
+                        size={128}
+                        initials={chwInitials}
+                        initialsBackground="#3D5A3E"
+                        onChange={() => {
+                          // onChange fires after the hook invalidates the query —
+                          // profileQuery will automatically refetch and re-render.
+                        }}
+                      />
                       <Text style={profileStyles.photoHint}>JPEG/PNG, max 5MB</Text>
                     </View>
 

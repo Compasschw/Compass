@@ -43,3 +43,6 @@ export type { PageWrapProps } from './PageWrap';
 
 export { ResizableDivider } from './ResizableDivider';
 export type { ResizableDividerProps } from './ResizableDivider';
+
+export { ProfilePictureEditor } from './ProfilePictureEditor';
+export type { ProfilePictureEditorProps } from './ProfilePictureEditor';

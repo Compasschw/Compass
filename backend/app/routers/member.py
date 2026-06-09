@@ -29,7 +29,7 @@ async def get_profile(current_user=Depends(require_role("member")), db: AsyncSes
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")
     # Merge associated User fields into the response so the mobile screen
-    # can render phone/email/name without a second round trip.
+    # can render phone/email/name/profile_picture_url without a second round trip.
     return MemberProfileResponse(
         id=profile.id,
         user_id=profile.user_id,
@@ -41,6 +41,7 @@ async def get_profile(current_user=Depends(require_role("member")), db: AsyncSes
         name=current_user.name,
         phone=current_user.phone,
         email=current_user.email,
+        profile_picture_url=current_user.profile_picture_url,
     )
 
 @router.put("/profile", response_model=MemberProfileResponse)
@@ -51,6 +52,9 @@ async def update_profile(data: MemberProfileUpdate, current_user=Depends(require
     accounts created before the auth_service.register_user signup-time
     provisioning landed. New signups always have a profile row, so this
     branch only fires for legacy users.
+
+    ``profile_picture_url`` lives on the User row (not the MemberProfile row)
+    and is routed there explicitly when present in the payload.
     """
     from app.models.user import MemberProfile
     result = await db.execute(select(MemberProfile).where(MemberProfile.user_id == current_user.id))
@@ -59,8 +63,16 @@ async def update_profile(data: MemberProfileUpdate, current_user=Depends(require
         profile = MemberProfile(user_id=current_user.id)
         db.add(profile)
         await db.flush()
-    for field, value in data.model_dump(exclude_unset=True).items():
+
+    payload = data.model_dump(exclude_unset=True)
+
+    # Route profile_picture_url to the User row, not the MemberProfile row.
+    if "profile_picture_url" in payload:
+        current_user.profile_picture_url = payload.pop("profile_picture_url")
+
+    for field, value in payload.items():
         setattr(profile, field, value)
+
     await db.commit()
     await db.refresh(profile)
     # Re-read with the User join so the response matches GET /profile shape.
@@ -75,6 +87,7 @@ async def update_profile(data: MemberProfileUpdate, current_user=Depends(require
         name=current_user.name,
         phone=current_user.phone,
         email=current_user.email,
+        profile_picture_url=current_user.profile_picture_url,
     )
 
 @router.get("/rewards")

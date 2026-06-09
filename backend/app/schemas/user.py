@@ -28,6 +28,9 @@ class CHWProfileResponse(BaseModel):
     name: str | None = None
     email: str | None = None
     phone: str | None = None
+    # Profile picture URL stored on the User row (S3 public bucket).
+    # Null when no photo has been uploaded.
+    profile_picture_url: str | None = None
 
 class CHWProfileUpdate(BaseModel):
     specializations: list[str] | None = None
@@ -35,6 +38,10 @@ class CHWProfileUpdate(BaseModel):
     bio: str | None = None
     zip_code: str | None = None
     is_available: bool | None = None
+    # Optional: update the User.profile_picture_url after a presigned-URL upload.
+    # Use an explicit sentinel (unset vs null) so callers can clear the photo by
+    # sending null without accidentally wiping it when the field is simply absent.
+    profile_picture_url: str | None = None
 
 class MemberProfileCreate(BaseModel):
     zip_code: str | None = None
@@ -56,6 +63,9 @@ class MemberProfileResponse(BaseModel):
     phone: str | None = None
     email: str | None = None
     insurance_provider: str | None = None
+    # Profile picture URL stored on the User row (S3 public bucket).
+    # Null when no photo has been uploaded.
+    profile_picture_url: str | None = None
 
 class MemberProfileUpdate(BaseModel):
     zip_code: str | None = None
@@ -66,3 +76,6 @@ class MemberProfileUpdate(BaseModel):
     # Medi-Cal beneficiary identification number — required for billing.
     # Stored encrypted at rest via the EncryptedString column type.
     medi_cal_id: str | None = None
+    # Optional: update the User.profile_picture_url after a presigned-URL upload.
+    # Sending null explicitly clears the photo; omitting the field is a no-op.
+    profile_picture_url: str | None = None

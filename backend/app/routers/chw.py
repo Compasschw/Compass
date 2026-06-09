@@ -47,6 +47,7 @@ def _serialize_chw_profile(profile, current_user) -> "CHWProfileResponse":
         name=current_user.name,
         email=current_user.email,
         phone=current_user.phone,
+        profile_picture_url=current_user.profile_picture_url,
     )
 
 
@@ -61,13 +62,28 @@ async def get_profile(current_user=Depends(require_role("chw")), db: AsyncSessio
 
 @router.put("/profile", response_model=CHWProfileResponse)
 async def update_profile(data: CHWProfileUpdate, current_user=Depends(require_role("chw")), db: AsyncSession = Depends(get_db)):
+    """Update the authenticated CHW's profile.
+
+    Fields that live on CHWProfile (specializations, languages, bio, zip_code,
+    is_available) are written to the CHWProfile row.  ``profile_picture_url``
+    lives on the User row and is routed there explicitly — it must NOT be set
+    via setattr on the CHWProfile object (that column doesn't exist there).
+    """
     from app.models.user import CHWProfile
     result = await db.execute(select(CHWProfile).where(CHWProfile.user_id == current_user.id))
     profile = result.scalar_one_or_none()
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")
-    for field, value in data.model_dump(exclude_unset=True).items():
+
+    payload = data.model_dump(exclude_unset=True)
+
+    # Route profile_picture_url to the User row, not the CHWProfile row.
+    if "profile_picture_url" in payload:
+        current_user.profile_picture_url = payload.pop("profile_picture_url")
+
+    for field, value in payload.items():
         setattr(profile, field, value)
+
     await db.commit()
     await db.refresh(profile)
     return _serialize_chw_profile(profile, current_user)
