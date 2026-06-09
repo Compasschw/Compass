@@ -63,21 +63,24 @@ jobs:
             echo "::endgroup::"
 
             echo "::group::Step 3/5 — wait for backend health"
-            # Give the backend container ~30s to come up before health-checking.
-            # `curl --retry` covers slow DB connects on cold start.
-            sleep 8
-            curl --retry 6 --retry-delay 4 --retry-connrefused -fsS http://localhost:8000/api/v1/health \
-              || (echo "Backend health check failed — dumping last 60 lines of backend logs:" \
-                  && docker compose logs --tail=60 backend && exit 1)
+            # Give the api container ~20s for uvicorn + DB connect on cold start.
+            # `--retry-all-errors` covers curl 56 (connection reset) when the
+            # socket is accepted before the app is ready.
+            sleep 20
+            curl --retry 6 --retry-delay 4 --retry-connrefused --retry-all-errors -fsS http://localhost:8000/api/v1/health \
+              || (echo "Backend health check failed — dumping last 60 lines of api logs:" \
+                  && docker compose logs --tail=60 api && exit 1)
             echo "::endgroup::"
 
             if [ "${SKIP_MIGRATIONS:-false}" = "true" ]; then
-              echo "::group::Step 4/5 — alembic upgrade head (SKIPPED via workflow input)"
+              echo "::group::Step 4/5 — alembic upgrade heads (SKIPPED via workflow input)"
               echo "Skipped per workflow_dispatch input."
               echo "::endgroup::"
             else
-              echo "::group::Step 4/5 — alembic upgrade head"
-              docker compose exec -T backend alembic upgrade head
+              echo "::group::Step 4/5 — alembic upgrade heads"
+              # `heads` (plural) advances every head — required because we have
+              # multi-head divergence in prod (5 heads as of 2026-06-09).
+              docker compose exec -T api alembic upgrade heads
               echo "::endgroup::"
             fi
 
