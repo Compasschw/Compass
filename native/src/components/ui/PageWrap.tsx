@@ -1,11 +1,12 @@
 /**
  * PageWrap — max-width container for Member screens on web.
  *
- * On web (Platform.OS === 'web'), constrains content to 560px and centers it
- * horizontally. On native mobile, this is a transparent pass-through (flex: 1).
+ * On web, constrains content to 1280px and centers it horizontally — matches
+ * the CHW dashboard breakpoint so Member dashboards/lists get the same
+ * admin-style page width. Form-shaped screens (e.g. RegisterScreen) override
+ * via `style={{ maxWidth: 560 }}` to stay narrower.
  *
- * Wave 3 Member screens MUST wrap their root content in PageWrap.
- * CHW screens do NOT use this — they are admin-style and go full-width.
+ * On native mobile, this is a transparent pass-through (flex: 1).
  */
 
 import React from 'react';
@@ -15,15 +16,16 @@ import { Platform, View, type StyleProp, type ViewStyle } from 'react-native';
 
 export interface PageWrapProps {
   children: React.ReactNode;
-  /** Additional styles merged onto the wrapper View. */
+  /** Additional styles merged onto the wrapper View. Use `maxWidth` here to
+   *  narrow form screens (e.g. RegisterScreen uses 560). */
   style?: StyleProp<ViewStyle>;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
 /**
- * Wraps Member-screen page content with a 560px max-width cap on web.
- * On native the wrapper is a transparent flex:1 pass-through.
+ * Wraps Member-screen page content with a 1280px max-width cap on web.
+ * Form screens override via `style={{ maxWidth: 560 }}` to stay narrower.
  *
  * @example
  * <PageWrap>
@@ -36,7 +38,7 @@ export function PageWrap({ children, style }: PageWrapProps): React.JSX.Element 
     <View
       style={[
         Platform.OS === 'web'
-          ? { maxWidth: 560, width: '100%', alignSelf: 'center' }
+          ? { maxWidth: 1280, width: '100%', alignSelf: 'center' }
           : { flex: 1 },
         style,
       ]}
