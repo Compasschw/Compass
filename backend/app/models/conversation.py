@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -11,11 +11,11 @@ from app.database import Base
 class Conversation(Base):
     """A messaging thread between a CHW and a member.
 
-    Design note: ``session_id`` ties a conversation to a specific scheduled
-    session (1-to-1, enforced by the unique constraint below).  General DMs
-    that are not session-scoped keep ``session_id = NULL`` — the unique
-    constraint only fires on non-NULL values in Postgres, so existing DM rows
-    are unaffected.
+    Each (chw_id, member_id) pair maps to exactly ONE Conversation row — the
+    ``uq_conversations_chw_member`` UNIQUE constraint enforces this at the DB
+    tier.  The ``find_or_create`` code paths (in conversations.py router and
+    session_lookup.py service) use ``INSERT ... ON CONFLICT DO NOTHING`` so
+    concurrent first-message requests produce only one winner.
 
     Read cursors (``chw_read_up_to``, ``member_read_up_to``) store the UUID of
     the last message each party has read.  NULL means "no messages read yet".
@@ -25,12 +25,19 @@ class Conversation(Base):
     """
 
     __tablename__ = "conversations"
-    # NOTE: the uq_conversations_session_id UNIQUE constraint that lived here
-    # was dropped in migration f6a7b8c9d0e1 (session-per-call refactor) so a
-    # Conversation can host multiple Sessions over its lifetime. The session_id
-    # column is kept temporarily as "the originating Session" for backward
-    # compat while the rollout flag flips; remove it in a follow-up once the
-    # flag is on in prod and no caller reads it.
+    # UNIQUE (chw_id, member_id): added in migration ab1c2d3e4f5a after
+    # consolidating any pre-existing duplicate rows. Declared here on the ORM
+    # model so that test DBs created via Base.metadata.create_all also carry
+    # the constraint — keeping the ON CONFLICT upsert logic valid in tests.
+    #
+    # NOTE: the uq_conversations_session_id UNIQUE constraint that previously
+    # lived here was dropped in migration f6a7b8c9d0e1 (session-per-call
+    # refactor) so a Conversation can host multiple Sessions over its lifetime.
+    # The session_id column is kept temporarily as "the originating Session"
+    # for backward compat while the rollout flag flips.
+    __table_args__ = (
+        UniqueConstraint("chw_id", "member_id", name="uq_conversations_chw_member"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     chw_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)

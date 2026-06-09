@@ -101,23 +101,23 @@ async def find_or_create_conversation(
         from app.services.relationship_guards import assert_shared_session
         await assert_shared_session(db, chw_id=chw_id, member_id=member_id)
 
-    # Fast path: existing ad-hoc conversation (session_id IS NULL).
+    # Fast path: existing conversation for this (chw, member) pair.
+    # The uq_conversations_chw_member UNIQUE constraint ensures at most one row.
     result = await db.execute(
         select(Conversation).where(
             Conversation.chw_id == chw_id,
             Conversation.member_id == member_id,
-            Conversation.session_id.is_(None),
         )
     )
     existing = result.scalar_one_or_none()
     if existing is not None:
         return existing
 
-    # Slow path: insert, tolerating concurrent inserts via ON CONFLICT DO NOTHING.
-    # Note: the existing unique constraint is on (session_id) — but only fires
-    # for non-NULL values. Ad-hoc conversations (session_id=NULL) have no
-    # unique constraint, so we may race-insert duplicates. We guard with a
-    # manual SELECT-after-INSERT to return whichever row won.
+    # Slow path: atomic upsert via ON CONFLICT (chw_id, member_id) DO NOTHING.
+    # The uq_conversations_chw_member UNIQUE constraint (migration ab1c2d3e4f5a)
+    # guarantees that two concurrent inserts for the same pair will resolve to
+    # exactly one winner. The loser gets nothing back (DO NOTHING), then falls
+    # through to the SELECT below to fetch the winning row.
     stmt = (
         pg_insert(Conversation)
         .values(
@@ -125,21 +125,25 @@ async def find_or_create_conversation(
             member_id=member_id,
             session_id=None,
         )
-        .returning(Conversation)
+        .on_conflict_do_nothing(index_elements=["chw_id", "member_id"])
+        .returning(Conversation.id)
     )
     insert_result = await db.execute(stmt)
-    inserted = insert_result.scalar_one_or_none()
-    if inserted is not None:
+    inserted_row = insert_result.first()
+    if inserted_row is not None:
+        conv = await db.get(Conversation, inserted_row[0])
+        assert conv is not None  # we just inserted it
         await db.commit()
-        return inserted
+        return conv
 
-    # Race: another request inserted first — fetch the winning row.
+    # Conflict: another request won the race — commit any prior flushed state
+    # and fetch the single canonical row now guaranteed by the UNIQUE constraint.
+    await db.commit()
     result = await db.execute(
         select(Conversation).where(
             Conversation.chw_id == chw_id,
             Conversation.member_id == member_id,
-            Conversation.session_id.is_(None),
-        ).order_by(Conversation.created_at.asc()).limit(1)
+        )
     )
     conv = result.scalar_one()
     return conv

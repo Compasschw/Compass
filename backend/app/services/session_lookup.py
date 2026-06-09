@@ -53,12 +53,25 @@ async def find_or_create_conversation_for_pair(
     chw_id: UUID,
     member_id: UUID,
 ) -> Conversation:
-    """Return the existing Conversation between the pair, or create one.
+    """Return the existing Conversation between the pair, or create one atomically.
 
-    Keyword-only args (``chw_id``, ``member_id``) prevent accidental
-    positional-argument swaps.  When a new Conversation is created it is
-    flushed to the DB (but not committed) so that the returned object
-    carries a valid ``id``.
+    Uses ``INSERT ... ON CONFLICT (chw_id, member_id) DO NOTHING RETURNING``
+    so that two concurrent callers racing to create the first conversation for a
+    pair will both end up with the same row rather than producing duplicates.
+    The ``uq_conversations_chw_member`` UNIQUE constraint (added in migration
+    ab1c2d3e4f5a) is the DB-level guard; this pattern is the application-level
+    complement.
+
+    Flow:
+        1. Attempt an INSERT via ``pg_insert ... ON CONFLICT DO NOTHING``.
+        2. If the INSERT returns a row (we won the race), load the full ORM
+           object by primary key and return it.
+        3. If the INSERT returns nothing (conflict — another request beat us),
+           SELECT the existing row by (chw_id, member_id).
+
+    Keyword-only args prevent accidental positional-argument swaps.
+    The returned Conversation is flushed (not committed) so callers that build
+    further objects in the same transaction get a valid ``id`` immediately.
 
     Args:
         db: The async SQLAlchemy session.
@@ -66,33 +79,36 @@ async def find_or_create_conversation_for_pair(
         member_id: UUID of the member user.
 
     Returns:
-        The existing or newly-created Conversation row.
+        The existing or newly-inserted Conversation row (never a duplicate).
     """
-    # Pick the oldest matching Conversation if duplicates exist. Legacy data
-    # from before the session-per-call refactor had a UC on session_id (not
-    # on the (chw,member) pair), so each prior Session got its own row and
-    # the same pair can have N Conversation rows. scalar_one_or_none() would
-    # raise MultipleResultsFound on those — which surfaces as a 500 in every
-    # Accept Request flow for the pair. ORDER BY + LIMIT 1 makes the lookup
-    # deterministic and safe; the follow-up UNIQUE (chw_id, member_id)
-    # constraint will eventually prevent duplicates from being created at
-    # all (tracked separately).
-    result = await db.execute(
-        select(Conversation)
-        .where(
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    stmt = (
+        pg_insert(Conversation)
+        .values(chw_id=chw_id, member_id=member_id)
+        .on_conflict_do_nothing(index_elements=["chw_id", "member_id"])
+        .returning(Conversation.id)
+    )
+    result = await db.execute(stmt)
+    row = result.first()
+
+    if row is not None:
+        # We inserted: load the full ORM object so callers get all columns.
+        conv = await db.get(Conversation, row[0])
+        # conv is guaranteed non-None — we just inserted the row in this
+        # transaction. The type-narrowing assert keeps mypy happy.
+        assert conv is not None
+        return conv
+
+    # Conflict: another concurrent request created this row first.
+    # The UNIQUE constraint guarantees exactly one row exists now.
+    existing = await db.execute(
+        select(Conversation).where(
             Conversation.chw_id == chw_id,
             Conversation.member_id == member_id,
         )
-        .order_by(Conversation.created_at.asc())
-        .limit(1)
     )
-    conv = result.scalar_one_or_none()
-    if conv is not None:
-        return conv
-
-    conv = Conversation(chw_id=chw_id, member_id=member_id)
-    db.add(conv)
-    await db.flush()
+    conv = existing.scalar_one()
     return conv
 
 

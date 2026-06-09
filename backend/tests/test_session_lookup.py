@@ -195,35 +195,48 @@ async def test_find_or_create_creates_when_absent() -> None:
 
 
 @pytest.mark.asyncio
-async def test_find_or_create_handles_legacy_duplicate_conversations() -> None:
-    """Pre-#193 data may have multiple Conversation rows for the same
-    (chw, member) pair (one per Session under the old 1:1 UC). The helper
-    must return ONE deterministically (the oldest by created_at) instead of
-    raising MultipleResultsFound, which would 500 every Accept Request flow
-    for that pair."""
-    from datetime import UTC, datetime, timedelta
+async def test_find_or_create_enforces_unique_constraint() -> None:
+    """The UNIQUE constraint on (chw_id, member_id) prevents duplicate
+    Conversation rows from being created.
+
+    Pre-migration: legacy data could have multiple rows per pair (one per
+    Session under the old 1:1 UC). Migration ab1c2d3e4f5a consolidated those
+    duplicates and added the UNIQUE constraint. This test verifies that the
+    constraint is present and enforced — a second direct INSERT for the same
+    pair must fail with an IntegrityError. The find_or_create helper itself
+    uses ON CONFLICT DO NOTHING to avoid raising, returning the existing row.
+    """
+    import sqlalchemy.exc
 
     async with test_session() as db:
         chw, member, req = await _seed_pair(db)
 
-        # Two Conversation rows for the same pair, distinct created_at.
-        older = Conversation(
-            chw_id=chw.id, member_id=member.id,
-            created_at=datetime.now(UTC) - timedelta(days=2),
-        )
-        newer = Conversation(
-            chw_id=chw.id, member_id=member.id,
-            created_at=datetime.now(UTC) - timedelta(hours=1),
-        )
-        db.add_all([older, newer])
+        # First insert: must succeed.
+        first = Conversation(chw_id=chw.id, member_id=member.id)
+        db.add(first)
         await db.flush()
 
-        result = await find_or_create_conversation_for_pair(
-            db, chw_id=chw.id, member_id=member.id
+        # Second direct INSERT for the same pair: must raise IntegrityError.
+        second = Conversation(chw_id=chw.id, member_id=member.id)
+        db.add(second)
+        with pytest.raises(
+            sqlalchemy.exc.IntegrityError,
+            match="uq_conversations_chw_member",
+        ):
+            await db.flush()
+
+    # find_or_create handles the conflict gracefully: returns the existing row.
+    async with test_session() as db:
+        chw2, member2, _ = await _seed_pair(db)
+        created = await find_or_create_conversation_for_pair(
+            db, chw_id=chw2.id, member_id=member2.id
         )
-        assert result.id == older.id, (
-            "must pick the oldest row deterministically to avoid "
-            "MultipleResultsFound under legacy duplicate data"
+        fetched = await find_or_create_conversation_for_pair(
+            db, chw_id=chw2.id, member_id=member2.id
+        )
+        assert created.id == fetched.id, (
+            "find_or_create must return the same row on a second call "
+            "instead of raising on the UNIQUE constraint."
         )
 
 
