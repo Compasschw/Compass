@@ -1,5 +1,6 @@
 /**
  * MemberFindScreen — "Find Your CHW" page.
+ * T19 — 3-col CHW-search redesign with shared primitives.
  *
  * Visual language: matches the CHW Member List card pattern (Card primitive,
  * name / specializations / availability badge / language pills via Pill).
