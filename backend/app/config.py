@@ -20,6 +20,19 @@ class Settings(BaseSettings):
     s3_bucket_phi: str = "compass-phi-dev"
     s3_bucket_public: str = "compass-public-dev"
 
+    # ── Call recording / transcript / AI-summary S3 buckets (Phase 1) ────────
+    # All three buckets live in us-west-2, encrypted with SSE-KMS under
+    # s3_kms_key_arn, with versioning + 7-year lifecycle.  Defaults to empty
+    # string so the backend starts cleanly in dev without AWS creds; the
+    # recording_finalizer skips the S3 PUT when this is unset.
+    s3_call_recordings_bucket: str = ""
+    s3_transcripts_bucket: str = ""
+    s3_ai_summaries_bucket: str = ""
+    # ARN of the KMS key used for SSE-KMS encryption on the three PHI buckets.
+    # Format: arn:aws:kms:us-west-2:{account_id}:key/{key_id}
+    # Leave empty in dev/staging to fall back to S3-managed encryption.
+    s3_kms_key_arn: str = ""
+
     # Pear bulk-upload CSV workaround. When enabled, every successful
     # submit_documentation appends a row to a monthly rolling CSV in
     # ``s3_bucket_billing_csv`` shaped to match Pear's CSV-import template

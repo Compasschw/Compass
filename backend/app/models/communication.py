@@ -28,6 +28,12 @@ class CommunicationSession(Base):
     recording_duration_seconds: Mapped[int | None] = mapped_column(Integer)
     provider_recording_id: Mapped[str | None] = mapped_column(String(255))
 
+    # S3 audio persistence — populated by recording_finalizer after successful
+    # PUT to compass-prod-call-recordings.  NULL means the upload has not run
+    # yet or failed; use audio_s3_key IS NULL as the "needs backfill" signal.
+    # Path schema: prod/v1/{year}/{month}/{session_id}.mp3
+    audio_s3_key: Mapped[str | None] = mapped_column(String(500))
+
     # Transcript
     transcript_text: Mapped[str | None] = mapped_column(Text)
     transcript_confidence: Mapped[float | None] = mapped_column()
