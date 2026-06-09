@@ -1397,6 +1397,7 @@ export function CHWMessagesScreen(): React.JSX.Element {
             onChange={handleRightWidthChange}
             min={CHW_RIGHT_MIN}
             max={CHW_RIGHT_MAX}
+            side="right"
           />
         ) : null}
 

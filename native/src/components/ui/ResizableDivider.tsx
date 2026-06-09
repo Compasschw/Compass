@@ -13,7 +13,7 @@ import React, { useCallback } from 'react';
 import { Platform, View } from 'react-native';
 
 export interface ResizableDividerProps {
-  /** Current width (in px) of the pane to the left of this divider. */
+  /** Current width (in px) of the pane this divider resizes. */
   readonly width: number;
   /** Called with the new clamped width as the user drags. */
   readonly onChange: (nextWidth: number) => void;
@@ -21,6 +21,12 @@ export interface ResizableDividerProps {
   readonly min?: number;
   /** Maximum allowed width in px. Defaults to 600. */
   readonly max?: number;
+  /**
+   * Which side of the divider the resized pane sits on.
+   * - 'left'  (default): pane is LEFT of the divider — dragging right grows it.
+   * - 'right': pane is RIGHT of the divider — dragging right SHRINKS it.
+   */
+  readonly side?: 'left' | 'right';
 }
 
 /**
@@ -32,6 +38,7 @@ export function ResizableDivider({
   onChange,
   min = 200,
   max = 600,
+  side = 'left',
 }: ResizableDividerProps): React.JSX.Element | null {
   if (Platform.OS !== 'web') return null;
 
@@ -41,9 +48,10 @@ export function ResizableDivider({
       e.preventDefault();
       const startX = e.clientX;
       const startWidth = width;
+      const sign = side === 'right' ? -1 : 1;
 
       const onMouseMove = (ev: MouseEvent): void => {
-        const next = Math.max(min, Math.min(max, startWidth + ev.clientX - startX));
+        const next = Math.max(min, Math.min(max, startWidth + sign * (ev.clientX - startX)));
         onChange(next);
       };
 
@@ -55,7 +63,7 @@ export function ResizableDivider({
       document.addEventListener('mousemove', onMouseMove);
       document.addEventListener('mouseup', onMouseUp);
     },
-    [width, onChange, min, max],
+    [width, onChange, min, max, side],
   );
 
   return (

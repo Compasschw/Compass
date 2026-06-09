@@ -1444,6 +1444,7 @@ export function MemberMessagesScreen(): React.JSX.Element {
             onChange={handleRightWidthChange}
             min={MEMBER_RIGHT_MIN}
             max={MEMBER_RIGHT_MAX}
+            side="right"
           />
         ) : null}
 
