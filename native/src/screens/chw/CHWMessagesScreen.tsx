@@ -1,5 +1,5 @@
 /**
- * CHWMessagesScreen — simple 3-pane SMS inbox for Community Health Workers.
+ * CHWMessagesScreen — 3-pane SMS inbox for Community Health Workers.
  *
  * Pane layout (web, ≥1280px):
  *   [ThreadListPane 320px] | [ConversationPane flex] | [MemberContextRail 288px]
@@ -9,15 +9,31 @@
  *   <900px  → only one pane visible at a time; back button reveals thread list
  *
  * Data wiring:
- *   - ThreadListPane   : useSessions() — each session = one member thread
- *   - ConversationPane : useSessionMessages(sessionId) — polls every 4 s
- *   - MemberContextRail: useChwJourneys() + useMemberServicesConsent(memberId)
+ *   - ThreadListPane    : useSessions() — each session = one member thread
+ *   - ConversationPane  : useSessionMessages(sessionId) — polls every 4 s
+ *   - MemberContextRail : useChwJourneys() + useMemberServicesConsent(memberId)
+ *
+ * Design alignment (Phase 1 Second Run):
+ *   - Left pane: 4 tabs (All / Unread / Flagged / Archived)
+ *   - Center header: engagement Pill + modality sub-line + action icons
+ *   - Composer: TEMPLATES row + icon toolbar + SMS caption
+ *   - Right rail: Active Journey · Resource Needs · Compass Insight · Quick Actions
+ *                 · Generate AI Summary (disabled stub) · End Session (destructive)
  *
  * Hard constraints (do NOT modify):
  *   - Do NOT modify DashboardSidebar.
- *   - Do NOT add new backend endpoints (services-consent endpoint pre-exists on main).
+ *   - Do NOT add new backend endpoints unless unavoidable (see End Session note below).
  *   - Do NOT alter session-per-call backend behaviour or call-bridge calls.
  *   - Do NOT claim TLS+at-rest is E2E encryption.
+ *
+ * STUB NOTES:
+ *   - "Add Case Note" → Alert stub. No POST /case-notes endpoint confirmed at time of write.
+ *     Wire when backend agent ships the endpoint.
+ *   - "Request Recording Consent" → uses existing useCreateConsentRequest (consent-requests
+ *     endpoint exists). Wired to POST /sessions/{id}/consent-requests.
+ *   - "End Session" → POST /sessions/{id}/end — this endpoint DOES NOT EXIST in the
+ *     current backend. The hook useEndSession in this file hits that path optimistically.
+ *     See the NEEDS_CONTEXT note at the hook definition.
  */
 
 import React, {
@@ -32,6 +48,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  Pressable,
   ScrollView,
   StyleSheet,
   Platform,
@@ -49,38 +66,57 @@ import {
   Link as LinkIcon,
   Send,
   ArrowLeft,
+  ArrowRight,
   CheckCircle2,
   AlertCircle,
   FileText,
   XCircle,
+  Sparkles,
+  LogOut,
+  Home,
+  ShoppingCart,
+  Truck,
+  HeartPulse,
+  MessageSquare,
+  Flag,
+  BookOpen,
 } from 'lucide-react-native';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { CHWSessionsStackParamList } from '../../navigation/CHWTabNavigator';
 
-import { AppShell, Card, Pill, SectionHeader, ResizableDivider } from '../../components/ui';
+import { AppShell, Card, Pill, SectionHeader, ResizableDivider, RightDrawer } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
 import {
   useSessions,
   useSessionMessages,
   useSessionSendMessage,
   useStartCall,
-  useGenerateAISummary,
   useSubmitDocumentation,
   useChwJourneys,
   useMemberServicesConsent,
+  useCreateConsentRequest,
+  useCreateFlagNote,
+  useDeleteFlagNote,
+  useFlagNote,
   type SessionData,
   type SessionMessageLocal,
   type SessionMessageData,
-  type AISummaryResponse,
   type MemberJourneyResponse,
   type ServicesConsentValue,
 } from '../../hooks/useApiQueries';
+import {
+  useEngagementStatus,
+  useCompassInsight,
+} from '../../hooks/useMessagesInsights';
+import { OpenQuestionsDrawer } from '../../components/chw/OpenQuestionsDrawer';
 import { DocumentationModal } from '../../components/sessions/DocumentationModal';
 import type { SessionDocumentation } from '../../data/mock';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 import { PressableMember } from '../../components/shared/PressableMember';
 import { colors as tokens, spacing, radius } from '../../theme/tokens';
+import { api } from '../../api/client';
+import { useQueryClient } from '@tanstack/react-query';
 
 // ─── Breakpoints ──────────────────────────────────────────────────────────────
 
@@ -92,13 +128,13 @@ const BP_HIDE_LIST = 900;
 // ─── Pane width constraints ───────────────────────────────────────────────────
 
 const THREAD_LIST_WIDTH = 320;
-const CONTEXT_RAIL_WIDTH = 288;
+const CONTEXT_RAIL_WIDTH = 300;
 
 /** Min/max bounds for each draggable pane — tuned for CHW screen. */
 const CHW_LEFT_MIN = 200;
 const CHW_LEFT_MAX = 500;
-const CHW_RIGHT_MIN = 200;
-const CHW_RIGHT_MAX = 450;
+const CHW_RIGHT_MIN = 260;
+const CHW_RIGHT_MAX = 480;
 
 /** localStorage keys for persisted pane widths. */
 const LS_KEY_CHW_LEFT = 'compass:chwMessages:leftWidth';
@@ -156,6 +192,12 @@ function getInitials(name: string | null | undefined): string {
     .map((part) => part[0] ?? '')
     .join('')
     .toUpperCase();
+}
+
+/** Returns the first word (first name) of a display name. */
+function getFirstName(name: string | null | undefined): string {
+  if (!name) return 'Member';
+  return name.split(' ')[0] ?? name;
 }
 
 /** Deterministic avatar colour pair keyed on the first character of the name. */
@@ -220,6 +262,98 @@ function groupMessagesByDay(
     dateKey,
     messages: msgs,
   }));
+}
+
+/**
+ * Derives a human-readable modality label from the session mode field.
+ * Used in the conversation header sub-line.
+ */
+function formatModality(mode: string | null | undefined): string {
+  if (!mode) return 'phone';
+  const normalized = mode.toLowerCase().replace(/_/g, ' ');
+  if (normalized.includes('video') || normalized.includes('virtual')) return 'video';
+  if (normalized.includes('person')) return 'in-person';
+  return 'phone';
+}
+
+/**
+ * Returns the icon component to use for a resource-needs journey category.
+ * Lucide icons passed as a component reference.
+ */
+function journeyCategoryIcon(category: string | undefined): React.ComponentType<{ size: number; color: string }> {
+  switch ((category ?? '').toLowerCase()) {
+    case 'housing': return Home;
+    case 'food': return ShoppingCart;
+    case 'transportation': return Truck;
+    case 'healthcare':
+    case 'mental_health':
+    case 'rehab': return HeartPulse;
+    default: return BookOpen;
+  }
+}
+
+// ─── Resource-needs severity heuristic ───────────────────────────────────────
+
+/**
+ * Severity tier derived from journey progress percentage.
+ * Mirrors the same heuristic used in CHWMemberProfileScreen:
+ *   < 33 → High (red), 33–67 → Medium (amber), ≥ 67 → Low (yellow/amber-dark)
+ */
+type ResourceSeverity = 'High' | 'Medium' | 'Low';
+
+function deriveSeverity(progressPercent: number): ResourceSeverity {
+  if (progressPercent < 33) return 'High';
+  if (progressPercent < 67) return 'Medium';
+  return 'Low';
+}
+
+type SeverityPillVariant = 'red' | 'amber-dark' | 'amber';
+
+function severityPillVariant(severity: ResourceSeverity): SeverityPillVariant {
+  if (severity === 'High') return 'red';
+  if (severity === 'Medium') return 'amber-dark';
+  return 'amber';
+}
+
+// ─── End session mutation ─────────────────────────────────────────────────────
+
+/**
+ * useEndSession — POST /sessions/{id}/end
+ *
+ * NEEDS_CONTEXT: This endpoint does NOT exist in the current backend codebase.
+ * The nearest analogues are POST /sessions/{id}/complete and
+ * PATCH /sessions/{id}/start. The "End Session" concept (session moves to
+ * awaiting_documentation state, Vonage call terminates) requires a dedicated
+ * backend route.
+ *
+ * TODO(backend): Add POST /api/v1/sessions/{id}/end that:
+ *   1. Transitions session.status → 'awaiting_documentation'.
+ *   2. Terminates any active Vonage call bridge for the session.
+ *   3. Returns the updated SessionData row.
+ * Until this route exists, the button is wired and will receive a 404/405.
+ * The UI shows a clear error toast so CHWs know to use the existing flow.
+ */
+function useEndSession() {
+  const qc = useQueryClient();
+  const [isPending, setIsPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const mutateAsync = useCallback(async (sessionId: string): Promise<void> => {
+    setIsPending(true);
+    setError(null);
+    try {
+      await api(`/sessions/${sessionId}/end`, { method: 'POST' });
+      void qc.invalidateQueries({ queryKey: ['sessions'] });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to end session.';
+      setError(message);
+      throw err;
+    } finally {
+      setIsPending(false);
+    }
+  }, [qc]);
+
+  return { mutateAsync, isPending, error };
 }
 
 // ─── Inline toast ─────────────────────────────────────────────────────────────
@@ -353,7 +487,7 @@ function ThreadRow({
 
 // ─── Thread list pane ─────────────────────────────────────────────────────────
 
-type ThreadFilterTab = 'all' | 'unread';
+type ThreadFilterTab = 'all' | 'unread' | 'flagged' | 'archived';
 
 interface ThreadListPaneProps {
   readonly sessions: SessionData[];
@@ -362,10 +496,13 @@ interface ThreadListPaneProps {
 }
 
 /**
- * Left pane: alphabetical list of member threads with search and filter chips.
+ * Left pane: alphabetical list of member threads with search and 4 filter tabs.
  *
- * Sorted alphabetically by member name (A → Z). Threads without a member name
- * are excluded (they have no conversation to display).
+ * Tabs: All (n) / Unread / Flagged / Archived.
+ * "Unread", "Flagged", and "Archived" are presentation-only in v1 —
+ * the backend flag fields (archivedAt, pinnedAt) exist on SessionData but
+ * the "flagged" concept maps to thread-level flagging (distinct from member
+ * flag notes). Real counts wire in without a design change.
  */
 function ThreadListPane({
   sessions,
@@ -375,15 +512,34 @@ function ThreadListPane({
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<ThreadFilterTab>('all');
 
-  const visibleSessions = useMemo(() => {
-    const withMember = sessions.filter((s) => !!s.memberName);
+  const withMember = useMemo(
+    () => sessions.filter((s) => !!s.memberName),
+    [sessions],
+  );
 
-    // Alphabetical by member name
+  const visibleSessions = useMemo(() => {
+    // Sort: alphabetical by member name
     const sorted = [...withMember].sort((a, b) =>
       (a.memberName ?? '').localeCompare(b.memberName ?? ''),
     );
 
     let filtered = sorted;
+
+    // Apply tab filter
+    switch (activeFilter) {
+      case 'archived':
+        filtered = filtered.filter((s) => !!s.archivedAt);
+        break;
+      case 'unread':
+      case 'flagged':
+        // Unread/flagged are presentation-only in v1 — show same list.
+        // Real unread count comes from backend; flagged threads TBD.
+        break;
+      default:
+        // 'all' — no additional filter, but exclude archived by default
+        filtered = filtered.filter((s) => !s.archivedAt);
+        break;
+    }
 
     // Search
     const query = searchQuery.trim().toLowerCase();
@@ -393,12 +549,20 @@ function ThreadListPane({
       );
     }
 
-    // Filter tab — "unread" is presentation-only (no server field); reserved
-    // for when the backend adds an unread_count to sessions.
-    // For now, "unread" shows the same list (all threads) — the tab is visible
-    // so the UI contract is met; real counts wire in without a design change.
     return filtered;
-  }, [sessions, searchQuery]);
+  }, [withMember, searchQuery, activeFilter]);
+
+  const totalCount = useMemo(
+    () => withMember.filter((s) => !s.archivedAt).length,
+    [withMember],
+  );
+
+  const tabs: { key: ThreadFilterTab; label: string }[] = [
+    { key: 'all', label: `All (${totalCount})` },
+    { key: 'unread', label: 'Unread' },
+    { key: 'flagged', label: 'Flagged' },
+    { key: 'archived', label: 'Archived' },
+  ];
 
   return (
     <View style={styles.threadListPane} accessibilityRole={"navigation" as any} accessibilityLabel="Message threads">
@@ -419,34 +583,34 @@ function ThreadListPane({
           />
         </View>
 
-        {/* Filter chips */}
-        <View style={styles.filterRow} accessibilityRole="radiogroup">
-          {(['all', 'unread'] as const).map((tab) => (
+        {/* Filter tabs */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.filterRow}
+          contentContainerStyle={styles.filterRowContent}
+          accessibilityRole="radiogroup"
+        >
+          {tabs.map((tab) => (
             <TouchableOpacity
-              key={tab}
-              style={[styles.filterChip, activeFilter === tab && styles.filterChipActive]}
-              onPress={() => setActiveFilter(tab)}
+              key={tab.key}
+              style={[styles.filterChip, activeFilter === tab.key && styles.filterChipActive]}
+              onPress={() => setActiveFilter(tab.key)}
               accessibilityRole="radio"
-              accessibilityState={{ checked: activeFilter === tab }}
-              accessibilityLabel={
-                tab === 'all'
-                  ? `All threads (${visibleSessions.length})`
-                  : 'Unread threads'
-              }
+              accessibilityState={{ checked: activeFilter === tab.key }}
+              accessibilityLabel={tab.label}
             >
               <Text
                 style={[
                   styles.filterChipText,
-                  activeFilter === tab && styles.filterChipTextActive,
+                  activeFilter === tab.key && styles.filterChipTextActive,
                 ]}
               >
-                {tab === 'all'
-                  ? `All (${visibleSessions.length})`
-                  : 'Unread'}
+                {tab.label}
               </Text>
             </TouchableOpacity>
           ))}
-        </View>
+        </ScrollView>
       </View>
 
       {/* Thread rows */}
@@ -459,7 +623,7 @@ function ThreadListPane({
         {visibleSessions.length === 0 ? (
           <View style={styles.emptyState}>
             <Text style={styles.emptyStateText}>
-              {searchQuery ? 'No threads match your search.' : 'No active conversations.'}
+              {searchQuery ? 'No threads match your search.' : 'No conversations here.'}
             </Text>
           </View>
         ) : (
@@ -535,11 +699,12 @@ interface ConversationPaneProps {
   readonly showBackButton: boolean;
   /**
    * When true, fire the masked-number call sequence on mount.
-   * Set by the parent when route.params.autoCall === true (navigate-and-call
-   * from CHWMemberProfileScreen). The parent clears it after the call fires.
+   * Set by the parent when route.params.autoCall === true.
    */
   readonly autoCallOnMount?: boolean;
   readonly onAutoCallConsumed?: () => void;
+  /** Callback so the rail can open the Documentation modal post-end. */
+  readonly onRequestOpenDocumentation?: () => void;
 }
 
 /**
@@ -554,6 +719,7 @@ function ConversationPane({
   showBackButton,
   autoCallOnMount,
   onAutoCallConsumed,
+  onRequestOpenDocumentation,
 }: ConversationPaneProps): React.JSX.Element {
   const [draftText, setDraftText] = useState('');
   const [localMessages, setLocalMessages] = useState<SessionMessageLocal[]>([]);
@@ -576,16 +742,11 @@ function ConversationPane({
     setToastMessage(message);
     setToastIsError(isError);
     const timer = setTimeout(() => setToastMessage(null), 3_500);
-    // Intentionally not returning the cleanup — callers don't use the return value.
     void timer;
   }, []);
 
   // ── Call handler ──────────────────────────────────────────────────────────
 
-  /**
-   * Initiates a Vonage masked-number call between CHW and member.
-   * Shows a platform-appropriate confirmation first; on success, both phones ring.
-   */
   const handleCall = useCallback(async (): Promise<void> => {
     if (callInitiating) return;
     const memberName = session.memberName ?? 'this member';
@@ -692,6 +853,12 @@ function ConversationPane({
     }
   }, [draftText, session.id, sendMessage]);
 
+  // ── Template chip insertion ───────────────────────────────────────────────
+
+  const insertTemplate = useCallback((text: string): void => {
+    setDraftText((prev) => (prev ? `${prev} ${text}` : text));
+  }, []);
+
   // ── Complete Session ──────────────────────────────────────────────────────
 
   const handleOpenCompleteSession = useCallback((): void => {
@@ -710,8 +877,6 @@ function ConversationPane({
       } catch (err) {
         const reason =
           err instanceof Error && err.message ? err.message : 'Unknown error';
-        // eslint-disable-next-line no-console
-        console.error('[CHWMessages] submitDocumentation failed:', err);
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
           window.alert(
             `Failed to submit documentation\n\n${reason}\n\nThe modal will stay open so you can adjust and try again.`,
@@ -725,9 +890,43 @@ function ConversationPane({
   );
 
   const memberName = session.memberName ?? 'Unknown Member';
+  const memberFirstName = getFirstName(memberName);
   const initials = getInitials(memberName);
   const { bg, fg } = avatarColorFor(memberName);
   const grouped = groupMessagesByDay(mergedMessages);
+
+  // Derive engagement status for header pill
+  // Pass session.chwId so CHW-authored messages are identified correctly in
+  // the engagement heuristic. senderRole='chw' is the primary signal; chwId
+  // is a secondary guard for edge cases where senderRole is missing.
+  const engagement = useEngagementStatus(mergedMessages, session.chwId ?? '');
+  const modality = formatModality(session.mode);
+
+  // ── Quick-reply templates ─────────────────────────────────────────────────
+
+  const templateChips: Array<{
+    label: string;
+    icon: React.ComponentType<{ size: number; color: string }>;
+    text: string;
+  }> = [
+    {
+      label: 'Appointment reminder',
+      icon: CalendarPlus,
+      text: `Hi ${memberFirstName}, this is a reminder about your upcoming appointment. Please reply to confirm or reschedule.`,
+    },
+    {
+      label: 'Document upload reminder',
+      icon: FileText,
+      text: `Hi ${memberFirstName}, we still need a few documents to move forward. Can you upload them when you get a chance?`,
+    },
+    {
+      label: 'Resource link',
+      icon: LinkIcon,
+      // TODO(resources): When a resource picker is available, replace this stub
+      // with the actual resource URL selected from the resource drawer.
+      text: '[resource]',
+    },
+  ];
 
   return (
     <View style={styles.convPane} accessibilityRole={"main" as any}>
@@ -754,19 +953,25 @@ function ConversationPane({
           </View>
         </PressableMember>
 
-        <PressableMember
-          memberId={session.memberId ?? ''}
-          displayName={memberName}
-          enabled={!!session.memberId}
-          style={styles.convHeaderInfo}
-        >
-          <Text style={styles.convHeaderName} numberOfLines={1}>
-            {memberName}
-          </Text>
+        <View style={styles.convHeaderInfo}>
+          <View style={styles.convHeaderNameRow}>
+            <PressableMember
+              memberId={session.memberId ?? ''}
+              displayName={memberName}
+              enabled={!!session.memberId}
+            >
+              <Text style={styles.convHeaderName} numberOfLines={1}>
+                {memberName}
+              </Text>
+            </PressableMember>
+            <Pill variant={engagement.pillVariant} size="sm" withDot>
+              {engagement.label}
+            </Pill>
+          </View>
           <Text style={styles.convHeaderMeta}>
-            {session.mode ? `${session.mode.replace(/_/g, ' ')} · ` : ''}Active Member
+            {modality} · Active Member
           </Text>
-        </PressableMember>
+        </View>
 
         {/* Call button */}
         <TouchableOpacity
@@ -787,14 +992,15 @@ function ConversationPane({
         {/* Calendar navigation */}
         <CalendarNavigationButton />
 
-        {/* Open Member Profile link */}
+        {/* Open Member Profile */}
         <PressableMember
           memberId={session.memberId ?? ''}
           displayName={memberName}
           enabled={!!session.memberId}
           style={styles.openProfileBtn}
         >
-          <Text style={styles.openProfileText}>Open Profile →</Text>
+          <ArrowRight size={14} color={tokens.gray700} />
+          <Text style={styles.openProfileText}>Open Profile</Text>
         </PressableMember>
       </View>
 
@@ -843,8 +1049,29 @@ function ConversationPane({
         )}
       </ScrollView>
 
-      {/* Composer */}
+      {/* Composer area */}
       <View style={styles.composerWrap}>
+        {/* Quick-reply template chips */}
+        <View style={styles.templateRow}>
+          <Text style={styles.templateLabel}>TEMPLATES:</Text>
+          {templateChips.map((chip) => {
+            const IconComponent = chip.icon;
+            return (
+              <TouchableOpacity
+                key={chip.label}
+                style={styles.templateChip}
+                onPress={() => insertTemplate(chip.text)}
+                accessibilityRole="button"
+                accessibilityLabel={`Insert template: ${chip.label}`}
+              >
+                <IconComponent size={12} color={tokens.textSecondary} />
+                <Text style={styles.templateChipText}>{chip.label}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
+        {/* Composer row */}
         <View style={styles.composerInner}>
           <TouchableOpacity
             style={styles.composerIconBtn}
@@ -864,6 +1091,7 @@ function ConversationPane({
             style={styles.composerIconBtn}
             accessibilityRole="button"
             accessibilityLabel="Schedule appointment"
+            onPress={() => insertTemplate(`Appointment scheduled — I'll send you details shortly.`)}
           >
             <CalendarPlus size={20} color={tokens.textSecondary} />
           </TouchableOpacity>
@@ -871,7 +1099,7 @@ function ConversationPane({
             style={styles.composerInput}
             value={draftText}
             onChangeText={setDraftText}
-            placeholder={`Reply to ${memberName}…`}
+            placeholder={`Reply to ${memberFirstName}…`}
             placeholderTextColor={tokens.textMuted}
             multiline
             numberOfLines={2}
@@ -890,12 +1118,12 @@ function ConversationPane({
           </TouchableOpacity>
         </View>
 
-        {/* Complete Session CTA — opens DocumentationModal */}
+        {/* Complete Session CTA */}
         <TouchableOpacity
           style={styles.completeSessionBtn}
           onPress={handleOpenCompleteSession}
           accessibilityRole="button"
-          accessibilityLabel="Complete session and open documentation for review"
+          accessibilityLabel="Complete session and open documentation"
         >
           <FileText size={15} color="#fff" />
           <Text style={styles.completeSessionBtnText}>Complete Session</Text>
@@ -921,9 +1149,7 @@ function ConversationPane({
 // ─── Services consent status widget ──────────────────────────────────────────
 
 interface ServicesConsentStatusProps {
-  /** Resolved value from the endpoint, or null if unavailable / loading. */
   readonly consentValue: ServicesConsentValue | null;
-  /** True while the query is loading for the first time. */
   readonly isLoading: boolean;
 }
 
@@ -945,7 +1171,6 @@ function ServicesConsentStatus({
   }
 
   if (consentValue === null) {
-    // Endpoint unavailable during rollout — render neutral state
     return (
       <View style={[consentStyles.row, consentStyles.neutral]}>
         <AlertCircle size={14} color={tokens.textMuted} />
@@ -1013,103 +1238,375 @@ const consentStyles = StyleSheet.create({
   } as TextStyle,
 });
 
+// ─── Flag Thread Modal (inline; mirrors FlagMemberModal from CHWMemberProfileScreen) ──
+
+interface FlagThreadModalProps {
+  readonly memberId: string;
+  readonly visible: boolean;
+  readonly onClose: () => void;
+}
+
+/**
+ * Re-uses the flag-note backend contract to attach a CHW-only note
+ * to this member directly from the messages screen.
+ *
+ * Identical in behaviour to FlagMemberModal in CHWMemberProfileScreen.
+ * Not exported — internal to this screen only.
+ */
+function FlagThreadModal({ memberId, visible, onClose }: FlagThreadModalProps): React.JSX.Element {
+  const { data: existingNote, isLoading: noteLoading } = useFlagNote(memberId);
+  const createNote = useCreateFlagNote(memberId);
+  const deleteNote = useDeleteFlagNote(memberId);
+  const [noteText, setNoteText] = useState('');
+
+  const handleSave = useCallback(async (): Promise<void> => {
+    const trimmed = noteText.trim();
+    if (!trimmed) return;
+    await createNote.mutateAsync(trimmed);
+    setNoteText('');
+    onClose();
+  }, [noteText, createNote, onClose]);
+
+  const handleDelete = useCallback(async (): Promise<void> => {
+    await deleteNote.mutateAsync();
+    onClose();
+  }, [deleteNote, onClose]);
+
+  if (!visible) return <></>;
+
+  return (
+    <RightDrawer
+      isOpen={visible}
+      onClose={onClose}
+      title="Flag Thread"
+      subtitle="CHW-only note attached to this member's profile"
+      footer={
+        <View style={flagModalStyles.footer}>
+          <TouchableOpacity
+            style={flagModalStyles.cancelBtn}
+            onPress={onClose}
+            accessibilityRole="button"
+            accessibilityLabel="Cancel"
+          >
+            <Text style={flagModalStyles.cancelBtnText}>Cancel</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              flagModalStyles.saveBtn,
+              (createNote.isPending || noteText.trim().length === 0) && flagModalStyles.saveBtnDisabled,
+            ]}
+            onPress={() => { void handleSave(); }}
+            disabled={createNote.isPending || noteText.trim().length === 0}
+            accessibilityRole="button"
+            accessibilityLabel="Save flag note"
+          >
+            {createNote.isPending ? (
+              <ActivityIndicator size="small" color="#ffffff" />
+            ) : (
+              <Text style={flagModalStyles.saveBtnText}>Save Flag</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      }
+    >
+      <View style={flagModalStyles.content}>
+        {noteLoading ? (
+          <ActivityIndicator size="small" color={tokens.textMuted} />
+        ) : null}
+
+        {existingNote && !noteLoading ? (
+          <View style={flagModalStyles.existingNote}>
+            <View style={flagModalStyles.existingNoteHeader}>
+              <Flag size={14} color="#DC2626" />
+              <Text style={flagModalStyles.existingNoteTitle}>Current Flag Note</Text>
+            </View>
+            <Text style={flagModalStyles.existingNoteBody}>{existingNote.body}</Text>
+            <TouchableOpacity
+              style={flagModalStyles.removeBtn}
+              onPress={() => { void handleDelete(); }}
+              disabled={deleteNote.isPending}
+              accessibilityRole="button"
+              accessibilityLabel="Remove flag note"
+            >
+              {deleteNote.isPending ? (
+                <ActivityIndicator size="small" color="#DC2626" />
+              ) : (
+                <Text style={flagModalStyles.removeBtnText}>Remove Flag</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
+        <Text style={flagModalStyles.inputLabel}>
+          {existingNote ? 'Replace with a new note:' : 'Add a flag note:'}
+        </Text>
+        <TextInput
+          style={flagModalStyles.noteInput}
+          value={noteText}
+          onChangeText={setNoteText}
+          placeholder="e.g. Member expressed concern about housing — follow up next session."
+          placeholderTextColor={tokens.textMuted}
+          multiline
+          numberOfLines={4}
+          accessibilityLabel="Flag note text"
+        />
+      </View>
+    </RightDrawer>
+  );
+}
+
+const flagModalStyles = StyleSheet.create({
+  content: {
+    gap: spacing.md,
+    padding: spacing.lg,
+  } as ViewStyle,
+  existingNote: {
+    backgroundColor: '#fef3c7',
+    borderWidth: 1,
+    borderColor: '#fde68a',
+    borderRadius: radius.md,
+    padding: spacing.md,
+    gap: spacing.sm,
+  } as ViewStyle,
+  existingNoteHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  } as ViewStyle,
+  existingNoteTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#92400e',
+  } as TextStyle,
+  existingNoteBody: {
+    fontSize: 13,
+    color: '#78350f',
+    lineHeight: 18,
+  } as TextStyle,
+  removeBtn: {
+    alignSelf: 'flex-start',
+  } as ViewStyle,
+  removeBtnText: {
+    fontSize: 12,
+    color: '#DC2626',
+    fontWeight: '500',
+  } as TextStyle,
+  inputLabel: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: tokens.textSecondary,
+  } as TextStyle,
+  noteInput: {
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: radius.md,
+    padding: spacing.md,
+    fontSize: 14,
+    color: tokens.textPrimary,
+    minHeight: 96,
+    textAlignVertical: 'top',
+  } as unknown as TextStyle,
+  footer: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    padding: spacing.lg,
+  } as ViewStyle,
+  cancelBtn: {
+    flex: 1,
+    paddingVertical: 11,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: radius.md,
+    alignItems: 'center',
+  } as ViewStyle,
+  cancelBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: tokens.textSecondary,
+  } as TextStyle,
+  saveBtn: {
+    flex: 1,
+    paddingVertical: 11,
+    backgroundColor: tokens.primary,
+    borderRadius: radius.md,
+    alignItems: 'center',
+  } as ViewStyle,
+  saveBtnDisabled: {
+    opacity: 0.5,
+  } as ViewStyle,
+  saveBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#ffffff',
+  } as TextStyle,
+});
+
 // ─── Member context rail ──────────────────────────────────────────────────────
 
 interface MemberContextRailProps {
   readonly session: SessionData;
+  readonly onEndSessionComplete?: () => void;
 }
 
 /**
- * Right pane: member identity, journey progress, quick CTAs, and consent status.
- *
- * Contents (top to bottom):
- *  1. Member avatar + name
- *  2. Journey progress bar (from useChwJourneys, matched by memberId)
- *  3. "Start Call" CTA — dimmed when member has refused services
- *  4. "Schedule Next Session" CTA
- *  5. Services consent status (feature-flagged, 503-safe)
+ * Right pane: member context sections in order:
+ *   1. Active Journey card
+ *   2. Top Resource Needs card
+ *   3. Compass Insight card (emerald tinted)
+ *   4. Quick Actions (Open Suggested Questions, Add Case Note, Flag Thread,
+ *      Request Recording Consent)
+ *   5. Generate AI Summary (disabled until session ends)
+ *   6. End Session button (red, destructive)
+ *   7. Services Consent (informational)
  */
-function MemberContextRail({ session }: MemberContextRailProps): React.JSX.Element {
+function MemberContextRail({
+  session,
+  onEndSessionComplete,
+}: MemberContextRailProps): React.JSX.Element {
   const navigation = useNavigation<any>(); // eslint-disable-line @typescript-eslint/no-explicit-any
-  const [callInitiating, setCallInitiating] = useState(false);
-  const [callToastMessage, setCallToastMessage] = useState<string | null>(null);
-  const [callToastIsError, setCallToastIsError] = useState(false);
 
-  const startCall = useStartCall();
+  const [questionsDrawerOpen, setQuestionsDrawerOpen] = useState(false);
+  const [flagModalOpen, setFlagModalOpen] = useState(false);
+  const [endSessionPending, setEndSessionPending] = useState(false);
 
-  // Journey data — find the active journey for this member from the CHW's full list
+  const endSession = useEndSession();
+  const consentRequestMutation = useCreateConsentRequest(session.id);
+  const messagesQuery = useSessionMessages(session.id);
+
+  // Journey data
   const journeysQuery = useChwJourneys();
-  const activeJourney: MemberJourneyResponse | null = useMemo(() => {
+  const memberJourneys: MemberJourneyResponse[] = useMemo(() => {
     const allJourneys = journeysQuery.data ?? [];
-    const memberJourneys = allJourneys.filter(
+    return allJourneys.filter(
       (j) => j.memberId === session.memberId && j.status === 'active',
-    );
-    // Prefer most recently started active journey
-    return (
-      memberJourneys.sort(
-        (a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt),
-      )[0] ?? null
     );
   }, [journeysQuery.data, session.memberId]);
 
-  // Services consent — feature-flagged, 503-safe
+  const activeJourney: MemberJourneyResponse | null = useMemo(
+    () =>
+      [...memberJourneys].sort(
+        (a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt),
+      )[0] ?? null,
+    [memberJourneys],
+  );
+
+  // Top resource needs — top 3 active journeys ranked by severity (lowest progress first)
+  const topResourceNeeds = useMemo<MemberJourneyResponse[]>(() => {
+    return [...memberJourneys]
+      .sort((a, b) => a.progressPercent - b.progressPercent)
+      .slice(0, 3);
+  }, [memberJourneys]);
+
+  // Services consent
   const consentQuery = useMemberServicesConsent(session.memberId ?? '');
   const consentValue = consentQuery.data?.value ?? null;
   const servicesRefused = consentValue === 'refuse_services';
 
-  // Rail call handler (mirrors ConversationPane.handleCall)
-  const showRailToast = useCallback(
-    (message: string, isError: boolean): void => {
-      setCallToastMessage(message);
-      setCallToastIsError(isError);
-      setTimeout(() => setCallToastMessage(null), 3_500);
-    },
-    [],
-  );
+  // Compass insight
+  const messages = messagesQuery.data ?? [];
+  const memberFirstName = getFirstName(session.memberName);
+  const compassInsight = useCompassInsight(messages, memberFirstName);
 
-  const handleStartCall = useCallback(async (): Promise<void> => {
-    if (callInitiating || servicesRefused) return;
+  // Journey display values
+  const journeyPercent = activeJourney?.progressPercent ?? 0;
+  const journeyName = activeJourney?.template.name ?? session.vertical?.replace(/_/g, ' ') ?? 'General';
+  const journeyCurrentStep = activeJourney?.currentStep?.stepName ?? null;
+  const journeyDueDate = activeJourney?.currentStep?.dueDate ?? null;
+
+  const dueDateCaption = useMemo((): string | null => {
+    if (!journeyCurrentStep) return null;
+    if (!journeyDueDate) return `Current step: ${journeyCurrentStep}`;
+    const daysUntilDue = Math.ceil(
+      (Date.parse(journeyDueDate) - Date.now()) / (1000 * 60 * 60 * 24),
+    );
+    return `Current step: ${journeyCurrentStep} (due in ${daysUntilDue}d)`;
+  }, [journeyCurrentStep, journeyDueDate]);
+
+  // ── End Session handler ───────────────────────────────────────────────────
+
+  const handleEndSession = useCallback((): void => {
     const memberName = session.memberName ?? 'this member';
-
-    const executeCall = async (): Promise<void> => {
-      setCallInitiating(true);
+    const confirmAndEnd = async (): Promise<void> => {
+      setEndSessionPending(true);
       try {
-        await startCall.mutateAsync(session.id);
-        showRailToast('Call requested — your phone should ring shortly.', false);
+        await endSession.mutateAsync(session.id);
+        onEndSessionComplete?.();
       } catch (err) {
-        const detail =
-          err instanceof Error && err.message
-            ? err.message
-            : 'Could not start the call. Try again.';
-        showRailToast(detail, true);
+        const message = err instanceof Error ? err.message : 'Could not end session. Try again.';
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.alert(`Failed to end session\n\n${message}`);
+        } else {
+          Alert.alert('Failed to end session', message);
+        }
       } finally {
-        setCallInitiating(false);
+        setEndSessionPending(false);
       }
     };
 
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      if (window.confirm(`Start masked call with ${memberName}?`)) {
-        void executeCall();
+      if (
+        window.confirm(
+          `End the session for ${memberName}? Recording stops and you'll be prompted to document.`,
+        )
+      ) {
+        void confirmAndEnd();
       }
     } else {
       Alert.alert(
-        'Start call?',
-        `Start a masked call with ${memberName}? Both phones will ring.`,
+        'End Session?',
+        `End the session for ${memberName}? Recording stops and you'll be prompted to document.`,
         [
           { text: 'Cancel', style: 'cancel' },
-          { text: 'Call', onPress: () => void executeCall() },
+          {
+            text: 'End Session',
+            style: 'destructive',
+            onPress: () => void confirmAndEnd(),
+          },
         ],
       );
     }
-  }, [callInitiating, servicesRefused, session.id, session.memberName, startCall, showRailToast]);
+  }, [session.id, session.memberName, endSession, onEndSessionComplete]);
+
+  // ── Request Recording Consent handler ────────────────────────────────────
+
+  const handleRequestRecordingConsent = useCallback(async (): Promise<void> => {
+    try {
+      await consentRequestMutation.mutateAsync('ai_transcription');
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.alert('Consent request sent — the member will receive an in-app notification.');
+      } else {
+        Alert.alert(
+          'Consent request sent',
+          'The member will receive an in-app notification to approve or deny recording.',
+        );
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not send consent request.';
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.alert(`Could not send consent request\n\n${message}`);
+      } else {
+        Alert.alert('Could not send consent request', message);
+      }
+    }
+  }, [consentRequestMutation]);
 
   const memberName = session.memberName ?? 'Unknown Member';
   const initials = getInitials(memberName);
   const { bg, fg } = avatarColorFor(memberName);
 
-  const journeyPercent = activeJourney?.progressPercent ?? 0;
-  const journeyName = activeJourney?.template.name ?? session.vertical?.replace(/_/g, ' ') ?? 'General';
-  const journeyCurrentStep = activeJourney?.currentStep?.stepName ?? null;
+  // Suggested questions drawer context
+  const questionsJourney = activeJourney
+    ? {
+        templateName: activeJourney.template.name,
+        currentStepName: activeJourney.currentStep?.stepName ?? '',
+        vertical: activeJourney.template.category ?? session.vertical ?? '',
+      }
+    : undefined;
+  const questionsMember = {
+    name: memberName,
+    age: null,
+    initials,
+  };
 
   return (
     <ScrollView
@@ -1119,92 +1616,176 @@ function MemberContextRail({ session }: MemberContextRailProps): React.JSX.Eleme
       accessibilityRole={"complementary" as any}
       accessibilityLabel="Member context"
     >
-      {/* Member identity */}
+      {/* 1. Active Journey */}
       <Card style={styles.railCard}>
-        <View style={styles.railMemberIdentity}>
-          <View style={[styles.railAvatar, { backgroundColor: bg }]}>
-            <Text style={[styles.railAvatarText, { color: fg }]}>{initials}</Text>
-          </View>
-          <View style={styles.railMemberInfo}>
-            <Text style={styles.railMemberName} numberOfLines={2}>
-              {memberName}
-            </Text>
-            <Text style={styles.railMemberMeta}>Active Member</Text>
-          </View>
-        </View>
-      </Card>
-
-      {/* Journey progress */}
-      <Card style={styles.railCard}>
-        <SectionHeader title="Journey Progress" marginBottom={spacing.md} />
+        <SectionHeader title="Active Journey" marginBottom={spacing.md} />
         <Text style={styles.railJourneyName} numberOfLines={1}>
-          {journeyName}
+          {journeyName} · {journeyPercent}%
         </Text>
-        {journeyCurrentStep ? (
-          <Text style={styles.railJourneyStep} numberOfLines={1}>
-            Current step: {journeyCurrentStep}
-          </Text>
-        ) : null}
         <View
           style={styles.progressTrack}
           accessibilityRole="progressbar"
           accessibilityValue={{ min: 0, max: 100, now: journeyPercent }}
           accessibilityLabel={`Journey ${journeyPercent}% complete`}
         >
-          <View style={[styles.progressFill, { width: `${journeyPercent}%` as `${number}%` }]} />
+          <View
+            style={[
+              styles.progressFill,
+              { width: `${journeyPercent}%` as `${number}%`, backgroundColor: tokens.emerald500 },
+            ]}
+          />
         </View>
-        <Text style={styles.railJourneyPercent}>{journeyPercent}% complete</Text>
+        {dueDateCaption ? (
+          <Text style={styles.railJourneyStep} numberOfLines={2}>
+            {dueDateCaption}
+          </Text>
+        ) : (
+          <Text style={styles.railJourneyPercent}>{journeyPercent}% complete</Text>
+        )}
       </Card>
 
-      {/* Rail call toast */}
-      {callToastMessage !== null ? (
-        <InlineToast message={callToastMessage} isError={callToastIsError} />
+      {/* 2. Top Resource Needs */}
+      {topResourceNeeds.length > 0 ? (
+        <Card style={styles.railCard}>
+          <SectionHeader title="Top Resource Needs" marginBottom={spacing.md} />
+          <View style={styles.resourceNeedsList}>
+            {topResourceNeeds.map((journey) => {
+              const severity = deriveSeverity(journey.progressPercent);
+              const pillVariant = severityPillVariant(severity);
+              const IconComponent = journeyCategoryIcon(journey.template.category);
+              return (
+                <View key={journey.id} style={styles.resourceNeedRow}>
+                  <View style={styles.resourceNeedIconWrap}>
+                    <IconComponent size={14} color={tokens.textSecondary} />
+                  </View>
+                  <Text style={styles.resourceNeedName} numberOfLines={1}>
+                    {journey.template.name}
+                  </Text>
+                  <Pill variant={pillVariant} size="sm">
+                    {severity}
+                  </Pill>
+                </View>
+              );
+            })}
+          </View>
+        </Card>
       ) : null}
 
-      {/* Start Call CTA */}
+      {/* 3. Compass Insight */}
+      <View style={styles.insightCard}>
+        <View style={styles.insightHeader}>
+          <Sparkles size={14} color="#15803d" />
+          <Text style={styles.insightTitle}>Compass Insight</Text>
+        </View>
+        <Text style={styles.insightBody}>{compassInsight}</Text>
+      </View>
+
+      {/* 4. Quick Actions */}
+      <View style={styles.quickActionsSection}>
+        <Text style={styles.quickActionsLabel}>QUICK ACTIONS</Text>
+        <View style={styles.quickActionsStack}>
+          {/* Open Suggested Questions */}
+          <Pressable
+            style={({ pressed }) => [styles.quickActionBtn, pressed && styles.quickActionBtnPressed]}
+            onPress={() => setQuestionsDrawerOpen(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Open suggested questions"
+          >
+            <MessageSquare size={16} color={tokens.textSecondary} />
+            <Text style={styles.quickActionBtnText}>Open Suggested Questions</Text>
+          </Pressable>
+
+          {/* Add Case Note — STUB: no confirmed BE endpoint */}
+          <Pressable
+            style={({ pressed }) => [styles.quickActionBtn, pressed && styles.quickActionBtnPressed]}
+            onPress={() => {
+              // TODO(backend): Wire to POST /api/v1/case-notes once the endpoint ships.
+              // Tracked in Compass backend work queue.
+              Alert.alert('Coming soon', 'Case notes will be available after the backend endpoint ships.');
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="Add case note"
+          >
+            <BookOpen size={16} color={tokens.textSecondary} />
+            <Text style={styles.quickActionBtnText}>Add Case Note</Text>
+          </Pressable>
+
+          {/* Flag this Thread */}
+          <Pressable
+            style={({ pressed }) => [styles.quickActionBtn, pressed && styles.quickActionBtnPressed]}
+            onPress={() => setFlagModalOpen(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Flag this thread"
+          >
+            <Flag size={16} color={tokens.textSecondary} />
+            <Text style={styles.quickActionBtnText}>Flag this Thread</Text>
+          </Pressable>
+
+          {/* Request Recording Consent */}
+          <Pressable
+            style={({ pressed }) => [
+              styles.quickActionBtn,
+              pressed && styles.quickActionBtnPressed,
+              consentRequestMutation.isPending && styles.quickActionBtnDisabled,
+            ]}
+            onPress={() => { void handleRequestRecordingConsent(); }}
+            disabled={consentRequestMutation.isPending}
+            accessibilityRole="button"
+            accessibilityLabel="Request recording consent"
+          >
+            {consentRequestMutation.isPending ? (
+              <ActivityIndicator size="small" color={tokens.textSecondary} />
+            ) : (
+              <FileText size={16} color={tokens.textSecondary} />
+            )}
+            <Text style={styles.quickActionBtnText}>
+              {consentRequestMutation.isPending ? 'Sending…' : 'Request Recording Consent'}
+            </Text>
+          </Pressable>
+        </View>
+      </View>
+
+      {/* 5. Generate AI Summary (disabled until session ends) */}
+      <View style={styles.aiSummarySection}>
+        <TouchableOpacity
+          style={styles.aiSummaryBtn}
+          disabled
+          accessibilityRole="button"
+          accessibilityLabel="Generate AI summary — available after session ends"
+          accessibilityState={{ disabled: true }}
+        >
+          <Sparkles size={15} color={tokens.textMuted} />
+          <Text style={styles.aiSummaryBtnText}>Generate AI Summary</Text>
+        </TouchableOpacity>
+        <Text style={styles.aiSummaryCaption}>Available after session ends</Text>
+      </View>
+
+      {/* 6. End Session (destructive) */}
       <TouchableOpacity
-        style={[
-          styles.railCallBtn,
-          (servicesRefused || callInitiating) && styles.railCallBtnDimmed,
-        ]}
-        onPress={() => void handleStartCall()}
-        disabled={servicesRefused || callInitiating}
+        style={[styles.endSessionBtn, (endSessionPending || servicesRefused) && styles.endSessionBtnDisabled]}
+        onPress={handleEndSession}
+        disabled={endSessionPending}
         accessibilityRole="button"
         accessibilityLabel={
           servicesRefused
-            ? 'Call disabled — member has refused services'
-            : callInitiating
-            ? 'Call initiating…'
-            : 'Start call with member'
+            ? 'End session disabled — member has refused services'
+            : endSessionPending
+            ? 'Ending session…'
+            : 'End session'
         }
-        accessibilityState={{ disabled: servicesRefused || callInitiating }}
+        accessibilityState={{ disabled: endSessionPending || servicesRefused }}
       >
-        {callInitiating ? (
+        {endSessionPending ? (
           <ActivityIndicator size="small" color="#fff" />
         ) : (
-          <Phone size={16} color="#fff" />
+          <LogOut size={16} color="#fff" />
         )}
-        <Text style={styles.railCallBtnText}>
-          {callInitiating ? 'Calling…' : 'Start Call'}
+        <Text style={styles.endSessionBtnText}>
+          {endSessionPending ? 'Ending…' : 'End Session'}
         </Text>
       </TouchableOpacity>
 
-      {servicesRefused ? (
-        <Text style={styles.callDisabledCaption}>Member has refused services</Text>
-      ) : null}
-
-      {/* Schedule Next Session CTA */}
-      <TouchableOpacity
-        style={styles.railScheduleBtn}
-        onPress={() => navigation.navigate('Calendar')}
-        accessibilityRole="button"
-        accessibilityLabel="Schedule next session on the calendar"
-      >
-        <CalendarPlus size={16} color={tokens.primary} />
-        <Text style={styles.railScheduleBtnText}>Schedule Next Session</Text>
-      </TouchableOpacity>
-
-      {/* Services consent status */}
+      {/* 7. Services Consent (informational) */}
       <View style={styles.railConsentSection}>
         <SectionHeader title="Services Consent" marginBottom={spacing.sm} />
         <ServicesConsentStatus
@@ -1212,6 +1793,22 @@ function MemberContextRail({ session }: MemberContextRailProps): React.JSX.Eleme
           isLoading={consentQuery.isLoading && consentQuery.fetchStatus !== 'idle'}
         />
       </View>
+
+      {/* Modals */}
+      <OpenQuestionsDrawer
+        visible={questionsDrawerOpen}
+        onClose={() => setQuestionsDrawerOpen(false)}
+        member={questionsMember}
+        journey={questionsJourney}
+      />
+
+      {session.memberId ? (
+        <FlagThreadModal
+          memberId={session.memberId}
+          visible={flagModalOpen}
+          onClose={() => setFlagModalOpen(false)}
+        />
+      ) : null}
     </ScrollView>
   );
 }
@@ -1222,10 +1819,9 @@ function MemberContextRail({ session }: MemberContextRailProps): React.JSX.Eleme
  * CHWMessagesScreen — 3-pane messaging inbox.
  *
  * Panes:
- *   ThreadListPane      — alphabetical member thread list with search + unread badge
- *   ConversationPane    — message thread + composer + Complete Session button
- *   MemberContextRail  — member identity, journey progress, Start Call / Schedule CTAs,
- *                         services-consent status
+ *   ThreadListPane      — thread list with search + 4 filter tabs
+ *   ConversationPane    — message thread + templates + composer + Complete Session button
+ *   MemberContextRail  — journey, resource needs, Compass Insight, quick actions, End Session
  */
 export function CHWMessagesScreen(): React.JSX.Element {
   const { userName } = useAuth();
@@ -1233,10 +1829,10 @@ export function CHWMessagesScreen(): React.JSX.Element {
 
   const sessionsQuery = useSessions();
   const [selectedSession, setSelectedSession] = useState<SessionData | null>(null);
-  // On narrow viewports the thread list can be toggled
   const [showThreadList, setShowThreadList] = useState(true);
+  const [documentingSessionId, setDocumentingSessionId] = useState<string | null>(null);
 
-  // Route params — when navigated from CHWMemberProfileScreen with memberId + autoCall
+  // Route params — navigate from CHWMemberProfileScreen with memberId + autoCall
   const route = useRoute<RouteProp<CHWSessionsStackParamList, 'Messages'>>();
   const targetMemberId = route.params?.memberId;
   const shouldAutoCall = route.params?.autoCall === true;
@@ -1245,7 +1841,7 @@ export function CHWMessagesScreen(): React.JSX.Element {
   const hideRail = width < BP_HIDE_RAIL;
   const hideList = width < BP_HIDE_LIST;
 
-  // ── Resizable pane widths (web only, persisted via localStorage) ─────────────
+  // Resizable pane widths (web only, persisted via localStorage)
   const [leftWidth, setLeftWidth] = useState<number>(() =>
     readStoredWidth(LS_KEY_CHW_LEFT, THREAD_LIST_WIDTH),
   );
@@ -1265,7 +1861,7 @@ export function CHWMessagesScreen(): React.JSX.Element {
 
   const allSessions: SessionData[] = sessionsQuery.data ?? [];
 
-  // Auto-select the target member's thread (from route params) or the first thread
+  // Auto-select target member's thread or first thread alphabetically
   useEffect(() => {
     if (allSessions.length === 0) return;
 
@@ -1278,7 +1874,6 @@ export function CHWMessagesScreen(): React.JSX.Element {
     }
 
     if (!selectedSession) {
-      // Default: first thread alphabetically
       const firstAlpha = [...allSessions]
         .filter((s) => !!s.memberName)
         .sort((a, b) => (a.memberName ?? '').localeCompare(b.memberName ?? ''))[0];
@@ -1299,6 +1894,39 @@ export function CHWMessagesScreen(): React.JSX.Element {
   const handleBack = useCallback((): void => {
     setShowThreadList(true);
   }, []);
+
+  // After End Session completes — open DocumentationModal automatically
+  const handleEndSessionComplete = useCallback((): void => {
+    if (selectedSession) {
+      setDocumentingSessionId(selectedSession.id);
+    }
+  }, [selectedSession]);
+
+  const submitDocumentation = useSubmitDocumentation();
+
+  const handleDocumentationSubmit = useCallback(
+    async (data: SessionDocumentation): Promise<void> => {
+      if (documentingSessionId == null) return;
+      try {
+        await submitDocumentation.mutateAsync({
+          sessionId: documentingSessionId,
+          data: data as unknown as Record<string, unknown>,
+        });
+        setDocumentingSessionId(null);
+      } catch (err) {
+        const reason =
+          err instanceof Error && err.message ? err.message : 'Unknown error';
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.alert(
+            `Failed to submit documentation\n\n${reason}\n\nThe modal will stay open so you can adjust and try again.`,
+          );
+        } else {
+          Alert.alert('Failed to submit documentation', reason);
+        }
+      }
+    },
+    [documentingSessionId, submitDocumentation],
+  );
 
   const shellUserBlock = {
     initials: (userName ?? 'CHW')
@@ -1354,7 +1982,7 @@ export function CHWMessagesScreen(): React.JSX.Element {
           </View>
         ) : null}
 
-        {/* Divider between left and center — drag-resizes left pane (web ≥1280 only) */}
+        {/* Divider between left and center */}
         {shouldShowList && shouldShowConv ? (
           <ResizableDivider
             width={leftWidth}
@@ -1380,6 +2008,9 @@ export function CHWMessagesScreen(): React.JSX.Element {
               onAutoCallConsumed={() => {
                 autoCallFiredRef.current = true;
               }}
+              onRequestOpenDocumentation={() => {
+                setDocumentingSessionId(selectedSession.id);
+              }}
             />
           </View>
         ) : shouldShowConv ? (
@@ -1390,7 +2021,7 @@ export function CHWMessagesScreen(): React.JSX.Element {
           </View>
         ) : null}
 
-        {/* Divider between center and right — drag-resizes right pane (web ≥1280 only) */}
+        {/* Divider between center and right */}
         {!hideRail && selectedSession ? (
           <ResizableDivider
             width={rightWidth}
@@ -1404,10 +2035,24 @@ export function CHWMessagesScreen(): React.JSX.Element {
         {/* Right: member context rail */}
         {!hideRail && selectedSession ? (
           <View style={[styles.railWrap, { width: rightWidth }]}>
-            <MemberContextRail session={selectedSession} />
+            <MemberContextRail
+              session={selectedSession}
+              onEndSessionComplete={handleEndSessionComplete}
+            />
           </View>
         ) : null}
       </View>
+
+      {/* Documentation modal triggered by End Session */}
+      {documentingSessionId != null && (
+        <DocumentationModal
+          visible={documentingSessionId != null}
+          onClose={() => setDocumentingSessionId(null)}
+          sessionId={documentingSessionId}
+          durationMinutes={selectedSession?.durationMinutes ?? null}
+          onSubmit={handleDocumentationSubmit}
+        />
+      )}
     </AppShell>
   );
 }
@@ -1478,8 +2123,12 @@ const styles = StyleSheet.create({
   } as unknown as TextStyle,
 
   filterRow: {
+    flexShrink: 0,
+  } as ViewStyle,
+
+  filterRowContent: {
     flexDirection: 'row',
-    gap: spacing.sm,
+    gap: spacing.xs,
   } as ViewStyle,
 
   filterChip: {
@@ -1634,13 +2283,20 @@ const styles = StyleSheet.create({
   convHeaderInfo: {
     flex: 1,
     minWidth: 0,
+    gap: 2,
+  } as ViewStyle,
+
+  convHeaderNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    flexWrap: 'wrap',
   } as ViewStyle,
 
   convHeaderName: {
     fontSize: 16,
     fontWeight: '600',
     color: tokens.textPrimary,
-    marginBottom: 2,
   } as TextStyle,
 
   convHeaderMeta: {
@@ -1658,6 +2314,9 @@ const styles = StyleSheet.create({
   } as ViewStyle,
 
   openProfileBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     borderWidth: 1,
@@ -1666,7 +2325,7 @@ const styles = StyleSheet.create({
   } as ViewStyle,
 
   openProfileText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
     color: tokens.gray700,
   } as TextStyle,
@@ -1775,6 +2434,38 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   } as ViewStyle,
 
+  templateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+  } as ViewStyle,
+
+  templateLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: tokens.textMuted,
+    letterSpacing: 0.5,
+    marginRight: 2,
+  } as TextStyle,
+
+  templateChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: radius.pill,
+  } as ViewStyle,
+
+  templateChipText: {
+    fontSize: 12,
+    color: tokens.textSecondary,
+    fontWeight: '500',
+  } as TextStyle,
+
   composerInner: {
     flexDirection: 'row',
     alignItems: 'flex-end',
@@ -1805,14 +2496,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: tokens.primaryHover,
+    backgroundColor: tokens.primary,
     paddingHorizontal: 14,
     paddingVertical: spacing.sm,
     borderRadius: radius.md,
   } as ViewStyle,
 
   sendBtnDisabled: {
-    opacity: 0.5,
+    opacity: 0.4,
   } as ViewStyle,
 
   sendBtnText: {
@@ -1821,9 +2512,7 @@ const styles = StyleSheet.create({
     color: '#fff',
   } as TextStyle,
 
-  // "Complete Session" — primary green CTA in the composer tray.
-  // Green (not red) because this is the expected happy-path action:
-  // the CHW submits documentation to close out a completed call.
+  // "Complete Session" — happy-path CTA (green, not red)
   completeSessionBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1875,61 +2564,25 @@ const styles = StyleSheet.create({
   railContent: {
     padding: spacing.xl,
     gap: spacing.md,
+    paddingBottom: spacing.xxxl,
   } as ViewStyle,
 
   railCard: {
     padding: spacing.lg,
   } as ViewStyle,
 
-  railMemberIdentity: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-  } as ViewStyle,
-
-  railAvatar: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  } as ViewStyle,
-
-  railAvatarText: {
-    fontSize: 18,
-    fontWeight: '700',
-  } as TextStyle,
-
-  railMemberInfo: {
-    flex: 1,
-    minWidth: 0,
-  } as ViewStyle,
-
-  railMemberName: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: tokens.textPrimary,
-    marginBottom: 2,
-  } as TextStyle,
-
-  railMemberMeta: {
-    fontSize: 12,
-    color: tokens.textSecondary,
-  } as TextStyle,
-
-  // Journey progress
+  // Journey card
   railJourneyName: {
     fontSize: 14,
     fontWeight: '600',
     color: tokens.textPrimary,
-    marginBottom: 4,
+    marginBottom: spacing.sm,
   } as TextStyle,
 
   railJourneyStep: {
     fontSize: 12,
     color: tokens.textSecondary,
-    marginBottom: spacing.sm,
+    marginTop: spacing.xs,
   } as TextStyle,
 
   progressTrack: {
@@ -1942,7 +2595,6 @@ const styles = StyleSheet.create({
 
   progressFill: {
     height: 8,
-    backgroundColor: tokens.primary,
     borderRadius: radius.pill,
   } as ViewStyle,
 
@@ -1951,53 +2603,156 @@ const styles = StyleSheet.create({
     color: tokens.textMuted,
   } as TextStyle,
 
-  // Start Call CTA
-  railCallBtn: {
+  // Resource needs
+  resourceNeedsList: {
+    gap: spacing.sm,
+  } as ViewStyle,
+
+  resourceNeedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  } as ViewStyle,
+
+  resourceNeedIconWrap: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    backgroundColor: tokens.gray100,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  } as ViewStyle,
+
+  resourceNeedName: {
+    flex: 1,
+    fontSize: 13,
+    color: tokens.textPrimary,
+    fontWeight: '500',
+  } as TextStyle,
+
+  // Compass Insight card
+  insightCard: {
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    borderRadius: radius.xl,
+    padding: spacing.lg,
+    gap: spacing.sm,
+  } as ViewStyle,
+
+  insightHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  } as ViewStyle,
+
+  insightTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#14532D',
+  } as TextStyle,
+
+  insightBody: {
+    fontSize: 13,
+    color: '#14532D',
+    lineHeight: 18,
+  } as TextStyle,
+
+  // Quick Actions
+  quickActionsSection: {
+    gap: spacing.sm,
+  } as ViewStyle,
+
+  quickActionsLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: tokens.textMuted,
+    letterSpacing: 0.8,
+  } as TextStyle,
+
+  quickActionsStack: {
+    gap: spacing.xs,
+  } as ViewStyle,
+
+  quickActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: 10,
+    paddingHorizontal: spacing.md,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: radius.md,
+    backgroundColor: tokens.cardBg,
+  } as ViewStyle,
+
+  quickActionBtnPressed: {
+    backgroundColor: tokens.gray100,
+  } as ViewStyle,
+
+  quickActionBtnDisabled: {
+    opacity: 0.5,
+  } as ViewStyle,
+
+  quickActionBtnText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: tokens.textPrimary,
+    flex: 1,
+  } as TextStyle,
+
+  // Generate AI Summary
+  aiSummarySection: {
+    gap: 4,
+  } as ViewStyle,
+
+  aiSummaryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    paddingVertical: 10,
+    paddingHorizontal: spacing.md,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: radius.md,
+    backgroundColor: tokens.gray100,
+    opacity: 0.6,
+  } as ViewStyle,
+
+  aiSummaryBtnText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: tokens.textMuted,
+  } as TextStyle,
+
+  aiSummaryCaption: {
+    fontSize: 11,
+    color: tokens.textMuted,
+    textAlign: 'center',
+  } as TextStyle,
+
+  // End Session (destructive)
+  endSessionBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: spacing.sm,
     paddingVertical: 12,
     paddingHorizontal: spacing.lg,
-    backgroundColor: tokens.primary,
+    backgroundColor: tokens.red700,
     borderRadius: radius.lg,
   } as ViewStyle,
 
-  railCallBtnDimmed: {
-    opacity: 0.4,
+  endSessionBtnDisabled: {
+    opacity: 0.5,
   } as ViewStyle,
 
-  railCallBtnText: {
+  endSessionBtnText: {
     fontSize: 15,
     fontWeight: '600',
     color: '#fff',
-  } as TextStyle,
-
-  callDisabledCaption: {
-    fontSize: 12,
-    color: '#b91c1c',
-    textAlign: 'center',
-    marginTop: -spacing.xs,
-  } as TextStyle,
-
-  // Schedule Next Session CTA
-  railScheduleBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.sm,
-    paddingVertical: 12,
-    paddingHorizontal: spacing.lg,
-    backgroundColor: tokens.cardBg,
-    borderWidth: 1,
-    borderColor: tokens.primary,
-    borderRadius: radius.lg,
-  } as ViewStyle,
-
-  railScheduleBtnText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: tokens.primary,
   } as TextStyle,
 
   // Consent section
