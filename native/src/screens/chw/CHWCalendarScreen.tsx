@@ -1,24 +1,33 @@
 /**
- * CHWCalendarScreen — Calendar with session dots and day detail panel.
+ * CHWCalendarScreen — Full-width calendar grid with Schedule Session modal.
  *
  * Features:
  *  - Day/Week/Month toggle in header
  *  - Week view: 7 columns × hourly rows 8 AM–6 PM, today highlighted (web default)
  *  - Month view: 7-column grid with member-count badges (all platforms)
- *  - Right rail (web): Today's Schedule list + Unconfirmed Appointments + This Week Summary
+ *  - "Schedule Session" CTA in the page header — opens a modal to schedule a new
+ *    session from an accepted service request (POSTs to POST /api/v1/sessions/).
+ *  - No right-side rail — calendar grid occupies full screen width.
  *  - Tap a day/slot to reveal events in detail panel
  *  - Color-coded legend for member journey statuses
- *  - Preserves existing scheduling/reschedule flow
  */
 
-import React, { useState, useMemo, useCallback } from 'react';
+import React, {
+  useState,
+  useMemo,
+  useCallback,
+  useRef,
+} from 'react';
 import {
   View,
   Text,
   ScrollView,
   StyleSheet,
   TouchableOpacity,
+  Modal,
   Platform,
+  ActivityIndicator,
+  TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
@@ -28,8 +37,11 @@ import {
   Clock,
   MapPin,
   Target,
+  Plus,
+  X,
 } from 'lucide-react-native';
 
+import { colors as tokens, spacing, radius } from '../../theme/tokens';
 import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
 import {
@@ -41,8 +53,18 @@ import {
   AppShell,
   PageHeader,
   Card,
-  RightRail,
+  SectionHeader,
 } from '../../components/ui';
+import {
+  useSessions,
+  useRequests,
+  useCreateSession,
+  type SessionData,
+  type ServiceRequestData,
+} from '../../hooks/useApiQueries';
+import { useRefreshControl } from '../../hooks/useRefreshControl';
+import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
+import { ErrorState } from '../../components/shared/ErrorState';
 
 // ─── Member need-journey status (mocked) — see CHWDashboardScreen ─────────────
 // TODO(backend): expose journey_status per session.
@@ -67,10 +89,6 @@ const JOURNEY_DESCRIPTIONS: Record<JourneyStatus, string> = {
   awaiting_confirmation: 'Resources shared — waiting on member',
   resolved: 'Resources used and member moved on',
 };
-import { useSessions, type SessionData } from '../../hooks/useApiQueries';
-import { useRefreshControl } from '../../hooks/useRefreshControl';
-import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
-import { ErrorState } from '../../components/shared/ErrorState';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -95,6 +113,13 @@ const VERTICAL_COLORS: Record<Vertical | 'goal_milestone', string> = {
 const WEEK_VIEW_HOURS = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
 
 type CalendarViewMode = 'day' | 'week' | 'month';
+
+type SessionModality = 'in_person' | 'virtual';
+
+const MODALITY_LABELS: Record<SessionModality, string> = {
+  in_person: 'In-Person',
+  virtual: 'Virtual',
+};
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -198,6 +223,29 @@ function formatHourLabel(hour: number): string {
   if (hour === 0) return '12 AM';
   if (hour === 12) return '12 PM';
   return hour < 12 ? `${hour} AM` : `${hour - 12} PM`;
+}
+
+/**
+ * Converts a local Date to an ISO-8601 string suitable for datetime-local inputs
+ * and backend scheduled_at payloads (UTC).
+ */
+function toISODateTimeLocal(date: Date): string {
+  // Returns YYYY-MM-DDTHH:mm (local time, for <input type="datetime-local">)
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+/**
+ * Formats a local datetime-local string to a display-friendly label.
+ * Input: "2026-06-15T14:30" → "Jun 15, 2026 at 2:30 PM"
+ */
+function formatDateTimeLabel(value: string): string {
+  if (!value) return '';
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return value;
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) +
+    ' at ' +
+    d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 }
 
 // ─── EventDetailCard sub-component ───────────────────────────────────────────
@@ -508,7 +556,7 @@ const weekStyles = StyleSheet.create({
     gap: 2,
   },
   dayHeaderToday: {
-    backgroundColor: colors.primary + '08',
+    backgroundColor: tokens.primary + '08',
   },
   dayHeaderLabel: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
@@ -518,7 +566,7 @@ const weekStyles = StyleSheet.create({
     color: '#6B7A6B',
   },
   dayHeaderLabelToday: {
-    color: colors.primary,
+    color: tokens.primary,
   },
   dayHeaderDate: {
     fontFamily: 'DMSans_700Bold',
@@ -527,7 +575,7 @@ const weekStyles = StyleSheet.create({
   },
   dayHeaderDateToday: {
     color: '#FFFFFF',
-    backgroundColor: colors.primary,
+    backgroundColor: tokens.primary,
     width: 32,
     height: 32,
     borderRadius: 16,
@@ -549,7 +597,7 @@ const weekStyles = StyleSheet.create({
     gap: 2,
   },
   hourCellToday: {
-    backgroundColor: colors.primary + '05',
+    backgroundColor: tokens.primary + '05',
   },
   eventChip: {
     borderLeftWidth: 2,
@@ -563,233 +611,545 @@ const weekStyles = StyleSheet.create({
   },
 });
 
-// ─── Web-only right rail ──────────────────────────────────────────────────────
+// ─── ScheduleSessionModal ─────────────────────────────────────────────────────
 
-interface CalendarRightRailProps {
-  todayEvents: CalendarEvent[];
-  weekEvents: CalendarEvent[];
-  allEvents: CalendarEvent[];
+interface ScheduleSessionModalProps {
+  visible: boolean;
+  onClose: () => void;
+  onSuccess: () => void;
+  acceptedRequests: ServiceRequestData[];
+  isLoadingRequests: boolean;
 }
 
 /**
- * Right-rail content for the calendar screen on web.
- * Shows Today's Schedule, Unconfirmed Appointments, This Week Summary.
+ * Modal for scheduling a new session from an accepted service request.
+ *
+ * Workflow:
+ *  1. CHW selects a member (from their accepted service requests).
+ *  2. Picks a date and time (datetime-local input on web; text input on native).
+ *  3. Picks a modality (In-Person / Virtual).
+ *  4. Submits — POSTs to POST /api/v1/sessions/.
+ *
+ * The `request_id` is resolved from the selected accepted request row.
+ * The backend derives vertical, chw_id, and member_id from the request.
  */
-function CalendarRightRail({
-  todayEvents,
-  weekEvents,
-  allEvents,
-}: CalendarRightRailProps): React.JSX.Element {
-  // "Unconfirmed" = mocked as every 3rd event (no backend status yet)
-  // TODO(backend): expose appointment.status on SessionData
-  const unconfirmedEvents = allEvents.filter((_, i) => i % 3 === 0).slice(0, 3);
+function ScheduleSessionModal({
+  visible,
+  onClose,
+  onSuccess,
+  acceptedRequests,
+  isLoadingRequests,
+}: ScheduleSessionModalProps): React.JSX.Element {
+  const { mutateAsync: createSession, isPending } = useCreateSession();
+
+  const [selectedRequestId, setSelectedRequestId] = useState<string>('');
+  const [scheduledAt, setScheduledAt] = useState<string>(() => {
+    // Default to tomorrow at 10:00 AM local time
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(10, 0, 0, 0);
+    return toISODateTimeLocal(tomorrow);
+  });
+  const [modality, setModality] = useState<SessionModality>('in_person');
+  const [fieldError, setFieldError] = useState<string | null>(null);
+
+  // Reset form when modal closes
+  const handleClose = useCallback(() => {
+    setSelectedRequestId('');
+    setScheduledAt(() => {
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      tomorrow.setHours(10, 0, 0, 0);
+      return toISODateTimeLocal(tomorrow);
+    });
+    setModality('in_person');
+    setFieldError(null);
+    onClose();
+  }, [onClose]);
+
+  const selectedRequest = acceptedRequests.find((r) => r.id === selectedRequestId);
+
+  const handleSubmit = useCallback(async () => {
+    setFieldError(null);
+
+    if (!selectedRequestId) {
+      setFieldError('Please select a member.');
+      return;
+    }
+
+    if (!scheduledAt) {
+      setFieldError('Please select a date and time.');
+      return;
+    }
+
+    const scheduledDate = new Date(scheduledAt);
+    if (isNaN(scheduledDate.getTime())) {
+      setFieldError('Invalid date/time. Please re-enter.');
+      return;
+    }
+
+    if (scheduledDate <= new Date()) {
+      setFieldError('Scheduled time must be in the future.');
+      return;
+    }
+
+    try {
+      await createSession({
+        requestId: selectedRequestId,
+        scheduledAt: scheduledDate.toISOString(),
+        mode: modality,
+      });
+      handleClose();
+      onSuccess();
+    } catch {
+      // Error alert is handled by useCreateSession's onError
+    }
+  }, [selectedRequestId, scheduledAt, modality, createSession, handleClose, onSuccess]);
+
+  const canSubmit =
+    selectedRequestId.length > 0 &&
+    scheduledAt.length > 0 &&
+    !isPending;
 
   return (
-    <ScrollView showsVerticalScrollIndicator={false}>
-      {/* Today's Schedule */}
-      <Card style={railStyles.card}>
-        <Text style={railStyles.railSectionTitle}>Today's Schedule</Text>
-        {todayEvents.length === 0 ? (
-          <Text style={railStyles.railEmpty}>No sessions today.</Text>
-        ) : (
-          todayEvents.map((event, idx) => {
-            const barColor = eventColor(event);
-            const isFirst = idx === 0;
-            return (
-              <View key={event.id} style={railStyles.scheduleRow}>
-                <Text style={railStyles.scheduleTime}>{formatTimeFull(event.startTime)}</Text>
-                <View style={railStyles.scheduleInfo}>
-                  <Text style={railStyles.scheduleTitle} numberOfLines={1}>{event.memberName ?? event.title}</Text>
-                  <Text style={railStyles.scheduleMeta} numberOfLines={1}>{event.title}</Text>
-                </View>
-                <Text style={[railStyles.scheduleAction, isFirst && railStyles.scheduleActionActive]}>
-                  {isFirst ? 'Start →' : 'Prep →'}
-                </Text>
-              </View>
-            );
-          })
-        )}
-      </Card>
-
-      {/* Unconfirmed Appointments */}
-      <Card style={[railStyles.card, railStyles.cardUnconfirmed]}>
-        <Text style={[railStyles.railSectionTitle, railStyles.unconfirmedTitle]}>Unconfirmed ({unconfirmedEvents.length})</Text>
-        {unconfirmedEvents.length === 0 ? (
-          <Text style={railStyles.railEmpty}>All appointments confirmed.</Text>
-        ) : (
-          unconfirmedEvents.map((event) => {
-            const barColor = eventColor(event);
-            return (
-              <View key={event.id} style={railStyles.unconfirmedRow}>
-                <View style={[railStyles.unconfirmedDot, { backgroundColor: barColor }]} />
-                <View style={railStyles.scheduleInfo}>
-                  <Text style={railStyles.scheduleTitle} numberOfLines={1}>{event.memberName ?? event.title}</Text>
-                  <Text style={railStyles.scheduleMeta}>{event.date}</Text>
-                </View>
-                <View style={railStyles.unconfirmedBadge}>
-                  <Text style={railStyles.unconfirmedBadgeText}>Pending</Text>
-                </View>
-              </View>
-            );
-          })
-        )}
-      </Card>
-
-      {/* This Week Summary */}
-      <Card style={railStyles.card}>
-        <Text style={railStyles.railSectionTitle}>This Week Summary</Text>
-        {[
-          {
-            label: 'In-person',
-            value: weekEvents.filter((e) => e.type === 'session').length,
-          },
-          {
-            label: 'Phone',
-            value: Math.round(weekEvents.length * 0.33),
-          },
-          {
-            label: 'Video',
-            value: Math.round(weekEvents.length * 0.18),
-          },
-          {
-            label: 'Outreach hours',
-            value: new Set(weekEvents.map((e) => e.memberName)).size,
-          },
-        ].map(({ label, value }) => (
-          <View key={label} style={railStyles.summaryStatRow}>
-            <Text style={railStyles.summaryStatLabel}>{label}</Text>
-            <Text style={railStyles.summaryStatValue}>{value}</Text>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={handleClose}
+      accessibilityViewIsModal
+    >
+      <View style={modalStyles.overlay}>
+        <View style={modalStyles.sheet}>
+          {/* Header */}
+          <View style={modalStyles.header}>
+            <Text style={modalStyles.headerTitle}>Schedule Session</Text>
+            <TouchableOpacity
+              style={modalStyles.closeBtn}
+              onPress={handleClose}
+              accessibilityRole="button"
+              accessibilityLabel="Close schedule session modal"
+            >
+              <X size={18} color={tokens.textSecondary} />
+            </TouchableOpacity>
           </View>
-        ))}
-      </Card>
-    </ScrollView>
+
+          <ScrollView
+            style={modalStyles.body}
+            contentContainerStyle={modalStyles.bodyContent}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
+            {/* Member selector */}
+            <View style={modalStyles.field}>
+              <Text style={modalStyles.fieldLabel}>Member</Text>
+              {isLoadingRequests ? (
+                <View style={modalStyles.loadingRow}>
+                  <ActivityIndicator size="small" color={tokens.primary} />
+                  <Text style={modalStyles.loadingText}>Loading members...</Text>
+                </View>
+              ) : acceptedRequests.length === 0 ? (
+                <View style={modalStyles.emptyHint}>
+                  <Text style={modalStyles.emptyHintText}>
+                    No accepted service requests. Accept a member request first before scheduling a session.
+                  </Text>
+                </View>
+              ) : (
+                <View style={modalStyles.memberList}>
+                  {acceptedRequests.map((req) => {
+                    const isActive = selectedRequestId === req.id;
+                    return (
+                      <TouchableOpacity
+                        key={req.id}
+                        style={[modalStyles.memberRow, isActive && modalStyles.memberRowActive]}
+                        onPress={() => setSelectedRequestId(req.id)}
+                        accessibilityRole="radio"
+                        accessibilityState={{ checked: isActive }}
+                        accessibilityLabel={`Select ${req.memberName ?? 'member'}`}
+                      >
+                        <View style={[modalStyles.memberRadio, isActive && modalStyles.memberRadioActive]}>
+                          {isActive ? <View style={modalStyles.memberRadioDot} /> : null}
+                        </View>
+                        <View style={modalStyles.memberInfo}>
+                          <Text style={[modalStyles.memberName, isActive && modalStyles.memberNameActive]}>
+                            {req.memberName ?? 'Unknown Member'}
+                          </Text>
+                          <Text style={modalStyles.memberMeta}>
+                            {req.vertical
+                              ? (verticalLabels[req.vertical as Vertical] ?? req.vertical)
+                              : 'General'} · {req.preferredMode.replace('_', '-')}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              )}
+            </View>
+
+            {/* Date & time */}
+            <View style={modalStyles.field}>
+              <Text style={modalStyles.fieldLabel}>Date &amp; Time</Text>
+              {Platform.OS === 'web' ? (
+                // Web: native datetime-local input
+                <View style={modalStyles.dateInputWrapper}>
+                  {/* @ts-ignore — datetime-local is a valid HTML input type on web */}
+                  <TextInput
+                    style={modalStyles.dateInput}
+                    // @ts-ignore — type is a valid HTML attribute on web
+                    type="datetime-local"
+                    value={scheduledAt}
+                    onChangeText={setScheduledAt}
+                    accessibilityLabel="Scheduled date and time"
+                  />
+                </View>
+              ) : (
+                // Native: text input for datetime — YYYY-MM-DDTHH:mm format
+                <View style={modalStyles.dateInputWrapper}>
+                  <TextInput
+                    style={modalStyles.dateInput}
+                    value={scheduledAt}
+                    onChangeText={setScheduledAt}
+                    placeholder="YYYY-MM-DDTHH:mm (e.g. 2026-06-15T14:00)"
+                    placeholderTextColor={tokens.textMuted}
+                    accessibilityLabel="Scheduled date and time"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    keyboardType="numbers-and-punctuation"
+                  />
+                </View>
+              )}
+              {scheduledAt.length > 0 && (
+                <Text style={modalStyles.datePreview}>{formatDateTimeLabel(scheduledAt)}</Text>
+              )}
+            </View>
+
+            {/* Modality */}
+            <View style={modalStyles.field}>
+              <Text style={modalStyles.fieldLabel}>Modality</Text>
+              <View style={modalStyles.modalityRow}>
+                {(['in_person', 'virtual'] as SessionModality[]).map((m) => {
+                  const isActive = modality === m;
+                  return (
+                    <TouchableOpacity
+                      key={m}
+                      style={[modalStyles.modalityBtn, isActive && modalStyles.modalityBtnActive]}
+                      onPress={() => setModality(m)}
+                      accessibilityRole="radio"
+                      accessibilityState={{ checked: isActive }}
+                      accessibilityLabel={MODALITY_LABELS[m]}
+                    >
+                      <Text style={[modalStyles.modalityText, isActive && modalStyles.modalityTextActive]}>
+                        {MODALITY_LABELS[m]}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+
+            {/* Session type context (read-only, derived from request) */}
+            {selectedRequest != null && (
+              <View style={modalStyles.field}>
+                <Text style={modalStyles.fieldLabel}>Session Type</Text>
+                <View style={modalStyles.readonlyRow}>
+                  <Text style={modalStyles.readonlyValue}>
+                    {selectedRequest.vertical
+                      ? (verticalLabels[selectedRequest.vertical as Vertical] ?? selectedRequest.vertical)
+                      : 'General'}
+                  </Text>
+                  <Text style={modalStyles.readonlyHint}>Derived from service request</Text>
+                </View>
+              </View>
+            )}
+
+            {/* Inline field error */}
+            {fieldError != null ? (
+              <View style={modalStyles.errorBanner}>
+                <Text style={modalStyles.errorText}>{fieldError}</Text>
+              </View>
+            ) : null}
+          </ScrollView>
+
+          {/* Footer actions */}
+          <View style={modalStyles.footer}>
+            <TouchableOpacity
+              style={modalStyles.cancelBtn}
+              onPress={handleClose}
+              accessibilityRole="button"
+            >
+              <Text style={modalStyles.cancelText}>Cancel</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[modalStyles.submitBtn, !canSubmit && modalStyles.submitBtnDisabled]}
+              onPress={() => void handleSubmit()}
+              disabled={!canSubmit}
+              accessibilityRole="button"
+              accessibilityLabel="Confirm and schedule session"
+              accessibilityState={{ disabled: !canSubmit }}
+            >
+              {isPending ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Text style={modalStyles.submitText}>Schedule Session</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
-const railStyles = StyleSheet.create({
-  card: {
-    padding: 20,
-    marginBottom: 16,
-    gap: 8,
-  },
-  railSectionTitle: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 14,
-    color: '#111827',
-    marginBottom: 4,
-  },
-  railEmpty: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 12,
-    color: '#9CA3AF',
-  },
-  scheduleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 8,
-    borderRadius: 8,
-  },
-  scheduleAccent: {
-    width: 3,
-    height: '100%',
-    borderRadius: 2,
-    minHeight: 32,
-    flexShrink: 0,
-  },
-  scheduleTime: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 11,
-    color: '#6B7A6B',
-    width: 40,
-    flexShrink: 0,
-  },
-  scheduleInfo: {
+const modalStyles = StyleSheet.create({
+  overlay: {
     flex: 1,
-    gap: 2,
-  },
-  scheduleTitle: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 12,
-    color: '#1E3320',
-  },
-  scheduleMeta: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 11,
-    color: '#6B7A6B',
-  },
-  scheduleAction: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 11,
-    color: '#9CA3AF',
-    flexShrink: 0,
-  },
-  scheduleActionActive: {
-    color: '#10b981',
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-  },
-  unconfirmedRow: {
-    flexDirection: 'row',
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    justifyContent: 'center',
     alignItems: 'center',
-    gap: 8,
-    paddingVertical: 6,
+    padding: spacing.xl,
   },
-  unconfirmedDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    flexShrink: 0,
+  sheet: {
+    backgroundColor: tokens.cardBg,
+    borderRadius: radius.xl,
+    width: '100%',
+    maxWidth: Platform.OS === 'web' ? 520 : undefined,
+    maxHeight: '90%',
+    overflow: 'hidden',
+    // Shadow
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.18,
+    shadowRadius: 32,
+    elevation: 12,
   },
-  unconfirmedBadge: {
-    backgroundColor: colors.compassGold + '22',
-    borderRadius: 100,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    flexShrink: 0,
-  },
-  unconfirmedBadgeText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 10,
-    color: colors.compassGold,
-  },
-  cardUnconfirmed: {
-    borderWidth: 1,
-    borderColor: '#FCD34D',
-    backgroundColor: '#FFFBEB',
-  },
-  unconfirmedTitle: {
-    color: '#92400E',
-  },
-  summaryRow: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    gap: 6,
-  },
-  summaryValue: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 22,
-    color: '#1E3320',
-  },
-  summaryLabel: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 13,
-    color: '#6B7A6B',
-  },
-  summaryStatRow: {
+  header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 4,
+    paddingHorizontal: spacing.xl,
+    paddingTop: spacing.xl,
+    paddingBottom: spacing.lg,
+    borderBottomWidth: 1,
+    borderBottomColor: tokens.cardBorder,
   },
-  summaryStatLabel: {
+  headerTitle: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 18,
+    color: tokens.textPrimary,
+  },
+  closeBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: radius.pill,
+    backgroundColor: tokens.gray100,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  body: {
+    flex: 1,
+  },
+  bodyContent: {
+    padding: spacing.xl,
+    gap: spacing.xl,
+    paddingBottom: spacing.xxl,
+  },
+  field: {
+    gap: spacing.sm,
+  },
+  fieldLabel: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 13,
+    color: tokens.textPrimary,
+    letterSpacing: 0.3,
+  },
+  loadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    padding: spacing.md,
+  },
+  loadingText: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 13,
-    color: '#6B7A6B',
+    color: tokens.textSecondary,
   },
-  summaryStatValue: {
-    fontFamily: 'DMSans_700Bold',
+  emptyHint: {
+    backgroundColor: tokens.amber100,
+    borderRadius: radius.md,
+    padding: spacing.md,
+  },
+  emptyHintText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 13,
-    color: '#1E3320',
+    color: tokens.amber700,
+    lineHeight: 18,
+  },
+  memberList: {
+    gap: spacing.xs,
+  },
+  memberRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: tokens.cardBorder,
+    backgroundColor: tokens.cardBg,
+  },
+  memberRowActive: {
+    borderColor: tokens.primary,
+    backgroundColor: tokens.emerald100,
+  },
+  memberRadio: {
+    width: 18,
+    height: 18,
+    borderRadius: radius.pill,
+    borderWidth: 2,
+    borderColor: '#D1D5DB',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  memberRadioActive: {
+    borderColor: tokens.primary,
+  },
+  memberRadioDot: {
+    width: 8,
+    height: 8,
+    borderRadius: radius.pill,
+    backgroundColor: tokens.primary,
+  },
+  memberInfo: {
+    flex: 1,
+    gap: 2,
+  },
+  memberName: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 14,
+    color: tokens.textPrimary,
+  },
+  memberNameActive: {
+    color: tokens.emerald700,
+  },
+  memberMeta: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 12,
+    color: tokens.textSecondary,
+  },
+  dateInputWrapper: {
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    borderRadius: radius.md,
+    overflow: 'hidden',
+  },
+  dateInput: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 14,
+    color: tokens.textPrimary,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    backgroundColor: tokens.cardBg,
+    minHeight: 44,
+  },
+  datePreview: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 12,
+    color: tokens.textSecondary,
+    marginTop: 2,
+  },
+  modalityRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  modalityBtn: {
+    flex: 1,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    alignItems: 'center',
+    backgroundColor: tokens.cardBg,
+  },
+  modalityBtnActive: {
+    borderColor: tokens.primary,
+    backgroundColor: tokens.emerald100,
+  },
+  modalityText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 13,
+    color: tokens.textSecondary,
+  },
+  modalityTextActive: {
+    color: tokens.emerald700,
+  },
+  readonlyRow: {
+    gap: 2,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    backgroundColor: tokens.gray100,
+    borderRadius: radius.md,
+  },
+  readonlyValue: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 14,
+    color: tokens.textPrimary,
+  },
+  readonlyHint: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: tokens.textMuted,
+  },
+  errorBanner: {
+    backgroundColor: tokens.red100,
+    borderRadius: radius.md,
+    padding: spacing.md,
+  },
+  errorText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: tokens.red700,
+  },
+  footer: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    padding: spacing.xl,
+    borderTopWidth: 1,
+    borderTopColor: tokens.cardBorder,
+  },
+  cancelBtn: {
+    flex: 1,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 14,
+    color: tokens.textSecondary,
+  },
+  submitBtn: {
+    flex: 2,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: tokens.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 44,
+  },
+  submitBtnDisabled: {
+    backgroundColor: tokens.textMuted,
+  },
+  submitText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 14,
+    color: '#FFFFFF',
   },
 });
 
@@ -801,10 +1161,18 @@ const TODAY_MONTH = now.getMonth();
 const TODAY_DAY = now.getDate();
 
 /**
- * CHW Calendar screen — week-view grid (web default) + month grid + right rail.
+ * CHW Calendar screen — full-width week/month view + Schedule Session modal.
+ *
+ * The right-side rail has been stripped per T12 spec. The calendar grid now
+ * occupies 100% of the available width on both web and native.
+ *
+ * The "Schedule Session" CTA in the page header opens a modal that lets the
+ * CHW pick a member from their accepted service requests, choose a date/time
+ * and modality, then POST to /api/v1/sessions/.
  */
 export function CHWCalendarScreen(): React.JSX.Element {
   const { data: rawSessions, isLoading, error, refetch } = useSessions();
+  const { data: rawRequests, isLoading: isLoadingRequests } = useRequests();
   const refresh = useRefreshControl([refetch]);
 
   // View mode: web defaults to 'week', native stays 'month'
@@ -826,6 +1194,9 @@ export function CHWCalendarScreen(): React.JSX.Element {
   const [weekAnchor, setWeekAnchor] = useState(() => new Date(TODAY_YEAR, TODAY_MONTH, TODAY_DAY));
   const weekDays = useMemo(() => getWeekDays(weekAnchor), [weekAnchor]);
 
+  // Schedule Session modal state
+  const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
+
   const allSessions = rawSessions ?? [];
 
   const allEvents = useMemo<CalendarEvent[]>(() => {
@@ -834,14 +1205,25 @@ export function CHWCalendarScreen(): React.JSX.Element {
 
   const eventsByDate = useMemo(() => groupByDate(allEvents), [allEvents]);
 
-  // Today's events for right rail
+  // Today's key (for day view)
   const todayKey = toDateKey(TODAY_YEAR, TODAY_MONTH, TODAY_DAY);
-  const todayEvents = useMemo(() => eventsByDate.get(todayKey) ?? [], [eventsByDate, todayKey]);
 
-  // This week's events for right rail
-  const weekEvents = useMemo(() => {
-    return weekDays.flatMap((d) => eventsByDate.get(dateToKey(d)) ?? []);
-  }, [weekDays, eventsByDate]);
+  // Accepted service requests — the only ones the CHW can create sessions for
+  const acceptedRequests = useMemo<ServiceRequestData[]>(() => {
+    return (rawRequests ?? []).filter((r) => r.status === 'accepted');
+  }, [rawRequests]);
+
+  const handleOpenScheduleModal = useCallback(() => {
+    setIsScheduleModalOpen(true);
+  }, []);
+
+  const handleCloseScheduleModal = useCallback(() => {
+    setIsScheduleModalOpen(false);
+  }, []);
+
+  const handleScheduleSuccess = useCallback(() => {
+    void refetch();
+  }, [refetch]);
 
   if (isLoading) {
     return (
@@ -915,21 +1297,36 @@ export function CHWCalendarScreen(): React.JSX.Element {
 
   // ── Rendered content ───────────────────────────────────────────────────────
 
+  /** View mode toggle chips — rendered in the PageHeader right slot alongside the CTA. */
   const headerRight = (
-    <View style={styles.viewToggle}>
-      {(['day', 'week', 'month'] as CalendarViewMode[]).map((mode) => (
-        <TouchableOpacity
-          key={mode}
-          style={[styles.toggleBtn, viewMode === mode && styles.toggleBtnActive]}
-          onPress={() => setViewMode(mode)}
-          accessibilityRole="button"
-          accessibilityState={{ selected: viewMode === mode }}
-        >
-          <Text style={[styles.toggleBtnText, viewMode === mode && styles.toggleBtnTextActive]}>
-            {mode.charAt(0).toUpperCase() + mode.slice(1)}
-          </Text>
-        </TouchableOpacity>
-      ))}
+    <View style={styles.headerRightRow}>
+      {/* Schedule Session CTA */}
+      <TouchableOpacity
+        style={styles.scheduleBtn}
+        onPress={handleOpenScheduleModal}
+        accessibilityRole="button"
+        accessibilityLabel="Schedule a new session"
+      >
+        <Plus size={14} color="#FFFFFF" />
+        <Text style={styles.scheduleBtnText}>Schedule Session</Text>
+      </TouchableOpacity>
+
+      {/* View mode toggle */}
+      <View style={styles.viewToggle}>
+        {(['day', 'week', 'month'] as CalendarViewMode[]).map((mode) => (
+          <TouchableOpacity
+            key={mode}
+            style={[styles.toggleBtn, viewMode === mode && styles.toggleBtnActive]}
+            onPress={() => setViewMode(mode)}
+            accessibilityRole="button"
+            accessibilityState={{ selected: viewMode === mode }}
+          >
+            <Text style={[styles.toggleBtnText, viewMode === mode && styles.toggleBtnTextActive]}>
+              {mode.charAt(0).toUpperCase() + mode.slice(1)}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
     </View>
   );
 
@@ -1075,70 +1472,68 @@ export function CHWCalendarScreen(): React.JSX.Element {
     </View>
   );
 
-  // Web: two-column layout with right rail
+  // Web: full-width single-column layout (no right rail)
   if (Platform.OS === 'web') {
     return (
       <AppShell role="chw" activeKey="appointments" userBlock={{ initials: 'C', name: 'CHW', role: 'CHW' }}>
         <View style={webStyles.root}>
-          {/* Main calendar column */}
-          <View style={webStyles.mainCol}>
-            <PageHeader
-              title="Calendar"
-              subtitle="Your schedule and appointments"
-              right={headerRight}
-            />
-            <Card style={webStyles.calendarCard}>
-              {calendarContent}
-            </Card>
+          <PageHeader
+            title="Calendar"
+            subtitle="Your schedule and appointments"
+            right={headerRight}
+          />
 
-            {/* Selected day detail panel (month view) */}
-            {viewMode === 'month' && selectedDay !== null ? (
-              <View style={styles.detailSection}>
-                <Text style={styles.detailHeading}>
-                  {MONTH_NAMES[month]} {selectedDay}
-                </Text>
-                {selectedEvents.length === 0 ? (
-                  <View style={styles.emptyDay}>
-                    <CalendarDays size={28} color={colors.border} />
-                    <Text style={styles.emptyDayText}>No events on this day</Text>
-                  </View>
-                ) : (
-                  selectedEvents.map((event) => (
-                    <EventDetailCard key={event.id} event={event} />
-                  ))
-                )}
-              </View>
-            ) : null}
+          <Card style={webStyles.calendarCard}>
+            {calendarContent}
+          </Card>
 
-            {/* Legend */}
-            <Card style={webStyles.legendCard}>
-              <Text style={styles.legendTitle}>Member Journey</Text>
-              {(Object.keys(JOURNEY_COLORS) as JourneyStatus[]).map((key) => (
-                <View key={key} style={styles.legendRow}>
-                  <View style={[styles.legendDot, { backgroundColor: JOURNEY_COLORS[key] }]} />
-                  <View style={styles.legendTextBlock}>
-                    <Text style={styles.legendLabel}>{JOURNEY_LABELS[key]}</Text>
-                    <Text style={styles.legendDesc}>{JOURNEY_DESCRIPTIONS[key]}</Text>
-                  </View>
+          {/* Selected day detail panel (month view) */}
+          {viewMode === 'month' && selectedDay !== null ? (
+            <View style={styles.detailSection}>
+              <Text style={styles.detailHeading}>
+                {MONTH_NAMES[month]} {selectedDay}
+              </Text>
+              {selectedEvents.length === 0 ? (
+                <View style={styles.emptyDay}>
+                  <CalendarDays size={28} color={colors.border} />
+                  <Text style={styles.emptyDayText}>No events on this day</Text>
                 </View>
-              ))}
-            </Card>
-          </View>
+              ) : (
+                selectedEvents.map((event) => (
+                  <EventDetailCard key={event.id} event={event} />
+                ))
+              )}
+            </View>
+          ) : null}
 
-          {/* Right rail */}
-          <RightRail width={288} style={webStyles.rail}>
-            <CalendarRightRail
-              todayEvents={todayEvents}
-              weekEvents={weekEvents}
-              allEvents={allEvents}
-            />
-          </RightRail>
+          {/* Legend */}
+          <Card style={webStyles.legendCard}>
+            <SectionHeader title="Member Journey" marginBottom={spacing.md} />
+            {(Object.keys(JOURNEY_COLORS) as JourneyStatus[]).map((key) => (
+              <View key={key} style={styles.legendRow}>
+                <View style={[styles.legendDot, { backgroundColor: JOURNEY_COLORS[key] }]} />
+                <View style={styles.legendTextBlock}>
+                  <Text style={styles.legendLabel}>{JOURNEY_LABELS[key]}</Text>
+                  <Text style={styles.legendDesc}>{JOURNEY_DESCRIPTIONS[key]}</Text>
+                </View>
+              </View>
+            ))}
+          </Card>
         </View>
+
+        {/* Schedule Session modal */}
+        <ScheduleSessionModal
+          visible={isScheduleModalOpen}
+          onClose={handleCloseScheduleModal}
+          onSuccess={handleScheduleSuccess}
+          acceptedRequests={acceptedRequests}
+          isLoadingRequests={isLoadingRequests}
+        />
       </AppShell>
     );
   }
 
-  // Native layout — original single-column + refresh control
+  // Native layout — full-width single-column + refresh control
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScrollView
@@ -1193,6 +1588,15 @@ export function CHWCalendarScreen(): React.JSX.Element {
           ))}
         </View>
       </ScrollView>
+
+      {/* Schedule Session modal */}
+      <ScheduleSessionModal
+        visible={isScheduleModalOpen}
+        onClose={handleCloseScheduleModal}
+        onSuccess={handleScheduleSuccess}
+        acceptedRequests={acceptedRequests}
+        isLoadingRequests={isLoadingRequests}
+      />
     </SafeAreaView>
   );
 }
@@ -1202,24 +1606,15 @@ export function CHWCalendarScreen(): React.JSX.Element {
 const webStyles = StyleSheet.create({
   root: {
     flex: 1,
-    flexDirection: 'row',
-    gap: 24,
     padding: 0,
-    alignItems: 'flex-start',
-  },
-  mainCol: {
-    flex: 1,
   },
   calendarCard: {
-    marginBottom: 24,
+    marginBottom: spacing.xxl,
     overflow: 'hidden',
   },
   legendCard: {
-    padding: 20,
-    marginBottom: 24,
-  },
-  rail: {
-    paddingTop: 8,
+    padding: spacing.xl,
+    marginBottom: spacing.xxl,
   },
 });
 
@@ -1230,32 +1625,53 @@ const CELL_ASPECT = 52;
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: '#F4F1ED',
+    backgroundColor: tokens.pageBg,
   },
   scroll: {
     flex: 1,
   },
   content: {
-    padding: 20,
+    padding: spacing.xl,
     paddingBottom: 48,
   },
   nativeHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 20,
-    gap: 12,
+    marginBottom: spacing.xl,
+    gap: spacing.md,
+    flexWrap: 'wrap',
   },
   pageTitle: {
     fontFamily: 'DMSans_700Bold',
     fontSize: 24,
     lineHeight: 30,
-    color: '#1E3320',
+    color: tokens.textPrimary,
+  },
+  headerRightRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    flexWrap: 'wrap',
+  },
+  scheduleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    backgroundColor: tokens.primary,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.lg,
+  },
+  scheduleBtnText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 13,
+    color: '#FFFFFF',
   },
   viewToggle: {
     flexDirection: 'row',
     backgroundColor: '#FFFFFF',
-    borderRadius: 8,
+    borderRadius: radius.sm + 2,
     borderWidth: 1,
     borderColor: '#DDD6CC',
     padding: 2,
@@ -1263,10 +1679,10 @@ const styles = StyleSheet.create({
   toggleBtn: {
     paddingHorizontal: 10,
     paddingVertical: 6,
-    borderRadius: 6,
+    borderRadius: radius.sm,
   },
   toggleBtnActive: {
-    backgroundColor: colors.primary,
+    backgroundColor: tokens.primary,
   },
   toggleBtnText: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
@@ -1281,11 +1697,11 @@ const styles = StyleSheet.create({
   },
   calendarCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    borderRadius: radius.xl,
     borderWidth: 1,
     borderColor: '#DDD6CC',
     overflow: 'hidden',
-    marginBottom: 20,
+    marginBottom: spacing.xl,
     shadowColor: '#3D5A3E',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.08,
@@ -1296,15 +1712,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 12,
+    paddingHorizontal: spacing.md,
     paddingVertical: 14,
-    backgroundColor: colors.primary,
+    backgroundColor: tokens.primary,
     borderBottomWidth: 1,
-    borderBottomColor: colors.primary,
+    borderBottomColor: tokens.primary,
   },
   navButton: {
     padding: 6,
-    borderRadius: 8,
+    borderRadius: radius.sm + 2,
     backgroundColor: 'rgba(255,255,255,0.15)',
   },
   monthLabel: {
@@ -1333,7 +1749,7 @@ const styles = StyleSheet.create({
   dayHeaderDate: {
     fontFamily: 'DMSans_700Bold',
     fontSize: 15,
-    color: '#1E3320',
+    color: tokens.textPrimary,
     paddingHorizontal: 16,
     paddingVertical: 10,
   },
@@ -1387,10 +1803,10 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
   },
   dayCellEmpty: {
-    backgroundColor: '#F4F1ED',
+    backgroundColor: tokens.pageBg,
   },
   dayCellSelected: {
-    backgroundColor: '#3D5A3E15',
+    backgroundColor: tokens.primary + '15',
   },
   dayNumber: {
     width: 22,
@@ -1403,21 +1819,21 @@ const styles = StyleSheet.create({
     borderColor: 'transparent',
   },
   dayNumberToday: {
-    borderColor: colors.primary,
+    borderColor: tokens.primary,
     backgroundColor: 'transparent',
   },
   dayNumberText: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 11,
-    color: '#1E3320',
+    color: tokens.textPrimary,
     lineHeight: 14,
   },
   dayNumberTextToday: {
-    color: colors.primary,
+    color: tokens.primary,
     fontFamily: 'PlusJakartaSans_600SemiBold',
   },
   dayNumberTextSelected: {
-    color: '#3D5A3E',
+    color: tokens.emerald700,
     fontFamily: 'PlusJakartaSans_600SemiBold',
   },
   memberCountBadge: {
@@ -1425,7 +1841,7 @@ const styles = StyleSheet.create({
     height: 22,
     paddingHorizontal: 6,
     borderRadius: 11,
-    backgroundColor: colors.primary,
+    backgroundColor: tokens.primary,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 2,
@@ -1437,19 +1853,19 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
   detailSection: {
-    marginBottom: 20,
+    marginBottom: spacing.xl,
   },
   detailHeading: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 12,
     letterSpacing: 1,
-    color: '#6B7A6B',
+    color: tokens.textSecondary,
     textTransform: 'uppercase',
-    marginBottom: 12,
+    marginBottom: spacing.md,
   },
   emptyDay: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    borderRadius: radius.xl,
     borderWidth: 1,
     borderColor: '#DDD6CC',
     padding: 28,
@@ -1459,11 +1875,11 @@ const styles = StyleSheet.create({
   emptyDayText: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 14,
-    color: '#6B7A6B',
+    color: tokens.textSecondary,
   },
   legendCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    borderRadius: radius.xl,
     borderWidth: 1,
     borderColor: '#DDD6CC',
     padding: 16,
@@ -1477,9 +1893,9 @@ const styles = StyleSheet.create({
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 12,
     letterSpacing: 1,
-    color: '#6B7A6B',
+    color: tokens.textSecondary,
     textTransform: 'uppercase',
-    marginBottom: 12,
+    marginBottom: spacing.md,
   },
   legendRow: {
     flexDirection: 'row',
@@ -1501,12 +1917,12 @@ const styles = StyleSheet.create({
   legendLabel: {
     fontFamily: 'DMSans_700Bold',
     fontSize: 13,
-    color: '#1E3320',
+    color: tokens.textPrimary,
   },
   legendDesc: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 12,
-    color: '#6B7A6B',
+    color: tokens.textSecondary,
     lineHeight: 16,
   },
 });
