@@ -24,9 +24,9 @@ import {
   Text,
   View,
 } from 'react-native';
-import { ArrowLeft, Gift, Sparkles } from 'lucide-react-native';
+import { ArrowLeft } from 'lucide-react-native';
 
-import { colors } from '../../theme/colors';
+import { colors as tokens, spacing, radius } from '../../theme/tokens';
 import {
   useMemberProfile,
   useMemberRewards,
@@ -38,7 +38,7 @@ import {
 } from '../../hooks/useApiQueries';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { useNavigation } from '@react-navigation/native';
-import { AppShell, PageHeader, Card, Pill } from '../../components/ui';
+import { AppShell, PageHeader, Card, SectionHeader, PageWrap } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
 
 const REWARD_ACTION_ICONS: Record<string, string> = {
@@ -111,14 +111,14 @@ export function MemberRewardsScreen(): React.JSX.Element {
 
   return (
     <AppShell role="member" activeKey="rewards" userBlock={shellUserBlock} badges={{ wellnessPoints: balance }}>
-      <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
+      <StatusBar barStyle="dark-content" backgroundColor={tokens.pageBg} />
 
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.pageWrap}>
+        <PageWrap style={styles.pageWrap}>
 
         {/* Native-only inline back button. AppShell renders the sidebar on
             web (which provides chrome to navigate elsewhere); on native there
@@ -131,7 +131,7 @@ export function MemberRewardsScreen(): React.JSX.Element {
             accessibilityLabel="Back"
             style={styles.backBtnInline}
           >
-            <ArrowLeft size={20} color="#1F2937" />
+            <ArrowLeft size={20} color={tokens.textPrimary} />
             <Text style={styles.backBtnInlineLabel}>Back</Text>
           </Pressable>
         )}
@@ -185,11 +185,11 @@ export function MemberRewardsScreen(): React.JSX.Element {
             </View>
             <View style={styles.heroStatTile}>
               <Text style={styles.heroStatLabel}>Lifetime</Text>
-              <Text style={[styles.heroStatValue, { color: '#1E3320' }]}>{balance.toLocaleString()}</Text>
+              <Text style={[styles.heroStatValue, { color: tokens.textPrimary }]}>{balance.toLocaleString()}</Text>
             </View>
             <View style={styles.heroStatTile}>
               <Text style={styles.heroStatLabel}>Streak</Text>
-              <Text style={[styles.heroStatValue, { color: '#D97706' }]}>4 wks 🔥</Text>
+              <Text style={[styles.heroStatValue, { color: tokens.amber700 }]}>4 wks 🔥</Text>
             </View>
           </View>
         </Card>
@@ -197,7 +197,7 @@ export function MemberRewardsScreen(): React.JSX.Element {
         {/* Featured live-catalog items (from /rewards/catalog) */}
         {featuredCatalog.length > 0 && (
           <View style={styles.categorySection}>
-            <Text style={styles.categoryLabel}>FEATURED REWARDS</Text>
+            <SectionHeader title="Featured Rewards" marginBottom={spacing.sm} />
             {featuredCatalog.map((item) => {
               const canAfford = balance >= item.costPoints;
               return (
@@ -271,9 +271,10 @@ export function MemberRewardsScreen(): React.JSX.Element {
           )}
         {groupedCatalog.map(([category, items]) => (
           <View key={category} style={styles.categorySection}>
-            <Text style={styles.categoryLabel}>
-              {category.replace(/_/g, ' ').toUpperCase()}
-            </Text>
+            <SectionHeader
+              title={category.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())}
+              marginBottom={spacing.sm}
+            />
             {items.map((item) => {
               const canAfford = balance >= item.costPoints;
               return (
@@ -346,10 +347,7 @@ export function MemberRewardsScreen(): React.JSX.Element {
 
         {/* Earn-more tips */}
         <Card style={styles.historyCard}>
-          <View style={styles.historyHeader}>
-            <Sparkles size={16} color={colors.compassGold} />
-            <Text style={styles.historyTitle}>How to earn more points</Text>
-          </View>
+          <SectionHeader title="How to earn more points" marginBottom={spacing.md} />
           {[
             { emoji: '✅', text: 'Complete a session with your CHW (+50 pts)' },
             { emoji: '⭐', text: 'Follow through on a goal milestone (+25 pts)' },
@@ -364,10 +362,7 @@ export function MemberRewardsScreen(): React.JSX.Element {
 
         {/* Redemption history */}
         <Card style={styles.historyCard}>
-          <View style={styles.historyHeader}>
-            <Gift size={16} color={colors.compassGold} />
-            <Text style={styles.historyTitle}>Recent activity</Text>
-          </View>
+          <SectionHeader title="Recent activity" marginBottom={spacing.md} />
           <FlatList
             data={rewardsQuery.data ?? []}
             keyExtractor={(item) => item.id}
@@ -384,7 +379,7 @@ export function MemberRewardsScreen(): React.JSX.Element {
         </Card>
 
         <View style={{ height: 24 }} />
-        </View>
+        </PageWrap>
       </ScrollView>
     </AppShell>
   );
@@ -406,7 +401,7 @@ function RewardRow({ item, showDivider }: { item: RewardTransaction; showDivider
         <Text
           style={[
             styles.rewardPoints,
-            { color: isPositive ? colors.secondary : colors.destructive },
+            { color: isPositive ? tokens.emerald700 : tokens.red700 },
           ]}
         >
           {isPositive ? '+' : ''}{item.points} pts
@@ -417,87 +412,54 @@ function RewardRow({ item, showDivider }: { item: RewardTransaction; showDivider
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#F4F1ED' },
   scroll: { flex: 1 },
   scrollContent: { flexGrow: 1, alignItems: 'center' },
-  // 560 px — single-column rewards catalog matches form screens.
+  /** PageWrap handles max-width 560 on web; padding applied here for both platforms. */
   pageWrap: {
-    width: '100%',
-    maxWidth: undefined as unknown as number,
-    alignSelf: 'center',
-    padding: 16,
+    padding: spacing.lg,
   },
 
   // Native-only inline back button (web users navigate via the sidebar).
   backBtnInline: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 4,
-    marginBottom: 8,
+    gap: spacing.xs + 2,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.xs,
+    marginBottom: spacing.sm,
     alignSelf: 'flex-start',
   },
   backBtnInlineLabel: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#1F2937',
-  },
-
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: '#F4F1ED',
-    borderBottomWidth: 1,
-    borderBottomColor: '#DDD6CC',
-  },
-  backBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-  },
-  headerTitle: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 18,
-    color: '#1E3320',
+    color: tokens.textPrimary,
   },
 
   heroCenterpiece: {
-    // mock: card p-8 bg-gradient from emerald-50/50 to white text-center
-    backgroundColor: '#F0FDF4',
-    borderRadius: 16,
+    backgroundColor: tokens.emerald100,
+    borderRadius: radius.xl,
     borderWidth: 1,
-    borderColor: '#A7F3D0',
-    paddingVertical: 32,
-    paddingHorizontal: 24,
-    marginBottom: 24,
-    gap: 24,
+    borderColor: tokens.emerald500 + '55',
+    paddingVertical: spacing.xxxl,
+    paddingHorizontal: spacing.xxl,
+    marginBottom: spacing.xxl,
+    gap: spacing.xxl,
   },
   heroRingRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    // gap-12 = 48px from mockup
     gap: 48,
     justifyContent: 'center',
   },
   ringOuter: {
-    // ring-progress: 200×200 from mockup conic-gradient
     width: 160,
     height: 160,
     borderRadius: 80,
     borderWidth: 10,
-    borderColor: '#10B981',
+    borderColor: tokens.emerald500,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: tokens.cardBg,
     flexShrink: 0,
   },
   ringInner: {
@@ -505,181 +467,143 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   ringTrophy: {
-    // text-5xl from mockup
     fontSize: 36,
   },
   ringBalance: {
     fontFamily: 'DMSans_700Bold',
-    // text-4xl from mockup
     fontSize: 32,
-    color: '#059669',
+    color: tokens.primary,
     lineHeight: 38,
   },
   ringUnit: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 11,
-    color: '#6B7280',
+    color: tokens.textSecondary,
   },
   heroNextReward: {
     flex: 1,
-    gap: 8,
-    // max-w-xs from mockup
+    gap: spacing.sm,
     maxWidth: 320,
   },
   heroNextLabel: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 11,
     letterSpacing: 0.8,
-    color: '#047857',
+    color: tokens.emerald700,
     textTransform: 'uppercase',
   },
   heroNextTitle: {
     fontFamily: 'DMSans_700Bold',
-    // text-2xl from mockup
     fontSize: 22,
-    color: '#111827',
+    color: tokens.textPrimary,
     lineHeight: 30,
   },
   heroNextSub: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 14,
-    color: '#4B5563',
+    color: tokens.textSecondary,
     lineHeight: 20,
   },
   heroStatRow: {
     flexDirection: 'row',
-    gap: 16,
+    gap: spacing.lg,
     justifyContent: 'center',
-    // max-w-2xl mx-auto from mockup
     maxWidth: 672,
     alignSelf: 'center',
     width: '100%',
   },
   heroStatTile: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    backgroundColor: tokens.cardBg,
+    borderRadius: radius.lg,
     borderWidth: 1,
-    borderColor: '#F3F4F6',
-    padding: 12,
+    borderColor: tokens.gray100,
+    padding: spacing.md,
     alignItems: 'center',
-    gap: 4,
+    gap: spacing.xs,
   },
   heroStatLabel: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 11,
-    color: '#6B7280',
+    color: tokens.textSecondary,
     textAlign: 'center',
   },
   heroStatValue: {
     fontFamily: 'DMSans_700Bold',
-    // text-2xl from mockup
     fontSize: 22,
-    color: '#059669',
+    color: tokens.primary,
   },
 
-  categorySection: { marginBottom: 16 },
-  categoryLabel: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 11,
-    letterSpacing: 1,
-    color: '#6B7280',
-    marginBottom: 8,
-  },
+  categorySection: { marginBottom: spacing.lg },
+  /** catalogCard: inline Card equivalent — replaced by <Card> in JSX, styles applied via style prop. */
   catalogCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#F1F5F4',
-    padding: 20,
-    marginBottom: 12,
+    padding: spacing.xl,
+    marginBottom: spacing.md,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 3,
-    elevation: 1,
+    gap: spacing.lg,
   },
   catalogEmoji: {
-    // text-5xl from mock's card emoji thumbnail
     fontSize: 36,
     width: 56,
     textAlign: 'center',
   },
   catalogInfo: {
     flex: 1,
-    gap: 4,
+    gap: spacing.xs,
   },
   catalogName: {
     fontFamily: 'DMSans_700Bold',
     fontSize: 16,
-    color: '#111827',
+    color: tokens.textPrimary,
   },
   catalogDesc: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 13,
-    color: '#6B7280',
+    color: tokens.textSecondary,
     lineHeight: 18,
   },
   catalogCost: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
-    // text-sm font-bold text-emerald-600 from mockup
     fontSize: 14,
-    color: '#059669',
+    color: tokens.primary,
     marginTop: 2,
   },
   redeemBtn: {
-    // bg-emerald-600 from mockup
-    backgroundColor: '#059669',
-    paddingHorizontal: 16,
+    backgroundColor: tokens.primary,
+    paddingHorizontal: spacing.lg,
     paddingVertical: 9,
-    borderRadius: 10,
+    borderRadius: radius.md,
   },
   redeemBtnDisabled: {
-    backgroundColor: '#E5E7EB',
+    backgroundColor: tokens.gray100,
   },
   redeemBtnText: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 13,
-    color: '#FFFFFF',
+    color: tokens.cardBg,
   },
   redeemBtnTextDisabled: {
-    color: '#9CA3AF',
+    color: tokens.textMuted,
   },
 
+  /** historyCard: Card padding override. */
   historyCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-    padding: 16,
-    marginTop: 8,
-  },
-  historyHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 12,
-  },
-  historyTitle: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 14,
-    color: '#1E3320',
+    padding: spacing.lg,
+    marginTop: spacing.sm,
   },
   historyEmpty: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 13,
-    color: '#6B7280',
+    color: tokens.textSecondary,
     textAlign: 'center',
-    paddingVertical: 12,
+    paddingVertical: spacing.md,
   },
   rewardRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    paddingVertical: 8,
+    gap: spacing.md,
+    paddingVertical: spacing.sm,
   },
   rewardIcon: {
     fontSize: 18,
@@ -690,12 +614,12 @@ const styles = StyleSheet.create({
   rewardAction: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 13,
-    color: '#1E3320',
+    color: tokens.textPrimary,
   },
   rewardDate: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 11,
-    color: '#6B7280',
+    color: tokens.textSecondary,
   },
   rewardPoints: {
     fontFamily: 'DMSans_700Bold',
@@ -703,7 +627,7 @@ const styles = StyleSheet.create({
   },
   divider: {
     height: 1,
-    backgroundColor: '#DDD6CC',
+    backgroundColor: tokens.cardBorder,
   },
   tipRow: {
     flexDirection: 'row',
@@ -711,7 +635,7 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingVertical: 7,
     borderTopWidth: 1,
-    borderTopColor: '#F4F1ED',
+    borderTopColor: tokens.pageBg,
   },
   tipEmoji: {
     fontSize: 16,
@@ -721,7 +645,7 @@ const styles = StyleSheet.create({
   tipText: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 13,
-    color: '#1E3320',
+    color: tokens.textPrimary,
     flex: 1,
     lineHeight: 18,
   },

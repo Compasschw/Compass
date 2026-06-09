@@ -37,7 +37,7 @@ import {
 } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
 
-import { colors } from '../../theme/colors';
+import { colors as tokens, spacing, radius } from '../../theme/tokens';
 import {
   verticalLabels,
   type CalendarEvent,
@@ -48,7 +48,7 @@ import { useRefreshControl } from '../../hooks/useRefreshControl';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 import { VERTICAL_COLOR } from '../../lib/verticals';
-import { AppShell, PageHeader, Card, RightRail } from '../../components/ui';
+import { AppShell, PageHeader, Card, RightRail, SectionHeader, PageWrap } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -67,7 +67,7 @@ const WEEK_VIEW_HOURS = [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19];
 /** Vertical → hex color map, extended with goal_milestone. */
 const VERTICAL_COLORS: Record<Vertical | 'goal_milestone', string> = {
   ...(VERTICAL_COLOR as Record<Vertical, string>),
-  goal_milestone: colors.secondary,
+  goal_milestone: tokens.emerald500,
 };
 
 const now = new Date();
@@ -139,7 +139,7 @@ function deriveSessionEvents(
 
 /** Resolves the hex color for a calendar event based on its vertical. */
 function eventColor(event: CalendarEvent): string {
-  if (event.vertical) return VERTICAL_COLORS[event.vertical] ?? colors.secondary;
+  if (event.vertical) return VERTICAL_COLORS[event.vertical] ?? tokens.emerald500;
   return VERTICAL_COLORS.goal_milestone;
 }
 
@@ -281,21 +281,21 @@ const weekStyles = StyleSheet.create({
   headerRow: {
     flexDirection: 'row',
     borderBottomWidth: 2,
-    borderBottomColor: '#DDD6CC',
-    backgroundColor: '#FFFFFF',
+    borderBottomColor: tokens.cardBorder,
+    backgroundColor: tokens.cardBg,
   },
   timeGutter: {
     width: 64,
-    paddingRight: 8,
+    paddingRight: spacing.sm,
     alignItems: 'flex-end',
     justifyContent: 'center',
     borderRightWidth: 1,
-    borderRightColor: '#F0EDE9',
+    borderRightColor: tokens.cardBorder,
   },
   timeLabel: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 10,
-    color: '#9CA3AF',
+    color: tokens.textMuted,
     paddingTop: 2,
   },
   dayHeader: {
@@ -304,30 +304,30 @@ const weekStyles = StyleSheet.create({
     justifyContent: 'center',
     paddingVertical: 10,
     borderRightWidth: 1,
-    borderRightColor: '#F0EDE9',
+    borderRightColor: tokens.cardBorder,
     gap: 2,
   },
   dayHeaderToday: {
-    backgroundColor: colors.primary + '08',
+    backgroundColor: tokens.primary + '08',
   },
   dayHeaderLabel: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 11,
     letterSpacing: 0.5,
     textTransform: 'uppercase',
-    color: '#6B7A6B',
+    color: tokens.textSecondary,
   },
   dayHeaderLabelToday: {
-    color: colors.primary,
+    color: tokens.primary,
   },
   dayHeaderDate: {
     fontFamily: 'DMSans_700Bold',
     fontSize: 18,
-    color: '#1E3320',
+    color: tokens.textPrimary,
   },
   dayHeaderDateToday: {
-    color: '#FFFFFF',
-    backgroundColor: colors.primary,
+    color: tokens.cardBg,
+    backgroundColor: tokens.primary,
     width: 32,
     height: 32,
     borderRadius: 16,
@@ -339,22 +339,22 @@ const weekStyles = StyleSheet.create({
     flexDirection: 'row',
     height: 56,
     borderBottomWidth: 1,
-    borderBottomColor: '#F0EDE9',
+    borderBottomColor: tokens.cardBorder,
   },
   hourCell: {
     flex: 1,
     borderRightWidth: 1,
-    borderRightColor: '#F0EDE9',
+    borderRightColor: tokens.cardBorder,
     padding: 2,
     gap: 2,
   },
   hourCellToday: {
-    backgroundColor: colors.primary + '05',
+    backgroundColor: tokens.primary + '05',
   },
   eventChip: {
     borderLeftWidth: 2,
-    borderRadius: 3,
-    paddingHorizontal: 4,
+    borderRadius: radius.sm / 2,
+    paddingHorizontal: spacing.xs,
     paddingVertical: 2,
     gap: 1,
   },
@@ -399,7 +399,7 @@ function EventDetailCard({ event }: EventDetailCardProps): React.JSX.Element {
         </View>
 
         <View style={cardStyles.metaRow}>
-          <Clock color={colors.mutedForeground} size={12} />
+          <Clock color={tokens.textMuted} size={12} />
           <Text style={cardStyles.metaText}>
             {formatTimeFull(event.startTime)}
             {event.endTime !== event.startTime ? ` – ${formatTimeFull(event.endTime)}` : ''}
@@ -408,14 +408,14 @@ function EventDetailCard({ event }: EventDetailCardProps): React.JSX.Element {
 
         {isSession && event.chwName ? (
           <View style={cardStyles.metaRow}>
-            <MapPin color={colors.mutedForeground} size={12} />
+            <MapPin color={tokens.textMuted} size={12} />
             <Text style={cardStyles.metaText}>With {event.chwName}</Text>
           </View>
         ) : null}
 
         {!isSession ? (
           <View style={cardStyles.metaRow}>
-            <CalendarDays color={colors.mutedForeground} size={12} />
+            <CalendarDays color={tokens.textMuted} size={12} />
             <Text style={cardStyles.metaText}>Goal milestone</Text>
           </View>
         ) : null}
@@ -426,13 +426,13 @@ function EventDetailCard({ event }: EventDetailCardProps): React.JSX.Element {
 
 const cardStyles = StyleSheet.create({
   container: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
+    backgroundColor: tokens.cardBg,
+    borderRadius: radius.xl,
     borderWidth: 1,
-    borderColor: '#DDD6CC',
+    borderColor: tokens.cardBorder,
     flexDirection: 'row',
     overflow: 'hidden',
-    marginBottom: 10,
+    marginBottom: spacing.md - 2,
     shadowColor: '#3D5A3E',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.08,
@@ -445,25 +445,25 @@ const cardStyles = StyleSheet.create({
   },
   content: {
     flex: 1,
-    padding: 12,
-    gap: 4,
+    padding: spacing.md,
+    gap: spacing.xs,
   },
   titleRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 8,
-    marginBottom: 4,
+    gap: spacing.sm,
+    marginBottom: spacing.xs,
   },
   title: {
     fontFamily: 'DMSans_700Bold',
     fontSize: 13,
-    color: '#1E3320',
+    color: tokens.textPrimary,
     flex: 1,
   },
   badge: {
-    paddingHorizontal: 8,
+    paddingHorizontal: spacing.sm,
     paddingVertical: 3,
-    borderRadius: 100,
+    borderRadius: radius.pill,
     flexShrink: 0,
   },
   badgeText: {
@@ -478,7 +478,7 @@ const cardStyles = StyleSheet.create({
   metaText: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 11,
-    color: '#6B7280',
+    color: tokens.textSecondary,
   },
 });
 
@@ -497,10 +497,10 @@ function MemberRightRail({ upcomingEvents, onFindCHW }: MemberRightRailProps): R
   return (
     <ScrollView showsVerticalScrollIndicator={false}>
       <Card style={railStyles.card}>
-        <Text style={railStyles.sectionTitle}>Upcoming Sessions</Text>
+        <SectionHeader title="Upcoming Sessions" marginBottom={spacing.md} />
         {upcomingEvents.length === 0 ? (
           <View style={railStyles.emptyWrap}>
-            <CalendarDays size={24} color={colors.mutedForeground} />
+            <CalendarDays size={24} color={tokens.textMuted} />
             <Text style={railStyles.emptyText}>No upcoming sessions.</Text>
             <TouchableOpacity
               style={railStyles.ctaBtn}
@@ -542,49 +542,43 @@ function MemberRightRail({ upcomingEvents, onFindCHW }: MemberRightRailProps): R
 
 const railStyles = StyleSheet.create({
   card: {
-    padding: 20,
-    marginBottom: 16,
-    gap: 12,
-  },
-  sectionTitle: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 14,
-    color: '#111827',
-    marginBottom: 4,
+    padding: spacing.xl,
+    marginBottom: spacing.lg,
+    gap: spacing.md,
   },
   emptyWrap: {
     alignItems: 'center',
-    gap: 8,
-    paddingVertical: 12,
+    gap: spacing.sm,
+    paddingVertical: spacing.md,
   },
   emptyText: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 12,
-    color: '#9CA3AF',
+    color: tokens.textMuted,
     textAlign: 'center',
   },
   ctaBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    backgroundColor: colors.primary,
-    borderRadius: 8,
+    gap: spacing.xs + 2,
+    backgroundColor: tokens.primary,
+    borderRadius: radius.sm + 2,
     paddingHorizontal: 14,
-    paddingVertical: 8,
-    marginTop: 4,
+    paddingVertical: spacing.sm,
+    marginTop: spacing.xs,
   },
   ctaBtnText: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 12,
-    color: '#FFFFFF',
+    color: tokens.cardBg,
   },
   sessionRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 10,
-    paddingVertical: 6,
+    paddingVertical: spacing.xs + 2,
     borderBottomWidth: 1,
-    borderBottomColor: '#F0EDE9',
+    borderBottomColor: tokens.cardBorder,
   },
   verticalPill: {
     width: 4,
@@ -600,17 +594,17 @@ const railStyles = StyleSheet.create({
   sessionTitle: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 12,
-    color: '#1E3320',
+    color: tokens.textPrimary,
   },
   sessionTime: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 11,
-    color: '#6B7A6B',
+    color: tokens.textSecondary,
   },
   sessionChw: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 11,
-    color: '#6B7A6B',
+    color: tokens.textSecondary,
   },
 });
 
@@ -795,11 +789,11 @@ export function MemberCalendarScreen(): React.JSX.Element {
   if (sessionsQuery.isLoading) {
     return (
       <AppShell role="member" activeKey="appointments" userBlock={shellUserBlock}>
-        <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
-        <View style={styles.pageWrap}>
+        <StatusBar barStyle="dark-content" backgroundColor={tokens.pageBg} />
+        <PageWrap style={styles.pageWrap}>
           <LoadingSkeleton variant="card" />
           <LoadingSkeleton variant="rows" rows={3} />
-        </View>
+        </PageWrap>
       </AppShell>
     );
   }
@@ -807,7 +801,7 @@ export function MemberCalendarScreen(): React.JSX.Element {
   if (sessionsQuery.error) {
     return (
       <AppShell role="member" activeKey="appointments" userBlock={shellUserBlock}>
-        <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
+        <StatusBar barStyle="dark-content" backgroundColor={tokens.pageBg} />
         <ErrorState
           message="Could not load calendar data. Please try again."
           onRetry={() => void sessionsQuery.refetch()}
@@ -872,7 +866,7 @@ export function MemberCalendarScreen(): React.JSX.Element {
                 {navHeader}
                 {weekIsEmpty ? (
                   <View style={styles.emptyWeekWrap}>
-                    <CalendarDays size={32} color={colors.mutedForeground} />
+                    <CalendarDays size={32} color={tokens.textMuted} />
                     <Text style={styles.emptyWeekTitle}>No sessions this week</Text>
                     <Text style={styles.emptyWeekSub}>
                       Schedule a session with your CHW to get started.
@@ -883,7 +877,7 @@ export function MemberCalendarScreen(): React.JSX.Element {
                       accessibilityRole="button"
                       accessibilityLabel="Find a CHW"
                     >
-                      <Users size={14} color="#FFFFFF" />
+                      <Users size={14} color={tokens.cardBg} />
                       <Text style={styles.findCHWBtnText}>Find a CHW</Text>
                     </TouchableOpacity>
                   </View>
@@ -915,23 +909,23 @@ export function MemberCalendarScreen(): React.JSX.Element {
 
   return (
     <AppShell role="member" activeKey="appointments" userBlock={shellUserBlock}>
-      <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
+      <StatusBar barStyle="dark-content" backgroundColor={tokens.pageBg} />
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
         refreshControl={refresh.control}
       >
-        <View style={styles.pageWrap}>
+        <PageWrap style={styles.pageWrap}>
           <PageHeader
             title="Appointments"
             subtitle="Your upcoming sessions and milestones."
           />
 
           {allEvents.length === 0 ? (
-            /* Global empty state */
-            <View style={styles.emptyStateCard}>
-              <CalendarDays size={36} color={colors.mutedForeground} />
+            /* Global empty state — Card replaces the inline emptyStateCard View */
+            <Card style={styles.emptyStateCard}>
+              <CalendarDays size={36} color={tokens.textMuted} />
               <Text style={styles.emptyStateTitle}>No sessions yet</Text>
               <Text style={styles.emptyStateSub}>
                 Connect with a Community Health Worker to schedule your first session.
@@ -942,16 +936,16 @@ export function MemberCalendarScreen(): React.JSX.Element {
                 accessibilityRole="button"
                 accessibilityLabel="Find a CHW"
               >
-                <Users size={14} color="#FFFFFF" />
+                <Users size={14} color={tokens.cardBg} />
                 <Text style={styles.findCHWBtnText}>Find a CHW</Text>
               </TouchableOpacity>
-            </View>
+            </Card>
           ) : (
             <>
               {/* Upcoming */}
               {nativeUpcoming.length > 0 && (
                 <View style={styles.listSection}>
-                  <Text style={styles.sectionLabel}>UPCOMING</Text>
+                  <SectionHeader title="Upcoming" marginBottom={spacing.md - 2} />
                   {nativeUpcoming.map((event) => (
                     <EventDetailCard key={event.id} event={event} />
                   ))}
@@ -961,7 +955,7 @@ export function MemberCalendarScreen(): React.JSX.Element {
               {/* Past */}
               {nativePast.length > 0 && (
                 <View style={styles.listSection}>
-                  <Text style={styles.sectionLabel}>PAST</Text>
+                  <SectionHeader title="Past" marginBottom={spacing.md - 2} />
                   {nativePast.map((event) => (
                     <EventDetailCard key={event.id} event={event} />
                   ))}
@@ -971,7 +965,7 @@ export function MemberCalendarScreen(): React.JSX.Element {
           )}
 
           <View style={{ height: 32 }} />
-        </View>
+        </PageWrap>
       </ScrollView>
     </AppShell>
   );
@@ -1027,9 +1021,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 12,
     paddingVertical: 14,
-    backgroundColor: colors.primary,
+    backgroundColor: tokens.primary,
     borderBottomWidth: 1,
-    borderBottomColor: colors.primary,
+    borderBottomColor: tokens.primary,
   },
   navButton: {
     padding: 6,
@@ -1120,7 +1114,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: colors.primary,
+    backgroundColor: tokens.primary,
     borderRadius: 8,
     paddingHorizontal: 16,
     paddingVertical: 10,
