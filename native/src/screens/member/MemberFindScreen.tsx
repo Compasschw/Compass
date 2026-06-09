@@ -1,13 +1,18 @@
 /**
  * MemberFindScreen — "Find Your CHW" page.
  *
- * Features:
- * - Search input (filters by name/bio)
- * - Horizontal filter tabs by vertical category
- * - Map view with CHW pins (native only; web falls back to list-only)
- * - FlatList of CHW cards with avatar, specializations, rating, experience, bio
- * - Schedule request Modal with vertical, urgency, mode, and description
- * - Toast confirmation on submit
+ * Visual language: matches the CHW Member List card pattern (Card primitive,
+ * name / specializations / availability badge / language pills via Pill).
+ *
+ * Layout (web ≥ 768 px):
+ *   Left rail  (240 px) — search + vertical filters
+ *   Centre col (flex)   — CHW cards list
+ *   Right rail (280 px) — map
+ *
+ * Narrow / native: stacked single-column layout with collapsible map.
+ *
+ * Primitives: Card, PageHeader, PageWrap, SectionHeader, Pill from ui/.
+ * Tokens: theme/tokens (canonical) — no imports from theme/colors.
  */
 
 import React, { useCallback, useMemo, useState } from 'react';
@@ -15,30 +20,42 @@ import {
   FlatList,
   Modal,
   Platform,
+  Pressable,
   ScrollView,
   StatusBar,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
+  type ViewStyle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
   CheckCircle,
+  ChevronDown,
+  ChevronUp,
+  Filter,
   Map as MapIcon,
   Search,
-  Star,
   User,
   X,
 } from 'lucide-react-native';
 import type { MemberFindStackParamList } from '../../navigation/MemberTabNavigator';
 
-import { AppShell } from '../../components/ui';
+import {
+  AppShell,
+  Card,
+  PageHeader,
+  PageWrap,
+  Pill,
+  SectionHeader,
+} from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
-import { colors } from '../../theme/colors';
+import { colors as tokens, radius, shadows, spacing } from '../../theme/tokens';
 import { typography } from '../../theme/typography';
 import {
   verticalLabels,
@@ -107,10 +124,23 @@ const GoogleMapsView: MapsViewComponent | null = (() => {
   }
 })();
 
+// ─── Layout constants ─────────────────────────────────────────────────────────
+
+/**
+ * Minimum viewport width at which the three-column layout activates.
+ * Below this threshold the screen collapses to single-column with a
+ * collapsible map toggle, matching native mobile behaviour.
+ */
+const THREE_COL_BREAKPOINT = 768;
+
+/** Fixed widths for the left-filter and right-map rails in three-col mode. */
+const FILTER_RAIL_WIDTH = 240;
+const MAP_RAIL_WIDTH    = 280;
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface ScheduleFormData {
-  /** One or more verticals — submitted as separate requests when multiple */
+  /** One or more verticals — submitted as a single request */
   verticals: Vertical[];
   urgency: Urgency;
   mode: SessionMode;
@@ -121,7 +151,6 @@ interface ScheduleFormData {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-// Sourced from lib/verticals — single source of truth for labels.
 const FILTER_VERTICALS: ReadonlyArray<{ key: Vertical; label: string }> =
   VERTICAL_FILTER_OPTIONS as ReadonlyArray<{ key: Vertical; label: string }>;
 
@@ -130,131 +159,15 @@ const VERTICAL_OPTIONS: ReadonlyArray<{ key: Vertical; label: string; emoji: str
 
 const URGENCY_OPTIONS: { key: Urgency; label: string }[] = [
   { key: 'routine', label: 'Routine' },
-  { key: 'soon', label: 'Soon' },
-  { key: 'urgent', label: 'Urgent' },
+  { key: 'soon',    label: 'Soon'    },
+  { key: 'urgent',  label: 'Urgent'  },
 ];
 
 const MODE_OPTIONS: { key: SessionMode; label: string }[] = [
   { key: 'in_person', label: 'In Person' },
-  { key: 'virtual', label: 'Virtual' },
-  { key: 'phone', label: 'Phone' },
+  { key: 'virtual',   label: 'Virtual'   },
+  { key: 'phone',     label: 'Phone'     },
 ];
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-/**
- * Returns a deterministic background color for CHW avatar initials
- * based on the first character's char code.
- */
-function getAvatarBg(initials: string): string {
-  const palettes = [
-    { bg: `${colors.primary}18`, text: colors.primary },
-    { bg: '#EBF5FB', text: '#0077B6' },
-    { bg: '#F3E5F5', text: '#7B1FA2' },
-    { bg: '#FFF3E0', text: '#E65100' },
-    { bg: '#FCE4EC', text: '#C2185B' },
-  ];
-  const idx = initials.charCodeAt(0) % palettes.length;
-  return palettes[idx].bg;
-}
-
-function getAvatarTextColor(initials: string): string {
-  const palettes = [
-    colors.primary,
-    '#0077B6',
-    '#7B1FA2',
-    '#E65100',
-    '#C2185B',
-  ];
-  const idx = initials.charCodeAt(0) % palettes.length;
-  return palettes[idx];
-}
-
-// ─── Sub-components ───────────────────────────────────────────────────────────
-
-interface ToastBannerProps {
-  message: string;
-}
-
-function ToastBanner({ message }: ToastBannerProps): React.JSX.Element {
-  return (
-    <View style={toastStyles.container} accessibilityRole="alert" accessibilityLiveRegion="polite">
-      <CheckCircle color="#FFFFFF" size={15} />
-      <Text style={toastStyles.text}>{message}</Text>
-    </View>
-  );
-}
-
-const toastStyles = StyleSheet.create({
-  container: {
-    position: 'absolute',
-    top: Platform.OS === 'ios' ? 54 : 16,
-    left: 16,
-    right: 16,
-    zIndex: 99,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: colors.primary,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 16,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.2,
-        shadowRadius: 12,
-      },
-      android: {
-        elevation: 8,
-      },
-    }),
-  },
-  text: {
-    ...typography.bodySm,
-    color: '#FFFFFF',
-    fontWeight: '600',
-    flex: 1,
-  },
-});
-
-interface StarDisplayProps {
-  rating: number;
-}
-
-function StarDisplay({ rating }: StarDisplayProps): React.JSX.Element {
-  const full = Math.floor(rating);
-  return (
-    <View style={starStyles.row} accessibilityLabel={`Rating: ${rating} out of 5`}>
-      {Array.from({ length: 5 }, (_, i) => (
-        <Star
-          key={i}
-          size={11}
-          color={i < full ? '#FBBF24' : colors.border}
-          fill={i < full ? '#FBBF24' : colors.border}
-        />
-      ))}
-      <Text style={starStyles.ratingText}>{rating.toFixed(1)}</Text>
-    </View>
-  );
-}
-
-const starStyles = StyleSheet.create({
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 2,
-  },
-  ratingText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: colors.mutedForeground,
-    marginLeft: 3,
-  },
-});
-
-// ─── Schedule Modal ────────────────────────────────────────────────────────────
 
 /** Time slots offered for follow-up sessions (per JT Figma feedback) */
 const TIME_SLOTS = [
@@ -263,18 +176,116 @@ const TIME_SLOTS = [
   '16:00', '17:00', '18:00',
 ];
 
+/** The LA County geographic center, used as the default camera target. */
+const LA_CENTER = { latitude: 34.0522, longitude: -118.2437 } as const;
+
+/** Zoom level that comfortably frames all of LA County (~county-wide view). */
+const LA_COUNTY_ZOOM = 9;
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Returns a deterministic avatar background colour for CHW initials
+ * based on the first character's char code, drawn from the token palette.
+ */
+function getAvatarBg(initials: string): string {
+  const palettes = [
+    tokens.emerald100,
+    tokens.blue100,
+    tokens.purple100,
+    tokens.amber100,
+    tokens.pink100,
+  ];
+  const idx = initials.charCodeAt(0) % palettes.length;
+  return palettes[idx];
+}
+
+function getAvatarTextColor(initials: string): string {
+  const palettes = [
+    tokens.emerald700,
+    tokens.blue700,
+    tokens.purple700,
+    tokens.amber700,
+    tokens.pink700,
+  ];
+  const idx = initials.charCodeAt(0) % palettes.length;
+  return palettes[idx];
+}
+
 function formatTimeSlot(hhmm: string): string {
   const [h, m] = hhmm.split(':').map(Number);
-  const suffix = h >= 12 ? 'PM' : 'AM';
+  const suffix  = h >= 12 ? 'PM' : 'AM';
   const display = h % 12 === 0 ? 12 : h % 12;
-  return m === 0 ? `${display} ${suffix}` : `${display}:${String(m).padStart(2, '0')} ${suffix}`;
+  return m === 0
+    ? `${display} ${suffix}`
+    : `${display}:${String(m).padStart(2, '0')} ${suffix}`;
 }
+
+/**
+ * Derives up to 2-character uppercase initials from a full name string.
+ */
+function nameToInitials(name: string): string {
+  return name
+    .split(' ')
+    .slice(0, 2)
+    .map((p) => p[0] ?? '')
+    .join('')
+    .toUpperCase();
+}
+
+// ─── Toast Banner ─────────────────────────────────────────────────────────────
+
+interface ToastBannerProps {
+  message: string;
+}
+
+function ToastBanner({ message }: ToastBannerProps): React.JSX.Element {
+  return (
+    <View
+      style={toastStyles.container}
+      accessibilityRole="alert"
+      accessibilityLiveRegion="polite"
+    >
+      <CheckCircle color="#FFFFFF" size={15} />
+      <Text style={toastStyles.text}>{message}</Text>
+    </View>
+  );
+}
+
+const toastStyles = StyleSheet.create({
+  container: {
+    position:        'absolute',
+    top:             Platform.OS === 'ios' ? 54 : 16,
+    left:            16,
+    right:           16,
+    zIndex:          99,
+    flexDirection:   'row',
+    alignItems:      'center',
+    gap:             spacing.sm,
+    backgroundColor: tokens.primary,
+    paddingHorizontal: spacing.lg,
+    paddingVertical:   spacing.md,
+    borderRadius:    radius.xl,
+    ...Platform.select({
+      ios:     { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 12 },
+      android: { elevation: 8 },
+    }),
+  } as ViewStyle,
+  text: {
+    ...typography.bodySm,
+    color:      '#FFFFFF',
+    fontWeight: '600',
+    flex:       1,
+  },
+});
+
+// ─── Schedule Modal ────────────────────────────────────────────────────────────
 
 interface ScheduleModalProps {
   chw: ChwBrowseItem;
   visible: boolean;
-  /** True if this CHW already has prior sessions with this member — controls
-   *  whether the time-slot picker is rendered (skip for first/initial meeting). */
+  /** True when this CHW already has prior sessions with this member —
+   *  controls whether the time-slot picker is rendered (skip for first meeting). */
   isFollowUp: boolean;
   onClose: () => void;
   onSubmit: (chwFirstName: string, formData: ScheduleFormData) => Promise<void>;
@@ -287,12 +298,9 @@ function ScheduleModal({
   onClose,
   onSubmit,
 }: ScheduleModalProps): React.JSX.Element {
-  // Multi-select: one schedule submission can cover multiple needs.
-  // The form now submits ONE request carrying all selected verticals —
-  // no more per-vertical fan-out. The CHW sees a single ticket in their inbox.
   const [selectedVerticals, setSelectedVerticals] = useState<Set<Vertical>>(new Set());
-  const [urgency, setUrgency] = useState<Urgency>('routine');
-  const [mode, setMode] = useState<SessionMode>('in_person');
+  const [urgency, setUrgency]   = useState<Urgency>('routine');
+  const [mode, setMode]         = useState<SessionMode>('in_person');
   const [description, setDescription] = useState('');
   const [preferredTime, setPreferredTime] = useState<string | null>(null);
 
@@ -322,7 +330,7 @@ function ScheduleModal({
     if (selectedVerticals.size === 0) return;
     const firstName = chw.name.split(' ')[0] ?? chw.name;
     void onSubmit(firstName, {
-      verticals: Array.from(selectedVerticals),
+      verticals:     Array.from(selectedVerticals),
       urgency,
       mode,
       description,
@@ -331,15 +339,8 @@ function ScheduleModal({
     resetForm();
   }, [chw.name, description, mode, onSubmit, preferredTime, resetForm, selectedVerticals, urgency]);
 
-  // Derive initials from name since ChwBrowseItem has no pre-computed avatar field
-  const initials = chw.name
-    .split(' ')
-    .slice(0, 2)
-    .map((p) => p[0] ?? '')
-    .join('')
-    .toUpperCase();
-
-  const avatarBg = getAvatarBg(initials);
+  const initials       = nameToInitials(chw.name);
+  const avatarBg       = getAvatarBg(initials);
   const avatarTextColor = getAvatarTextColor(initials);
 
   return (
@@ -360,7 +361,9 @@ function ScheduleModal({
                 </Text>
               </View>
               <View>
-                <Text style={modalStyles.headerTitle}>Schedule with {chw.name.split(' ')[0]}</Text>
+                <Text style={modalStyles.headerTitle}>
+                  Schedule with {chw.name.split(' ')[0]}
+                </Text>
                 <Text style={modalStyles.headerSub}>{chw.name}</Text>
               </View>
             </View>
@@ -371,15 +374,15 @@ function ScheduleModal({
               accessibilityLabel="Close modal"
               hitSlop={8}
             >
-              <X color={colors.mutedForeground} size={18} />
+              <X color={tokens.textSecondary} size={18} />
             </TouchableOpacity>
           </View>
 
           <ScrollView style={modalStyles.body} showsVerticalScrollIndicator={false}>
-            {/* Vertical selection — multi-select per Akram instruction */}
+            {/* Vertical selection — multi-select */}
             <Text style={modalStyles.fieldLabel}>
               What do you need help with?{' '}
-              <Text style={{ fontWeight: '400', color: colors.mutedForeground }}>
+              <Text style={{ fontWeight: '400', color: tokens.textSecondary }}>
                 (select all that apply)
               </Text>
             </Text>
@@ -399,14 +402,16 @@ function ScheduleModal({
                     accessibilityLabel={opt.label}
                   >
                     <Text style={modalStyles.verticalEmoji}>{opt.emoji}</Text>
-                    <Text style={[
-                      modalStyles.verticalOptionText,
-                      isSelected && { color: colors.primary },
-                    ]}>
+                    <Text
+                      style={[
+                        modalStyles.verticalOptionText,
+                        isSelected && { color: tokens.primary },
+                      ]}
+                    >
                       {opt.label}
                     </Text>
                     {isSelected && (
-                      <CheckCircle color={colors.primary} size={15} style={modalStyles.checkIcon} />
+                      <CheckCircle color={tokens.primary} size={15} />
                     )}
                   </TouchableOpacity>
                 );
@@ -426,10 +431,12 @@ function ScheduleModal({
                     accessibilityRole="radio"
                     accessibilityState={{ selected: isSelected }}
                   >
-                    <Text style={[
-                      modalStyles.chipText,
-                      isSelected && { color: colors.primary },
-                    ]}>
+                    <Text
+                      style={[
+                        modalStyles.chipText,
+                        isSelected && { color: tokens.primary },
+                      ]}
+                    >
                       {opt.label}
                     </Text>
                   </TouchableOpacity>
@@ -450,10 +457,12 @@ function ScheduleModal({
                     accessibilityRole="radio"
                     accessibilityState={{ selected: isSelected }}
                   >
-                    <Text style={[
-                      modalStyles.chipText,
-                      isSelected && { color: colors.primary },
-                    ]}>
+                    <Text
+                      style={[
+                        modalStyles.chipText,
+                        isSelected && { color: tokens.primary },
+                      ]}
+                    >
                       {opt.label}
                     </Text>
                   </TouchableOpacity>
@@ -461,13 +470,14 @@ function ScheduleModal({
               })}
             </View>
 
-            {/* Time-slot picker — only for follow-up sessions per JT feedback.
-                First/initial meetings get scheduled by the CHW after contact. */}
+            {/* Time-slot picker — follow-up sessions only (per JT Figma feedback) */}
             {isFollowUp && (
               <>
                 <Text style={modalStyles.fieldLabel}>
                   Preferred time{' '}
-                  <Text style={{ fontWeight: '400', color: colors.mutedForeground }}>(optional)</Text>
+                  <Text style={{ fontWeight: '400', color: tokens.textSecondary }}>
+                    (optional)
+                  </Text>
                 </Text>
                 <View style={modalStyles.timeSlotGrid}>
                   {TIME_SLOTS.map((slot) => {
@@ -501,13 +511,16 @@ function ScheduleModal({
 
             {/* Description */}
             <Text style={modalStyles.fieldLabel}>
-              Description <Text style={{ fontWeight: '400', color: colors.mutedForeground }}>(optional)</Text>
+              Description{' '}
+              <Text style={{ fontWeight: '400', color: tokens.textSecondary }}>
+                (optional)
+              </Text>
             </Text>
             <TextInput
               value={description}
               onChangeText={setDescription}
               placeholder="Briefly describe what you need help with..."
-              placeholderTextColor={colors.mutedForeground}
+              placeholderTextColor={tokens.textSecondary}
               multiline
               numberOfLines={3}
               style={modalStyles.textArea}
@@ -515,14 +528,12 @@ function ScheduleModal({
               accessibilityLabel="Description"
             />
 
-            {/* Submit — always one request regardless of how many verticals are
-                selected. Show a category count below the button when more than
-                one vertical is selected so the member knows what they're submitting. */}
             {selectedVerticals.size > 1 ? (
               <Text style={modalStyles.selectedCountHint}>
                 {selectedVerticals.size} categories selected
               </Text>
             ) : null}
+
             <TouchableOpacity
               onPress={handleSubmit}
               disabled={selectedVerticals.size === 0}
@@ -533,10 +544,12 @@ function ScheduleModal({
               accessibilityRole="button"
               accessibilityLabel="Submit request"
             >
-              <Text style={[
-                modalStyles.submitBtnText,
-                selectedVerticals.size === 0 && { color: colors.mutedForeground },
-              ]}>
+              <Text
+                style={[
+                  modalStyles.submitBtnText,
+                  selectedVerticals.size === 0 && { color: tokens.textSecondary },
+                ]}
+              >
                 Submit Request
               </Text>
             </TouchableOpacity>
@@ -551,191 +564,423 @@ function ScheduleModal({
 
 const modalStyles = StyleSheet.create({
   backdrop: {
-    flex: 1,
+    flex:            1,
     backgroundColor: 'rgba(0,0,0,0.45)',
-    justifyContent: 'flex-end',
-  },
+    justifyContent:  'flex-end',
+  } as ViewStyle,
   sheet: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    maxHeight: '90%',
-    shadowColor: '#3D5A3E',
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 16,
-    elevation: 16,
-  },
+    backgroundColor:     tokens.cardBg,
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+    maxHeight:           '90%',
+    ...Platform.select({
+      ios:     { shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.1, shadowRadius: 16 },
+      android: { elevation: 16 },
+    }),
+  } as ViewStyle,
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 18,
+    flexDirection:   'row',
+    alignItems:      'center',
+    justifyContent:  'space-between',
+    padding:         spacing.xl,
     borderBottomWidth: 1,
-    borderBottomColor: '#DDD6CC',
-  },
+    borderBottomColor: tokens.cardBorder,
+  } as ViewStyle,
   headerLeft: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    flex: 1,
-  },
+    alignItems:    'center',
+    gap:           spacing.md,
+    flex:          1,
+  } as ViewStyle,
   avatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
+    width:          44,
+    height:         44,
+    borderRadius:   radius.pill,
+    alignItems:     'center',
     justifyContent: 'center',
-  },
+  } as ViewStyle,
   avatarText: {
     fontFamily: 'DMSans_700Bold',
-    fontSize: 14,
+    fontSize:   15,
   },
   headerTitle: {
     fontFamily: 'DMSans_700Bold',
-    fontSize: 16,
+    fontSize:   16,
     lineHeight: 22,
-    color: '#1E3320',
+    color:      tokens.textPrimary,
   },
   headerSub: {
     fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 12,
-    letterSpacing: 1,
-    color: '#6B7A6B',
+    fontSize:   12,
+    letterSpacing: 0.5,
+    color:      tokens.textSecondary,
   },
   closeBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#F4F1ED',
-    alignItems: 'center',
+    width:          32,
+    height:         32,
+    borderRadius:   radius.pill,
+    backgroundColor: tokens.gray100,
+    alignItems:     'center',
     justifyContent: 'center',
-  },
+  } as ViewStyle,
   body: {
-    padding: 18,
+    padding: spacing.xl,
   },
   fieldLabel: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 14,
-    color: '#1E3320',
-    marginBottom: 10,
-    marginTop: 4,
+    fontFamily:  'PlusJakartaSans_600SemiBold',
+    fontSize:    14,
+    color:       tokens.textPrimary,
+    marginBottom: spacing.sm + 2,
+    marginTop:   spacing.xs,
   },
   verticalList: {
-    gap: 8,
-    marginBottom: 20,
-  },
+    gap:          spacing.sm,
+    marginBottom: spacing.xl,
+  } as ViewStyle,
   verticalOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-    backgroundColor: '#FFFFFF',
-  },
+    flexDirection:   'row',
+    alignItems:      'center',
+    gap:             spacing.md,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    borderRadius:    radius.lg,
+    borderWidth:     1,
+    borderColor:     tokens.cardBorder,
+    backgroundColor: tokens.cardBg,
+  } as ViewStyle,
   verticalOptionSelected: {
-    borderColor: '#3D5A3E',
-    backgroundColor: '#3D5A3E0D',
-  },
+    borderColor:     tokens.primary,
+    backgroundColor: `${tokens.primary}0D`,
+  } as ViewStyle,
   verticalEmoji: {
     fontSize: 18,
   },
   verticalOptionText: {
     fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 14,
-    color: '#1E3320',
-    flex: 1,
-  },
-  checkIcon: {
-    marginLeft: 'auto' as any,
+    fontSize:   14,
+    color:      tokens.textPrimary,
+    flex:       1,
   },
   chipRow: {
     flexDirection: 'row',
-    gap: 8,
-    marginBottom: 20,
-  },
+    gap:           spacing.sm,
+    marginBottom:  spacing.xl,
+  } as ViewStyle,
   chip: {
-    flex: 1,
-    paddingVertical: 10,
-    paddingHorizontal: 8,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-  },
+    flex:              1,
+    paddingVertical:   spacing.sm + 2,
+    paddingHorizontal: spacing.sm,
+    borderRadius:      radius.lg,
+    borderWidth:       1,
+    borderColor:       tokens.cardBorder,
+    alignItems:        'center',
+    backgroundColor:   tokens.cardBg,
+  } as ViewStyle,
   chipSelected: {
-    borderColor: '#3D5A3E',
-    backgroundColor: '#3D5A3E0D',
+    borderColor:     tokens.primary,
+    backgroundColor: `${tokens.primary}0D`,
+  } as ViewStyle,
+  chipText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize:   14,
+    color:      tokens.textSecondary,
   },
   timeSlotGrid: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginBottom: 20,
-  },
+    flexWrap:      'wrap',
+    gap:           spacing.sm,
+    marginBottom:  spacing.xl,
+  } as ViewStyle,
   timeSlot: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-    backgroundColor: '#FFFFFF',
-    minWidth: 76,
-    alignItems: 'center',
-  },
+    paddingHorizontal: spacing.md,
+    paddingVertical:   spacing.sm,
+    borderRadius:      radius.md,
+    borderWidth:       1,
+    borderColor:       tokens.cardBorder,
+    backgroundColor:   tokens.cardBg,
+    minWidth:          76,
+    alignItems:        'center',
+  } as ViewStyle,
   timeSlotSelected: {
-    borderColor: '#3D5A3E',
-    backgroundColor: '#3D5A3E',
-  },
+    borderColor:     tokens.primary,
+    backgroundColor: tokens.primary,
+  } as ViewStyle,
   timeSlotText: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 13,
-    color: '#1E3320',
+    fontSize:   13,
+    color:      tokens.textPrimary,
   },
   timeSlotTextSelected: {
     color: '#FFFFFF',
   },
-  chipText: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 14,
-    color: '#6B7A6B',
-  },
   textArea: {
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-    borderRadius: 12,
-    padding: 16,
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 14,
-    color: '#1E3320',
-    minHeight: 80,
-    marginBottom: 20,
-    backgroundColor: '#FFFFFF',
+    borderWidth:       1,
+    borderColor:       tokens.cardBorder,
+    borderRadius:      radius.lg,
+    padding:           spacing.lg,
+    fontFamily:        'PlusJakartaSans_400Regular',
+    fontSize:          14,
+    color:             tokens.textPrimary,
+    minHeight:         80,
+    marginBottom:      spacing.xl,
+    backgroundColor:   tokens.cardBg,
   },
   selectedCountHint: {
     fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 13,
-    color: '#6B7A6B',
-    textAlign: 'center',
-    marginBottom: 8,
+    fontSize:   13,
+    color:      tokens.textSecondary,
+    textAlign:  'center',
+    marginBottom: spacing.sm,
   },
   submitBtn: {
-    backgroundColor: '#3D5A3E',
-    borderRadius: 12,
-    paddingVertical: 16,
-    alignItems: 'center',
-  },
+    backgroundColor: tokens.primary,
+    borderRadius:    radius.lg,
+    paddingVertical: spacing.lg,
+    alignItems:      'center',
+  } as ViewStyle,
   submitBtnDisabled: {
-    backgroundColor: '#DDD6CC',
-  },
+    backgroundColor: tokens.gray100,
+  } as ViewStyle,
   submitBtnText: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 14,
-    color: '#FFFFFF',
+    fontSize:   14,
+    color:      '#FFFFFF',
+  },
+});
+
+// ─── Filter Rail (left column) ────────────────────────────────────────────────
+
+interface FilterRailProps {
+  searchQuery: string;
+  onSearchChange: (q: string) => void;
+  selectedVerticals: Set<Vertical>;
+  onToggleVertical: (v: Vertical) => void;
+  onClearFilters: () => void;
+  verticalCount: (key: Vertical) => number;
+  /** When true render as a Card-wrapped vertical sidebar; false = full-width. */
+  isRail: boolean;
+}
+
+/**
+ * Search input + vertical category multi-select filter section.
+ * Renders as a fixed left rail in 3-col mode or as a top block in single-col mode.
+ */
+function FilterRail({
+  searchQuery,
+  onSearchChange,
+  selectedVerticals,
+  onToggleVertical,
+  onClearFilters,
+  verticalCount,
+  isRail,
+}: FilterRailProps): React.JSX.Element {
+  const activeCount = selectedVerticals.size;
+
+  const content = (
+    <View style={filterRailStyles.inner}>
+      <SectionHeader
+        title="Filters"
+        marginBottom={spacing.lg}
+        right={
+          activeCount > 0 ? (
+            <Pressable
+              onPress={onClearFilters}
+              accessibilityRole="button"
+              accessibilityLabel="Clear all filters"
+            >
+              <Text style={filterRailStyles.clearLink}>Clear</Text>
+            </Pressable>
+          ) : null
+        }
+      />
+
+      {/* Search */}
+      <View style={filterRailStyles.searchBox}>
+        <Search color={tokens.textSecondary} size={14} />
+        <TextInput
+          value={searchQuery}
+          onChangeText={onSearchChange}
+          placeholder="Search by name, specialty..."
+          placeholderTextColor={tokens.textMuted}
+          style={filterRailStyles.searchInput}
+          clearButtonMode="while-editing"
+          accessibilityLabel="Search CHWs"
+          returnKeyType="search"
+        />
+      </View>
+
+      {/* Specializations */}
+      <Text style={filterRailStyles.groupLabel}>Specialization</Text>
+
+      {/* All */}
+      <TouchableOpacity
+        onPress={onClearFilters}
+        style={[
+          filterRailStyles.filterItem,
+          activeCount === 0 && filterRailStyles.filterItemActive,
+        ]}
+        accessibilityRole="checkbox"
+        accessibilityState={{ checked: activeCount === 0 }}
+        accessibilityLabel="Show all specializations"
+      >
+        <Text
+          style={[
+            filterRailStyles.filterItemText,
+            activeCount === 0 && filterRailStyles.filterItemTextActive,
+          ]}
+        >
+          All
+        </Text>
+      </TouchableOpacity>
+
+      {FILTER_VERTICALS.map((tab) => {
+        const isSelected = selectedVerticals.has(tab.key);
+        const count      = verticalCount(tab.key);
+        return (
+          <TouchableOpacity
+            key={tab.key}
+            onPress={() => onToggleVertical(tab.key)}
+            style={[
+              filterRailStyles.filterItem,
+              isSelected && filterRailStyles.filterItemActive,
+            ]}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: isSelected }}
+            accessibilityLabel={`Toggle ${tab.label} filter`}
+          >
+            <Text
+              style={[
+                filterRailStyles.filterItemText,
+                isSelected && filterRailStyles.filterItemTextActive,
+              ]}
+              numberOfLines={1}
+            >
+              {tab.label}
+            </Text>
+            {count > 0 && (
+              <View
+                style={[
+                  filterRailStyles.countBadge,
+                  isSelected && filterRailStyles.countBadgeActive,
+                ]}
+              >
+                <Text
+                  style={[
+                    filterRailStyles.countText,
+                    isSelected && filterRailStyles.countTextActive,
+                  ]}
+                >
+                  {count}
+                </Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
+
+  if (isRail) {
+    return (
+      <Card style={[filterRailStyles.railCard, shadows.card as ViewStyle]}>
+        {content}
+      </Card>
+    );
+  }
+
+  return <View style={filterRailStyles.flatWrap}>{content}</View>;
+}
+
+const filterRailStyles = StyleSheet.create({
+  railCard: {
+    width:  FILTER_RAIL_WIDTH,
+    flexShrink: 0,
+    padding: spacing.xl,
+    alignSelf: 'flex-start',
+  } as ViewStyle,
+  flatWrap: {
+    backgroundColor: tokens.cardBg,
+    borderRadius:    radius.xl,
+    borderWidth:     1,
+    borderColor:     tokens.cardBorder,
+    marginBottom:    spacing.lg,
+    padding:         spacing.xl,
+  } as ViewStyle,
+  inner: {
+    gap: spacing.xs,
+  } as ViewStyle,
+  clearLink: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize:   13,
+    color:      tokens.primary,
+  },
+  searchBox: {
+    flexDirection:   'row',
+    alignItems:      'center',
+    gap:             spacing.sm,
+    backgroundColor: tokens.pageBg,
+    borderWidth:     1,
+    borderColor:     tokens.cardBorder,
+    borderRadius:    radius.lg,
+    paddingHorizontal: spacing.md,
+    paddingVertical:   Platform.OS === 'ios' ? spacing.md : spacing.sm,
+    marginBottom:    spacing.lg,
+  } as ViewStyle,
+  searchInput: {
+    flex:       1,
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize:   14,
+    color:      tokens.textPrimary,
+    padding:    0,
+  },
+  groupLabel: {
+    fontFamily:    'PlusJakartaSans_600SemiBold',
+    fontSize:      10,
+    letterSpacing: 1,
+    textTransform: 'uppercase' as const,
+    color:         tokens.textMuted,
+    marginBottom:  spacing.xs,
+    marginTop:     spacing.sm,
+  },
+  filterItem: {
+    flexDirection:   'row',
+    alignItems:      'center',
+    justifyContent:  'space-between',
+    paddingVertical: spacing.sm + 2,
+    paddingHorizontal: spacing.sm,
+    borderRadius:    radius.md,
+    marginBottom:    spacing.xs,
+  } as ViewStyle,
+  filterItemActive: {
+    backgroundColor: `${tokens.primary}12`,
+  } as ViewStyle,
+  filterItemText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize:   14,
+    color:      tokens.textSecondary,
+    flex:       1,
+  },
+  filterItemTextActive: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    color:      tokens.primary,
+  },
+  countBadge: {
+    backgroundColor: tokens.gray100,
+    borderRadius:    radius.pill,
+    paddingHorizontal: 7,
+    paddingVertical:   2,
+    marginLeft:      spacing.sm,
+  } as ViewStyle,
+  countBadgeActive: {
+    backgroundColor: `${tokens.primary}22`,
+  } as ViewStyle,
+  countText: {
+    fontFamily:  'PlusJakartaSans_600SemiBold',
+    fontSize:    11,
+    color:       tokens.textSecondary,
+  },
+  countTextActive: {
+    color: tokens.primary,
   },
 });
 
@@ -744,266 +989,227 @@ const modalStyles = StyleSheet.create({
 interface CHWCardProps {
   chw: ChwBrowseItem;
   onSchedule: (chw: ChwBrowseItem) => void;
-  /** Navigate to the member-facing CHW profile screen for this CHW. */
   onViewProfile: (chw: ChwBrowseItem) => void;
 }
 
+/**
+ * Renders a single CHW result card using the shared Card primitive.
+ * Matches the CHW Members list card pattern:
+ *   avatar / name + availability badge / specialization Pill row /
+ *   language pills / bio excerpt / action buttons.
+ */
 function CHWCard({ chw, onSchedule, onViewProfile }: CHWCardProps): React.JSX.Element {
-  const initials = chw.name
-    .split(' ')
-    .slice(0, 2)
-    .map((p) => p[0] ?? '')
-    .join('')
-    .toUpperCase();
-  const avatarBg = getAvatarBg(initials);
+  const initials       = nameToInitials(chw.name);
+  const avatarBg       = getAvatarBg(initials);
   const avatarTextColor = getAvatarTextColor(initials);
 
   return (
-    <View style={cardStyles.container} accessibilityRole="none">
-      <View style={cardStyles.topRow}>
-        {/* Avatar */}
-        <View style={[cardStyles.avatar, { backgroundColor: avatarBg }]}>
-          <Text style={[cardStyles.avatarText, { color: avatarTextColor }]}>{initials}</Text>
+    <Card style={chwCardStyles.card}>
+      {/* Top row: avatar + identity block */}
+      <View style={chwCardStyles.topRow}>
+        <View style={[chwCardStyles.avatar, { backgroundColor: avatarBg }]}>
+          <Text style={[chwCardStyles.avatarText, { color: avatarTextColor }]}>
+            {initials}
+          </Text>
         </View>
 
-        <View style={cardStyles.infoCol}>
-          {/* Name + availability */}
-          <View style={cardStyles.nameRow}>
-            <Text style={cardStyles.name} numberOfLines={1}>{chw.name}</Text>
+        <View style={chwCardStyles.identityBlock}>
+          {/* Name + availability badge */}
+          <View style={chwCardStyles.nameRow}>
+            <Text style={chwCardStyles.name} numberOfLines={1}>
+              {chw.name}
+            </Text>
             {chw.isAvailable ? (
-              <View style={cardStyles.availableBadge}>
-                <Text style={cardStyles.availableBadgeText}>Available</Text>
-              </View>
+              <Pill variant="emerald" size="sm">Available</Pill>
             ) : (
-              <View style={cardStyles.unavailableBadge}>
-                <Text style={cardStyles.unavailableBadgeText}>Unavailable</Text>
-              </View>
+              <Pill variant="gray" size="sm">Unavailable</Pill>
             )}
           </View>
 
-          {/* Rating + experience */}
-          <View style={cardStyles.metaRow}>
-            <StarDisplay rating={chw.rating} />
-            <Text style={cardStyles.expText}>{chw.yearsExperience} yrs exp</Text>
-          </View>
-
-          {/* Specialization pills */}
-          <View style={cardStyles.pillRow}>
-            {chw.specializations.map((v) => (
-              <View key={v} style={cardStyles.pill}>
-                <Text style={cardStyles.pillText}>
-                  {verticalLabels[v as Vertical] ?? v}
-                </Text>
-              </View>
-            ))}
-          </View>
-
-          {/* Languages */}
-          <Text style={cardStyles.languages}>
-            <Text style={cardStyles.languagesLabel}>Languages: </Text>
-            {chw.languages.join(', ')}
+          {/* Experience */}
+          <Text style={chwCardStyles.meta}>
+            {chw.yearsExperience} yr{chw.yearsExperience !== 1 ? 's' : ''} experience
           </Text>
-
-          {/* Bio */}
-          <Text style={cardStyles.bio} numberOfLines={2}>{chw.bio}</Text>
         </View>
       </View>
 
-      {/* Action row: View Profile + Schedule */}
-      <View style={cardStyles.actionRow}>
+      {/* Specialization pills */}
+      {chw.specializations.length > 0 && (
+        <View style={chwCardStyles.pillRow}>
+          {chw.specializations.map((v) => (
+            <Pill key={v} variant="emerald" size="sm">
+              {verticalLabels[v as Vertical] ?? v}
+            </Pill>
+          ))}
+        </View>
+      )}
+
+      {/* Languages */}
+      {chw.languages.length > 0 && (
+        <View style={chwCardStyles.pillRow}>
+          {chw.languages.map((lang) => (
+            <Pill key={lang} variant="blue" size="sm">
+              {lang}
+            </Pill>
+          ))}
+        </View>
+      )}
+
+      {/* Bio excerpt */}
+      {chw.bio.length > 0 && (
+        <Text style={chwCardStyles.bio} numberOfLines={2}>
+          {chw.bio}
+        </Text>
+      )}
+
+      {/* Divider */}
+      <View style={chwCardStyles.divider} />
+
+      {/* Actions */}
+      <View style={chwCardStyles.actionRow}>
         <TouchableOpacity
           onPress={() => onViewProfile(chw)}
-          style={cardStyles.profileBtn}
+          style={chwCardStyles.profileBtn}
           accessibilityRole="button"
           accessibilityLabel={`View ${chw.name}'s profile`}
         >
-          <User size={14} color={colors.primary} />
-          <Text style={cardStyles.profileBtnText}>Profile</Text>
+          <User size={13} color={tokens.primary} />
+          <Text style={chwCardStyles.profileBtnText}>Profile</Text>
         </TouchableOpacity>
+
         <TouchableOpacity
           onPress={() => onSchedule(chw)}
           style={[
-            cardStyles.scheduleBtn,
-            !chw.isAvailable && cardStyles.scheduleBtnDisabled,
+            chwCardStyles.scheduleBtn,
+            !chw.isAvailable && chwCardStyles.scheduleBtnDisabled,
           ]}
           disabled={!chw.isAvailable}
           accessibilityRole="button"
-          accessibilityLabel={`Schedule a session with ${chw.name}`}
+          accessibilityLabel={
+            chw.isAvailable
+              ? `Schedule a session with ${chw.name}`
+              : `${chw.name} is not available`
+          }
         >
           <Text
             style={[
-              cardStyles.scheduleBtnText,
-              !chw.isAvailable && { color: colors.mutedForeground },
+              chwCardStyles.scheduleBtnText,
+              !chw.isAvailable && { color: tokens.textSecondary },
             ]}
           >
-            {chw.isAvailable ? 'Schedule Session' : 'Not Available'}
+            {chw.isAvailable ? 'Schedule Session' : 'Unavailable'}
           </Text>
         </TouchableOpacity>
       </View>
-    </View>
+    </Card>
   );
 }
 
-const cardStyles = StyleSheet.create({
-  container: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-    padding: 16,
-    marginHorizontal: 16,
-    marginBottom: 12,
-    shadowColor: '#3D5A3E',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 24,
-    elevation: 3,
-  },
+const chwCardStyles = StyleSheet.create({
+  card: {
+    padding:      spacing.xl,
+    marginBottom: spacing.md,
+  } as ViewStyle,
   topRow: {
     flexDirection: 'row',
-    gap: 12,
-    marginBottom: 12,
-  },
+    alignItems:    'flex-start',
+    gap:           spacing.md,
+    marginBottom:  spacing.md,
+  } as ViewStyle,
   avatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    alignItems: 'center',
+    width:          48,
+    height:         48,
+    borderRadius:   radius.pill,
+    alignItems:     'center',
     justifyContent: 'center',
-    flexShrink: 0,
-  },
+    flexShrink:     0,
+  } as ViewStyle,
   avatarText: {
-    fontSize: 16,
-    fontWeight: '700',
+    fontFamily: 'DMSans_700Bold',
+    fontSize:   16,
+    lineHeight: 20,
   },
-  infoCol: {
+  identityBlock: {
     flex: 1,
-    gap: 4,
-  },
+    gap:  spacing.xs,
+  } as ViewStyle,
   nameRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    flexWrap: 'wrap',
-  },
+    alignItems:    'center',
+    gap:           spacing.sm,
+    flexWrap:      'wrap',
+  } as ViewStyle,
   name: {
     fontFamily: 'DMSans_700Bold',
-    fontSize: 14,
+    fontSize:   15,
     lineHeight: 20,
-    color: '#1E3320',
-    flex: 1,
+    color:      tokens.textPrimary,
+    flexShrink: 1,
   },
-  availableBadge: {
-    backgroundColor: '#7A9F5A20',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 100,
-  },
-  availableBadgeText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 12,
-    color: '#7A9F5A',
-  },
-  unavailableBadge: {
-    backgroundColor: '#6B7A6B15',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 100,
-  },
-  unavailableBadgeText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 12,
-    color: '#6B7A6B',
-  },
-  metaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  expText: {
+  meta: {
     fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 11,
-    color: '#6B7A6B',
+    fontSize:   12,
+    color:      tokens.textSecondary,
+    lineHeight: 16,
   },
   pillRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 4,
-  },
-  pill: {
-    backgroundColor: '#7A9F5A18',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 100,
-  },
-  pillText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 10,
-    color: '#7A9F5A',
-  },
-  languages: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 11,
-    color: '#6B7A6B',
-  },
-  languagesLabel: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    textTransform: 'uppercase',
-    fontSize: 10,
-    letterSpacing: 1,
-  },
+    flexWrap:      'wrap',
+    gap:           spacing.xs,
+    marginBottom:  spacing.sm,
+  } as ViewStyle,
   bio: {
     fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 11,
-    color: '#6B7A6B',
-    lineHeight: 16,
+    fontSize:   13,
+    color:      tokens.textSecondary,
+    lineHeight: 18,
+    marginBottom: spacing.md,
   },
+  divider: {
+    height:          1,
+    backgroundColor: tokens.cardBorder,
+    marginBottom:    spacing.md,
+  } as ViewStyle,
   actionRow: {
     flexDirection: 'row',
-    gap: 8,
-    alignItems: 'center',
-  },
+    gap:           spacing.sm,
+    alignItems:    'center',
+  } as ViewStyle,
   profileBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: colors.primary + '50',
-    backgroundColor: colors.primary + '10',
-    flexShrink: 0,
-  },
+    flexDirection:   'row',
+    alignItems:      'center',
+    gap:             spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical:   spacing.sm + 2,
+    borderRadius:    radius.lg,
+    borderWidth:     1,
+    borderColor:     `${tokens.primary}50`,
+    backgroundColor: `${tokens.primary}10`,
+    flexShrink:      0,
+  } as ViewStyle,
   profileBtnText: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 13,
-    color: colors.primary,
+    fontSize:   13,
+    color:      tokens.primary,
   },
   scheduleBtn: {
-    flex: 1,
-    backgroundColor: '#3D5A3E',
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: 'center',
-  },
+    flex:            1,
+    backgroundColor: tokens.primary,
+    borderRadius:    radius.lg,
+    paddingVertical: spacing.sm + 2,
+    alignItems:      'center',
+  } as ViewStyle,
   scheduleBtnDisabled: {
-    backgroundColor: '#DDD6CC',
-  },
+    backgroundColor: tokens.gray100,
+  } as ViewStyle,
   scheduleBtnText: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 14,
-    color: '#FFFFFF',
+    fontSize:   14,
+    color:      '#FFFFFF',
   },
 });
 
-// ─── CHW Map View (native only) ───────────────────────────────────────────────
-
-/** The LA County geographic center, used as the default camera target. */
-const LA_CENTER = { latitude: 34.0522, longitude: -118.2437 } as const;
-
-/** Zoom level that comfortably frames all of LA County (~county-wide view). */
-const LA_COUNTY_ZOOM = 9;
+// ─── CHW Map Rail (native only) ───────────────────────────────────────────────
 
 interface ChwMapViewProps {
   chws: ChwBrowseItem[];
@@ -1017,26 +1223,21 @@ interface ChwMapViewProps {
  * Uses AppleMaps on iOS, GoogleMaps on Android. Not rendered on web.
  */
 function ChwMapView({ chws, onMarkerPress }: ChwMapViewProps): React.JSX.Element | null {
-  // Build a lookup from CHW id → CHW for fast retrieval inside the marker
-  // click handler, which only receives the marker object back from the SDK.
   const chwById = useMemo(() => {
     const lookup = new Map<string, ChwBrowseItem>();
-    for (const chw of chws) {
-      lookup.set(chw.id, chw);
-    }
+    for (const chw of chws) lookup.set(chw.id, chw);
     return lookup;
   }, [chws]);
 
-  /** Resolved markers — one per CHW with a resolvable ZIP code. */
   const markers = useMemo(() => {
     return chws.flatMap((chw) => {
       const coords = zipToLatLng(chw.zipCode);
       if (!coords) return [];
       return [
         {
-          id: chw.id,
+          id:          chw.id,
           coordinates: { latitude: coords.lat, longitude: coords.lng },
-          title: chw.name,
+          title:       chw.name,
         },
       ];
     });
@@ -1045,7 +1246,7 @@ function ChwMapView({ chws, onMarkerPress }: ChwMapViewProps): React.JSX.Element
   if (Platform.OS === 'ios' && AppleMapsView) {
     return (
       <AppleMapsView
-        style={mapStyles.map}
+        style={mapViewStyles.map}
         cameraPosition={{ coordinates: LA_CENTER, zoom: LA_COUNTY_ZOOM }}
         markers={markers}
         onMarkerClick={(marker: { id?: string }) => {
@@ -1060,7 +1261,7 @@ function ChwMapView({ chws, onMarkerPress }: ChwMapViewProps): React.JSX.Element
   if (Platform.OS === 'android' && GoogleMapsView) {
     return (
       <GoogleMapsView
-        style={mapStyles.map}
+        style={mapViewStyles.map}
         cameraPosition={{ coordinates: LA_CENTER, zoom: LA_COUNTY_ZOOM }}
         markers={markers}
         onMarkerClick={(marker: { id?: string }) => {
@@ -1072,19 +1273,170 @@ function ChwMapView({ chws, onMarkerPress }: ChwMapViewProps): React.JSX.Element
     );
   }
 
-  // Fallback: should not be reached on native, but satisfies the type system.
   return null;
 }
 
-const mapStyles = StyleSheet.create({
+const mapViewStyles = StyleSheet.create({
   map: {
-    height: 220,
-    marginHorizontal: 16,
-    marginBottom: 12,
-    borderRadius: 16,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: colors.border,
+    flex:         1,
+    borderRadius: radius.xl,
+    overflow:     'hidden',
+  } as ViewStyle,
+});
+
+// ─── Map Rail (right column — web 3-col) ─────────────────────────────────────
+
+interface MapRailProps {
+  chws: ChwBrowseItem[];
+  onMarkerPress: (chw: ChwBrowseItem) => void;
+}
+
+/**
+ * Sticky right-rail card containing the CHW map.
+ * On web this renders the Mapbox WebView; on native it renders the expo-maps view.
+ */
+function MapRail({ chws, onMarkerPress }: MapRailProps): React.JSX.Element {
+  return (
+    <Card style={mapRailStyles.railCard}>
+      <SectionHeader
+        title="CHW Locations"
+        subtitle="LA County"
+        marginBottom={spacing.md}
+      />
+      <View style={mapRailStyles.mapWrap}>
+        {Platform.OS === 'web' ? (
+          <ChwMapWebView chws={chws} onMarkerPress={onMarkerPress} />
+        ) : (
+          <ChwMapView chws={chws} onMarkerPress={onMarkerPress} />
+        )}
+      </View>
+    </Card>
+  );
+}
+
+const mapRailStyles = StyleSheet.create({
+  railCard: {
+    width:      MAP_RAIL_WIDTH,
+    flexShrink: 0,
+    padding:    spacing.xl,
+    alignSelf:  'flex-start',
+  } as ViewStyle,
+  mapWrap: {
+    height:       320,
+    borderRadius: radius.lg,
+    overflow:     'hidden',
+    borderWidth:  1,
+    borderColor:  tokens.cardBorder,
+  } as ViewStyle,
+});
+
+// ─── Collapsible Map (single-col / narrow) ────────────────────────────────────
+
+interface CollapsibleMapProps {
+  chws: ChwBrowseItem[];
+  onMarkerPress: (chw: ChwBrowseItem) => void;
+  expanded: boolean;
+  onToggle: () => void;
+}
+
+function CollapsibleMap({
+  chws,
+  onMarkerPress,
+  expanded,
+  onToggle,
+}: CollapsibleMapProps): React.JSX.Element {
+  return (
+    <View style={collapseMapStyles.wrapper}>
+      <TouchableOpacity
+        style={collapseMapStyles.toggleRow}
+        onPress={onToggle}
+        accessibilityRole="button"
+        accessibilityLabel={expanded ? 'Collapse map view' : 'Expand map view'}
+      >
+        <MapIcon color={tokens.primary} size={14} />
+        <Text style={collapseMapStyles.toggleLabel}>Map view</Text>
+        {expanded
+          ? <ChevronUp color={tokens.textMuted} size={14} />
+          : <ChevronDown color={tokens.textMuted} size={14} />
+        }
+      </TouchableOpacity>
+
+      {expanded && (
+        <View style={collapseMapStyles.mapWrap}>
+          {Platform.OS === 'web' ? (
+            <ChwMapWebView chws={chws} onMarkerPress={onMarkerPress} />
+          ) : (
+            <ChwMapView chws={chws} onMarkerPress={onMarkerPress} />
+          )}
+        </View>
+      )}
+    </View>
+  );
+}
+
+const collapseMapStyles = StyleSheet.create({
+  wrapper: {
+    marginBottom: spacing.lg,
+  } as ViewStyle,
+  toggleRow: {
+    flexDirection:   'row',
+    alignItems:      'center',
+    gap:             spacing.sm,
+    backgroundColor: tokens.cardBg,
+    borderWidth:     1,
+    borderColor:     tokens.cardBorder,
+    borderRadius:    radius.lg,
+    paddingHorizontal: spacing.lg,
+    paddingVertical:   spacing.sm + 2,
+    marginBottom:    spacing.sm,
+  } as ViewStyle,
+  toggleLabel: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize:   13,
+    color:      tokens.textPrimary,
+    flex:       1,
+  },
+  mapWrap: {
+    height:       220,
+    borderRadius: radius.xl,
+    overflow:     'hidden',
+    borderWidth:  1,
+    borderColor:  tokens.cardBorder,
+  } as ViewStyle,
+});
+
+// ─── Empty State ──────────────────────────────────────────────────────────────
+
+function EmptyState(): React.JSX.Element {
+  return (
+    <View style={emptyStyles.container}>
+      <Filter color={tokens.textMuted} size={28} />
+      <Text style={emptyStyles.title}>No CHWs found</Text>
+      <Text style={emptyStyles.sub}>
+        Try adjusting your filters or search term.
+      </Text>
+    </View>
+  );
+}
+
+const emptyStyles = StyleSheet.create({
+  container: {
+    paddingTop:       48,
+    alignItems:       'center',
+    gap:              spacing.sm,
+    paddingHorizontal: spacing.xxxl,
+  } as ViewStyle,
+  title: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize:   16,
+    lineHeight: 22,
+    color:      tokens.textPrimary,
+  },
+  sub: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize:   14,
+    color:      tokens.textSecondary,
+    textAlign:  'center',
   },
 });
 
@@ -1093,6 +1445,15 @@ const mapStyles = StyleSheet.create({
 export function MemberFindScreen(): React.JSX.Element {
   const navigation = useNavigation<NativeStackNavigationProp<MemberFindStackParamList>>();
   const { userName } = useAuth();
+  const { width: windowWidth } = useWindowDimensions();
+
+  /**
+   * Activate three-column layout when the viewport is wide enough.
+   * Member screens use PageWrap at 560px on web, but this screen is
+   * info-dense (map + cards + filters) so we override to a wider 960px
+   * container and activate 3-col at the 768px breakpoint.
+   */
+  const isThreeCol = Platform.OS === 'web' && windowWidth >= THREE_COL_BREAKPOINT;
 
   const memberInitials = (userName ?? 'M')
     .split(' ')
@@ -1103,37 +1464,27 @@ export function MemberFindScreen(): React.JSX.Element {
 
   const shellUserBlock = {
     initials: memberInitials,
-    name: userName ?? 'Member',
-    role: 'Member' as const,
+    name:     userName ?? 'Member',
+    role:     'Member' as const,
   };
 
-  const [searchQuery, setSearchQuery] = useState('');
-  // Multi-select category filter (per JT Figma feedback: "select CHW with
-  // multiple categories. Not just one or all but multi-select"). Empty set
-  // = "All" (no filter applied).
+  const [searchQuery, setSearchQuery]         = useState('');
   const [selectedVerticals, setSelectedVerticals] = useState<Set<Vertical>>(new Set());
-  const [schedulingChw, setSchedulingChw] = useState<ChwBrowseItem | null>(null);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-  /** Controls whether the map panel is expanded. Defaults to expanded on
-   *  every platform so members see CHW locations immediately. */
-  const [mapExpanded, setMapExpanded] = useState(true);
+  const [schedulingChw, setSchedulingChw]     = useState<ChwBrowseItem | null>(null);
+  const [toastMessage, setToastMessage]       = useState<string | null>(null);
+  const [mapExpanded, setMapExpanded]         = useState(true);
 
-  // Always fetch the full CHW list (no server-side filter). Multi-select
-  // filtering happens client-side below — keeps the backend contract
-  // unchanged while supporting union filtering.
-  const chwQuery = useChwBrowse(undefined);
-  const sessionsQuery = useSessions();
-  const createRequest = useCreateRequest();
+  const chwQuery       = useChwBrowse(undefined);
+  const sessionsQuery  = useSessions();
+  const createRequest  = useCreateRequest();
 
-  // Set of CHW ids the member has had any session with — drives the "this
-  // is a follow-up" branch in ScheduleModal so first/initial meetings skip
-  // the time-slot picker per JT Figma feedback.
+  // Determine which CHWs the member has had sessions with — drives the
+  // follow-up branch in ScheduleModal (skip time-slot picker for first meetings).
   const priorChwIds = useMemo(() => {
     const set = new Set<string>();
     for (const s of sessionsQuery.data ?? []) {
-      // ChwBrowseItem.id corresponds to the CHW user id; SessionData carries
-      // chwName but not chwId on the wire today. TODO(backend): expose
-      // session.chw_id so this reads cleanly. For now match on chwName.
+      // session.chw_id is not yet exposed on the wire; match on chwName.
+      // TODO: wire session.chw_id once backend exposes it (#backend-chw-id).
       if (s.chwName) set.add(s.chwName);
     }
     return set;
@@ -1156,10 +1507,9 @@ export function MemberFindScreen(): React.JSX.Element {
 
   const filteredChws = useMemo(() => {
     const query = searchQuery.toLowerCase().trim();
-    let result = allChws;
+    let result  = allChws;
 
-    // Vertical filter — CHW must have at least one of the selected
-    // specializations (union, not intersection).
+    // Union filter: CHW must have at least one of the selected specializations.
     if (selectedVerticals.size > 0) {
       result = result.filter((chw) =>
         chw.specializations.some((s) => selectedVerticals.has(s as Vertical)),
@@ -1167,15 +1517,13 @@ export function MemberFindScreen(): React.JSX.Element {
     }
 
     if (!query) return result;
-    return result.filter((chw) => {
-      return (
-        chw.name.toLowerCase().includes(query) ||
-        chw.bio.toLowerCase().includes(query) ||
-        chw.specializations.some((s) =>
-          (verticalLabels[s as Vertical] ?? s).toLowerCase().includes(query),
-        )
-      );
-    });
+    return result.filter((chw) =>
+      chw.name.toLowerCase().includes(query) ||
+      chw.bio.toLowerCase().includes(query) ||
+      chw.specializations.some((s) =>
+        (verticalLabels[s as Vertical] ?? s).toLowerCase().includes(query),
+      ),
+    );
   }, [searchQuery, selectedVerticals, allChws]);
 
   const verticalCount = useCallback(
@@ -1213,8 +1561,8 @@ export function MemberFindScreen(): React.JSX.Element {
   }, []);
 
   /**
-   * Tapping a map pin selects that CHW and opens the schedule modal,
-   * matching the same selection pattern used by the list card's Schedule button.
+   * Tapping a map pin opens the schedule modal for that CHW — same pattern
+   * as tapping the Schedule button on a card.
    */
   const handleMapMarkerPress = useCallback((chw: ChwBrowseItem) => {
     setSchedulingChw(chw);
@@ -1222,26 +1570,17 @@ export function MemberFindScreen(): React.JSX.Element {
 
   const handleModalSubmit = useCallback(
     async (chwFirstName: string, formData: ScheduleFormData) => {
-      // Capture the chosen CHW's user UUID BEFORE clearing the modal state,
-      // so the payload below doesn't read a closed-over null.  Use ``userId``,
-      // not ``id`` — the latter is the CHWProfile PK and the backend validates
-      // the target against the users table (where it would not exist).
+      // Capture the chosen CHW's user UUID BEFORE clearing the modal state.
+      // Use userId, not id — the latter is the CHWProfile PK and the backend
+      // validates the target against the users table (where it would not exist).
       const targetChwId = schedulingChw?.userId;
       setSchedulingChw(null);
       const count = formData.verticals.length;
       try {
-        // Send ONE request carrying all selected verticals. The backend
-        // writes both `verticals` (authoritative array) and `vertical`
-        // (first element, for sessions/claims backwards-compat).
-        //
-        // ``targetChwId`` is captured from the CHW card the member tapped:
-        // the backend locks the request to that CHW for 24h so it lands
-        // in their Request filter on the Members page (not in the open
-        // pool any other CHW could claim).
         const payload: CreateRequestPayload = {
-          verticals: formData.verticals,
-          urgency: formData.urgency,
-          description: formData.description,
+          verticals:     formData.verticals,
+          urgency:       formData.urgency,
+          description:   formData.description,
           preferredMode: formData.mode,
           estimatedUnits: 1,
           targetChwId,
@@ -1253,10 +1592,6 @@ export function MemberFindScreen(): React.JSX.Element {
             : `Request submitted! ${chwFirstName} will be in touch soon.`,
         );
       } catch (err) {
-        // Surface the real backend reason so we can diagnose 401 / 422 /
-        // 500 instead of swallowing it behind a generic "please try again"
-        // toast. ApiError carries `.detail` from FastAPI's HTTPException;
-        // a network failure becomes a plain Error.
         const reason =
           err instanceof Error && err.message ? err.message : 'Unknown error';
         showToast(`Failed to submit request: ${reason}`);
@@ -1265,273 +1600,166 @@ export function MemberFindScreen(): React.JSX.Element {
     [createRequest, showToast, schedulingChw],
   );
 
-  return (
-    <AppShell role="member" activeKey="myChw" userBlock={shellUserBlock} disableMainScroll>
-    <SafeAreaView style={styles.safeArea} edges={['top']}>
-      <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
+  // ── CHW list body (loading / error / list) ─────────────────────────────────
 
-      {/* Toast */}
-      {toastMessage ? <ToastBanner message={toastMessage} /> : null}
-
-      {/* Schedule modal */}
-      {schedulingChw ? (
-        <ScheduleModal
-          chw={schedulingChw}
-          visible={schedulingChw !== null}
-          isFollowUp={priorChwIds.has(schedulingChw.name)}
-          onClose={handleModalClose}
-          onSubmit={handleModalSubmit}
-        />
-      ) : null}
-
-      <View style={styles.pageWrap}>
-      {/* Page header */}
-      <View style={styles.pageHeader}>
-        <Text style={styles.pageTitle}>Find Your CHW</Text>
-        <Text style={styles.pageSub}>Matched to your needs</Text>
-      </View>
-
-      {/* Search bar */}
-      <View style={styles.searchContainer}>
-        <Search color={colors.mutedForeground} size={16} />
-        <TextInput
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-          placeholder="Search by name, specialty..."
-          placeholderTextColor={colors.mutedForeground}
-          style={styles.searchInput}
-          clearButtonMode="while-editing"
-          accessibilityLabel="Search CHWs"
-          returnKeyType="search"
-        />
-      </View>
-
-      {/* Multi-select category chips (JT Figma feedback) */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.filterTabsContent}
-        style={styles.filterTabs}
-      >
-        {/* "All" — active when nothing is selected. Tapping clears selection. */}
-        <TouchableOpacity
-          onPress={clearFilters}
-          style={[styles.filterTab, selectedVerticals.size === 0 && styles.filterTabActive]}
-          accessibilityRole="checkbox"
-          accessibilityState={{ checked: selectedVerticals.size === 0 }}
-          accessibilityLabel="Show all categories"
-        >
-          <Text style={[styles.filterTabText, selectedVerticals.size === 0 && styles.filterTabTextActive]}>
-            All
-          </Text>
-        </TouchableOpacity>
-        {FILTER_VERTICALS.map((tab) => {
-          const isSelected = selectedVerticals.has(tab.key);
-          const count = verticalCount(tab.key);
-          return (
-            <TouchableOpacity
-              key={tab.key}
-              onPress={() => toggleVertical(tab.key)}
-              style={[styles.filterTab, isSelected && styles.filterTabActive]}
-              accessibilityRole="checkbox"
-              accessibilityState={{ checked: isSelected }}
-              accessibilityLabel={`Toggle ${tab.label} filter`}
-            >
-              <Text style={[styles.filterTabText, isSelected && styles.filterTabTextActive]}>
-                {tab.label}{count > 0 ? ` ${count}` : ''}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
-
-      {/* Map toggle header — all platforms */}
-      <TouchableOpacity
-        style={styles.mapToggleRow}
-        onPress={() => setMapExpanded((prev) => !prev)}
-        accessibilityRole="button"
-        accessibilityLabel={mapExpanded ? 'Collapse map view' : 'Expand map view'}
-      >
-        <MapIcon color={colors.primary} size={15} />
-        <Text style={styles.mapToggleText}>Map view</Text>
-        <Text style={styles.mapToggleChevron}>{mapExpanded ? '▲' : '▼'}</Text>
-      </TouchableOpacity>
-
-      {/* Map — AppleMaps/GoogleMaps on native, Mapbox on web. */}
-      {mapExpanded ? (
-        Platform.OS === 'web' ? (
-          <ChwMapWebView chws={filteredChws} onMarkerPress={handleMapMarkerPress} />
-        ) : (
-          <ChwMapView chws={filteredChws} onMarkerPress={handleMapMarkerPress} />
-        )
-      ) : null}
-
-      {/* CHW List */}
-      {chwQuery.isLoading ? (
-        <View style={{ paddingHorizontal: 16, paddingTop: 8 }}>
+  function renderChwList(): React.JSX.Element {
+    if (chwQuery.isLoading) {
+      return (
+        <View style={{ paddingTop: spacing.sm }}>
           <LoadingSkeleton variant="rows" rows={4} />
         </View>
-      ) : chwQuery.error ? (
+      );
+    }
+    if (chwQuery.error) {
+      return (
         <ErrorState
           message="Could not load CHW listings. Please try again."
           onRetry={() => void chwQuery.refetch()}
         />
-      ) : (
-        <FlatList
-          data={filteredChws}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => (
-            <CHWCard
-              chw={item}
-              onSchedule={handleSchedule}
-              onViewProfile={handleViewProfile}
-            />
-          )}
-          contentContainerStyle={styles.listContent}
+      );
+    }
+    return (
+      <FlatList
+        data={filteredChws}
+        keyExtractor={(item) => item.id}
+        renderItem={({ item }) => (
+          <CHWCard
+            chw={item}
+            onSchedule={handleSchedule}
+            onViewProfile={handleViewProfile}
+          />
+        )}
+        contentContainerStyle={screenStyles.listContent}
+        showsVerticalScrollIndicator={false}
+        scrollEnabled={false}
+        ListEmptyComponent={EmptyState}
+      />
+    );
+  }
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+
+  return (
+    <AppShell role="member" activeKey="myChw" userBlock={shellUserBlock} disableMainScroll>
+      <SafeAreaView style={screenStyles.safeArea} edges={['top']}>
+        <StatusBar barStyle="dark-content" backgroundColor={tokens.pageBg} />
+
+        {toastMessage ? <ToastBanner message={toastMessage} /> : null}
+
+        {schedulingChw ? (
+          <ScheduleModal
+            chw={schedulingChw}
+            visible={schedulingChw !== null}
+            isFollowUp={priorChwIds.has(schedulingChw.name)}
+            onClose={handleModalClose}
+            onSubmit={handleModalSubmit}
+          />
+        ) : null}
+
+        <ScrollView
+          style={screenStyles.scroll}
+          contentContainerStyle={screenStyles.scrollContent}
           showsVerticalScrollIndicator={false}
-          ListEmptyComponent={() => (
-            <View style={styles.emptyState}>
-              <Search color={colors.mutedForeground} size={28} />
-              <Text style={styles.emptyTitle}>No CHWs found</Text>
-              <Text style={styles.emptySub}>
-                Try a different filter or search term.
-              </Text>
-            </View>
-          )}
-        />
-      )}
-      </View>
-    </SafeAreaView>
+        >
+          {/*
+           * Info-dense browse screen — override the 560 PageWrap cap with a
+           * 960px container so filters + cards + map have room to breathe.
+           * PageWrap is still used via composition on strictly member-only
+           * read screens (profile, roadmap, etc.).
+           */}
+          <View style={screenStyles.pageContainer}>
+            <PageHeader
+              title="Find Your CHW"
+              subtitle="Matched to your needs in LA County"
+            />
+
+            {isThreeCol ? (
+              // ── Three-column layout ────────────────────────────────────────
+              <View style={screenStyles.threeColRow}>
+                {/* Left: filter rail */}
+                <FilterRail
+                  searchQuery={searchQuery}
+                  onSearchChange={setSearchQuery}
+                  selectedVerticals={selectedVerticals}
+                  onToggleVertical={toggleVertical}
+                  onClearFilters={clearFilters}
+                  verticalCount={verticalCount}
+                  isRail
+                />
+
+                {/* Centre: CHW cards */}
+                <View style={screenStyles.centerCol}>
+                  {renderChwList()}
+                </View>
+
+                {/* Right: map rail */}
+                <MapRail
+                  chws={filteredChws}
+                  onMarkerPress={handleMapMarkerPress}
+                />
+              </View>
+            ) : (
+              // ── Single-column layout ───────────────────────────────────────
+              <View>
+                <FilterRail
+                  searchQuery={searchQuery}
+                  onSearchChange={setSearchQuery}
+                  selectedVerticals={selectedVerticals}
+                  onToggleVertical={toggleVertical}
+                  onClearFilters={clearFilters}
+                  verticalCount={verticalCount}
+                  isRail={false}
+                />
+
+                <CollapsibleMap
+                  chws={filteredChws}
+                  onMarkerPress={handleMapMarkerPress}
+                  expanded={mapExpanded}
+                  onToggle={() => setMapExpanded((prev) => !prev)}
+                />
+
+                {renderChwList()}
+              </View>
+            )}
+          </View>
+        </ScrollView>
+      </SafeAreaView>
     </AppShell>
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
+// ─── Screen-level Styles ──────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
+const screenStyles = StyleSheet.create({
   safeArea: {
+    flex:            1,
+    backgroundColor: tokens.pageBg,
+  } as ViewStyle,
+  scroll: {
     flex: 1,
-    backgroundColor: '#F4F1ED',
+  } as ViewStyle,
+  scrollContent: {
+    flexGrow:   1,
     alignItems: 'center',
-  },
-  // 960 px — CHW browse list is info-dense; needs room for the map + cards.
-  pageWrap: {
-    width: '100%',
+  } as ViewStyle,
+  // Info-dense browse screen: wider than the standard 560 member PageWrap cap.
+  // Three-col layout needs room for 240 + flex + 280 + gaps ≈ 960px target.
+  pageContainer: {
+    width:   '100%',
     maxWidth: 960,
-    flex: 1,
-    alignSelf: 'center',
-  },
-  pageHeader: {
-    paddingHorizontal: 16,
-    paddingTop: 20,
-    paddingBottom: 12,
-  },
-  pageTitle: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 24,
-    lineHeight: 30,
-    color: '#1E3320',
-  },
-  pageSub: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 14,
-    color: '#6B7A6B',
-    marginTop: 2,
-  },
-  searchContainer: {
+    padding: Platform.OS === 'web' ? spacing.xxxl : spacing.xl,
+    paddingBottom: 48,
+  } as ViewStyle,
+  threeColRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginHorizontal: 16,
-    marginBottom: 12,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: Platform.OS === 'ios' ? 14 : 8,
-  },
-  searchInput: {
+    alignItems:    'flex-start',
+    gap:           spacing.xxl,
+  } as ViewStyle,
+  centerCol: {
     flex: 1,
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 14,
-    lineHeight: 20,
-    color: '#1E3320',
-    padding: 0,
-  },
-  filterTabs: {
-    maxHeight: 44,
-    marginBottom: 10,
-  },
-  filterTabsContent: {
-    paddingHorizontal: 16,
-    gap: 8,
-    alignItems: 'center',
-  },
-  filterTab: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-    backgroundColor: '#FFFFFF',
-  },
-  filterTabActive: {
-    backgroundColor: '#3D5A3E',
-    borderColor: '#3D5A3E',
-  },
-  filterTabText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 14,
-    color: '#6B7A6B',
-  },
-  filterTabTextActive: {
-    color: '#FFFFFF',
-  },
-  mapToggleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginHorizontal: 16,
-    marginBottom: 8,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 10,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-  mapToggleText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 13,
-    color: colors.foreground,
-    flex: 1,
-  },
-  mapToggleChevron: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 10,
-    color: colors.mutedForeground,
-  },
+    minWidth: 0,
+  } as ViewStyle,
   listContent: {
-    paddingTop: 4,
-    paddingBottom: 24,
-  },
-  emptyState: {
-    paddingTop: 48,
-    alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: 32,
-  },
-  emptyTitle: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 16,
-    lineHeight: 22,
-    color: '#1E3320',
-  },
-  emptySub: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 14,
-    color: '#6B7A6B',
-    textAlign: 'center',
-  },
+    paddingBottom: spacing.xxl,
+  } as ViewStyle,
 });
