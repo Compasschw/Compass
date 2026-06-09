@@ -168,20 +168,19 @@ export function RegisterScreen(): React.JSX.Element {
     phone: useRef<TextInput>(null),
   };
 
-  // Hard-required gate by role:
+  // Hard-required gate by role (T15 — paired with T07 BE schema relaxation):
   //   - CHW: first + last name + valid email + 8-char password.
-  //   - Member: same as CHW + valid DOB + Sex (everything else is captured
-  //     optionally and persists to the MemberProfile but doesn't block
-  //     submission).
+  //   - Member: same as CHW + DOB + Sex + Insurance + CIN (8 digits + 1
+  //     letter) + ZIP (any non-empty string; format validated by BE).
+  //
+  // Dropped from the member gate (T15): phone, addressLine1, city, state,
+  // and the ZIP >= 5 length check.  Phone/address are now optional at
+  // registration and can be completed in the member profile.  ZIP format
+  // validation is owned by the backend (commit 724130f on main).
+  //
   // Both first AND last are required at the form layer because the backend
   // rejects single-token names for members (Pear requires both) and we want
   // CHW.name to carry a full name too for consistent display.
-  //
-  // For members, every field Pear's Member Import requires is now hard-
-  // gated on submit so we never produce a member who can't be billed:
-  // Phone, DOB, Sex, Insurance, CIN (8 digits + 1 letter), Address line 1,
-  // City, State (2-letter USPS), ZIP. Address line 2 is the only optional
-  // field per Pear's spec.
   const accountBasicsOk =
     firstName.trim().length > 0 &&
     lastName.trim().length > 0 &&
@@ -195,15 +194,11 @@ export function RegisterScreen(): React.JSX.Element {
   const memberProfileOk =
     role !== 'member' ||
     (
-      phone.trim().length > 0 &&
       dobIso !== null &&
       sex !== null &&
       insuranceCompany.trim().length > 0 &&
       cinIsValid &&
-      addressLine1.trim().length > 0 &&
-      city.trim().length > 0 &&
-      stateCode.trim().length === 2 &&
-      zip.trim().length >= 5
+      zip.trim().length > 0
     );
   const canSubmit = accountBasicsOk && memberProfileOk;
 
