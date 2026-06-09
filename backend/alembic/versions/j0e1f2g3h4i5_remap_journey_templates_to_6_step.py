@@ -231,6 +231,9 @@ def upgrade() -> None:
 
         # ── 1c. Insert 6 new standardized steps ───────────────────────────────
         # new_order → new_step_id (UUID str)
+        # Note: required_documents inlined as '[]'::jsonb literal — using a bind
+        # param with `::jsonb` (e.g. `:docs::jsonb`) collides with SQLAlchemy's
+        # `::` cast operator parsing and yields "syntax error at or near :".
         new_order_to_id: dict[int, str] = {}
         for step_def in _STANDARD_STEPS:
             new_step_id = str(uuid.uuid4())
@@ -240,7 +243,7 @@ def upgrade() -> None:
                     "INSERT INTO journey_template_steps "
                     "(id, template_id, \"order\", name, description, "
                     " points_on_completion, required_documents) "
-                    "VALUES (:id, :tid, :ord, :name, :desc, :pts, :docs::jsonb)"
+                    "VALUES (:id, :tid, :ord, :name, :desc, :pts, '[]'::jsonb)"
                 ),
                 {
                     "id": new_step_id,
@@ -249,7 +252,6 @@ def upgrade() -> None:
                     "name": step_def["name"],
                     "desc": "",
                     "pts": step_def["points"],
-                    "docs": "[]",
                 },
             )
 
@@ -332,7 +334,7 @@ def upgrade() -> None:
                     "INSERT INTO journey_template_steps "
                     "(id, template_id, \"order\", name, description, "
                     " points_on_completion, required_documents) "
-                    "VALUES (:id, :tid, :ord, :name, :desc, :pts, :docs::jsonb)"
+                    "VALUES (:id, :tid, :ord, :name, :desc, :pts, '[]'::jsonb)"
                 ),
                 {
                     "id": str(uuid.uuid4()),
@@ -341,7 +343,6 @@ def upgrade() -> None:
                     "name": step_def["name"],
                     "desc": "",
                     "pts": step_def["points"],
-                    "docs": "[]",
                 },
             )
 
