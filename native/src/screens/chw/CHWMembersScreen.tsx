@@ -62,7 +62,7 @@ import type { CHWTabParamList } from '../../navigation/CHWTabNavigator';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type FilterKey = 'all' | 'active' | 'high_risk' | 'overdue' | 'in_journey' | 'inactive' | 'request';
+type FilterKey = 'all' | 'active' | 'inactive' | 'request';
 
 interface FilterChip {
   key: FilterKey;
@@ -74,19 +74,21 @@ interface FilterChip {
 /** Number of days without contact before a member is flagged "Overdue". */
 const OVERDUE_THRESHOLD_DAYS = 5;
 
+/**
+ * Four canonical filter chips for the member roster.
+ * - All: entire relationship roster
+ * - Active: members with status === 'active'
+ * - Inactive: members with status === 'inactive'
+ * - Request: pending Schedule-with-Me requests within their 24h CHW-exclusive
+ *   window. Backed by GET /requests/incoming + useIncomingMemberRequests.
+ *   Renders a different row layout (inline Accept/Decline) because each entry
+ *   is a prospective member, not an established one.
+ */
 const FILTER_CHIPS: FilterChip[] = [
-  { key: 'all',        label: 'All'               },
-  { key: 'active',     label: 'Active'            },
-  { key: 'high_risk',  label: 'High Risk'         },
-  { key: 'overdue',    label: 'Overdue follow-up' },
-  { key: 'in_journey', label: 'In a journey'      },
-  { key: 'inactive',   label: 'Inactive'          },
-  // Pending Schedule-with-Me requests within their 24h CHW-exclusive
-  // window.  Backed by GET /requests/incoming + the useIncomingMemberRequests
-  // hook.  Renders a different row layout than the other filters (inline
-  // Accept/Decline buttons) because each entry is a prospective member, not
-  // an established one.
-  { key: 'request',    label: 'Request'           },
+  { key: 'all',      label: 'All'      },
+  { key: 'active',   label: 'Active'   },
+  { key: 'inactive', label: 'Inactive' },
+  { key: 'request',  label: 'Request'  },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -796,19 +798,6 @@ export function CHWMembersScreen(): React.JSX.Element {
     () => members.filter((m) => m.status === 'inactive').length,
     [members],
   );
-  const highRiskCount = useMemo(
-    () => members.filter((m) => m.risk != null && m.risk === 'high').length,
-    [members],
-  );
-  const overdueCount = useMemo(
-    () => members.filter((m) => m.status === 'active' && isOverdue(m.lastContactAt)).length,
-    [members],
-  );
-  const inJourneyCount = useMemo(
-    () => members.filter((m) => m.activeJourney != null).length,
-    [members],
-  );
-
   const lastRefreshedLabel = useMemo(() => {
     if (!dataUpdatedAt) return '';
     const diffMs = Date.now() - dataUpdatedAt;
@@ -825,18 +814,11 @@ export function CHWMembersScreen(): React.JSX.Element {
       case 'active':
         result = result.filter((m) => m.status === 'active');
         break;
-      case 'high_risk':
-        result = result.filter((m) => m.risk === 'high');
-        break;
-      case 'overdue':
-        result = result.filter((m) => m.status === 'active' && isOverdue(m.lastContactAt));
-        break;
-      case 'in_journey':
-        result = result.filter((m) => m.activeJourney != null);
-        break;
       case 'inactive':
         result = result.filter((m) => m.status === 'inactive');
         break;
+      // 'all' and 'request' require no member-list filtering; 'request'
+      // renders the incomingRequests list separately and never reaches here.
       default:
         break;
     }
@@ -872,13 +854,10 @@ export function CHWMembersScreen(): React.JSX.Element {
   // ── Count helper for chip labels ─────────────────────────────────────────────
   const chipCount = (key: FilterKey): number => {
     switch (key) {
-      case 'all':        return members.length;
-      case 'active':     return activeCount;
-      case 'high_risk':  return highRiskCount;
-      case 'overdue':    return overdueCount;
-      case 'in_journey': return inJourneyCount;
-      case 'inactive':   return inactiveCount;
-      case 'request':    return incomingRequests.length;
+      case 'all':      return members.length;
+      case 'active':   return activeCount;
+      case 'inactive': return inactiveCount;
+      case 'request':  return incomingRequests.length;
     }
   };
 
