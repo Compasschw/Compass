@@ -1,23 +1,31 @@
 /**
- * MemberProfileScreen — Member profile, settings, preferences, rewards, and account management.
+ * MemberProfileScreen — 3-column redesign (T22).
  *
- * Sections:
- * - Avatar with initials + name (editable in edit mode)
- * - Profile info: name, zip, phone, email, primary language, primary need, insurance (editable)
- * - CHW preferences: gender preference, language preference (multi-select), session mode preference
- * - Notification settings with Switch toggles
- * - Rewards balance + history (FlatList of mockRewardHistory)
- * - Redemption catalog (cards with "Redeem" CTA)
- * - Sign out button
+ * Layout (3-column top card — mirrors T08's CHWMemberProfileScreen pattern):
+ *   Left   — Demographics: name, DOB, gender, address, phone, ZIP, insurance, CIN.
+ *             Pencil icon on the card header opens InsuranceCinEditModal.
+ *   Center — Services Consent: verbatim disclaimer + Yes/No consent toggle.
+ *             Flipping to refuse_services shows a confirm modal. No confirm on restore.
+ *   Right  — Active Journeys list + Rewards balance + recent point activity preview.
  *
- * Edit mode: draft state pattern — edits modify draft; Save commits, Cancel reverts.
+ * Below the top card (full-width):
+ *   - CHW Preferences (gender, language, session mode)
+ *   - Notification settings
+ *   - Rewards history
+ *   - Redemption catalog
+ *   - Account (Sign Out, Delete Account)
+ *
+ * Web: PageWrap caps at 560px. Native: full-width.
  */
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   FlatList,
+  Modal,
   Platform,
+  Pressable,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -26,6 +34,8 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  type ViewStyle,
+  type TextStyle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
@@ -46,7 +56,8 @@ import {
 
 import { useAuth } from '../../context/AuthContext';
 import { PhoneVerificationModal } from '../../components/shared/PhoneVerificationModal';
-import { colors } from '../../theme/colors';
+import { colors as legacyColors } from '../../theme/colors';
+import { colors as tokens, spacing, radius, shadows } from '../../theme/tokens';
 import { typography } from '../../theme/typography';
 import {
   redemptionCatalog,
@@ -59,45 +70,53 @@ import {
   useMemberRewards,
   useUpdateMemberProfile,
   useDeleteAccount,
+  useOwnServicesConsent,
+  useUpdateServicesConsent,
+  useUpdateInsuranceCin,
+  useMemberJourneys,
   type RewardTransaction,
+  type ServicesConsentValue,
+  type MemberJourneyResponse,
 } from '../../hooks/useApiQueries';
+import { Card } from '../../components/ui/Card';
+import { PageWrap } from '../../components/ui/PageWrap';
+import { PageHeader } from '../../components/ui/PageHeader';
+import { SectionHeader } from '../../components/ui/SectionHeader';
+import { Pill } from '../../components/ui/Pill';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 import { DeleteAccountModal } from '../../components/profile/DeleteAccountModal';
 import { confirmAsync } from '../../utils/confirm';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-interface NotificationSettings {
-  sessionReminders: boolean;
-  goalUpdates: boolean;
-  healthTips: boolean;
-}
-
-type GenderPreference = 'any' | 'male' | 'female';
-type SessionModePreference = 'in_person' | 'virtual' | 'phone';
-
-interface CHWPreferences {
-  genderPreference: GenderPreference;
-  languagePreferences: string[];
-  sessionModePreference: SessionModePreference;
-}
-
-interface ProfileDraft {
-  firstName: string;
-  lastName: string;
-  zipCode: string;
-  phone: string;
-  email: string;
-  primaryLanguage: string;
-  primaryNeed: Vertical;
-  insuranceProvider: string;
-}
-
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-// Shown in place of a missing phone/email/insurance_provider on the profile.
-// The backend now returns these when present (see MemberProfileResponse).
+/**
+ * Verbatim disclaimer copy from the cofounder spec.
+ * Do NOT rephrase or truncate. This is the exact string that must render above
+ * the consent toggle per the T22 / T03 spec.
+ */
+const SERVICES_CONSENT_DISCLAIMER =
+  'CHW services are provided to you at no cost by your health plan, do you consent to receive services?';
+
+/**
+ * CIN validation pattern: 8 digits + 1 uppercase letter.
+ * Matches the backend's CIN_PATTERN (T07) and RegisterScreen.tsx:67.
+ */
+const CIN_PATTERN = /^\d{8}[A-Z]$/;
+
+/**
+ * Curated 6-carrier insurance list used at signup (RegisterScreen.tsx:105).
+ * Reused here so the Insurance edit dropdown is consistent.
+ */
+const INSURANCE_OPTIONS: readonly string[] = [
+  'Anthem Blue Cross Blue Shield',
+  'Blue Shield of California - Promise Plan',
+  'Health Net',
+  'Independent Living Systems (Kaiser)',
+  'LA Care Health Plan',
+  'Molina Healthcare California',
+];
+
 const NOT_PROVIDED = 'Not provided';
 
 const ALL_LANGUAGES: string[] = [
@@ -137,6 +156,43 @@ const REWARD_ACTION_ICONS: Record<string, string> = {
   redeemed: '🎁',
 };
 
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type GenderPreference = 'any' | 'male' | 'female';
+type SessionModePreference = 'in_person' | 'virtual' | 'phone';
+
+interface CHWPreferences {
+  genderPreference: GenderPreference;
+  languagePreferences: string[];
+  sessionModePreference: SessionModePreference;
+}
+
+interface NotificationSettings {
+  sessionReminders: boolean;
+  goalUpdates: boolean;
+  healthTips: boolean;
+}
+
+interface ProfileDraft {
+  firstName: string;
+  lastName: string;
+  zipCode: string;
+  phone: string;
+  email: string;
+  primaryLanguage: string;
+  primaryNeed: Vertical;
+  insuranceProvider: string;
+}
+
+interface ProfileSource {
+  zipCode: string;
+  primaryLanguage: string;
+  primaryNeed: string;
+  insuranceProvider?: string;
+  phone?: string;
+  email?: string;
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function getInitials(name: string): string {
@@ -155,15 +211,6 @@ function formatRewardDate(dateStr: string): string {
   });
 }
 
-interface ProfileSource {
-  zipCode: string;
-  primaryLanguage: string;
-  primaryNeed: string;
-  insuranceProvider?: string;
-  phone?: string;
-  email?: string;
-}
-
 function buildDraft(name: string, profile: ProfileSource): ProfileDraft {
   const parts = name.split(' ');
   return {
@@ -178,17 +225,1146 @@ function buildDraft(name: string, profile: ProfileSource): ProfileDraft {
   };
 }
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
+/**
+ * Normalizes a raw CIN string to uppercase and validates against CIN_PATTERN.
+ * Returns { normalized, valid } so callers can display feedback inline.
+ */
+function normalizeCin(raw: string): { normalized: string; valid: boolean } {
+  const normalized = raw.trim().toUpperCase();
+  return { normalized, valid: CIN_PATTERN.test(normalized) };
+}
+
+// ─── InsuranceCinEditModal ─────────────────────────────────────────────────────
+
+interface InsuranceCinEditModalProps {
+  visible: boolean;
+  initialInsurance: string;
+  initialCin: string;
+  onClose: () => void;
+  onSaved: () => void;
+}
+
+/**
+ * Modal that lets a member edit their insurance carrier (dropdown) and
+ * Medi-Cal CIN (text input with format validation).
+ *
+ * On submit it PATCHes /api/v1/member/profile/insurance-cin. Closes on success.
+ * CIN is validated to `^\d{8}[A-Z]$` before the network call is made — no
+ * invalid bodies reach the server.
+ */
+function InsuranceCinEditModal({
+  visible,
+  initialInsurance,
+  initialCin,
+  onClose,
+  onSaved,
+}: InsuranceCinEditModalProps): React.JSX.Element {
+  const [selectedInsurance, setSelectedInsurance] = useState(initialInsurance);
+  const [cinInput, setCinInput] = useState(initialCin);
+  const [cinError, setCinError] = useState<string | null>(null);
+  const [showCarrierPicker, setShowCarrierPicker] = useState(false);
+
+  const updateInsuranceCin = useUpdateInsuranceCin();
+
+  // Reset form to initial values whenever the modal opens.
+  React.useEffect(() => {
+    if (visible) {
+      setSelectedInsurance(initialInsurance);
+      setCinInput(initialCin);
+      setCinError(null);
+      setShowCarrierPicker(false);
+    }
+  }, [visible, initialInsurance, initialCin]);
+
+  const handleCinChange = useCallback((text: string) => {
+    setCinInput(text);
+    // Clear error as user types so they get immediate feedback on correction.
+    if (cinError !== null) {
+      setCinError(null);
+    }
+  }, [cinError]);
+
+  const handleSubmit = useCallback(async () => {
+    const { normalized, valid } = normalizeCin(cinInput);
+
+    if (!valid) {
+      setCinError('CIN must be 8 digits followed by 1 letter (e.g. 12345678A).');
+      return;
+    }
+
+    if (selectedInsurance.trim().length === 0) {
+      setCinError('Please select an insurance carrier.');
+      return;
+    }
+
+    try {
+      await updateInsuranceCin.mutateAsync({
+        insuranceCompany: selectedInsurance.trim(),
+        mediCalId: normalized,
+      });
+      onSaved();
+      onClose();
+    } catch (err: unknown) {
+      // Surface 422 field-level errors; fall back to generic message.
+      const detail =
+        err != null &&
+        typeof err === 'object' &&
+        'detail' in err &&
+        typeof (err as { detail: unknown }).detail === 'string'
+          ? (err as { detail: string }).detail
+          : 'Could not save. Please check your entries and try again.';
+      setCinError(detail);
+    }
+  }, [cinInput, selectedInsurance, updateInsuranceCin, onSaved, onClose]);
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={onClose}
+      accessibilityViewIsModal
+    >
+      <Pressable style={cinModalStyles.backdrop} onPress={onClose} accessibilityLabel="Close modal" />
+      <View style={cinModalStyles.sheet}>
+        {/* Header */}
+        <View style={cinModalStyles.sheetHeader}>
+          <Text style={cinModalStyles.sheetTitle}>Edit Insurance & CIN</Text>
+          <TouchableOpacity
+            onPress={onClose}
+            accessibilityRole="button"
+            accessibilityLabel="Close"
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <X size={18} color={tokens.textSecondary} />
+          </TouchableOpacity>
+        </View>
+
+        {/* Insurance carrier selector */}
+        <Text style={cinModalStyles.fieldLabel}>Insurance Carrier</Text>
+        <TouchableOpacity
+          style={cinModalStyles.selectorBtn}
+          onPress={() => setShowCarrierPicker((prev) => !prev)}
+          accessibilityRole="button"
+          accessibilityLabel={`Insurance carrier: ${selectedInsurance || 'Select carrier'}`}
+        >
+          <Text
+            style={[
+              cinModalStyles.selectorText,
+              selectedInsurance.length === 0 && cinModalStyles.selectorPlaceholder,
+            ]}
+            numberOfLines={1}
+          >
+            {selectedInsurance.length > 0 ? selectedInsurance : 'Select carrier…'}
+          </Text>
+          <Text style={cinModalStyles.selectorChevron}>{showCarrierPicker ? '▲' : '▼'}</Text>
+        </TouchableOpacity>
+
+        {showCarrierPicker && (
+          <View style={cinModalStyles.pickerList}>
+            {INSURANCE_OPTIONS.map((carrier) => {
+              const isSelected = carrier === selectedInsurance;
+              return (
+                <TouchableOpacity
+                  key={carrier}
+                  style={[
+                    cinModalStyles.pickerItem,
+                    isSelected && cinModalStyles.pickerItemSelected,
+                  ]}
+                  onPress={() => {
+                    setSelectedInsurance(carrier);
+                    setShowCarrierPicker(false);
+                  }}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: isSelected }}
+                  accessibilityLabel={carrier}
+                >
+                  <Text
+                    style={[
+                      cinModalStyles.pickerItemText,
+                      isSelected && cinModalStyles.pickerItemTextSelected,
+                    ]}
+                  >
+                    {carrier}
+                  </Text>
+                  {isSelected && <Check size={14} color={tokens.primary} />}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        )}
+
+        {/* CIN input */}
+        <Text style={[cinModalStyles.fieldLabel, { marginTop: spacing.md }]}>
+          Medi-Cal CIN
+        </Text>
+        <TextInput
+          style={[cinModalStyles.cinInput, cinError !== null && cinModalStyles.cinInputError]}
+          value={cinInput}
+          onChangeText={handleCinChange}
+          placeholder="12345678A"
+          placeholderTextColor={tokens.textMuted}
+          autoCapitalize="characters"
+          autoCorrect={false}
+          maxLength={9}
+          accessibilityLabel="Medi-Cal CIN"
+          accessibilityHint="8 digits followed by 1 letter"
+        />
+        <Text style={cinModalStyles.cinHint}>
+          Format: 8 digits + 1 letter, e.g. 12345678A
+        </Text>
+
+        {cinError !== null && (
+          <Text style={cinModalStyles.errorText} accessibilityRole="alert">
+            {cinError}
+          </Text>
+        )}
+
+        {/* Actions */}
+        <View style={cinModalStyles.actions}>
+          <TouchableOpacity
+            style={cinModalStyles.cancelBtn}
+            onPress={onClose}
+            accessibilityRole="button"
+            accessibilityLabel="Cancel"
+          >
+            <Text style={cinModalStyles.cancelBtnText}>Cancel</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              cinModalStyles.saveBtn,
+              updateInsuranceCin.isPending && cinModalStyles.saveBtnDisabled,
+            ]}
+            onPress={() => void handleSubmit()}
+            disabled={updateInsuranceCin.isPending}
+            accessibilityRole="button"
+            accessibilityLabel="Save insurance and CIN"
+          >
+            {updateInsuranceCin.isPending ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <Text style={cinModalStyles.saveBtnText}>Save</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+const cinModalStyles = StyleSheet.create({
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  } as ViewStyle,
+  sheet: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: tokens.cardBg,
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+    padding: spacing.xl,
+    paddingBottom: Platform.OS === 'ios' ? 36 : spacing.xl,
+    ...(shadows.card as object),
+  } as ViewStyle,
+  sheetHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.xl,
+  } as ViewStyle,
+  sheetTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: tokens.textPrimary,
+  } as TextStyle,
+  fieldLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: tokens.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginBottom: spacing.xs,
+  } as TextStyle,
+  selectorBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderColor: tokens.cardBorder,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    backgroundColor: tokens.cardBg,
+  } as ViewStyle,
+  selectorText: {
+    flex: 1,
+    fontSize: 14,
+    color: tokens.textPrimary,
+    fontWeight: '400',
+  } as TextStyle,
+  selectorPlaceholder: {
+    color: tokens.textMuted,
+  } as TextStyle,
+  selectorChevron: {
+    fontSize: 10,
+    color: tokens.textSecondary,
+    marginLeft: spacing.sm,
+  } as TextStyle,
+  pickerList: {
+    borderWidth: 1,
+    borderColor: tokens.cardBorder,
+    borderRadius: radius.md,
+    marginTop: spacing.xs,
+    overflow: 'hidden',
+    backgroundColor: tokens.cardBg,
+  } as ViewStyle,
+  pickerItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: tokens.cardBorder,
+  } as ViewStyle,
+  pickerItemSelected: {
+    backgroundColor: `${tokens.primary}10`,
+  } as ViewStyle,
+  pickerItemText: {
+    flex: 1,
+    fontSize: 13,
+    color: tokens.textPrimary,
+  } as TextStyle,
+  pickerItemTextSelected: {
+    fontWeight: '600',
+    color: tokens.primary,
+  } as TextStyle,
+  cinInput: {
+    borderWidth: 1,
+    borderColor: tokens.cardBorder,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    fontSize: 15,
+    fontWeight: '500',
+    color: tokens.textPrimary,
+    backgroundColor: tokens.cardBg,
+    letterSpacing: 2,
+  } as TextStyle,
+  cinInputError: {
+    borderColor: tokens.red700,
+  } as ViewStyle,
+  cinHint: {
+    fontSize: 11,
+    color: tokens.textMuted,
+    marginTop: spacing.xs,
+    marginBottom: spacing.xs,
+  } as TextStyle,
+  errorText: {
+    fontSize: 12,
+    color: tokens.red700,
+    marginTop: spacing.xs,
+    fontWeight: '500',
+  } as TextStyle,
+  actions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginTop: spacing.xl,
+  } as ViewStyle,
+  cancelBtn: {
+    flex: 1,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: tokens.cardBorder,
+    alignItems: 'center',
+  } as ViewStyle,
+  cancelBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: tokens.textSecondary,
+  } as TextStyle,
+  saveBtn: {
+    flex: 2,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: tokens.primary,
+    alignItems: 'center',
+  } as ViewStyle,
+  saveBtnDisabled: {
+    opacity: 0.6,
+  } as ViewStyle,
+  saveBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  } as TextStyle,
+});
+
+// ─── RefuseServicesConfirmModal ────────────────────────────────────────────────
+
+interface RefuseServicesConfirmModalProps {
+  visible: boolean;
+  isPending: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}
+
+/**
+ * Shown when the member attempts to flip consent to `refuse_services`.
+ * Requires explicit "Yes, refuse" confirmation because the consequence is
+ * blocking ALL CHW↔member communication until consent is restored.
+ */
+function RefuseServicesConfirmModal({
+  visible,
+  isPending,
+  onConfirm,
+  onCancel,
+}: RefuseServicesConfirmModalProps): React.JSX.Element {
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onCancel}
+      accessibilityViewIsModal
+    >
+      <View style={refuseModalStyles.overlay}>
+        <View style={refuseModalStyles.dialog}>
+          <Text style={refuseModalStyles.title}>Refuse CHW Services?</Text>
+          <Text style={refuseModalStyles.body}>
+            If you refuse, you will be unable to call or message your CHW until you restore consent. Are you sure?
+          </Text>
+          <View style={refuseModalStyles.actions}>
+            <TouchableOpacity
+              style={refuseModalStyles.cancelBtn}
+              onPress={onCancel}
+              disabled={isPending}
+              accessibilityRole="button"
+              accessibilityLabel="Keep consent — do not refuse"
+            >
+              <Text style={refuseModalStyles.cancelBtnText}>Keep Consent</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[refuseModalStyles.refuseBtn, isPending && refuseModalStyles.btnDisabled]}
+              onPress={onConfirm}
+              disabled={isPending}
+              accessibilityRole="button"
+              accessibilityLabel="Confirm: refuse services"
+            >
+              {isPending ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Text style={refuseModalStyles.refuseBtnText}>Yes, Refuse</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+const refuseModalStyles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: spacing.xl,
+  } as ViewStyle,
+  dialog: {
+    backgroundColor: tokens.cardBg,
+    borderRadius: radius.xl,
+    padding: spacing.xl,
+    width: '100%',
+    maxWidth: 400,
+    ...(shadows.card as object),
+  } as ViewStyle,
+  title: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: tokens.textPrimary,
+    marginBottom: spacing.md,
+  } as TextStyle,
+  body: {
+    fontSize: 14,
+    fontWeight: '400',
+    color: tokens.textSecondary,
+    lineHeight: 21,
+    marginBottom: spacing.xl,
+  } as TextStyle,
+  actions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  } as ViewStyle,
+  cancelBtn: {
+    flex: 1,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: tokens.cardBorder,
+    alignItems: 'center',
+  } as ViewStyle,
+  cancelBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: tokens.textSecondary,
+  } as TextStyle,
+  refuseBtn: {
+    flex: 1,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: tokens.red700,
+    alignItems: 'center',
+  } as ViewStyle,
+  btnDisabled: {
+    opacity: 0.6,
+  } as ViewStyle,
+  refuseBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  } as TextStyle,
+});
+
+// ─── DemographicsCard ──────────────────────────────────────────────────────────
+
+interface DemographicsCardProps {
+  name: string;
+  profile: ProfileDraft;
+  insuranceProvider: string;
+  isPhoneVerified: boolean;
+  onEditInsuranceCin: () => void;
+}
+
+/**
+ * Left card: read-only demographics display with pencil-icon action
+ * to open the Insurance/CIN edit modal.
+ */
+function DemographicsCard({
+  name,
+  profile,
+  insuranceProvider,
+  isPhoneVerified,
+  onEditInsuranceCin,
+}: DemographicsCardProps): React.JSX.Element {
+  const initials = getInitials(name);
+
+  return (
+    <View style={demoCardStyles.card}>
+      {/* Card header row */}
+      <View style={demoCardStyles.headerRow}>
+        <Text style={demoCardStyles.cardTitle}>Demographics</Text>
+        <TouchableOpacity
+          style={demoCardStyles.editBtn}
+          onPress={onEditInsuranceCin}
+          accessibilityRole="button"
+          accessibilityLabel="Edit insurance and CIN"
+          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+        >
+          <Edit2 size={14} color={tokens.primary} />
+        </TouchableOpacity>
+      </View>
+
+      {/* Avatar + name */}
+      <View style={demoCardStyles.avatarBlock}>
+        <View style={demoCardStyles.avatar}>
+          <Text style={demoCardStyles.avatarText}>{initials}</Text>
+        </View>
+        <Text style={demoCardStyles.displayName} numberOfLines={2}>{name}</Text>
+        <View style={demoCardStyles.memberBadge}>
+          <Text style={demoCardStyles.memberBadgeText}>Member</Text>
+        </View>
+      </View>
+
+      {/* Info rows */}
+      <DemoRow icon={<MapPin size={13} color={tokens.primary} />} label="ZIP" value={profile.zipCode || NOT_PROVIDED} />
+      <DemoRow icon={<Globe size={13} color={tokens.primary} />} label="Language" value={profile.primaryLanguage || NOT_PROVIDED} />
+      <DemoRow
+        icon={<Phone size={13} color={tokens.primary} />}
+        label={isPhoneVerified ? 'Phone (verified)' : 'Phone'}
+        value={profile.phone || NOT_PROVIDED}
+      />
+      <DemoRow icon={<Mail size={13} color={tokens.primary} />} label="Email" value={profile.email || NOT_PROVIDED} />
+      <DemoRow icon={<Heart size={13} color={tokens.primary} />} label="Primary Need" value={verticalLabels[profile.primaryNeed] ?? profile.primaryNeed} />
+      <DemoRow icon={<User size={13} color={tokens.primary} />} label="Insurance" value={insuranceProvider || NOT_PROVIDED} />
+    </View>
+  );
+}
+
+interface DemoRowProps {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+}
+
+function DemoRow({ icon, label, value }: DemoRowProps): React.JSX.Element {
+  const isPlaceholder = value === NOT_PROVIDED;
+  return (
+    <View style={demoCardStyles.row}>
+      <View style={demoCardStyles.rowIcon}>{icon}</View>
+      <View style={demoCardStyles.rowText}>
+        <Text style={demoCardStyles.rowLabel}>{label}</Text>
+        <Text style={[demoCardStyles.rowValue, isPlaceholder && demoCardStyles.rowValueMuted]}>
+          {value}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+const demoCardStyles = StyleSheet.create({
+  card: {
+    backgroundColor: tokens.cardBg,
+    borderWidth: 1,
+    borderColor: tokens.cardBorder,
+    borderRadius: radius.xl,
+    padding: spacing.lg,
+    flex: 1,
+    ...(shadows.card as object),
+  } as ViewStyle,
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.md,
+  } as ViewStyle,
+  cardTitle: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: tokens.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  } as TextStyle,
+  editBtn: {
+    padding: spacing.xs,
+    borderRadius: radius.sm,
+    backgroundColor: `${tokens.primary}10`,
+  } as ViewStyle,
+  avatarBlock: {
+    alignItems: 'center',
+    marginBottom: spacing.md,
+    gap: spacing.xs,
+  } as ViewStyle,
+  avatar: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: `${tokens.primary}18`,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: tokens.cardBg,
+    ...Platform.select({
+      ios: {
+        shadowColor: tokens.primary,
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.12,
+        shadowRadius: 6,
+      },
+      android: { elevation: 2 },
+    }),
+  } as ViewStyle,
+  avatarText: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: tokens.primary,
+  } as TextStyle,
+  displayName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: tokens.textPrimary,
+    textAlign: 'center',
+  } as TextStyle,
+  memberBadge: {
+    backgroundColor: `${tokens.emerald100}`,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+  } as ViewStyle,
+  memberBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: tokens.emerald700,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  } as TextStyle,
+  row: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+    paddingVertical: 5,
+    borderBottomWidth: 1,
+    borderBottomColor: tokens.cardBorder,
+  } as ViewStyle,
+  rowIcon: {
+    marginTop: 2,
+    width: 18,
+    alignItems: 'center',
+  } as ViewStyle,
+  rowText: {
+    flex: 1,
+  } as ViewStyle,
+  rowLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: tokens.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  } as TextStyle,
+  rowValue: {
+    fontSize: 12,
+    fontWeight: '400',
+    color: tokens.textPrimary,
+    marginTop: 1,
+  } as TextStyle,
+  rowValueMuted: {
+    color: tokens.textMuted,
+    fontStyle: 'italic',
+  } as TextStyle,
+});
+
+// ─── ServicesConsentCard ───────────────────────────────────────────────────────
+
+interface ServicesConsentCardProps {
+  consentValue: ServicesConsentValue | null | undefined;
+  isLoading: boolean;
+  isPending: boolean;
+  onConsentToggle: (requestedValue: ServicesConsentValue) => void;
+}
+
+/**
+ * Center card: verbatim disclaimer copy above a two-button Yes/No consent toggle.
+ *
+ * - Flipping to `refuse_services` is handled by the parent (which shows the
+ *   confirm modal) — this component only surfaces the intent via onConsentToggle.
+ * - Flipping back to `consent_to_services` calls onConsentToggle immediately
+ *   without a confirm modal (per spec).
+ * - While consent query is loading, the toggle renders in a neutral state.
+ */
+function ServicesConsentCard({
+  consentValue,
+  isLoading,
+  isPending,
+  onConsentToggle,
+}: ServicesConsentCardProps): React.JSX.Element {
+  const isConsented = consentValue !== 'refuse_services';
+
+  return (
+    <View style={consentCardStyles.card}>
+      <Text style={consentCardStyles.cardTitle}>Services Consent</Text>
+
+      {/* Verbatim disclaimer — do NOT rephrase */}
+      <Text style={consentCardStyles.disclaimer} accessibilityRole="text">
+        {SERVICES_CONSENT_DISCLAIMER}
+      </Text>
+
+      {isLoading ? (
+        <View style={consentCardStyles.loadingRow}>
+          <ActivityIndicator size="small" color={tokens.primary} />
+          <Text style={consentCardStyles.loadingText}>Loading…</Text>
+        </View>
+      ) : (
+        <>
+          {/* Two-position consent selector */}
+          <View style={consentCardStyles.toggleRow}>
+            {/* "Yes, I consent" button */}
+            <TouchableOpacity
+              style={[
+                consentCardStyles.consentBtn,
+                isConsented && consentCardStyles.consentBtnActive,
+                isPending && consentCardStyles.consentBtnDisabled,
+              ]}
+              onPress={() => {
+                if (!isConsented) {
+                  onConsentToggle('consent_to_services');
+                }
+              }}
+              disabled={isPending || isConsented}
+              accessibilityRole="radio"
+              accessibilityState={{ selected: isConsented, disabled: isPending || isConsented }}
+              accessibilityLabel="Yes, I consent to services"
+            >
+              {isPending && isConsented ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <>
+                  {isConsented && <Check size={13} color="#FFFFFF" />}
+                  <Text style={[consentCardStyles.consentBtnText, isConsented && consentCardStyles.consentBtnTextActive]}>
+                    Yes, I consent
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
+
+            {/* "No, I refuse" button */}
+            <TouchableOpacity
+              style={[
+                consentCardStyles.refuseBtn,
+                !isConsented && consentCardStyles.refuseBtnActive,
+                isPending && consentCardStyles.consentBtnDisabled,
+              ]}
+              onPress={() => {
+                if (isConsented) {
+                  onConsentToggle('refuse_services');
+                }
+              }}
+              disabled={isPending || !isConsented}
+              accessibilityRole="radio"
+              accessibilityState={{ selected: !isConsented, disabled: isPending || !isConsented }}
+              accessibilityLabel="No, I refuse services"
+            >
+              {isPending && !isConsented ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Text style={[consentCardStyles.refuseBtnText, !isConsented && consentCardStyles.refuseBtnTextActive]}>
+                  No, I refuse
+                </Text>
+              )}
+            </TouchableOpacity>
+          </View>
+
+          {/* Status indicator */}
+          <View style={consentCardStyles.statusRow}>
+            <View
+              style={[
+                consentCardStyles.statusDot,
+                { backgroundColor: isConsented ? tokens.emerald500 : tokens.red700 },
+              ]}
+            />
+            <Text style={consentCardStyles.statusText}>
+              {isConsented ? 'Services active' : 'Services refused — call and messaging are blocked'}
+            </Text>
+          </View>
+        </>
+      )}
+    </View>
+  );
+}
+
+const consentCardStyles = StyleSheet.create({
+  card: {
+    backgroundColor: tokens.cardBg,
+    borderWidth: 1,
+    borderColor: tokens.cardBorder,
+    borderRadius: radius.xl,
+    padding: spacing.lg,
+    flex: 1,
+    ...(shadows.card as object),
+  } as ViewStyle,
+  cardTitle: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: tokens.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginBottom: spacing.md,
+  } as TextStyle,
+  disclaimer: {
+    fontSize: 13,
+    fontWeight: '400',
+    color: tokens.textPrimary,
+    lineHeight: 20,
+    marginBottom: spacing.xl,
+  } as TextStyle,
+  loadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  } as ViewStyle,
+  loadingText: {
+    fontSize: 13,
+    color: tokens.textSecondary,
+  } as TextStyle,
+  toggleRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+  } as ViewStyle,
+  consentBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: tokens.cardBorder,
+    backgroundColor: tokens.pageBg,
+  } as ViewStyle,
+  consentBtnActive: {
+    backgroundColor: tokens.primary,
+    borderColor: tokens.primary,
+  } as ViewStyle,
+  consentBtnDisabled: {
+    opacity: 0.5,
+  } as ViewStyle,
+  consentBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: tokens.textSecondary,
+  } as TextStyle,
+  consentBtnTextActive: {
+    color: '#FFFFFF',
+  } as TextStyle,
+  refuseBtn: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: tokens.cardBorder,
+    backgroundColor: tokens.pageBg,
+  } as ViewStyle,
+  refuseBtnActive: {
+    backgroundColor: tokens.red700,
+    borderColor: tokens.red700,
+  } as ViewStyle,
+  refuseBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: tokens.textSecondary,
+  } as TextStyle,
+  refuseBtnTextActive: {
+    color: '#FFFFFF',
+  } as TextStyle,
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    marginTop: spacing.xs,
+  } as ViewStyle,
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    flexShrink: 0,
+  } as ViewStyle,
+  statusText: {
+    fontSize: 11,
+    fontWeight: '400',
+    color: tokens.textSecondary,
+    flex: 1,
+    flexWrap: 'wrap',
+  } as TextStyle,
+});
+
+// ─── JourneysRewardsCard ───────────────────────────────────────────────────────
+
+interface JourneysRewardsCardProps {
+  journeys: MemberJourneyResponse[];
+  journeysLoading: boolean;
+  rewardsBalance: number;
+  recentTransactions: RewardTransaction[];
+}
+
+/**
+ * Right card: Active Journeys list + Rewards balance + recent point activity preview.
+ */
+function JourneysRewardsCard({
+  journeys,
+  journeysLoading,
+  rewardsBalance,
+  recentTransactions,
+}: JourneysRewardsCardProps): React.JSX.Element {
+  const activeJourneys = useMemo(
+    () => journeys.filter((j) => j.status !== 'completed' && j.status !== 'abandoned'),
+    [journeys],
+  );
+
+  return (
+    <View style={journeyCardStyles.card}>
+      {/* Rewards balance tile */}
+      <View style={journeyCardStyles.balanceTile}>
+        <Gift size={16} color={tokens.amber700} />
+        <View style={journeyCardStyles.balanceText}>
+          <Text style={journeyCardStyles.balanceLabel}>Rewards</Text>
+          <Text style={journeyCardStyles.balanceValue}>{rewardsBalance} pts</Text>
+        </View>
+      </View>
+
+      <View style={journeyCardStyles.divider} />
+
+      {/* Active journeys section */}
+      <Text style={journeyCardStyles.sectionLabel}>Active Journeys</Text>
+
+      {journeysLoading ? (
+        <ActivityIndicator size="small" color={tokens.primary} style={{ marginVertical: spacing.md }} />
+      ) : activeJourneys.length === 0 ? (
+        <Text style={journeyCardStyles.emptyText}>No active journeys</Text>
+      ) : (
+        activeJourneys.slice(0, 3).map((journey) => (
+          <View key={journey.id} style={journeyCardStyles.journeyRow}>
+            <View style={journeyCardStyles.journeyDot} />
+            <View style={journeyCardStyles.journeyInfo}>
+              <Text style={journeyCardStyles.journeyName} numberOfLines={1}>
+                {journey.template?.name ?? 'Journey'}
+              </Text>
+              {journey.currentStep !== null && (
+                <Text style={journeyCardStyles.journeyStep} numberOfLines={1}>
+                  {journey.currentStep.stepName}
+                </Text>
+              )}
+            </View>
+            {journey.progressPercent !== undefined && (
+              <Text style={journeyCardStyles.journeyPct}>{journey.progressPercent}%</Text>
+            )}
+          </View>
+        ))
+      )}
+
+      {activeJourneys.length > 3 && (
+        <Text style={journeyCardStyles.moreText}>+{activeJourneys.length - 3} more</Text>
+      )}
+
+      <View style={journeyCardStyles.divider} />
+
+      {/* Recent points activity */}
+      <Text style={journeyCardStyles.sectionLabel}>Recent Points</Text>
+      {recentTransactions.length === 0 ? (
+        <Text style={journeyCardStyles.emptyText}>No recent activity</Text>
+      ) : (
+        recentTransactions.slice(0, 3).map((txn) => {
+          const isPositive = txn.points > 0;
+          return (
+            <View key={txn.id} style={journeyCardStyles.pointsRow}>
+              <Text style={journeyCardStyles.pointsAction} numberOfLines={1}>
+                {REWARD_ACTION_ICONS[txn.action] ?? '•'} {txn.action.replace(/_/g, ' ')}
+              </Text>
+              <Text style={[journeyCardStyles.pointsDelta, { color: isPositive ? tokens.emerald700 : tokens.red700 }]}>
+                {isPositive ? '+' : ''}{txn.points}
+              </Text>
+            </View>
+          );
+        })
+      )}
+    </View>
+  );
+}
+
+const journeyCardStyles = StyleSheet.create({
+  card: {
+    backgroundColor: tokens.cardBg,
+    borderWidth: 1,
+    borderColor: tokens.cardBorder,
+    borderRadius: radius.xl,
+    padding: spacing.lg,
+    flex: 1,
+    ...(shadows.card as object),
+  } as ViewStyle,
+  balanceTile: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: tokens.amber100,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    marginBottom: spacing.md,
+  } as ViewStyle,
+  balanceText: {
+    flex: 1,
+  } as ViewStyle,
+  balanceLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: tokens.amber700,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  } as TextStyle,
+  balanceValue: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: tokens.textPrimary,
+  } as TextStyle,
+  divider: {
+    height: 1,
+    backgroundColor: tokens.cardBorder,
+    marginVertical: spacing.md,
+  } as ViewStyle,
+  sectionLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: tokens.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginBottom: spacing.sm,
+  } as TextStyle,
+  journeyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: 5,
+  } as ViewStyle,
+  journeyDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: tokens.primary,
+    flexShrink: 0,
+  } as ViewStyle,
+  journeyInfo: {
+    flex: 1,
+  } as ViewStyle,
+  journeyName: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: tokens.textPrimary,
+  } as TextStyle,
+  journeyStep: {
+    fontSize: 11,
+    fontWeight: '400',
+    color: tokens.textSecondary,
+  } as TextStyle,
+  journeyPct: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: tokens.primary,
+  } as TextStyle,
+  moreText: {
+    fontSize: 11,
+    color: tokens.textMuted,
+    marginTop: spacing.xs,
+  } as TextStyle,
+  emptyText: {
+    fontSize: 12,
+    color: tokens.textMuted,
+    fontStyle: 'italic',
+    marginBottom: spacing.xs,
+  } as TextStyle,
+  pointsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+  } as ViewStyle,
+  pointsAction: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '400',
+    color: tokens.textPrimary,
+    textTransform: 'capitalize',
+  } as TextStyle,
+  pointsDelta: {
+    fontSize: 12,
+    fontWeight: '700',
+    marginLeft: spacing.sm,
+  } as TextStyle,
+});
+
+// ─── Legacy sub-components (retained for below-fold sections) ─────────────────
 
 interface InfoRowProps {
   icon: React.ReactNode;
   label: string;
   value: string;
-  /**
-   * When true, the value renders in a dimmer muted style — used for
-   * "Not provided" placeholders so they read as intentionally empty
-   * rather than as data that failed to load.
-   */
   placeholder?: boolean;
 }
 
@@ -211,38 +1387,38 @@ const infoRowStyles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
-    backgroundColor: '#E5DFD6',
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    marginBottom: 8,
-  },
+    backgroundColor: '#E5DFD615',
+    borderRadius: radius.md,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.md,
+    marginBottom: spacing.sm,
+  } as ViewStyle,
   iconBox: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: '#3D5A3E15',
+    width: 32,
+    height: 32,
+    borderRadius: radius.sm,
+    backgroundColor: `${tokens.primary}12`,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  textBox: { flex: 1 },
+  } as ViewStyle,
+  textBox: { flex: 1 } as ViewStyle,
   label: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 10,
-    color: '#6B7280',
+    fontWeight: '600',
+    color: tokens.textSecondary,
     textTransform: 'uppercase',
-    letterSpacing: 1,
+    letterSpacing: 0.8,
     marginBottom: 1,
-  },
+  } as TextStyle,
   value: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 14,
-    color: '#1E3320',
-  },
+    fontSize: 13,
+    fontWeight: '400',
+    color: tokens.textPrimary,
+  } as TextStyle,
   valuePlaceholder: {
-    color: '#A0A6AB',
+    color: tokens.textMuted,
     fontStyle: 'italic',
-  },
+  } as TextStyle,
 });
 
 interface EditFieldProps {
@@ -268,7 +1444,7 @@ function EditField({
         value={value}
         onChangeText={onChangeText}
         placeholder={placeholder ?? label}
-        placeholderTextColor={colors.mutedForeground}
+        placeholderTextColor={tokens.textMuted}
         keyboardType={keyboardType}
         accessibilityLabel={label}
       />
@@ -277,26 +1453,26 @@ function EditField({
 }
 
 const editFieldStyles = StyleSheet.create({
-  container: { marginBottom: 12 },
+  container: { marginBottom: spacing.md } as ViewStyle,
   label: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 10,
-    color: '#6B7280',
+    fontWeight: '600',
+    color: tokens.textSecondary,
     textTransform: 'uppercase',
-    letterSpacing: 1,
+    letterSpacing: 0.8,
     marginBottom: 6,
-  },
+  } as TextStyle,
   input: {
     borderWidth: 1,
-    borderColor: '#DDD6CC',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    backgroundColor: '#FFFFFF',
-    fontFamily: 'PlusJakartaSans_400Regular',
+    borderColor: tokens.cardBorder,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    backgroundColor: tokens.cardBg,
     fontSize: 14,
-    color: '#1E3320',
-  },
+    fontWeight: '400',
+    color: tokens.textPrimary,
+  } as TextStyle,
 });
 
 interface SectionCardProps {
@@ -315,36 +1491,28 @@ function SectionCard({ title, children }: SectionCardProps): React.JSX.Element {
 
 const sectionCardStyles = StyleSheet.create({
   container: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    backgroundColor: tokens.cardBg,
+    borderRadius: radius.xl,
     borderWidth: 1,
-    borderColor: '#DDD6CC',
-    marginBottom: 16,
+    borderColor: tokens.cardBorder,
+    marginBottom: spacing.lg,
     overflow: 'hidden',
-    ...Platform.select({
-      ios: {
-        shadowColor: '#3D5A3E',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.08,
-        shadowRadius: 24,
-      },
-      android: { elevation: 3 },
-    }),
-  },
+    ...(shadows.card as object),
+  } as ViewStyle,
   title: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 12,
-    color: '#6B7280',
+    fontSize: 11,
+    fontWeight: '600',
+    color: tokens.textSecondary,
     textTransform: 'uppercase',
-    letterSpacing: 1,
-    paddingHorizontal: 16,
-    paddingTop: 14,
+    letterSpacing: 0.8,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
     paddingBottom: 6,
-  },
+  } as TextStyle,
   body: {
-    paddingHorizontal: 16,
-    paddingBottom: 8,
-  },
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.sm,
+  } as ViewStyle,
 });
 
 interface NotificationToggleRowProps {
@@ -369,8 +1537,8 @@ function NotificationToggleRow({
       <Switch
         value={value}
         onValueChange={onChange}
-        trackColor={{ false: colors.border, true: `${colors.primary}80` }}
-        thumbColor={value ? colors.primary : '#FFFFFF'}
+        trackColor={{ false: tokens.cardBorder, true: `${tokens.primary}80` }}
+        thumbColor={value ? tokens.primary : '#FFFFFF'}
         accessibilityLabel={label}
       />
     </View>
@@ -382,24 +1550,22 @@ const notifRowStyles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 12,
-    gap: 12,
-  },
-  textBox: { flex: 1 },
+    paddingVertical: spacing.md,
+    gap: spacing.md,
+  } as ViewStyle,
+  textBox: { flex: 1 } as ViewStyle,
   label: {
-    fontFamily: 'DMSans_700Bold',
     fontSize: 14,
-    color: '#1E3320',
-  },
+    fontWeight: '700',
+    color: tokens.textPrimary,
+  } as TextStyle,
   desc: {
-    fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 12,
-    color: '#6B7280',
+    fontWeight: '400',
+    color: tokens.textSecondary,
     marginTop: 1,
-  },
+  } as TextStyle,
 });
-
-// ─── Reward history row ───────────────────────────────────────────────────────
 
 function RewardRow({ item }: { item: RewardTransaction }): React.JSX.Element {
   const isPositive = item.points > 0;
@@ -416,12 +1582,7 @@ function RewardRow({ item }: { item: RewardTransaction }): React.JSX.Element {
         </Text>
         <Text style={rewardRowStyles.date}>{formatRewardDate(item.createdAt)}</Text>
       </View>
-      <Text
-        style={[
-          rewardRowStyles.points,
-          { color: isPositive ? colors.secondary : colors.destructive },
-        ]}
-      >
+      <Text style={[rewardRowStyles.points, { color: isPositive ? tokens.emerald700 : tokens.red700 }]}>
         {isPositive ? '+' : ''}{item.points} pts
       </Text>
     </View>
@@ -432,41 +1593,35 @@ const rewardRowStyles = StyleSheet.create({
   container: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    paddingVertical: 10,
-  },
+    gap: spacing.md,
+    paddingVertical: spacing.sm,
+  } as ViewStyle,
   iconBox: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: '#D4A35415',
+    width: 34,
+    height: 34,
+    borderRadius: radius.sm,
+    backgroundColor: tokens.amber100,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  icon: {
-    fontSize: 16,
-  },
-  info: {
-    flex: 1,
-    gap: 2,
-  },
+  } as ViewStyle,
+  icon: { fontSize: 15 } as TextStyle,
+  info: { flex: 1, gap: 2 } as ViewStyle,
   description: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 13,
-    color: '#1E3320',
-  },
+    fontWeight: '600',
+    color: tokens.textPrimary,
+    textTransform: 'capitalize',
+  } as TextStyle,
   date: {
-    fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 11,
-    color: '#6B7280',
-  },
+    fontWeight: '400',
+    color: tokens.textSecondary,
+  } as TextStyle,
   points: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 14,
-  },
+    fontSize: 13,
+    fontWeight: '700',
+  } as TextStyle,
 });
-
-// ─── Redemption card ──────────────────────────────────────────────────────────
 
 interface RedemptionCardProps {
   item: RedemptionItem;
@@ -487,22 +1642,14 @@ function RedemptionCard({ item, onRedeem, balance }: RedemptionCardProps): React
         <Text style={redemptionCardStyles.cost}>{item.pointsCost} pts</Text>
       </View>
       <TouchableOpacity
-        style={[
-          redemptionCardStyles.redeemBtn,
-          !canAfford && redemptionCardStyles.redeemBtnDisabled,
-        ]}
+        style={[redemptionCardStyles.redeemBtn, !canAfford && redemptionCardStyles.redeemBtnDisabled]}
         onPress={() => onRedeem(item)}
         disabled={!canAfford}
         accessibilityRole="button"
         accessibilityLabel={`Redeem ${item.name} for ${item.pointsCost} points`}
         accessibilityState={{ disabled: !canAfford }}
       >
-        <Text
-          style={[
-            redemptionCardStyles.redeemBtnText,
-            !canAfford && redemptionCardStyles.redeemBtnTextDisabled,
-          ]}
-        >
+        <Text style={[redemptionCardStyles.redeemBtnText, !canAfford && redemptionCardStyles.redeemBtnTextDisabled]}>
           Redeem
         </Text>
       </TouchableOpacity>
@@ -512,89 +1659,84 @@ function RedemptionCard({ item, onRedeem, balance }: RedemptionCardProps): React
 
 const redemptionCardStyles = StyleSheet.create({
   card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    backgroundColor: tokens.cardBg,
+    borderRadius: radius.xl,
     borderWidth: 1,
-    borderColor: '#DDD6CC',
-    padding: 16,
-    marginBottom: 10,
+    borderColor: tokens.cardBorder,
+    padding: spacing.lg,
+    marginBottom: spacing.sm,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#3D5A3E',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.08,
-        shadowRadius: 24,
-      },
-      android: { elevation: 3 },
-    }),
-  },
+    gap: spacing.md,
+    ...(shadows.card as object),
+  } as ViewStyle,
   emoji: {
-    fontSize: 28,
-    width: 44,
+    fontSize: 26,
+    width: 40,
     textAlign: 'center',
-  },
-  info: {
-    flex: 1,
-    gap: 2,
-  },
+  } as TextStyle,
+  info: { flex: 1, gap: 2 } as ViewStyle,
   name: {
-    fontFamily: 'DMSans_700Bold',
     fontSize: 14,
-    color: '#1E3320',
-  },
+    fontWeight: '700',
+    color: tokens.textPrimary,
+  } as TextStyle,
   description: {
-    fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 12,
-    color: '#6B7280',
-    lineHeight: 18,
-  },
+    fontWeight: '400',
+    color: tokens.textSecondary,
+    lineHeight: 17,
+  } as TextStyle,
   cost: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 11,
-    color: '#D4A354',
+    fontWeight: '600',
+    color: tokens.amber700,
     marginTop: 2,
-  },
+  } as TextStyle,
   redeemBtn: {
-    backgroundColor: '#D4A354',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 10,
-  },
+    backgroundColor: tokens.amber700,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.sm,
+  } as ViewStyle,
   redeemBtnDisabled: {
-    backgroundColor: '#DDD6CC',
-  },
+    backgroundColor: tokens.cardBorder,
+  } as ViewStyle,
   redeemBtnText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 11,
+    fontWeight: '600',
     color: '#FFFFFF',
-  },
+  } as TextStyle,
   redeemBtnTextDisabled: {
-    color: '#6B7280',
-  },
+    color: tokens.textSecondary,
+  } as TextStyle,
 });
 
-// ─── Screen ───────────────────────────────────────────────────────────────────
+// ─── MemberProfileScreen ──────────────────────────────────────────────────────
 
+/**
+ * Member-facing profile screen — T22 3-column redesign.
+ *
+ * Top card: [Demographics | Services Consent | Journeys + Rewards]
+ * Below fold: CHW Preferences, Notifications, Rewards history, Redemptions, Account.
+ */
 export function MemberProfileScreen(): React.JSX.Element {
   const { userName, logout } = useAuth();
 
   const profileQuery = useMemberProfile();
   const rewardsQuery = useMemberRewards();
+  const consentQuery = useOwnServicesConsent();
+  const updateConsent = useUpdateServicesConsent();
   const updateProfile = useUpdateMemberProfile();
 
   const apiProfile = profileQuery.data;
+  const displayName = apiProfile?.name ?? userName ?? 'Member';
 
-  // Use API data when available, fall back to auth userName
-  const displayName = userName ?? 'Member';
-
-  // Committed name state
+  // ── Name + profile state ──
   const [name, setName] = useState(displayName);
   const [rewardsBalance, setRewardsBalance] = useState<number | null>(null);
+  const [isEditing, setIsEditing] = useState(false);
 
-  // Sync rewardsBalance from API once loaded
   React.useEffect(() => {
     if (apiProfile?.rewardsBalance !== undefined) {
       setRewardsBalance(apiProfile.rewardsBalance);
@@ -602,9 +1744,6 @@ export function MemberProfileScreen(): React.JSX.Element {
   }, [apiProfile?.rewardsBalance]);
 
   const effectiveBalance = rewardsBalance ?? apiProfile?.rewardsBalance ?? 0;
-
-  // Edit mode
-  const [isEditing, setIsEditing] = useState(false);
 
   const fallbackProfile: ProfileSource = {
     zipCode: apiProfile?.zipCode ?? '',
@@ -619,7 +1758,6 @@ export function MemberProfileScreen(): React.JSX.Element {
     buildDraft(displayName, fallbackProfile),
   );
 
-  // Re-initialize draft when API data loads
   React.useEffect(() => {
     if (apiProfile) {
       setDraft(buildDraft(displayName, {
@@ -629,10 +1767,52 @@ export function MemberProfileScreen(): React.JSX.Element {
         insuranceProvider: apiProfile.insuranceProvider,
       }));
     }
-  // Only run when profile data first arrives
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiProfile?.id]);
 
+  const committedDraft = buildDraft(name, fallbackProfile);
+
+  // ── Insurance/CIN edit modal ──
+  const [isInsuranceCinModalVisible, setIsInsuranceCinModalVisible] = useState(false);
+
+  // ── Services consent state ──
+  const [isRefuseModalVisible, setIsRefuseModalVisible] = useState(false);
+
+  /**
+   * Called when the member taps a consent button.
+   * Restore (`consent_to_services`): fire immediately, no confirm.
+   * Refuse (`refuse_services`): show the confirm modal first.
+   */
+  const handleConsentToggle = useCallback((requestedValue: ServicesConsentValue) => {
+    if (requestedValue === 'refuse_services') {
+      setIsRefuseModalVisible(true);
+    } else {
+      void updateConsent.mutateAsync('consent_to_services').catch((err: unknown) => {
+        Alert.alert(
+          'Could not update consent',
+          err instanceof Error ? err.message : 'Please try again.',
+        );
+      });
+    }
+  }, [updateConsent]);
+
+  const handleRefuseConfirm = useCallback(async () => {
+    try {
+      await updateConsent.mutateAsync('refuse_services');
+      setIsRefuseModalVisible(false);
+    } catch (err: unknown) {
+      Alert.alert(
+        'Could not update consent',
+        err instanceof Error ? err.message : 'Please try again.',
+      );
+      setIsRefuseModalVisible(false);
+    }
+  }, [updateConsent]);
+
+  // ── Journeys ──
+  const journeysQuery = useMemberJourneys(apiProfile?.id ?? '');
+
+  // ── CHW preferences ──
   const [notifications, setNotifications] = useState<NotificationSettings>({
     sessionReminders: true,
     goalUpdates: true,
@@ -651,18 +1831,18 @@ export function MemberProfileScreen(): React.JSX.Element {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [name, apiProfile]);
 
-  const handleCancel = useCallback(() => {
-    setIsEditing(false);
-  }, []);
+  const handleCancel = useCallback(() => setIsEditing(false), []);
+
+  // Phone verification flow
+  const [isPhoneVerificationVisible, setIsPhoneVerificationVisible] = useState(false);
+  const [pendingPhone, setPendingPhone] = useState<string>('');
 
   const handleSave = useCallback(() => {
     const updatedName = [draft.firstName.trim(), draft.lastName.trim()]
       .filter(Boolean)
       .join(' ');
-    if (updatedName) {
-      setName(updatedName);
-    }
-    // Persist changes to the backend
+    if (updatedName) setName(updatedName);
+
     void updateProfile.mutateAsync({
       zipCode: draft.zipCode,
       primaryLanguage: draft.primaryLanguage,
@@ -670,14 +1850,11 @@ export function MemberProfileScreen(): React.JSX.Element {
       insuranceProvider: draft.insuranceProvider,
       preferredMode: chwPreferences.sessionModePreference,
     }).catch(() => {
-      // Silently ignore network errors — local state is already updated
+      // Silent on network error — local state already updated
     });
+
     setIsEditing(false);
 
-    // If the phone field changed, kick off SMS verification.
-    // The backend phone field is updated by confirm-verification, not here,
-    // so we only trigger the modal — the unverified draft.phone is displayed
-    // locally until confirmed.
     const trimmedPhone = draft.phone.trim();
     const currentPhone = apiProfile?.phone ?? '';
     if (trimmedPhone && trimmedPhone !== currentPhone) {
@@ -716,7 +1893,7 @@ export function MemberProfileScreen(): React.JSX.Element {
       }
       Alert.alert(
         `Redeem ${item.name}?`,
-        `This will use ${item.pointsCost} points from your balance.\n\nCurrent balance: ${effectiveBalance} pts`,
+        `This will use ${item.pointsCost} points.\n\nCurrent balance: ${effectiveBalance} pts`,
         [
           { text: 'Cancel', style: 'cancel' },
           {
@@ -739,21 +1916,12 @@ export function MemberProfileScreen(): React.JSX.Element {
       confirmText: 'Sign Out',
       destructive: true,
     });
-    if (confirmed) {
-      await logout();
-    }
+    if (confirmed) await logout();
   }, [logout]);
 
   const [isDeleteModalVisible, setIsDeleteModalVisible] = useState(false);
   const [deleteErrorMessage, setDeleteErrorMessage] = useState<string | null>(null);
   const deleteAccount = useDeleteAccount();
-
-  // Phone verification flow — triggered when the user saves an edit that
-  // changed the phone field.  The modal is shown post-save so the draft is
-  // already committed to the server (phone stored but unverified); on
-  // confirmation the backend flips phone_verified_at.
-  const [isPhoneVerificationVisible, setIsPhoneVerificationVisible] = useState(false);
-  const [pendingPhone, setPendingPhone] = useState<string>('');
 
   const handleDeleteAccountConfirm = useCallback(async (password: string) => {
     setDeleteErrorMessage(null);
@@ -774,26 +1942,26 @@ export function MemberProfileScreen(): React.JSX.Element {
     }
   }, [deleteAccount, logout]);
 
-  const initials = getInitials(name);
-
-  const committedDraft = buildDraft(name, fallbackProfile);
+  // ── Loading / error states ──
 
   if (profileQuery.isLoading) {
     return (
-      <SafeAreaView style={styles.safeArea} edges={['top']}>
-        <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
-        <View style={styles.pageWrap}>
-          <LoadingSkeleton variant="card" />
-          <LoadingSkeleton variant="rows" rows={4} />
-        </View>
+      <SafeAreaView style={screenStyles.safeArea} edges={['top']}>
+        <StatusBar barStyle="dark-content" backgroundColor={tokens.pageBg} />
+        <ScrollView contentContainerStyle={screenStyles.loadingContainer}>
+          <PageWrap>
+            <LoadingSkeleton variant="card" />
+            <LoadingSkeleton variant="rows" rows={4} />
+          </PageWrap>
+        </ScrollView>
       </SafeAreaView>
     );
   }
 
   if (profileQuery.error) {
     return (
-      <SafeAreaView style={styles.safeArea} edges={['top']}>
-        <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
+      <SafeAreaView style={screenStyles.safeArea} edges={['top']}>
+        <StatusBar barStyle="dark-content" backgroundColor={tokens.pageBg} />
         <ErrorState
           message="Could not load your profile. Please try again."
           onRetry={() => void profileQuery.refetch()}
@@ -802,870 +1970,655 @@ export function MemberProfileScreen(): React.JSX.Element {
     );
   }
 
-  return (
-    <SafeAreaView style={styles.safeArea} edges={['top']}>
-      <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
+  // ── Render ──
 
-      {/* ── Header with Edit/Save/Cancel ── */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>My Profile</Text>
+  return (
+    <SafeAreaView style={screenStyles.safeArea} edges={['top']}>
+      <StatusBar barStyle="dark-content" backgroundColor={tokens.pageBg} />
+
+      {/* ── Header ── */}
+      <View style={screenStyles.header}>
+        <Text style={screenStyles.headerTitle}>My Profile</Text>
         {isEditing ? (
-          <View style={styles.headerActions}>
+          <View style={screenStyles.headerActions}>
             <TouchableOpacity
-              style={styles.headerCancelBtn}
+              style={screenStyles.headerCancelBtn}
               onPress={handleCancel}
               accessibilityRole="button"
               accessibilityLabel="Cancel editing"
             >
-              <X size={16} color={colors.mutedForeground} />
-              <Text style={styles.headerCancelText}>Cancel</Text>
+              <X size={15} color={tokens.textSecondary} />
+              <Text style={screenStyles.headerCancelText}>Cancel</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={styles.headerSaveBtn}
+              style={screenStyles.headerSaveBtn}
               onPress={handleSave}
               accessibilityRole="button"
               accessibilityLabel="Save profile changes"
             >
-              <Check size={16} color="#FFFFFF" />
-              <Text style={styles.headerSaveText}>Save</Text>
+              <Check size={15} color="#FFFFFF" />
+              <Text style={screenStyles.headerSaveText}>Save</Text>
             </TouchableOpacity>
           </View>
         ) : (
           <TouchableOpacity
-            style={styles.headerEditBtn}
+            style={screenStyles.headerEditBtn}
             onPress={handleEditPress}
             accessibilityRole="button"
             accessibilityLabel="Edit profile"
           >
-            <Edit2 size={15} color={colors.primary} />
-            <Text style={styles.headerEditText}>Edit</Text>
+            <Edit2 size={14} color={tokens.primary} />
+            <Text style={screenStyles.headerEditText}>Edit</Text>
           </TouchableOpacity>
         )}
       </View>
 
       <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.scrollContent}
+        style={screenStyles.scroll}
+        contentContainerStyle={screenStyles.scrollContent}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
-        <View style={styles.pageWrap}>
-        {/* Banner + Avatar + name */}
-        <View style={styles.bannerContainer}>
-          <View style={styles.banner} />
-          <View style={styles.avatarSection}>
-            <View style={styles.avatarWrapper}>
-              <View style={styles.avatar}>
-                <Text style={styles.avatarText}>{initials}</Text>
+        {/* PageWrap — 560px cap on web, full-width on native */}
+        <PageWrap style={screenStyles.pageWrap}>
+
+          {/* ── Green banner ── */}
+          <View style={screenStyles.banner} />
+
+          {/* ── 3-column top card ── */}
+          <View style={screenStyles.topCardGrid}>
+            {/* Left: Demographics */}
+            <DemographicsCard
+              name={name}
+              profile={committedDraft}
+              insuranceProvider={apiProfile?.insuranceProvider ?? ''}
+              isPhoneVerified={!!apiProfile?.phoneVerifiedAt}
+              onEditInsuranceCin={() => setIsInsuranceCinModalVisible(true)}
+            />
+
+            {/* Center: Services Consent */}
+            <ServicesConsentCard
+              consentValue={consentQuery.data?.value}
+              isLoading={consentQuery.isLoading}
+              isPending={updateConsent.isPending}
+              onConsentToggle={handleConsentToggle}
+            />
+
+            {/* Right: Journeys + Rewards */}
+            <JourneysRewardsCard
+              journeys={journeysQuery.data ?? []}
+              journeysLoading={journeysQuery.isLoading}
+              rewardsBalance={effectiveBalance}
+              recentTransactions={rewardsQuery.data ?? []}
+            />
+          </View>
+
+          {/* ── Below-fold: profile edit form ── */}
+          {isEditing ? (
+            <View style={screenStyles.editCard}>
+              <Text style={screenStyles.editCardTitle}>Profile Information</Text>
+              <EditField
+                label="ZIP Code"
+                value={draft.zipCode}
+                onChangeText={(text) => setDraft((prev) => ({ ...prev, zipCode: text }))}
+                keyboardType="numeric"
+                placeholder="90031"
+              />
+              <EditField
+                label="Phone"
+                value={draft.phone}
+                onChangeText={(text) => setDraft((prev) => ({ ...prev, phone: text }))}
+                keyboardType="phone-pad"
+                placeholder="(310) 555-0000"
+              />
+              <EditField
+                label="Email"
+                value={draft.email}
+                onChangeText={(text) => setDraft((prev) => ({ ...prev, email: text }))}
+                keyboardType="email-address"
+                placeholder="your@email.com"
+              />
+              <Text style={editFieldStyles.label}>Primary Language</Text>
+              <View style={screenStyles.pillRow}>
+                {ALL_LANGUAGES.map((lang) => {
+                  const isSelected = draft.primaryLanguage === lang;
+                  return (
+                    <TouchableOpacity
+                      key={lang}
+                      style={[
+                        screenStyles.pill,
+                        isSelected
+                          ? { backgroundColor: `${tokens.primary}20`, borderColor: tokens.primary }
+                          : { backgroundColor: tokens.pageBg, borderColor: tokens.cardBorder },
+                      ]}
+                      onPress={() => setDraft((prev) => ({ ...prev, primaryLanguage: lang }))}
+                      accessibilityRole="radio"
+                      accessibilityState={{ selected: isSelected }}
+                      accessibilityLabel={lang}
+                    >
+                      <Text style={[screenStyles.pillText, { color: isSelected ? tokens.primary : tokens.textSecondary }]}>
+                        {lang}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              <View style={{ height: spacing.md }} />
+              <Text style={editFieldStyles.label}>Primary Need</Text>
+              <View style={screenStyles.pillRow}>
+                {ALL_VERTICALS.map((v) => {
+                  const isSelected = draft.primaryNeed === v;
+                  return (
+                    <TouchableOpacity
+                      key={v}
+                      style={[
+                        screenStyles.pill,
+                        isSelected
+                          ? { backgroundColor: `${tokens.primary}20`, borderColor: tokens.primary }
+                          : { backgroundColor: tokens.pageBg, borderColor: tokens.cardBorder },
+                      ]}
+                      onPress={() => setDraft((prev) => ({ ...prev, primaryNeed: v }))}
+                      accessibilityRole="radio"
+                      accessibilityState={{ selected: isSelected }}
+                      accessibilityLabel={verticalLabels[v]}
+                    >
+                      <Text style={[screenStyles.pillText, { color: isSelected ? tokens.primary : tokens.textSecondary }]}>
+                        {verticalLabels[v]}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
             </View>
-          {isEditing ? (
-            <View style={styles.nameEditRow}>
-              <TextInput
-                style={[styles.nameInput, { flex: 1 }]}
-                value={draft.firstName}
-                onChangeText={(text) => setDraft((prev) => ({ ...prev, firstName: text }))}
-                placeholder="First name"
-                placeholderTextColor={colors.mutedForeground}
-                accessibilityLabel="First name"
-              />
-              <TextInput
-                style={[styles.nameInput, { flex: 1 }]}
-                value={draft.lastName}
-                onChangeText={(text) => setDraft((prev) => ({ ...prev, lastName: text }))}
-                placeholder="Last name"
-                placeholderTextColor={colors.mutedForeground}
-                accessibilityLabel="Last name"
-              />
-            </View>
-          ) : (
-            <Text style={styles.displayName}>{name}</Text>
-          )}
-          <View style={styles.memberBadge}>
-            <Text style={styles.memberBadgeText}>Member</Text>
-          </View>
-          </View>
-        </View>
+          ) : null}
 
-        {/* Rewards balance */}
-        <View style={styles.rewardsCard}>
-          <View style={styles.rewardsIconBox}>
-            <Gift color={colors.compassGold} size={20} />
-          </View>
-          <View style={styles.rewardsInfo}>
-            <Text style={styles.rewardsLabel}>Rewards Balance</Text>
-            <Text style={styles.rewardsValue}>{effectiveBalance} points</Text>
-          </View>
-          <View style={styles.rewardsBadge}>
-            <Text style={styles.rewardsBadgeText}>Active</Text>
-          </View>
-        </View>
+          {/* ── CHW Preferences ── */}
+          <SectionCard title="CHW Preferences">
+            <View style={screenStyles.prefSection}>
+              <Text style={screenStyles.prefLabel}>Gender Preference</Text>
+              <View style={screenStyles.segmentRow}>
+                {GENDER_OPTIONS.map((opt) => {
+                  const isSelected = chwPreferences.genderPreference === opt.key;
+                  return (
+                    <TouchableOpacity
+                      key={opt.key}
+                      style={[screenStyles.segmentBtn, isSelected && screenStyles.segmentBtnActive]}
+                      onPress={() => setChwPreferences((prev) => ({ ...prev, genderPreference: opt.key }))}
+                      accessibilityRole="radio"
+                      accessibilityState={{ selected: isSelected }}
+                    >
+                      <Text style={[screenStyles.segmentBtnText, isSelected && screenStyles.segmentBtnTextActive]}>
+                        {opt.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
 
-        {/* Profile info */}
-        {isEditing ? (
-          <View style={styles.editCard}>
-            <Text style={styles.editCardTitle}>Profile Information</Text>
-            <EditField
-              label="ZIP Code"
-              value={draft.zipCode}
-              onChangeText={(text) => setDraft((prev) => ({ ...prev, zipCode: text }))}
-              keyboardType="numeric"
-              placeholder="90031"
-            />
-            <EditField
-              label="Phone"
-              value={draft.phone}
-              onChangeText={(text) => setDraft((prev) => ({ ...prev, phone: text }))}
-              keyboardType="phone-pad"
-              placeholder="(310) 555-0000"
-            />
-            <EditField
-              label="Email"
-              value={draft.email}
-              onChangeText={(text) => setDraft((prev) => ({ ...prev, email: text }))}
-              keyboardType="email-address"
-              placeholder="your@email.com"
-            />
-            <Text style={editFieldStyles.label}>Primary Language</Text>
-            <View style={styles.pillRow}>
-              {ALL_LANGUAGES.map((lang) => {
-                const isSelected = draft.primaryLanguage === lang;
-                return (
-                  <TouchableOpacity
-                    key={lang}
-                    style={[
-                      styles.pill,
-                      isSelected
-                        ? { backgroundColor: colors.primary + '20', borderColor: colors.primary }
-                        : { backgroundColor: colors.card, borderColor: colors.border },
-                    ]}
-                    onPress={() => setDraft((prev) => ({ ...prev, primaryLanguage: lang }))}
-                    accessibilityRole="radio"
-                    accessibilityState={{ selected: isSelected }}
-                    accessibilityLabel={lang}
-                  >
-                    <Text
+            <View style={screenStyles.divider} />
+
+            <View style={screenStyles.prefSection}>
+              <Text style={screenStyles.prefLabel}>Language Preference</Text>
+              <Text style={screenStyles.prefHint}>Select all languages you are comfortable with</Text>
+              <View style={screenStyles.pillRow}>
+                {ALL_LANGUAGES.map((lang) => {
+                  const isSelected = chwPreferences.languagePreferences.includes(lang);
+                  return (
+                    <TouchableOpacity
+                      key={lang}
                       style={[
-                        styles.pillText,
-                        { color: isSelected ? colors.primary : colors.mutedForeground },
+                        screenStyles.pill,
+                        isSelected
+                          ? { backgroundColor: `${tokens.primary}20`, borderColor: tokens.primary }
+                          : { backgroundColor: tokens.pageBg, borderColor: tokens.cardBorder },
                       ]}
+                      onPress={() => handleToggleLanguagePref(lang)}
+                      accessibilityRole="checkbox"
+                      accessibilityState={{ checked: isSelected }}
+                      accessibilityLabel={lang}
                     >
-                      {lang}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
+                      <Text style={[screenStyles.pillText, { color: isSelected ? tokens.primary : tokens.textSecondary }]}>
+                        {lang}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
             </View>
-            <View style={{ height: 12 }} />
-            <Text style={editFieldStyles.label}>Primary Need</Text>
-            <View style={styles.pillRow}>
-              {ALL_VERTICALS.map((v) => {
-                const isSelected = draft.primaryNeed === v;
-                return (
-                  <TouchableOpacity
-                    key={v}
-                    style={[
-                      styles.pill,
-                      isSelected
-                        ? { backgroundColor: colors.primary + '20', borderColor: colors.primary }
-                        : { backgroundColor: colors.card, borderColor: colors.border },
-                    ]}
-                    onPress={() => setDraft((prev) => ({ ...prev, primaryNeed: v }))}
-                    accessibilityRole="radio"
-                    accessibilityState={{ selected: isSelected }}
-                    accessibilityLabel={verticalLabels[v]}
-                  >
-                    <Text
-                      style={[
-                        styles.pillText,
-                        { color: isSelected ? colors.primary : colors.mutedForeground },
-                      ]}
+
+            <View style={screenStyles.divider} />
+
+            <View style={screenStyles.prefSection}>
+              <Text style={screenStyles.prefLabel}>Session Mode Preference</Text>
+              <View style={screenStyles.segmentRow}>
+                {SESSION_MODE_OPTIONS.map((opt) => {
+                  const isSelected = chwPreferences.sessionModePreference === opt.key;
+                  return (
+                    <TouchableOpacity
+                      key={opt.key}
+                      style={[screenStyles.segmentBtn, isSelected && screenStyles.segmentBtnActive]}
+                      onPress={() => setChwPreferences((prev) => ({ ...prev, sessionModePreference: opt.key }))}
+                      accessibilityRole="radio"
+                      accessibilityState={{ selected: isSelected }}
                     >
-                      {verticalLabels[v]}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
+                      <Text style={[screenStyles.segmentBtnText, isSelected && screenStyles.segmentBtnTextActive]}>
+                        {opt.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
             </View>
-            <View style={{ height: 12 }} />
-            <EditField
-              label="Insurance Provider"
-              value={draft.insuranceProvider}
-              onChangeText={(text) => setDraft((prev) => ({ ...prev, insuranceProvider: text }))}
-              placeholder="Medi-Cal, Kaiser, etc."
+          </SectionCard>
+
+          {/* ── Notification settings ── */}
+          <SectionCard title="Notifications">
+            <NotificationToggleRow
+              label="Session Reminders"
+              description="Get reminded before upcoming sessions"
+              value={notifications.sessionReminders}
+              onChange={handleToggleNotification('sessionReminders')}
             />
-          </View>
-        ) : (
-          <SectionCard title="Profile Information">
-            <InfoRow
-              icon={<MapPin color={colors.primary} size={16} />}
-              label="ZIP Code"
-              value={committedDraft.zipCode}
+            <View style={screenStyles.divider} />
+            <NotificationToggleRow
+              label="Goal Updates"
+              description="Progress milestones and check-ins"
+              value={notifications.goalUpdates}
+              onChange={handleToggleNotification('goalUpdates')}
             />
-            <View style={styles.divider} />
-            <InfoRow
-              icon={<Globe color={colors.primary} size={16} />}
-              label="Primary Language"
-              value={committedDraft.primaryLanguage}
-            />
-            <View style={styles.divider} />
-            <InfoRow
-              icon={<Phone color={colors.primary} size={16} />}
-              label={
-                committedDraft.phone && apiProfile?.phoneVerifiedAt
-                  ? 'Phone (verified)'
-                  : committedDraft.phone
-                  ? 'Phone (unverified)'
-                  : 'Phone'
-              }
-              value={committedDraft.phone || NOT_PROVIDED}
-              placeholder={!committedDraft.phone}
-            />
-            <View style={styles.divider} />
-            <InfoRow
-              icon={<Mail color={colors.primary} size={16} />}
-              label="Email"
-              value={committedDraft.email || NOT_PROVIDED}
-              placeholder={!committedDraft.email}
-            />
-            <View style={styles.divider} />
-            <InfoRow
-              icon={<Heart color={colors.primary} size={16} />}
-              label="Primary Need"
-              value={verticalLabels[committedDraft.primaryNeed]}
-            />
-            <View style={styles.divider} />
-            <InfoRow
-              icon={<User color={colors.primary} size={16} />}
-              label="Insurance"
-              value={committedDraft.insuranceProvider || NOT_PROVIDED}
-              placeholder={!committedDraft.insuranceProvider}
+            <View style={screenStyles.divider} />
+            <NotificationToggleRow
+              label="Health Tips"
+              description="Weekly wellness and resource tips"
+              value={notifications.healthTips}
+              onChange={handleToggleNotification('healthTips')}
             />
           </SectionCard>
-        )}
 
-        {/* CHW Preferences */}
-        <SectionCard title="CHW Preferences">
-          <View style={styles.prefSection}>
-            <Text style={styles.prefLabel}>Gender Preference</Text>
-            <View style={styles.segmentRow}>
-              {GENDER_OPTIONS.map((opt) => {
-                const isSelected = chwPreferences.genderPreference === opt.key;
-                return (
-                  <TouchableOpacity
-                    key={opt.key}
-                    style={[
-                      styles.segmentBtn,
-                      isSelected && styles.segmentBtnActive,
-                    ]}
-                    onPress={() =>
-                      setChwPreferences((prev) => ({
-                        ...prev,
-                        genderPreference: opt.key,
-                      }))
-                    }
-                    accessibilityRole="radio"
-                    accessibilityState={{ selected: isSelected }}
-                  >
-                    <Text
-                      style={[
-                        styles.segmentBtnText,
-                        isSelected && styles.segmentBtnTextActive,
-                      ]}
-                    >
-                      {opt.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
+          {/* ── Rewards history ── */}
+          <View style={screenStyles.rewardsHistoryCard}>
+            <View style={screenStyles.rewardsHistoryHeader}>
+              <Bell size={15} color={tokens.amber700} />
+              <Text style={screenStyles.rewardsHistoryTitle}>Rewards History</Text>
             </View>
-          </View>
-
-          <View style={styles.divider} />
-
-          <View style={styles.prefSection}>
-            <Text style={styles.prefLabel}>Language Preference</Text>
-            <Text style={styles.prefHint}>Select all languages you are comfortable with</Text>
-            <View style={styles.pillRow}>
-              {ALL_LANGUAGES.map((lang) => {
-                const isSelected = chwPreferences.languagePreferences.includes(lang);
-                return (
-                  <TouchableOpacity
-                    key={lang}
-                    style={[
-                      styles.pill,
-                      isSelected
-                        ? { backgroundColor: colors.primary + '20', borderColor: colors.primary }
-                        : { backgroundColor: colors.card, borderColor: colors.border },
-                    ]}
-                    onPress={() => handleToggleLanguagePref(lang)}
-                    accessibilityRole="checkbox"
-                    accessibilityState={{ checked: isSelected }}
-                    accessibilityLabel={lang}
-                  >
-                    <Text
-                      style={[
-                        styles.pillText,
-                        { color: isSelected ? colors.primary : colors.mutedForeground },
-                      ]}
-                    >
-                      {lang}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </View>
-
-          <View style={styles.divider} />
-
-          <View style={styles.prefSection}>
-            <Text style={styles.prefLabel}>Session Mode Preference</Text>
-            <View style={styles.segmentRow}>
-              {SESSION_MODE_OPTIONS.map((opt) => {
-                const isSelected = chwPreferences.sessionModePreference === opt.key;
-                return (
-                  <TouchableOpacity
-                    key={opt.key}
-                    style={[
-                      styles.segmentBtn,
-                      isSelected && styles.segmentBtnActive,
-                    ]}
-                    onPress={() =>
-                      setChwPreferences((prev) => ({
-                        ...prev,
-                        sessionModePreference: opt.key,
-                      }))
-                    }
-                    accessibilityRole="radio"
-                    accessibilityState={{ selected: isSelected }}
-                  >
-                    <Text
-                      style={[
-                        styles.segmentBtnText,
-                        isSelected && styles.segmentBtnTextActive,
-                      ]}
-                    >
-                      {opt.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </View>
-        </SectionCard>
-
-        {/* Notification settings */}
-        <SectionCard title="Notifications">
-          <NotificationToggleRow
-            label="Session Reminders"
-            description="Get reminded before upcoming sessions"
-            value={notifications.sessionReminders}
-            onChange={handleToggleNotification('sessionReminders')}
-          />
-          <View style={styles.divider} />
-          <NotificationToggleRow
-            label="Goal Updates"
-            description="Progress milestones and check-ins"
-            value={notifications.goalUpdates}
-            onChange={handleToggleNotification('goalUpdates')}
-          />
-          <View style={styles.divider} />
-          <NotificationToggleRow
-            label="Health Tips"
-            description="Weekly wellness and resource tips"
-            value={notifications.healthTips}
-            onChange={handleToggleNotification('healthTips')}
-          />
-        </SectionCard>
-
-        {/* Rewards history */}
-        <View style={styles.rewardsHistoryCard}>
-          <View style={styles.rewardsHistoryHeader}>
-            <Bell size={16} color={colors.compassGold} />
-            <Text style={styles.rewardsHistoryTitle}>Rewards History</Text>
-          </View>
-          <FlatList
-            data={rewardsQuery.data ?? []}
-            keyExtractor={(item) => item.id}
-            renderItem={({ item, index }) => (
-              <>
-                {index > 0 ? <View style={styles.divider} /> : null}
-                <RewardRow item={item} />
-              </>
-            )}
-            scrollEnabled={false}
-            accessibilityLabel="Rewards history list"
-          />
-        </View>
-
-        {/* Redemption catalog */}
-        <View style={styles.catalogSection}>
-          <View style={styles.catalogHeader}>
-            <ShoppingBag size={16} color={colors.primary} />
-            <Text style={styles.catalogTitle}>Redemption Catalog</Text>
-          </View>
-          <Text style={styles.catalogBalance}>
-            Your balance: <Text style={styles.catalogBalanceBold}>{effectiveBalance} pts</Text>
-          </Text>
-          {redemptionCatalog.map((item) => (
-            <RedemptionCard
-              key={item.id}
-              item={item}
-              onRedeem={handleRedeem}
-              balance={effectiveBalance}
+            <FlatList
+              data={rewardsQuery.data ?? []}
+              keyExtractor={(item) => item.id}
+              renderItem={({ item, index }) => (
+                <>
+                  {index > 0 ? <View style={screenStyles.divider} /> : null}
+                  <RewardRow item={item} />
+                </>
+              )}
+              scrollEnabled={false}
+              accessibilityLabel="Rewards history list"
             />
-          ))}
-        </View>
+          </View>
 
-        {/* Account */}
-        <SectionCard title="Account">
-          <TouchableOpacity
-            onPress={handleSignOut}
-            style={styles.signOutBtn}
-            accessibilityRole="button"
-            accessibilityLabel="Sign out of your account"
-          >
-            <LogOut color={colors.destructive} size={18} />
-            <Text style={styles.signOutText}>Sign Out</Text>
-          </TouchableOpacity>
+          {/* ── Redemption catalog ── */}
+          <View style={screenStyles.catalogSection}>
+            <View style={screenStyles.catalogHeader}>
+              <ShoppingBag size={15} color={tokens.primary} />
+              <Text style={screenStyles.catalogTitle}>Redemption Catalog</Text>
+            </View>
+            <Text style={screenStyles.catalogBalance}>
+              Your balance:{' '}
+              <Text style={screenStyles.catalogBalanceBold}>{effectiveBalance} pts</Text>
+            </Text>
+            {redemptionCatalog.map((item) => (
+              <RedemptionCard
+                key={item.id}
+                item={item}
+                onRedeem={handleRedeem}
+                balance={effectiveBalance}
+              />
+            ))}
+          </View>
 
-          <TouchableOpacity
-            onPress={() => {
-              setDeleteErrorMessage(null);
-              setIsDeleteModalVisible(true);
-            }}
-            style={styles.deleteAccountBtn}
-            accessibilityRole="button"
-            accessibilityLabel="Delete your account"
-          >
-            <Text style={styles.deleteAccountText}>Delete Account</Text>
-          </TouchableOpacity>
-        </SectionCard>
+          {/* ── Account ── */}
+          <SectionCard title="Account">
+            <TouchableOpacity
+              onPress={() => void handleSignOut()}
+              style={screenStyles.signOutBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Sign out of your account"
+            >
+              <LogOut color={tokens.red700} size={17} />
+              <Text style={screenStyles.signOutText}>Sign Out</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => {
+                setDeleteErrorMessage(null);
+                setIsDeleteModalVisible(true);
+              }}
+              style={screenStyles.deleteAccountBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Delete your account"
+            >
+              <Text style={screenStyles.deleteAccountText}>Delete Account</Text>
+            </TouchableOpacity>
+          </SectionCard>
 
-        <DeleteAccountModal
-          visible={isDeleteModalVisible}
-          onClose={() => setIsDeleteModalVisible(false)}
-          onConfirm={handleDeleteAccountConfirm}
-          errorMessage={deleteErrorMessage}
-        />
-
-        {/* Phone verification modal — appears after saving a new phone number */}
-        <PhoneVerificationModal
-          visible={isPhoneVerificationVisible}
-          initialPhone={pendingPhone}
-          onVerified={() => {
-            setIsPhoneVerificationVisible(false);
-            // Refresh the profile so the verified badge reflects the new state
-            void profileQuery.refetch();
-          }}
-          onClose={() => setIsPhoneVerificationVisible(false)}
-        />
-
-        <Text style={styles.versionText}>Compass CHW · v1.0.0</Text>
-        <View style={{ height: 24 }} />
-        </View>
+          <Text style={screenStyles.versionText}>Compass CHW · v1.0.0</Text>
+          <View style={{ height: spacing.xxxl }} />
+        </PageWrap>
       </ScrollView>
+
+      {/* ── Modals ── */}
+
+      <InsuranceCinEditModal
+        visible={isInsuranceCinModalVisible}
+        initialInsurance={apiProfile?.insuranceProvider ?? ''}
+        initialCin={''}
+        onClose={() => setIsInsuranceCinModalVisible(false)}
+        onSaved={() => void profileQuery.refetch()}
+      />
+
+      <RefuseServicesConfirmModal
+        visible={isRefuseModalVisible}
+        isPending={updateConsent.isPending}
+        onConfirm={() => void handleRefuseConfirm()}
+        onCancel={() => setIsRefuseModalVisible(false)}
+      />
+
+      <DeleteAccountModal
+        visible={isDeleteModalVisible}
+        onClose={() => setIsDeleteModalVisible(false)}
+        onConfirm={handleDeleteAccountConfirm}
+        errorMessage={deleteErrorMessage}
+      />
+
+      <PhoneVerificationModal
+        visible={isPhoneVerificationVisible}
+        initialPhone={pendingPhone}
+        onVerified={() => {
+          setIsPhoneVerificationVisible(false);
+          void profileQuery.refetch();
+        }}
+        onClose={() => setIsPhoneVerificationVisible(false)}
+      />
     </SafeAreaView>
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
+// ─── Screen-level styles ──────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
+const screenStyles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#F4F1ED',
-  },
+    backgroundColor: tokens.pageBg,
+  } as ViewStyle,
 
   // Header
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    backgroundColor: '#F4F1ED',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    backgroundColor: tokens.pageBg,
     borderBottomWidth: 1,
-    borderBottomColor: '#DDD6CC',
-  },
+    borderBottomColor: tokens.cardBorder,
+  } as ViewStyle,
   headerTitle: {
-    fontFamily: 'DMSans_700Bold',
     fontSize: 18,
-    color: '#1E3320',
-  },
+    fontWeight: '700',
+    color: tokens.textPrimary,
+  } as TextStyle,
   headerActions: {
     flexDirection: 'row',
-    gap: 8,
-  },
+    gap: spacing.sm,
+  } as ViewStyle,
   headerEditBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 10,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: '#3D5A3E40',
-    backgroundColor: '#3D5A3E10',
-  },
+    borderColor: `${tokens.primary}40`,
+    backgroundColor: `${tokens.primary}10`,
+  } as ViewStyle,
   headerEditText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 13,
-    color: '#3D5A3E',
-  },
+    fontWeight: '600',
+    color: tokens.primary,
+  } as TextStyle,
   headerSaveBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 10,
-    backgroundColor: '#3D5A3E',
-  },
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: tokens.primary,
+  } as ViewStyle,
   headerSaveText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 13,
+    fontWeight: '600',
     color: '#FFFFFF',
-  },
+  } as TextStyle,
   headerCancelBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 10,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: '#DDD6CC',
-    backgroundColor: '#FFFFFF',
-  },
+    borderColor: tokens.cardBorder,
+    backgroundColor: tokens.cardBg,
+  } as ViewStyle,
   headerCancelText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 13,
-    color: '#6B7280',
-  },
+    fontWeight: '600',
+    color: tokens.textSecondary,
+  } as TextStyle,
 
-  scroll: { flex: 1 },
+  scroll: { flex: 1 } as ViewStyle,
   scrollContent: {
     flexGrow: 1,
     alignItems: 'center',
-  },
-  // 560 px — single-column profile form matches CHW profile and intake screens.
+    backgroundColor: tokens.pageBg,
+  } as ViewStyle,
+  loadingContainer: {
+    flexGrow: 1,
+    alignItems: 'center',
+    paddingTop: spacing.xl,
+  } as ViewStyle,
+
   pageWrap: {
-    width: '100%',
-    maxWidth: 1100,
-    alignSelf: 'center',
-    paddingHorizontal: 16,
+    paddingHorizontal: spacing.lg,
     paddingTop: 0,
-  },
+    paddingBottom: spacing.xl,
+  } as ViewStyle,
 
-  // Banner + Avatar
-  bannerContainer: {
-    marginHorizontal: -16,
-    marginBottom: 0,
-  },
+  // Green banner (same as CHW profile screens)
   banner: {
-    height: 80,
-    backgroundColor: '#3D5A3E',
-  },
-  avatarSection: {
-    alignItems: 'center',
-    marginBottom: 20,
-    paddingHorizontal: 16,
-    gap: 8,
-  },
-  avatarWrapper: {
-    marginTop: -40,
-    marginBottom: 4,
-  },
-  avatar: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: '#3D5A3E18',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 4,
-    borderColor: '#FFFFFF',
-    ...Platform.select({
-      ios: {
-        shadowColor: '#3D5A3E',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.18,
-        shadowRadius: 12,
-      },
-      android: { elevation: 4 },
-    }),
-  },
-  avatarText: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 24,
-    color: '#3D5A3E',
-  },
-  nameEditRow: {
-    flexDirection: 'row',
-    gap: 10,
-    width: '100%',
-  },
-  nameInput: {
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: '#FFFFFF',
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 14,
-    color: '#1E3320',
-    textAlign: 'center',
-  },
-  displayName: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 20,
-    color: '#1E3320',
-  },
-  memberBadge: {
-    backgroundColor: '#7A9F5A20',
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 100,
-  },
-  memberBadgeText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 11,
-    color: '#7A9F5A',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-  },
+    height: 72,
+    backgroundColor: tokens.sidebarBg,
+    marginHorizontal: -spacing.lg,
+    marginBottom: spacing.lg,
+  } as ViewStyle,
 
-  // Rewards summary card
-  rewardsCard: {
-    backgroundColor: '#D4A35415',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#D4A35430',
-    padding: 14,
+  // 3-column top card grid
+  topCardGrid: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    marginBottom: 16,
-  },
-  rewardsIconBox: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: '#D4A35420',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  rewardsInfo: { flex: 1 },
-  rewardsLabel: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 10,
-    color: '#6B7280',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-  },
-  rewardsValue: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 16,
-    color: '#1E3320',
-  },
-  rewardsBadge: {
-    backgroundColor: '#7A9F5A',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 10,
-  },
-  rewardsBadgeText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 11,
-    color: '#FFFFFF',
-  },
+    gap: spacing.md,
+    marginBottom: spacing.xl,
+    // On very narrow screens (< 480px), stack vertically
+    flexWrap: Platform.OS === 'web' ? 'nowrap' : 'wrap',
+    alignItems: 'stretch',
+  } as ViewStyle,
 
-  // Inline edit card
+  // Edit card (below 3-col when isEditing)
   editCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    backgroundColor: tokens.cardBg,
+    borderRadius: radius.xl,
     borderWidth: 1,
-    borderColor: '#DDD6CC',
-    padding: 16,
-    marginBottom: 16,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#3D5A3E',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.08,
-        shadowRadius: 24,
-      },
-      android: { elevation: 3 },
-    }),
-  },
+    borderColor: tokens.cardBorder,
+    padding: spacing.lg,
+    marginBottom: spacing.lg,
+    ...(shadows.card as object),
+  } as ViewStyle,
   editCardTitle: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 12,
-    color: '#6B7280',
+    fontSize: 11,
+    fontWeight: '600',
+    color: tokens.textSecondary,
     textTransform: 'uppercase',
-    letterSpacing: 1,
-    marginBottom: 14,
-  },
+    letterSpacing: 0.8,
+    marginBottom: spacing.md,
+  } as TextStyle,
 
   divider: {
     height: 1,
-    backgroundColor: '#DDD6CC',
-  },
+    backgroundColor: tokens.cardBorder,
+  } as ViewStyle,
 
-  // Pill toggles
+  // Pill toggles (language/need selectors)
   pillRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
-    marginTop: 8,
-  },
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  } as ViewStyle,
   pill: {
-    paddingHorizontal: 12,
+    paddingHorizontal: spacing.md,
     paddingVertical: 6,
-    borderRadius: 100,
+    borderRadius: radius.pill,
     borderWidth: 1,
-  },
+  } as ViewStyle,
   pillText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 12,
+    fontWeight: '600',
     lineHeight: 18,
-  },
+  } as TextStyle,
 
-  // CHW preferences
+  // CHW preference sections
   prefSection: {
-    paddingVertical: 12,
-  },
+    paddingVertical: spacing.md,
+  } as ViewStyle,
   prefLabel: {
-    fontFamily: 'DMSans_700Bold',
     fontSize: 14,
-    color: '#1E3320',
+    fontWeight: '700',
+    color: tokens.textPrimary,
     marginBottom: 4,
-  },
+  } as TextStyle,
   prefHint: {
-    fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 11,
-    color: '#6B7280',
+    fontWeight: '400',
+    color: tokens.textSecondary,
     marginBottom: 4,
-  },
+  } as TextStyle,
   segmentRow: {
     flexDirection: 'row',
-    gap: 8,
-    marginTop: 8,
+    gap: spacing.sm,
+    marginTop: spacing.sm,
     flexWrap: 'wrap',
-  },
+  } as ViewStyle,
   segmentBtn: {
     flex: 1,
-    paddingVertical: 10,
-    borderRadius: 10,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.sm,
     borderWidth: 1,
-    borderColor: '#DDD6CC',
-    backgroundColor: '#F4F1ED',
+    borderColor: tokens.cardBorder,
+    backgroundColor: tokens.pageBg,
     alignItems: 'center',
     minWidth: 80,
-  },
+  } as ViewStyle,
   segmentBtnActive: {
-    backgroundColor: '#3D5A3E20',
-    borderColor: '#3D5A3E',
-  },
+    backgroundColor: `${tokens.primary}15`,
+    borderColor: tokens.primary,
+  } as ViewStyle,
   segmentBtnText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 13,
-    color: '#6B7280',
-  },
+    fontWeight: '600',
+    color: tokens.textSecondary,
+  } as TextStyle,
   segmentBtnTextActive: {
-    color: '#3D5A3E',
-  },
+    color: tokens.primary,
+  } as TextStyle,
 
   // Rewards history
   rewardsHistoryCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    backgroundColor: tokens.cardBg,
+    borderRadius: radius.xl,
     borderWidth: 1,
-    borderColor: '#DDD6CC',
-    padding: 16,
-    marginBottom: 16,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#3D5A3E',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.08,
-        shadowRadius: 24,
-      },
-      android: { elevation: 3 },
-    }),
-  },
+    borderColor: tokens.cardBorder,
+    padding: spacing.lg,
+    marginBottom: spacing.lg,
+    ...(shadows.card as object),
+  } as ViewStyle,
   rewardsHistoryHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    marginBottom: 12,
-  },
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+  } as ViewStyle,
   rewardsHistoryTitle: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 16,
-    color: '#1E3320',
-  },
+    fontSize: 15,
+    fontWeight: '700',
+    color: tokens.textPrimary,
+  } as TextStyle,
 
   // Redemption catalog
   catalogSection: {
-    marginBottom: 16,
-  },
+    marginBottom: spacing.lg,
+  } as ViewStyle,
   catalogHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: spacing.sm,
     marginBottom: 6,
-  },
+  } as ViewStyle,
   catalogTitle: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 16,
-    color: '#1E3320',
-  },
+    fontSize: 15,
+    fontWeight: '700',
+    color: tokens.textPrimary,
+  } as TextStyle,
   catalogBalance: {
-    fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 13,
-    color: '#6B7280',
-    marginBottom: 12,
-  },
+    fontWeight: '400',
+    color: tokens.textSecondary,
+    marginBottom: spacing.md,
+  } as TextStyle,
   catalogBalanceBold: {
-    fontFamily: 'DMSans_700Bold',
-    color: '#D4A354',
-  },
+    fontWeight: '700',
+    color: tokens.amber700,
+  } as TextStyle,
 
-  // Sign out
+  // Account
   signOutBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    paddingVertical: 14,
-  },
+    gap: spacing.md,
+    paddingVertical: spacing.md,
+  } as ViewStyle,
   signOutText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 14,
-    color: '#DC2626',
-  },
-
+    fontWeight: '600',
+    color: tokens.red700,
+  } as TextStyle,
   deleteAccountBtn: {
-    paddingVertical: 14,
+    paddingVertical: spacing.md,
     alignItems: 'center',
     borderTopWidth: 1,
-    borderTopColor: colors.border,
-  },
+    borderTopColor: tokens.cardBorder,
+  } as ViewStyle,
   deleteAccountText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 14,
-    color: colors.destructive,
+    fontWeight: '600',
+    color: tokens.red700,
     textDecorationLine: 'underline',
-  },
+  } as TextStyle,
 
   versionText: {
-    fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 11,
-    color: '#6B7280',
+    fontWeight: '400',
+    color: tokens.textMuted,
     textAlign: 'center',
-    marginBottom: 8,
-  },
+    marginBottom: spacing.sm,
+  } as TextStyle,
 });

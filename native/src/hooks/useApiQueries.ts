@@ -1623,6 +1623,102 @@ export function useMemberServicesConsent(memberId: string) {
   });
 }
 
+/**
+ * Update the authenticated member's own services-consent status.
+ *
+ * Endpoint: PATCH /api/v1/member/services-consent
+ * Body: { value: ServicesConsentValue }
+ *
+ * On success invalidates both the member-own and any CHW-side reads of the
+ * same member's consent so call/message gate UI refreshes across all screens
+ * without a manual reload.
+ *
+ * The caller is responsible for showing the confirm modal before calling
+ * mutateAsync with `refuse_services` — this hook does not enforce the UX gate.
+ */
+export function useUpdateServicesConsent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (value: ServicesConsentValue): Promise<MemberServicesConsentData> => {
+      const raw = await api<unknown>('/member/services-consent', {
+        method: 'PATCH',
+        body: JSON.stringify({ value }),
+      });
+      return transformKeys<MemberServicesConsentData>(raw);
+    },
+    onSuccess: (_data, _value) => {
+      // Invalidate the member-own consent query so the toggle reflects the new state.
+      void qc.invalidateQueries({
+        queryKey: ['member', 'own', 'services-consent'],
+      });
+      // Also invalidate any CHW-side reads (keyed by memberId) in case the CHW
+      // is simultaneously viewing the member — the refusal banner updates without reload.
+      void qc.invalidateQueries({
+        predicate: (query) => {
+          const key = query.queryKey;
+          return (
+            Array.isArray(key) &&
+            key.length === 3 &&
+            key[0] === 'member' &&
+            key[2] === 'services-consent'
+          );
+        },
+      });
+    },
+    onError: (_error: unknown) => {
+      // Callers handle errors inline — no silent failures.
+    },
+  });
+}
+
+// ─── Insurance + CIN edit (T03) ──────────────────────────────────────────────
+
+/**
+ * Payload for PATCH /api/v1/member/profile/insurance-cin.
+ *
+ * Both fields are required; send the normalized forms (CIN uppercased).
+ * The server validates CIN against `^\d{8}[A-Z]$` and returns 422 on mismatch.
+ */
+export interface UpdateInsuranceCinPayload {
+  /** Insurance carrier name — must match one of the 6 curated carriers. */
+  insuranceCompany: string;
+  /** Medi-Cal ID in the format 8 digits + 1 uppercase letter, e.g. "12345678A". */
+  mediCalId: string;
+}
+
+/**
+ * Update the authenticated member's insurance provider and Medi-Cal CIN.
+ *
+ * Endpoint: PATCH /api/v1/member/profile/insurance-cin
+ * Body: { insurance_company: string, medi_cal_id: string }
+ *
+ * On success invalidates the member profile query so the Demographics card
+ * refreshes with the new values.
+ *
+ * The caller must validate CIN format (`^\d{8}[A-Z]$`, case-normalized) before
+ * calling mutateAsync — do not ship an invalid PATCH body.
+ */
+export function useUpdateInsuranceCin() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: UpdateInsuranceCinPayload): Promise<void> => {
+      await api('/member/profile/insurance-cin', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          insurance_company: payload.insuranceCompany,
+          medi_cal_id: payload.mediCalId,
+        }),
+      });
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.memberProfile });
+    },
+    onError: (_error: unknown) => {
+      // Callers handle errors inline — no silent failures.
+    },
+  });
+}
+
 // ─── CHW Intake Questionnaire ───────────────────────────────────────────────
 
 export interface CHWIntakeState {
@@ -2378,6 +2474,184 @@ export function useCreateRedemption(memberId: string) {
     },
     onError: (_error: unknown) => {
       // Caller handles the error — no silent failures.
+    },
+  });
+}
+
+// ─── Flag Notes (T04) ────────────────────────────────────────────────────────
+
+/**
+ * Wire shape for a single active flag note returned by
+ * GET /api/v1/members/{member_id}/flag-note.
+ *
+ * HIPAA: ``body`` is PHI — only CHW-authenticated callers receive this value.
+ */
+export interface FlagNoteData {
+  id: string;
+  memberId: string;
+  authorChwId: string;
+  /** PHI — do not log. */
+  body: string;
+  createdAt: string;
+}
+
+/** Query key namespace for flag-note data. */
+export const flagNoteQueryKeys = {
+  flagNote: (memberId: string) => ['members', memberId, 'flag-note'] as const,
+};
+
+/**
+ * Fetch the currently active flag note for the given member.
+ *
+ * GET /api/v1/members/{member_id}/flag-note
+ *
+ * Returns null when no active note exists (HTTP 200 with JSON null from backend).
+ * Returns 403 when the calling CHW has no care relationship with the member.
+ *
+ * @param memberId - The member's User.id (UUID string).
+ */
+export function useFlagNote(memberId: string) {
+  return useQuery({
+    queryKey: flagNoteQueryKeys.flagNote(memberId),
+    queryFn: async (): Promise<FlagNoteData | null> => {
+      const raw = await api<unknown>(`/members/${memberId}/flag-note`);
+      if (raw === null || raw === undefined) return null;
+      return transformKeys<FlagNoteData>(raw);
+    },
+    enabled: memberId.length > 0,
+    staleTime: 60_000,
+    retry: (failureCount, error: unknown) => {
+      if (
+        error != null &&
+        typeof error === 'object' &&
+        'status' in error &&
+        (error as { status: number }).status === 403
+      ) {
+        return false;
+      }
+      return failureCount < 2;
+    },
+  });
+}
+
+/**
+ * Create (or replace) the active flag note for the given member.
+ *
+ * POST /api/v1/members/{member_id}/flag-note
+ * Body: { body: string }
+ *
+ * If an active note already exists the backend soft-deletes it first.
+ * On success the flag-note cache for this member is invalidated.
+ */
+export function useCreateFlagNote(memberId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (noteBody: string): Promise<FlagNoteData> => {
+      const raw = await api<unknown>(`/members/${memberId}/flag-note`, {
+        method: 'POST',
+        body: JSON.stringify({ body: noteBody }),
+      });
+      return transformKeys<FlagNoteData>(raw);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: flagNoteQueryKeys.flagNote(memberId) });
+    },
+    onError: (error: Error) => {
+      Alert.alert('Failed to save flag note', error?.message ?? 'Please try again.');
+    },
+  });
+}
+
+/**
+ * Soft-delete the currently active flag note for the given member.
+ *
+ * DELETE /api/v1/members/{member_id}/flag-note
+ *
+ * Idempotent — returns 200 even when no active note exists.
+ * On success the flag-note cache for this member is invalidated.
+ */
+export function useDeleteFlagNote(memberId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (): Promise<void> => {
+      await api(`/members/${memberId}/flag-note`, { method: 'DELETE' });
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: flagNoteQueryKeys.flagNote(memberId) });
+    },
+    onError: (error: Error) => {
+      Alert.alert('Failed to remove flag', error?.message ?? 'Please try again.');
+    },
+  });
+}
+
+// ─── Billable Units (T05) ─────────────────────────────────────────────────────
+
+/**
+ * Wire shape for GET /api/v1/chw/members/{member_id}/billable-units.
+ *
+ * All counts are scoped to the authenticated CHW ↔ this member pair.
+ */
+export interface ChwBillableUnitsData {
+  daily: {
+    used: number;
+    limit: number;
+    remaining: number;
+  };
+  yearly: {
+    used: number;
+    limit: number;
+    remaining: number;
+  };
+  /** ISO date string (YYYY-MM-DD) in America/Los_Angeles wall-clock time. */
+  asOfLaLocalDate: string;
+}
+
+/** Query key for CHW billable-units widget. */
+export const billableUnitsKey = (memberId: string) =>
+  ['chw', 'members', memberId, 'billable-units'] as const;
+
+/**
+ * Fetch daily and yearly Medi-Cal billable-unit counts for a CHW↔member pair.
+ *
+ * GET /api/v1/chw/members/{member_id}/billable-units
+ *
+ * Returns null when the CHW has no shared session with the member (403).
+ * Stale after 60 s — caps change when documentation is submitted.
+ *
+ * @param memberId - The member's User.id (UUID string).
+ */
+export function useChwBillableUnits(memberId: string) {
+  return useQuery({
+    queryKey: billableUnitsKey(memberId),
+    queryFn: async (): Promise<ChwBillableUnitsData | null> => {
+      try {
+        const raw = await api<unknown>(`/chw/members/${memberId}/billable-units`);
+        return transformKeys<ChwBillableUnitsData>(raw);
+      } catch (err) {
+        if (
+          err != null &&
+          typeof err === 'object' &&
+          'status' in err &&
+          (err as { status: number }).status === 403
+        ) {
+          return null;
+        }
+        throw err;
+      }
+    },
+    enabled: memberId.length > 0,
+    staleTime: 60_000,
+    retry: (failureCount, error: unknown) => {
+      if (
+        error != null &&
+        typeof error === 'object' &&
+        'status' in error &&
+        (error as { status: number }).status === 403
+      ) {
+        return false;
+      }
+      return failureCount < 2;
     },
   });
 }
