@@ -7,7 +7,7 @@
  *
  * Layout:
  *   - AppShell wrapper (sidebar on web, passthrough on native)
- *   - PageWrap (560px max-width on web — mandatory for Member screens)
+ *   - PageWrap (1280px max-width on web — matches CHW dashboard breakpoint)
  *   - PageHeader: greeting + subtitle
  *   - "Your CHW" hero card (CHW photo + name + Message/Call CTAs)  ← hero
  *   - 2×2 StatTile grid (Rewards · Upcoming · Active Goals · Open Requests)
@@ -25,7 +25,7 @@
  *
  * Token rules (T18):
  *   - All colours from `theme/tokens` only; `theme/colors` removed entirely.
- *   - PageWrap provides 560px web cap.
+ *   - PageWrap provides 1280px web cap.
  *   - SectionHeader replaces all inline `sectionHeading` Text nodes.
  *   - Card, StatTile, PageHeader, Pill from `components/ui`.
  */
@@ -699,7 +699,7 @@ const styles = StyleSheet.create({
     ...(Platform.OS !== 'web' ? { alignItems: 'center' } : {}),
   } as import('react-native').ViewStyle,
 
-  // PageWrap inner padding — PageWrap already constrains to 560px on web.
+  // PageWrap inner padding — PageWrap already constrains to 1280px on web.
   pageWrapInner: {
     paddingHorizontal: spacing.xxl,
     paddingTop: spacing.xxl,

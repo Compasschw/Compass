@@ -15,7 +15,7 @@
  *   - Redemption catalog
  *   - Account (Sign Out, Delete Account)
  *
- * Web: PageWrap caps at 560px. Native: full-width.
+ * Web: PageWrap caps at 1280px. Native: full-width.
  */
 
 import React, { useCallback, useMemo, useState } from 'react';

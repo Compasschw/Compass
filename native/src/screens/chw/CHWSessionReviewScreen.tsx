@@ -1144,11 +1144,11 @@ const screenStyles = StyleSheet.create({
     backgroundColor: tokens.pageBg,
   },
 
-  // Centers the review flow on wide displays (web/tablet).
-  // 960px lets the follow-up cards breathe while keeping the layout focused.
+  // Full-width on web — review cards fill the available content area.
+  // Raised from 960 → no cap so content breathes on 1280px+ viewports.
   pageWrap: {
     width:     '100%',
-    maxWidth:  960,
+    maxWidth:  1280,
     alignSelf: 'center',
     flex:      1,
   },

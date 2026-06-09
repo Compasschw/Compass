@@ -1663,8 +1663,8 @@ export function MemberFindScreen(): React.JSX.Element {
           showsVerticalScrollIndicator={false}
         >
           {/*
-           * Info-dense browse screen — override the 560 PageWrap cap with a
-           * 960px container so filters + cards + map have room to breathe.
+           * Info-dense browse screen — full 1280px page container so the
+           * 3-column layout (filters + cards + map) fills the viewport.
            * PageWrap is still used via composition on strictly member-only
            * read screens (profile, roadmap, etc.).
            */}
@@ -1743,11 +1743,11 @@ const screenStyles = StyleSheet.create({
     flexGrow:   1,
     alignItems: 'center',
   } as ViewStyle,
-  // Info-dense browse screen: wider than the standard 560 member PageWrap cap.
-  // Three-col layout needs room for 240 + flex + 280 + gaps ≈ 960px target.
+  // Info-dense browse screen: full 1280px page width so the 3-col layout
+  // (240 + flex + 280 + gaps) can breathe on standard 1280px+ desktops.
   pageContainer: {
     width:   '100%',
-    maxWidth: 960,
+    maxWidth: 1280,
     padding: Platform.OS === 'web' ? spacing.xxxl : spacing.xl,
     paddingBottom: 48,
   } as ViewStyle,

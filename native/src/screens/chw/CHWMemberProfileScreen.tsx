@@ -2763,7 +2763,7 @@ const s = StyleSheet.create({
   scrollContent: { flexGrow: 1 } as ViewStyle,
   pageWrap: {
     width: '100%',
-    maxWidth: 1100,
+    maxWidth: 1280,
     alignSelf: 'center',
     padding: 24,
     paddingBottom: 100,

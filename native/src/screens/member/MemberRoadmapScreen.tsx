@@ -1,7 +1,7 @@
 /**
  * MemberRoadmapScreen — Member's health journey roadmap.
  *
- * Layout (single-column, PageWrap 560px on web):
+ * Layout (single-column, PageWrap 1280px on web):
  *   1. PageHeader — "My Roadmap" + journey name + status Pill
  *   2. StatTile row — progress % and total points earned
  *   3. Journey Steps section — 6-step template roadmap (from useMemberJourneys)
@@ -640,7 +640,7 @@ const followupRowStyles = StyleSheet.create({
  *   - useMemberJourneys: 6-step journey template data (T06 migrated)
  *   - useMemberRoadmap: session-sourced follow-up items
  *
- * On web the entire content column is constrained to 560px via PageWrap.
+ * On web the entire content column is constrained to 1280px via PageWrap.
  */
 export function MemberRoadmapScreen(): React.JSX.Element {
   const { userName } = useAuth();
