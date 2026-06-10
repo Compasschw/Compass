@@ -89,6 +89,7 @@ import {
   Check,
   ChevronRight,
   Navigation,
+  Route,
 } from 'lucide-react-native';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 
@@ -123,6 +124,7 @@ import {
 } from '../../hooks/useApiQueries';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
+import { useEngagementStatus } from '../../hooks/useMessagesInsights';
 
 // ─── Breakpoints (matching H mockup) ─────────────────────────────────────────
 
@@ -171,9 +173,6 @@ function writeStoredWidth(key: string, value: number): void {
 // ─── Inbox thread types ───────────────────────────────────────────────────────
 
 type InboxItemType = 'chw' | 'system' | 'appointment' | 'document' | 'reward';
-
-/** Tab filter options for the inbox pane. */
-type InboxTab = 'all' | 'chw' | 'system' | 'docs';
 
 // ─── Quick reactions ──────────────────────────────────────────────────────────
 
@@ -573,6 +572,18 @@ function InboxThreadRow({
   const { bg, text } = avatarColors(name);
   const ts = formatThreadTime(session.createdAt);
 
+  // Fetch messages to derive real preview text and engagement status.
+  const messagesQuery = useSessionMessages(session.id);
+  const messages = messagesQuery.data ?? [];
+  const engagement = useEngagementStatus(messages, session.chwId);
+  const hasMessages = messages.length > 0;
+
+  // Thread preview: last confirmed message body, truncated to 60 chars.
+  const lastMessage = messages[messages.length - 1];
+  const previewText: string = lastMessage != null
+    ? lastMessage.body.slice(0, 60)
+    : 'No messages yet';
+
   return (
     <PressableCard
       onPress={() => onSelect(session, 'chw')}
@@ -599,10 +610,12 @@ function InboxThreadRow({
           <Text style={[styles.threadTime, numerals.tabular]}>{ts}</Text>
         </View>
         <Text style={styles.threadPreview} numberOfLines={1}>
-          {session.notes ?? 'No messages yet'}
+          {previewText}
         </Text>
         <View style={styles.threadPillRow}>
-          <Pill variant="emerald" size="sm">Active</Pill>
+          {hasMessages && (
+            <Pill variant={engagement.pillVariant} size="sm">{engagement.label}</Pill>
+          )}
           {unreadCount > 0 && (
             <View style={styles.unreadBadge}>
               <Text style={[styles.unreadBadgeText, numerals.tabular]}>
@@ -1401,15 +1414,15 @@ function ConversationPane({
             accessibilityLabel="Quick reply options"
           >
             {QUICK_REACTIONS.map((r) => (
-              <TouchableOpacity
+              <PressableCard
                 key={r}
-                style={styles.quickChip}
                 onPress={() => handleQuickReaction(r)}
+                style={styles.reactionChip}
                 accessibilityRole="button"
                 accessibilityLabel={`Quick reply: ${r}`}
               >
-                <Text style={styles.quickChipText}>{r}</Text>
-              </TouchableOpacity>
+                <Text style={styles.reactionChipText}>{r}</Text>
+              </PressableCard>
             ))}
           </ScrollView>
 
@@ -1583,7 +1596,11 @@ function CareContextRail({
               </View>
             </>
           ) : (
-            <Text style={styles.noJourneyText}>No active journey yet.</Text>
+            <EmptyState
+              icon={Route}
+              title="No active journey yet"
+              body="Your CHW will assign one after your first session"
+            />
           )}
         </View>
 
@@ -1787,7 +1804,6 @@ export function MemberMessagesScreen(): React.JSX.Element {
   /** null = CHW thread, string = synthetic item id */
   const [selectedSyntheticId, setSelectedSyntheticId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery]     = useState('');
-  const [inboxTab, setInboxTab]           = useState<InboxTab>('all');
 
   // ── Data ──────────────────────────────────────────────────────────────────────
   const sessionsQuery      = useSessions();
@@ -1818,37 +1834,44 @@ export function MemberMessagesScreen(): React.JSX.Element {
   // ── Session list (filtered by search) ────────────────────────────────────────
   const allSessions: SessionData[] = sessionsQuery.data ?? [];
 
+  /**
+   * Deduplicate sessions by chwId — keep the most-recently-created row per CHW.
+   * The UNIQUE constraint (commit ce70623) prevents future duplicates, but existing
+   * prod data may have multiple rows for the same (chwId, memberId) pair.
+   */
+  const deduplicatedSessions = useMemo<SessionData[]>(() => {
+    const map = new Map<string, SessionData>();
+    for (const session of allSessions) {
+      const existing = map.get(session.chwId);
+      if (!existing || session.createdAt > existing.createdAt) {
+        map.set(session.chwId, session);
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }, [allSessions]);
+
   const filteredSessions = useMemo<SessionData[]>(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return allSessions;
-    return allSessions.filter(
+    if (!q) return deduplicatedSessions;
+    return deduplicatedSessions.filter(
       (s) =>
         (s.chwName ?? '').toLowerCase().includes(q) ||
         (s.notes ?? '').toLowerCase().includes(q),
     );
-  }, [allSessions, searchQuery]);
+  }, [deduplicatedSessions, searchQuery]);
 
-  // ── Tab filtering for synthetic items ────────────────────────────────────────
+  // ── Synthetic items filtered by search only (no tab filtering) ───────────────
   const filteredSynthetic = useMemo<SyntheticItem[]>(() => {
     const q = searchQuery.trim().toLowerCase();
-    const base = SYNTHETIC_ITEMS.filter((item) => {
-      if (q && !item.sender.toLowerCase().includes(q) && !item.preview.toLowerCase().includes(q)) {
-        return false;
-      }
-      return true;
-    });
-    if (inboxTab === 'all') return base;
-    if (inboxTab === 'system') return base.filter((i) => i.type === 'system');
-    if (inboxTab === 'docs')   return base.filter((i) => i.type === 'document');
-    return [];
-  }, [searchQuery, inboxTab]);
+    if (!q) return SYNTHETIC_ITEMS;
+    return SYNTHETIC_ITEMS.filter(
+      (item) =>
+        item.sender.toLowerCase().includes(q) ||
+        item.preview.toLowerCase().includes(q),
+    );
+  }, [searchQuery]);
 
-  const filteredCHWSessions = useMemo<SessionData[]>(() => {
-    if (inboxTab === 'all' || inboxTab === 'chw') return filteredSessions;
-    return [];
-  }, [filteredSessions, inboxTab]);
-
-  const hasAnyItems = filteredCHWSessions.length > 0 || filteredSynthetic.length > 0;
+  const hasAnyItems = filteredSessions.length > 0 || filteredSynthetic.length > 0;
 
   // ── Auto-select thread on load or when chwId route param is present ───────────
   useEffect(() => {
@@ -1973,30 +1996,12 @@ export function MemberMessagesScreen(): React.JSX.Element {
               </View>
             </View>
 
-            {/* Tabs */}
-            <View style={styles.inboxTabs} accessibilityRole="tablist">
-              {(['all', 'chw', 'system', 'docs'] as InboxTab[]).map((tab) => (
-                <TouchableOpacity
-                  key={tab}
-                  style={[styles.inboxTab, inboxTab === tab && styles.inboxTabActive]}
-                  onPress={() => setInboxTab(tab)}
-                  accessibilityRole="tab"
-                  accessibilityState={{ selected: inboxTab === tab }}
-                  accessibilityLabel={tab === 'all' ? 'All' : tab === 'chw' ? 'CHW' : tab === 'system' ? 'System' : 'Documents'}
-                >
-                  <Text style={[styles.inboxTabText, inboxTab === tab && styles.inboxTabTextActive]}>
-                    {tab === 'all' ? 'All' : tab === 'chw' ? 'CHW' : tab === 'system' ? 'System' : 'Documents'}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
             {/* Thread list */}
             <ScrollView style={styles.inboxList} showsVerticalScrollIndicator={false}>
               {hasAnyItems ? (
                 <StaggerList delayMs={50} durationMs={240}>
                   {/* CHW sessions */}
-                  {filteredCHWSessions.map((session) => (
+                  {filteredSessions.map((session) => (
                     <InboxThreadRow
                       key={session.id}
                       session={session}
@@ -2214,35 +2219,6 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     outlineStyle: 'none',
   } as unknown as TextStyle,
-
-  // Tabs
-  inboxTabs: {
-    flexDirection: 'row',
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.cardBorder,
-    gap: 4,
-  } as ViewStyle,
-  inboxTab: {
-    paddingHorizontal: spacing.sm,
-    paddingBottom: 8,
-    paddingTop: 5,
-    borderBottomWidth: 2,
-    borderBottomColor: 'transparent',
-  } as ViewStyle,
-  inboxTabActive: {
-    borderBottomColor: colors.primary,
-  } as ViewStyle,
-  inboxTabText: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: colors.textSecondary,
-  } as TextStyle,
-  inboxTabTextActive: {
-    color: colors.primary,
-    fontWeight: '600',
-  } as TextStyle,
 
   // Thread list scroll
   inboxList: {
@@ -2588,16 +2564,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xl,
     paddingVertical: 8,
   } as ViewStyle,
-  quickChip: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: 6,
-    borderRadius: radius.pill,
-    borderWidth: 1.5,
+  reactionChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
     borderColor: colors.cardBorder,
-    backgroundColor: colors.cardBg,
+    backgroundColor: '#ffffff',
   } as ViewStyle,
-  quickChipText: {
-    fontSize: 12,
+  reactionChipText: {
+    fontSize: 13.5,
     fontWeight: '500',
     color: colors.textPrimary,
   } as TextStyle,
@@ -2920,12 +2896,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: MARIGOLD,
   } as TextStyle,
-  noJourneyText: {
-    fontSize: 13,
-    color: colors.textMuted,
-    paddingVertical: spacing.sm,
-  } as TextStyle,
-
   // Shared items
   sharedRow: {
     flexDirection: 'row',
