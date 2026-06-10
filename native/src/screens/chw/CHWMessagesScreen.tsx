@@ -2,7 +2,7 @@
  * CHWMessagesScreen — 3-pane SMS inbox for Community Health Workers.
  *
  * Pane layout (web, ≥1280px):
- *   [ThreadListPane 320px] | [ConversationPane flex] | [MemberContextRail 288px]
+ *   [ThreadListPane 300px] | [ConversationPane flex] | [MemberContextRail 320px]
  *
  * Responsive collapse:
  *   <1280px → right rail hidden; thread list + conversation both visible
@@ -13,26 +13,26 @@
  *   - ConversationPane  : useSessionMessages(sessionId) — polls every 4 s
  *   - MemberContextRail : useChwJourneys() + useMemberServicesConsent(memberId)
  *
- * Design alignment (Phase 1 Second Run):
- *   - Left pane: 4 tabs (All / Unread / Flagged / Archived)
- *   - Center header: engagement Pill + modality sub-line + action icons
- *   - Composer: TEMPLATES row + icon toolbar + SMS caption
- *   - Right rail: Active Journey · Resource Needs · Compass Insight · Quick Actions
- *                 · Generate AI Summary (disabled stub) · End Session (destructive)
+ * Design alignment (Polish Wave 2 — agent G):
+ *   - PressableCard on every interactive surface (thread rows, icon btns, template chips, quick actions)
+ *   - StaggerList cascading mount on thread rows
+ *   - EmptyState primitive for zero-data states
+ *   - numerals.tabular on all numeric values (timestamps, counts, percentages)
+ *   - shadows.card / shadows.elevated token — no inline shadow overrides
+ *   - Consolidated 6-hue Pill variants only (emerald / blue / amber / red / gray / purple)
+ *   - End Session → slide-up inline confirmation within the rail (no window.confirm)
+ *   - Engagement Pill in thread row list + conversation header
  *
  * Hard constraints (do NOT modify):
  *   - Do NOT modify DashboardSidebar.
- *   - Do NOT add new backend endpoints unless unavoidable (see End Session note below).
+ *   - Do NOT add new backend endpoints.
  *   - Do NOT alter session-per-call backend behaviour or call-bridge calls.
  *   - Do NOT claim TLS+at-rest is E2E encryption.
  *
  * STUB NOTES:
  *   - "Add Case Note" → Wired to POST /api/v1/case-notes (shipped 2026-06-09).
- *     Opens CaseNoteModal (RightDrawer) in MemberContextRail.
- *   - "Request Recording Consent" → uses existing useCreateConsentRequest (consent-requests
- *     endpoint exists). Wired to POST /sessions/{id}/consent-requests.
- *   - "End Session" → POST /sessions/{id}/end — backend shipped 2026-06-09.
- *     Transitions session to awaiting_documentation and opens DocumentationModal.
+ *   - "Request Recording Consent" → uses useCreateConsentRequest.
+ *   - "End Session" → POST /sessions/{id}/end, opens DocumentationModal.
  */
 
 import React, {
@@ -49,6 +49,7 @@ import {
   TouchableOpacity,
   Pressable,
   ScrollView,
+  Animated,
   StyleSheet,
   Platform,
   Alert,
@@ -79,11 +80,23 @@ import {
   MessageSquare,
   Flag,
   BookOpen,
+  Activity,
 } from 'lucide-react-native';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { CHWSessionsStackParamList } from '../../navigation/CHWTabNavigator';
 
-import { AppShell, Card, Pill, SectionHeader, ResizableDivider, RightDrawer } from '../../components/ui';
+import {
+  AppShell,
+  Card,
+  Pill,
+  SectionHeader,
+  ResizableDivider,
+  RightDrawer,
+  PressableCard,
+  StaggerList,
+  EmptyState,
+} from '../../components/ui';
+import type { PillVariant } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
 import {
   useSessions,
@@ -115,7 +128,7 @@ import type { SessionDocumentation } from '../../data/mock';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 import { PressableMember } from '../../components/shared/PressableMember';
-import { colors as tokens, spacing, radius } from '../../theme/tokens';
+import { colors as tokens, spacing, radius, numerals, shadows } from '../../theme/tokens';
 
 // ─── Breakpoints ──────────────────────────────────────────────────────────────
 
@@ -124,12 +137,12 @@ const BP_HIDE_RAIL = 1280;
 /** Below this width only one pane is shown at a time. */
 const BP_HIDE_LIST = 900;
 
-// ─── Pane width constraints ───────────────────────────────────────────────────
+// ─── Pane width defaults ──────────────────────────────────────────────────────
 
-const THREAD_LIST_WIDTH = 320;
-const CONTEXT_RAIL_WIDTH = 300;
+const THREAD_LIST_WIDTH = 300;
+const CONTEXT_RAIL_WIDTH = 320;
 
-/** Min/max bounds for each draggable pane — tuned for CHW screen. */
+/** Min/max bounds for each draggable pane. */
 const CHW_LEFT_MIN = 200;
 const CHW_LEFT_MAX = 500;
 const CHW_RIGHT_MIN = 260;
@@ -276,8 +289,7 @@ function formatModality(mode: string | null | undefined): string {
 }
 
 /**
- * Returns the icon component to use for a resource-needs journey category.
- * Lucide icons passed as a component reference.
+ * Returns the icon component for a resource-needs journey category.
  */
 function journeyCategoryIcon(category: string | undefined): React.ComponentType<{ size: number; color: string }> {
   switch ((category ?? '').toLowerCase()) {
@@ -295,8 +307,7 @@ function journeyCategoryIcon(category: string | undefined): React.ComponentType<
 
 /**
  * Severity tier derived from journey progress percentage.
- * Mirrors the same heuristic used in CHWMemberProfileScreen:
- *   < 33 → High (red), 33–67 → Medium (amber), ≥ 67 → Low (yellow/amber-dark)
+ *   < 33 → High (red), 33–67 → Medium (amber), ≥ 67 → Low (amber)
  */
 type ResourceSeverity = 'High' | 'Medium' | 'Low';
 
@@ -306,12 +317,42 @@ function deriveSeverity(progressPercent: number): ResourceSeverity {
   return 'Low';
 }
 
-type SeverityPillVariant = 'red' | 'amber-dark' | 'amber';
-
-function severityPillVariant(severity: ResourceSeverity): SeverityPillVariant {
+function severityPillVariant(severity: ResourceSeverity): PillVariant {
   if (severity === 'High') return 'red';
-  if (severity === 'Medium') return 'amber-dark';
+  // Medium and Low both map to amber — consolidated 6-hue palette
   return 'amber';
+}
+
+// ─── Rank chip ────────────────────────────────────────────────────────────────
+
+interface RankChipProps {
+  readonly rank: number;
+}
+
+/**
+ * Small numbered rank badge for resource needs list.
+ * Ranks 1–2 use red tint; rank 3+ use amber tint.
+ */
+function RankChip({ rank }: RankChipProps): React.JSX.Element {
+  const isHighPriority = rank <= 2;
+  return (
+    <View
+      style={[
+        styles.rankChip,
+        isHighPriority ? styles.rankChipRed : styles.rankChipAmber,
+      ]}
+    >
+      <Text
+        style={[
+          styles.rankChipText,
+          numerals.tabular,
+          isHighPriority ? styles.rankChipTextRed : styles.rankChipTextAmber,
+        ]}
+      >
+        {rank}
+      </Text>
+    </View>
+  );
 }
 
 // ─── Inline toast ─────────────────────────────────────────────────────────────
@@ -374,14 +415,13 @@ const toastStyles = StyleSheet.create({
 function CalendarNavigationButton(): React.JSX.Element {
   const navigation = useNavigation<any>(); // eslint-disable-line @typescript-eslint/no-explicit-any
   return (
-    <TouchableOpacity
-      style={styles.iconBtn}
+    <PressableCard
       onPress={() => navigation.navigate('Calendar')}
-      accessibilityRole="button"
       accessibilityLabel="Go to calendar"
+      style={styles.iconBtnCard}
     >
       <CalendarPlus size={20} color={tokens.textSecondary} />
-    </TouchableOpacity>
+    </PressableCard>
   );
 }
 
@@ -397,7 +437,9 @@ interface ThreadRowProps {
 
 /**
  * A single row in the thread list pane.
- * Shows avatar, member name, message preview, timestamp, and an unread dot.
+ * Shows: 36px avatar, member name, engagement Pill, last message preview,
+ * timestamp (tabular mono), and an unread dot.
+ * Uses PressableCard for tactile press feedback.
  */
 function ThreadRow({
   session,
@@ -414,13 +456,16 @@ function ThreadRow({
     lastMessage?.createdAt ?? session.scheduledAt,
   );
 
+  // Derive engagement per thread — passes empty chwId since thread-level
+  // context doesn't carry the chwId; senderRole is the authoritative signal.
+  const messages: SessionMessageLocal[] = [];
+  const engagement = useEngagementStatus(messages, session.chwId ?? '');
+
   return (
-    <TouchableOpacity
+    <PressableCard
       onPress={() => onSelect(session)}
-      style={[styles.threadRow, isActive && styles.threadRowActive]}
-      accessibilityRole="button"
       accessibilityLabel={`Thread with ${name}${hasUnread ? ', unread' : ''}`}
-      accessibilityState={{ selected: isActive }}
+      style={[styles.threadRow, isActive && styles.threadRowActive]}
     >
       <View style={[styles.threadAvatar, { backgroundColor: bg }]}>
         <Text style={[styles.threadAvatarText, { color: fg }]}>{initials}</Text>
@@ -431,7 +476,12 @@ function ThreadRow({
           <Text style={styles.threadName} numberOfLines={1}>
             {name}
           </Text>
-          <Text style={styles.threadTimestamp}>{timestamp}</Text>
+          <Text style={[styles.threadTimestamp, numerals.tabular]}>{timestamp}</Text>
+        </View>
+        <View style={styles.threadEngagementRow}>
+          <Pill variant={engagement.pillVariant} size="sm" withDot>
+            {engagement.label}
+          </Pill>
         </View>
         <Text style={styles.threadPreview} numberOfLines={1}>
           {preview}
@@ -439,7 +489,7 @@ function ThreadRow({
       </View>
 
       {hasUnread ? <View style={styles.unreadIndicator} /> : null}
-    </TouchableOpacity>
+    </PressableCard>
   );
 }
 
@@ -451,21 +501,21 @@ interface ThreadListPaneProps {
   readonly sessions: SessionData[];
   readonly selectedSessionId: string | null;
   readonly onSelectSession: (session: SessionData) => void;
+  readonly onNavigateToMembers: () => void;
 }
 
 /**
  * Left pane: alphabetical list of member threads with search and 4 filter tabs.
  *
- * Tabs: All (n) / Unread / Flagged / Archived.
- * "Unread", "Flagged", and "Archived" are presentation-only in v1 —
- * the backend flag fields (archivedAt, pinnedAt) exist on SessionData but
- * the "flagged" concept maps to thread-level flagging (distinct from member
- * flag notes). Real counts wire in without a design change.
+ * Tabs: All (n) / Unread / Flagged / Archived — rendered as outlined Pill chips.
+ * Empty tab state renders the EmptyState primitive.
+ * Thread rows wrapped in StaggerList for cascading mount animation.
  */
 function ThreadListPane({
   sessions,
   selectedSessionId,
   onSelectSession,
+  onNavigateToMembers,
 }: ThreadListPaneProps): React.JSX.Element {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<ThreadFilterTab>('all');
@@ -476,30 +526,25 @@ function ThreadListPane({
   );
 
   const visibleSessions = useMemo(() => {
-    // Sort: alphabetical by member name
     const sorted = [...withMember].sort((a, b) =>
       (a.memberName ?? '').localeCompare(b.memberName ?? ''),
     );
 
     let filtered = sorted;
 
-    // Apply tab filter
     switch (activeFilter) {
       case 'archived':
         filtered = filtered.filter((s) => !!s.archivedAt);
         break;
       case 'unread':
       case 'flagged':
-        // Unread/flagged are presentation-only in v1 — show same list.
-        // Real unread count comes from backend; flagged threads TBD.
+        // Presentation-only in v1 — show same list.
         break;
       default:
-        // 'all' — no additional filter, but exclude archived by default
         filtered = filtered.filter((s) => !s.archivedAt);
         break;
     }
 
-    // Search
     const query = searchQuery.trim().toLowerCase();
     if (query) {
       filtered = filtered.filter((s) =>
@@ -516,7 +561,7 @@ function ThreadListPane({
   );
 
   const tabs: { key: ThreadFilterTab; label: string }[] = [
-    { key: 'all', label: `All (${totalCount})` },
+    { key: 'all', label: 'All' },
     { key: 'unread', label: 'Unread' },
     { key: 'flagged', label: 'Flagged' },
     { key: 'archived', label: 'Archived' },
@@ -526,7 +571,15 @@ function ThreadListPane({
     <View style={styles.threadListPane} accessibilityRole={"navigation" as any} accessibilityLabel="Message threads">
       {/* Header */}
       <View style={styles.threadListHeader}>
-        <Text style={styles.threadListTitle}>Messages</Text>
+        {/* Title row */}
+        <View style={styles.threadListTitleRow}>
+          <Text style={styles.threadListTitle}>Messages</Text>
+          <View style={[styles.threadCountBadge]}>
+            <Text style={[styles.threadCountBadgeText, numerals.tabular]}>
+              {totalCount}
+            </Text>
+          </View>
+        </View>
 
         {/* Search */}
         <View style={styles.searchBar}>
@@ -535,13 +588,13 @@ function ThreadListPane({
             style={styles.searchInput}
             value={searchQuery}
             onChangeText={setSearchQuery}
-            placeholder="Search members…"
+            placeholder="Search members..."
             placeholderTextColor={tokens.textMuted}
             accessibilityLabel="Search message threads"
           />
         </View>
 
-        {/* Filter tabs */}
+        {/* Filter tabs — outlined Pill chips */}
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -556,7 +609,7 @@ function ThreadListPane({
               onPress={() => setActiveFilter(tab.key)}
               accessibilityRole="radio"
               accessibilityState={{ checked: activeFilter === tab.key }}
-              accessibilityLabel={tab.label}
+              accessibilityLabel={tab.key === 'all' ? `All (${totalCount})` : tab.label}
             >
               <Text
                 style={[
@@ -564,14 +617,14 @@ function ThreadListPane({
                   activeFilter === tab.key && styles.filterChipTextActive,
                 ]}
               >
-                {tab.label}
+                {tab.key === 'all' ? `All (${totalCount})` : tab.label}
               </Text>
             </TouchableOpacity>
           ))}
         </ScrollView>
       </View>
 
-      {/* Thread rows */}
+      {/* Thread rows or empty state */}
       <ScrollView
         style={styles.threadScrollView}
         showsVerticalScrollIndicator={false}
@@ -579,22 +632,33 @@ function ThreadListPane({
         accessibilityLabel="Member threads"
       >
         {visibleSessions.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyStateText}>
-              {searchQuery ? 'No threads match your search.' : 'No conversations here.'}
-            </Text>
-          </View>
+          <EmptyState
+            icon={MessageSquare}
+            title={searchQuery ? 'No threads match your search.' : 'No conversations yet'}
+            body={
+              searchQuery
+                ? 'Try a different name or clear the search.'
+                : 'Threads appear when you start a session with a member.'
+            }
+            cta={
+              !searchQuery
+                ? { label: 'Find Members', onPress: onNavigateToMembers }
+                : undefined
+            }
+          />
         ) : (
-          visibleSessions.map((session) => (
-            <ThreadRow
-              key={session.id}
-              session={session}
-              isActive={selectedSessionId === session.id}
-              lastMessage={null}
-              hasUnread={false}
-              onSelect={onSelectSession}
-            />
-          ))
+          <StaggerList delayMs={40} durationMs={250}>
+            {visibleSessions.map((session) => (
+              <ThreadRow
+                key={session.id}
+                session={session}
+                isActive={selectedSessionId === session.id}
+                lastMessage={null}
+                hasUnread={false}
+                onSelect={onSelectSession}
+              />
+            ))}
+          </StaggerList>
         )}
       </ScrollView>
     </View>
@@ -637,11 +701,12 @@ function MessageBubble({ message, isSentByChw }: MessageBubbleProps): React.JSX.
         <Text
           style={[
             styles.bubbleTimestamp,
+            numerals.tabular,
             isSentByChw ? styles.bubbleTimestampOutbound : styles.bubbleTimestampInbound,
           ]}
         >
           {formatMessageTimestamp(message.createdAt)}
-          {message.status === 'sending' ? ' · Sending…' : ''}
+          {message.status === 'sending' ? ' · Sending...' : ''}
           {message.status === 'failed' ? ' · Failed' : ''}
         </Text>
       </View>
@@ -853,20 +918,18 @@ function ConversationPane({
   const { bg, fg } = avatarColorFor(memberName);
   const grouped = groupMessagesByDay(mergedMessages);
 
-  // Derive engagement status for header pill
-  // Pass session.chwId so CHW-authored messages are identified correctly in
-  // the engagement heuristic. senderRole='chw' is the primary signal; chwId
-  // is a secondary guard for edge cases where senderRole is missing.
+  // Derive engagement status for header pill.
+  // senderRole='chw' is the primary signal; chwId is a secondary guard.
   const engagement = useEngagementStatus(mergedMessages, session.chwId ?? '');
   const modality = formatModality(session.mode);
 
-  // ── Quick-reply templates ─────────────────────────────────────────────────
+  // ── Quick-reply templates — 4 chips per mockup spec ───────────────────────
 
   const templateChips: Array<{
     label: string;
     icon: React.ComponentType<{ size: number; color: string }>;
     text: string;
-  }> = [
+  }> = useMemo(() => [
     {
       label: 'Appointment reminder',
       icon: CalendarPlus,
@@ -880,25 +943,28 @@ function ConversationPane({
     {
       label: 'Resource link',
       icon: LinkIcon,
-      // TODO(resources): When a resource picker is available, replace this stub
-      // with the actual resource URL selected from the resource drawer.
+      // TODO(resources): Replace with actual resource URL when resource picker is available.
       text: '[resource]',
     },
-  ];
+    {
+      label: 'Check-in',
+      icon: Activity,
+      text: `Hey ${memberFirstName} — just checking in. How are things going this week?`,
+    },
+  ], [memberFirstName]);
 
   return (
     <View style={styles.convPane} accessibilityRole={"main" as any}>
-      {/* Header */}
-      <View style={styles.convHeader}>
+      {/* Sticky header */}
+      <View style={[styles.convHeader, shadows.elevated as ViewStyle]}>
         {showBackButton && onBack ? (
-          <TouchableOpacity
+          <PressableCard
             onPress={onBack}
-            style={styles.backBtn}
-            accessibilityRole="button"
             accessibilityLabel="Back to thread list"
+            style={styles.iconBtnCard}
           >
             <ArrowLeft size={20} color={tokens.textPrimary} />
-          </TouchableOpacity>
+          </PressableCard>
         ) : null}
 
         <PressableMember
@@ -932,20 +998,18 @@ function ConversationPane({
         </View>
 
         {/* Call button */}
-        <TouchableOpacity
-          style={[styles.iconBtn, callInitiating && styles.iconBtnDisabled]}
+        <PressableCard
           onPress={() => void handleCall()}
           disabled={callInitiating}
-          accessibilityRole="button"
-          accessibilityLabel={callInitiating ? 'Call initiating…' : 'Call member'}
-          accessibilityState={{ disabled: callInitiating }}
+          accessibilityLabel={callInitiating ? 'Call initiating...' : 'Call member'}
+          style={styles.iconBtnCard}
         >
           {callInitiating ? (
             <ActivityIndicator size="small" color={tokens.textSecondary} />
           ) : (
             <Phone size={20} color={tokens.textSecondary} />
           )}
-        </TouchableOpacity>
+        </PressableCard>
 
         {/* Calendar navigation */}
         <CalendarNavigationButton />
@@ -984,16 +1048,21 @@ function ConversationPane({
             onRetry={() => void messagesQuery.refetch()}
           />
         ) : grouped.length === 0 ? (
-          <View style={styles.emptyMessages}>
-            <Text style={styles.emptyMessagesText}>No messages yet. Say hello!</Text>
-          </View>
+          <EmptyState
+            icon={MessageSquare}
+            title="No messages yet"
+            body="Start the conversation by saying hello."
+          />
         ) : (
           grouped.map(({ dateKey, messages: dayMessages }) => (
             <View key={dateKey}>
+              {/* Day separator */}
               <View style={styles.daySeparator}>
+                <View style={styles.daySepLine} />
                 <Text style={styles.daySeparatorText}>
                   {formatDaySeparator(dayMessages[0]?.createdAt ?? dateKey)}
                 </Text>
+                <View style={styles.daySepLine} />
               </View>
               {dayMessages.map((msg) => (
                 <MessageBubble
@@ -1008,85 +1077,72 @@ function ConversationPane({
       </ScrollView>
 
       {/* Composer area */}
-      <View style={styles.composerWrap}>
-        {/* Quick-reply template chips */}
+      <View style={[styles.composerWrap]}>
+        {/* Quick-reply template chips — 4 outlined pills per mockup */}
         <View style={styles.templateRow}>
           <Text style={styles.templateLabel}>TEMPLATES:</Text>
           {templateChips.map((chip) => {
             const IconComponent = chip.icon;
             return (
-              <TouchableOpacity
+              <PressableCard
                 key={chip.label}
-                style={styles.templateChip}
                 onPress={() => insertTemplate(chip.text)}
-                accessibilityRole="button"
                 accessibilityLabel={`Insert template: ${chip.label}`}
+                style={styles.templateChip}
               >
                 <IconComponent size={12} color={tokens.textSecondary} />
                 <Text style={styles.templateChipText}>{chip.label}</Text>
-              </TouchableOpacity>
+              </PressableCard>
             );
           })}
         </View>
 
         {/* Composer row */}
         <View style={styles.composerInner}>
-          <TouchableOpacity
-            style={styles.composerIconBtn}
-            accessibilityRole="button"
+          <PressableCard
+            onPress={() => {/* Attach file — placeholder */}}
             accessibilityLabel="Attach file"
+            style={styles.composerIconBtnCard}
           >
             <Paperclip size={20} color={tokens.textSecondary} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.composerIconBtn}
-            accessibilityRole="button"
+          </PressableCard>
+          <PressableCard
+            onPress={() => {/* Insert link — placeholder */}}
             accessibilityLabel="Insert link"
+            style={styles.composerIconBtnCard}
           >
             <LinkIcon size={20} color={tokens.textSecondary} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.composerIconBtn}
-            accessibilityRole="button"
+          </PressableCard>
+          <PressableCard
+            onPress={() => insertTemplate('Appointment scheduled — I\'ll send you details shortly.')}
             accessibilityLabel="Schedule appointment"
-            onPress={() => insertTemplate(`Appointment scheduled — I'll send you details shortly.`)}
+            style={styles.composerIconBtnCard}
           >
             <CalendarPlus size={20} color={tokens.textSecondary} />
-          </TouchableOpacity>
+          </PressableCard>
           <TextInput
             style={styles.composerInput}
             value={draftText}
             onChangeText={setDraftText}
-            placeholder={`Reply to ${memberFirstName}…`}
+            placeholder={`Reply to ${memberFirstName}...`}
             placeholderTextColor={tokens.textMuted}
             multiline
             numberOfLines={2}
             accessibilityLabel="Message input"
             onSubmitEditing={() => void handleSend()}
           />
-          <TouchableOpacity
-            style={[styles.sendBtn, !draftText.trim() && styles.sendBtnDisabled]}
+          <PressableCard
             onPress={() => void handleSend()}
             disabled={!draftText.trim() || sendMessage.isPending}
-            accessibilityRole="button"
             accessibilityLabel="Send message"
+            style={[styles.sendBtnCard, (!draftText.trim() || sendMessage.isPending) && styles.sendBtnDisabled]}
           >
             <Send size={16} color="#fff" />
             <Text style={styles.sendBtnText}>Send</Text>
-          </TouchableOpacity>
+          </PressableCard>
         </View>
 
-        {/* Complete Session CTA */}
-        <TouchableOpacity
-          style={styles.completeSessionBtn}
-          onPress={handleOpenCompleteSession}
-          accessibilityRole="button"
-          accessibilityLabel="Complete session and open documentation"
-        >
-          <FileText size={15} color="#fff" />
-          <Text style={styles.completeSessionBtnText}>Complete Session</Text>
-        </TouchableOpacity>
-
+        {/* SMS caption — mono tabular */}
         <Text style={styles.composerMeta}>SMS via Vonage masked number</Text>
       </View>
 
@@ -1123,7 +1179,7 @@ function ServicesConsentStatus({
     return (
       <View style={consentStyles.row}>
         <ActivityIndicator size="small" color={tokens.textMuted} />
-        <Text style={consentStyles.label}>Loading consent status…</Text>
+        <Text style={consentStyles.label}>Loading consent status...</Text>
       </View>
     );
   }
@@ -1196,7 +1252,7 @@ const consentStyles = StyleSheet.create({
   } as TextStyle,
 });
 
-// ─── Flag Thread Modal (inline; mirrors FlagMemberModal from CHWMemberProfileScreen) ──
+// ─── Flag Thread Modal ────────────────────────────────────────────────────────
 
 interface FlagThreadModalProps {
   readonly memberId: string;
@@ -1207,9 +1263,6 @@ interface FlagThreadModalProps {
 /**
  * Re-uses the flag-note backend contract to attach a CHW-only note
  * to this member directly from the messages screen.
- *
- * Identical in behaviour to FlagMemberModal in CHWMemberProfileScreen.
- * Not exported — internal to this screen only.
  */
 function FlagThreadModal({ memberId, visible, onClose }: FlagThreadModalProps): React.JSX.Element {
   const { data: existingNote, isLoading: noteLoading } = useFlagNote(memberId);
@@ -1410,12 +1463,7 @@ interface CaseNoteModalProps {
 
 /**
  * RightDrawer modal for adding a clinical case note for the member.
- *
- * POSTs to POST /api/v1/case-notes via ``useCreateCaseNote``.
- * On success shows a brief "Case note saved" inline toast (via Alert on native)
- * then closes.  The note is optionally attached to the current session.
- *
- * Note: not exported — internal to this screen.
+ * POSTs to POST /api/v1/case-notes via useCreateCaseNote.
  */
 function CaseNoteModal({
   memberId,
@@ -1439,7 +1487,6 @@ function CaseNoteModal({
     setNoteBody('');
     setIsPinned(false);
     onClose();
-    // Brief feedback on native after close.
     Alert.alert('Case note saved', 'Your note has been added to this member.');
   }, [noteBody, isPinned, memberId, sessionId, createNote, onClose]);
 
@@ -1473,9 +1520,7 @@ function CaseNoteModal({
               (createNote.isPending || noteBody.trim().length === 0) &&
                 caseNoteModalStyles.saveBtnDisabled,
             ]}
-            onPress={() => {
-              void handleSave();
-            }}
+            onPress={() => { void handleSave(); }}
             disabled={createNote.isPending || noteBody.trim().length === 0}
             accessibilityRole="button"
             accessibilityLabel="Save case note"
@@ -1495,7 +1540,7 @@ function CaseNoteModal({
           style={caseNoteModalStyles.noteInput}
           value={noteBody}
           onChangeText={setNoteBody}
-          placeholder="Clinical observations, follow-up actions, member updates…"
+          placeholder="Clinical observations, follow-up actions, member updates..."
           placeholderTextColor={tokens.textMuted}
           multiline
           numberOfLines={5}
@@ -1611,14 +1656,15 @@ interface MemberContextRailProps {
 
 /**
  * Right pane: member context sections in order:
- *   1. Active Journey card
- *   2. Top Resource Needs card
- *   3. Compass Insight card (emerald tinted)
- *   4. Quick Actions (Open Suggested Questions, Add Case Note, Flag Thread,
- *      Request Recording Consent)
- *   5. Generate AI Summary (disabled until session ends)
- *   6. End Session button (red, destructive)
+ *   1. Active Journey card (progress bar + numerals.tabular %)
+ *   2. Top Resource Needs card (ranked by severity, border-top dividers)
+ *   3. Compass Insight card (emerald tinted bg, purple "AI suggested" Pill)
+ *   4. Quick Actions (PressableCard buttons, OpenQuestionsDrawer trigger)
+ *   5. Generate AI Summary (disabled stub)
+ *   6. End Session (red destructive, inline slide-up confirm panel)
  *   7. Services Consent (informational)
+ *
+ * No nested cards within a single Card region — border-top dividers used instead.
  */
 function MemberContextRail({
   session,
@@ -1630,6 +1676,43 @@ function MemberContextRail({
   const [flagModalOpen, setFlagModalOpen] = useState(false);
   const [caseNoteModalOpen, setCaseNoteModalOpen] = useState(false);
   const [endSessionPending, setEndSessionPending] = useState(false);
+  const [showEndConfirm, setShowEndConfirm] = useState(false);
+
+  // Slide-up animation for the end-session confirmation panel
+  const confirmSlideY = useRef(new Animated.Value(60)).current;
+  const confirmOpacity = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (showEndConfirm) {
+      Animated.parallel([
+        Animated.spring(confirmSlideY, {
+          toValue: 0,
+          useNativeDriver: true,
+          stiffness: 280,
+          damping: 22,
+          mass: 1,
+        }),
+        Animated.timing(confirmOpacity, {
+          toValue: 1,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    } else {
+      Animated.parallel([
+        Animated.timing(confirmSlideY, {
+          toValue: 60,
+          duration: 160,
+          useNativeDriver: true,
+        }),
+        Animated.timing(confirmOpacity, {
+          toValue: 0,
+          duration: 160,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }
+  }, [showEndConfirm, confirmSlideY, confirmOpacity]);
 
   const endSession = useEndSessionHook();
   const consentRequestMutation = useCreateConsentRequest(session.id);
@@ -1686,48 +1769,23 @@ function MemberContextRail({
 
   // ── End Session handler ───────────────────────────────────────────────────
 
-  const handleEndSession = useCallback((): void => {
-    const memberName = session.memberName ?? 'this member';
-    const confirmAndEnd = async (): Promise<void> => {
-      setEndSessionPending(true);
-      try {
-        await endSession.mutateAsync(session.id);
-        onEndSessionComplete?.();
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Could not end session. Try again.';
-        if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          window.alert(`Failed to end session\n\n${message}`);
-        } else {
-          Alert.alert('Failed to end session', message);
-        }
-      } finally {
-        setEndSessionPending(false);
+  const handleEndSessionConfirmed = useCallback(async (): Promise<void> => {
+    setShowEndConfirm(false);
+    setEndSessionPending(true);
+    try {
+      await endSession.mutateAsync(session.id);
+      onEndSessionComplete?.();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not end session. Try again.';
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.alert(`Failed to end session\n\n${message}`);
+      } else {
+        Alert.alert('Failed to end session', message);
       }
-    };
-
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      if (
-        window.confirm(
-          `End the session for ${memberName}? Recording stops and you'll be prompted to document.`,
-        )
-      ) {
-        void confirmAndEnd();
-      }
-    } else {
-      Alert.alert(
-        'End Session?',
-        `End the session for ${memberName}? Recording stops and you'll be prompted to document.`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'End Session',
-            style: 'destructive',
-            onPress: () => void confirmAndEnd(),
-          },
-        ],
-      );
+    } finally {
+      setEndSessionPending(false);
     }
-  }, [session.id, session.memberName, endSession, onEndSessionComplete]);
+  }, [session.id, endSession, onEndSessionComplete]);
 
   // ── Request Recording Consent handler ────────────────────────────────────
 
@@ -1771,186 +1829,241 @@ function MemberContextRail({
   };
 
   return (
-    <ScrollView
-      style={styles.railOuter}
-      contentContainerStyle={styles.railContent}
-      showsVerticalScrollIndicator={false}
-      accessibilityRole={"complementary" as any}
-      accessibilityLabel="Member context"
-    >
-      {/* 1. Active Journey */}
-      <Card style={styles.railCard}>
-        <SectionHeader title="Active Journey" marginBottom={spacing.md} />
-        <Text style={styles.railJourneyName} numberOfLines={1}>
-          {journeyName} · {journeyPercent}%
-        </Text>
-        <View
-          style={styles.progressTrack}
-          accessibilityRole="progressbar"
-          accessibilityValue={{ min: 0, max: 100, now: journeyPercent }}
-          accessibilityLabel={`Journey ${journeyPercent}% complete`}
-        >
+    <View style={styles.railOuter} accessibilityRole={"complementary" as any} accessibilityLabel="Member context">
+      <ScrollView
+        style={styles.railScrollView}
+        contentContainerStyle={styles.railContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* 1. Active Journey */}
+        <Card style={styles.railCard} accessibilityRole="region" accessibilityLabel="Active Journey">
+          <View style={styles.railCardTitleRow}>
+            <Activity size={13} color={tokens.textSecondary} />
+            <Text style={styles.railCardTitle}>Active Journey</Text>
+          </View>
+          <View style={styles.journeyNameRow}>
+            <Text style={styles.railJourneyName} numberOfLines={1}>
+              {journeyName}
+            </Text>
+            <Text style={[styles.journeyPercent, numerals.tabular]}>
+              {journeyPercent}%
+            </Text>
+          </View>
           <View
-            style={[
-              styles.progressFill,
-              { width: `${journeyPercent}%` as `${number}%`, backgroundColor: tokens.emerald500 },
-            ]}
-          />
-        </View>
-        {dueDateCaption ? (
-          <Text style={styles.railJourneyStep} numberOfLines={2}>
-            {dueDateCaption}
-          </Text>
-        ) : (
-          <Text style={styles.railJourneyPercent}>{journeyPercent}% complete</Text>
-        )}
-      </Card>
+            style={styles.progressTrack}
+            accessibilityRole="progressbar"
+            accessibilityValue={{ min: 0, max: 100, now: journeyPercent }}
+            accessibilityLabel={`Journey ${journeyPercent}% complete`}
+          >
+            <View
+              style={[
+                styles.progressFill,
+                { width: `${journeyPercent}%` as `${number}%`, backgroundColor: tokens.emerald500 },
+              ]}
+            />
+          </View>
+          {dueDateCaption ? (
+            <Text style={styles.railJourneyStep} numberOfLines={2}>
+              {dueDateCaption}
+            </Text>
+          ) : (
+            <Text style={[styles.railJourneyPercent, numerals.tabular]}>
+              {journeyPercent}% complete
+            </Text>
+          )}
+        </Card>
 
-      {/* 2. Top Resource Needs */}
-      {topResourceNeeds.length > 0 ? (
-        <Card style={styles.railCard}>
-          <SectionHeader title="Top Resource Needs" marginBottom={spacing.md} />
-          <View style={styles.resourceNeedsList}>
-            {topResourceNeeds.map((journey) => {
+        {/* 2. Top Resource Needs */}
+        {topResourceNeeds.length > 0 ? (
+          <Card style={styles.railCard} accessibilityRole="region" accessibilityLabel="Top Resource Needs">
+            <View style={styles.railCardTitleRow}>
+              <Flag size={13} color={tokens.textSecondary} />
+              <Text style={styles.railCardTitle}>Top Resource Needs</Text>
+            </View>
+            {topResourceNeeds.map((journey, index) => {
               const severity = deriveSeverity(journey.progressPercent);
               const pillVariant = severityPillVariant(severity);
               const IconComponent = journeyCategoryIcon(journey.template.category);
               return (
-                <View key={journey.id} style={styles.resourceNeedRow}>
-                  <View style={styles.resourceNeedIconWrap}>
-                    <IconComponent size={14} color={tokens.textSecondary} />
+                <View
+                  key={journey.id}
+                  style={[styles.needRow, index > 0 && styles.needRowBorder]}
+                >
+                  <RankChip rank={index + 1} />
+                  <View style={styles.needName}>
+                    <IconComponent size={13} color={tokens.textMuted} />
+                    <Text style={styles.needNameText} numberOfLines={1}>
+                      {journey.template.name}
+                    </Text>
                   </View>
-                  <Text style={styles.resourceNeedName} numberOfLines={1}>
-                    {journey.template.name}
-                  </Text>
                   <Pill variant={pillVariant} size="sm">
                     {severity}
                   </Pill>
                 </View>
               );
             })}
+          </Card>
+        ) : null}
+
+        {/* 3. Compass Insight (emerald tinted, purple "AI suggested" Pill) */}
+        <View style={styles.insightCard} accessibilityRole="region" accessibilityLabel="Compass Insight">
+          <View style={styles.insightHeader}>
+            <Sparkles size={14} color="#15803d" />
+            <Text style={styles.insightTitle}>Compass Insight</Text>
           </View>
-        </Card>
-      ) : null}
-
-      {/* 3. Compass Insight */}
-      <View style={styles.insightCard}>
-        <View style={styles.insightHeader}>
-          <Sparkles size={14} color="#15803d" />
-          <Text style={styles.insightTitle}>Compass Insight</Text>
+          <Text style={styles.insightBody}>{compassInsight}</Text>
+          <View style={styles.insightFooter}>
+            <Pill variant="purple" size="sm">AI suggested</Pill>
+          </View>
         </View>
-        <Text style={styles.insightBody}>{compassInsight}</Text>
-      </View>
 
-      {/* 4. Quick Actions */}
-      <View style={styles.quickActionsSection}>
-        <Text style={styles.quickActionsLabel}>QUICK ACTIONS</Text>
-        <View style={styles.quickActionsStack}>
-          {/* Open Suggested Questions */}
-          <Pressable
-            style={({ pressed }) => [styles.quickActionBtn, pressed && styles.quickActionBtnPressed]}
-            onPress={() => setQuestionsDrawerOpen(true)}
+        {/* 4. Quick Actions */}
+        <View accessibilityRole="region" accessibilityLabel="Quick Actions">
+          <Text style={styles.quickActionsLabel}>QUICK ACTIONS</Text>
+          <View style={styles.quickActionsStack}>
+            {/* Open Suggested Questions */}
+            <PressableCard
+              onPress={() => setQuestionsDrawerOpen(true)}
+              accessibilityLabel="Open suggested questions"
+              style={styles.quickActionBtn}
+            >
+              <MessageSquare size={16} color={tokens.textSecondary} style={styles.quickActionIcon} />
+              <Text style={styles.quickActionBtnText}>Open Suggested Questions</Text>
+            </PressableCard>
+
+            {/* Add Case Note */}
+            <PressableCard
+              onPress={() => setCaseNoteModalOpen(true)}
+              accessibilityLabel="Add case note"
+              style={styles.quickActionBtn}
+            >
+              <BookOpen size={16} color={tokens.textSecondary} style={styles.quickActionIcon} />
+              <Text style={styles.quickActionBtnText}>Add Case Note</Text>
+            </PressableCard>
+
+            {/* Flag this Thread */}
+            <PressableCard
+              onPress={() => setFlagModalOpen(true)}
+              accessibilityLabel="Flag this thread"
+              style={styles.quickActionBtn}
+            >
+              <Flag size={16} color={tokens.textSecondary} style={styles.quickActionIcon} />
+              <Text style={styles.quickActionBtnText}>Flag this Thread</Text>
+            </PressableCard>
+
+            {/* Request Recording Consent */}
+            <PressableCard
+              onPress={() => { void handleRequestRecordingConsent(); }}
+              disabled={consentRequestMutation.isPending}
+              accessibilityLabel="Request recording consent"
+              style={[styles.quickActionBtn, consentRequestMutation.isPending && styles.quickActionBtnDisabled]}
+            >
+              {consentRequestMutation.isPending ? (
+                <ActivityIndicator size="small" color={tokens.textSecondary} style={styles.quickActionIcon} />
+              ) : (
+                <FileText size={16} color={tokens.textSecondary} style={styles.quickActionIcon} />
+              )}
+              <Text style={styles.quickActionBtnText}>
+                {consentRequestMutation.isPending ? 'Sending...' : 'Request Recording Consent'}
+              </Text>
+            </PressableCard>
+          </View>
+        </View>
+
+        {/* 5. Generate AI Summary (disabled) */}
+        <View accessibilityRole="region" accessibilityLabel="AI Summary">
+          <TouchableOpacity
+            style={styles.aiSummaryBtn}
+            disabled
             accessibilityRole="button"
-            accessibilityLabel="Open suggested questions"
+            accessibilityLabel="Generate AI summary — available after session ends"
+            accessibilityState={{ disabled: true }}
           >
-            <MessageSquare size={16} color={tokens.textSecondary} />
-            <Text style={styles.quickActionBtnText}>Open Suggested Questions</Text>
-          </Pressable>
+            <Sparkles size={15} color={tokens.textMuted} />
+            <Text style={styles.aiSummaryBtnText}>Generate AI Summary</Text>
+          </TouchableOpacity>
+          <Text style={styles.aiSummaryCaption}>Available after session ends</Text>
+        </View>
 
-          {/* Add Case Note */}
-          <Pressable
-            style={({ pressed }) => [styles.quickActionBtn, pressed && styles.quickActionBtnPressed]}
-            onPress={() => setCaseNoteModalOpen(true)}
-            accessibilityRole="button"
-            accessibilityLabel="Add case note"
-          >
-            <BookOpen size={16} color={tokens.textSecondary} />
-            <Text style={styles.quickActionBtnText}>Add Case Note</Text>
-          </Pressable>
-
-          {/* Flag this Thread */}
-          <Pressable
-            style={({ pressed }) => [styles.quickActionBtn, pressed && styles.quickActionBtnPressed]}
-            onPress={() => setFlagModalOpen(true)}
-            accessibilityRole="button"
-            accessibilityLabel="Flag this thread"
-          >
-            <Flag size={16} color={tokens.textSecondary} />
-            <Text style={styles.quickActionBtnText}>Flag this Thread</Text>
-          </Pressable>
-
-          {/* Request Recording Consent */}
-          <Pressable
-            style={({ pressed }) => [
-              styles.quickActionBtn,
-              pressed && styles.quickActionBtnPressed,
-              consentRequestMutation.isPending && styles.quickActionBtnDisabled,
+        {/* 6. End Session (destructive) */}
+        <View accessibilityRole="region" accessibilityLabel="End Session" style={styles.endSessionRegion}>
+          <TouchableOpacity
+            style={[
+              styles.endSessionBtn,
+              (endSessionPending || servicesRefused) && styles.endSessionBtnDisabled,
             ]}
-            onPress={() => { void handleRequestRecordingConsent(); }}
-            disabled={consentRequestMutation.isPending}
+            onPress={() => setShowEndConfirm(true)}
+            disabled={endSessionPending || servicesRefused}
             accessibilityRole="button"
-            accessibilityLabel="Request recording consent"
+            accessibilityLabel={
+              servicesRefused
+                ? 'End session disabled — member has refused services'
+                : endSessionPending
+                ? 'Ending session...'
+                : 'End session'
+            }
+            accessibilityState={{ disabled: endSessionPending || servicesRefused }}
           >
-            {consentRequestMutation.isPending ? (
-              <ActivityIndicator size="small" color={tokens.textSecondary} />
+            {endSessionPending ? (
+              <ActivityIndicator size="small" color="#fff" />
             ) : (
-              <FileText size={16} color={tokens.textSecondary} />
+              <LogOut size={16} color="#fff" />
             )}
-            <Text style={styles.quickActionBtnText}>
-              {consentRequestMutation.isPending ? 'Sending…' : 'Request Recording Consent'}
+            <Text style={styles.endSessionBtnText}>
+              {endSessionPending ? 'Ending...' : 'End Session'}
             </Text>
-          </Pressable>
+          </TouchableOpacity>
+
+          {/* Inline slide-up confirmation panel — no window.confirm */}
+          {showEndConfirm ? (
+            <Animated.View
+              style={[
+                styles.endConfirmPanel,
+                {
+                  opacity: confirmOpacity,
+                  transform: [{ translateY: confirmSlideY }],
+                },
+              ]}
+              accessibilityRole="dialog"
+              accessibilityLabel="Confirm end session"
+            >
+              <Text style={styles.endConfirmTitle}>
+                End the session for {memberFirstName}?
+              </Text>
+              <Text style={styles.endConfirmBody}>
+                Recording stops and you will be prompted to document the session before the claim can be filed.
+              </Text>
+              <View style={styles.endConfirmActions}>
+                <TouchableOpacity
+                  style={styles.endConfirmCancel}
+                  onPress={() => setShowEndConfirm(false)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Cancel end session"
+                >
+                  <Text style={styles.endConfirmCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.endConfirmProceed}
+                  onPress={() => void handleEndSessionConfirmed()}
+                  accessibilityRole="button"
+                  accessibilityLabel="Confirm end session"
+                >
+                  <Text style={styles.endConfirmProceedText}>End Session</Text>
+                </TouchableOpacity>
+              </View>
+            </Animated.View>
+          ) : null}
         </View>
-      </View>
 
-      {/* 5. Generate AI Summary (disabled until session ends) */}
-      <View style={styles.aiSummarySection}>
-        <TouchableOpacity
-          style={styles.aiSummaryBtn}
-          disabled
-          accessibilityRole="button"
-          accessibilityLabel="Generate AI summary — available after session ends"
-          accessibilityState={{ disabled: true }}
-        >
-          <Sparkles size={15} color={tokens.textMuted} />
-          <Text style={styles.aiSummaryBtnText}>Generate AI Summary</Text>
-        </TouchableOpacity>
-        <Text style={styles.aiSummaryCaption}>Available after session ends</Text>
-      </View>
-
-      {/* 6. End Session (destructive) */}
-      <TouchableOpacity
-        style={[styles.endSessionBtn, (endSessionPending || servicesRefused) && styles.endSessionBtnDisabled]}
-        onPress={handleEndSession}
-        disabled={endSessionPending}
-        accessibilityRole="button"
-        accessibilityLabel={
-          servicesRefused
-            ? 'End session disabled — member has refused services'
-            : endSessionPending
-            ? 'Ending session…'
-            : 'End session'
-        }
-        accessibilityState={{ disabled: endSessionPending || servicesRefused }}
-      >
-        {endSessionPending ? (
-          <ActivityIndicator size="small" color="#fff" />
-        ) : (
-          <LogOut size={16} color="#fff" />
-        )}
-        <Text style={styles.endSessionBtnText}>
-          {endSessionPending ? 'Ending…' : 'End Session'}
-        </Text>
-      </TouchableOpacity>
-
-      {/* 7. Services Consent (informational) */}
-      <View style={styles.railConsentSection}>
-        <SectionHeader title="Services Consent" marginBottom={spacing.sm} />
-        <ServicesConsentStatus
-          consentValue={consentValue}
-          isLoading={consentQuery.isLoading && consentQuery.fetchStatus !== 'idle'}
-        />
-      </View>
+        {/* 7. Services Consent (informational) */}
+        <View style={styles.railConsentSection}>
+          <SectionHeader title="Services Consent" marginBottom={spacing.sm} />
+          <ServicesConsentStatus
+            consentValue={consentValue}
+            isLoading={consentQuery.isLoading && consentQuery.fetchStatus !== 'idle'}
+          />
+        </View>
+      </ScrollView>
 
       {/* Modals */}
       <OpenQuestionsDrawer
@@ -1976,7 +2089,7 @@ function MemberContextRail({
           onClose={() => setCaseNoteModalOpen(false)}
         />
       ) : null}
-    </ScrollView>
+    </View>
   );
 }
 
@@ -1987,8 +2100,8 @@ function MemberContextRail({
  *
  * Panes:
  *   ThreadListPane      — thread list with search + 4 filter tabs
- *   ConversationPane    — message thread + templates + composer + Complete Session button
- *   MemberContextRail  — journey, resource needs, Compass Insight, quick actions, End Session
+ *   ConversationPane    — message thread + templates + composer
+ *   MemberContextRail   — journey, resource needs, Compass Insight, quick actions, End Session
  */
 export function CHWMessagesScreen(): React.JSX.Element {
   const { userName } = useAuth();
@@ -2027,6 +2140,8 @@ export function CHWMessagesScreen(): React.JSX.Element {
   }, []);
 
   const allSessions: SessionData[] = sessionsQuery.data ?? [];
+
+  const navigation = useNavigation<any>(); // eslint-disable-line @typescript-eslint/no-explicit-any
 
   // Auto-select target member's thread or first thread alphabetically
   useEffect(() => {
@@ -2145,6 +2260,7 @@ export function CHWMessagesScreen(): React.JSX.Element {
               sessions={allSessions}
               selectedSessionId={selectedSession?.id ?? null}
               onSelectSession={handleSelectSession}
+              onNavigateToMembers={() => navigation.navigate('Members')}
             />
           </View>
         ) : null}
@@ -2182,9 +2298,11 @@ export function CHWMessagesScreen(): React.JSX.Element {
           </View>
         ) : shouldShowConv ? (
           <View style={styles.noSelectionWrap}>
-            <Text style={styles.noSelectionText}>
-              Select a thread to start messaging
-            </Text>
+            <EmptyState
+              icon={MessageSquare}
+              title="No thread selected"
+              body="Select a member thread from the list to start messaging."
+            />
           </View>
         ) : null}
 
@@ -2255,15 +2373,37 @@ const styles = StyleSheet.create({
 
   threadListHeader: {
     padding: spacing.lg,
+    paddingBottom: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    borderBottomColor: tokens.cardBorder,
     gap: spacing.sm,
   } as ViewStyle,
 
+  threadListTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginBottom: 2,
+  } as ViewStyle,
+
   threadListTitle: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '700',
     color: tokens.textPrimary,
+    letterSpacing: -0.3,
+  } as TextStyle,
+
+  threadCountBadge: {
+    backgroundColor: tokens.emerald100,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+  } as ViewStyle,
+
+  threadCountBadgeText: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: tokens.emerald700,
   } as TextStyle,
 
   searchBar: {
@@ -2271,10 +2411,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: tokens.pageBg,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
+    borderColor: tokens.cardBorder,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
   } as ViewStyle,
 
   searchIcon: {
@@ -2283,9 +2423,9 @@ const styles = StyleSheet.create({
 
   searchInput: {
     flex: 1,
-    fontSize: 14,
+    fontSize: 13,
     color: tokens.textPrimary,
-    paddingVertical: spacing.sm,
+    paddingVertical: spacing.xs,
     outlineStyle: 'none',
   } as unknown as TextStyle,
 
@@ -2296,22 +2436,26 @@ const styles = StyleSheet.create({
   filterRowContent: {
     flexDirection: 'row',
     gap: spacing.xs,
+    paddingBottom: 2,
   } as ViewStyle,
 
   filterChip: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-    borderRadius: radius.sm,
+    paddingHorizontal: 11,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: tokens.cardBorder,
   } as ViewStyle,
 
   filterChipActive: {
     backgroundColor: tokens.emerald100,
+    borderColor: tokens.emerald100,
   } as ViewStyle,
 
   filterChipText: {
     fontSize: 12,
     fontWeight: '500',
-    color: tokens.textSecondary,
+    color: tokens.textMuted,
   } as TextStyle,
 
   filterChipTextActive: {
@@ -2323,64 +2467,56 @@ const styles = StyleSheet.create({
     flex: 1,
   } as ViewStyle,
 
-  emptyState: {
-    padding: spacing.xxl,
-    alignItems: 'center',
-  } as ViewStyle,
-
-  emptyStateText: {
-    fontSize: 14,
-    color: tokens.textMuted,
-    textAlign: 'center',
-  } as TextStyle,
-
   // ── Thread row ────────────────────────────────────────────────────────────────
   threadRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.md,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: 14,
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    // Override PressableCard's xl radius to 0 for list rows
+    borderRadius: 0,
     borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+    borderBottomColor: tokens.cardBorder,
+    // No boxShadow override — uses PressableCard's shadows.card token
   } as ViewStyle,
 
   threadRowActive: {
-    backgroundColor: '#ECFDF5',
+    backgroundColor: tokens.emerald100,
     borderLeftWidth: 3,
     borderLeftColor: tokens.primary,
-    paddingLeft: 13,
+    paddingLeft: 11,
   } as ViewStyle,
 
   threadAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
   } as ViewStyle,
 
   threadAvatarText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
   } as TextStyle,
 
   threadBody: {
     flex: 1,
     minWidth: 0,
+    gap: 2,
   } as ViewStyle,
 
   threadTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
-    marginBottom: 3,
   } as ViewStyle,
 
   threadName: {
     flex: 1,
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
     color: tokens.textPrimary,
   } as TextStyle,
@@ -2390,6 +2526,11 @@ const styles = StyleSheet.create({
     color: tokens.textMuted,
     flexShrink: 0,
   } as TextStyle,
+
+  threadEngagementRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  } as ViewStyle,
 
   threadPreview: {
     fontSize: 12,
@@ -2422,21 +2563,26 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.md,
     paddingHorizontal: spacing.xl,
-    paddingVertical: 14,
+    paddingVertical: 12,
     backgroundColor: tokens.cardBg,
     borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    borderBottomColor: tokens.cardBorder,
+    // shadows.elevated applied as style spread
   } as ViewStyle,
 
-  backBtn: {
+  iconBtnCard: {
     padding: spacing.sm,
-    borderRadius: radius.sm,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: tokens.cardBorder,
+    backgroundColor: tokens.cardBg,
+    // No boxShadow override — inherits shadows.card from PressableCard
   } as ViewStyle,
 
   convHeaderAvatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
@@ -2461,8 +2607,9 @@ const styles = StyleSheet.create({
   } as ViewStyle,
 
   convHeaderName: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '600',
+    letterSpacing: -0.3,
     color: tokens.textPrimary,
   } as TextStyle,
 
@@ -2471,28 +2618,19 @@ const styles = StyleSheet.create({
     color: tokens.textSecondary,
   } as TextStyle,
 
-  iconBtn: {
-    padding: spacing.sm,
-    borderRadius: radius.sm,
-  } as ViewStyle,
-
-  iconBtnDisabled: {
-    opacity: 0.5,
-  } as ViewStyle,
-
   openProfileBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: radius.sm,
+    borderColor: tokens.cardBorder,
+    borderRadius: 10,
   } as ViewStyle,
 
   openProfileText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
     color: tokens.gray700,
   } as TextStyle,
@@ -2507,25 +2645,24 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
   } as ViewStyle,
 
-  emptyMessages: {
-    flex: 1,
+  daySeparator: {
+    flexDirection: 'row',
     alignItems: 'center',
-    paddingTop: 40,
+    gap: 12,
+    marginVertical: 12,
   } as ViewStyle,
 
-  emptyMessagesText: {
-    fontSize: 14,
-    color: tokens.textMuted,
-  } as TextStyle,
-
-  daySeparator: {
-    alignItems: 'center',
-    marginVertical: spacing.md,
+  daySepLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: tokens.cardBorder,
   } as ViewStyle,
 
   daySeparatorText: {
-    fontSize: 12,
+    fontSize: 11,
     color: tokens.textMuted,
+    fontWeight: '500',
+    letterSpacing: 0.3,
   } as TextStyle,
 
   bubbleRowOutbound: {
@@ -2541,31 +2678,34 @@ const styles = StyleSheet.create({
   } as ViewStyle,
 
   bubble: {
-    maxWidth: '75%',
+    maxWidth: '68%',
     padding: 10,
     paddingHorizontal: 14,
     gap: spacing.xs,
   } as ViewStyle,
 
   bubbleOutbound: {
-    backgroundColor: tokens.emerald500,
-    borderRadius: 18,
+    backgroundColor: tokens.emerald100,
+    borderRadius: 14,
     borderBottomRightRadius: 4,
   } as ViewStyle,
 
   bubbleInbound: {
-    backgroundColor: '#F3F4F6',
-    borderRadius: 18,
+    backgroundColor: tokens.cardBg,
+    borderWidth: 1,
+    borderColor: tokens.cardBorder,
+    borderRadius: 14,
     borderBottomLeftRadius: 4,
+    ...(shadows.card as object),
   } as ViewStyle,
 
   bubbleText: {
     fontSize: 14,
-    lineHeight: 20,
+    lineHeight: 21,
   } as TextStyle,
 
   bubbleTextOutbound: {
-    color: '#fff',
+    color: tokens.emerald700,
   } as TextStyle,
 
   bubbleTextInbound: {
@@ -2578,7 +2718,8 @@ const styles = StyleSheet.create({
   } as TextStyle,
 
   bubbleTimestampOutbound: {
-    color: 'rgba(255,255,255,0.7)',
+    color: tokens.emerald700,
+    opacity: 0.65,
     textAlign: 'right',
   } as TextStyle,
 
@@ -2594,37 +2735,40 @@ const styles = StyleSheet.create({
 
   // ── Composer ──────────────────────────────────────────────────────────────────
   composerWrap: {
-    padding: 14,
+    padding: 12,
+    paddingTop: 12,
     backgroundColor: tokens.cardBg,
     borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
-    gap: spacing.sm,
+    borderTopColor: tokens.cardBorder,
+    gap: 10,
   } as ViewStyle,
 
   templateRow: {
     flexDirection: 'row',
     alignItems: 'center',
     flexWrap: 'wrap',
-    gap: spacing.xs,
+    gap: 6,
   } as ViewStyle,
 
   templateLabel: {
     fontSize: 10,
     fontWeight: '700',
     color: tokens.textMuted,
-    letterSpacing: 0.5,
+    letterSpacing: 0.7,
     marginRight: 2,
   } as TextStyle,
 
   templateChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: 5,
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: tokens.cardBorder,
     borderRadius: radius.pill,
+    // Overrides PressableCard's xl radius with pill radius
+    backgroundColor: tokens.cardBg,
   } as ViewStyle,
 
   templateChipText: {
@@ -2636,17 +2780,20 @@ const styles = StyleSheet.create({
   composerInner: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    gap: 6,
-    backgroundColor: tokens.pageBg,
+    gap: 8,
+    backgroundColor: tokens.cardBg,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: radius.lg,
-    padding: 10,
+    borderColor: tokens.cardBorder,
+    borderRadius: radius.xl,
+    padding: 8,
   } as ViewStyle,
 
-  composerIconBtn: {
+  composerIconBtnCard: {
     padding: 6,
     borderRadius: radius.sm,
+    backgroundColor: 'transparent',
+    borderWidth: 0,
+    // No border/shadow override needed — transparent surface
   } as ViewStyle,
 
   composerInput: {
@@ -2654,19 +2801,20 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: tokens.textPrimary,
     paddingVertical: 6,
-    minHeight: 36,
-    maxHeight: 100,
+    minHeight: 22,
+    maxHeight: 80,
     outlineStyle: 'none',
   } as unknown as TextStyle,
 
-  sendBtn: {
+  sendBtnCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 5,
     backgroundColor: tokens.primary,
-    paddingHorizontal: 14,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.md,
+    paddingHorizontal: 16,
+    paddingVertical: 7,
+    borderRadius: 10,
+    borderWidth: 0,
   } as ViewStyle,
 
   sendBtnDisabled: {
@@ -2674,46 +2822,25 @@ const styles = StyleSheet.create({
   } as ViewStyle,
 
   sendBtnText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#fff',
-  } as TextStyle,
-
-  // "Complete Session" — happy-path CTA (green, not red)
-  completeSessionBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.sm,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 10,
-    backgroundColor: tokens.primary,
-    borderRadius: radius.md,
-  } as ViewStyle,
-
-  completeSessionBtnText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
     color: '#fff',
   } as TextStyle,
 
   composerMeta: {
-    fontSize: 11,
+    fontSize: 10,
     color: tokens.textMuted,
     textAlign: 'center',
-  } as TextStyle,
+    fontVariant: ['tabular-nums'],
+  } as unknown as TextStyle,
 
   // ── No selection ──────────────────────────────────────────────────────────────
   noSelectionWrap: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: tokens.pageBg,
   } as ViewStyle,
-
-  noSelectionText: {
-    fontSize: 14,
-    color: tokens.textMuted,
-  } as TextStyle,
 
   // ── Member context rail ───────────────────────────────────────────────────────
   railWrap: {
@@ -2726,35 +2853,62 @@ const styles = StyleSheet.create({
   railOuter: {
     flex: 1,
     backgroundColor: tokens.cardBg,
+    position: 'relative',
+  } as ViewStyle,
+
+  railScrollView: {
+    flex: 1,
   } as ViewStyle,
 
   railContent: {
-    padding: spacing.xl,
-    gap: spacing.md,
+    padding: 14,
+    paddingTop: 16,
+    gap: 10,
     paddingBottom: spacing.xxxl,
   } as ViewStyle,
 
   railCard: {
-    padding: spacing.lg,
+    padding: 14,
   } as ViewStyle,
 
-  // Journey card
-  railJourneyName: {
-    fontSize: 14,
-    fontWeight: '600',
+  railCardTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 10,
+  } as ViewStyle,
+
+  railCardTitle: {
+    fontSize: 12,
+    fontWeight: '650' as any,
+    letterSpacing: -0.1,
     color: tokens.textPrimary,
-    marginBottom: spacing.sm,
   } as TextStyle,
 
-  railJourneyStep: {
-    fontSize: 12,
-    color: tokens.textSecondary,
-    marginTop: spacing.xs,
+  // Journey card
+  journeyNameRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 6,
+    marginBottom: 4,
+  } as ViewStyle,
+
+  railJourneyName: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: tokens.textPrimary,
+    flex: 1,
+  } as TextStyle,
+
+  journeyPercent: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: tokens.emerald700,
   } as TextStyle,
 
   progressTrack: {
     height: 8,
-    backgroundColor: '#E5E7EB',
+    backgroundColor: tokens.pageBg,
     borderRadius: radius.pill,
     overflow: 'hidden',
     marginBottom: spacing.xs,
@@ -2765,97 +2919,141 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
   } as ViewStyle,
 
+  railJourneyStep: {
+    fontSize: 11,
+    color: tokens.textSecondary,
+    marginTop: spacing.xs,
+    lineHeight: 15,
+  } as TextStyle,
+
   railJourneyPercent: {
     fontSize: 11,
     color: tokens.textMuted,
   } as TextStyle,
 
-  // Resource needs
-  resourceNeedsList: {
-    gap: spacing.sm,
-  } as ViewStyle,
-
-  resourceNeedRow: {
+  // Resource needs (no nested cards — border-top dividers)
+  needRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.sm,
+    gap: 8,
+    paddingVertical: 6,
   } as ViewStyle,
 
-  resourceNeedIconWrap: {
-    width: 24,
-    height: 24,
-    borderRadius: 6,
-    backgroundColor: tokens.gray100,
+  needRowBorder: {
+    borderTopWidth: 1,
+    borderTopColor: tokens.cardBorder,
+  } as ViewStyle,
+
+  needName: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  } as ViewStyle,
+
+  needNameText: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '500',
+    color: tokens.textPrimary,
+  } as TextStyle,
+
+  // Rank chip
+  rankChip: {
+    width: 18,
+    height: 18,
+    borderRadius: 5,
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
   } as ViewStyle,
 
-  resourceNeedName: {
-    flex: 1,
-    fontSize: 13,
-    color: tokens.textPrimary,
-    fontWeight: '500',
+  rankChipRed: {
+    backgroundColor: tokens.red100,
+  } as ViewStyle,
+
+  rankChipAmber: {
+    backgroundColor: tokens.amber100,
+  } as ViewStyle,
+
+  rankChipText: {
+    fontSize: 10,
+    fontWeight: '700',
   } as TextStyle,
 
-  // Compass Insight card
+  rankChipTextRed: {
+    color: tokens.red700,
+  } as TextStyle,
+
+  rankChipTextAmber: {
+    color: tokens.amber700,
+  } as TextStyle,
+
+  // Compass Insight card (emerald tinted — no Card wrapper)
   insightCard: {
-    backgroundColor: '#F0FDF4',
+    backgroundColor: '#ecfdf5',
     borderWidth: 1,
-    borderColor: '#BBF7D0',
+    borderColor: '#a7f3d0',
     borderRadius: radius.xl,
-    padding: spacing.lg,
+    padding: 14,
     gap: spacing.sm,
+    ...(shadows.card as object),
   } as ViewStyle,
 
   insightHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.xs,
+    gap: 6,
+    marginBottom: 2,
   } as ViewStyle,
 
   insightTitle: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
-    color: '#14532D',
+    color: '#047857',
+    flex: 1,
   } as TextStyle,
 
   insightBody: {
-    fontSize: 13,
-    color: '#14532D',
-    lineHeight: 18,
+    fontSize: 12,
+    color: '#065f46',
+    lineHeight: 19,
   } as TextStyle,
 
-  // Quick Actions
-  quickActionsSection: {
-    gap: spacing.sm,
+  insightFooter: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
   } as ViewStyle,
 
+  // Quick Actions
   quickActionsLabel: {
     fontSize: 10,
     fontWeight: '700',
     color: tokens.textMuted,
-    letterSpacing: 0.8,
+    letterSpacing: 0.7,
+    marginBottom: 6,
+    paddingHorizontal: 2,
   } as TextStyle,
 
   quickActionsStack: {
-    gap: spacing.xs,
+    gap: 5,
   } as ViewStyle,
 
   quickActionBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.sm,
-    paddingVertical: 10,
-    paddingHorizontal: spacing.md,
+    gap: 9,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: radius.md,
+    borderColor: tokens.cardBorder,
+    borderRadius: 10,
     backgroundColor: tokens.cardBg,
+    // Override PressableCard's xl radius to 10 for action buttons
   } as ViewStyle,
 
-  quickActionBtnPressed: {
-    backgroundColor: tokens.gray100,
+  quickActionIcon: {
+    flexShrink: 0,
   } as ViewStyle,
 
   quickActionBtnDisabled: {
@@ -2870,10 +3068,6 @@ const styles = StyleSheet.create({
   } as TextStyle,
 
   // Generate AI Summary
-  aiSummarySection: {
-    gap: 4,
-  } as ViewStyle,
-
   aiSummaryBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2882,7 +3076,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: spacing.md,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: tokens.cardBorder,
     borderRadius: radius.md,
     backgroundColor: tokens.gray100,
     opacity: 0.6,
@@ -2898,18 +3092,23 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: tokens.textMuted,
     textAlign: 'center',
+    marginTop: 4,
   } as TextStyle,
 
   // End Session (destructive)
+  endSessionRegion: {
+    position: 'relative',
+  } as ViewStyle,
+
   endSessionBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: spacing.sm,
-    paddingVertical: 12,
+    paddingVertical: 11,
     paddingHorizontal: spacing.lg,
-    backgroundColor: tokens.red700,
-    borderRadius: radius.lg,
+    backgroundColor: '#dc2626',
+    borderRadius: 10,
   } as ViewStyle,
 
   endSessionBtnDisabled: {
@@ -2917,9 +3116,70 @@ const styles = StyleSheet.create({
   } as ViewStyle,
 
   endSessionBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#ffffff',
+  } as TextStyle,
+
+  // End session inline confirmation panel
+  endConfirmPanel: {
+    marginTop: spacing.sm,
+    backgroundColor: tokens.cardBg,
+    borderTopWidth: 2,
+    borderTopColor: '#dc2626',
+    borderRadius: radius.xl,
+    padding: spacing.lg,
+    ...(shadows.elevated as object),
+  } as ViewStyle,
+
+  endConfirmTitle: {
     fontSize: 15,
+    fontWeight: '700',
+    color: tokens.textPrimary,
+    marginBottom: 6,
+    letterSpacing: -0.2,
+  } as TextStyle,
+
+  endConfirmBody: {
+    fontSize: 13,
+    color: tokens.textSecondary,
+    lineHeight: 19,
+    marginBottom: 14,
+  } as TextStyle,
+
+  endConfirmActions: {
+    flexDirection: 'row',
+    gap: 8,
+  } as ViewStyle,
+
+  endConfirmCancel: {
+    flex: 1,
+    paddingVertical: 9,
+    borderWidth: 1,
+    borderColor: tokens.cardBorder,
+    borderRadius: 10,
+    alignItems: 'center',
+    backgroundColor: tokens.cardBg,
+  } as ViewStyle,
+
+  endConfirmCancelText: {
+    fontSize: 13,
     fontWeight: '600',
-    color: '#fff',
+    color: tokens.textSecondary,
+  } as TextStyle,
+
+  endConfirmProceed: {
+    flex: 1,
+    paddingVertical: 9,
+    borderRadius: 10,
+    alignItems: 'center',
+    backgroundColor: '#dc2626',
+  } as ViewStyle,
+
+  endConfirmProceedText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#ffffff',
   } as TextStyle,
 
   // Consent section
