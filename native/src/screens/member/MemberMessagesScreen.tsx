@@ -143,11 +143,18 @@ const RAIL_WIDTH  = 320;
 const LEFT_MIN  = 200;
 const LEFT_MAX  = 500;
 const RIGHT_MIN = 200;
-const RIGHT_MAX = 450;
+const RIGHT_MAX = 360;
 
 /** localStorage keys for persisted pane widths. */
 const LS_KEY_LEFT  = 'compass:memberMessages:leftWidth';
 const LS_KEY_RIGHT = 'compass:memberMessages:rightWidth';
+
+/**
+ * One-time migration key. When absent the right-rail width is forced back to
+ * RAIL_WIDTH (320), discarding any stale pre-clamp value (e.g. 720px) that
+ * was persisted before RIGHT_MAX was introduced.
+ */
+const LS_KEY_RIGHT_MIGRATED_V2 = 'compass:memberMessages:_migratedV2';
 
 /**
  * Reads a numeric pane width from localStorage and clamps it to [min, max].
@@ -180,6 +187,29 @@ function writeStoredWidth(key: string, value: number): void {
   } catch {
     // Storage unavailable — ignore.
   }
+}
+
+/**
+ * Reads the right-rail width with a one-time v2 migration.
+ * If the migration flag is absent the stored value is discarded and the
+ * default (RAIL_WIDTH = 320) is written, preventing stale pre-clamp values
+ * (e.g. a 720px rail dragged before RIGHT_MAX existed) from blowing out the
+ * layout on every subsequent load.
+ */
+function readRightWidthWithMigration(): number {
+  if (typeof window === 'undefined') return RAIL_WIDTH;
+  try {
+    const migrated = window.localStorage.getItem(LS_KEY_RIGHT_MIGRATED_V2);
+    if (migrated !== '1') {
+      // First visit after the v2 clamp landed — reset to intended default.
+      window.localStorage.setItem(LS_KEY_RIGHT, String(RAIL_WIDTH));
+      window.localStorage.setItem(LS_KEY_RIGHT_MIGRATED_V2, '1');
+      return RAIL_WIDTH;
+    }
+  } catch {
+    return RAIL_WIDTH;
+  }
+  return readStoredWidth(LS_KEY_RIGHT, RAIL_WIDTH, RIGHT_MIN, RIGHT_MAX);
 }
 
 // ─── Inbox thread types ───────────────────────────────────────────────────────
@@ -1285,43 +1315,40 @@ function ConversationPane({
           </View>
         </View>
 
-        {/* Action buttons */}
+        {/* Action buttons — card-style, matching CHW iconBtnCard treatment */}
         <View style={styles.convActions}>
           {/* Phone */}
-          <TouchableOpacity
-            style={[styles.iconBtn, callInitiating && styles.iconBtnDisabled]}
+          <PressableCard
             onPress={() => void handleCall()}
             disabled={callInitiating}
-            accessibilityRole="button"
             accessibilityLabel={callInitiating ? 'Call initiating…' : 'Call your CHW'}
+            style={[styles.iconBtnCard, callInitiating && styles.iconBtnDisabled]}
           >
             {callInitiating ? (
               <ActivityIndicator size="small" color={colors.textSecondary} />
             ) : (
-              <Phone size={18} color={colors.textSecondary} />
+              <Phone size={18} color={colors.textSecondary} strokeWidth={1.5} />
             )}
-          </TouchableOpacity>
+          </PressableCard>
 
           {/* Calendar */}
-          <TouchableOpacity
-            style={styles.iconBtn}
+          <PressableCard
             onPress={onGoToCalendar}
-            accessibilityRole="button"
             accessibilityLabel="Schedule appointment"
+            style={styles.iconBtnCard}
           >
-            <Calendar size={18} color={colors.textSecondary} />
-          </TouchableOpacity>
+            <Calendar size={18} color={colors.textSecondary} strokeWidth={1.5} />
+          </PressableCard>
 
           {/* More */}
-          <TouchableOpacity
-            style={styles.iconBtn}
+          <PressableCard
             onPress={() => setMoreMenuOpen((v) => !v)}
-            accessibilityRole="button"
             accessibilityLabel="More options"
             accessibilityState={{ expanded: moreMenuOpen }}
+            style={styles.iconBtnCard}
           >
-            <MoreVertical size={18} color={colors.textSecondary} />
-          </TouchableOpacity>
+            <MoreVertical size={18} color={colors.textSecondary} strokeWidth={1.5} />
+          </PressableCard>
         </View>
       </View>
 
@@ -1416,12 +1443,9 @@ function ConversationPane({
         <ServicesConsentBanner chwName={chwName} onGoToProfile={onGoToProfile} />
       ) : (
         <>
-          {/* Quick reactions */}
-          <ScrollView
-            horizontal
-            style={styles.quickReactionsScroll}
-            contentContainerStyle={styles.quickReactionsContent}
-            showsHorizontalScrollIndicator={false}
+          {/* Quick reactions — flex-wrap so all 4 chips are always visible */}
+          <View
+            style={styles.quickReactionsRow}
             accessibilityRole="toolbar"
             accessibilityLabel="Quick reply options"
           >
@@ -1436,7 +1460,7 @@ function ConversationPane({
                 <Text style={styles.reactionChipText}>{r}</Text>
               </PressableCard>
             ))}
-          </ScrollView>
+          </View>
 
           {/* Composer */}
           <View style={styles.composerWrap}>
@@ -1556,8 +1580,9 @@ function CareContextRail({
   const wellnessPoints = completedSteps * 10 + (completedSteps > 0 ? 5 : 0);
 
   return (
+    <View style={[styles.railOuter, widthOverride]}>
     <ScrollView
-      style={[styles.railOuter, widthOverride]}
+      style={styles.railScroll}
       contentContainerStyle={styles.railContent}
       showsVerticalScrollIndicator={false}
       accessibilityRole="complementary"
@@ -1739,6 +1764,7 @@ function CareContextRail({
 
       </Card>
     </ScrollView>
+    </View>
   );
 }
 
@@ -1797,9 +1823,7 @@ export function MemberMessagesScreen(): React.JSX.Element {
   const [leftWidth, setLeftWidth] = useState<number>(() =>
     readStoredWidth(LS_KEY_LEFT, INBOX_WIDTH, LEFT_MIN, LEFT_MAX),
   );
-  const [rightWidth, setRightWidth] = useState<number>(() =>
-    readStoredWidth(LS_KEY_RIGHT, RAIL_WIDTH, RIGHT_MIN, RIGHT_MAX),
-  );
+  const [rightWidth, setRightWidth] = useState<number>(readRightWidthWithMigration);
 
   const handleLeftWidthChange  = useCallback((next: number) => {
     setLeftWidth(next);
@@ -2439,12 +2463,16 @@ const styles = StyleSheet.create({
   convActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: 6,
   } as ViewStyle,
-  iconBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: radius.md,
+  // Card-style icon button — matches CHW iconBtnCard exactly:
+  // padding gives ~40×40 tap target; border + white bg make it a visible chip.
+  iconBtnCard: {
+    padding: spacing.sm,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    backgroundColor: colors.cardBg,
     alignItems: 'center',
     justifyContent: 'center',
   } as ViewStyle,
@@ -2564,18 +2592,18 @@ const styles = StyleSheet.create({
     marginTop: 2,
   } as TextStyle,
 
-  // Quick reactions
-  quickReactionsScroll: {
-    flexShrink: 0,
+  // Quick reactions — wrapping row so all 4 chips are always fully visible.
+  // Falls to 2-row layout when the conversation pane is narrow.
+  quickReactionsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: 10,
     backgroundColor: colors.cardBg,
     borderTopWidth: 1,
     borderTopColor: colors.cardBorder,
-  } as ViewStyle,
-  quickReactionsContent: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    paddingHorizontal: spacing.xl,
-    paddingVertical: 8,
+    flexShrink: 0,
   } as ViewStyle,
   reactionChip: {
     paddingHorizontal: 14,
@@ -2827,15 +2855,19 @@ const styles = StyleSheet.create({
   } as TextStyle,
 
   // ── Right rail ────────────────────────────────────────────────────────────────
-  // Base width is RAIL_WIDTH (320px). CareContextRail passes a widthOverride
-  // { width: rightWidth } as the second style in the array, which wins over
-  // this static value. flexShrink: 0 prevents the rail from being squeezed.
+  // railOuter is the sizing container — it receives the dynamic width + flexShrink.
+  // railScroll fills it with flex:1 so the ScrollView never dictates its own width.
+  // This mirrors the CHW screen's railWrap + railOuter two-layer pattern exactly.
   railOuter: {
     width: RAIL_WIDTH,
     flexShrink: 0,
     backgroundColor: colors.cardBg,
     borderLeftWidth: 1,
     borderLeftColor: colors.cardBorder,
+    overflow: 'hidden',
+  } as ViewStyle,
+  railScroll: {
+    flex: 1,
   } as ViewStyle,
   railContent: {
     // no gap — the ONE card fills the rail
