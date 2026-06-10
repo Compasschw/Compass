@@ -41,6 +41,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   Bell,
   Check,
+  CheckCircle2,
+  ClipboardList,
   Edit2,
   Gift,
   Globe,
@@ -50,6 +52,7 @@ import {
   MapPin,
   Phone,
   ShoppingBag,
+  Star,
   User,
   X,
 } from 'lucide-react-native';
@@ -151,11 +154,49 @@ const SESSION_MODE_OPTIONS: { key: SessionModePreference; label: string }[] = [
   { key: 'phone', label: 'Phone' },
 ];
 
-const REWARD_ACTION_ICONS: Record<string, string> = {
-  session_completed: '✅',
-  follow_through: '⭐',
-  redeemed: '🎁',
-};
+/**
+ * Returns the appropriate lucide icon for a reward action type.
+ * Falls back to a ClipboardList icon for unknown actions.
+ */
+function RewardActionIcon({ action, size = 15 }: { action: string; size?: number }): React.JSX.Element {
+  switch (action) {
+    case 'session_completed':
+      return (
+        <CheckCircle2
+          size={size}
+          color={tokens.emerald700}
+          strokeWidth={2}
+          accessibilityLabel="session completed"
+        />
+      );
+    case 'follow_through':
+      return (
+        <Star
+          size={size}
+          color={tokens.amber700}
+          strokeWidth={2}
+          accessibilityLabel="goal milestone achieved"
+        />
+      );
+    case 'redeemed':
+      return (
+        <Gift
+          size={size}
+          color={tokens.primary}
+          strokeWidth={2}
+          accessibilityLabel="reward redeemed"
+        />
+      );
+    default:
+      return (
+        <ClipboardList
+          size={size}
+          color={tokens.primary}
+          strokeWidth={2}
+        />
+      );
+  }
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1247,8 +1288,11 @@ function JourneysRewardsCard({
           const isPositive = txn.points > 0;
           return (
             <View key={txn.id} style={journeyCardStyles.pointsRow}>
+              <View style={journeyCardStyles.pointsIconWrap}>
+                <RewardActionIcon action={txn.action} size={14} />
+              </View>
               <Text style={journeyCardStyles.pointsAction} numberOfLines={1}>
-                {REWARD_ACTION_ICONS[txn.action] ?? '•'} {txn.action.replace(/_/g, ' ')}
+                {txn.action.replace(/_/g, ' ')}
               </Text>
               <Text style={[journeyCardStyles.pointsDelta, { color: isPositive ? tokens.emerald700 : tokens.red700 }]}>
                 {isPositive ? '+' : ''}{txn.points}
@@ -1356,6 +1400,12 @@ const journeyCardStyles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingVertical: 4,
+  } as ViewStyle,
+  pointsIconWrap: {
+    width: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
   } as ViewStyle,
   pointsAction: {
     flex: 1,
@@ -1584,9 +1634,7 @@ function RewardRow({ item }: { item: RewardTransaction }): React.JSX.Element {
   return (
     <View style={rewardRowStyles.container}>
       <View style={rewardRowStyles.iconBox}>
-        <Text style={rewardRowStyles.icon}>
-          {REWARD_ACTION_ICONS[item.action] ?? '•'}
-        </Text>
+        <RewardActionIcon action={item.action} size={15} />
       </View>
       <View style={rewardRowStyles.info}>
         <Text style={rewardRowStyles.description} numberOfLines={2}>
@@ -1616,7 +1664,6 @@ const rewardRowStyles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   } as ViewStyle,
-  icon: { fontSize: 15 } as TextStyle,
   info: { flex: 1, gap: 2 } as ViewStyle,
   description: {
     fontSize: 13,

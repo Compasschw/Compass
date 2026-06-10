@@ -27,7 +27,10 @@ import {
 import {
   CheckCircle2,
   Clock,
+  CreditCard,
   FileText,
+  Home,
+  IdCard,
   Upload,
   XCircle,
 } from 'lucide-react-native';
@@ -57,8 +60,8 @@ interface MemberDocument {
   uploadedAt: string | null;
   /** Which journey step requires this document. Null = general. */
   requiredBy: string | null;
-  /** Emoji icon representing the document category. */
-  icon: string;
+  /** Lucide icon node representing the document category. */
+  icon: React.ReactNode;
 }
 
 // ─── Mock documents (replace with real endpoint when available) ───────────────
@@ -70,7 +73,7 @@ const MOCK_DOCUMENTS: MemberDocument[] = [
     status: 'uploaded',
     uploadedAt: '2026-04-15T10:00:00Z',
     requiredBy: null,
-    icon: '🪪',
+    icon: <IdCard size={32} color={tokens.primary} strokeWidth={2} accessibilityLabel="photo ID document" />,
   },
   {
     id: 'doc-2',
@@ -78,7 +81,7 @@ const MOCK_DOCUMENTS: MemberDocument[] = [
     status: 'uploaded',
     uploadedAt: '2026-04-16T14:30:00Z',
     requiredBy: null,
-    icon: '🏠',
+    icon: <Home size={32} color={tokens.primary} strokeWidth={2} accessibilityLabel="proof of address document" />,
   },
   {
     id: 'doc-3',
@@ -86,7 +89,7 @@ const MOCK_DOCUMENTS: MemberDocument[] = [
     status: 'pending',
     uploadedAt: null,
     requiredBy: 'Enrollment Step',
-    icon: '💳',
+    icon: <CreditCard size={32} color={tokens.amber700} strokeWidth={2} accessibilityLabel="Medi-Cal card document" />,
   },
   {
     id: 'doc-4',
@@ -94,7 +97,7 @@ const MOCK_DOCUMENTS: MemberDocument[] = [
     status: 'rejected',
     uploadedAt: '2026-04-18T09:00:00Z',
     requiredBy: null,
-    icon: '📄',
+    icon: <FileText size={32} color={tokens.textSecondary} strokeWidth={2} accessibilityLabel="income verification document" />,
   },
 ];
 
@@ -154,7 +157,7 @@ function DocCard({ doc, onUpload, isUploadPlaceholder = false }: DocCardProps): 
         {isPending ? (
           <Upload size={20} color={isUploadPlaceholder ? tokens.primary : tokens.amber700} />
         ) : (
-          <Text style={dc.iconEmoji}>{doc.icon}</Text>
+          doc.icon
         )}
       </View>
 
@@ -222,10 +225,6 @@ const dc = StyleSheet.create({
   iconCirclePending: {
     backgroundColor: '#FFFBEB',
   } as ViewStyle,
-  iconEmoji: {
-    // text-5xl ≈ 36px from mockup doc thumbnail
-    fontSize: 36,
-  } as TextStyle,
   name: {
     fontSize: 14,
     fontWeight: '600',
@@ -366,7 +365,14 @@ export function MemberDocumentsScreen(): React.JSX.Element {
                       status: 'pending',
                       uploadedAt: null,
                       requiredBy: 'Your CHW needs this',
-                      icon: '📄',
+                      icon: (
+                        <FileText
+                          size={32}
+                          color={tokens.textSecondary}
+                          strokeWidth={2}
+                          accessibilityLabel="document required"
+                        />
+                      ),
                     }}
                     onUpload={(d) => handleUpload(d)}
                     isUploadPlaceholder

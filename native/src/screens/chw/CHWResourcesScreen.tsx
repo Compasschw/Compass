@@ -118,16 +118,16 @@ const CATEGORY_LABELS: Record<ResourceCategory, string> = {
 
 const CATEGORY_PILL: Record<
   Exclude<ResourceCategory, 'all'>,
-  'red' | 'amber' | 'purple' | 'pink' | 'emerald' | 'blue' | 'orange' | 'gray-muted'
+  'red' | 'amber' | 'purple' | 'emerald' | 'blue' | 'gray'
 > = {
   housing:        'red',
   food:           'amber',
   mental_health:  'purple',
-  rehab:          'pink',
+  rehab:          'amber',
   healthcare:     'emerald',
   legal:          'blue',
-  transportation: 'orange',
-  other:          'gray-muted',
+  transportation: 'amber',
+  other:          'gray',
 };
 
 const CategoryIcon: React.FC<{ category: Exclude<ResourceCategory, 'all'>; size?: number; iconColor?: string }> = ({
@@ -216,8 +216,8 @@ function ResourceCard({ resource }: ResourceCardProps): React.JSX.Element {
           onPress={() => {
             const blurb = [
               resource.title,
-              resource.address ? `📍 ${resource.address}` : null,
-              resource.phone ? `📞 ${resource.phone}` : null,
+              resource.address ? `Address: ${resource.address}` : null,
+              resource.phone ? `Phone: ${resource.phone}` : null,
               '',
               resource.description,
             ]

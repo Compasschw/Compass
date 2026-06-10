@@ -24,7 +24,15 @@ import {
   Text,
   View,
 } from 'react-native';
-import { ArrowLeft } from 'lucide-react-native';
+import {
+  ArrowLeft,
+  CheckCircle2,
+  ClipboardList,
+  Flame,
+  Gift,
+  Star,
+  Trophy,
+} from 'lucide-react-native';
 
 import { colors as tokens, spacing, radius } from '../../theme/tokens';
 import {
@@ -41,11 +49,49 @@ import { useNavigation } from '@react-navigation/native';
 import { AppShell, PageHeader, Card, SectionHeader, PageWrap } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
 
-const REWARD_ACTION_ICONS: Record<string, string> = {
-  session_completed: '✅',
-  follow_through: '⭐',
-  redeemed: '🎁',
-};
+/**
+ * Returns the appropriate lucide icon for a reward action type.
+ * Falls back to a ClipboardList icon for unknown actions.
+ */
+function RewardActionIcon({ action }: { action: string }): React.JSX.Element {
+  switch (action) {
+    case 'session_completed':
+      return (
+        <CheckCircle2
+          size={18}
+          color={tokens.emerald700}
+          strokeWidth={2}
+          accessibilityLabel="session completed"
+        />
+      );
+    case 'follow_through':
+      return (
+        <Star
+          size={18}
+          color={tokens.amber700}
+          strokeWidth={2}
+          accessibilityLabel="goal milestone achieved"
+        />
+      );
+    case 'redeemed':
+      return (
+        <Gift
+          size={18}
+          color={tokens.primary}
+          strokeWidth={2}
+          accessibilityLabel="reward redeemed"
+        />
+      );
+    default:
+      return (
+        <ClipboardList
+          size={18}
+          color={tokens.primary}
+          strokeWidth={2}
+        />
+      );
+  }
+}
 
 function formatDate(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString('en-US', {
@@ -147,7 +193,12 @@ export function MemberRewardsScreen(): React.JSX.Element {
             {/* Progress ring visual */}
             <View style={styles.ringOuter}>
               <View style={styles.ringInner}>
-                <Text style={styles.ringTrophy}>🏆</Text>
+                <Trophy
+                  size={36}
+                  color={tokens.primary}
+                  strokeWidth={2}
+                  accessibilityLabel="wellness trophy"
+                />
                 <Text style={styles.ringBalance}>{balance.toLocaleString()}</Text>
                 <Text style={styles.ringUnit}>wellness pts</Text>
               </View>
@@ -189,7 +240,15 @@ export function MemberRewardsScreen(): React.JSX.Element {
             </View>
             <View style={styles.heroStatTile}>
               <Text style={styles.heroStatLabel}>Streak</Text>
-              <Text style={[styles.heroStatValue, { color: tokens.amber700 }]}>4 wks 🔥</Text>
+              <View style={styles.streakRow}>
+                <Text style={[styles.heroStatValue, { color: tokens.amber700 }]}>4 wks</Text>
+                <Flame
+                  size={18}
+                  color={tokens.amber700}
+                  strokeWidth={2}
+                  accessibilityLabel="fire streak indicator"
+                />
+              </View>
             </View>
           </View>
         </Card>
@@ -349,12 +408,42 @@ export function MemberRewardsScreen(): React.JSX.Element {
         <Card style={styles.historyCard}>
           <SectionHeader title="How to earn more points" marginBottom={spacing.md} />
           {[
-            { emoji: '✅', text: 'Complete a session with your CHW (+50 pts)' },
-            { emoji: '⭐', text: 'Follow through on a goal milestone (+25 pts)' },
-            { emoji: '📋', text: 'Complete your member profile (+10 pts)' },
+            {
+              icon: (
+                <CheckCircle2
+                  size={18}
+                  color={tokens.emerald700}
+                  strokeWidth={2}
+                  accessibilityLabel="complete session"
+                />
+              ),
+              text: 'Complete a session with your CHW (+50 pts)',
+            },
+            {
+              icon: (
+                <Star
+                  size={18}
+                  color={tokens.amber700}
+                  strokeWidth={2}
+                  accessibilityLabel="follow through on goal"
+                />
+              ),
+              text: 'Follow through on a goal milestone (+25 pts)',
+            },
+            {
+              icon: (
+                <ClipboardList
+                  size={18}
+                  color={tokens.primary}
+                  strokeWidth={2}
+                  accessibilityLabel="complete profile"
+                />
+              ),
+              text: 'Complete your member profile (+10 pts)',
+            },
           ].map((tip) => (
             <View key={tip.text} style={styles.tipRow}>
-              <Text style={styles.tipEmoji}>{tip.emoji}</Text>
+              <View style={styles.tipIconWrap}>{tip.icon}</View>
               <Text style={styles.tipText}>{tip.text}</Text>
             </View>
           ))}
@@ -391,7 +480,9 @@ function RewardRow({ item, showDivider }: { item: RewardTransaction; showDivider
     <>
       {showDivider ? <View style={styles.divider} /> : null}
       <View style={styles.rewardRow}>
-        <Text style={styles.rewardIcon}>{REWARD_ACTION_ICONS[item.action] ?? '•'}</Text>
+        <View style={styles.rewardIconWrap}>
+          <RewardActionIcon action={item.action} />
+        </View>
         <View style={styles.rewardInfo}>
           <Text style={styles.rewardAction} numberOfLines={1}>
             {item.action.replace(/_/g, ' ')}
@@ -466,8 +557,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 2,
   },
-  ringTrophy: {
-    fontSize: 36,
+  /** streakRow: flex row for streak value + Flame icon */
+  streakRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
   ringBalance: {
     fontFamily: 'DMSans_700Bold',
@@ -605,10 +699,11 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     paddingVertical: spacing.sm,
   },
-  rewardIcon: {
-    fontSize: 18,
+  /** rewardIconWrap: fixed-width container for reward action icon */
+  rewardIconWrap: {
     width: 28,
-    textAlign: 'center',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   rewardInfo: { flex: 1, gap: 1 },
   rewardAction: {
@@ -637,10 +732,11 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: tokens.pageBg,
   },
-  tipEmoji: {
-    fontSize: 16,
+  /** tipIconWrap: fixed-width container aligning tip icon with tip text */
+  tipIconWrap: {
     width: 24,
-    textAlign: 'center',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   tipText: {
     fontFamily: 'PlusJakartaSans_400Regular',

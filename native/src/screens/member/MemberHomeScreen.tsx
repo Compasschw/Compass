@@ -48,9 +48,13 @@ import {
   ChevronUp,
   ClipboardList,
   Gift,
+  Hand,
+  HeartPulse,
+  Home,
   ListChecks,
   MessageSquare,
   Phone,
+  ShoppingBasket,
   Square,
   CheckSquare,
   Target,
@@ -146,15 +150,28 @@ function mockActionItems(sessionId: string): string[] {
   ];
 }
 
-// ─── VerticalEmoji map (emoji only — no external colour dependency) ───────────
+// ─── VerticalIcon map — lucide icons replacing emoji ──────────────────────────
 
-const verticalEmoji: Record<Vertical, string> = {
-  housing:       '🏠',
-  rehab:         '💪',
-  food:          '🛒',
-  mental_health: '🧠',
-  healthcare:    '🏥',
-};
+/**
+ * Returns the appropriate lucide icon for a given care vertical.
+ * Each icon is sized at 20px with strokeWidth 2 and a token-derived colour.
+ */
+function VerticalIcon({ vertical }: { vertical: Vertical }): React.JSX.Element {
+  switch (vertical) {
+    case 'housing':
+      return <Home size={20} color={tokens.primary} strokeWidth={2} accessibilityLabel="Housing vertical" />;
+    case 'rehab':
+      return <HeartPulse size={20} color={tokens.purple700} strokeWidth={2} accessibilityLabel="Rehab vertical" />;
+    case 'food':
+      return <ShoppingBasket size={20} color={tokens.orange700} strokeWidth={2} accessibilityLabel="Food vertical" />;
+    case 'mental_health':
+      return <HeartPulse size={20} color={tokens.purple700} strokeWidth={2} accessibilityLabel="Mental health vertical" />;
+    case 'healthcare':
+      return <ClipboardList size={20} color={tokens.primary} strokeWidth={2} accessibilityLabel="Healthcare vertical" />;
+    default:
+      return <ClipboardList size={20} color={tokens.primary} strokeWidth={2} />;
+  }
+}
 
 // ─── UpcomingSessionRow ───────────────────────────────────────────────────────
 
@@ -167,7 +184,6 @@ interface UpcomingSessionRowProps {
  * The "Scheduled" badge now uses the shared Pill primitive (blue variant).
  */
 function UpcomingSessionRow({ session }: UpcomingSessionRowProps): React.JSX.Element {
-  const emoji = verticalEmoji[session.vertical as Vertical] ?? '📅';
   const [expanded, setExpanded] = useState(false);
   const [checkedItems, setCheckedItems] = useState<Set<number>>(new Set());
 
@@ -189,7 +205,7 @@ function UpcomingSessionRow({ session }: UpcomingSessionRowProps): React.JSX.Ele
       {/* Session info row */}
       <View style={styles.sessionRow}>
         <View style={styles.sessionIconContainer}>
-          <Text style={styles.sessionEmoji} accessibilityElementsHidden>{emoji}</Text>
+          <VerticalIcon vertical={(session.vertical as Vertical) ?? 'healthcare'} />
         </View>
         <View style={styles.sessionInfo}>
           <Text style={styles.sessionChwName} numberOfLines={1}>
@@ -401,8 +417,16 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
 
           {/* ── Page title ──────────────────────────────────────────────── */}
           <PageHeader
-            title={`${greeting}, ${firstName} 👋`}
+            title={`${greeting}, ${firstName}`}
             subtitle="Here's what's happening today"
+            right={
+              <Hand
+                size={22}
+                color={tokens.primary}
+                strokeWidth={2}
+                accessibilityLabel="greeting wave"
+              />
+            }
           />
 
           {/* ── Your CHW hero card ───────────────────────────────────────
@@ -549,7 +573,12 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
             >
               <View style={styles.journeyCardHeader}>
                 <View style={[styles.journeyIconCircle, { backgroundColor: '#FED7AA' }]}>
-                  <Text style={styles.journeyIconEmoji}>🍽️</Text>
+                  <ShoppingBasket
+                    size={22}
+                    color={tokens.orange700}
+                    strokeWidth={2}
+                    accessibilityLabel="food assistance category"
+                  />
                 </View>
                 <View style={styles.journeyCardText}>
                   <Text style={styles.journeyCardTitle}>Food Assistance</Text>
@@ -575,7 +604,12 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
             >
               <View style={styles.journeyCardHeader}>
                 <View style={[styles.journeyIconCircle, { backgroundColor: '#E9D5FF' }]}>
-                  <Text style={styles.journeyIconEmoji}>🧠</Text>
+                  <HeartPulse
+                    size={22}
+                    color={tokens.purple700}
+                    strokeWidth={2}
+                    accessibilityLabel="mental health category"
+                  />
                 </View>
                 <View style={styles.journeyCardText}>
                   <Text style={styles.journeyCardTitle}>Mental Health</Text>
@@ -893,10 +927,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   } as import('react-native').ViewStyle,
 
-  journeyIconEmoji: {
-    fontSize: 20,
-  } as import('react-native').TextStyle,
-
   journeyCardText: {
     flex: 1,
     gap: 2,
@@ -1039,10 +1069,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   } as import('react-native').ViewStyle,
-
-  sessionEmoji: {
-    fontSize: 18,
-  } as import('react-native').TextStyle,
 
   sessionInfo: {
     flex: 1,

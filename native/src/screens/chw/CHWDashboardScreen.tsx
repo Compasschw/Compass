@@ -43,6 +43,7 @@ import { useNavigation } from '@react-navigation/native';
 import {
   CalendarCheck,
   AlertTriangle,
+  Hand,
   MessageSquare,
   DollarSign,
   CheckCircle2,
@@ -71,7 +72,6 @@ import { PressableMember } from '../../components/shared/PressableMember';
 
 import {
   AppShell,
-  PageHeader,
   Card,
   StatTile,
   Pill,
@@ -197,11 +197,15 @@ function formatCurrency(amount: number): string {
 
 // ─── Day-of-week greeting ─────────────────────────────────────────────────────
 
+/**
+ * Returns a time-of-day greeting string without an emoji suffix.
+ * The Hand icon is rendered separately at the call site for a11y and consistency.
+ */
 function morningGreeting(firstName: string): string {
   const hour = new Date().getHours();
-  if (hour < 12) return `Good morning, ${firstName} 👋`;
-  if (hour < 17) return `Good afternoon, ${firstName} 👋`;
-  return `Good evening, ${firstName} 👋`;
+  if (hour < 12) return `Good morning, ${firstName}`;
+  if (hour < 17) return `Good afternoon, ${firstName}`;
+  return `Good evening, ${firstName}`;
 }
 
 /**
@@ -612,38 +616,53 @@ export function CHWDashboardScreen(): React.JSX.Element {
       <View style={Platform.OS === 'web' ? styles.pageWrapWeb : styles.pageWrapNative}>
 
         {/* ── Page header ─────────────────────────────────────────────────── */}
-        <PageHeader
-          title={greeting}
-          subtitle={headerSubtitle}
-          right={
-            <View style={styles.headerRight}>
-              {/* Search input — web-only visual (full-width on native would crowd the header) */}
-              {Platform.OS === 'web' && (
-                <View style={styles.searchWrap}>
-                  <Search size={14} color={tokens.textSecondary} style={styles.searchIcon} />
-                  <TextInput
-                    style={styles.searchInput}
-                    placeholder="Search members, journeys, resources…"
-                    placeholderTextColor={tokens.textSecondary}
-                    accessibilityLabel="Search"
-                  />
-                </View>
-              )}
-
-              {/* Add New Member */}
-              <TouchableOpacity
-                style={styles.newSessionBtn}
-                onPress={() => navigation.navigate('CHWMembers' as never)}
-                activeOpacity={0.85}
-                accessibilityRole="button"
-                accessibilityLabel="Add a new member"
-              >
-                <UserPlus size={14} color="#fff" />
-                <Text style={styles.newSessionText}>Add New Member</Text>
-              </TouchableOpacity>
+        {/* Greeting row: title + Hand icon inline, followed by the existing
+            right-slot controls (search + Add Member button).               */}
+        <View style={styles.greetingRow}>
+          <View style={styles.greetingTitleBlock}>
+            <View style={styles.greetingTitleInner}>
+              <Text style={styles.greetingTitle} accessibilityRole="header">
+                {greeting}
+              </Text>
+              <Hand
+                size={22}
+                color={tokens.primary}
+                strokeWidth={2}
+                accessibilityLabel="greeting wave"
+              />
             </View>
-          }
-        />
+            {headerSubtitle.length > 0 && (
+              <Text style={styles.greetingSubtitle}>{headerSubtitle}</Text>
+            )}
+          </View>
+
+          <View style={styles.headerRight}>
+            {/* Search input — web-only visual */}
+            {Platform.OS === 'web' && (
+              <View style={styles.searchWrap}>
+                <Search size={14} color={tokens.textSecondary} style={styles.searchIcon} />
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder="Search members, journeys, resources…"
+                  placeholderTextColor={tokens.textSecondary}
+                  accessibilityLabel="Search"
+                />
+              </View>
+            )}
+
+            {/* Add New Member */}
+            <TouchableOpacity
+              style={styles.newSessionBtn}
+              onPress={() => navigation.navigate('CHWMembers' as never)}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel="Add a new member"
+            >
+              <UserPlus size={14} color="#fff" />
+              <Text style={styles.newSessionText}>Add New Member</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
 
         {/* ── KPI row — 4 tiles ───────────────────────────────────────────── */}
         <View style={styles.kpiRow}>
@@ -773,7 +792,7 @@ export function CHWDashboardScreen(): React.JSX.Element {
                   TODO: wire when /chw/stats/satisfaction ships. */}
               <SnapshotBox
                 label="Member satisfaction"
-                value="4.9 ★"
+                value="4.9"
                 delta="stable"
               />
             </View>
@@ -862,6 +881,41 @@ const styles = StyleSheet.create({
     padding: spacing.xxxl,
     paddingBottom: 48,
   } as ViewStyle,
+
+  // ── Greeting row (replaces PageHeader for the greeting + Hand icon) ─────────
+  greetingRow: {
+    flexDirection:  'row',
+    alignItems:     'center',
+    justifyContent: 'space-between',
+    marginBottom:   spacing.xxl,
+    gap:            spacing.md,
+  } as ViewStyle,
+
+  greetingTitleBlock: {
+    flex: 1,
+    gap:  4,
+  } as ViewStyle,
+
+  greetingTitleInner: {
+    flexDirection: 'row',
+    alignItems:    'center',
+    gap:           8,
+  } as ViewStyle,
+
+  greetingTitle: {
+    fontSize:   24,
+    fontWeight: '700',
+    color:      '#111827',
+    lineHeight: 30,
+  } as TextStyle,
+
+  greetingSubtitle: {
+    fontSize:   14,
+    fontWeight: '400',
+    color:      '#6b7280',
+    lineHeight: 20,
+    marginTop:  4,
+  } as TextStyle,
 
   // ── Header right slot ──────────────────────────────────────────────────────
   headerRight: {
