@@ -46,7 +46,7 @@ import {
 } from '../../hooks/useApiQueries';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { useNavigation } from '@react-navigation/native';
-import { AppShell, PageHeader, Card, SectionHeader, PageWrap } from '../../components/ui';
+import { AppShell, EmptyState, PageHeader, Card, SectionHeader, PageWrap } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
 
 /**
@@ -460,9 +460,12 @@ export function MemberRewardsScreen(): React.JSX.Element {
             )}
             scrollEnabled={false}
             ListEmptyComponent={
-              <Text style={styles.historyEmpty}>
-                No reward activity yet. Earn points by completing sessions.
-              </Text>
+              <EmptyState
+                icon={Gift}
+                title="Your rewards start here"
+                body="Complete journey steps with your CHW to earn points."
+                cta={{ label: 'View My Journey', onPress: () => (navigation as any).navigate('MemberJourney') }}
+              />
             }
           />
         </Card>

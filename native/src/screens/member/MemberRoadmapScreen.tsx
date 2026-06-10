@@ -71,6 +71,7 @@ import { ErrorState } from '../../components/shared/ErrorState';
 import {
   AppShell,
   Card,
+  EmptyState,
   PageHeader,
   PageWrap,
   Pill,
@@ -810,16 +811,11 @@ export function MemberRoadmapScreen(): React.JSX.Element {
 
             {/* ── Journey Steps section ────────────────────────────────────── */}
             {activeJourney === null ? (
-              <Card style={styles.emptyJourneyCard}>
-                <View style={styles.emptyJourneyIcon}>
-                  <Lightbulb size={28} color={tokens.textMuted} accessibilityLabel="" />
-                </View>
-                <Text style={styles.emptyTitle}>No active journey</Text>
-                <Text style={styles.emptySub}>
-                  Your CHW will assign a journey after your first session. Check back
-                  soon.
-                </Text>
-              </Card>
+              <EmptyState
+                icon={Lightbulb}
+                title="No active journey"
+                body="Your CHW will assign a journey after your first session. Check back soon."
+              />
             ) : (
               <>
                 <SectionHeader
@@ -1109,34 +1105,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: tokens.amber700,
-  } as TextStyle,
-
-  // ── Empty journey ─────────────────────────────────────────────────────────
-  emptyJourneyCard: {
-    padding: spacing.xxxl,
-    alignItems: 'center',
-    gap: spacing.md,
-    marginBottom: spacing.xxl,
-  } as ViewStyle,
-  emptyJourneyIcon: {
-    width: 56,
-    height: 56,
-    borderRadius: radius.lg,
-    backgroundColor: tokens.gray100,
-    alignItems: 'center',
-    justifyContent: 'center',
-  } as ViewStyle,
-  emptyTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: tokens.textPrimary,
-  } as TextStyle,
-  emptySub: {
-    fontSize: 14,
-    color: tokens.textSecondary,
-    textAlign: 'center',
-    lineHeight: 20,
-    maxWidth: 300,
   } as TextStyle,
 
   // ── Session follow-ups ────────────────────────────────────────────────────

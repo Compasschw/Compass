@@ -35,7 +35,7 @@ import {
   Trash2,
 } from 'lucide-react-native';
 
-import { AppShell, PageHeader, Card, Pill, RightRail, StatTile } from '../../components/ui';
+import { AppShell, EmptyState, PageHeader, Card, Pill, RightRail, StatTile } from '../../components/ui';
 import { colors, spacing, radius } from '../../theme/tokens';
 import { useAuth } from '../../context/AuthContext';
 
@@ -288,9 +288,11 @@ export function CHWDocumentsScreen(): React.JSX.Element {
 
           {/* Table body */}
           {filtered.length === 0 ? (
-            <Card style={styles.emptyCard}>
-              <Text style={styles.emptyText}>No documents match your search.</Text>
-            </Card>
+            <EmptyState
+              icon={FileText}
+              title="No documents found"
+              body="Try a different search term or document type filter."
+            />
           ) : (
             filtered.map((doc, idx) => (
               <Card
@@ -620,16 +622,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.textSecondary,
     lineHeight: 16,
-  } as unknown as TextStyle,
-
-  emptyCard: {
-    padding: spacing.xl,
-    alignItems: 'center',
-  } as ViewStyle,
-
-  emptyText: {
-    fontSize: 14,
-    color: colors.textSecondary,
   } as unknown as TextStyle,
 
   railCard: {

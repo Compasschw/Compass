@@ -48,7 +48,6 @@ import {
   ChevronRight,
   Clock,
   FileText,
-  Inbox,
   MessageCircle,
   Sparkles,
   Star,
@@ -69,6 +68,7 @@ import {
 import {
   AppShell,
   Card,
+  EmptyState,
   PageHeader,
   PageWrap,
   Pill,
@@ -1288,42 +1288,6 @@ const pagFooterStyles = StyleSheet.create({
   } as TextStyle,
 });
 
-// ─── Empty state ──────────────────────────────────────────────────────────────
-
-interface EmptyStateProps {
-  message: string;
-  subtext?: string;
-}
-
-function EmptyState({ message, subtext }: EmptyStateProps): React.JSX.Element {
-  return (
-    <View style={emptyStyles.container}>
-      <Inbox size={28} color={tokens.textMuted} />
-      <Text style={emptyStyles.title}>{message}</Text>
-      {subtext ? <Text style={emptyStyles.sub}>{subtext}</Text> : null}
-    </View>
-  );
-}
-
-const emptyStyles = StyleSheet.create({
-  container: {
-    paddingVertical:   spacing.xxxl,
-    alignItems:        'center',
-    gap:               spacing.sm,
-    paddingHorizontal: spacing.xxxl,
-  } as ViewStyle,
-  title: {
-    fontSize:   16,
-    fontWeight: '700',
-    color:      tokens.textPrimary,
-  } as TextStyle,
-  sub: {
-    fontSize:  14,
-    color:     tokens.textSecondary,
-    textAlign: 'center' as const,
-  } as TextStyle,
-});
-
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export function MemberSessionsScreen(): React.JSX.Element {
@@ -1544,8 +1508,9 @@ export function MemberSessionsScreen(): React.JSX.Element {
 
           {totalRows === 0 ? (
             <EmptyState
-              message="No sessions yet"
-              subtext="Your sessions with a CHW will appear here after your first meeting."
+              icon={CalendarCheck}
+              title="No sessions yet"
+              body="Your sessions with a CHW will appear here after your first meeting."
             />
           ) : (
             <>

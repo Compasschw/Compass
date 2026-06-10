@@ -34,7 +34,7 @@ import {
   Sparkles,
 } from 'lucide-react-native';
 
-import { AppShell, PageHeader, Card, Pill, RightRail, StatTile } from '../../components/ui';
+import { AppShell, EmptyState, PageHeader, Card, Pill, RightRail, StatTile } from '../../components/ui';
 import { colors, spacing, radius } from '../../theme/tokens';
 import { useAuth } from '../../context/AuthContext';
 import { useChwJourneys, type MemberJourneyResponse } from '../../hooks/useApiQueries';
@@ -555,7 +555,11 @@ export function CHWJourneysScreen(): React.JSX.Element {
             </View>
           ) : filtered.length === 0 ? (
             <Card style={styles.emptyCard}>
-              <Text style={styles.emptyText}>No journeys match this filter.</Text>
+              <EmptyState
+                icon={Route}
+                title="No journeys found"
+                body="No journeys match this filter. Try a different status or check back after assigning a journey."
+              />
             </Card>
           ) : (() => {
             const activeJourneys  = filtered.filter((j) => j.status === 'active' && !j.steps.some((s) => s.status === 'missed'));
@@ -818,11 +822,6 @@ const styles = StyleSheet.create({
     padding: spacing.xl,
     alignItems: 'center',
   } as ViewStyle,
-
-  emptyText: {
-    fontSize: 14,
-    color: colors.textSecondary,
-  } as TextStyle,
 
   railCard: {
     padding: spacing.lg,

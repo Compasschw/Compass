@@ -45,7 +45,7 @@ import {
   X,
 } from 'lucide-react-native';
 
-import { AppShell, Card, PageHeader, Pill } from '../../components/ui';
+import { AppShell, Card, EmptyState, PageHeader, Pill } from '../../components/ui';
 import type { PillVariant } from '../../components/ui/Pill';
 import { Avatar } from '../../components/shared/Avatar';
 import { colors, radius, spacing } from '../../theme/tokens';
@@ -943,12 +943,11 @@ export function CHWMembersScreen(): React.JSX.Element {
            container so the visual rhythm matches the other filters. */
         incomingRequests.length === 0 ? (
           <Card style={styles.emptyCard}>
-            <Users size={32} color={colors.textMuted} />
-            <Text style={styles.emptyTitle}>No pending requests</Text>
-            <Text style={styles.emptyText}>
-              When a member schedules a session with you from their My CHW
-              screen, the request will appear here for the first 24 hours.
-            </Text>
+            <EmptyState
+              icon={Users}
+              title="No pending requests"
+              body="When a member schedules a session with you, the request will appear here."
+            />
           </Card>
         ) : (
           <Card style={styles.tableCard}>
@@ -976,15 +975,17 @@ export function CHWMembersScreen(): React.JSX.Element {
         </Card>
       ) : filtered.length === 0 ? (
         <Card style={styles.emptyCard}>
-          <Users size={32} color={colors.textMuted} />
-          <Text style={styles.emptyTitle}>No members found</Text>
-          <Text style={styles.emptyText}>
-            {searchQuery
-              ? 'Try a different search term.'
-              : activeFilter === 'all'
-                ? 'Members will appear here once you accept a request or complete a session.'
-                : 'No members match this filter.'}
-          </Text>
+          <EmptyState
+            icon={Users}
+            title="No members found"
+            body={
+              searchQuery
+                ? 'Try a different search term.'
+                : activeFilter === 'all'
+                  ? 'Members will appear here once you accept a request or complete a session.'
+                  : 'No members match this filter.'
+            }
+          />
         </Card>
       ) : Platform.OS === 'web' ? (
         /* Web: full table layout */
@@ -1266,12 +1267,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap:        spacing.md,
   } as ViewStyle,
-
-  emptyTitle: {
-    fontSize:   16,
-    fontWeight: '600',
-    color:      colors.textPrimary,
-  } as TextStyle,
 
   emptyText: {
     fontSize:   14,

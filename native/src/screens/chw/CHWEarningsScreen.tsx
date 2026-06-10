@@ -27,10 +27,14 @@ import {
   type TextStyle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
+import type { DrawerNavigationProp } from '@react-navigation/drawer';
+import type { CHWTabParamList } from '../../navigation/CHWTabNavigator';
 import {
-  DollarSign,
   Banknote,
   CheckCircle2,
+  DollarSign,
+  Wallet,
 } from 'lucide-react-native';
 
 import { formatCurrency } from '../../data/mock';
@@ -43,14 +47,16 @@ import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 import {
   AppShell,
+  EmptyState,
   PageHeader,
   Card,
   StatTile,
   SectionHeader,
   Pill,
+  PressableCard,
   type PillVariant,
 } from '../../components/ui';
-import { colors as tokens } from '../../theme/tokens';
+import { colors as tokens, numerals } from '../../theme/tokens';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -97,6 +103,7 @@ function pearPill(status: string): { variant: PillVariant; label: string } {
  * CHW Earnings screen — 3-card KPI row, sessions billed table, recent payouts.
  */
 export function CHWEarningsScreen(): React.JSX.Element {
+  const navigation = useNavigation<DrawerNavigationProp<CHWTabParamList>>();
   const earningsQuery = useChwEarnings();
   const claimsQuery = useChwClaims();
 
@@ -284,11 +291,12 @@ export function CHWEarningsScreen(): React.JSX.Element {
 
                   {/* Data rows */}
                   {currentMonthClaims.length === 0 ? (
-                    <View style={styles.tableEmptyRow}>
-                      <Text style={styles.tableEmptyText}>
-                        No sessions billed this month.
-                      </Text>
-                    </View>
+                    <EmptyState
+                      icon={Wallet}
+                      title="No earnings yet"
+                      body="Complete your first documented session to start earning."
+                      cta={{ label: 'View Members', onPress: () => navigation.navigate('CHWMembers') }}
+                    />
                   ) : (
                     currentMonthClaims.map((claim) => {
                       const pear = pearPill(claim.status);
@@ -307,13 +315,13 @@ export function CHWEarningsScreen(): React.JSX.Element {
                               {claim.procedureCode || '—'}
                             </Pill>
                           </View>
-                          <Text style={[styles.td, styles.tdNumeric, colWidths.Units]}>
+                          <Text style={[styles.td, styles.tdNumeric, colWidths.Units, numerals.tabular]}>
                             {claim.units ?? '—'}
                           </Text>
-                          <Text style={[styles.td, colWidths.Gross]}>
+                          <Text style={[styles.td, colWidths.Gross, numerals.tabular]}>
                             {formatCurrency(claim.grossAmount)}
                           </Text>
-                          <Text style={[styles.td, styles.tdBold, colWidths.Net]}>
+                          <Text style={[styles.td, styles.tdBold, colWidths.Net, numerals.tabular]}>
                             {formatCurrency(claim.netPayout)}
                           </Text>
                           <View style={[colWidths['Pear Suite'], styles.tdCenter]}>
@@ -342,30 +350,27 @@ export function CHWEarningsScreen(): React.JSX.Element {
               <View style={styles.payoutsList}>
                 {recentPayoutClaims.length === 0 ? (
                   /* Empty state — shown when no paid claims exist yet */
-                  <View style={styles.payoutRow}>
-                    <View style={styles.payoutIconCircle}>
-                      <CheckCircle2 size={18} color="#16a34a" />
-                    </View>
-                    <View style={styles.payoutInfo}>
-                      <Text style={styles.payoutAmount}>—</Text>
-                      <Text style={styles.payoutMeta}>No payouts yet</Text>
-                    </View>
-                    <Pill variant="gray" size="sm">Pending</Pill>
-                  </View>
+                  <EmptyState
+                    icon={Wallet}
+                    title="No payouts yet"
+                    body="Payouts appear here once your submitted claims are approved."
+                  />
                 ) : (
                   recentPayoutClaims.map((claim, idx) => (
-                    <View
+                    <PressableCard
                       key={claim.id}
                       style={[
                         styles.payoutRow,
                         idx < recentPayoutClaims.length - 1 && styles.payoutRowDivider,
+                        styles.payoutRowCard,
                       ]}
+                      accessibilityLabel={`Payout of ${formatCurrency(claim.netPayout)}`}
                     >
                       <View style={styles.payoutIconCircle}>
                         <CheckCircle2 size={18} color="#16a34a" />
                       </View>
                       <View style={styles.payoutInfo}>
-                        <Text style={styles.payoutAmount}>
+                        <Text style={[styles.payoutAmount, numerals.tabular]}>
                           {formatCurrency(claim.netPayout)}
                         </Text>
                         <Text style={styles.payoutMeta}>
@@ -375,7 +380,7 @@ export function CHWEarningsScreen(): React.JSX.Element {
                         </Text>
                       </View>
                       <Pill variant="emerald" size="sm">Completed</Pill>
-                    </View>
+                    </PressableCard>
                   ))
                 )}
               </View>
@@ -522,17 +527,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   } as ViewStyle,
 
-  tableEmptyRow: {
-    paddingVertical: 24,
-    paddingHorizontal: 20,
-    alignItems: 'center',
-  } as ViewStyle,
-
-  tableEmptyText: {
-    fontSize: 13,
-    color: '#9ca3af',
-  } as TextStyle,
-
   // ── Recent payouts card ──────────────────────────────────────────────────────
   payoutsCard: {
     marginBottom: 24,
@@ -563,6 +557,14 @@ const styles = StyleSheet.create({
   payoutRowDivider: {
     borderBottomWidth: 1,
     borderBottomColor: '#f3f4f6',
+  } as ViewStyle,
+
+  payoutRowCard: {
+    borderWidth: 0,
+    backgroundColor: 'transparent',
+    borderRadius: 8,
+    shadowOpacity: 0,
+    elevation: 0,
   } as ViewStyle,
 
   payoutIconCircle: {
