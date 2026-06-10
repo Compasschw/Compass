@@ -142,20 +142,32 @@ const RAIL_WIDTH  = 320;
 
 const LEFT_MIN  = 200;
 const LEFT_MAX  = 500;
-const RIGHT_MIN = 240;
-const RIGHT_MAX = 480;
+const RIGHT_MIN = 200;
+const RIGHT_MAX = 450;
 
 /** localStorage keys for persisted pane widths. */
 const LS_KEY_LEFT  = 'compass:memberMessages:leftWidth';
 const LS_KEY_RIGHT = 'compass:memberMessages:rightWidth';
 
-function readStoredWidth(key: string, fallback: number): number {
+/**
+ * Reads a numeric pane width from localStorage and clamps it to [min, max].
+ * Returns the fallback when running in SSR context, when the key is absent,
+ * or when the stored value is non-numeric. Clamping ensures stale values
+ * (e.g. a previously dragged 720px rail) are corrected on next load.
+ */
+function readStoredWidth(
+  key: string,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
   if (typeof window === 'undefined') return fallback;
   try {
     const stored = window.localStorage.getItem(key);
     if (stored === null) return fallback;
-    const parsed = Number(stored);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+    const parsed = parseInt(stored, 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+    return Math.max(min, Math.min(max, parsed));
   } catch {
     return fallback;
   }
@@ -1783,10 +1795,10 @@ export function MemberMessagesScreen(): React.JSX.Element {
 
   // ── Resizable pane widths ─────────────────────────────────────────────────────
   const [leftWidth, setLeftWidth] = useState<number>(() =>
-    readStoredWidth(LS_KEY_LEFT, INBOX_WIDTH),
+    readStoredWidth(LS_KEY_LEFT, INBOX_WIDTH, LEFT_MIN, LEFT_MAX),
   );
   const [rightWidth, setRightWidth] = useState<number>(() =>
-    readStoredWidth(LS_KEY_RIGHT, RAIL_WIDTH),
+    readStoredWidth(LS_KEY_RIGHT, RAIL_WIDTH, RIGHT_MIN, RIGHT_MAX),
   );
 
   const handleLeftWidthChange  = useCallback((next: number) => {
@@ -2351,6 +2363,7 @@ const styles = StyleSheet.create({
   // ── Center pane ───────────────────────────────────────────────────────────────
   convPane: {
     flex: 1,
+    minWidth: 0,
     flexDirection: 'column',
     backgroundColor: colors.pageBg,
     overflow: 'hidden',
@@ -2814,6 +2827,9 @@ const styles = StyleSheet.create({
   } as TextStyle,
 
   // ── Right rail ────────────────────────────────────────────────────────────────
+  // Base width is RAIL_WIDTH (320px). CareContextRail passes a widthOverride
+  // { width: rightWidth } as the second style in the array, which wins over
+  // this static value. flexShrink: 0 prevents the rail from being squeezed.
   railOuter: {
     width: RAIL_WIDTH,
     flexShrink: 0,
