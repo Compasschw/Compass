@@ -37,7 +37,7 @@ import {
 } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
 
-import { colors as tokens, spacing, radius } from '../../theme/tokens';
+import { colors as tokens, numerals, spacing, radius } from '../../theme/tokens';
 import {
   verticalLabels,
   type CalendarEvent,
@@ -219,7 +219,7 @@ function WeekViewGrid({
         <View key={hour} style={weekStyles.hourRow}>
           {/* Time label */}
           <View style={weekStyles.timeGutter}>
-            <Text style={weekStyles.timeLabel}>{formatHourLabel(hour)}</Text>
+            <Text style={[weekStyles.timeLabel, numerals.tabular]}>{formatHourLabel(hour)}</Text>
           </View>
           {/* Day columns */}
           {weekDays.map((date) => {
@@ -262,7 +262,7 @@ function WeekViewGrid({
                           {event.chwName}
                         </Text>
                       ) : null}
-                      <Text style={[weekStyles.eventChipMeta, { color: barColor }]}>
+                      <Text style={[weekStyles.eventChipMeta, { color: barColor }, numerals.tabular]}>
                         {formatTimeFull(event.startTime)}
                       </Text>
                     </View>
@@ -400,7 +400,7 @@ function EventDetailCard({ event }: EventDetailCardProps): React.JSX.Element {
 
         <View style={cardStyles.metaRow}>
           <Clock color={tokens.textMuted} size={12} />
-          <Text style={cardStyles.metaText}>
+          <Text style={[cardStyles.metaText, numerals.tabular]}>
             {formatTimeFull(event.startTime)}
             {event.endTime !== event.startTime ? ` – ${formatTimeFull(event.endTime)}` : ''}
           </Text>
@@ -522,7 +522,7 @@ function MemberRightRail({ upcomingEvents, onFindCHW }: MemberRightRailProps): R
                   <Text style={railStyles.sessionTitle} numberOfLines={1}>
                     {event.title}
                   </Text>
-                  <Text style={railStyles.sessionTime}>
+                  <Text style={[railStyles.sessionTime, numerals.tabular]}>
                     {event.date} · {formatTimeFull(event.startTime)}
                   </Text>
                   {event.chwName ? (

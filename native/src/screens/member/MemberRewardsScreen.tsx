@@ -34,7 +34,7 @@ import {
   Trophy,
 } from 'lucide-react-native';
 
-import { colors as tokens, spacing, radius } from '../../theme/tokens';
+import { colors as tokens, numerals, spacing, radius } from '../../theme/tokens';
 import {
   useMemberProfile,
   useMemberRewards,
@@ -46,7 +46,7 @@ import {
 } from '../../hooks/useApiQueries';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { useNavigation } from '@react-navigation/native';
-import { AppShell, EmptyState, PageHeader, Card, SectionHeader, PageWrap } from '../../components/ui';
+import { AppShell, EmptyState, PageHeader, Card, PressableCard, SectionHeader, PageWrap } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
 
 /**
@@ -199,7 +199,7 @@ export function MemberRewardsScreen(): React.JSX.Element {
                   strokeWidth={2}
                   accessibilityLabel="wellness trophy"
                 />
-                <Text style={styles.ringBalance}>{balance.toLocaleString()}</Text>
+                <Text style={[styles.ringBalance, numerals.tabular]}>{balance.toLocaleString()}</Text>
                 <Text style={styles.ringUnit}>wellness pts</Text>
               </View>
             </View>
@@ -232,16 +232,16 @@ export function MemberRewardsScreen(): React.JSX.Element {
           <View style={styles.heroStatRow}>
             <View style={styles.heroStatTile}>
               <Text style={styles.heroStatLabel}>Earned this month</Text>
-              <Text style={styles.heroStatValue}>+175</Text>
+              <Text style={[styles.heroStatValue, numerals.tabular]}>+175</Text>
             </View>
             <View style={styles.heroStatTile}>
               <Text style={styles.heroStatLabel}>Lifetime</Text>
-              <Text style={[styles.heroStatValue, { color: tokens.textPrimary }]}>{balance.toLocaleString()}</Text>
+              <Text style={[styles.heroStatValue, { color: tokens.textPrimary }, numerals.tabular]}>{balance.toLocaleString()}</Text>
             </View>
             <View style={styles.heroStatTile}>
               <Text style={styles.heroStatLabel}>Streak</Text>
               <View style={styles.streakRow}>
-                <Text style={[styles.heroStatValue, { color: tokens.amber700 }]}>4 wks</Text>
+                <Text style={[styles.heroStatValue, { color: tokens.amber700 }, numerals.tabular]}>4 wks</Text>
                 <Flame
                   size={18}
                   color={tokens.amber700}
@@ -260,14 +260,14 @@ export function MemberRewardsScreen(): React.JSX.Element {
             {featuredCatalog.map((item) => {
               const canAfford = balance >= item.costPoints;
               return (
-                <Card key={item.id} style={styles.catalogCard}>
+                <PressableCard key={item.id} style={styles.catalogCard}>
                   <Text style={styles.catalogEmoji}>{item.imageEmoji}</Text>
                   <View style={styles.catalogInfo}>
                     <Text style={styles.catalogName}>{item.name}</Text>
                     <Text style={styles.catalogDesc} numberOfLines={2}>
                       {item.description}
                     </Text>
-                    <Text style={styles.catalogCost}>{item.costPoints.toLocaleString()} pts</Text>
+                    <Text style={[styles.catalogCost, numerals.tabular]}>{item.costPoints.toLocaleString()} pts</Text>
                   </View>
                   <Pressable
                     onPress={async () => {
@@ -308,7 +308,7 @@ export function MemberRewardsScreen(): React.JSX.Element {
                       Redeem
                     </Text>
                   </Pressable>
-                </Card>
+                </PressableCard>
               );
             })}
           </View>
@@ -337,14 +337,14 @@ export function MemberRewardsScreen(): React.JSX.Element {
             {items.map((item) => {
               const canAfford = balance >= item.costPoints;
               return (
-                <Card key={item.id} style={styles.catalogCard}>
+                <PressableCard key={item.id} style={styles.catalogCard}>
                   <Text style={styles.catalogEmoji}>{item.imageEmoji}</Text>
                   <View style={styles.catalogInfo}>
                     <Text style={styles.catalogName}>{item.name}</Text>
                     <Text style={styles.catalogDesc} numberOfLines={2}>
                       {item.description}
                     </Text>
-                    <Text style={styles.catalogCost}>
+                    <Text style={[styles.catalogCost, numerals.tabular]}>
                       {item.costPoints.toLocaleString()} pts
                     </Text>
                   </View>
@@ -398,7 +398,7 @@ export function MemberRewardsScreen(): React.JSX.Element {
                       Redeem
                     </Text>
                   </Pressable>
-                </Card>
+                </PressableCard>
               );
             })}
           </View>
@@ -496,6 +496,7 @@ function RewardRow({ item, showDivider }: { item: RewardTransaction; showDivider
           style={[
             styles.rewardPoints,
             { color: isPositive ? tokens.emerald700 : tokens.red700 },
+            numerals.tabular,
           ]}
         >
           {isPositive ? '+' : ''}{item.points} pts

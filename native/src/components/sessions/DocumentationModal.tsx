@@ -41,7 +41,7 @@ import {
 } from 'lucide-react-native';
 import { ResourceMentionInput } from '../resources/ResourceMentionInput';
 
-import { colors as tokens, spacing, radius, shadows } from '../../theme/tokens';
+import { colors as tokens, numerals, spacing, radius, shadows } from '../../theme/tokens';
 import { typography } from '../../theme/typography';
 import { Card, SectionHeader, Pill } from '../ui';
 import { useGenerateAISummary } from '../../hooks/useApiQueries';
@@ -508,7 +508,7 @@ function UnitsSummary({ value, durationMinutes }: UnitsSummaryProps): React.JSX.
             <DollarSign size={18} color={tokens.emerald700} />
           </View>
           <View style={us.heroText}>
-            <Text style={us.heroValue}>
+            <Text style={[us.heroValue, numerals.tabular]}>
               {value} {value === 1 ? 'unit' : 'units'}
             </Text>
             <Text style={us.heroFootnote}>Auto-calculated · {durationLabel}</Text>
@@ -520,15 +520,15 @@ function UnitsSummary({ value, durationMinutes }: UnitsSummaryProps): React.JSX.
       <View style={us.statRow}>
         <Card style={us.statCell}>
           <Text style={us.statLabel}>Gross</Text>
-          <Text style={us.statValue}>{formatCurrency(grossAmount)}</Text>
+          <Text style={[us.statValue, numerals.tabular]}>{formatCurrency(grossAmount)}</Text>
         </Card>
         <Card style={us.statCell}>
           <Text style={us.statLabel}>Net (85%)</Text>
-          <Text style={[us.statValue, { color: tokens.primary }]}>{formatCurrency(netAmount)}</Text>
+          <Text style={[us.statValue, { color: tokens.primary }, numerals.tabular]}>{formatCurrency(netAmount)}</Text>
         </Card>
         <Card style={us.statCell}>
           <Text style={us.statLabel}>Rate</Text>
-          <Text style={us.statValue}>{formatCurrency(MEDI_CAL_RATE)}/unit</Text>
+          <Text style={[us.statValue, numerals.tabular]}>{formatCurrency(MEDI_CAL_RATE)}/unit</Text>
         </Card>
       </View>
     </View>

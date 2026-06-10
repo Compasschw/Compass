@@ -55,7 +55,7 @@ import {
   XCircle,
 } from 'lucide-react-native';
 
-import { colors as tokens, spacing, radius, shadows } from '../../theme/tokens';
+import { colors as tokens, numerals, spacing, radius, shadows } from '../../theme/tokens';
 import { typography } from '../../theme/typography';
 import {
   sessionModeLabels,
@@ -688,7 +688,7 @@ function SessionTableRow({
 
         {/* Duration */}
         <View style={[tableRowStyles.cell, tableRowStyles.durationCell]}>
-          <Text style={tableRowStyles.bodyText}>{durationDisplay}</Text>
+          <Text style={[tableRowStyles.bodyText, numerals.tabular]}>{durationDisplay}</Text>
         </View>
 
         {/* Modality */}
@@ -923,7 +923,7 @@ function SessionNativeCard({
         <Text style={nativeCardStyles.metaSep}>·</Text>
         <Text style={nativeCardStyles.metaText}>{formatModality(session.mode)}</Text>
         <Text style={nativeCardStyles.metaSep}>·</Text>
-        <Text style={nativeCardStyles.metaText}>
+        <Text style={[nativeCardStyles.metaText, numerals.tabular]}>
           {isScheduled ? 'Scheduled' : formatDuration(session.durationMinutes)}
         </Text>
       </View>
@@ -1156,7 +1156,7 @@ function PaginationFooter({
 
   return (
     <View style={pagFooterStyles.container}>
-      <Text style={pagFooterStyles.info}>
+      <Text style={[pagFooterStyles.info, numerals.tabular]}>
         Showing {firstRow}–{lastRow} of {totalRows} session{totalRows !== 1 ? 's' : ''}
       </Text>
 

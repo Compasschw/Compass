@@ -84,7 +84,7 @@ import {
 import { useQuery } from '@tanstack/react-query';
 
 import { fonts } from '../../theme/typography';
-import { colors as tokens, radius } from '../../theme/tokens';
+import { colors as tokens, numerals, radius } from '../../theme/tokens';
 import { api } from '../../api/client';
 import { transformKeys } from '../../utils/caseTransform';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
@@ -96,9 +96,11 @@ import {
   Card,
   PageHeader,
   Pill,
+  PressableCard,
   RightDrawer,
   RightRail,
   SectionHeader,
+  StaggerList,
 } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
 import {
@@ -1608,39 +1610,41 @@ function ResourceNeedsColumn({
         <Text style={resourceColStyles.emptyText}>No active journeys.</Text>
       ) : (
         <View style={resourceColStyles.priorityList}>
-          {top3.map((journey, index) => {
-            const rank = index + 1;
-            const severity = deriveSeverity(journey.progressPercent);
-            const chipBg = RANK_CHIP_BG[rank] ?? '#F3F4F6';
-            const chipColor = RANK_CHIP_COLOR[rank] ?? tokens.textMuted;
-            const pillVariant =
-              severity === 'high'
-                ? 'red'
-                : severity === 'medium'
-                ? 'amber'
-                : ('amber' as const);
-            const pillLabel =
-              severity === 'high' ? 'High' : severity === 'medium' ? 'Medium' : 'Low';
+          <StaggerList delayMs={50} durationMs={240}>
+            {top3.map((journey, index) => {
+              const rank = index + 1;
+              const severity = deriveSeverity(journey.progressPercent);
+              const chipBg = RANK_CHIP_BG[rank] ?? '#F3F4F6';
+              const chipColor = RANK_CHIP_COLOR[rank] ?? tokens.textMuted;
+              const pillVariant =
+                severity === 'high'
+                  ? 'red'
+                  : severity === 'medium'
+                  ? 'amber'
+                  : ('amber' as const);
+              const pillLabel =
+                severity === 'high' ? 'High' : severity === 'medium' ? 'Medium' : 'Low';
 
-            return (
-              <View key={journey.id} style={resourceColStyles.priorityItem}>
-                {/* Rank chip */}
-                <View style={[resourceColStyles.rankChip, { backgroundColor: chipBg }]}>
-                  <Text style={[resourceColStyles.rankText, { color: chipColor }]}>
-                    {rank}
+              return (
+                <View key={journey.id} style={resourceColStyles.priorityItem}>
+                  {/* Rank chip */}
+                  <View style={[resourceColStyles.rankChip, { backgroundColor: chipBg }]}>
+                    <Text style={[resourceColStyles.rankText, { color: chipColor }, numerals.tabular]}>
+                      {rank}
+                    </Text>
+                  </View>
+
+                  {/* Journey name */}
+                  <Text style={resourceColStyles.journeyName} numberOfLines={2}>
+                    {journey.template.name}
                   </Text>
+
+                  {/* Severity pill */}
+                  <Pill variant={pillVariant} size="sm">{pillLabel}</Pill>
                 </View>
-
-                {/* Journey name */}
-                <Text style={resourceColStyles.journeyName} numberOfLines={2}>
-                  {journey.template.name}
-                </Text>
-
-                {/* Severity pill */}
-                <Pill variant={pillVariant} size="sm">{pillLabel}</Pill>
-              </View>
-            );
-          })}
+              );
+            })}
+          </StaggerList>
         </View>
       )}
 
@@ -1648,7 +1652,7 @@ function ResourceNeedsColumn({
       {rewardsBalance !== undefined && (
         <View style={resourceColStyles.rewardsBadge}>
           <Star size={12} color="#D97706" />
-          <Text style={resourceColStyles.rewardsText}>
+          <Text style={[resourceColStyles.rewardsText, numerals.tabular]}>
             {rewardsBalance.currentBalance.toLocaleString()} wellness pts
           </Text>
         </View>
@@ -1703,7 +1707,7 @@ function ResourceNeedsColumn({
       {/* Session count chip */}
       {sessionCount > 0 && (
         <View style={resourceColStyles.sessionCountRow}>
-          <Text style={resourceColStyles.sessionCountText}>
+          <Text style={[resourceColStyles.sessionCountText, numerals.tabular]}>
             {sessionCount} session{sessionCount !== 1 ? 's' : ''} completed
           </Text>
         </View>
@@ -1991,7 +1995,7 @@ const StepCircle = React.memo(function StepCircle({
         {subLabelText}
       </Text>
       {/* Points */}
-      <Text style={isUpcoming ? timelineStyles.pointsMuted : timelineStyles.pointsActive}>
+      <Text style={[isUpcoming ? timelineStyles.pointsMuted : timelineStyles.pointsActive, numerals.tabular]}>
         +{step.points} pts
       </Text>
     </View>
@@ -2059,7 +2063,7 @@ const VerticalStepRow = React.memo(function VerticalStepRow({
           <Text style={[verticalStepStyles.statusText, { color: subLabelColor }]}>
             {subLabelText}
           </Text>
-          <Text style={verticalStepStyles.pointsText}>+{step.points} pts</Text>
+          <Text style={[verticalStepStyles.pointsText, numerals.tabular]}>+{step.points} pts</Text>
         </View>
       </View>
     </View>
@@ -2151,13 +2155,13 @@ const SingleJourneyTrack = React.memo(function SingleJourneyTrack({
       {/* Header row */}
       <View style={trackStyles.header}>
         <View style={[trackStyles.rankChip, { backgroundColor: chipBg }]}>
-          <Text style={[trackStyles.rankText, { color: chipColor }]}>{rank}</Text>
+          <Text style={[trackStyles.rankText, { color: chipColor }, numerals.tabular]}>{rank}</Text>
         </View>
         <Text style={trackStyles.journeyName} numberOfLines={1}>
           {journey.template.name}
         </Text>
         <Pill variant={pillVariant} size="sm">{pillLabel}</Pill>
-        <Text style={trackStyles.progressLabel}>
+        <Text style={[trackStyles.progressLabel, numerals.tabular]}>
           {Math.round(journey.progressPercent)}%
         </Text>
       </View>
@@ -2481,21 +2485,21 @@ function QuickAccessRow({
     <Card style={quickRowStyles.card}>
       <View style={quickRowStyles.row}>
         {quickActions.map((action, index) => (
-          <TouchableOpacity
+          <PressableCard
             key={action.label}
+            onPress={action.onPress}
             style={[
               quickRowStyles.actionBtn,
+              quickRowStyles.actionBtnFlat,
               index < quickActions.length - 1 && quickRowStyles.actionBtnBorder,
             ]}
-            onPress={action.onPress}
-            accessibilityRole="button"
             accessibilityLabel={action.label}
           >
             <View style={[quickRowStyles.iconCircle, { backgroundColor: action.iconBg }]}>
               {action.icon}
             </View>
             <Text style={quickRowStyles.actionLabel}>{action.label}</Text>
-          </TouchableOpacity>
+          </PressableCard>
         ))}
       </View>
     </Card>
@@ -2521,6 +2525,14 @@ const quickRowStyles = StyleSheet.create({
   actionBtnBorder: {
     borderRightWidth: 1,
     borderRightColor: '#F3F4F6',
+  } as ViewStyle,
+  /** Suppresses PressableCard's default card surface — buttons live inside a Card already. */
+  actionBtnFlat: {
+    borderWidth: 0,
+    backgroundColor: 'transparent',
+    shadowOpacity: 0,
+    elevation: 0,
+    borderRadius: 0,
   } as ViewStyle,
   iconCircle: {
     width: 40,
@@ -2603,11 +2615,12 @@ function BillableUnitsWidget({ memberId }: BillableUnitsWidgetProps): React.JSX.
               style={[
                 billingWidgetStyles.usedLabel,
                 dailyAtCap && billingWidgetStyles.usedLabelDanger,
+                numerals.tabular,
               ]}
             >
               {units.daily.used} / {units.daily.limit} used
             </Text>
-            <Text style={billingWidgetStyles.remainingLabel}>
+            <Text style={[billingWidgetStyles.remainingLabel, numerals.tabular]}>
               {units.daily.remaining} left
             </Text>
           </View>
@@ -2634,11 +2647,12 @@ function BillableUnitsWidget({ memberId }: BillableUnitsWidgetProps): React.JSX.
               style={[
                 billingWidgetStyles.usedLabel,
                 yearlyAtCap && billingWidgetStyles.usedLabelDanger,
+                numerals.tabular,
               ]}
             >
               {units.yearly.used} / {units.yearly.limit} used
             </Text>
-            <Text style={billingWidgetStyles.remainingLabel}>
+            <Text style={[billingWidgetStyles.remainingLabel, numerals.tabular]}>
               {units.yearly.remaining} left
             </Text>
           </View>

@@ -41,7 +41,7 @@ import {
   X,
 } from 'lucide-react-native';
 
-import { colors as tokens, spacing, radius } from '../../theme/tokens';
+import { colors as tokens, numerals, spacing, radius } from '../../theme/tokens';
 import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
 import {
@@ -285,7 +285,7 @@ function EventDetailCard({ event }: EventDetailCardProps): React.JSX.Element {
 
         <View style={detailStyles.metaRow}>
           <Clock size={12} color={colors.mutedForeground} />
-          <Text style={detailStyles.metaText}>
+          <Text style={[detailStyles.metaText, numerals.tabular]}>
             {formatTimeFull(event.startTime)}
             {event.endTime !== event.startTime
               ? ` – ${formatTimeFull(event.endTime)}`
@@ -481,7 +481,7 @@ function WeekViewGrid({
         <View key={hour} style={weekStyles.hourRow}>
           {/* Time label */}
           <View style={weekStyles.timeGutter}>
-            <Text style={weekStyles.timeLabel}>{formatHourLabel(hour)}</Text>
+            <Text style={[weekStyles.timeLabel, numerals.tabular]}>{formatHourLabel(hour)}</Text>
           </View>
           {/* Day columns */}
           {weekDays.map((date) => {
@@ -1376,7 +1376,7 @@ export function CHWCalendarScreen(): React.JSX.Element {
             });
             return (
               <View key={hour} style={styles.dayHourRow}>
-                <Text style={styles.dayHourLabel}>{formatHourLabel(hour)}</Text>
+                <Text style={[styles.dayHourLabel, numerals.tabular]}>{formatHourLabel(hour)}</Text>
                 <View style={styles.dayHourCell}>
                   {dayEvents.map((event) => {
                     const barColor = eventColor(event);
@@ -1385,7 +1385,7 @@ export function CHWCalendarScreen(): React.JSX.Element {
                         <Text style={[styles.dayEventText, { color: barColor }]} numberOfLines={1}>
                           {event.memberName ?? event.title}
                         </Text>
-                        <Text style={[styles.dayEventMeta, { color: barColor }]}>
+                        <Text style={[styles.dayEventMeta, { color: barColor }, numerals.tabular]}>
                           {formatTimeFull(event.startTime)}
                         </Text>
                       </View>

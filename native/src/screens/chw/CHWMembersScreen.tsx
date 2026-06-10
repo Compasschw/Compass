@@ -45,10 +45,10 @@ import {
   X,
 } from 'lucide-react-native';
 
-import { AppShell, Card, EmptyState, PageHeader, Pill } from '../../components/ui';
+import { AppShell, Card, EmptyState, PageHeader, Pill, PressableCard } from '../../components/ui';
 import type { PillVariant } from '../../components/ui/Pill';
 import { Avatar } from '../../components/shared/Avatar';
-import { colors, radius, spacing } from '../../theme/tokens';
+import { colors, numerals, radius, spacing } from '../../theme/tokens';
 import { useAuth } from '../../context/AuthContext';
 import {
   useChwMembers,
@@ -455,7 +455,7 @@ function MemberTableRow({ item, onPress }: RowProps): React.JSX.Element {
         {item.activeJourney != null ? (
           <View>
             <Text style={rowStyles.journeyName}>{item.activeJourney.name}</Text>
-            <Text style={rowStyles.journeyMeta}>
+            <Text style={[rowStyles.journeyMeta, numerals.tabular]}>
               {Math.round(item.activeJourney.percent)}%
               {item.activeJourney.currentStep ? ` · ${item.activeJourney.currentStep}` : ''}
             </Text>
@@ -594,58 +594,55 @@ function MemberCard({ item, onPress }: MemberCardProps): React.JSX.Element {
   const overdue = isOverdue(item.lastContactAt);
 
   return (
-    <TouchableOpacity
+    <PressableCard
       onPress={onPress}
-      accessible
-      accessibilityRole="button"
+      style={cardStyles.card}
       accessibilityLabel={`View profile for ${item.displayName}`}
     >
-      <Card style={cardStyles.card}>
-        <View style={cardStyles.headerRow}>
-          <Avatar
-            displayName={item.displayName}
-            initials={item.avatarInitials}
-            size={40}
-          />
-          <View style={cardStyles.nameBlock}>
-            <Text style={cardStyles.name}>{item.displayName}</Text>
-            <Text style={cardStyles.meta}>
-              {item.age != null ? `${item.age} · ` : ''}ID {item.maskedId}
-            </Text>
-          </View>
-          <ChevronRight size={18} color={colors.textMuted} />
-        </View>
-
-        <View style={cardStyles.pillRow}>
-          <Pill variant={item.status === 'active' ? 'emerald' : 'gray'} size="sm" withDot>
-            {item.status === 'active' ? 'Active' : 'Inactive'}
-          </Pill>
-          <Pill variant={engagementVariant(item.engagement, item.status)} size="sm">
-            {engagementLabel(item.engagement)}
-          </Pill>
-          {item.topNeed != null && (
-            <Pill variant={verticalVariant(item.topNeed)} size="sm">
-              {formatVertical(item.topNeed)}
-            </Pill>
-          )}
-        </View>
-
-        {item.activeJourney != null && (
-          <Text style={cardStyles.journeyLine}>
-            Journey: {item.activeJourney.name} · {Math.round(item.activeJourney.percent)}%
+      <View style={cardStyles.headerRow}>
+        <Avatar
+          displayName={item.displayName}
+          initials={item.avatarInitials}
+          size={40}
+        />
+        <View style={cardStyles.nameBlock}>
+          <Text style={cardStyles.name}>{item.displayName}</Text>
+          <Text style={cardStyles.meta}>
+            {item.age != null ? `${item.age} · ` : ''}ID {item.maskedId}
           </Text>
+        </View>
+        <ChevronRight size={18} color={colors.textMuted} />
+      </View>
+
+      <View style={cardStyles.pillRow}>
+        <Pill variant={item.status === 'active' ? 'emerald' : 'gray'} size="sm" withDot>
+          {item.status === 'active' ? 'Active' : 'Inactive'}
+        </Pill>
+        <Pill variant={engagementVariant(item.engagement, item.status)} size="sm">
+          {engagementLabel(item.engagement)}
+        </Pill>
+        {item.topNeed != null && (
+          <Pill variant={verticalVariant(item.topNeed)} size="sm">
+            {formatVertical(item.topNeed)}
+          </Pill>
         )}
+      </View>
 
-        <View style={cardStyles.contactRow}>
-          <Text style={cardStyles.contactTime}>
-            Last contact: {formatRelativeTime(item.lastContactAt)}
-          </Text>
-          {overdue && item.status === 'active' && (
-            <Text style={cardStyles.overdueTag}>Overdue</Text>
-          )}
-        </View>
-      </Card>
-    </TouchableOpacity>
+      {item.activeJourney != null && (
+        <Text style={[cardStyles.journeyLine, numerals.tabular]}>
+          Journey: {item.activeJourney.name} · {Math.round(item.activeJourney.percent)}%
+        </Text>
+      )}
+
+      <View style={cardStyles.contactRow}>
+        <Text style={cardStyles.contactTime}>
+          Last contact: {formatRelativeTime(item.lastContactAt)}
+        </Text>
+        {overdue && item.status === 'active' && (
+          <Text style={cardStyles.overdueTag}>Overdue</Text>
+        )}
+      </View>
+    </PressableCard>
   );
 }
 
@@ -920,7 +917,7 @@ export function CHWMembersScreen(): React.JSX.Element {
                 accessibilityState={{ selected: isActive }}
                 accessibilityLabel={`Filter: ${chip.label} (${count})`}
               >
-                <Text style={[styles.filterChipText, isActive && styles.filterChipTextActive]}>
+                <Text style={[styles.filterChipText, isActive && styles.filterChipTextActive, numerals.tabular]}>
                   {chip.label} ({count})
                 </Text>
               </TouchableOpacity>

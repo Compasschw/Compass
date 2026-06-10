@@ -75,10 +75,11 @@ import {
   PageHeader,
   PageWrap,
   Pill,
+  PressableCard,
   SectionHeader,
   StatTile,
 } from '../../components/ui';
-import { colors as tokens, spacing, radius } from '../../theme/tokens';
+import { colors as tokens, numerals, spacing, radius } from '../../theme/tokens';
 import type { PillVariant } from '../../components/ui/Pill';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -350,7 +351,7 @@ function StepDetailCard({ step }: StepDetailCardProps): React.JSX.Element {
         </Pill>
         <View style={stepDetailStyles.pointsBadge}>
           <Gift size={12} color={tokens.amber700} />
-          <Text style={stepDetailStyles.pointsText}>
+          <Text style={[stepDetailStyles.pointsText, numerals.tabular]}>
             +{step.pointsOnCompletion} pts
           </Text>
         </View>
@@ -825,10 +826,10 @@ export function MemberRoadmapScreen(): React.JSX.Element {
                 />
 
                 {/* Progress bar inside roadmap card */}
-                <Card style={styles.roadmapCard}>
+                <PressableCard style={styles.roadmapCard}>
                   <View style={styles.progressHeader}>
                     <Text style={styles.progressLabel}>Overall progress</Text>
-                    <Text style={styles.progressPct}>{journeyProgressPercent}%</Text>
+                    <Text style={[styles.progressPct, numerals.tabular]}>{journeyProgressPercent}%</Text>
                   </View>
                   <JourneyProgressBar percent={activeJourney.progressPercent} />
                   <Text style={styles.progressMeta}>
@@ -887,7 +888,7 @@ export function MemberRoadmapScreen(): React.JSX.Element {
                       rewards.
                     </Text>
                   </View>
-                </Card>
+                </PressableCard>
 
                 {/* Expanded step detail card */}
                 {selectedStep !== null && (
@@ -906,7 +907,7 @@ export function MemberRoadmapScreen(): React.JSX.Element {
                         <Text style={styles.pointsLegendName}>{name}</Text>
                         <View style={styles.pointsLegendBadge}>
                           <Gift size={10} color={tokens.amber700} accessibilityLabel="" />
-                          <Text style={styles.pointsLegendPts}>+{pts}</Text>
+                          <Text style={[styles.pointsLegendPts, numerals.tabular]}>+{pts}</Text>
                         </View>
                       </View>
                     ))}

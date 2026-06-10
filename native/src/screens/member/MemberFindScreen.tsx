@@ -53,6 +53,7 @@ import {
   PageHeader,
   PageWrap,
   Pill,
+  PressableCard,
   SectionHeader,
 } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
@@ -1005,7 +1006,7 @@ function CHWCard({ chw, onSchedule, onViewProfile }: CHWCardProps): React.JSX.El
   const avatarTextColor = getAvatarTextColor(initials);
 
   return (
-    <Card style={chwCardStyles.card}>
+    <PressableCard style={chwCardStyles.card}>
       {/* Top row: avatar + identity block */}
       <View style={chwCardStyles.topRow}>
         <View style={[chwCardStyles.avatar, { backgroundColor: avatarBg }]}>
@@ -1102,7 +1103,7 @@ function CHWCard({ chw, onSchedule, onViewProfile }: CHWCardProps): React.JSX.El
           </Text>
         </TouchableOpacity>
       </View>
-    </Card>
+    </PressableCard>
   );
 }
 

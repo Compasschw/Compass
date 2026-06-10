@@ -52,7 +52,7 @@ import {
   UserPlus,
 } from 'lucide-react-native';
 
-import { colors as tokens, spacing, radius } from '../../theme/tokens';
+import { colors as tokens, spacing, radius, numerals } from '../../theme/tokens';
 import { useAuth } from '../../context/AuthContext';
 import {
   useSessions,
@@ -75,6 +75,8 @@ import {
   Card,
   StatTile,
   Pill,
+  PressableCard,
+  StaggerList,
 } from '../../components/ui';
 
 // ─── Avatar palette (deterministic by initials, matches CHWMembersScreen) ────
@@ -310,17 +312,15 @@ function ScheduleRow({
   const name                = session.memberName ?? '—';
 
   return (
-    <TouchableOpacity
-      style={styles.scheduleRow}
+    <PressableCard
       onPress={onPress}
-      activeOpacity={0.75}
-      accessibilityRole="button"
+      style={styles.scheduleRow}
       accessibilityLabel={`Session with ${name} at ${time} ${meridiem}`}
     >
       {/* Time stack */}
       <View style={styles.timeStack}>
-        <Text style={styles.timeText}>{time}</Text>
-        <Text style={styles.timeAm}>{meridiem}</Text>
+        <Text style={[styles.timeText, numerals.tabular]}>{time}</Text>
+        <Text style={[styles.timeAm, numerals.tabular]}>{meridiem}</Text>
       </View>
 
       {/* Avatar — taps to MemberProfile (RN's deepest-pressable wins inside the row's TouchableOpacity). */}
@@ -363,7 +363,7 @@ function ScheduleRow({
           {startSoon ? 'Start →' : 'Prep →'}
         </Text>
       </TouchableOpacity>
-    </TouchableOpacity>
+    </PressableCard>
   );
 }
 
@@ -382,7 +382,7 @@ function SnapshotBox({
   return (
     <View style={styles.snapshotBox}>
       <Text style={styles.snapshotLabel}>{label}</Text>
-      <Text style={styles.snapshotValue}>{value}</Text>
+      <Text style={[styles.snapshotValue, numerals.tabular]}>{value}</Text>
       <Text style={[styles.snapshotDelta, { color: deltaColor ?? tokens.emerald700 }]}>{delta}</Text>
     </View>
   );
@@ -412,7 +412,7 @@ function ActivityRow({ item }: { item: ActivityItem }): React.JSX.Element {
         )}
         {item.description}
       </Text>
-      <Text style={styles.activityTime}>{relativeTime(item.timestamp)}</Text>
+      <Text style={[styles.activityTime, numerals.tabular]}>{relativeTime(item.timestamp)}</Text>
     </View>
   );
 }
@@ -651,78 +651,79 @@ export function CHWDashboardScreen(): React.JSX.Element {
             )}
 
             {/* Add New Member */}
-            <TouchableOpacity
-              style={styles.newSessionBtn}
+            <PressableCard
               onPress={() => navigation.navigate('CHWMembers' as never)}
-              activeOpacity={0.85}
-              accessibilityRole="button"
+              style={styles.newSessionBtn}
               accessibilityLabel="Add a new member"
             >
               <UserPlus size={14} color="#fff" />
               <Text style={styles.newSessionText}>Add New Member</Text>
-            </TouchableOpacity>
+            </PressableCard>
           </View>
         </View>
 
         {/* ── KPI row — 4 tiles ───────────────────────────────────────────── */}
+        {/* StaggerList cascades the 4 stat tiles in on initial mount. */}
         <View style={styles.kpiRow}>
-          {/* 1. Sessions today */}
-          <StatTile
-            icon={<CalendarCheck size={18} color={tokens.emerald700} />}
-            iconBg={tokens.emerald100}
-            label="Sessions today"
-            value={sessionsTodayCount}
-            delta={sessionsTodayCount > 0 ? `+${sessionsTodayCount} today` : 'none today'}
-            deltaColor={tokens.emerald700}
-            deltaBg="#ecfdf5"
-            style={styles.kpiTile}
-            onPress={() => navigation.navigate('Calendar' as never)}
-          />
+          <StaggerList delayMs={50} durationMs={240}>
+            {/* 1. Sessions today */}
+            <StatTile
+              icon={<CalendarCheck size={18} color={tokens.emerald700} />}
+              iconBg={tokens.emerald100}
+              label="Sessions today"
+              value={sessionsTodayCount}
+              delta={sessionsTodayCount > 0 ? `+${sessionsTodayCount} today` : 'none today'}
+              deltaColor={tokens.emerald700}
+              deltaBg="#ecfdf5"
+              style={styles.kpiTile}
+              onPress={() => navigation.navigate('Calendar' as never)}
+            />
 
-          {/* 2. Overdue follow-ups */}
-          <StatTile
-            icon={<AlertTriangle size={18} color={tokens.amber700} />}
-            iconBg={tokens.amber100}
-            label="Overdue follow-ups"
-            value={overdueFollowupsCount}
-            delta="action needed"
-            deltaColor={tokens.amber700}
-            deltaBg="#fffbeb"
-            style={styles.kpiTile}
-            onPress={() => navigation.navigate('Requests' as never)}
-          />
+            {/* 2. Overdue follow-ups */}
+            <StatTile
+              icon={<AlertTriangle size={18} color={tokens.amber700} />}
+              iconBg={tokens.amber100}
+              label="Overdue follow-ups"
+              value={overdueFollowupsCount}
+              delta="action needed"
+              deltaColor={tokens.amber700}
+              deltaBg="#fffbeb"
+              style={styles.kpiTile}
+              onPress={() => navigation.navigate('Requests' as never)}
+            />
 
-          {/* 3. Messages awaiting reply
-              Heuristic: in_progress session count.
-              TODO: wire to /chw/messages/unread when that endpoint ships. */}
-          <StatTile
-            icon={<MessageSquare size={18} color={tokens.blue700} />}
-            iconBg={tokens.blue100}
-            label="Messages awaiting reply"
-            value={messagesAwaitingCount}
-            delta={messagesAwaitingCount > 0 ? `${messagesAwaitingCount} unread` : 'no unread'}
-            deltaColor={tokens.blue700}
-            deltaBg="#eff6ff"
-            style={styles.kpiTile}
-            onPress={() => navigation.navigate('SessionsStack' as never)}
-          />
+            {/* 3. Messages awaiting reply
+                Heuristic: in_progress session count.
+                TODO: wire to /chw/messages/unread when that endpoint ships. */}
+            <StatTile
+              icon={<MessageSquare size={18} color={tokens.blue700} />}
+              iconBg={tokens.blue100}
+              label="Messages awaiting reply"
+              value={messagesAwaitingCount}
+              delta={messagesAwaitingCount > 0 ? `${messagesAwaitingCount} unread` : 'no unread'}
+              deltaColor={tokens.blue700}
+              deltaBg="#eff6ff"
+              style={styles.kpiTile}
+              onPress={() => navigation.navigate('SessionsStack' as never)}
+            />
 
-          {/* 4. Earnings this week */}
-          <StatTile
-            icon={<DollarSign size={18} color={tokens.purple700} />}
-            iconBg={tokens.purple100}
-            label="Earnings this week"
-            value={formatCurrency(earningsThisWeek)}
-            /* MoM delta not derivable without prior-month breakdown — omit cleanly.
-               TODO: wire when /chw/earnings returns month_over_month_pct. */
-            delta={earnings?.pendingPayout != null && earnings.pendingPayout > 0
-              ? `${formatCurrency(earnings.pendingPayout)} pending`
-              : undefined}
-            deltaColor={tokens.emerald700}
-            deltaBg="#ecfdf5"
-            style={styles.kpiTile}
-            onPress={() => navigation.navigate('EarningsStack' as never)}
-          />
+            {/* 4. Earnings this week */}
+            <StatTile
+              icon={<DollarSign size={18} color={tokens.purple700} />}
+              iconBg={tokens.purple100}
+              label="Earnings this week"
+              value={formatCurrency(earningsThisWeek)}
+              /* MoM delta not derivable without prior-month breakdown — omit cleanly.
+                 TODO: wire when /chw/earnings returns month_over_month_pct. */
+              delta={earnings?.pendingPayout != null && earnings.pendingPayout > 0
+                ? `${formatCurrency(earnings.pendingPayout)} pending`
+                : undefined}
+              deltaColor={tokens.emerald700}
+              deltaBg="#ecfdf5"
+              style={styles.kpiTile}
+              onPress={() => navigation.navigate('EarningsStack' as never)}
+            />
+          </StaggerList>
         </View>
 
         {/* ── Mid row: Today's Schedule (full-width) ──────────────────────── */}
@@ -954,8 +955,9 @@ const styles = StyleSheet.create({
     flexDirection:   'row',
     alignItems:      'center',
     gap:             6,
-    backgroundColor: '#16a34a', // emerald-600
+    backgroundColor: '#16a34a', // emerald-600 — overrides PressableCard white default
     borderRadius:    radius.lg,
+    borderWidth:     0,
     paddingHorizontal: spacing.lg,
     paddingVertical:   spacing.sm + 2,
   } as ViewStyle,

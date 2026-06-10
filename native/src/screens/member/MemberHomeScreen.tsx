@@ -81,8 +81,10 @@ import {
   PageHeader,
   PageWrap,
   Pill,
+  PressableCard,
   SectionHeader,
   StatTile,
+  StaggerList,
 } from '../../components/ui';
 import { useMemberRoadmap } from '../../hooks/useFollowupQueries';
 import { useRefreshControl } from '../../hooks/useRefreshControl';
@@ -488,49 +490,51 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
            *  content: Rewards, Upcoming sessions, Active Goals, Open Requests.
            */}
           <View style={styles.statGrid}>
-            <StatTile
-              icon={<Gift color={tokens.emerald700} size={18} />}
-              iconBg={tokens.emerald100}
-              label="Wellness Points"
-              value={rewardsBalance.toLocaleString()}
-              delta="Points earned"
-              style={styles.statGridTile}
-              onPress={handleOpenRewards}
-              accessibilityLabel={`Wellness Points: ${rewardsBalance.toLocaleString()}`}
-            />
-            <StatTile
-              icon={<CalendarCheck color={tokens.blue700} size={18} />}
-              iconBg={tokens.blue100}
-              label="Upcoming"
-              value={upcomingSessions.length}
-              delta={upcomingSessions.length === 1 ? 'Session' : 'Sessions'}
-              deltaColor={tokens.blue700}
-              style={styles.statGridTile}
-              onPress={handleOpenSessions}
-              accessibilityLabel={`Upcoming sessions: ${upcomingSessions.length}`}
-            />
-            <StatTile
-              icon={<Target color={tokens.amber700} size={18} />}
-              iconBg={tokens.amber100}
-              label="Active Goals"
-              value={activeRoadmapItems.length}
-              delta="On your roadmap"
-              deltaColor={tokens.amber700}
-              style={styles.statGridTile}
-              onPress={handleOpenRoadmap}
-              accessibilityLabel={`Active goals: ${activeRoadmapItems.length}`}
-            />
-            <StatTile
-              icon={<ClipboardList color={tokens.purple700} size={18} />}
-              iconBg={tokens.purple100}
-              label="Open Requests"
-              value={openRequestsCount}
-              delta="Awaiting CHW"
-              deltaColor={tokens.purple700}
-              style={styles.statGridTile}
-              onPress={handleFindCHW}
-              accessibilityLabel={`Open requests: ${openRequestsCount}`}
-            />
+            <StaggerList delayMs={50} durationMs={240}>
+              <StatTile
+                icon={<Gift color={tokens.emerald700} size={18} />}
+                iconBg={tokens.emerald100}
+                label="Wellness Points"
+                value={rewardsBalance.toLocaleString()}
+                delta="Points earned"
+                style={styles.statGridTile}
+                onPress={handleOpenRewards}
+                accessibilityLabel={`Wellness Points: ${rewardsBalance.toLocaleString()}`}
+              />
+              <StatTile
+                icon={<CalendarCheck color={tokens.blue700} size={18} />}
+                iconBg={tokens.blue100}
+                label="Upcoming"
+                value={upcomingSessions.length}
+                delta={upcomingSessions.length === 1 ? 'Session' : 'Sessions'}
+                deltaColor={tokens.blue700}
+                style={styles.statGridTile}
+                onPress={handleOpenSessions}
+                accessibilityLabel={`Upcoming sessions: ${upcomingSessions.length}`}
+              />
+              <StatTile
+                icon={<Target color={tokens.amber700} size={18} />}
+                iconBg={tokens.amber100}
+                label="Active Goals"
+                value={activeRoadmapItems.length}
+                delta="On your roadmap"
+                deltaColor={tokens.amber700}
+                style={styles.statGridTile}
+                onPress={handleOpenRoadmap}
+                accessibilityLabel={`Active goals: ${activeRoadmapItems.length}`}
+              />
+              <StatTile
+                icon={<ClipboardList color={tokens.purple700} size={18} />}
+                iconBg={tokens.purple100}
+                label="Open Requests"
+                value={openRequestsCount}
+                delta="Awaiting CHW"
+                deltaColor={tokens.purple700}
+                style={styles.statGridTile}
+                onPress={handleFindCHW}
+                accessibilityLabel={`Open requests: ${openRequestsCount}`}
+              />
+            </StaggerList>
           </View>
 
           {/* ── Secondary stat row — completed sessions ──────────────── */}
@@ -565,10 +569,9 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
           />
           <View style={styles.journeyRow}>
             {/* Food Assistance */}
-            <Pressable
+            <PressableCard
               onPress={handleOpenRoadmap}
-              style={({ pressed }) => [styles.journeyCard, pressed && { opacity: 0.85 }]}
-              accessibilityRole="button"
+              style={styles.journeyCard}
               accessibilityLabel="Food Assistance journey, 60% complete"
             >
               <View style={styles.journeyCardHeader}>
@@ -593,13 +596,12 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
               >
                 <View style={[styles.journeyProgressFill, { width: '60%' }]} />
               </View>
-            </Pressable>
+            </PressableCard>
 
             {/* Mental Health */}
-            <Pressable
+            <PressableCard
               onPress={handleOpenRoadmap}
-              style={({ pressed }) => [styles.journeyCard, pressed && { opacity: 0.85 }]}
-              accessibilityRole="button"
+              style={styles.journeyCard}
               accessibilityLabel="Mental Health journey, 80% complete"
             >
               <View style={styles.journeyCardHeader}>
@@ -624,7 +626,7 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
               >
                 <View style={[styles.journeyProgressFill, { width: '80%' }]} />
               </View>
-            </Pressable>
+            </PressableCard>
           </View>
 
           {/* ── Recent Activity ──────────────────────────────────────────
