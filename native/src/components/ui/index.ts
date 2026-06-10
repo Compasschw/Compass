@@ -46,3 +46,18 @@ export type { ResizableDividerProps } from './ResizableDivider';
 
 export { ProfilePictureEditor } from './ProfilePictureEditor';
 export type { ProfilePictureEditorProps } from './ProfilePictureEditor';
+
+export { PressableCard } from './PressableCard';
+export type { PressableCardProps } from './PressableCard';
+
+export { StaggerList } from './StaggerList';
+export type { StaggerListProps } from './StaggerList';
+
+export { EmptyState } from './EmptyState';
+export type { EmptyStateProps, EmptyStateCTAProps } from './EmptyState';
+
+// JourneyStepSpring is exported from its own feature barrel (components/journey)
+// but also re-exported here for convenience so Wave 2 agents can import from
+// the single ui/ barrel without needing to know the journey/ path.
+export { JourneyStepSpring } from '../journey/JourneyStepSpring';
+export type { JourneyStepSpringProps } from '../journey/JourneyStepSpring';
