@@ -202,12 +202,12 @@ const SERVICE_TYPE_LABELS: Record<ServiceType, string> = {
   legal:        'Legal',
 };
 
-const SERVICE_PILL: Record<Exclude<ServiceType, 'all'>, 'blue' | 'amber' | 'purple' | 'emerald' | 'orange' | 'gray'> = {
+const SERVICE_PILL: Record<Exclude<ServiceType, 'all'>, 'blue' | 'amber' | 'purple' | 'emerald' | 'gray'> = {
   housing:      'blue',
   food:         'amber',
   mental_health:'purple',
   healthcare:   'emerald',
-  benefits:     'orange',
+  benefits:     'amber',
   legal:        'gray',
 };
 

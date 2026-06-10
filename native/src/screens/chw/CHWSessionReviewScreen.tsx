@@ -98,12 +98,15 @@ const KIND_LABELS: Record<FollowupKind, string> = {
 /**
  * Maps follow-up kind to a Pill variant so item-type chips use the shared
  * design-system token pairs instead of arbitrary hex values.
+ *
+ * Note: `member_goal` uses `blue` (informational) not `purple`; purple is
+ * reserved exclusively for AI-generated content tags.
  */
-const KIND_PILL_VARIANT: Record<FollowupKind, 'blue' | 'amber' | 'emerald' | 'purple'> = {
+const KIND_PILL_VARIANT: Record<FollowupKind, 'blue' | 'amber' | 'emerald'> = {
   action_item:       'blue',
   follow_up_task:    'amber',
   resource_referral: 'emerald',
-  member_goal:       'purple',
+  member_goal:       'blue',
 };
 
 const OWNER_LABELS: Record<FollowupOwner, string> = {
@@ -130,9 +133,9 @@ const PRIORITY_LABELS: Record<FollowupPriority, string> = {
  * Maps priority level to a Pill variant, replacing the previous inline
  * hex-literal approach with canonical design-system semantic pairs.
  */
-const PRIORITY_PILL_VARIANT: Record<FollowupPriority, 'gray' | 'amber-dark' | 'red'> = {
+const PRIORITY_PILL_VARIANT: Record<FollowupPriority, 'gray' | 'amber' | 'red'> = {
   low:    'gray',
-  medium: 'amber-dark',
+  medium: 'amber',
   high:   'red',
 };
 

@@ -143,7 +143,7 @@ const CATEGORY_PILL_VARIANT: Record<Exclude<ResourceCategory, 'all'>, import('..
   housing: 'blue',
   healthcare: 'emerald',
   mental_health: 'purple',
-  food: 'orange',
+  food: 'amber',
   rehab: 'red',
 };
 

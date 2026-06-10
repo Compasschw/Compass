@@ -49,7 +49,7 @@ interface VerticalRow {
   sessions: number;
   percentOfTotal: number;
   avgDuration: number;
-  pillVariant: 'emerald' | 'blue' | 'purple' | 'amber' | 'orange';
+  pillVariant: 'emerald' | 'blue' | 'purple' | 'amber';
 }
 
 // ─── Mock data — TODO: replace with real hook ─────────────────────────────────
@@ -81,7 +81,7 @@ const MOCK_VERTICALS: VerticalRow[] = [
   { vertical: 'food',          label: 'Food',          sessions: 9,  percentOfTotal: 21, avgDuration: 38, pillVariant: 'amber'   },
   { vertical: 'mental_health', label: 'Mental Health', sessions: 8,  percentOfTotal: 19, avgDuration: 60, pillVariant: 'purple'  },
   { vertical: 'healthcare',    label: 'Healthcare',    sessions: 7,  percentOfTotal: 17, avgDuration: 45, pillVariant: 'emerald' },
-  { vertical: 'benefits',      label: 'Benefits',      sessions: 4,  percentOfTotal: 10, avgDuration: 40, pillVariant: 'orange'  },
+  { vertical: 'benefits',      label: 'Benefits',      sessions: 4,  percentOfTotal: 10, avgDuration: 40, pillVariant: 'amber'   },
 ];
 
 const DATE_RANGE_LABELS: Record<DateRange, string> = {

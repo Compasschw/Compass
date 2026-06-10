@@ -19,7 +19,7 @@ import {
 } from 'react-native';
 
 import { Card } from './Card';
-import { colors, spacing, radius } from '../../theme/tokens';
+import { colors, spacing, radius, numerals } from '../../theme/tokens';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -103,8 +103,8 @@ export function StatTile({
         )}
       </View>
 
-      {/* Value */}
-      <Text style={styles.value}>{String(value)}</Text>
+      {/* Value — tabular-nums keeps digit widths stable as data updates */}
+      <Text style={[styles.value, numerals.tabular]}>{String(value)}</Text>
 
       {/* Label */}
       <Text style={styles.label}>{label}</Text>

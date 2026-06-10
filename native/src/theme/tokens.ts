@@ -116,25 +116,47 @@ export const radius = {
 
 export type RadiusToken = keyof typeof radius;
 
+// ─── Typographic numerals ─────────────────────────────────────────────────────
+
+/**
+ * Apply `numerals.tabular` to any text that displays numeric values — counts,
+ * durations, money amounts, percentages, and timestamps. Tabular-nums forces
+ * every digit to the same advance width, eliminating layout jitter when values
+ * change and aligning columns without monospace fallback fonts.
+ *
+ * Usage:
+ * ```ts
+ * <Text style={[styles.value, numerals.tabular]}>142</Text>
+ * ```
+ */
+export const numerals = {
+  tabular: { fontVariant: ['tabular-nums' as const] },
+} as const;
+
 // ─── Shadows ──────────────────────────────────────────────────────────────────
 
 /**
- * `shadows.card` works on both React Native and web.
+ * `shadows.card` and `shadows.elevated` work on both React Native and web.
  *
  * On native iOS/Android use the RN shadow props. On web, StyleSheet
  * forwards unknown props to the DOM element's `style`, so `boxShadow`
  * renders correctly when accessed via `Platform.select`.
+ *
+ * Shadow colours use a page-tinted near-black (`rgba(16,24,20,1)`) so
+ * perceived shadows shift from neutral grey to a barely-green-grey — sitting
+ * IN the page rather than ON it.
  */
 export const shadows = {
   /**
    * Matches Tailwind `shadow-sm`:
-   *   0 1px 3px rgba(0,0,0,.04), 0 1px 2px rgba(0,0,0,.03)
+   *   0 1px 3px rgba(16,24,20,.04), 0 1px 2px rgba(16,24,20,.03)
    *
-   * Native approximation uses a single soft shadow layer.
+   * Native approximation uses a single soft tinted shadow layer.
+   * Use on standard cards and panels.
    */
   card: Platform.select<Record<string, unknown>>({
     ios: {
-      shadowColor:   '#000000',
+      shadowColor:   'rgba(16, 24, 20, 1)',
       shadowOffset:  { width: 0, height: 1 },
       shadowOpacity: 0.04,
       shadowRadius:  3,
@@ -143,8 +165,30 @@ export const shadows = {
       elevation: 1,
     },
     web: {
-      boxShadow: '0 1px 3px rgba(0,0,0,.04), 0 1px 2px rgba(0,0,0,.03)',
+      boxShadow: '0 1px 3px rgba(16,24,20,.04), 0 1px 2px rgba(16,24,20,.03)',
     },
     default: {},
+  }) ?? {},
+
+  /**
+   * Two-layer tinted diffusion shadow for cards that need more lift (e.g.
+   * modals, detail drawers, active/focused cards). Emulates the mockup's
+   * layered `box-shadow` pattern with a medium ambient layer and a deeper
+   * directional layer at reduced opacity.
+   *
+   * Native falls back to a single larger shadow (React Native cannot compose
+   * multiple shadow layers natively).
+   */
+  elevated: Platform.select<Record<string, unknown>>({
+    web: {
+      boxShadow: '0 1px 3px rgba(16,24,20,.06), 0 8px 24px -12px rgba(19,78,54,.10)',
+    },
+    default: {
+      shadowColor:   'rgba(16, 24, 20, 1)',
+      shadowOpacity: 0.08,
+      shadowRadius:  16,
+      shadowOffset:  { width: 0, height: 4 },
+      elevation:     6,
+    },
   }) ?? {},
 } as const;

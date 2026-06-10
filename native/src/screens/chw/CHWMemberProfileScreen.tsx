@@ -1618,7 +1618,7 @@ function ResourceNeedsColumn({
                 ? 'red'
                 : severity === 'medium'
                 ? 'amber'
-                : ('amber-dark' as const);
+                : ('amber' as const);
             const pillLabel =
               severity === 'high' ? 'High' : severity === 'medium' ? 'Medium' : 'Low';
 
@@ -2142,7 +2142,7 @@ const SingleJourneyTrack = React.memo(function SingleJourneyTrack({
   const isMid = windowWidth >= TIMELINE_MID_BP && windowWidth < TIMELINE_WIDE_BP;
 
   const pillVariant =
-    severity === 'high' ? 'red' : severity === 'medium' ? 'amber' : ('amber-dark' as const);
+    severity === 'high' ? 'red' : severity === 'medium' ? 'amber' : ('amber' as const);
   const pillLabel =
     severity === 'high' ? 'High' : severity === 'medium' ? 'Medium' : 'Low';
 

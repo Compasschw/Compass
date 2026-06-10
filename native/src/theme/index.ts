@@ -23,6 +23,7 @@ export {
   spacing,
   radius,
   shadows,
+  numerals,
 } from './tokens';
 export type { ColorToken as TokenColorKey, SpacingToken, RadiusToken } from './tokens';
 

@@ -137,10 +137,10 @@ function isOverdue(lastContactAt: string | null): boolean {
  * Accepts the loosened string type to remain forward-compatible once a risk
  * model is wired up and the backend starts returning non-null values.
  */
-function riskVariant(risk: string | null): 'emerald' | 'amber-dark' | 'red' | null {
+function riskVariant(risk: string | null): 'emerald' | 'amber' | 'red' | null {
   switch (risk) {
     case 'low':    return 'emerald';
-    case 'medium': return 'amber-dark';
+    case 'medium': return 'amber';
     case 'high':   return 'red';
     default:       return null;
   }
@@ -160,17 +160,17 @@ function riskLabel(risk: string | null): string {
 
 /**
  * Maps engagement level → Pill variant.
- * When the member is inactive, "disengaged" renders as gray-muted (gray-100/gray-600).
+ * When the member is inactive, "disengaged" renders as gray (neutral / inactive).
  */
 function engagementVariant(
   engagement: MembersRosterItem['engagement'],
   status: MembersRosterItem['status'],
-): 'emerald' | 'amber-dark' | 'red' | 'gray-muted' {
+): 'emerald' | 'amber' | 'red' | 'gray' {
   switch (engagement) {
     case 'highly':      return 'emerald';
-    case 'moderately':  return 'amber-dark';
+    case 'moderately':  return 'amber';
     case 'disengaged':
-      return status === 'inactive' ? 'gray-muted' : 'red';
+      return status === 'inactive' ? 'gray' : 'red';
   }
 }
 
@@ -190,14 +190,14 @@ function engagementLabel(engagement: MembersRosterItem['engagement']): string {
  */
 function verticalVariant(
   vertical: string | null,
-): 'red' | 'orange' | 'purple' | 'amber' | 'pink' | 'emerald' | 'blue' | 'gray' {
+): 'red' | 'amber' | 'purple' | 'emerald' | 'blue' | 'gray' {
   if (!vertical) return 'gray';
-  const map: Record<string, 'red' | 'orange' | 'purple' | 'amber' | 'pink' | 'emerald' | 'blue' | 'gray'> = {
+  const map: Record<string, 'red' | 'amber' | 'purple' | 'emerald' | 'blue' | 'gray'> = {
     housing:         'red',
-    food:            'orange',
+    food:            'amber',
     mental_health:   'purple',
     transportation:  'amber',
-    maternal_health: 'pink',
+    maternal_health: 'amber',
     healthcare:      'emerald',
     benefits:        'blue',
     utilities:       'emerald',

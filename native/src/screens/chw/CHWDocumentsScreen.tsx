@@ -157,11 +157,11 @@ const DOC_TYPE_LABELS: Record<DocType, string> = {
   other:      'Other',
 };
 
-const DOC_TYPE_PILL: Record<Exclude<DocType, 'all'>, 'blue' | 'purple' | 'emerald' | 'orange' | 'gray'> = {
+const DOC_TYPE_PILL: Record<Exclude<DocType, 'all'>, 'blue' | 'purple' | 'emerald' | 'amber' | 'gray'> = {
   consent:    'blue',
   assessment: 'purple',
   care_plan:  'emerald',
-  referral:   'orange',
+  referral:   'amber',
   other:      'gray',
 };
 

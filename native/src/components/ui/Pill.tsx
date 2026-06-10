@@ -1,8 +1,16 @@
 /**
  * Pill — semantic colour-coded label chip for statuses, verticals, etc.
  *
- * Supports the full set of colour variants defined in the design system tokens
- * and two sizes (`sm` for inline use, `md` for standalone / table use).
+ * Six canonical variants (10 → 6 consolidation, Polish Wave 1):
+ *
+ *   emerald — positive / active / complete
+ *   blue    — informational / modality
+ *   amber   — attention / in-progress / medium-priority
+ *   red     — blocked / refused / high-priority
+ *   gray    — neutral / metadata / inactive
+ *   purple  — AI-generated content tags (RESERVED — do not use for other semantics)
+ *
+ * Supports two sizes (`sm` for inline use, `md` for standalone / table use).
  *
  * The optional `withDot` prop renders a small filled circle before the label —
  * used for Status and Risk pills in the Members table (matching members.html).
@@ -26,13 +34,9 @@ export type PillVariant =
   | 'emerald'
   | 'red'
   | 'amber'
-  | 'amber-dark'   // amber-100 bg / amber-800 text (Medium risk, Moderately Engaged)
   | 'blue'
   | 'purple'
-  | 'orange'
-  | 'pink'
-  | 'gray'
-  | 'gray-muted';  // gray-100 bg / gray-600 text (Inactive-Disengaged)
+  | 'gray';
 
 export type PillSize = 'sm' | 'md';
 
@@ -54,16 +58,12 @@ interface PillTokens {
 }
 
 const variantTokens: Record<PillVariant, PillTokens> = {
-  emerald:    { bg: colors.emerald100, text: colors.emerald700, dot: '#10b981' /* emerald-500 */ },
-  red:        { bg: colors.red100,     text: colors.red700,     dot: '#ef4444' /* red-500    */ },
-  amber:      { bg: colors.amber100,   text: colors.amber700,   dot: '#f59e0b' /* amber-500  */ },
-  'amber-dark':{ bg: colors.amber100,  text: colors.amber800,   dot: '#f59e0b' /* amber-500  */ },
-  blue:       { bg: colors.blue100,    text: colors.blue700,    dot: '#3b82f6' /* blue-500   */ },
-  purple:     { bg: colors.purple100,  text: colors.purple700,  dot: '#8b5cf6' /* purple-500 */ },
-  orange:     { bg: colors.orange100,  text: colors.orange700,  dot: '#f97316' /* orange-500 */ },
-  pink:       { bg: colors.pink100,    text: colors.pink700,    dot: '#ec4899' /* pink-500   */ },
-  gray:       { bg: colors.gray100,    text: colors.gray700,    dot: '#9ca3af' /* gray-400   */ },
-  'gray-muted':{ bg: colors.gray100,   text: colors.gray600,    dot: '#9ca3af' /* gray-400   */ },
+  emerald: { bg: colors.emerald100, text: colors.emerald700, dot: '#10b981' /* emerald-500 */ },
+  red:     { bg: colors.red100,     text: colors.red700,     dot: '#ef4444' /* red-500    */ },
+  amber:   { bg: colors.amber100,   text: colors.amber700,   dot: '#f59e0b' /* amber-500  */ },
+  blue:    { bg: colors.blue100,    text: colors.blue700,    dot: '#3b82f6' /* blue-500   */ },
+  purple:  { bg: colors.purple100,  text: colors.purple700,  dot: '#8b5cf6' /* purple-500 */ },
+  gray:    { bg: colors.gray100,    text: colors.gray700,    dot: '#9ca3af' /* gray-400   */ },
 };
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -73,8 +73,8 @@ const variantTokens: Record<PillVariant, PillTokens> = {
  *
  * ```tsx
  * <Pill variant="emerald" withDot>Active</Pill>
- * <Pill variant="amber-dark" size="sm">Moderately Engaged</Pill>
- * <Pill variant="red" size="sm">Housing</Pill>
+ * <Pill variant="amber" size="sm">Moderately Engaged</Pill>
+ * <Pill variant="red" size="sm">High Risk</Pill>
  * ```
  */
 export function Pill({
