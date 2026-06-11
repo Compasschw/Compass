@@ -476,3 +476,134 @@ class TestSessionChat:
             headers=auth_header(chw_b),
         )
         assert res.status_code == 403, res.text
+
+
+# ─── Send-message attachment validation tests ─────────────────────────────────
+#
+# These tests focus on the message body / attachment validation rules in
+# POST /sessions/{id}/messages without requiring AWS credentials (no S3 calls
+# are made — the 422 fires before the boto3 layer).
+#
+# Invariants enforced at the endpoint level:
+#   - text-only message (body present, no attachment) → 201
+#   - attachment-only message (s3_key + metadata, empty body) → 201
+#   - both body and attachment → 201
+#   - neither body nor attachment → 422
+#   - s3_key without required attachment metadata → 422
+#   - disallowed MIME type in attachment_content_type → 422 (server-side guard)
+#
+# The content_type allowlist is enforced at the SESSION layer (not the upload
+# layer) to catch stale / out-of-band s3_keys. The upload endpoint has its own
+# MIME allowlist (test_upload_validation.py); this test verifies the send path.
+
+class TestSendMessageAttachmentValidation:
+    """Validation tests for POST /sessions/{id}/messages attachment rules."""
+
+    @pytest.mark.asyncio
+    async def test_text_only_message_accepted(
+        self, client: AsyncClient, chw_tokens: dict, member_tokens: dict
+    ) -> None:
+        """Text-only message (no attachment fields) returns 201."""
+        session_id = await _create_session(client, member_tokens, chw_tokens)
+        res = await client.post(
+            f"/api/v1/sessions/{session_id}/messages",
+            json={"body": "Hello, just text"},
+            headers=auth_header(chw_tokens),
+        )
+        assert res.status_code == 201, res.text
+        assert res.json()["body"] == "Hello, just text"
+        assert res.json()["attachment"] is None
+
+    @pytest.mark.skipif(
+        not _aws_creds_available(),
+        reason="Requires AWS credentials to generate presigned S3 GET URLs",
+    )
+    @pytest.mark.asyncio
+    async def test_attachment_only_message_accepted(
+        self, client: AsyncClient, chw_tokens: dict, member_tokens: dict
+    ) -> None:
+        """Attachment-only message (empty body) returns 201."""
+        session_id = await _create_session(client, member_tokens, chw_tokens)
+        res = await client.post(
+            f"/api/v1/sessions/{session_id}/messages",
+            json={
+                "body": "",
+                "attachment_s3_key": "users/test/message_attachment/doc.pdf",
+                "attachment_filename": "doc.pdf",
+                "attachment_size_bytes": 102400,
+                "attachment_content_type": "application/pdf",
+            },
+            headers=auth_header(chw_tokens),
+        )
+        assert res.status_code == 201, res.text
+        body = res.json()
+        assert body["body"] == ""
+        assert body["attachment"] is not None
+        assert body["type"] == "file"
+
+    @pytest.mark.skipif(
+        not _aws_creds_available(),
+        reason="Requires AWS credentials to generate presigned S3 GET URLs",
+    )
+    @pytest.mark.asyncio
+    async def test_body_and_attachment_both_accepted(
+        self, client: AsyncClient, chw_tokens: dict, member_tokens: dict
+    ) -> None:
+        """Message with both body text and an attachment returns 201."""
+        session_id = await _create_session(client, member_tokens, chw_tokens)
+        res = await client.post(
+            f"/api/v1/sessions/{session_id}/messages",
+            json={
+                "body": "Here is the photo I mentioned",
+                "attachment_s3_key": "users/test/message_attachment/photo.jpg",
+                "attachment_filename": "photo.jpg",
+                "attachment_size_bytes": 51200,
+                "attachment_content_type": "image/jpeg",
+            },
+            headers=auth_header(chw_tokens),
+        )
+        assert res.status_code == 201, res.text
+        body = res.json()
+        assert body["body"] == "Here is the photo I mentioned"
+        assert body["attachment"] is not None
+        assert body["type"] == "image"
+
+    @pytest.mark.asyncio
+    async def test_neither_body_nor_attachment_returns_422(
+        self, client: AsyncClient, chw_tokens: dict, member_tokens: dict
+    ) -> None:
+        """Empty body with no attachment fields must return 422."""
+        session_id = await _create_session(client, member_tokens, chw_tokens)
+        res = await client.post(
+            f"/api/v1/sessions/{session_id}/messages",
+            json={"body": ""},
+            headers=auth_header(chw_tokens),
+        )
+        assert res.status_code == 422, res.text
+
+    @pytest.mark.asyncio
+    async def test_whitespace_only_body_no_attachment_returns_422(
+        self, client: AsyncClient, chw_tokens: dict, member_tokens: dict
+    ) -> None:
+        """Whitespace-only body with no attachment must return 422."""
+        session_id = await _create_session(client, member_tokens, chw_tokens)
+        res = await client.post(
+            f"/api/v1/sessions/{session_id}/messages",
+            json={"body": "   \t\n"},
+            headers=auth_header(chw_tokens),
+        )
+        assert res.status_code == 422, res.text
+
+    @pytest.mark.asyncio
+    async def test_s3_key_without_metadata_returns_422(
+        self, client: AsyncClient, chw_tokens: dict, member_tokens: dict
+    ) -> None:
+        """Providing attachment_s3_key but omitting the companion fields → 422."""
+        session_id = await _create_session(client, member_tokens, chw_tokens)
+        res = await client.post(
+            f"/api/v1/sessions/{session_id}/messages",
+            # attachment_filename, attachment_size_bytes, attachment_content_type absent
+            json={"body": "", "attachment_s3_key": "users/test/message_attachment/thing.pdf"},
+            headers=auth_header(chw_tokens),
+        )
+        assert res.status_code == 422, res.text

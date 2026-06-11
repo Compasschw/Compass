@@ -2,19 +2,27 @@
  * MemberDocumentsScreen — personal document folder for the member.
  *
  * Layout:
- *   - PageHeader: "My Documents"
- *   - 4-column grid of document cards (uploaded and pending)
- *   - Right rail: "What does [CHW] need next?" upload prompt card
+ *   - PageHeader: "My Documents" with uploaded / needed counts
+ *   - Document grid: one card per document type category (id, income, address, medical, other)
+ *     - If a document of that type is uploaded → DocCard (with Download + Delete)
+ *     - If not → UploadCard (Upload {type} button)
+ *   - Right rail: checklist of needed vs uploaded categories
+ *   - EmptyState when zero documents uploaded
  *
- * Note: Document upload is mocked with an Alert placeholder. Wire to the
- * presigned-URL upload flow when a member-facing /member/documents endpoint
- * ships. The "Maria needs this" upload card prompts for the next required
- * document from the active journey step.
+ * Upload flow (per category):
+ *   web:    hidden <input type="file"> → useFileUpload hook
+ *   native: expo-document-picker → useFileUpload hook
+ *
+ * Download: calls GET /documents/{id}/download-url then opens the presigned URL.
+ * Delete:   calls DELETE /documents/{id} (soft-delete), invalidates query.
  */
 
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
+  Linking,
+  Platform,
   Pressable,
   ScrollView,
   StatusBar,
@@ -26,84 +34,59 @@ import {
 } from 'react-native';
 import {
   CheckCircle2,
-  Clock,
-  CreditCard,
+  Download,
   FileText,
-  Home,
   IdCard,
+  MapPin,
+  Stethoscope,
+  Trash2,
   Upload,
+  Wallet,
   XCircle,
 } from 'lucide-react-native';
 
 import { useAuth } from '../../context/AuthContext';
 import {
   useMemberProfile,
-  useMemberJourneys,
+  useMemberDocuments,
+  useMemberDocumentDelete,
+  useMemberDocumentDownloadUrl,
+  type MemberDocumentData,
 } from '../../hooks/useApiQueries';
 import {
+  useFileUpload,
+  type DocumentType,
+} from '../../hooks/useFileUpload';
+import {
   AppShell,
-  PageHeader,
   Card,
+  EmptyState,
+  PageHeader,
   Pill,
+  PressableCard,
   RightRail,
 } from '../../components/ui';
-import { colors as tokens } from '../../theme/tokens';
+import { colors as tokens, numerals } from '../../theme/tokens';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// ─── Document category config ─────────────────────────────────────────────────
 
-type DocumentStatus = 'uploaded' | 'pending' | 'rejected';
-
-interface MemberDocument {
-  id: string;
-  name: string;
-  status: DocumentStatus;
-  uploadedAt: string | null;
-  /** Which journey step requires this document. Null = general. */
-  requiredBy: string | null;
-  /** Lucide icon node representing the document category. */
-  icon: React.ReactNode;
+interface CategoryConfig {
+  type: DocumentType;
+  label: string;
+  Icon: React.ComponentType<{ size: number; color: string; strokeWidth?: number; accessibilityLabel?: string }>;
 }
 
-// ─── Mock documents (replace with real endpoint when available) ───────────────
-
-const MOCK_DOCUMENTS: MemberDocument[] = [
-  {
-    id: 'doc-1',
-    name: 'Photo ID',
-    status: 'uploaded',
-    uploadedAt: '2026-04-15T10:00:00Z',
-    requiredBy: null,
-    icon: <IdCard size={32} color={tokens.primary} strokeWidth={2} accessibilityLabel="photo ID document" />,
-  },
-  {
-    id: 'doc-2',
-    name: 'Proof of Address',
-    status: 'uploaded',
-    uploadedAt: '2026-04-16T14:30:00Z',
-    requiredBy: null,
-    icon: <Home size={32} color={tokens.primary} strokeWidth={2} accessibilityLabel="proof of address document" />,
-  },
-  {
-    id: 'doc-3',
-    name: 'Medi-Cal Card',
-    status: 'pending',
-    uploadedAt: null,
-    requiredBy: 'Enrollment Step',
-    icon: <CreditCard size={32} color={tokens.amber700} strokeWidth={2} accessibilityLabel="Medi-Cal card document" />,
-  },
-  {
-    id: 'doc-4',
-    name: 'Income Verification',
-    status: 'rejected',
-    uploadedAt: '2026-04-18T09:00:00Z',
-    requiredBy: null,
-    icon: <FileText size={32} color={tokens.textSecondary} strokeWidth={2} accessibilityLabel="income verification document" />,
-  },
+const DOCUMENT_CATEGORIES: CategoryConfig[] = [
+  { type: 'id',      label: 'Photo ID',            Icon: IdCard      },
+  { type: 'income',  label: 'Income Verification', Icon: Wallet      },
+  { type: 'address', label: 'Proof of Address',    Icon: MapPin      },
+  { type: 'medical', label: 'Medical Documents',   Icon: Stethoscope },
+  { type: 'other',   label: 'Other',               Icon: FileText    },
 ];
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function formatDate(iso: string | null): string {
+function formatDate(iso: string | null | undefined): string {
   if (!iso) return '—';
   return new Date(iso).toLocaleDateString('en-US', {
     month: 'short',
@@ -112,138 +95,334 @@ function formatDate(iso: string | null): string {
   });
 }
 
-function statusPillVariant(
-  status: DocumentStatus,
-): import('../../components/ui/Pill').PillVariant {
-  switch (status) {
-    case 'uploaded': return 'emerald';
-    case 'pending': return 'amber';
-    case 'rejected': return 'red';
-    default: return 'gray';
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function showError(msg: string): void {
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    window.alert(msg);
+  } else {
+    Alert.alert('Error', msg);
   }
 }
 
-function statusLabel(status: DocumentStatus): string {
-  switch (status) {
-    case 'uploaded': return 'Uploaded';
-    case 'pending': return 'Needed';
-    case 'rejected': return 'Re-upload';
-    default: return status;
-  }
-}
+// ─── Download logic (opens presigned URL) ────────────────────────────────────
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
+/**
+ * DownloadButton — fetches a presigned download URL on demand and opens it.
+ *
+ * Renders a Download icon button. On press it calls the download-url endpoint,
+ * then opens the returned URL.  A small activity spinner appears during fetch.
+ */
+function DownloadButton({ docId }: { docId: string }): React.JSX.Element {
+  const [enabled, setEnabled] = useState(false);
+  const downloadQuery = useMemberDocumentDownloadUrl(docId, { enabled });
 
-interface DocCardProps {
-  doc: MemberDocument;
-  onUpload: (doc: MemberDocument) => void;
-  isUploadPlaceholder?: boolean;
-}
+  const handlePress = useCallback(() => {
+    if (downloadQuery.isFetching) return;
+    setEnabled(true);
+  }, [downloadQuery.isFetching]);
 
-function DocCard({ doc, onUpload, isUploadPlaceholder = false }: DocCardProps): React.JSX.Element {
-  const isPending = doc.status === 'pending' || doc.status === 'rejected';
-  const pillVariant = statusPillVariant(doc.status);
+  // When enabled and data arrives, open the URL then reset so the next press
+  // fetches a fresh presigned URL (they expire in 15 min).
+  React.useEffect(() => {
+    if (!enabled || !downloadQuery.data) return;
+    const url = downloadQuery.data.downloadUrl;
+    void Linking.openURL(url).catch(() => {
+      showError('Could not open the file. Please try again.');
+    });
+    setEnabled(false);
+  }, [enabled, downloadQuery.data]);
+
+  React.useEffect(() => {
+    if (downloadQuery.isError) {
+      showError('Could not generate a download link. Please try again.');
+      setEnabled(false);
+    }
+  }, [downloadQuery.isError]);
 
   return (
-    <Card
-      style={[
-        dc.card,
-        isPending && dc.cardPending,
-        isUploadPlaceholder && dc.cardPlaceholder,
-      ]}
+    <Pressable
+      onPress={handlePress}
+      accessibilityRole="button"
+      accessibilityLabel="Download document"
+      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+      style={({ pressed }) => [dc.actionBtn, pressed && { opacity: 0.6 }]}
     >
-      {/* Icon */}
-      <View style={[dc.iconCircle, isPending && dc.iconCirclePending]}>
-        {isPending ? (
-          <Upload size={20} color={isUploadPlaceholder ? tokens.primary : tokens.amber700} />
-        ) : (
-          doc.icon
-        )}
-      </View>
-
-      {/* Name */}
-      <Text style={[dc.name, isPending && dc.namePending]} numberOfLines={2}>
-        {doc.name}
-      </Text>
-
-      {/* Status pill */}
-      <Pill variant={pillVariant} size="sm">{statusLabel(doc.status)}</Pill>
-
-      {/* Date */}
-      {doc.uploadedAt !== null && (
-        <Text style={dc.date}>{formatDate(doc.uploadedAt)}</Text>
+      {downloadQuery.isFetching ? (
+        <ActivityIndicator size="small" color={tokens.primary} />
+      ) : (
+        <Download size={14} color={tokens.primary} />
       )}
-
-      {/* Upload / re-upload button */}
-      {isPending && (
-        <Pressable
-          onPress={() => onUpload(doc)}
-          style={({ pressed }) => [dc.uploadBtn, pressed && { opacity: 0.75 }]}
-          accessibilityRole="button"
-          accessibilityLabel={`Upload ${doc.name}`}
-        >
-          <Upload size={12} color="#FFFFFF" />
-          <Text style={dc.uploadBtnText}>
-            {doc.status === 'rejected' ? 'Re-upload' : 'Upload'}
-          </Text>
-        </Pressable>
-      )}
-    </Card>
+    </Pressable>
   );
 }
 
+// ─── DocCard — uploaded document ─────────────────────────────────────────────
+
+interface DocCardProps {
+  doc: MemberDocumentData;
+  config: CategoryConfig;
+  memberId: string;
+}
+
+function DocCard({ doc, config, memberId }: DocCardProps): React.JSX.Element {
+  const deleteMutation = useMemberDocumentDelete(memberId);
+
+  const handleDelete = useCallback(() => {
+    const proceed = (): void => {
+      deleteMutation.mutate(doc.id, {
+        onError: () => showError('Could not delete the document. Please try again.'),
+      });
+    };
+
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      if (window.confirm(`Delete "${doc.filename}"?`)) proceed();
+    } else {
+      Alert.alert('Delete document', `Delete "${doc.filename}"?`, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: proceed },
+      ]);
+    }
+  }, [doc, deleteMutation]);
+
+  const isImage = doc.contentType.startsWith('image/');
+
+  return (
+    <PressableCard style={dc.card}>
+      {/* Type badge */}
+      <View style={[dc.typeBadge, { backgroundColor: isImage ? '#7c3aed' : '#dc2626' }]}>
+        <Text style={dc.typeBadgeText}>{isImage ? 'IMG' : 'PDF'}</Text>
+      </View>
+
+      {/* Icon */}
+      <View style={dc.iconBox}>
+        <config.Icon
+          size={28}
+          color={tokens.primary}
+          strokeWidth={1.5}
+          accessibilityLabel={`${config.label} icon`}
+        />
+      </View>
+
+      {/* Filename */}
+      <Text style={dc.filename} numberOfLines={2}>{doc.filename}</Text>
+
+      {/* Status pill */}
+      <Pill variant="emerald" size="sm">Uploaded</Pill>
+
+      {/* Meta row — tabular numerals for date + size */}
+      <View style={dc.metaRow}>
+        <Text style={[dc.metaText, numerals.tabular as object]}>{formatDate(doc.uploadedAt)}</Text>
+        <Text style={[dc.metaText, numerals.tabular as object]}>{formatBytes(doc.sizeBytes)}</Text>
+      </View>
+
+      {/* Actions */}
+      <View style={dc.actionsRow}>
+        <DownloadButton docId={doc.id} />
+        <Pressable
+          onPress={handleDelete}
+          disabled={deleteMutation.isPending}
+          accessibilityRole="button"
+          accessibilityLabel={`Delete ${doc.filename}`}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          style={({ pressed }) => [dc.actionBtn, pressed && { opacity: 0.6 }]}
+        >
+          {deleteMutation.isPending ? (
+            <ActivityIndicator size="small" color="#dc2626" />
+          ) : (
+            <Trash2 size={14} color="#dc2626" />
+          )}
+        </Pressable>
+      </View>
+    </PressableCard>
+  );
+}
+
+// ─── UploadCard — upload slot per document type ───────────────────────────────
+
+interface UploadCardProps {
+  config: CategoryConfig;
+  memberId: string;
+  /** True when a document of this type already exists (shows Replace label). */
+  isReplace?: boolean;
+  existingDoc?: MemberDocumentData;
+}
+
+function UploadCard({
+  config,
+  memberId,
+  isReplace = false,
+}: UploadCardProps): React.JSX.Element {
+  // Web: hidden file input ref.
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const { upload, isUploading } = useFileUpload('member_document', {
+    memberId,
+    documentType: config.type,
+    onError: (err) => showError(err.message),
+  });
+
+  const handlePress = useCallback(() => {
+    if (isUploading) return;
+    if (Platform.OS === 'web') {
+      fileInputRef.current?.click();
+    } else {
+      void upload();
+    }
+  }, [isUploading, upload]);
+
+  const handleWebFileChange = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0] ?? null;
+      if (event.target) event.target.value = '';
+      void upload(file);
+    },
+    [upload],
+  );
+
+  const label = isReplace ? `Replace ${config.label}` : `Upload ${config.label}`;
+
+  return (
+    <View style={dc.card}>
+      {/* Icon area — dashed placeholder */}
+      <View style={dc.iconBoxPlaceholder}>
+        {isUploading ? (
+          <ActivityIndicator size="large" color={tokens.primary} />
+        ) : (
+          <config.Icon
+            size={28}
+            color={tokens.textSecondary}
+            strokeWidth={1.5}
+            accessibilityLabel={`${config.label} icon`}
+          />
+        )}
+      </View>
+
+      <Text style={dc.name} numberOfLines={2}>{config.label}</Text>
+
+      <Pill variant="amber" size="sm">Needed</Pill>
+
+      <Pressable
+        onPress={handlePress}
+        disabled={isUploading}
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        style={({ pressed }) => [dc.uploadBtn, pressed && { opacity: 0.75 }]}
+      >
+        <Upload size={12} color="#FFFFFF" />
+        <Text style={dc.uploadBtnText}>{isUploading ? 'Uploading…' : label}</Text>
+      </Pressable>
+
+      {Platform.OS === 'web' && (
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="application/pdf,image/jpeg,image/png,image/heic,image/*"
+          style={{ display: 'none' }}
+          onChange={handleWebFileChange}
+          aria-hidden="true"
+        />
+      )}
+    </View>
+  );
+}
+
+// ─── Shared card styles ───────────────────────────────────────────────────────
+
 const dc = StyleSheet.create({
   card: {
-    // p-4 = 16px from mockup; fixed-width thumbnail card matching mock grid
     padding: 16,
     gap: 8,
     alignItems: 'flex-start',
-    flex: 1,
-    // min 160px so cards look like tiles, not tiny chips
     minWidth: 160,
     maxWidth: 220,
+    flex: 1,
+    backgroundColor: tokens.cardBg ?? '#ffffff',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: tokens.cardBorder ?? '#e5e7eb',
   } as ViewStyle,
-  cardPending: {
-    borderColor: '#FDE68A',
-    backgroundColor: '#FFFBEB',
+
+  typeBadge: {
+    position: 'absolute' as const,
+    top: 8,
+    right: 8,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 4,
   } as ViewStyle,
-  cardPlaceholder: {
-    borderStyle: 'dashed',
-    borderWidth: 2,
-    borderColor: '#A7F3D0',
-    backgroundColor: `#D1FAE5` + '20',
-  } as ViewStyle,
-  iconCircle: {
-    // doc-thumb: w-full h-120 from mockup → use fixed 48px icon box
+
+  typeBadgeText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#ffffff',
+  } as TextStyle,
+
+  iconBox: {
     width: '100%' as unknown as number,
-    height: 96,
+    height: 80,
     borderRadius: 12,
-    backgroundColor: tokens.gray100,
+    backgroundColor: tokens.emerald100,
     alignItems: 'center',
     justifyContent: 'center',
   } as ViewStyle,
-  iconCirclePending: {
-    backgroundColor: '#FFFBEB',
+
+  iconBoxPlaceholder: {
+    width: '100%' as unknown as number,
+    height: 80,
+    borderRadius: 12,
+    borderStyle: 'dashed',
+    borderWidth: 2,
+    borderColor: tokens.cardBorder ?? '#e5e7eb',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: tokens.gray100,
   } as ViewStyle,
-  name: {
-    fontSize: 14,
+
+  filename: {
+    fontSize: 13,
     fontWeight: '600',
-    color: '#111827',
-    lineHeight: 20,
+    color: tokens.textPrimary ?? '#111827',
+    lineHeight: 18,
   } as TextStyle,
-  namePending: {
-    color: '#B45309',
+
+  name: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: tokens.textSecondary ?? '#374151',
+    lineHeight: 18,
   } as TextStyle,
-  date: {
+
+  metaRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: '100%' as unknown as number,
+  } as ViewStyle,
+
+  metaText: {
     fontSize: 11,
     color: tokens.textMuted,
   } as TextStyle,
+
+  actionsRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 4,
+  } as ViewStyle,
+
+  actionBtn: {
+    padding: 4,
+  } as ViewStyle,
+
   uploadBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    // bg-emerald-600 from mockup
-    backgroundColor: '#059669',
+    backgroundColor: tokens.primary,
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: 8,
@@ -251,6 +430,7 @@ const dc = StyleSheet.create({
     width: '100%' as unknown as number,
     justifyContent: 'center',
   } as ViewStyle,
+
   uploadBtnText: {
     fontSize: 12,
     fontWeight: '600',
@@ -263,8 +443,10 @@ const dc = StyleSheet.create({
 export function MemberDocumentsScreen(): React.JSX.Element {
   const { userName } = useAuth();
   const profileQuery = useMemberProfile();
-  const memberId = profileQuery.data?.id ?? '';
-  const journeysQuery = useMemberJourneys(memberId);
+  const memberId = profileQuery.data?.userId ?? profileQuery.data?.id ?? '';
+
+  const documentsQuery = useMemberDocuments(memberId);
+  const docs = documentsQuery.data?.items ?? [];
 
   const memberInitials = (userName ?? 'M')
     .split(' ')
@@ -273,56 +455,19 @@ export function MemberDocumentsScreen(): React.JSX.Element {
     .join('')
     .toUpperCase();
 
-  // Derive the next required document from the active journey step.
-  const nextRequiredDoc = useMemo(() => {
-    const journeys = journeysQuery.data ?? [];
-    const active =
-      journeys.find((j) => j.status === 'active') ?? journeys[0] ?? null;
-    const step =
-      active?.currentStep ??
-      active?.steps.find((s) => s.status === 'in_progress' || s.status === 'upcoming') ??
-      null;
-    return step?.requiredDocuments[0] ?? null;
-  }, [journeysQuery.data]);
+  // Build a map: documentType → first active document of that type.
+  const docsByType = useMemo<Record<string, MemberDocumentData>>(() => {
+    const map: Record<string, MemberDocumentData> = {};
+    for (const doc of docs) {
+      if (!map[doc.documentType]) {
+        map[doc.documentType] = doc;
+      }
+    }
+    return map;
+  }, [docs]);
 
-  const [localDocs, setLocalDocs] = useState<MemberDocument[]>(MOCK_DOCUMENTS);
-
-  const handleUpload = useCallback((doc: MemberDocument) => {
-    Alert.alert(
-      `Upload ${doc.name}`,
-      "Choose how you'd like to upload this document.",
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Take Photo',
-          onPress: () => {
-            // TODO: wire to ImagePicker when member-side upload flow ships.
-            setLocalDocs((prev) =>
-              prev.map((d) =>
-                d.id === doc.id
-                  ? { ...d, status: 'uploaded' as DocumentStatus, uploadedAt: new Date().toISOString() }
-                  : d,
-              ),
-            );
-            Alert.alert('Uploaded', `${doc.name} has been uploaded successfully.`);
-          },
-        },
-        {
-          text: 'Choose from Library',
-          onPress: () => {
-            setLocalDocs((prev) =>
-              prev.map((d) =>
-                d.id === doc.id
-                  ? { ...d, status: 'uploaded' as DocumentStatus, uploadedAt: new Date().toISOString() }
-                  : d,
-              ),
-            );
-            Alert.alert('Uploaded', `${doc.name} has been uploaded successfully.`);
-          },
-        },
-      ],
-    );
-  }, []);
+  const uploadedCount = Object.keys(docsByType).length;
+  const neededCount = DOCUMENT_CATEGORIES.length - uploadedCount;
 
   const shellUserBlock = {
     initials: memberInitials,
@@ -330,8 +475,8 @@ export function MemberDocumentsScreen(): React.JSX.Element {
     role: 'Member' as const,
   };
 
-  const uploadedCount = localDocs.filter((d) => d.status === 'uploaded').length;
-  const pendingCount = localDocs.filter((d) => d.status !== 'uploaded').length;
+  const isLoading = profileQuery.isLoading || documentsQuery.isLoading;
+  const hasDocuments = docs.length > 0;
 
   return (
     <AppShell role="member" activeKey="documents" userBlock={shellUserBlock}>
@@ -344,83 +489,92 @@ export function MemberDocumentsScreen(): React.JSX.Element {
         <View style={styles.pageWrap}>
           <PageHeader
             title="My Documents"
-            subtitle={`${uploadedCount} uploaded · ${pendingCount} needed`}
+            subtitle={
+              isLoading
+                ? 'Loading…'
+                : `${uploadedCount} uploaded · ${neededCount} needed`
+            }
           />
 
-          <View style={styles.body}>
-            {/* Main column — document grid */}
-            <View style={styles.mainCol}>
-              <Text style={styles.sectionLabel}>YOUR DOCUMENTS</Text>
-              <View style={styles.docGrid}>
-                {localDocs.map((doc) => (
-                  <DocCard key={doc.id} doc={doc} onUpload={handleUpload} />
-                ))}
-
-                {/* Placeholder upload card if there's a next required doc */}
-                {nextRequiredDoc !== null && (
-                  <DocCard
-                    doc={{
-                      id: 'placeholder',
-                      name: nextRequiredDoc,
-                      status: 'pending',
-                      uploadedAt: null,
-                      requiredBy: 'Your CHW needs this',
-                      icon: (
-                        <FileText
-                          size={32}
-                          color={tokens.textSecondary}
-                          strokeWidth={2}
-                          accessibilityLabel="document required"
-                        />
-                      ),
-                    }}
-                    onUpload={(d) => handleUpload(d)}
-                    isUploadPlaceholder
-                  />
-                )}
-              </View>
+          {isLoading ? (
+            <View style={styles.loadingBox}>
+              <ActivityIndicator size="large" color={tokens.primary} />
             </View>
+          ) : (
+            <View style={styles.body}>
+              {/* Main column */}
+              <View style={styles.mainCol}>
+                <Text style={styles.sectionLabel}>YOUR DOCUMENTS</Text>
 
-            {/* Right rail */}
-            <RightRail width={260}>
-              <Card style={styles.railCard}>
-                <View style={styles.railHeader}>
-                  <FileText size={16} color={tokens.primary} />
-                  <Text style={styles.railTitle}>What does your CHW need?</Text>
+                {!hasDocuments ? (
+                  <EmptyState
+                    icon={FileText}
+                    title="No documents uploaded yet"
+                    body="Upload ID, income proof, and other documents your CHW requests."
+                    style={styles.emptyState}
+                  />
+                ) : null}
+
+                <View style={styles.docGrid}>
+                  {DOCUMENT_CATEGORIES.map((config) => {
+                    const existing = docsByType[config.type];
+                    if (existing) {
+                      return (
+                        <DocCard
+                          key={config.type}
+                          doc={existing}
+                          config={config}
+                          memberId={memberId}
+                        />
+                      );
+                    }
+                    return (
+                      <UploadCard
+                        key={config.type}
+                        config={config}
+                        memberId={memberId}
+                      />
+                    );
+                  })}
                 </View>
-                <Text style={styles.railBody}>
-                  Your CHW may request documents as part of your care journey.
-                  Keep your uploads current to avoid delays in services.
-                </Text>
-                <View style={styles.railList}>
-                  {localDocs
-                    .filter((d) => d.status !== 'uploaded')
-                    .map((d) => (
-                      <View key={d.id} style={styles.railDocRow}>
-                        <XCircle size={13} color={tokens.amber700} />
-                        <Text style={styles.railDocName}>{d.name}</Text>
-                      </View>
-                    ))}
-                  {localDocs.filter((d) => d.status === 'uploaded').map((d) => (
-                    <View key={d.id} style={styles.railDocRow}>
-                      <CheckCircle2 size={13} color={tokens.emerald700} />
-                      <Text style={[styles.railDocName, { color: tokens.emerald700 }]}>
-                        {d.name}
-                      </Text>
-                    </View>
-                  ))}
-                </View>
-                {nextRequiredDoc !== null && (
-                  <View style={styles.nextDocBanner}>
-                    <Clock size={13} color={tokens.primary} />
-                    <Text style={styles.nextDocText}>
-                      Next needed: <Text style={{ fontWeight: '700' }}>{nextRequiredDoc}</Text>
-                    </Text>
+              </View>
+
+              {/* Right rail */}
+              <RightRail width={260}>
+                <Card style={styles.railCard}>
+                  <View style={styles.railHeader}>
+                    <FileText size={16} color={tokens.primary} />
+                    <Text style={styles.railTitle}>Document Checklist</Text>
                   </View>
-                )}
-              </Card>
-            </RightRail>
-          </View>
+                  <Text style={styles.railBody}>
+                    Keep your documents current to avoid delays in services.
+                  </Text>
+                  <View style={styles.railList}>
+                    {DOCUMENT_CATEGORIES.map((config) => {
+                      const uploaded = !!docsByType[config.type];
+                      return (
+                        <View key={config.type} style={styles.railDocRow}>
+                          {uploaded ? (
+                            <CheckCircle2 size={13} color={tokens.emerald700} />
+                          ) : (
+                            <XCircle size={13} color={tokens.amber700} />
+                          )}
+                          <Text
+                            style={[
+                              styles.railDocName,
+                              uploaded && { color: tokens.emerald700 },
+                            ]}
+                          >
+                            {config.label}
+                          </Text>
+                        </View>
+                      );
+                    })}
+                  </View>
+                </Card>
+              </RightRail>
+            </View>
+          )}
         </View>
       </ScrollView>
     </AppShell>
@@ -433,11 +587,9 @@ const styles = StyleSheet.create({
   scroll: { flex: 1 },
   scrollContent: { flexGrow: 1 },
   pageWrap: {
-    // p-8 = 32px from mockup
     paddingHorizontal: 32,
     paddingTop: 24,
     paddingBottom: 32,
-    maxWidth: undefined as unknown as number,
     width: '100%',
     alignSelf: 'center',
   } as ViewStyle,
@@ -450,6 +602,15 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
   } as ViewStyle,
+  loadingBox: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 200,
+  } as ViewStyle,
+  emptyState: {
+    marginBottom: 16,
+  } as ViewStyle,
   sectionLabel: {
     fontSize: 13,
     fontWeight: '600',
@@ -461,13 +622,11 @@ const styles = StyleSheet.create({
   docGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    // gap-4 = 16px from mockup
     gap: 16,
   } as ViewStyle,
   railCard: {
     padding: 20,
     gap: 12,
-    // mock: bg-gradient-to-b from-amber-50/40 to-white
     backgroundColor: '#FFFBEB',
   } as ViewStyle,
   railHeader: {
@@ -497,20 +656,7 @@ const styles = StyleSheet.create({
   } as ViewStyle,
   railDocName: {
     fontSize: 12,
-    color: tokens.textPrimary,
-    flex: 1,
-  } as TextStyle,
-  nextDocBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: `${tokens.primary}10`,
-    borderRadius: 8,
-    padding: 10,
-  } as ViewStyle,
-  nextDocText: {
-    fontSize: 12,
-    color: tokens.primary,
+    color: tokens.textPrimary ?? '#111827',
     flex: 1,
   } as TextStyle,
 });

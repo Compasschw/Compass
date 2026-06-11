@@ -21,7 +21,18 @@ ALLOWED_MIME_TYPES = frozenset({
 
 # Upload purpose determines S3 bucket (PHI vs public) and path prefix.
 # Kept as a Literal for compile-time + runtime validation.
-UploadPurpose = Literal["credential", "recording", "document", "profile_image"]
+# message_attachment → compass-prod-message-attachments (PHI bucket; must be
+# created via docs/runbooks/create-phi-buckets.md before use in production).
+# member_document   → compass-prod-member-documents (PHI bucket; must be
+# created via docs/runbooks/create-phi-buckets.md → Step 3c before production use).
+UploadPurpose = Literal[
+    "credential",
+    "recording",
+    "document",
+    "profile_image",
+    "message_attachment",
+    "member_document",
+]
 
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 MB
 

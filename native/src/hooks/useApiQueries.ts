@@ -3086,3 +3086,100 @@ export function usePatchCredentialDocument() {
     },
   });
 }
+
+// ─── Member Documents ─────────────────────────────────────────────────────────
+
+/**
+ * Shape of a MemberDocument row returned by the backend.
+ * s3_url is intentionally absent — clients must use the download-url endpoint.
+ */
+export interface MemberDocumentData {
+  id: string;
+  memberId: string;
+  documentType: string;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+  uploadedBy: string;
+  uploadedAt: string;
+  deletedAt: string | null;
+}
+
+/** Paginated envelope from GET /members/{id}/documents. */
+export interface MemberDocumentListData {
+  items: MemberDocumentData[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+/**
+ * Fetch paginated active documents for a member.
+ * Works for both member-self and CHW-with-relationship callers.
+ *
+ * Query key: ['member', 'documents', memberId]
+ */
+export function useMemberDocuments(memberId: string, page = 1, pageSize = 50) {
+  return useQuery({
+    queryKey: ['member', 'documents', memberId, page, pageSize],
+    queryFn: async () => {
+      if (!memberId) return { items: [], total: 0, page: 1, pageSize } as MemberDocumentListData;
+      const raw = await api<unknown>(
+        `/members/${memberId}/documents?page=${page}&page_size=${pageSize}`,
+      );
+      return transformKeys<MemberDocumentListData>(raw);
+    },
+    enabled: !!memberId,
+  });
+}
+
+/**
+ * Soft-delete a member document (204 No Content).
+ * Invalidates the owning member's documents list on success.
+ *
+ * Usage:
+ *   const del = useMemberDocumentDelete(memberId);
+ *   del.mutate(docId);
+ */
+export function useMemberDocumentDelete(memberId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (docId: string): Promise<void> => {
+      await api(`/documents/${docId}`, { method: 'DELETE' });
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({
+        queryKey: ['member', 'documents', memberId],
+      });
+    },
+  });
+}
+
+/** Shape returned by GET /documents/{id}/download-url. */
+export interface PresignedDownloadUrlData {
+  downloadUrl: string;
+  expiresInSeconds: number;
+}
+
+/**
+ * Lazily fetch a presigned download URL for a specific member document.
+ * The query is disabled by default — set `enabled: true` or call
+ * `refetch()` manually to trigger the request.
+ *
+ * The presigned URL expires in 15 minutes; do NOT cache it indefinitely.
+ * Use `staleTime: 0` (default) so a second call always fetches a fresh URL.
+ */
+export function useMemberDocumentDownloadUrl(docId: string | null, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['member', 'documents', 'download-url', docId],
+    queryFn: async () => {
+      if (!docId) throw new Error('docId is required');
+      const raw = await api<unknown>(`/documents/${docId}/download-url`);
+      return transformKeys<PresignedDownloadUrlData>(raw);
+    },
+    enabled: (options?.enabled ?? false) && !!docId,
+    // Never cache — URL expires in 15 min and is only valid for one download.
+    staleTime: 0,
+    gcTime: 0,
+  });
+}

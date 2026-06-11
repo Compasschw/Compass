@@ -1,201 +1,400 @@
 /**
- * CHWDocumentsScreen — Member document storage table for CHWs.
+ * CHWDocumentsScreen — document management for CHWs.
  *
- * Displays all documents uploaded in the context of the CHW's sessions
- * (consent forms, assessments, care plans, referral letters) in a sortable
- * table. CHW can filter by type or member, and download/preview any doc.
+ * Shows all MemberDocument rows where uploaded_by == current CHW's user ID.
+ * Provides:
+ *   - Search by filename or member ID
+ *   - Filter by document type (all, id, income, address, medical, other)
+ *   - Table rows with filename, type, uploaded date, size, Download, Delete
+ *   - Right rail stat tiles (web only)
+ *   - Upload button: triggers upload flow for a chosen member + document type.
+ *     The CHW enters the member UUID (or navigates here from a member profile
+ *     with memberId pre-filled via route params) and selects a document type.
  *
- * All data is mocked inline for v1 — the /chw/documents endpoint does not
- * exist yet. Replace with a real query hook once it ships.
+ * NOTE: Phase 1 scope — the "Upload on behalf of member" CTA opens an Alert
+ * (native) or prompt (web) asking for the member UUID, then calls the full
+ * useFileUpload pipeline.  A member-selector picker (from the CHW's caseload)
+ * is deferred to Phase 2; the bare-UUID input is functional and sufficient for
+ * the cofounder demo.
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useCallback, useRef } from 'react';
 import {
-  View,
-  Text,
+  ActivityIndicator,
+  Alert,
+  Linking,
+  Platform,
   ScrollView,
   StyleSheet,
-  TouchableOpacity,
+  Text,
   TextInput,
-  Platform,
+  TouchableOpacity,
+  View,
   type ViewStyle,
   type TextStyle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
-  FileText,
-  Download,
-  Search,
   ClipboardList,
+  Download,
+  Eye,
   FileBadge,
   FileSignature,
   FileScan,
+  FileText,
   Filter,
-  Eye,
+  Plus,
+  Search,
   Trash2,
 } from 'lucide-react-native';
 
-import { AppShell, EmptyState, PageHeader, Card, Pill, RightRail, StatTile } from '../../components/ui';
-import { colors, spacing, radius } from '../../theme/tokens';
+import { AppShell, Card, EmptyState, PageHeader, Pill, RightRail, StatTile } from '../../components/ui';
+import { colors, numerals, spacing, radius } from '../../theme/tokens';
 import { useAuth } from '../../context/AuthContext';
+import {
+  useMemberDocuments,
+  useMemberDocumentDelete,
+  useMemberDocumentDownloadUrl,
+  type MemberDocumentData,
+} from '../../hooks/useApiQueries';
+import {
+  useFileUpload,
+  type DocumentType,
+} from '../../hooks/useFileUpload';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type DocType = 'all' | 'consent' | 'assessment' | 'care_plan' | 'referral' | 'other';
-
-interface DocumentRecord {
-  id: string;
-  filename: string;
-  docType: Exclude<DocType, 'all'>;
-  memberName: string;
-  memberId: string;
-  sessionId?: string;
-  uploadedAt: string;
-  sizeKb: number;
-  status: 'pending_review' | 'approved' | 'archived';
-}
-
-// ─── Mock data — TODO: replace with real hook ─────────────────────────────────
-
-// TODO: replace with real hook — GET /chw/documents
-const MOCK_DOCUMENTS: DocumentRecord[] = [
-  {
-    id: 'doc-001',
-    filename: 'AI_Transcription_Consent_Rivera.pdf',
-    docType: 'consent',
-    memberName: 'Maria Rivera',
-    memberId: 'mem-001',
-    sessionId: 'sess-101',
-    uploadedAt: '2026-05-08T14:22:00Z',
-    sizeKb: 48,
-    status: 'approved',
-  },
-  {
-    id: 'doc-002',
-    filename: 'SDOH_Assessment_Chen_2026-05-07.pdf',
-    docType: 'assessment',
-    memberName: 'David Chen',
-    memberId: 'mem-002',
-    sessionId: 'sess-102',
-    uploadedAt: '2026-05-07T10:15:00Z',
-    sizeKb: 134,
-    status: 'approved',
-  },
-  {
-    id: 'doc-003',
-    filename: 'CarePlan_Johnson_Q2-2026.pdf',
-    docType: 'care_plan',
-    memberName: 'Tamika Johnson',
-    memberId: 'mem-003',
-    uploadedAt: '2026-05-06T09:00:00Z',
-    sizeKb: 210,
-    status: 'approved',
-  },
-  {
-    id: 'doc-004',
-    filename: 'Referral_MentalHealth_Rivera.pdf',
-    docType: 'referral',
-    memberName: 'Maria Rivera',
-    memberId: 'mem-001',
-    sessionId: 'sess-101',
-    uploadedAt: '2026-05-05T16:40:00Z',
-    sizeKb: 72,
-    status: 'approved',
-  },
-  {
-    id: 'doc-005',
-    filename: 'Consent_MedicalBilling_Patel.pdf',
-    docType: 'consent',
-    memberName: 'Arjun Patel',
-    memberId: 'mem-004',
-    sessionId: 'sess-103',
-    uploadedAt: '2026-05-04T11:20:00Z',
-    sizeKb: 52,
-    status: 'approved',
-  },
-  {
-    id: 'doc-006',
-    filename: 'SDOH_Assessment_Patel_Initial.pdf',
-    docType: 'assessment',
-    memberName: 'Arjun Patel',
-    memberId: 'mem-004',
-    sessionId: 'sess-103',
-    uploadedAt: '2026-05-03T13:55:00Z',
-    sizeKb: 156,
-    status: 'pending_review',
-  },
-  {
-    id: 'doc-007',
-    filename: 'HousingReferral_Nguyen.pdf',
-    docType: 'referral',
-    memberName: 'Linh Nguyen',
-    memberId: 'mem-005',
-    uploadedAt: '2026-05-01T08:30:00Z',
-    sizeKb: 88,
-    status: 'approved',
-  },
-  {
-    id: 'doc-008',
-    filename: 'CarePlan_Chen_Quarterly.pdf',
-    docType: 'care_plan',
-    memberName: 'David Chen',
-    memberId: 'mem-002',
-    uploadedAt: '2026-04-28T15:10:00Z',
-    sizeKb: 198,
-    status: 'archived',
-  },
-];
+type FilterType = 'all' | DocumentType;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const DOC_TYPE_LABELS: Record<DocType, string> = {
-  all:        'All Types',
-  consent:    'Consent',
-  assessment: 'Assessment',
-  care_plan:  'Care Plan',
-  referral:   'Referral',
-  other:      'Other',
+const DOC_TYPE_LABELS: Record<FilterType, string> = {
+  all:     'All Types',
+  id:      'Photo ID',
+  income:  'Income',
+  address: 'Address',
+  medical: 'Medical',
+  other:   'Other',
 };
 
-const DOC_TYPE_PILL: Record<Exclude<DocType, 'all'>, 'blue' | 'purple' | 'emerald' | 'amber' | 'gray'> = {
-  consent:    'blue',
-  assessment: 'purple',
-  care_plan:  'emerald',
-  referral:   'amber',
-  other:      'gray',
+const DOC_TYPE_PILL: Record<DocumentType, 'blue' | 'purple' | 'emerald' | 'amber' | 'gray'> = {
+  id:      'blue',
+  income:  'purple',
+  address: 'emerald',
+  medical: 'amber',
+  other:   'gray',
 };
 
-const STATUS_PILL: Record<DocumentRecord['status'], 'emerald' | 'amber' | 'gray'> = {
-  approved:        'emerald',
-  pending_review:  'amber',
-  archived:        'gray',
-};
-
-const STATUS_LABEL: Record<DocumentRecord['status'], string> = {
-  approved:       'Approved',
-  pending_review: 'Pending Review',
-  archived:       'Archived',
-};
-
-function DocTypeIcon({ docType, size = 16 }: { docType: Exclude<DocType, 'all'>; size?: number }): React.JSX.Element {
-  const color = colors.textSecondary;
+function DocTypeIcon({ docType, size = 16 }: { docType: DocumentType; size?: number }): React.JSX.Element {
+  const c = colors.textSecondary;
   switch (docType) {
-    case 'consent':    return <FileSignature size={size} color={color} />;
-    case 'assessment': return <ClipboardList  size={size} color={color} />;
-    case 'care_plan':  return <FileBadge      size={size} color={color} />;
-    case 'referral':   return <FileScan       size={size} color={color} />;
-    default:           return <FileText       size={size} color={color} />;
+    case 'id':      return <FileSignature size={size} color={c} />;
+    case 'income':  return <ClipboardList  size={size} color={c} />;
+    case 'address': return <FileBadge      size={size} color={c} />;
+    case 'medical': return <FileScan       size={size} color={c} />;
+    default:        return <FileText       size={size} color={c} />;
   }
 }
 
-function formatBytes(kb: number): string {
-  if (kb < 1024) return `${kb} KB`;
-  return `${(kb / 1024).toFixed(1)} MB`;
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function formatDate(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  return new Date(iso).toLocaleDateString('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric',
+  });
+}
+
+function showError(msg: string): void {
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    window.alert(msg);
+  } else {
+    Alert.alert('Error', msg);
+  }
+}
+
+// ─── DownloadButton ───────────────────────────────────────────────────────────
+
+function DownloadButton({ docId }: { docId: string }): React.JSX.Element {
+  const [enabled, setEnabled] = useState(false);
+  const q = useMemberDocumentDownloadUrl(docId, { enabled });
+
+  const handlePress = useCallback(() => {
+    if (q.isFetching) return;
+    setEnabled(true);
+  }, [q.isFetching]);
+
+  React.useEffect(() => {
+    if (!enabled || !q.data) return;
+    void Linking.openURL(q.data.downloadUrl).catch(() =>
+      showError('Could not open the file. Please try again.')
+    );
+    setEnabled(false);
+  }, [enabled, q.data]);
+
+  React.useEffect(() => {
+    if (q.isError) { showError('Could not generate a download link.'); setEnabled(false); }
+  }, [q.isError]);
+
+  return (
+    <TouchableOpacity
+      onPress={handlePress}
+      accessible
+      accessibilityLabel="Download document"
+      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+    >
+      {q.isFetching
+        ? <ActivityIndicator size="small" color={colors.primary} />
+        : <Download size={14} color={colors.textSecondary} />
+      }
+    </TouchableOpacity>
+  );
+}
+
+// ─── TableRow ─────────────────────────────────────────────────────────────────
+
+interface TableRowProps {
+  doc: MemberDocumentData;
+  idx: number;
+}
+
+function TableRow({ doc, idx }: TableRowProps): React.JSX.Element {
+  const deleteMutation = useMemberDocumentDelete(doc.memberId);
+
+  const handleDelete = useCallback(() => {
+    const proceed = (): void => {
+      deleteMutation.mutate(doc.id, {
+        onError: () => showError('Could not delete the document.'),
+      });
+    };
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      if (window.confirm(`Delete "${doc.filename}"?`)) proceed();
+    } else {
+      Alert.alert('Delete document', `Delete "${doc.filename}"?`, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: proceed },
+      ]);
+    }
+  }, [doc, deleteMutation]);
+
+  const isImage = doc.contentType.startsWith('image/');
+  const docType = doc.documentType as DocumentType;
+
+  return (
+    <Card style={[styles.tableRowCard, idx % 2 === 1 && styles.tableRowAlt]}>
+      <View style={styles.tableRow}>
+        {/* File */}
+        <View style={[styles.colFile, styles.fileCell]}>
+          <View style={[styles.fileTypeBadge, { backgroundColor: isImage ? '#7c3aed' : '#dc2626' }]}>
+            <Text style={styles.fileTypeBadgeText}>{isImage ? 'IMG' : 'PDF'}</Text>
+          </View>
+          <View style={styles.fileCellText}>
+            <Text style={styles.filename} numberOfLines={1}>{doc.filename}</Text>
+            <Text style={styles.fileSubtitle} numberOfLines={1}>
+              {DOC_TYPE_LABELS[docType] ?? docType} · {doc.memberId.slice(0, 8)}…
+            </Text>
+          </View>
+        </View>
+
+        {/* Type */}
+        <View style={styles.colType}>
+          <Pill variant={DOC_TYPE_PILL[docType] ?? 'gray'} size="sm">
+            {DOC_TYPE_LABELS[docType] ?? docType}
+          </Pill>
+        </View>
+
+        {/* Date */}
+        <Text style={[styles.cellText, styles.colDate, numerals.tabular as object]}>
+          {formatDate(doc.uploadedAt)}
+        </Text>
+
+        {/* Size */}
+        <Text style={[styles.cellText, styles.colSize, numerals.tabular as object]}>
+          {formatBytes(doc.sizeBytes)}
+        </Text>
+
+        {/* Actions */}
+        <View style={styles.colAction}>
+          <TouchableOpacity accessible accessibilityLabel={`Preview ${doc.filename}`} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+            <Eye size={14} color={colors.textSecondary} />
+          </TouchableOpacity>
+          <DownloadButton docId={doc.id} />
+          <TouchableOpacity
+            accessible
+            accessibilityLabel={`Delete ${doc.filename}`}
+            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+            onPress={handleDelete}
+            disabled={deleteMutation.isPending}
+          >
+            {deleteMutation.isPending
+              ? <ActivityIndicator size="small" color="#dc2626" />
+              : <Trash2 size={14} color={colors.textSecondary} />
+            }
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Card>
+  );
+}
+
+// ─── Upload trigger (CHW uploads on behalf of a member) ───────────────────────
+
+/**
+ * CHWUploadTrigger — minimal upload initiation.
+ * On press, prompts for a member UUID (Phase 1: bare input; Phase 2: caseload picker),
+ * then prompts for a document type, then runs the upload pipeline.
+ */
+function CHWUploadTrigger(): React.JSX.Element {
+  const [memberId, setMemberId] = useState<string | null>(null);
+  const [docType, setDocType] = useState<DocumentType>('other');
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const { upload, isUploading } = useFileUpload('member_document', {
+    memberId: memberId ?? '',
+    documentType: docType,
+    onError: (err) => showError(err.message),
+  });
+
+  const triggerUpload = useCallback((mid: string, dt: DocumentType) => {
+    setMemberId(mid);
+    setDocType(dt);
+    if (Platform.OS === 'web') {
+      // Give state a tick to settle before clicking the file input.
+      setTimeout(() => fileInputRef.current?.click(), 50);
+    } else {
+      void upload();
+    }
+  }, [upload]);
+
+  const handleWebFileChange = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0] ?? null;
+      if (event.target) event.target.value = '';
+      void upload(file);
+    },
+    [upload],
+  );
+
+  const handlePress = useCallback(() => {
+    if (isUploading) return;
+
+    const docTypes: DocumentType[] = ['id', 'income', 'address', 'medical', 'other'];
+
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const mid = window.prompt('Member UUID:');
+      if (!mid?.trim()) return;
+      const dtRaw = window.prompt(
+        `Document type (${docTypes.join(', ')}):`,
+        'other',
+      );
+      const dt: DocumentType = docTypes.includes(dtRaw as DocumentType)
+        ? (dtRaw as DocumentType)
+        : 'other';
+      triggerUpload(mid.trim(), dt);
+    } else {
+      Alert.prompt(
+        'Upload document',
+        'Enter member UUID:',
+        (mid) => {
+          if (!mid?.trim()) return;
+          Alert.alert(
+            'Document type',
+            'Select a category:',
+            docTypes.map((dt) => ({
+              text: DOC_TYPE_LABELS[dt],
+              onPress: () => triggerUpload(mid.trim(), dt),
+            })),
+          );
+        },
+        'plain-text',
+      );
+    }
+  }, [isUploading, triggerUpload]);
+
+  return (
+    <>
+      <TouchableOpacity
+        onPress={handlePress}
+        disabled={isUploading}
+        accessible
+        accessibilityRole="button"
+        accessibilityLabel="Upload document for a member"
+        style={styles.uploadTrigger}
+      >
+        {isUploading
+          ? <ActivityIndicator size="small" color="#ffffff" />
+          : <Plus size={14} color="#ffffff" />
+        }
+        <Text style={styles.uploadTriggerText}>
+          {isUploading ? 'Uploading…' : 'Upload for Member'}
+        </Text>
+      </TouchableOpacity>
+
+      {Platform.OS === 'web' && (
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="application/pdf,image/jpeg,image/png,image/heic,image/*"
+          style={{ display: 'none' }}
+          onChange={handleWebFileChange}
+          aria-hidden="true"
+        />
+      )}
+    </>
+  );
+}
+
+// ─── MemberDocumentsTable — fetches + renders docs for one member ─────────────
+
+/**
+ * Internally, the CHW Documents screen renders a flat list of documents across
+ * all members the CHW has uploaded for.  We achieve this by fetching documents
+ * for each member ID that appears in the CHW's session/request caseload.
+ *
+ * Phase 1 simplification: the screen shows documents uploaded by the current
+ * CHW (identified server-side via ``uploaded_by``).  To get a per-member list,
+ * we query each member the CHW has a relationship with.
+ *
+ * For the cofounder demo this is fine.  A dedicated `GET /chw/documents`
+ * endpoint aggregating across all member relationships is tracked as a follow-up.
+ *
+ * KNOWN FOLLOW-UP: Replace with a CHW-scoped documents list endpoint that
+ * returns all documents the CHW uploaded across their caseload in a single
+ * query (avoids N+1 HTTP calls).
+ */
+
+interface MemberDocumentTableProps {
+  memberId: string;
+  query: string;
+  activeType: FilterType;
+}
+
+function MemberDocumentTable({ memberId, query, activeType }: MemberDocumentTableProps): React.JSX.Element | null {
+  const docsQuery = useMemberDocuments(memberId);
+  const docs = docsQuery.data?.items ?? [];
+
+  const filtered = useMemo(() => {
+    const lq = query.toLowerCase();
+    return docs.filter((d) => {
+      const typeMatch = activeType === 'all' || d.documentType === activeType;
+      const qMatch = query.length === 0 || d.filename.toLowerCase().includes(lq);
+      return typeMatch && qMatch;
+    });
+  }, [docs, query, activeType]);
+
+  if (docsQuery.isLoading) return null;
+  if (filtered.length === 0) return null;
+
+  return (
+    <>
+      {filtered.map((doc, idx) => (
+        <TableRow key={doc.id} doc={doc} idx={idx} />
+      ))}
+    </>
+  );
 }
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
@@ -203,26 +402,20 @@ function formatDate(iso: string): string {
 export function CHWDocumentsScreen(): React.JSX.Element {
   const { userName } = useAuth();
   const [query, setQuery] = useState('');
-  const [activeType, setActiveType] = useState<DocType>('all');
+  const [activeType, setActiveType] = useState<FilterType>('all');
 
-  const filtered = useMemo(() => {
-    const lq = query.toLowerCase();
-    return MOCK_DOCUMENTS.filter((d) => {
-      const typeMatch = activeType === 'all' || d.docType === activeType;
-      const qMatch =
-        query.length === 0 ||
-        d.filename.toLowerCase().includes(lq) ||
-        d.memberName.toLowerCase().includes(lq);
-      return typeMatch && qMatch;
-    });
-  }, [query, activeType]);
+  // Phase 1: use own member profile to seed the member ID list.
+  // A real CHW doesn't have member profiles, but we use the same hook pattern.
+  // In practice, the CHW documents page will be navigated to from a member profile
+  // which passes memberId as a route param.  We render a placeholder here.
+  // TODO(documents): add GET /chw/documents endpoint that returns all docs across
+  // the CHW's caseload in one call.
 
-  const pendingCount = MOCK_DOCUMENTS.filter((d) => d.status === 'pending_review').length;
-  const docTypes = Object.keys(DOC_TYPE_LABELS) as DocType[];
+  const filterTypes = Object.keys(DOC_TYPE_LABELS) as FilterType[];
 
   const userInitials = (userName ?? 'CHW')
     .split(' ')
-    .map((n) => n[0])
+    .map((n) => n[0] ?? '')
     .join('')
     .toUpperCase()
     .slice(0, 2);
@@ -230,19 +423,22 @@ export function CHWDocumentsScreen(): React.JSX.Element {
   const content = (
     <>
       <PageHeader
-        title="Documents"
-        subtitle={`${MOCK_DOCUMENTS.length} documents · ${pendingCount} pending review`}
+        title="Member Documents"
+        subtitle="Documents you've uploaded on behalf of your members"
         right={
-          <View style={styles.searchWrap}>
-            <Search size={14} color={colors.textSecondary} />
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Search documents or members…"
-              placeholderTextColor={colors.textMuted}
-              value={query}
-              onChangeText={setQuery}
-              accessibilityLabel="Search documents"
-            />
+          <View style={styles.headerRight}>
+            <View style={styles.searchWrap}>
+              <Search size={14} color={colors.textSecondary} />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Search documents…"
+                placeholderTextColor={colors.textMuted}
+                value={query}
+                onChangeText={setQuery}
+                accessibilityLabel="Search documents"
+              />
+            </View>
+            <CHWUploadTrigger />
           </View>
         }
       />
@@ -254,7 +450,7 @@ export function CHWDocumentsScreen(): React.JSX.Element {
         style={styles.chipRow}
         contentContainerStyle={styles.chipRowContent}
       >
-        {docTypes.map((type) => (
+        {filterTypes.map((type) => (
           <TouchableOpacity
             key={type}
             onPress={() => setActiveType(type)}
@@ -272,151 +468,35 @@ export function CHWDocumentsScreen(): React.JSX.Element {
         ))}
       </ScrollView>
 
-      {/* Body row */}
+      {/* Body */}
       <View style={styles.bodyRow}>
         <View style={styles.tableWrap}>
           {/* Table header */}
           <View style={styles.tableHeaderRow}>
             <Text style={[styles.colHeader, styles.colFile]}>File</Text>
-            <Text style={[styles.colHeader, styles.colMember]}>Member</Text>
             <Text style={[styles.colHeader, styles.colType]}>Type</Text>
             <Text style={[styles.colHeader, styles.colDate]}>Uploaded</Text>
             <Text style={[styles.colHeader, styles.colSize]}>Size</Text>
-            <Text style={[styles.colHeader, styles.colStatus]}>Status</Text>
             <Text style={[styles.colHeader, styles.colAction]}>{' '}</Text>
           </View>
 
-          {/* Table body */}
-          {filtered.length === 0 ? (
-            <EmptyState
-              icon={FileText}
-              title="No documents found"
-              body="Try a different search term or document type filter."
-            />
-          ) : (
-            filtered.map((doc, idx) => (
-              <Card
-                key={doc.id}
-                style={[styles.tableRowCard, idx % 2 === 1 && styles.tableRowAlt]}
-              >
-                <View style={styles.tableRow}>
-                  {/* File */}
-                  <View style={[styles.colFile, styles.fileCell]}>
-                    <View style={[styles.fileTypeBadge, { backgroundColor: doc.filename.endsWith('.pdf') ? '#7c3aed' : '#dc2626' }]}>
-                      <Text style={styles.fileTypeBadgeText}>{doc.filename.endsWith('.pdf') ? 'PDF' : 'IMG'}</Text>
-                    </View>
-                    <View style={styles.fileCellText}>
-                      <Text style={styles.filename} numberOfLines={1}>
-                        {doc.filename}
-                      </Text>
-                      <Text style={styles.fileSubtitle} numberOfLines={1}>
-                        {doc.docType.replace('_', ' ')} · {doc.memberId}
-                      </Text>
-                    </View>
-                  </View>
-
-                  {/* Member */}
-                  <Text style={[styles.cellText, styles.colMember]} numberOfLines={1}>
-                    {doc.memberName}
-                  </Text>
-
-                  {/* Type */}
-                  <View style={styles.colType}>
-                    <Pill variant={DOC_TYPE_PILL[doc.docType]} size="sm">
-                      {DOC_TYPE_LABELS[doc.docType]}
-                    </Pill>
-                  </View>
-
-                  {/* Date */}
-                  <Text style={[styles.cellText, styles.colDate]}>
-                    {formatDate(doc.uploadedAt)}
-                  </Text>
-
-                  {/* Size */}
-                  <Text style={[styles.cellText, styles.colSize]}>
-                    {formatBytes(doc.sizeKb)}
-                  </Text>
-
-                  {/* Status */}
-                  <View style={styles.colStatus}>
-                    <Pill variant={STATUS_PILL[doc.status]} size="sm">
-                      {STATUS_LABEL[doc.status]}
-                    </Pill>
-                  </View>
-
-                  {/* Actions */}
-                  <View style={styles.colAction}>
-                    <TouchableOpacity
-                      accessible
-                      accessibilityLabel={`Preview ${doc.filename}`}
-                      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                    >
-                      <Eye size={14} color={colors.textSecondary} />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      accessible
-                      accessibilityLabel={`Download ${doc.filename}`}
-                      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                    >
-                      <Download size={14} color={colors.textSecondary} />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      accessible
-                      accessibilityLabel={`Delete ${doc.filename}`}
-                      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                    >
-                      <Trash2 size={14} color={colors.textSecondary} />
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              </Card>
-            ))
-          )}
+          <EmptyState
+            icon={FileText}
+            title="No documents yet"
+            body="Use the 'Upload for Member' button to upload documents on behalf of a member in your caseload."
+            style={styles.emptyStateHint}
+          />
         </View>
 
         {Platform.OS === 'web' && (
           <RightRail>
             <Card style={styles.railCard}>
-              <Text style={styles.railTitle}>Document Stats</Text>
-              <StatTile
-                icon={<FileText size={18} color={colors.blue700} />}
-                iconBg={colors.blue100}
-                label="Total Documents"
-                value={MOCK_DOCUMENTS.length}
-                style={styles.statTile}
-              />
-              <StatTile
-                icon={<ClipboardList size={18} color={colors.amber700} />}
-                iconBg={colors.amber100}
-                label="Pending Review"
-                value={pendingCount}
-                deltaColor={pendingCount > 0 ? colors.amber700 : colors.emerald700}
-                style={styles.statTile}
-              />
-              <StatTile
-                icon={<FileBadge size={18} color={colors.emerald700} />}
-                iconBg={colors.emerald100}
-                label="Approved"
-                value={MOCK_DOCUMENTS.filter((d) => d.status === 'approved').length}
-                style={styles.statTile}
-              />
-            </Card>
-
-            <Card style={styles.railCard}>
-              <Text style={styles.railTitle}>Recent Activity</Text>
-              <View style={styles.activityList}>
-                {MOCK_DOCUMENTS.slice(0, 4).map((doc) => (
-                  <View key={doc.id} style={styles.activityItem}>
-                    <DocTypeIcon docType={doc.docType} size={12} />
-                    <View style={styles.activityText}>
-                      <Text style={styles.activityFilename} numberOfLines={1}>
-                        {doc.filename}
-                      </Text>
-                      <Text style={styles.activityMember}>{doc.memberName}</Text>
-                    </View>
-                  </View>
-                ))}
-              </View>
+              <Text style={styles.railTitle}>Quick Tip</Text>
+              <Text style={styles.railBody}>
+                Click "Upload for Member" and enter the member's UUID to upload
+                a document on their behalf.{'\n\n'}
+                The member will see it immediately in their My Documents page.
+              </Text>
             </Card>
           </RightRail>
         )}
@@ -458,6 +538,12 @@ const styles = StyleSheet.create({
     flexGrow: 1,
   } as ViewStyle,
 
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  } as ViewStyle,
+
   searchWrap: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -468,7 +554,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     height: 36,
     gap: spacing.xs,
-    minWidth: 260,
+    minWidth: 220,
   } as ViewStyle,
 
   searchInput: {
@@ -479,20 +565,31 @@ const styles = StyleSheet.create({
     outlineStyle: 'none',
   } as unknown as TextStyle,
 
+  uploadTrigger: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.primary,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: radius.md,
+    height: 36,
+  } as ViewStyle,
+
+  uploadTriggerText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#ffffff',
+  } as TextStyle,
+
   chipRow: {
     marginBottom: spacing.lg,
-    // Prevent the horizontal ScrollView from claiming any extra vertical
-    // height in its column-direction parent. Without this, RN-Web's default
-    // flex behaviour stretches the row to fill, and the chips inside (which
-    // are flex items in the row) get stretched vertically into tall capsules.
     flexGrow: 0,
     flexShrink: 0,
   } as ViewStyle,
 
   chipRowContent: {
     flexDirection: 'row',
-    // Cross-axis center keeps each chip at its natural content height
-    // instead of inheriting the row's full height.
     alignItems: 'center',
     gap: spacing.sm,
     paddingRight: spacing.md,
@@ -573,11 +670,9 @@ const styles = StyleSheet.create({
   } as unknown as TextStyle,
 
   colFile:   { flex: 2.5 } as ViewStyle,
-  colMember: { flex: 1.5 } as ViewStyle,
   colType:   { flex: 1   } as ViewStyle,
   colDate:   { flex: 1   } as ViewStyle,
-  colSize:   { width: 60 } as ViewStyle,
-  colStatus: { flex: 1.2 } as ViewStyle,
+  colSize:   { width: 72 } as ViewStyle,
   colAction: { width: 72, flexDirection: 'row' as const, alignItems: 'center' as const, gap: 10 } as ViewStyle,
 
   fileCell: {
@@ -624,6 +719,10 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   } as unknown as TextStyle,
 
+  emptyStateHint: {
+    paddingTop: 32,
+  } as ViewStyle,
+
   railCard: {
     padding: spacing.lg,
     gap: spacing.md,
@@ -636,33 +735,9 @@ const styles = StyleSheet.create({
     marginBottom: spacing.xs,
   } as unknown as TextStyle,
 
-  statTile: {
-    padding: spacing.md,
-  } as ViewStyle,
-
-  activityList: {
-    gap: spacing.sm,
-  } as ViewStyle,
-
-  activityItem: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: spacing.xs,
-  } as ViewStyle,
-
-  activityText: {
-    flex: 1,
-    gap: 2,
-  } as ViewStyle,
-
-  activityFilename: {
-    fontSize: 11,
-    color: colors.textPrimary,
-    fontWeight: '500',
-  } as unknown as TextStyle,
-
-  activityMember: {
-    fontSize: 10,
+  railBody: {
+    fontSize: 12,
     color: colors.textSecondary,
+    lineHeight: 18,
   } as unknown as TextStyle,
 });

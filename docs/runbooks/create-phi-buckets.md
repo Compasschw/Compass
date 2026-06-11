@@ -328,3 +328,344 @@ cd /home/ubuntu/compass/backend
 source .venv/bin/activate
 alembic downgrade z9w3x4y5a6b7
 ```
+
+---
+
+## Step 3b — Create the message-attachments PHI bucket (4th bucket)
+
+**When to run:** Before enabling file/image attachment sending in CHW and Member Messages screens in production. The backend will return a boto3 error (not a crash) if this bucket is absent when a user attempts to upload a message attachment.
+
+**Bucket name:** `compass-prod-message-attachments`
+
+This bucket uses the **same KMS key** created in Step 1 (`alias/compass-prod-phi`). Run the same block from Step 3 with the bucket name substituted:
+
+```bash
+BUCKET=compass-prod-message-attachments
+KEY_ARN=<KEY_ARN from Step 1>
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
+# 3b-a. Create bucket
+aws s3api create-bucket \
+  --bucket "$BUCKET" \
+  --region us-west-2 \
+  --create-bucket-configuration LocationConstraint=us-west-2
+
+# 3b-b. Block all public access
+aws s3api put-public-access-block \
+  --bucket "$BUCKET" \
+  --public-access-block-configuration \
+    "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
+
+# 3b-c. Enable versioning
+aws s3api put-bucket-versioning \
+  --bucket "$BUCKET" \
+  --versioning-configuration Status=Enabled
+
+# 3b-d. SSE-KMS encryption with Bucket Key
+aws s3api put-bucket-encryption \
+  --bucket "$BUCKET" \
+  --server-side-encryption-configuration "{
+    \"Rules\": [{
+      \"ApplyServerSideEncryptionByDefault\": {
+        \"SSEAlgorithm\": \"aws:kms\",
+        \"KMSMasterKeyID\": \"$KEY_ARN\"
+      },
+      \"BucketKeyEnabled\": true
+    }]
+  }"
+
+# 3b-e. Deny non-TLS requests (HIPAA transport control)
+aws s3api put-bucket-policy \
+  --bucket "$BUCKET" \
+  --policy "{
+    \"Version\": \"2012-10-17\",
+    \"Statement\": [{
+      \"Sid\": \"DenyNonTLS\",
+      \"Effect\": \"Deny\",
+      \"Principal\": \"*\",
+      \"Action\": \"s3:*\",
+      \"Resource\": [
+        \"arn:aws:s3:::$BUCKET\",
+        \"arn:aws:s3:::$BUCKET/*\"
+      ],
+      \"Condition\": {
+        \"Bool\": {\"aws:SecureTransport\": \"false\"}
+      }
+    }]
+  }"
+
+# 3b-f. Server access logging
+aws s3api put-bucket-logging \
+  --bucket "$BUCKET" \
+  --bucket-logging-status "{
+    \"LoggingEnabled\": {
+      \"TargetBucket\": \"compass-prod-s3-access-logs\",
+      \"TargetPrefix\": \"$BUCKET/\"
+    }
+  }"
+
+# 3b-g. HIPAA 7-year lifecycle (same as the other three PHI buckets)
+aws s3api put-bucket-lifecycle-configuration \
+  --bucket "$BUCKET" \
+  --lifecycle-configuration '{
+    "Rules": [{
+      "ID": "hipaa-7yr-lifecycle",
+      "Status": "Enabled",
+      "Filter": {"Prefix": ""},
+      "Transitions": [
+        {"Days": 90,  "StorageClass": "STANDARD_IA"},
+        {"Days": 365, "StorageClass": "GLACIER_IR"},
+        {"Days": 1095,"StorageClass": "GLACIER"}
+      ],
+      "Expiration": {"Days": 2587},
+      "NoncurrentVersionTransitions": [
+        {"NoncurrentDays": 90,  "StorageClass": "STANDARD_IA"},
+        {"NoncurrentDays": 365, "StorageClass": "GLACIER_IR"}
+      ],
+      "NoncurrentVersionExpiration": {"NoncurrentDays": 2557}
+    }]
+  }'
+```
+
+### Update IAM role policy to include the 4th bucket
+
+Extend the existing inline policy on the EC2 instance role (`CompassProdCallRecordingBuckets`) to add the message-attachments bucket:
+
+```bash
+ROLE_NAME=<role-name-from-Step-4>
+KEY_ARN=<KEY_ARN from Step 1>
+
+aws iam put-role-policy \
+  --role-name "$ROLE_NAME" \
+  --policy-name "CompassProdPHIBuckets" \
+  --policy-document "{
+    \"Version\": \"2012-10-17\",
+    \"Statement\": [
+      {
+        \"Sid\": \"S3PHIBuckets\",
+        \"Effect\": \"Allow\",
+        \"Action\": [
+          \"s3:PutObject\",
+          \"s3:GetObject\",
+          \"s3:DeleteObject\",
+          \"s3:ListBucket\"
+        ],
+        \"Resource\": [
+          \"arn:aws:s3:::compass-prod-call-recordings\",
+          \"arn:aws:s3:::compass-prod-call-recordings/*\",
+          \"arn:aws:s3:::compass-prod-transcripts\",
+          \"arn:aws:s3:::compass-prod-transcripts/*\",
+          \"arn:aws:s3:::compass-prod-ai-summaries\",
+          \"arn:aws:s3:::compass-prod-ai-summaries/*\",
+          \"arn:aws:s3:::compass-prod-message-attachments\",
+          \"arn:aws:s3:::compass-prod-message-attachments/*\"
+        ]
+      },
+      {
+        \"Sid\": \"KMSForPHIBuckets\",
+        \"Effect\": \"Allow\",
+        \"Action\": [
+          \"kms:Encrypt\",
+          \"kms:Decrypt\",
+          \"kms:GenerateDataKey\",
+          \"kms:GenerateDataKeyWithoutPlaintext\",
+          \"kms:DescribeKey\"
+        ],
+        \"Resource\": \"$KEY_ARN\"
+      }
+    ]
+  }"
+```
+
+### Set env var on prod
+
+Add to `/home/ubuntu/compass/backend/.env`:
+
+```
+S3_MESSAGE_ATTACHMENTS_BUCKET=compass-prod-message-attachments
+```
+
+Then restart: `sudo systemctl restart compass-backend`
+
+### Verify
+
+```bash
+aws s3api get-bucket-location --bucket compass-prod-message-attachments
+aws s3api get-bucket-encryption --bucket compass-prod-message-attachments
+aws s3api get-public-access-block --bucket compass-prod-message-attachments
+```
+
+---
+
+## Step 3c — Create the member-documents PHI bucket (5th bucket)
+
+**When to run:** Before enabling document upload on the Member Documents or CHW
+Documents screens in production.  The backend will return a boto3 error (not a
+crash) if this bucket is absent when a user attempts to upload a member document.
+
+**Bucket name:** `compass-prod-member-documents`
+
+**Allowed object types:** PDF, JPEG, PNG, HEIC (enforced in
+`backend/app/schemas/upload.py` ALLOWED_MIME_TYPES and the presigned-URL
+endpoint).
+
+This bucket uses the **same KMS key** created in Step 1 (`alias/compass-prod-phi`).
+
+```bash
+BUCKET=compass-prod-member-documents
+KEY_ARN=<KEY_ARN from Step 1>
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
+# 3c-a. Create bucket
+aws s3api create-bucket \
+  --bucket "$BUCKET" \
+  --region us-west-2 \
+  --create-bucket-configuration LocationConstraint=us-west-2
+
+# 3c-b. Block all public access
+aws s3api put-public-access-block \
+  --bucket "$BUCKET" \
+  --public-access-block-configuration \
+    "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
+
+# 3c-c. Enable versioning
+aws s3api put-bucket-versioning \
+  --bucket "$BUCKET" \
+  --versioning-configuration Status=Enabled
+
+# 3c-d. SSE-KMS encryption with Bucket Key
+aws s3api put-bucket-encryption \
+  --bucket "$BUCKET" \
+  --server-side-encryption-configuration "{
+    \"Rules\": [{
+      \"ApplyServerSideEncryptionByDefault\": {
+        \"SSEAlgorithm\": \"aws:kms\",
+        \"KMSMasterKeyID\": \"$KEY_ARN\"
+      },
+      \"BucketKeyEnabled\": true
+    }]
+  }"
+
+# 3c-e. Deny non-TLS requests (HIPAA transport control)
+aws s3api put-bucket-policy \
+  --bucket "$BUCKET" \
+  --policy "{
+    \"Version\": \"2012-10-17\",
+    \"Statement\": [{
+      \"Sid\": \"DenyNonTLS\",
+      \"Effect\": \"Deny\",
+      \"Principal\": \"*\",
+      \"Action\": \"s3:*\",
+      \"Resource\": [
+        \"arn:aws:s3:::$BUCKET\",
+        \"arn:aws:s3:::$BUCKET/*\"
+      ],
+      \"Condition\": {
+        \"Bool\": {\"aws:SecureTransport\": \"false\"}
+      }
+    }]
+  }"
+
+# 3c-f. Server access logging
+aws s3api put-bucket-logging \
+  --bucket "$BUCKET" \
+  --bucket-logging-status "{
+    \"LoggingEnabled\": {
+      \"TargetBucket\": \"compass-prod-s3-access-logs\",
+      \"TargetPrefix\": \"$BUCKET/\"
+    }
+  }"
+
+# 3c-g. HIPAA 7-year lifecycle (same as the other four PHI buckets)
+aws s3api put-bucket-lifecycle-configuration \
+  --bucket "$BUCKET" \
+  --lifecycle-configuration '{
+    "Rules": [{
+      "ID": "hipaa-7yr-lifecycle",
+      "Status": "Enabled",
+      "Filter": {"Prefix": ""},
+      "Transitions": [
+        {"Days": 90,  "StorageClass": "STANDARD_IA"},
+        {"Days": 365, "StorageClass": "GLACIER_IR"},
+        {"Days": 1095,"StorageClass": "GLACIER"}
+      ],
+      "Expiration": {"Days": 2587},
+      "NoncurrentVersionTransitions": [
+        {"NoncurrentDays": 90,  "StorageClass": "STANDARD_IA"},
+        {"NoncurrentDays": 365, "StorageClass": "GLACIER_IR"}
+      ],
+      "NoncurrentVersionExpiration": {"NoncurrentDays": 2557}
+    }]
+  }'
+```
+
+### Update IAM role policy to include the 5th bucket
+
+Extend the existing inline policy on the EC2 instance role (`CompassProdPHIBuckets`)
+to add the member-documents bucket:
+
+```bash
+ROLE_NAME=<role-name-from-Step-4>
+KEY_ARN=<KEY_ARN from Step 1>
+
+aws iam put-role-policy \
+  --role-name "$ROLE_NAME" \
+  --policy-name "CompassProdPHIBuckets" \
+  --policy-document "{
+    \"Version\": \"2012-10-17\",
+    \"Statement\": [
+      {
+        \"Sid\": \"S3PHIBuckets\",
+        \"Effect\": \"Allow\",
+        \"Action\": [
+          \"s3:PutObject\",
+          \"s3:GetObject\",
+          \"s3:DeleteObject\",
+          \"s3:ListBucket\"
+        ],
+        \"Resource\": [
+          \"arn:aws:s3:::compass-prod-call-recordings\",
+          \"arn:aws:s3:::compass-prod-call-recordings/*\",
+          \"arn:aws:s3:::compass-prod-transcripts\",
+          \"arn:aws:s3:::compass-prod-transcripts/*\",
+          \"arn:aws:s3:::compass-prod-ai-summaries\",
+          \"arn:aws:s3:::compass-prod-ai-summaries/*\",
+          \"arn:aws:s3:::compass-prod-message-attachments\",
+          \"arn:aws:s3:::compass-prod-message-attachments/*\",
+          \"arn:aws:s3:::compass-prod-member-documents\",
+          \"arn:aws:s3:::compass-prod-member-documents/*\"
+        ]
+      },
+      {
+        \"Sid\": \"KMSForPHIBuckets\",
+        \"Effect\": \"Allow\",
+        \"Action\": [
+          \"kms:Encrypt\",
+          \"kms:Decrypt\",
+          \"kms:GenerateDataKey\",
+          \"kms:GenerateDataKeyWithoutPlaintext\",
+          \"kms:DescribeKey\"
+        ],
+        \"Resource\": \"$KEY_ARN\"
+      }
+    ]
+  }"
+```
+
+### Set env var on prod
+
+Add to `/home/ubuntu/compass/backend/.env`:
+
+```
+S3_MEMBER_DOCUMENTS_BUCKET=compass-prod-member-documents
+```
+
+Then restart: `sudo systemctl restart compass-backend`
+
+### Verify
+
+```bash
+aws s3api get-bucket-location --bucket compass-prod-member-documents
+aws s3api get-bucket-encryption --bucket compass-prod-member-documents
+aws s3api get-public-access-block --bucket compass-prod-member-documents
+```

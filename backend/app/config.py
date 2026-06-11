@@ -28,6 +28,20 @@ class Settings(BaseSettings):
     s3_call_recordings_bucket: str = ""
     s3_transcripts_bucket: str = ""
     s3_ai_summaries_bucket: str = ""
+    # PHI bucket for CHW↔member message attachments (images + PDFs).
+    # Created separately via docs/runbooks/create-phi-buckets.md (see
+    # "Step 3b — compass-prod-message-attachments" section).
+    # Leave empty in dev — the presigned-URL endpoint will surface a boto3
+    # error on attachment upload attempts, which is acceptable for local dev
+    # where attachments aren't exercised against real S3.
+    s3_message_attachments_bucket: str = ""
+    # PHI bucket for member-owned documents (government IDs, income proof,
+    # address verification, medical documents, etc.).
+    # Created separately via docs/runbooks/create-phi-buckets.md (see
+    # "Step 3c — compass-prod-member-documents" section).
+    # Leave empty in dev — presigned-URL endpoint surfaces a boto3 error on
+    # document upload, acceptable when documents aren't tested against real S3.
+    s3_member_documents_bucket: str = ""
     # ARN of the KMS key used for SSE-KMS encryption on the three PHI buckets.
     # Format: arn:aws:kms:us-west-2:{account_id}:key/{key_id}
     # Leave empty in dev/staging to fall back to S3-managed encryption.
