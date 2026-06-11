@@ -1,13 +1,17 @@
 """Tests for the S3 audio persistence step in recording_finalizer.
 
 Coverage:
-1. _build_audio_s3_key — pure unit, no I/O.
-2. _upload_audio_to_s3 success path — mocked boto3 client; verifies put_object
+1. _build_audio_s3_key -- pure unit, no I/O.
+   New path scheme: prod/v1/sessions/{session_uuid}/{comm_session_uuid}.mp3
+   - No year/month partition -- keys are UUID-only (no PHI).
+   - The comm_session_uuid as filename means two calls in the same session
+     produce different keys (overwrite-collision fix).
+2. _upload_audio_to_s3 success path -- mocked boto3; verifies put_object
    call shape (bucket, key, SSE-KMS, ContentType, Metadata) and return value.
-3. _upload_audio_to_s3 BotoCoreError path — returns None, does NOT raise.
-4. _upload_audio_to_s3 ClientError path — returns None, does NOT raise.
-5. _run_pipeline S3 success — audio_s3_key populated on comm_session.
-6. _run_pipeline S3 failure — audio_s3_key stays NULL; transcription still runs.
+3. _upload_audio_to_s3 BotoCoreError path -- returns None, does NOT raise.
+4. _upload_audio_to_s3 ClientError path -- returns None, does NOT raise.
+5. _run_pipeline S3 success -- audio_s3_key populated on comm_session.
+6. _run_pipeline S3 failure -- audio_s3_key stays NULL; transcription still runs.
 
 All tests are unit-level with mocked external services.  No real AWS calls.
 No real DB is needed for the pure-unit tests; the pipeline integration tests
@@ -30,35 +34,67 @@ from app.services.communication.recording_finalizer import (
 
 
 # ---------------------------------------------------------------------------
-# _build_audio_s3_key — pure unit
+# _build_audio_s3_key -- pure unit
 # ---------------------------------------------------------------------------
 
 
 def test_build_audio_s3_key_format() -> None:
+    """Key uses the new member-scoped UUID-only scheme: sessions/{session}/{call}.mp3"""
     session_id = uuid.UUID("550e8400-e29b-41d4-a716-446655440000")
-    recorded_at = datetime(2026, 6, 9, 14, 32, 0, tzinfo=UTC)
-    key = _build_audio_s3_key(session_id=session_id, recorded_at=recorded_at)
-    assert key == "prod/v1/2026/06/550e8400-e29b-41d4-a716-446655440000.mp3"
+    comm_session_id = uuid.UUID("7f3a1c9d-1234-5678-abcd-ef0123456789")
+    key = _build_audio_s3_key(
+        session_id=session_id,
+        communication_session_id=comm_session_id,
+    )
+    assert key == (
+        "prod/v1/sessions/550e8400-e29b-41d4-a716-446655440000"
+        "/7f3a1c9d-1234-5678-abcd-ef0123456789.mp3"
+    )
 
 
-def test_build_audio_s3_key_zero_pads_single_digit_month() -> None:
-    session_id = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
-    recorded_at = datetime(2026, 3, 1, 0, 0, 0, tzinfo=UTC)
-    key = _build_audio_s3_key(session_id=session_id, recorded_at=recorded_at)
-    assert key == "prod/v1/2026/03/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.mp3"
+def test_build_audio_s3_key_no_phi_in_path() -> None:
+    """Key must contain only UUIDs -- no dates, names, or other PHI."""
+    session_id = uuid.uuid4()
+    comm_session_id = uuid.uuid4()
+    key = _build_audio_s3_key(
+        session_id=session_id,
+        communication_session_id=comm_session_id,
+    )
+    assert key.startswith("prod/v1/sessions/")
+    # No year/month date partitions
+    assert "/2026/" not in key
+    assert "/06/" not in key
+    # Must end with the comm_session_id UUID + .mp3
+    assert key.endswith(f"{comm_session_id}.mp3")
 
 
-def test_build_audio_s3_key_stable_across_retries() -> None:
-    """Two calls with the same session_id and month produce the same key."""
+def test_build_audio_s3_key_two_calls_same_session_no_collision() -> None:
+    """Two comm_sessions on the same session produce different keys (no overwrite)."""
     session_id = uuid.UUID("12345678-1234-5678-1234-567812345678")
-    t1 = datetime(2026, 6, 9, 10, 0, 0, tzinfo=UTC)
-    t2 = datetime(2026, 6, 9, 10, 5, 0, tzinfo=UTC)
-    assert _build_audio_s3_key(session_id=session_id, recorded_at=t1) == \
-           _build_audio_s3_key(session_id=session_id, recorded_at=t2)
+    call_1 = uuid.UUID("aaaaaaaa-0000-0000-0000-000000000001")
+    call_2 = uuid.UUID("bbbbbbbb-0000-0000-0000-000000000002")
+    key_1 = _build_audio_s3_key(session_id=session_id, communication_session_id=call_1)
+    key_2 = _build_audio_s3_key(session_id=session_id, communication_session_id=call_2)
+    assert key_1 != key_2
+    # Both share the same session prefix
+    prefix = f"prod/v1/sessions/{session_id}/"
+    assert key_1.startswith(prefix)
+    assert key_2.startswith(prefix)
+
+
+def test_build_audio_s3_key_same_inputs_are_stable() -> None:
+    """Identical inputs always produce the same key (deterministic, idempotent)."""
+    session_id = uuid.UUID("12345678-1234-5678-1234-567812345678")
+    comm_session_id = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+    assert _build_audio_s3_key(
+        session_id=session_id, communication_session_id=comm_session_id
+    ) == _build_audio_s3_key(
+        session_id=session_id, communication_session_id=comm_session_id
+    )
 
 
 # ---------------------------------------------------------------------------
-# _upload_audio_to_s3 — mocked boto3
+# _upload_audio_to_s3 -- mocked boto3
 # ---------------------------------------------------------------------------
 
 
@@ -75,19 +111,23 @@ def _make_settings(bucket: str = "compass-prod-call-recordings", kms_arn: str = 
 async def test_upload_audio_to_s3_success_returns_key() -> None:
     """Successful PUT returns the expected S3 key string."""
     session_id = uuid.UUID("550e8400-e29b-41d4-a716-446655440000")
-    comm_session_id = uuid.uuid4()
+    comm_session_id = uuid.UUID("7f3a1c9d-1234-5678-abcd-ef0123456789")
     recorded_at = datetime(2026, 6, 9, 14, 32, 0, tzinfo=UTC)
     audio_bytes = b"fake-mp3-bytes"
 
     mock_s3 = MagicMock()
     mock_s3.put_object.return_value = {}
 
+    # boto3 is imported lazily inside the function body, so we patch the
+    # module-level boto3 reference that the lazy import resolves to, plus
+    # the settings object via app.config.
     with (
-        patch("app.services.communication.recording_finalizer.boto3") as mock_boto3,
-        patch("app.services.communication.recording_finalizer.settings", _make_settings(kms_arn="arn:aws:kms:us-west-2:123456789012:key/test-key-id")),
+        patch("boto3.client", return_value=mock_s3),
+        patch(
+            "app.config.settings",
+            _make_settings(kms_arn="arn:aws:kms:us-west-2:123456789012:key/test-key-id"),
+        ),
     ):
-        mock_boto3.client.return_value = mock_s3
-
         result = await _upload_audio_to_s3(
             audio_bytes=audio_bytes,
             session_id=session_id,
@@ -95,7 +135,9 @@ async def test_upload_audio_to_s3_success_returns_key() -> None:
             recorded_at=recorded_at,
         )
 
-    expected_key = "prod/v1/2026/06/550e8400-e29b-41d4-a716-446655440000.mp3"
+    expected_key = (
+        f"prod/v1/sessions/{session_id}/{comm_session_id}.mp3"
+    )
     assert result == expected_key
 
     mock_s3.put_object.assert_called_once()
@@ -121,10 +163,9 @@ async def test_upload_audio_to_s3_omits_kms_key_id_when_arn_empty() -> None:
     mock_s3.put_object.return_value = {}
 
     with (
-        patch("app.services.communication.recording_finalizer.boto3") as mock_boto3,
-        patch("app.services.communication.recording_finalizer.settings", _make_settings(kms_arn="")),
+        patch("boto3.client", return_value=mock_s3),
+        patch("app.config.settings", _make_settings(kms_arn="")),
     ):
-        mock_boto3.client.return_value = mock_s3
         result = await _upload_audio_to_s3(
             audio_bytes=b"bytes",
             session_id=session_id,
@@ -139,7 +180,7 @@ async def test_upload_audio_to_s3_omits_kms_key_id_when_arn_empty() -> None:
 
 @pytest.mark.asyncio
 async def test_upload_audio_to_s3_returns_none_on_client_error() -> None:
-    """ClientError from boto3 results in None return — does NOT raise."""
+    """ClientError from boto3 results in None return -- does NOT raise."""
     from botocore.exceptions import ClientError
 
     session_id = uuid.uuid4()
@@ -153,10 +194,9 @@ async def test_upload_audio_to_s3_returns_none_on_client_error() -> None:
     )
 
     with (
-        patch("app.services.communication.recording_finalizer.boto3") as mock_boto3,
-        patch("app.services.communication.recording_finalizer.settings", _make_settings()),
+        patch("boto3.client", return_value=mock_s3),
+        patch("app.config.settings", _make_settings()),
     ):
-        mock_boto3.client.return_value = mock_s3
         result = await _upload_audio_to_s3(
             audio_bytes=b"bytes",
             session_id=session_id,
@@ -174,11 +214,12 @@ async def test_upload_audio_to_s3_returns_none_when_bucket_not_configured() -> N
     comm_session_id = uuid.uuid4()
     recorded_at = datetime(2026, 6, 9, 14, 32, 0, tzinfo=UTC)
 
+    mock_s3 = MagicMock()
+
     with (
-        patch("app.services.communication.recording_finalizer.boto3") as mock_boto3,
-        patch("app.services.communication.recording_finalizer.settings", _make_settings(bucket="")),
+        patch("boto3.client", return_value=mock_s3),
+        patch("app.config.settings", _make_settings(bucket="")),
     ):
-        mock_boto3.client.return_value = MagicMock()
         result = await _upload_audio_to_s3(
             audio_bytes=b"bytes",
             session_id=session_id,
@@ -188,7 +229,7 @@ async def test_upload_audio_to_s3_returns_none_when_bucket_not_configured() -> N
 
     assert result is None
     # put_object must NOT have been called
-    mock_boto3.client.return_value.put_object.assert_not_called()
+    mock_s3.put_object.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -253,7 +294,8 @@ async def test_run_pipeline_sets_audio_s3_key_on_success() -> None:
     mock_transcription_provider.transcribe_bytes = AsyncMock(return_value=transcription_result)
     mock_transcription_provider.summarize_transcript = AsyncMock(return_value=None)
 
-    expected_key = "prod/v1/2026/06/" + str(session_id) + ".mp3"
+    # The expected key under the new scheme uses the comm_session.id UUID.
+    expected_key = f"prod/v1/sessions/{session_id}/{comm_session.id}.mp3"
 
     with patch(
         "app.services.communication.recording_finalizer._upload_audio_to_s3",
@@ -304,7 +346,7 @@ async def test_run_pipeline_audio_s3_key_stays_null_on_s3_failure() -> None:
             transcription_provider_factory=lambda: mock_transcription_provider,
         )
 
-    # audio_s3_key must still be None — upload failure must not raise.
+    # audio_s3_key must still be None -- upload failure must not raise.
     assert comm_session.audio_s3_key is None
     # Transcription must have been called despite the S3 failure.
     mock_transcription_provider.transcribe_bytes.assert_called_once()

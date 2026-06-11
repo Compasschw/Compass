@@ -50,23 +50,31 @@ from app.models.session import SessionTranscript
 logger = logging.getLogger("compass.communication.finalizer")
 
 
-def _build_audio_s3_key(session_id: UUID, recorded_at: datetime) -> str:
+def _build_audio_s3_key(session_id: UUID, communication_session_id: UUID) -> str:
     """Construct the S3 object key for a Vonage call recording.
 
-    Path schema: ``prod/v1/{year}/{month}/{session_id}.mp3``
+    Path schema: ``prod/v1/sessions/{session_id}/{communication_session_id}.mp3``
 
-    Uses the session_id (not communication_session_id) so the path is stable
-    across retry calls.  The year/month partition is derived from the
-    ``recorded_at`` timestamp (UTC) so keys can be scanned by date range.
+    Scoped by the parent session UUID so all recordings for a single care
+    session share a common prefix, enabling O(1) per-session S3 prefix listings
+    for audit.  The comm_session UUID (per-call) is the filename, which
+    eliminates the overwrite collision that occurred when a session had multiple
+    calls in the same calendar month under the old date-partitioned scheme.
+
+    No PHI appears anywhere in the key — both UUIDs are opaque identifiers from
+    the database, not derived from member names, DOBs, CINs, or any PII.
 
     Args:
         session_id: The parent Session UUID (from CommunicationSession.session_id).
-        recorded_at: UTC datetime of when the recording finalizer runs.
+        communication_session_id: The CommunicationSession UUID — uniquely
+            identifies a single Vonage call, so two calls within the same session
+            produce different keys and never overwrite each other.
 
     Returns:
-        S3 object key string, e.g. ``prod/v1/2026/06/550e8400-...mp3``.
+        S3 object key string, e.g.
+        ``prod/v1/sessions/550e8400-.../7f3a1c9d-....mp3``.
     """
-    return f"prod/v1/{recorded_at.year}/{recorded_at.month:02d}/{session_id}.mp3"
+    return f"prod/v1/sessions/{session_id}/{communication_session_id}.mp3"
 
 
 async def _upload_audio_to_s3(
@@ -83,9 +91,11 @@ async def _upload_audio_to_s3(
 
     Args:
         audio_bytes: Raw MP3 bytes downloaded from Vonage.
-        session_id: Parent Session UUID (used in the S3 key path).
-        communication_session_id: CommunicationSession UUID (stored in S3 metadata).
-        recorded_at: UTC timestamp used for the year/month path partition.
+        session_id: Parent Session UUID (used in the S3 key path prefix).
+        communication_session_id: CommunicationSession UUID (used as the S3
+            object name within the session prefix, and stored in S3 metadata).
+        recorded_at: UTC timestamp recorded as S3 object metadata (not used
+            in the key path — key is UUID-only so no PHI leaks via timestamps).
 
     Returns:
         S3 key string on success, None on failure.
@@ -107,7 +117,10 @@ async def _upload_audio_to_s3(
             )
             return None
 
-        s3_key = _build_audio_s3_key(session_id=session_id, recorded_at=recorded_at)
+        s3_key = _build_audio_s3_key(
+            session_id=session_id,
+            communication_session_id=communication_session_id,
+        )
 
         put_kwargs: dict = {
             "Bucket": bucket,

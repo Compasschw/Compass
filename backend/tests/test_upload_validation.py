@@ -135,3 +135,37 @@ class TestUploadValidation:
             },
         )
         assert res.status_code == 401
+
+    async def test_message_attachment_without_target_member_id_rejected(
+        self, client: AsyncClient, chw_tokens: dict
+    ):
+        """message_attachment uploads must supply target_member_id -- 422 if missing."""
+        res = await client.post(
+            "/api/v1/upload/presigned-url",
+            json={
+                "filename": "photo.jpg",
+                "content_type": "image/jpeg",
+                "purpose": "message_attachment",
+                "size_bytes": 200_000,
+                # target_member_id intentionally omitted
+            },
+            headers=auth_header(chw_tokens),
+        )
+        assert res.status_code == 422
+
+    async def test_message_attachment_with_invalid_target_member_id_rejected(
+        self, client: AsyncClient, chw_tokens: dict
+    ):
+        """target_member_id must be a valid UUID -- 422 on non-UUID strings."""
+        res = await client.post(
+            "/api/v1/upload/presigned-url",
+            json={
+                "filename": "photo.jpg",
+                "content_type": "image/jpeg",
+                "purpose": "message_attachment",
+                "size_bytes": 200_000,
+                "target_member_id": "not-a-uuid",
+            },
+            headers=auth_header(chw_tokens),
+        )
+        assert res.status_code == 422

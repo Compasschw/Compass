@@ -31,7 +31,9 @@ class CommunicationSession(Base):
     # S3 audio persistence — populated by recording_finalizer after successful
     # PUT to compass-prod-call-recordings.  NULL means the upload has not run
     # yet or failed; use audio_s3_key IS NULL as the "needs backfill" signal.
-    # Path schema: prod/v1/{year}/{month}/{session_id}.mp3
+    # Path schema: prod/v1/sessions/{session_id}/{communication_session_id}.mp3
+    # UUID-only keys -- no PHI; comm_session_id as filename eliminates overwrite
+    # collisions when a session has multiple Vonage calls in the same month.
     audio_s3_key: Mapped[str | None] = mapped_column(String(500))
 
     # Transcript
