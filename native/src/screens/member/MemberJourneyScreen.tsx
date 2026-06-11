@@ -24,6 +24,9 @@ import {
   type ViewStyle,
   type TextStyle,
 } from 'react-native';
+import type { DrawerScreenProps } from '@react-navigation/drawer';
+import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
+import type { MemberTabParamList } from '../../navigation/MemberTabNavigator';
 import {
   CheckCircle2,
   Circle,
@@ -380,9 +383,25 @@ const pb = StyleSheet.create({
   } as ViewStyle,
 });
 
+// ─── Route prop type ─────────────────────────────────────────────────────────
+
+/**
+ * Accept route props from both navigators (bottom tabs on native, drawer on
+ * web). The `focusJourneyId` param is optional — callers that navigate without
+ * params continue to work as before.
+ */
+type MemberJourneyScreenProps =
+  | Partial<BottomTabScreenProps<MemberTabParamList, 'MemberJourney'>>
+  | Partial<DrawerScreenProps<MemberTabParamList, 'MemberJourney'>>;
+
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
-export function MemberJourneyScreen(): React.JSX.Element {
+export function MemberJourneyScreen(props: MemberJourneyScreenProps): React.JSX.Element {
+  // Extract focusJourneyId from route params if present.
+  const focusJourneyId =
+    (props as Partial<BottomTabScreenProps<MemberTabParamList, 'MemberJourney'>>)
+      ?.route?.params?.focusJourneyId ?? null;
+
   const { userName } = useAuth();
   const profileQuery = useMemberProfile();
   // MemberJourney.member_id is FK to users.id, not members.id.
@@ -402,9 +421,17 @@ export function MemberJourneyScreen(): React.JSX.Element {
   const journeys = journeysQuery.data ?? [];
   const defaultActive = useMemo(() => resolveActiveJourney(journeys), [journeys]);
 
-  const [selectedJourneyId, setSelectedJourneyId] = useState<string | null>(null);
+  // Seed selectedJourneyId from focusJourneyId on first meaningful data load.
+  // If the focused journey id is valid, use it; otherwise fall back to the
+  // default active journey. This ensures a tap from MemberHomeScreen
+  // immediately highlights the correct journey without an extra useState effect.
+  const [selectedJourneyId, setSelectedJourneyId] = useState<string | null>(
+    () => focusJourneyId,
+  );
+
   const selectedJourney =
-    journeys.find((j) => j.id === selectedJourneyId) ?? defaultActive;
+    journeys.find((j) => j.id === (selectedJourneyId ?? focusJourneyId)) ??
+    defaultActive;
 
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
   const selectedStep = useMemo(() => {

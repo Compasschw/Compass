@@ -90,7 +90,12 @@ export type MemberTabParamList = {
   Roadmap: undefined;
   Profile: undefined;
   // New (Wave 2) sidebar destinations.
-  MemberJourney: undefined;
+  /**
+   * Optional `focusJourneyId` — when present MemberJourneyScreen scrolls /
+   * highlights that specific journey on mount. Supplied by MemberHomeScreen
+   * journey cards so tapping a card deep-links directly to that journey.
+   */
+  MemberJourney: { focusJourneyId?: string } | undefined;
   MemberResources: undefined;
   MemberRewards: undefined;
   MemberDocuments: undefined;

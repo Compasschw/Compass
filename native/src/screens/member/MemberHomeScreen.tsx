@@ -54,16 +54,18 @@ import {
   ListChecks,
   MessageSquare,
   Phone,
+  Route,
   ShoppingBasket,
   Square,
   CheckSquare,
+  Stethoscope,
   Target,
   Trophy,
 } from 'lucide-react-native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 
 import { useAuth } from '../../context/AuthContext';
-import { colors as tokens, spacing, radius } from '../../theme/tokens';
+import { colors as tokens, numerals, spacing, radius } from '../../theme/tokens';
 import { fonts } from '../../theme/typography';
 import {
   verticalLabels,
@@ -72,12 +74,15 @@ import {
 import {
   useSessions,
   useMemberProfile,
+  useMemberJourneys,
   useRequests,
+  type MemberJourneyResponse,
   type SessionData,
 } from '../../hooks/useApiQueries';
 import {
   AppShell,
   Card,
+  EmptyState,
   PageHeader,
   PageWrap,
   Pill,
@@ -86,6 +91,7 @@ import {
   StatTile,
   StaggerList,
 } from '../../components/ui';
+import type { PillVariant } from '../../components/ui/Pill';
 import { useMemberRoadmap } from '../../hooks/useFollowupQueries';
 import { useRefreshControl } from '../../hooks/useRefreshControl';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
@@ -119,6 +125,94 @@ function deriveGreeting(hourOfDay: number): string {
   if (hourOfDay < 12) return 'Good morning';
   if (hourOfDay < 17) return 'Good afternoon';
   return 'Good evening';
+}
+
+// ─── Journey category icon/color mapping ──────────────────────────────────────
+
+/**
+ * Colour tokens for a journey category tile.
+ * `pillVariant` must be a valid PillVariant — limited to the 6 canonical tokens.
+ */
+interface JourneyCategoryTokens {
+  iconBg: string;
+  iconColor: string;
+  pillVariant: PillVariant;
+  Icon: React.ComponentType<{ size: number; color: string; strokeWidth?: number }>;
+}
+
+/**
+ * Maps a journey template slug to an icon component and colour tokens.
+ * Falls back to a neutral Route icon when the slug is unrecognised.
+ */
+function resolveJourneyCategoryTokens(slug: string): JourneyCategoryTokens {
+  if (
+    slug === 'food_assistance' ||
+    slug === 'calfresh_enrollment' ||
+    slug === 'food_pantry'
+  ) {
+    return {
+      iconBg: tokens.orange100,
+      iconColor: tokens.orange700,
+      pillVariant: 'amber',
+      Icon: ShoppingBasket,
+    };
+  }
+  if (slug === 'mental_health') {
+    return {
+      iconBg: tokens.purple100,
+      iconColor: tokens.purple700,
+      pillVariant: 'purple',
+      Icon: HeartPulse,
+    };
+  }
+  if (
+    slug === 'housing' ||
+    slug === 'rent_payment_assistance' ||
+    slug === 'utility_support'
+  ) {
+    return {
+      iconBg: tokens.blue100,
+      iconColor: tokens.blue700,
+      pillVariant: 'blue',
+      Icon: Home,
+    };
+  }
+  if (
+    slug === 'maternal_health' ||
+    slug === 'healthcare_appointment' ||
+    slug === 'health_education'
+  ) {
+    return {
+      iconBg: tokens.emerald100,
+      iconColor: tokens.emerald700,
+      pillVariant: 'emerald',
+      Icon: Stethoscope,
+    };
+  }
+  // Fallback
+  return {
+    iconBg: tokens.gray100,
+    iconColor: tokens.gray700,
+    pillVariant: 'gray',
+    Icon: Route,
+  };
+}
+
+/**
+ * Derives the journey card subtitle from the current step.
+ * If the member is on the last step, returns a "Almost done" nudge string.
+ */
+function resolveJourneySubtitle(journey: MemberJourneyResponse): string {
+  const lastStepOrder = journey.steps.length;
+  const currentStep = journey.currentStep ?? journey.steps[0] ?? null;
+
+  if (!currentStep) return '';
+
+  if (currentStep.stepOrder >= lastStepOrder) {
+    return 'Almost done — Journey Complete coming up';
+  }
+
+  return currentStep.stepName;
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -282,11 +376,18 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
   const roadmapQuery  = useMemberRoadmap();
   const requestsQuery = useRequests();
 
+  // useMemberJourneys requires the member's User UUID (not the Members row PK).
+  // We wait for profileQuery to resolve before enabling it, so memberId is '':
+  // useMemberJourneys guards on enabled: !!memberId internally.
+  const memberId = profileQuery.data?.userId ?? '';
+  const journeysQuery = useMemberJourneys(memberId);
+
   const refresh = useRefreshControl([
     sessionsQuery.refetch,
     profileQuery.refetch,
     roadmapQuery.refetch,
     requestsQuery.refetch,
+    journeysQuery.refetch,
   ]);
 
   const allSessions  = sessionsQuery.data ?? [];
@@ -313,6 +414,10 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
   // Open requests = member-submitted, not yet picked up by a CHW.
   const openRequestsCount = allRequests.filter((r) => r.status === 'open').length;
 
+  // Active journeys for the Your Journeys section.
+  const allJourneys   = journeysQuery.data ?? [];
+  const activeJourneys = allJourneys.filter((j) => j.status === 'active');
+
   // ─── Navigation callbacks ──────────────────────────────────────────────────
 
   const handleFindCHW = useCallback(() => {
@@ -333,6 +438,13 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
     navigation.navigate('Roadmap');
   }, [navigation]);
 
+  const handleOpenJourney = useCallback(
+    (focusJourneyId: string) => {
+      navigation.navigate('MemberJourney', { focusJourneyId });
+    },
+    [navigation],
+  );
+
   // ─── Loading / error guards ────────────────────────────────────────────────
 
   const isLoading =
@@ -340,6 +452,10 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
     profileQuery.isLoading ||
     roadmapQuery.isLoading ||
     requestsQuery.isLoading;
+
+  // journeysQuery loading is tracked separately so the journey section can
+  // render its own skeleton without blocking the full page.
+  const journeysLoading = journeysQuery.isLoading;
 
   // Only hard-error on sessions or profile. Roadmap and requests degrade
   // gracefully to empty arrays so partial-load never tombstones the screen.
@@ -551,14 +667,14 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
           </View>
 
           {/* ── Your Journeys ────────────────────────────────────────────
-           *  Static journey cards until the active roadmap items surface
-           *  a live journey list. Progress bars use emerald token.
+           *  Live data from useMemberJourneys. Filtered to status==='active'.
+           *  Each card navigates to MemberJourneyScreen with focusJourneyId.
            */}
           <SectionHeader
             title="Your Journeys"
             right={
               <Pressable
-                onPress={handleOpenRoadmap}
+                onPress={() => navigation.navigate('MemberJourney', undefined)}
                 accessibilityRole="link"
                 accessibilityLabel="View all journeys"
               >
@@ -567,67 +683,97 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
             }
             marginBottom={spacing.md}
           />
-          <View style={styles.journeyRow}>
-            {/* Food Assistance */}
-            <PressableCard
-              onPress={handleOpenRoadmap}
-              style={styles.journeyCard}
-              accessibilityLabel="Food Assistance journey, 60% complete"
-            >
-              <View style={styles.journeyCardHeader}>
-                <View style={[styles.journeyIconCircle, { backgroundColor: '#FED7AA' }]}>
-                  <ShoppingBasket
-                    size={22}
-                    color={tokens.orange700}
-                    strokeWidth={2}
-                    accessibilityLabel="food assistance category"
-                  />
-                </View>
-                <View style={styles.journeyCardText}>
-                  <Text style={styles.journeyCardTitle}>Food Assistance</Text>
-                  <Text style={styles.journeyCardSub}>CalFresh enrollment</Text>
-                </View>
-                <Pill variant="emerald" size="sm">60%</Pill>
-              </View>
-              <View
-                style={styles.journeyProgressTrack}
-                accessibilityRole="progressbar"
-                accessibilityValue={{ min: 0, max: 100, now: 60 }}
-              >
-                <View style={[styles.journeyProgressFill, { width: '60%' }]} />
-              </View>
-            </PressableCard>
 
-            {/* Mental Health */}
-            <PressableCard
-              onPress={handleOpenRoadmap}
-              style={styles.journeyCard}
-              accessibilityLabel="Mental Health journey, 80% complete"
-            >
-              <View style={styles.journeyCardHeader}>
-                <View style={[styles.journeyIconCircle, { backgroundColor: '#E9D5FF' }]}>
-                  <HeartPulse
-                    size={22}
-                    color={tokens.purple700}
-                    strokeWidth={2}
-                    accessibilityLabel="mental health category"
-                  />
-                </View>
-                <View style={styles.journeyCardText}>
-                  <Text style={styles.journeyCardTitle}>Mental Health</Text>
-                  <Text style={styles.journeyCardSub}>Behavioral health referral</Text>
-                </View>
-                <Pill variant="purple" size="sm">80%</Pill>
-              </View>
-              <View
-                style={styles.journeyProgressTrack}
-                accessibilityRole="progressbar"
-                accessibilityValue={{ min: 0, max: 100, now: 80 }}
-              >
-                <View style={[styles.journeyProgressFill, { width: '80%' }]} />
-              </View>
-            </PressableCard>
-          </View>
+          {/* Loading state — skeleton cards at journey card dimensions */}
+          {journeysLoading && (
+            <View style={styles.journeyRow}>
+              <View style={[styles.journeyCard, styles.journeySkeletonCard]} />
+              <View style={[styles.journeyCard, styles.journeySkeletonCard]} />
+            </View>
+          )}
+
+          {/* Empty state — member has no active journeys */}
+          {!journeysLoading && activeJourneys.length === 0 && (
+            <EmptyState
+              icon={Route}
+              title="No journeys yet"
+              body={"Your CHW will assign one after your first session"}
+              style={styles.journeyEmptyState}
+            />
+          )}
+
+          {/* Live journey cards */}
+          {!journeysLoading && activeJourneys.length > 0 && (
+            <View style={styles.journeyRow}>
+              {activeJourneys.map((journey) => {
+                const progressPct = Math.round(journey.progressPercent);
+                const categoryTokens = resolveJourneyCategoryTokens(
+                  journey.template.slug,
+                );
+                const subtitle = resolveJourneySubtitle(journey);
+                const { iconBg, iconColor, pillVariant, Icon: CategoryIcon } =
+                  categoryTokens;
+
+                return (
+                  <PressableCard
+                    key={journey.id}
+                    onPress={() => handleOpenJourney(journey.id)}
+                    style={styles.journeyCard}
+                    accessibilityLabel={`${journey.template.name}, ${progressPct}% complete, tap to view journey roadmap`}
+                  >
+                    <View style={styles.journeyCardHeader}>
+                      {/* Category icon tile — 56×56, rounded 12 */}
+                      <View
+                        style={[
+                          styles.journeyIconCircle,
+                          { backgroundColor: iconBg },
+                        ]}
+                      >
+                        <CategoryIcon
+                          size={22}
+                          color={iconColor}
+                          strokeWidth={2}
+                        />
+                      </View>
+
+                      {/* Title + current step subtitle */}
+                      <View style={styles.journeyCardText}>
+                        <Text style={styles.journeyCardTitle} numberOfLines={1}>
+                          {journey.template.name}
+                        </Text>
+                        {subtitle.length > 0 && (
+                          <Text style={styles.journeyCardSub} numberOfLines={1}>
+                            {subtitle}
+                          </Text>
+                        )}
+                      </View>
+
+                      {/* Progress % chip — colour family matches icon tile.
+                       *  Nested Text carries tabular-nums so digit widths
+                       *  stay stable across values like 9% → 100%. */}
+                      <Pill variant={pillVariant} size="sm">
+                        <Text style={numerals.tabular}>{progressPct}%</Text>
+                      </Pill>
+                    </View>
+
+                    {/* Progress bar — emerald primary fill on gray track */}
+                    <View
+                      style={styles.journeyProgressTrack}
+                      accessibilityRole="progressbar"
+                      accessibilityValue={{ min: 0, max: 100, now: progressPct }}
+                    >
+                      <View
+                        style={[
+                          styles.journeyProgressFill,
+                          { width: `${progressPct}%` },
+                        ]}
+                      />
+                    </View>
+                  </PressableCard>
+                );
+              })}
+            </View>
+          )}
 
           {/* ── Recent Activity ──────────────────────────────────────────
            *  Static feed; wire to a real activity endpoint when available.
@@ -922,11 +1068,22 @@ const styles = StyleSheet.create({
   } as import('react-native').ViewStyle,
 
   journeyIconCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: radius.lg,
+    width: 56,
+    height: 56,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
+  } as import('react-native').ViewStyle,
+
+  journeySkeletonCard: {
+    // Approximate journey card height — same padding + icon row + progress bar
+    height: 112,
+    backgroundColor: tokens.gray100,
+    opacity: 0.6,
+  } as import('react-native').ViewStyle,
+
+  journeyEmptyState: {
+    marginBottom: spacing.xxl,
   } as import('react-native').ViewStyle,
 
   journeyCardText: {
