@@ -49,6 +49,9 @@ import {
   TouchableOpacity,
   Pressable,
   ScrollView,
+  Image,
+  Modal,
+  Linking,
   Animated,
   StyleSheet,
   Platform,
@@ -63,6 +66,7 @@ import {
   Phone,
   CalendarPlus,
   Paperclip,
+  Image as ImageIcon,
   Link as LinkIcon,
   Send,
   ArrowLeft,
@@ -71,6 +75,8 @@ import {
   AlertCircle,
   FileText,
   XCircle,
+  X,
+  Download,
   Sparkles,
   LogOut,
   Home,
@@ -122,6 +128,10 @@ import {
   useEngagementStatus,
   useCompassInsight,
 } from '../../hooks/useMessagesInsights';
+import {
+  useMessageAttachmentUpload,
+  type MessageAttachmentUploadResult,
+} from '../../hooks/useFileUpload';
 import { OpenQuestionsDrawer } from '../../components/chw/OpenQuestionsDrawer';
 import { DocumentationModal } from '../../components/sessions/DocumentationModal';
 import type { SessionDocumentation } from '../../data/mock';
@@ -451,7 +461,18 @@ function ThreadRow({
   const name = session.memberName ?? 'Unknown Member';
   const initials = getInitials(name);
   const { bg, fg } = avatarColorFor(name);
-  const preview = lastMessage?.body ?? session.notes ?? 'No messages yet';
+
+  // Derive preview: prefer body; fall back to "Attachment: filename" for
+  // attachment-only messages; last resort is notes or "No messages yet".
+  const preview: string = (() => {
+    if (!lastMessage) return session.notes ?? 'No messages yet';
+    if (lastMessage.body.trim()) return lastMessage.body;
+    if (lastMessage.attachment?.filename) {
+      return `Attachment: ${lastMessage.attachment.filename}`;
+    }
+    return session.notes ?? 'No messages yet';
+  })();
+
   const timestamp = formatThreadTimestamp(
     lastMessage?.createdAt ?? session.scheduledAt,
   );
@@ -665,6 +686,150 @@ function ThreadListPane({
   );
 }
 
+// ─── Attachment bubble helpers ────────────────────────────────────────────────
+
+/**
+ * Formats a byte count as a compact human-readable size string (e.g. "1.2 MB").
+ * Uses numerals.tabular on the Text element at the call site.
+ */
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+interface ImageAttachmentBubbleProps {
+  readonly downloadUrl: string;
+  readonly filename: string;
+  readonly isSentByChw: boolean;
+}
+
+/**
+ * Renders an image attachment inline with tap-to-zoom (native) or new-tab (web).
+ */
+function ImageAttachmentBubble({
+  downloadUrl,
+  filename,
+  isSentByChw,
+}: ImageAttachmentBubbleProps): React.JSX.Element {
+  const [zoomVisible, setZoomVisible] = useState(false);
+
+  const handleTap = useCallback((): void => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.open(downloadUrl, '_blank', 'noopener,noreferrer');
+    } else {
+      setZoomVisible(true);
+    }
+  }, [downloadUrl]);
+
+  return (
+    <>
+      <TouchableOpacity
+        onPress={handleTap}
+        activeOpacity={0.85}
+        accessibilityRole="image"
+        accessibilityLabel={`Attachment: ${filename}. Tap to view full size.`}
+      >
+        <Image
+          source={{ uri: downloadUrl }}
+          style={[
+            styles.attachmentImageThumb,
+            isSentByChw ? styles.attachmentImageOutbound : styles.attachmentImageInbound,
+          ]}
+          resizeMode="cover"
+          accessibilityIgnoresInvertColors
+        />
+      </TouchableOpacity>
+
+      {/* Native full-screen zoom modal */}
+      {Platform.OS !== 'web' ? (
+        <Modal
+          visible={zoomVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setZoomVisible(false)}
+          accessibilityViewIsModal
+        >
+          <View style={styles.imageZoomOverlay}>
+            <TouchableOpacity
+              style={styles.imageZoomClose}
+              onPress={() => setZoomVisible(false)}
+              accessibilityRole="button"
+              accessibilityLabel="Close image"
+            >
+              <X size={24} color="#fff" />
+            </TouchableOpacity>
+            <Image
+              source={{ uri: downloadUrl }}
+              style={styles.imageZoomFull}
+              resizeMode="contain"
+              accessibilityIgnoresInvertColors
+            />
+          </View>
+        </Modal>
+      ) : null}
+    </>
+  );
+}
+
+interface PdfAttachmentBubbleProps {
+  readonly downloadUrl: string;
+  readonly filename: string;
+  readonly sizeBytes: number;
+  readonly isSentByChw: boolean;
+}
+
+/**
+ * Renders a PDF (or generic file) attachment as a Card-style row with
+ * emerald-tinted icon circle, filename, size, and download icon.
+ */
+function FileAttachmentBubble({
+  downloadUrl,
+  filename,
+  sizeBytes,
+  isSentByChw,
+}: PdfAttachmentBubbleProps): React.JSX.Element {
+  const handleTap = useCallback((): void => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.open(downloadUrl, '_blank', 'noopener,noreferrer');
+    } else {
+      void Linking.openURL(downloadUrl);
+    }
+  }, [downloadUrl]);
+
+  return (
+    <TouchableOpacity
+      onPress={handleTap}
+      activeOpacity={0.85}
+      style={[
+        styles.fileAttachmentRow,
+        isSentByChw ? styles.fileAttachmentOutbound : styles.fileAttachmentInbound,
+      ]}
+      accessibilityRole="button"
+      accessibilityLabel={`Open attachment: ${filename}, ${formatFileSize(sizeBytes)}`}
+    >
+      <View style={styles.fileIconCircle}>
+        <FileText size={16} color="#047857" />
+      </View>
+      <View style={styles.fileAttachmentInfo}>
+        <Text
+          style={[
+            styles.fileAttachmentName,
+            isSentByChw ? styles.fileAttachmentNameOut : styles.fileAttachmentNameIn,
+          ]}
+          numberOfLines={1}
+        >
+          {filename}
+        </Text>
+        <Text style={[styles.fileAttachmentSize, numerals.tabular]}>
+          {formatFileSize(sizeBytes)}
+        </Text>
+      </View>
+      <Download size={16} color={isSentByChw ? tokens.emerald700 : tokens.textSecondary} />
+    </TouchableOpacity>
+  );
+}
+
 // ─── Message bubble ───────────────────────────────────────────────────────────
 
 interface MessageBubbleProps {
@@ -673,22 +838,50 @@ interface MessageBubbleProps {
 }
 
 function MessageBubble({ message, isSentByChw }: MessageBubbleProps): React.JSX.Element {
+  const att = message.attachment;
+
+  const isImageAttachment = att != null && att.contentType.startsWith('image/');
+  const isFileAttachment  = att != null && !isImageAttachment;
+  const hasTextBody       = message.body.trim().length > 0;
+
   return (
     <View style={isSentByChw ? styles.bubbleRowOutbound : styles.bubbleRowInbound}>
       <View style={[styles.bubble, isSentByChw ? styles.bubbleOutbound : styles.bubbleInbound]}>
-        {message.attachment ? (
-          <View style={styles.attachmentRow}>
-            <Paperclip size={14} color={isSentByChw ? '#fff' : tokens.textPrimary} />
-            <Text
-              style={[
-                styles.bubbleText,
-                isSentByChw ? styles.bubbleTextOutbound : styles.bubbleTextInbound,
-              ]}
-            >
-              {message.attachment.filename}
-            </Text>
-          </View>
-        ) : (
+
+        {/* Image attachment */}
+        {isImageAttachment && att != null ? (
+          <ImageAttachmentBubble
+            downloadUrl={att.downloadUrl}
+            filename={att.filename}
+            isSentByChw={isSentByChw}
+          />
+        ) : null}
+
+        {/* PDF / generic file attachment */}
+        {isFileAttachment && att != null ? (
+          <FileAttachmentBubble
+            downloadUrl={att.downloadUrl}
+            filename={att.filename}
+            sizeBytes={att.sizeBytes}
+            isSentByChw={isSentByChw}
+          />
+        ) : null}
+
+        {/* Text body (caption or standalone text) */}
+        {hasTextBody ? (
+          <Text
+            style={[
+              styles.bubbleText,
+              isSentByChw ? styles.bubbleTextOutbound : styles.bubbleTextInbound,
+              att != null ? styles.bubbleTextWithAttachment : undefined,
+            ]}
+          >
+            {message.body}
+          </Text>
+        ) : null}
+
+        {/* Fallback for messages with no body and no attachment (shouldn't happen) */}
+        {!hasTextBody && att == null ? (
           <Text
             style={[
               styles.bubbleText,
@@ -697,7 +890,8 @@ function MessageBubble({ message, isSentByChw }: MessageBubbleProps): React.JSX.
           >
             {message.body}
           </Text>
-        )}
+        ) : null}
+
         <Text
           style={[
             styles.bubbleTimestamp,
@@ -751,8 +945,14 @@ function ConversationPane({
   const [toastIsError, setToastIsError] = useState(false);
   const [documentingSessionId, setDocumentingSessionId] = useState<string | null>(null);
 
+  /** Pending attachment — set after upload completes, cleared after send. */
+  const [pendingAttachment, setPendingAttachment] = useState<MessageAttachmentUploadResult | null>(null);
+
   const scrollRef = useRef<ScrollView>(null);
   const navigation = useNavigation<any>(); // eslint-disable-line @typescript-eslint/no-explicit-any
+  /** Hidden <input type="file"> refs for web — one for docs+images, one for images only. */
+  const fileInputDocRef  = useRef<HTMLInputElement | null>(null);
+  const fileInputImgRef  = useRef<HTMLInputElement | null>(null);
 
   const messagesQuery = useSessionMessages(session.id);
   const sendMessage = useSessionSendMessage();
@@ -767,6 +967,10 @@ function ConversationPane({
     const timer = setTimeout(() => setToastMessage(null), 3_500);
     void timer;
   }, []);
+
+  const { uploadAttachment, isUploading: isAttachmentUploading } = useMessageAttachmentUpload({
+    onError: (err) => showToast(err.message, true),
+  });
 
   // ── Call handler ──────────────────────────────────────────────────────────
 
@@ -844,11 +1048,85 @@ function ConversationPane({
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
   }, [mergedMessages.length]);
 
+  // ── Attachment pickers ────────────────────────────────────────────────────
+
+  /**
+   * Handles a file selected from a web <input type="file">.
+   * Uploads immediately; the result is stored in `pendingAttachment`.
+   */
+  const handleWebFileChosen = useCallback(
+    async (file: File): Promise<void> => {
+      const result = await uploadAttachment(file);
+      if (result) setPendingAttachment(result);
+    },
+    [uploadAttachment],
+  );
+
+  /**
+   * On native — triggers expo-document-picker for PDFs + images.
+   * On web — programmatically clicks the hidden doc file input.
+   */
+  const handlePickDocument = useCallback((): void => {
+    if (Platform.OS === 'web') {
+      fileInputDocRef.current?.click();
+    } else {
+      void (async () => {
+        const result = await uploadAttachment(null);
+        if (result) setPendingAttachment(result);
+      })();
+    }
+  }, [uploadAttachment]);
+
+  /**
+   * On native — triggers expo-image-picker for images only.
+   * On web — programmatically clicks the hidden image-only file input.
+   */
+  const handlePickImage = useCallback((): void => {
+    if (Platform.OS === 'web') {
+      fileInputImgRef.current?.click();
+    } else {
+      void (async () => {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports
+        const ImagePicker = require('expo-image-picker') as typeof import('expo-image-picker');
+        const result = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          allowsEditing: false,
+          quality: 0.9,
+        });
+        if (result.canceled || !result.assets[0]) return;
+
+        const asset = result.assets[0];
+        if (!asset) return;
+
+        const mimeType =
+          asset.mimeType ??
+          (asset.uri.endsWith('.png') ? 'image/png' : 'image/jpeg');
+        const sizeBytes = asset.fileSize ?? 0;
+
+        if (sizeBytes > 10 * 1024 * 1024) {
+          showToast('File too large (max 10 MB)', true);
+          return;
+        }
+
+        const uploadResult = await uploadAttachment(null, {
+          uri: asset.uri,
+          filename: asset.fileName ?? `image-${Date.now()}.jpg`,
+          mimeType,
+          sizeBytes,
+        });
+        if (uploadResult) setPendingAttachment(uploadResult);
+      })();
+    }
+  }, [uploadAttachment, showToast]);
+
   // ── Send message ──────────────────────────────────────────────────────────
 
   const handleSend = useCallback(async (): Promise<void> => {
     const trimmed = draftText.trim();
-    if (!trimmed) return;
+    // Valid if there is text OR a pending attachment (attachment-only is allowed).
+    if (!trimmed && !pendingAttachment) return;
+
+    const capturedAttachment = pendingAttachment;
 
     const optimisticId = `local-${Date.now()}`;
     const optimisticMessage: SessionMessageLocal = {
@@ -856,16 +1134,39 @@ function ConversationPane({
       senderUserId: '',
       senderRole: 'chw',
       body: trimmed,
-      type: 'text',
+      type: capturedAttachment ? (capturedAttachment.contentType.startsWith('image/') ? 'image' : 'file') : 'text',
       createdAt: new Date().toISOString(),
       status: 'sending',
+      attachment: capturedAttachment
+        ? {
+            id: optimisticId,
+            filename: capturedAttachment.filename,
+            sizeBytes: capturedAttachment.sizeBytes,
+            contentType: capturedAttachment.contentType,
+            s3Key: capturedAttachment.s3Key,
+            // Use the local URI for immediate preview on optimistic message.
+            downloadUrl: capturedAttachment.localUri,
+          }
+        : undefined,
     };
 
     setLocalMessages((prev) => [...prev, optimisticMessage]);
     setDraftText('');
+    setPendingAttachment(null);
 
     try {
-      await sendMessage.mutateAsync({ sessionId: session.id, body: trimmed });
+      await sendMessage.mutateAsync({
+        sessionId: session.id,
+        body: trimmed,
+        attachment: capturedAttachment
+          ? {
+              s3Key: capturedAttachment.s3Key,
+              filename: capturedAttachment.filename,
+              sizeBytes: capturedAttachment.sizeBytes,
+              contentType: capturedAttachment.contentType,
+            }
+          : undefined,
+      });
       setLocalMessages((prev) => prev.filter((m) => m.id !== optimisticId));
     } catch {
       setLocalMessages((prev) =>
@@ -874,7 +1175,7 @@ function ConversationPane({
         ),
       );
     }
-  }, [draftText, session.id, sendMessage]);
+  }, [draftText, pendingAttachment, session.id, sendMessage]);
 
   // ── Template chip insertion ───────────────────────────────────────────────
 
@@ -1097,15 +1398,106 @@ function ConversationPane({
           })}
         </View>
 
+        {/* Attachment preview row — shown while an attachment is staged */}
+        {pendingAttachment != null ? (
+          <View style={styles.attachmentPreviewRow} accessibilityRole="status">
+            {pendingAttachment.contentType.startsWith('image/') ? (
+              <Image
+                source={{ uri: pendingAttachment.localUri }}
+                style={styles.attachmentPreviewThumb}
+                resizeMode="cover"
+                accessibilityIgnoresInvertColors
+              />
+            ) : (
+              <View style={styles.attachmentPreviewFileIcon}>
+                <FileText size={20} color="#047857" />
+              </View>
+            )}
+            <View style={styles.attachmentPreviewInfo}>
+              <Text style={styles.attachmentPreviewName} numberOfLines={1}>
+                {pendingAttachment.filename}
+              </Text>
+              <Text style={[styles.attachmentPreviewSize, numerals.tabular]}>
+                {formatFileSize(pendingAttachment.sizeBytes)}
+              </Text>
+            </View>
+            {isAttachmentUploading ? (
+              <ActivityIndicator size="small" color={tokens.textSecondary} />
+            ) : (
+              <PressableCard
+                onPress={() => setPendingAttachment(null)}
+                accessibilityLabel="Remove attachment"
+                style={styles.attachmentPreviewRemove}
+              >
+                <X size={14} color={tokens.textSecondary} />
+              </PressableCard>
+            )}
+          </View>
+        ) : null}
+
         {/* Composer row */}
         <View style={styles.composerInner}>
+          {/* Hidden web file inputs */}
+          {Platform.OS === 'web' ? (
+            <>
+              {/* @ts-expect-error — web-only input element rendered via ref */}
+              <input
+                ref={fileInputDocRef}
+                type="file"
+                accept="application/pdf,image/jpeg,image/png,image/gif,image/webp"
+                style={{ display: 'none' }}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                  const file = e.target.files?.[0];
+                  if (file) void handleWebFileChosen(file);
+                  // Reset so the same file can be re-selected.
+                  e.target.value = '';
+                }}
+              />
+              {/* @ts-expect-error — web-only input element rendered via ref */}
+              <input
+                ref={fileInputImgRef}
+                type="file"
+                accept="image/jpeg,image/png,image/gif,image/webp"
+                style={{ display: 'none' }}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                  const file = e.target.files?.[0];
+                  if (file) void handleWebFileChosen(file);
+                  e.target.value = '';
+                }}
+              />
+            </>
+          ) : null}
+
+          {/* Paperclip — PDFs + images */}
           <PressableCard
-            onPress={() => {/* Attach file — placeholder */}}
-            accessibilityLabel="Attach file"
+            onPress={handlePickDocument}
+            disabled={isAttachmentUploading}
+            accessibilityLabel="Attach file (PDF or image)"
+            style={[
+              styles.composerIconBtnCard,
+              pendingAttachment != null && styles.composerIconBtnActive,
+            ]}
+          >
+            {isAttachmentUploading ? (
+              <ActivityIndicator size="small" color={tokens.textSecondary} />
+            ) : (
+              <Paperclip
+                size={20}
+                color={pendingAttachment != null ? tokens.primary : tokens.textSecondary}
+              />
+            )}
+          </PressableCard>
+
+          {/* Image picker — images only */}
+          <PressableCard
+            onPress={handlePickImage}
+            disabled={isAttachmentUploading}
+            accessibilityLabel="Attach image"
             style={styles.composerIconBtnCard}
           >
-            <Paperclip size={20} color={tokens.textSecondary} />
+            <ImageIcon size={20} color={tokens.textSecondary} />
           </PressableCard>
+
           <PressableCard
             onPress={() => {/* Insert link — placeholder */}}
             accessibilityLabel="Insert link"
@@ -1133,11 +1525,18 @@ function ConversationPane({
           />
           <PressableCard
             onPress={() => void handleSend()}
-            disabled={!draftText.trim() || sendMessage.isPending}
+            disabled={(!draftText.trim() && !pendingAttachment) || sendMessage.isPending || isAttachmentUploading}
             accessibilityLabel="Send message"
-            style={[styles.sendBtnCard, (!draftText.trim() || sendMessage.isPending) && styles.sendBtnDisabled]}
+            style={[
+              styles.sendBtnCard,
+              ((!draftText.trim() && !pendingAttachment) || sendMessage.isPending || isAttachmentUploading) && styles.sendBtnDisabled,
+            ]}
           >
-            <Send size={16} color="#fff" />
+            {sendMessage.isPending ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Send size={16} color="#fff" />
+            )}
             <Text style={styles.sendBtnText}>Send</Text>
           </PressableCard>
         </View>
@@ -2731,6 +3130,158 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+  } as ViewStyle,
+
+  bubbleTextWithAttachment: {
+    marginTop: 6,
+  } as TextStyle,
+
+  // ── Attachment image bubble ───────────────────────────────────────────────────
+  attachmentImageThumb: {
+    width: 240,
+    height: 180,
+    borderRadius: 12,
+  } as ViewStyle,
+
+  attachmentImageOutbound: {
+    // No extra overrides needed — border-radius already applied.
+  } as ViewStyle,
+
+  attachmentImageInbound: {
+    // No extra overrides needed.
+  } as ViewStyle,
+
+  // ── Image zoom modal (native only) ────────────────────────────────────────────
+  imageZoomOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.92)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  } as ViewStyle,
+
+  imageZoomClose: {
+    position: 'absolute',
+    top: 48,
+    right: 20,
+    padding: 8,
+    zIndex: 10,
+  } as ViewStyle,
+
+  imageZoomFull: {
+    width: '100%',
+    height: '80%',
+  } as ViewStyle,
+
+  // ── File attachment bubble ────────────────────────────────────────────────────
+  fileAttachmentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 10,
+    borderRadius: 10,
+  } as ViewStyle,
+
+  fileAttachmentOutbound: {
+    backgroundColor: 'rgba(0,0,0,0.06)',
+  } as ViewStyle,
+
+  fileAttachmentInbound: {
+    backgroundColor: '#f0fdf4',
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+  } as ViewStyle,
+
+  fileIconCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#d1fae5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  } as ViewStyle,
+
+  fileAttachmentInfo: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  } as ViewStyle,
+
+  fileAttachmentName: {
+    fontSize: 13,
+    fontWeight: '600',
+  } as TextStyle,
+
+  fileAttachmentNameOut: {
+    color: tokens.emerald700,
+  } as TextStyle,
+
+  fileAttachmentNameIn: {
+    color: tokens.textPrimary,
+  } as TextStyle,
+
+  fileAttachmentSize: {
+    fontSize: 11,
+    color: tokens.textMuted,
+  } as TextStyle,
+
+  // ── Attachment preview row (composer staging area) ────────────────────────────
+  attachmentPreviewRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    backgroundColor: '#f0fdf4',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+  } as ViewStyle,
+
+  attachmentPreviewThumb: {
+    width: 48,
+    height: 48,
+    borderRadius: 8,
+    flexShrink: 0,
+  } as ViewStyle,
+
+  attachmentPreviewFileIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 8,
+    backgroundColor: '#d1fae5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  } as ViewStyle,
+
+  attachmentPreviewInfo: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  } as ViewStyle,
+
+  attachmentPreviewName: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: tokens.textPrimary,
+  } as TextStyle,
+
+  attachmentPreviewSize: {
+    fontSize: 11,
+    color: tokens.textMuted,
+  } as TextStyle,
+
+  attachmentPreviewRemove: {
+    padding: 4,
+    borderRadius: 6,
+    borderWidth: 0,
+    backgroundColor: 'transparent',
+    flexShrink: 0,
+  } as ViewStyle,
+
+  composerIconBtnActive: {
+    backgroundColor: tokens.emerald100,
   } as ViewStyle,
 
   // ── Composer ──────────────────────────────────────────────────────────────────
