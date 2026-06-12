@@ -378,9 +378,10 @@ async def request_magic_link(
     # parses this and calls /auth/magic/verify with the token.
     magic_url = f"{settings.magic_link_base_url}?token={raw_token}"
 
-    # Deliver via email. Failures are logged (for dev debugging) but don't
-    # change the API response — we still return 202 to preserve the no-enumeration
-    # property. In staging, the dev picks the URL from the log if SES isn't set up.
+    # Deliver via email. Failures are logged but don't change the API response —
+    # we still return 202 to preserve the no-enumeration property. The raw token
+    # is a bearer credential: it must never reach logs outside local development
+    # (CloudWatch retains log groups, so a logged URL is a stored credential).
     import logging
 
     from app.services.email import send_magic_link_email
@@ -390,10 +391,13 @@ async def request_magic_link(
         ttl_minutes=settings.magic_link_ttl_minutes,
     )
     if not result.success:
-        logging.getLogger("compass.auth").warning(
-            "Magic link email for user %s failed: %s. URL (dev only): %s",
-            user.id, result.error, magic_url,
+        logger = logging.getLogger("compass.auth")
+        logger.warning(
+            "Magic link email for user %s failed: %s", user.id, result.error,
         )
+        if settings.environment == "development":
+            # Local-only convenience when SES isn't configured.
+            logger.warning("Magic link URL (development only): %s", magic_url)
 
     return {"status": "accepted"}
 
