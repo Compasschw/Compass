@@ -67,6 +67,7 @@ import {
   useWindowDimensions,
   type ViewStyle,
   type TextStyle,
+  type ImageStyle,
 } from 'react-native';
 import {
   Phone,
@@ -1561,9 +1562,9 @@ function ConversationPane({
   const showCharCount = charCount > 100;
 
   return (
-    <View style={styles.convPane} accessibilityRole="main">
+    <View style={styles.convPane} role="main">
       {/* Sticky header */}
-      <View style={styles.convHeader} accessibilityRole="banner">
+      <View style={styles.convHeader} role="banner">
         {showBackButton && onBack != null ? (
           <TouchableOpacity
             onPress={onBack}
@@ -1622,7 +1623,6 @@ function ConversationPane({
           <PressableCard
             onPress={() => setMoreMenuOpen((v) => !v)}
             accessibilityLabel="More options"
-            accessibilityState={{ expanded: moreMenuOpen }}
             style={styles.iconBtnCard}
           >
             <MoreVertical size={18} color={colors.textSecondary} strokeWidth={1.5} />
@@ -1745,7 +1745,6 @@ function ConversationPane({
             {/* Hidden web file inputs */}
             {Platform.OS === 'web' ? (
               <>
-                {/* @ts-expect-error — web-only input element rendered via ref */}
                 <input
                   ref={fileInputDocRef}
                   type="file"
@@ -1757,7 +1756,6 @@ function ConversationPane({
                     e.target.value = '';
                   }}
                 />
-                {/* @ts-expect-error — web-only input element rendered via ref */}
                 <input
                   ref={fileInputImgRef}
                   type="file"
@@ -1774,7 +1772,7 @@ function ConversationPane({
 
             {/* Attachment preview row */}
             {pendingAttachment != null ? (
-              <View style={styles.attachmentPreviewRow} accessibilityRole="status">
+              <View style={styles.attachmentPreviewRow} role="status">
                 {pendingAttachment.contentType.startsWith('image/') ? (
                   <Image
                     source={{ uri: pendingAttachment.localUri }}
@@ -1952,7 +1950,7 @@ function CareContextRail({
       style={styles.railScroll}
       contentContainerStyle={styles.railContent}
       showsVerticalScrollIndicator={false}
-      accessibilityRole="complementary"
+      role="complementary"
       accessibilityLabel="Your care context"
     >
       {/* Rail header label */}
@@ -2368,7 +2366,7 @@ export function MemberMessagesScreen(): React.JSX.Element {
         {shouldShowInbox ? (
           <View
             style={[styles.inboxPane, { width: !hideRail ? leftWidth : INBOX_WIDTH }]}
-            accessibilityRole="navigation"
+            role="navigation"
             accessibilityLabel="Message inbox"
           >
             {/* Paused banner (refused services) */}
@@ -2467,7 +2465,7 @@ export function MemberMessagesScreen(): React.JSX.Element {
           ) : selectedSyntheticId !== null ? (
             <View style={styles.convPane}>
               {/* Alt pane shares the conversation header style */}
-              <View style={styles.convHeader} accessibilityRole="banner">
+              <View style={styles.convHeader} role="banner">
                 {hideInbox ? (
                   <TouchableOpacity
                     onPress={handleBack}
@@ -2961,10 +2959,10 @@ const styles = StyleSheet.create({
     width: 240,
     height: 180,
     borderRadius: 12,
-  } as ViewStyle,
+  } as ImageStyle,
 
-  attachmentImageMe: {} as ViewStyle,
-  attachmentImageThem: {} as ViewStyle,
+  attachmentImageMe: {} as ImageStyle,
+  attachmentImageThem: {} as ImageStyle,
 
   // ── Image zoom modal (native only) ────────────────────────────────────────────
   imageZoomOverlay: {
@@ -2985,7 +2983,7 @@ const styles = StyleSheet.create({
   imageZoomFull: {
     width: '100%',
     height: '80%',
-  } as ViewStyle,
+  } as ImageStyle,
 
   // ── File attachment bubble ────────────────────────────────────────────────────
   fileAttachmentRow: {
@@ -3059,7 +3057,7 @@ const styles = StyleSheet.create({
     height: 48,
     borderRadius: 8,
     flexShrink: 0,
-  } as ViewStyle,
+  } as ImageStyle,
 
   attachmentPreviewFileIcon: {
     width: 48,

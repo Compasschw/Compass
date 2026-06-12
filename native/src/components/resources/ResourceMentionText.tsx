@@ -43,6 +43,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  type StyleProp,
   Text,
   TextStyle,
   TouchableOpacity,
@@ -104,8 +105,8 @@ function parseSegments(text: string): Segment[] {
 export interface ResourceMentionTextProps {
   /** The raw text content, may contain @[Name](resource:uuid) tokens. */
   text: string;
-  /** Text style applied to non-mention segments. */
-  textStyle?: TextStyle;
+  /** Text style applied to non-mention segments. Accepts an array or a single style. */
+  textStyle?: StyleProp<TextStyle>;
   /** Max lines before truncation. Omit for unlimited. */
   numberOfLines?: number;
 }

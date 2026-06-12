@@ -14,16 +14,19 @@ jobs:
         working-directory: native
     steps:
       - uses: actions/checkout@v4
+      # The project uses bun (bun.lock; no package-lock.json) — npm ci was
+      # failing with EUSAGE before any check ran.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
-          cache-dependency-path: native/package-lock.json
-      - run: npm ci
+      - run: bun install --frozen-lockfile
       - name: TypeScript check
-        run: npm run typecheck
+        run: bun run typecheck
       - name: Expo doctor (informational — does not fail the build)
-        run: npm run doctor || true
+        run: bun run doctor || true
         continue-on-error: true
 
   backend:

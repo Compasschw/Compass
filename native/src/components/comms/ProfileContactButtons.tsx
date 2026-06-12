@@ -259,7 +259,7 @@ export function ProfileContactButtons({
     <View style={styles.wrapper}>
       <View
         style={styles.actionRow}
-        accessibilityRole="group"
+        role="group"
         accessibilityLabel="Quick contact actions"
       >
         {/* ── Call button ── */}

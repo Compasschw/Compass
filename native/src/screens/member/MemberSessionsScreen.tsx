@@ -661,7 +661,7 @@ function SessionTableRow({
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
         accessible
-        accessibilityRole="row"
+        role="row"
         accessibilityLabel={`Session on ${formatShortDate(session.scheduledAt)}, ${session.status}`}
       >
         {/* Date & Time */}

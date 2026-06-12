@@ -60,6 +60,7 @@ import {
   useWindowDimensions,
   type ViewStyle,
   type TextStyle,
+  type ImageStyle,
 } from 'react-native';
 import {
   Search,
@@ -1400,7 +1401,7 @@ function ConversationPane({
 
         {/* Attachment preview row — shown while an attachment is staged */}
         {pendingAttachment != null ? (
-          <View style={styles.attachmentPreviewRow} accessibilityRole="status">
+          <View style={styles.attachmentPreviewRow} role="status">
             {pendingAttachment.contentType.startsWith('image/') ? (
               <Image
                 source={{ uri: pendingAttachment.localUri }}
@@ -1440,7 +1441,6 @@ function ConversationPane({
           {/* Hidden web file inputs */}
           {Platform.OS === 'web' ? (
             <>
-              {/* @ts-expect-error — web-only input element rendered via ref */}
               <input
                 ref={fileInputDocRef}
                 type="file"
@@ -1453,7 +1453,6 @@ function ConversationPane({
                   e.target.value = '';
                 }}
               />
-              {/* @ts-expect-error — web-only input element rendered via ref */}
               <input
                 ref={fileInputImgRef}
                 type="file"
@@ -2235,7 +2234,7 @@ function MemberContextRail({
         showsVerticalScrollIndicator={false}
       >
         {/* 1. Active Journey */}
-        <Card style={styles.railCard} accessibilityRole="region" accessibilityLabel="Active Journey">
+        <Card style={styles.railCard}>
           <View style={styles.railCardTitleRow}>
             <Activity size={13} color={tokens.textSecondary} />
             <Text style={styles.railCardTitle}>Active Journey</Text>
@@ -2274,7 +2273,7 @@ function MemberContextRail({
 
         {/* 2. Top Resource Needs */}
         {topResourceNeeds.length > 0 ? (
-          <Card style={styles.railCard} accessibilityRole="region" accessibilityLabel="Top Resource Needs">
+          <Card style={styles.railCard}>
             <View style={styles.railCardTitleRow}>
               <Flag size={13} color={tokens.textSecondary} />
               <Text style={styles.railCardTitle}>Top Resource Needs</Text>
@@ -2305,7 +2304,7 @@ function MemberContextRail({
         ) : null}
 
         {/* 3. Compass Insight (emerald tinted, purple "AI suggested" Pill) */}
-        <View style={styles.insightCard} accessibilityRole="region" accessibilityLabel="Compass Insight">
+        <View style={styles.insightCard} role="region" accessibilityLabel="Compass Insight">
           <View style={styles.insightHeader}>
             <Sparkles size={14} color="#15803d" />
             <Text style={styles.insightTitle}>Compass Insight</Text>
@@ -2317,7 +2316,7 @@ function MemberContextRail({
         </View>
 
         {/* 4. Quick Actions */}
-        <View accessibilityRole="region" accessibilityLabel="Quick Actions">
+        <View role="region" accessibilityLabel="Quick Actions">
           <Text style={styles.quickActionsLabel}>QUICK ACTIONS</Text>
           <View style={styles.quickActionsStack}>
             {/* Open Suggested Questions */}
@@ -2370,7 +2369,7 @@ function MemberContextRail({
         </View>
 
         {/* 5. Generate AI Summary (disabled) */}
-        <View accessibilityRole="region" accessibilityLabel="AI Summary">
+        <View role="region" accessibilityLabel="AI Summary">
           <TouchableOpacity
             style={styles.aiSummaryBtn}
             disabled
@@ -2385,7 +2384,7 @@ function MemberContextRail({
         </View>
 
         {/* 6. End Session (destructive) */}
-        <View accessibilityRole="region" accessibilityLabel="End Session" style={styles.endSessionRegion}>
+        <View role="region" accessibilityLabel="End Session" style={styles.endSessionRegion}>
           <TouchableOpacity
             style={[
               styles.endSessionBtn,
@@ -2423,7 +2422,7 @@ function MemberContextRail({
                   transform: [{ translateY: confirmSlideY }],
                 },
               ]}
-              accessibilityRole="dialog"
+              role="dialog"
               accessibilityLabel="Confirm end session"
             >
               <Text style={styles.endConfirmTitle}>
@@ -3141,15 +3140,15 @@ const styles = StyleSheet.create({
     width: 240,
     height: 180,
     borderRadius: 12,
-  } as ViewStyle,
+  } as ImageStyle,
 
   attachmentImageOutbound: {
     // No extra overrides needed — border-radius already applied.
-  } as ViewStyle,
+  } as ImageStyle,
 
   attachmentImageInbound: {
     // No extra overrides needed.
-  } as ViewStyle,
+  } as ImageStyle,
 
   // ── Image zoom modal (native only) ────────────────────────────────────────────
   imageZoomOverlay: {
@@ -3170,7 +3169,7 @@ const styles = StyleSheet.create({
   imageZoomFull: {
     width: '100%',
     height: '80%',
-  } as ViewStyle,
+  } as ImageStyle,
 
   // ── File attachment bubble ────────────────────────────────────────────────────
   fileAttachmentRow: {
@@ -3243,7 +3242,7 @@ const styles = StyleSheet.create({
     height: 48,
     borderRadius: 8,
     flexShrink: 0,
-  } as ViewStyle,
+  } as ImageStyle,
 
   attachmentPreviewFileIcon: {
     width: 48,

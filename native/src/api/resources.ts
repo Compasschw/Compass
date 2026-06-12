@@ -15,9 +15,13 @@
  *
  * All request/response types are camelCase (transformed from/to snake_case
  * at the boundary — consistent with the rest of the codebase).
+ *
+ * Transport notes: `api()` resolves with the parsed JSON body on 2xx
+ * (an empty object on 204) and throws {@link ApiError} on any non-2xx
+ * response, with the server's `detail` message attached.
  */
 
-import { api } from './client';
+import { api, ApiError } from './client';
 import { transformKeys, toSnakeCase } from '../utils/caseTransform';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -147,14 +151,57 @@ export interface SuggestionRejectPayload {
   adminNotes?: string | null;
 }
 
-// ─── Response transformer ─────────────────────────────────────────────────────
+// ─── Wire types (snake_case payloads as returned by the API) ─────────────────
 
-/** Convert a raw snake_case API response to camelCase. */
-function toResource(raw: Record<string, unknown>): Resource {
+/** Raw snake_case resource row as returned by the API. */
+interface ResourceWire {
+  id: string;
+  name: string;
+  description: string;
+  category: ResourceCategory;
+  url: string | null;
+  phone: string | null;
+  address: string | null;
+  zip_code: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  hours: string | null;
+  eligibility: string | null;
+  languages: string[];
+  status: ResourceStatus;
+  created_at: string;
+  created_by_admin_id?: string | null;
+}
+
+/** Raw snake_case suggestion row as returned by the API. */
+interface ResourceSuggestionWire {
+  id: string;
+  chw_id: string;
+  proposed_resource: Record<string, unknown>;
+  notes: string | null;
+  status: SuggestionStatus;
+  reviewed_by_admin_id: string | null;
+  created_at: string;
+  reviewed_at: string | null;
+}
+
+/** Generic snake_case pagination envelope used by the admin list endpoints. */
+interface PaginatedWire<TItem> {
+  items: TItem[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+// ─── Response transformers ────────────────────────────────────────────────────
+
+/** Convert a raw snake_case API resource to the camelCase domain shape. */
+function toResource(raw: ResourceWire): Resource {
   return transformKeys<Resource>(raw);
 }
 
-function toSuggestion(raw: Record<string, unknown>): ResourceSuggestion {
+/** Convert a raw snake_case API suggestion to the camelCase domain shape. */
+function toSuggestion(raw: ResourceSuggestionWire): ResourceSuggestion {
   return transformKeys<ResourceSuggestion>(raw);
 }
 
@@ -163,6 +210,8 @@ function toSuggestion(raw: Record<string, unknown>): ResourceSuggestion {
 /**
  * Search active resources. Returns up to ``limit`` ranked results.
  * Authenticates with the stored user JWT (any role).
+ *
+ * @throws {ApiError} on any non-2xx response.
  */
 export async function searchResources(
   params: ResourceSearchParams,
@@ -175,22 +224,25 @@ export async function searchResources(
 
   const qs = query.toString();
   const url = `/resources/search${qs ? `?${qs}` : ''}`;
-  const res = await api(url);
-  if (!res.ok) throw new Error(`Resource search failed: ${res.status}`);
-  const data = (await res.json()) as unknown[];
-  return data.map((r) => toResource(r as Record<string, unknown>));
+  const data = await api<ResourceWire[]>(url);
+  return data.map(toResource);
 }
 
 /**
  * Fetch a single resource by UUID.
  * Returns null if the resource is not found (404).
  * Inactive resources are still returned (for @-mention token resolution).
+ *
+ * @throws {ApiError} on any non-2xx response other than 404.
  */
 export async function getResourceById(resourceId: string): Promise<Resource | null> {
-  const res = await api(`/resources/${resourceId}`);
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`Fetch resource failed: ${res.status}`);
-  return toResource((await res.json()) as Record<string, unknown>);
+  try {
+    const raw = await api<ResourceWire>(`/resources/${resourceId}`);
+    return toResource(raw);
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return null;
+    throw error;
+  }
 }
 
 /**
@@ -200,20 +252,15 @@ export async function getResourceById(resourceId: string): Promise<Resource | nu
 export async function createResourceSuggestion(
   payload: SuggestionCreatePayload,
 ): Promise<ResourceSuggestion> {
-  const body = toSnakeCase({
+  const body = toSnakeCase<Record<string, unknown>>({
     proposedResource: payload.proposedResource,
     notes: payload.notes ?? null,
   });
-  const res = await api('/chw/resources/suggestions', {
+  const raw = await api<ResourceSuggestionWire>('/chw/resources/suggestions', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  if (!res.ok) {
-    const err = (await res.json().catch(() => ({}))) as { detail?: string };
-    throw new Error(err.detail ?? `Create suggestion failed: ${res.status}`);
-  }
-  return toSuggestion((await res.json()) as Record<string, unknown>);
+  return toSuggestion(raw);
 }
 
 // ─── Admin endpoints ───────────────────────────────────────────────────────────
@@ -227,6 +274,8 @@ export async function createResourceSuggestion(
  *
  * If the project later gates these strictly behind the raw ADMIN_KEY, the
  * caller will pass it explicitly via the Authorization header override.
+ *
+ * @throws {ApiError} on any non-2xx response.
  */
 export async function adminListResources(
   params: AdminResourceListParams = {},
@@ -240,15 +289,7 @@ export async function adminListResources(
 
   const qs = query.toString();
   const url = `/admin/resources${qs ? `?${qs}` : ''}`;
-  const res = await api(url);
-  if (!res.ok) throw new Error(`Admin list resources failed: ${res.status}`);
-
-  const raw = (await res.json()) as {
-    items: Record<string, unknown>[];
-    total: number;
-    page: number;
-    page_size: number;
-  };
+  const raw = await api<PaginatedWire<ResourceWire>>(url);
   return {
     items: raw.items.map(toResource),
     total: raw.total,
@@ -257,50 +298,54 @@ export async function adminListResources(
   };
 }
 
-/** Admin create resource. */
+/**
+ * Admin create resource.
+ *
+ * @throws {ApiError} on any non-2xx response (detail message from the server).
+ */
 export async function adminCreateResource(
   payload: ResourceCreatePayload,
 ): Promise<Resource> {
-  const body = toSnakeCase(payload as unknown as Record<string, unknown>);
-  const res = await api('/admin/resources', {
+  const body = toSnakeCase<Record<string, unknown>>(payload);
+  const raw = await api<ResourceWire>('/admin/resources', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  if (!res.ok) {
-    const err = (await res.json().catch(() => ({}))) as { detail?: string };
-    throw new Error(err.detail ?? `Create resource failed: ${res.status}`);
-  }
-  return toResource((await res.json()) as Record<string, unknown>);
+  return toResource(raw);
 }
 
-/** Admin partial update resource. */
+/**
+ * Admin partial update resource.
+ *
+ * @throws {ApiError} on any non-2xx response (detail message from the server).
+ */
 export async function adminUpdateResource(
   resourceId: string,
   payload: ResourceUpdatePayload,
 ): Promise<Resource> {
-  const body = toSnakeCase(payload as unknown as Record<string, unknown>);
-  const res = await api(`/admin/resources/${resourceId}`, {
+  const body = toSnakeCase<Record<string, unknown>>(payload);
+  const raw = await api<ResourceWire>(`/admin/resources/${resourceId}`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  if (!res.ok) {
-    const err = (await res.json().catch(() => ({}))) as { detail?: string };
-    throw new Error(err.detail ?? `Update resource failed: ${res.status}`);
-  }
-  return toResource((await res.json()) as Record<string, unknown>);
+  return toResource(raw);
 }
 
-/** Admin soft-delete resource (sets status=inactive). */
+/**
+ * Admin soft-delete resource (sets status=inactive).
+ * `api()` resolves on 2xx (including 204 No Content) and throws otherwise.
+ *
+ * @throws {ApiError} on any non-2xx response.
+ */
 export async function adminDeleteResource(resourceId: string): Promise<void> {
-  const res = await api(`/admin/resources/${resourceId}`, { method: 'DELETE' });
-  if (!res.ok && res.status !== 204) {
-    throw new Error(`Delete resource failed: ${res.status}`);
-  }
+  await api<void>(`/admin/resources/${resourceId}`, { method: 'DELETE' });
 }
 
-/** Admin suggestion queue. */
+/**
+ * Admin suggestion queue.
+ *
+ * @throws {ApiError} on any non-2xx response.
+ */
 export async function adminListSuggestions(
   status: SuggestionStatus = 'pending',
   page = 1,
@@ -311,15 +356,9 @@ export async function adminListSuggestions(
     page: String(page),
     page_size: String(pageSize),
   });
-  const res = await api(`/admin/resources/suggestions?${query}`);
-  if (!res.ok) throw new Error(`List suggestions failed: ${res.status}`);
-
-  const raw = (await res.json()) as {
-    items: Record<string, unknown>[];
-    total: number;
-    page: number;
-    page_size: number;
-  };
+  const raw = await api<PaginatedWire<ResourceSuggestionWire>>(
+    `/admin/resources/suggestions?${query}`,
+  );
   return {
     items: raw.items.map(toSuggestion),
     total: raw.total,
@@ -328,38 +367,42 @@ export async function adminListSuggestions(
   };
 }
 
-/** Admin approve suggestion → creates a new Resource row. */
+/**
+ * Admin approve suggestion → creates a new Resource row.
+ *
+ * @throws {ApiError} on any non-2xx response (detail message from the server).
+ */
 export async function adminApproveSuggestion(
   suggestionId: string,
   overrides: SuggestionApprovePayload = {},
 ): Promise<Resource> {
-  const body = toSnakeCase(overrides as unknown as Record<string, unknown>);
-  const res = await api(`/admin/resources/suggestions/${suggestionId}/approve`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const err = (await res.json().catch(() => ({}))) as { detail?: string };
-    throw new Error(err.detail ?? `Approve suggestion failed: ${res.status}`);
-  }
-  return toResource((await res.json()) as Record<string, unknown>);
+  const body = toSnakeCase<Record<string, unknown>>(overrides);
+  const raw = await api<ResourceWire>(
+    `/admin/resources/suggestions/${suggestionId}/approve`,
+    {
+      method: 'POST',
+      body: JSON.stringify(body),
+    },
+  );
+  return toResource(raw);
 }
 
-/** Admin reject suggestion. */
+/**
+ * Admin reject suggestion.
+ *
+ * @throws {ApiError} on any non-2xx response (detail message from the server).
+ */
 export async function adminRejectSuggestion(
   suggestionId: string,
   adminNotes?: string,
 ): Promise<ResourceSuggestion> {
-  const body = toSnakeCase({ adminNotes: adminNotes ?? null });
-  const res = await api(`/admin/resources/suggestions/${suggestionId}/reject`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const err = (await res.json().catch(() => ({}))) as { detail?: string };
-    throw new Error(err.detail ?? `Reject suggestion failed: ${res.status}`);
-  }
-  return toSuggestion((await res.json()) as Record<string, unknown>);
+  const body = toSnakeCase<Record<string, unknown>>({ adminNotes: adminNotes ?? null });
+  const raw = await api<ResourceSuggestionWire>(
+    `/admin/resources/suggestions/${suggestionId}/reject`,
+    {
+      method: 'POST',
+      body: JSON.stringify(body),
+    },
+  );
+  return toSuggestion(raw);
 }

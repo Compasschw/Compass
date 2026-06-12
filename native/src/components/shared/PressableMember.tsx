@@ -101,7 +101,7 @@ const s = StyleSheet.create({
   },
   cursor: {
     // RN-Web converts this to CSS `cursor: pointer`. Native ignores it.
-    // @ts-expect-error — `cursor` exists on the web style type only.
+    // (`cursor: 'pointer'` is a valid RN `CursorValue`, so no suppression needed.)
     cursor: 'pointer',
   },
   hovered: {

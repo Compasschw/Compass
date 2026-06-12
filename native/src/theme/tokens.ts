@@ -8,7 +8,7 @@
  * Naming mirrors the HTML mockup's CSS custom properties for a 1-to-1 mapping.
  */
 
-import { Platform } from 'react-native';
+import { Platform, type TextStyle } from 'react-native';
 
 // ─── Colors ───────────────────────────────────────────────────────────────────
 
@@ -131,9 +131,12 @@ export type RadiusToken = keyof typeof radius;
  * <Text style={[styles.value, numerals.tabular]}>142</Text>
  * ```
  */
-export const numerals = {
-  tabular: { fontVariant: ['tabular-nums' as const] },
-} as const;
+// Typed as TextStyle (not `as const`): a readonly fontVariant tuple is not
+// assignable to RN's mutable FontVariant[], which broke every style array
+// that spread `numerals.tabular`.
+export const numerals: { tabular: TextStyle } = {
+  tabular: { fontVariant: ['tabular-nums'] },
+};
 
 // ─── Shadows ──────────────────────────────────────────────────────────────────
 

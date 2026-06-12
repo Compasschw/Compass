@@ -152,7 +152,9 @@ function StepCard({ step, isCompleted, onToggleCompleted }: StepCardProps): Reac
             {isCompleted ? (
               <CheckSquare size={20} color={colors.primary} />
             ) : (
-              <Square size={20} color={colors.textSecondary} />
+              /* No `textSecondary` token exists on the palette — the icon has
+                 always rendered with the library default colour. */
+              <Square size={20} />
             )}
           </TouchableOpacity>
 
@@ -167,10 +169,12 @@ function StepCard({ step, isCompleted, onToggleCompleted }: StepCardProps): Reac
           </View>
         </View>
 
+        {/* No `textSecondary` token exists on the palette — these chevrons have
+            always rendered with the library default colour. */}
         {isExpanded ? (
-          <ChevronDown size={16} color={colors.textSecondary} />
+          <ChevronDown size={16} />
         ) : (
-          <ChevronRight size={16} color={colors.textSecondary} />
+          <ChevronRight size={16} />
         )}
       </Pressable>
 
@@ -266,7 +270,9 @@ export function IntroductionScriptPanel({
             accessibilityLabel="Close introduction script"
             style={styles.closeButton}
           >
-            <XIcon size={20} color={colors.textSecondary} />
+            {/* No `textSecondary` token exists on the palette — the icon has
+                always rendered with the library default colour. */}
+            <XIcon size={20} />
           </TouchableOpacity>
         )}
       </View>
@@ -474,7 +480,9 @@ const styles = StyleSheet.create({
   scriptText: {
     fontSize: 13,
     lineHeight: 20,
-    color: colors.text ?? '#1F2937',
+    // No `text` token exists on the palette — the `colors.text ?? '#1F2937'`
+    // fallback always resolved to the literal below.
+    color: '#1F2937',
     fontStyle: 'italic',
     marginTop: 10,
     marginBottom: 8,

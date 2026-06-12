@@ -7,13 +7,20 @@
  */
 
 import React from 'react';
-import { View, StyleSheet, type StyleProp, type ViewStyle } from 'react-native';
+import {
+  View,
+  StyleSheet,
+  type StyleProp,
+  type ViewProps,
+  type ViewStyle,
+} from 'react-native';
 
 import { colors, radius, shadows } from '../../theme/tokens';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export interface CardProps {
+export interface CardProps
+  extends Pick<ViewProps, 'accessible' | 'accessibilityLabel' | 'accessibilityHint'> {
   /** Additional styles merged onto the outer View. Accepts an array or a single style. */
   style?: StyleProp<ViewStyle>;
   children?: React.ReactNode;
@@ -30,9 +37,20 @@ export interface CardProps {
  * </Card>
  * ```
  */
-export function Card({ style, children }: CardProps): React.JSX.Element {
+export function Card({
+  style,
+  children,
+  accessible,
+  accessibilityLabel,
+  accessibilityHint,
+}: CardProps): React.JSX.Element {
   return (
-    <View style={[styles.card, shadows.card as ViewStyle, style]}>
+    <View
+      style={[styles.card, shadows.card as ViewStyle, style]}
+      accessible={accessible}
+      accessibilityLabel={accessibilityLabel}
+      accessibilityHint={accessibilityHint}
+    >
       {children}
     </View>
   );

@@ -10,7 +10,7 @@
  */
 
 import React, { useCallback } from 'react';
-import { Platform, View } from 'react-native';
+import { Platform, View, type ViewStyle } from 'react-native';
 
 export interface ResizableDividerProps {
   /** Current width (in px) of the pane this divider resizes. */
@@ -70,16 +70,20 @@ export function ResizableDivider({
     <View
       // @ts-ignore — web-only DOM event handler not in RN types
       onMouseDown={handleMouseDown}
-      style={{
-        width: 5,
-        flexShrink: 0,
-        backgroundColor: 'transparent',
-        // @ts-ignore — web-only CSS properties
-        cursor: 'col-resize',
-        userSelect: 'none',
-        zIndex: 10,
-      }}
-      accessibilityRole="separator"
+      style={
+        {
+          width: 5,
+          flexShrink: 0,
+          backgroundColor: 'transparent',
+          // `cursor: 'col-resize'` and `userSelect` are web-only CSS values not
+          // present in RN's ViewStyle; this component renders on web only
+          // (returns null on native), where react-native-web forwards them.
+          cursor: 'col-resize',
+          userSelect: 'none',
+          zIndex: 10,
+        } as unknown as ViewStyle
+      }
+      role="separator"
       accessibilityLabel="Drag to resize pane"
     />
   );

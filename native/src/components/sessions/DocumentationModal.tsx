@@ -618,7 +618,7 @@ function MultiSelectList({
           return (
             <Pressable
               key={item}
-              style={({ hovered }: { hovered?: boolean }) => [
+              style={({ hovered }: { pressed: boolean; hovered?: boolean }) => [
                 ms.item,
                 !isLast && ms.itemBorder,
                 isChecked && ms.itemChecked,

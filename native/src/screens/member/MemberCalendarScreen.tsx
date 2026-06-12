@@ -35,7 +35,7 @@ import {
   MapPin,
   Users,
 } from 'lucide-react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, type NavigationProp } from '@react-navigation/native';
 
 import { colors as tokens, numerals, spacing, radius } from '../../theme/tokens';
 import {
@@ -50,6 +50,7 @@ import { ErrorState } from '../../components/shared/ErrorState';
 import { VERTICAL_COLOR } from '../../lib/verticals';
 import { AppShell, PageHeader, Card, RightRail, SectionHeader, PageWrap } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
+import type { MemberTabParamList } from '../../navigation/MemberTabNavigator';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -640,7 +641,7 @@ function splitUpcomingPast(
  */
 export function MemberCalendarScreen(): React.JSX.Element {
   const { userName } = useAuth();
-  const navigation = useNavigation();
+  const navigation = useNavigation<NavigationProp<MemberTabParamList>>();
 
   const memberInitials = (userName ?? 'M')
     .split(' ')
@@ -703,10 +704,7 @@ export function MemberCalendarScreen(): React.JSX.Element {
     // screen — MyCHWScreen (FindMain) auto-renders the existing-CHW profile
     // when the member already has sessions, so 'FindCHW' alone dead-ends
     // there. FindList always shows MemberFindScreen.
-    navigation.navigate(
-      'FindCHW' as never,
-      { screen: 'FindList' } as never,
-    );
+    navigation.navigate('FindCHW', { screen: 'FindList' });
   }, [navigation]);
 
   // ── Derived data ─────────────────────────────────────────────────────────────

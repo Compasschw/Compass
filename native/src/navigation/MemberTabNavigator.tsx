@@ -15,6 +15,7 @@ import { Platform } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createDrawerNavigator } from '@react-navigation/drawer';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import type { NavigatorScreenParams } from '@react-navigation/native';
 import {
   Home,
   Search,
@@ -76,7 +77,12 @@ export type MemberFindStackParamList = {
 
 export type MemberTabParamList = {
   Home: undefined;
-  FindCHW: undefined;
+  /**
+   * Nested Find CHW stack. `NavigatorScreenParams` lets callers deep-link to a
+   * specific screen inside the stack (e.g. `navigate('FindCHW', { screen:
+   * 'FindList' })`); plain `navigate('FindCHW')` continues to work unchanged.
+   */
+  FindCHW: NavigatorScreenParams<MemberFindStackParamList> | undefined;
   /**
    * Optional route params supported by MemberMessagesScreen (T20).
    * - `chwId`: when provided the thread for that CHW is pre-selected.

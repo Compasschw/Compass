@@ -437,7 +437,6 @@ function FollowupItemCard({
   return (
     <Card
       style={[itemCardStyles.card, cardOverrideStyle]}
-      // @ts-expect-error — accessibilityLabel is valid on View (RN 0.74+)
       accessibilityLabel={`Follow-up item: ${KIND_LABELS[item.kind]}. Status: ${item.status}`}
     >
       {/* ── Top row: kind pill + status badge ───────────────────────────── */}

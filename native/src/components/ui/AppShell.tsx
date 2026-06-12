@@ -202,9 +202,9 @@ function AppShellWeb({
         toggleCollapsed();
       }
     };
-    (globalThis as { document?: { addEventListener: (t: string, h: EventListenerOrEventListenerObject) => void; removeEventListener: (t: string, h: EventListenerOrEventListenerObject) => void } }).document?.addEventListener('keydown', handler);
+    (globalThis as { document?: { addEventListener: (t: string, h: (e: KeyboardEvent) => void) => void; removeEventListener: (t: string, h: (e: KeyboardEvent) => void) => void } }).document?.addEventListener('keydown', handler);
     return () => {
-      (globalThis as { document?: { addEventListener: (t: string, h: EventListenerOrEventListenerObject) => void; removeEventListener: (t: string, h: EventListenerOrEventListenerObject) => void } }).document?.removeEventListener('keydown', handler);
+      (globalThis as { document?: { addEventListener: (t: string, h: (e: KeyboardEvent) => void) => void; removeEventListener: (t: string, h: (e: KeyboardEvent) => void) => void } }).document?.removeEventListener('keydown', handler);
     };
   }, [toggleCollapsed]);
 

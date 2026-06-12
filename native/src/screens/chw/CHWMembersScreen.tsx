@@ -1137,9 +1137,10 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color:    colors.textPrimary,
     height:   '100%',
-    // @ts-ignore — outline not in RN types but needed on web
+    // `outlineStyle: 'none'` is not in RN types but needed on web — hence the
+    // `unknown` round-trip (same pattern as CHWResourcesScreen.searchInput).
     outlineStyle: 'none',
-  } as TextStyle,
+  } as unknown as TextStyle,
 
   addButton: {
     flexDirection:   'row',

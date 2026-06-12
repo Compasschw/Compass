@@ -61,7 +61,9 @@ import {
   Stethoscope,
   Target,
 } from 'lucide-react-native';
-import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
+import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
+import type { CompositeScreenProps } from '@react-navigation/native';
+import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
 import { useAuth } from '../../context/AuthContext';
 import { colors as tokens, numerals, spacing, radius } from '../../theme/tokens';
@@ -95,13 +97,22 @@ import { useMemberRoadmap } from '../../hooks/useFollowupQueries';
 import { useRefreshControl } from '../../hooks/useRefreshControl';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
-import type { MemberTabParamList } from '../../navigation/MemberTabNavigator';
+import type {
+  MemberHomeStackParamList,
+  MemberTabParamList,
+} from '../../navigation/MemberTabNavigator';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface MemberHomeScreenProps {
-  navigation: BottomTabNavigationProp<MemberTabParamList, 'Home'>;
-}
+/**
+ * Screen props for MemberHomeScreen as registered at `HomeMain` inside the
+ * Home tab's nested native stack. The composite type exposes both the stack's
+ * own routes and the parent tab navigator's routes (FindCHW, Sessions, …).
+ */
+type MemberHomeScreenProps = CompositeScreenProps<
+  NativeStackScreenProps<MemberHomeStackParamList, 'HomeMain'>,
+  BottomTabScreenProps<MemberTabParamList>
+>;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
