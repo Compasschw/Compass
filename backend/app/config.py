@@ -118,6 +118,10 @@ class Settings(BaseSettings):
     # Pear Suite billing integration
     pear_suite_api_key: str = ""
     pear_suite_base_url: str = "https://api.pearsuite.com"
+    # Shared secret for inbound Pear webhooks (HMAC-SHA256 over the raw body).
+    # Empty = webhook receiver rejects all POSTs with 401. Set this only once
+    # Pear publishes their webhook contract and we exchange a secret.
+    pear_suite_webhook_secret: str = ""
 
     # ── Pear Suite demo / real-submission config ──────────────────────────────
     # Jemal's userId in Pear Suite — obtained from Pear dashboard → Users.

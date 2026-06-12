@@ -1,26 +1,35 @@
 """Pear Suite webhook receiver — claim status updates.
 
-STUB: Pear has not yet shared their webhook contract or signature scheme
-as of 2026-05-12. This endpoint accepts any POST body, returns 200 quickly
-(so Pear's retry logic doesn't pile up), logs the raw payload, and short-
-circuits before doing any work. Replace `TODO(pear-webhook)` blocks once
-Pear publishes:
+STUB (processing-wise): Pear has not yet shared their webhook contract as
+of 2026-06-12, so no payload is parsed or applied. The
+`poll_pear_claim_status` scheduler job covers status transitions by pulling
+every 30 minutes, so we are not blind — just less timely than a push.
 
-  1. Signature header name + algorithm (HMAC-SHA256? Stripe-style timestamp+sig?)
-  2. Payload schema (event_type, claim_id, new_status, paid_at, etc.)
-  3. Idempotency / event-id header so we can dedupe retries
+Security posture (audit 2026-06-12 blocker #3):
+- The endpoint REJECTS every request with 401 until
+  `settings.pear_suite_webhook_secret` is configured.
+- Once a secret is set, requests must carry an HMAC-SHA256 hex digest of
+  the raw body in `X-Pear-Signature` (constant-time compared). Adjust the
+  header name/scheme when Pear publishes their actual contract.
+- The request body is NEVER logged — webhook payloads will carry claim /
+  member identifiers (PHI-adjacent), and CloudWatch log groups are
+  long-retention storage. Only metadata (body length, signature presence)
+  is logged.
 
-In the meantime, the `poll_pear_claim_status` scheduler job covers status
-transitions by pulling every 30 minutes — so we're not blind on the demo,
-just less timely than a push would be.
+Remaining TODO(pear-webhook) once Pear publishes the contract:
+  1. Confirm signature header name + algorithm (adjust below).
+  2. Parse payload schema (event_type, claim_id, new_status, paid_at).
+  3. Dedupe retries via their idempotency / event-id header.
+  4. Apply claim status transitions (see git history of this file for the
+     sketched BillingClaim update flow).
 
-Route is registered under /api/v1/webhooks/pear-suite. Public (no auth);
-Pear's signature header is the only authentication once the contract lands.
+Route is registered under /api/v1/webhooks/pear-suite.
 """
 
+import hashlib
+import hmac
 import logging
-from datetime import UTC, datetime
-from typing import Any
+from typing import Annotated
 
 from fastapi import APIRouter, Header, Request, status
 from fastapi.responses import JSONResponse
@@ -32,83 +41,64 @@ logger = logging.getLogger("compass.pear_webhook")
 router = APIRouter(prefix="/api/v1/webhooks", tags=["pear-webhook"])
 
 
+def _signature_is_valid(raw_body: bytes, supplied_signature: str | None) -> bool:
+    """Validate the HMAC-SHA256 signature on an inbound Pear webhook.
+
+    Returns False when no secret is configured (endpoint disabled), when the
+    signature header is missing, or when the digest does not match. Uses
+    `hmac.compare_digest` to avoid timing side-channels.
+    """
+    secret = settings.pear_suite_webhook_secret
+    if not secret or not supplied_signature:
+        return False
+    expected = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, supplied_signature)
+
+
 @router.post(
     "/pear-suite",
     status_code=status.HTTP_200_OK,
-    summary="Pear Suite webhook receiver — STUB until contract lands",
+    summary="Pear Suite webhook receiver — signature-gated, processing stubbed",
 )
 async def receive_pear_webhook(
     request: Request,
-    # TODO(pear-webhook): replace `x_pear_signature` with the actual header
-    # name once Pear publishes it. Common patterns: 'X-Pear-Signature',
+    # TODO(pear-webhook): confirm the real header name once Pear publishes
+    # their contract. Common patterns: 'X-Pear-Signature',
     # 'X-Pear-Hub-Signature', 'X-Webhook-Signature'.
-    x_pear_signature: str | None = Header(default=None, alias="X-Pear-Signature"),
+    x_pear_signature: Annotated[str | None, Header(alias="X-Pear-Signature")] = None,
 ) -> JSONResponse:
-    """Accept a webhook from Pear Suite and (eventually) update claim status.
+    """Accept a signed webhook from Pear Suite and (eventually) update claim status.
 
-    Current behaviour: log the raw body + headers, return 200. This keeps
-    Pear's webhook retry queue clean while we wait on their contract.
+    Behaviour:
+    - 401 for every request until `pear_suite_webhook_secret` is configured.
+    - 401 when the HMAC-SHA256 signature is missing or does not match.
+    - 200 `{"received": true, "applied": false}` on a valid signature —
+      payload processing remains stubbed until Pear publishes the contract.
 
-    Future behaviour (once Pear publishes the contract):
-      1. Verify signature using `settings.pear_suite_webhook_secret` (HMAC).
-         Reject with 401 on mismatch.
-      2. Parse JSON body into a typed model (see `PearWebhookEvent` below).
-      3. Dispatch on event_type — claim.paid → flip BillingClaim.status +
-         set paid_at + let the existing payout scheduler fire the transfer.
-      4. Return 200 with the event id to ACK.
-
-    Returns:
-        JSONResponse 200 with a minimal `{ "received": true }` body so
-        Pear's retry logic doesn't trigger. Pear-side dashboard will show
-        the webhook as delivered.
+    The body is intentionally never logged (PHI-adjacent payloads must not
+    land in CloudWatch).
     """
-    # Read raw body for logging (defensive — request.json() can blow up if
-    # Pear sends a non-JSON content-type during early integration tests).
-    try:
-        raw_body = await request.body()
-        body_preview = raw_body[:2000].decode("utf-8", errors="replace")
-    except Exception:  # noqa: BLE001
-        body_preview = "<unreadable>"
+    raw_body = await request.body()
+
+    if not _signature_is_valid(raw_body, x_pear_signature):
+        logger.warning(
+            "pear_webhook.rejected: secret_configured=%s signature_present=%s body_bytes=%d",
+            bool(settings.pear_suite_webhook_secret),
+            x_pear_signature is not None,
+            len(raw_body),
+        )
+        return JSONResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            content={"error": "invalid or missing signature"},
+        )
 
     logger.info(
-        "pear_webhook.received: signature_present=%s body_preview=%r received_at=%s",
-        x_pear_signature is not None,
-        body_preview,
-        datetime.now(UTC).isoformat(),
+        "pear_webhook.received: signature_valid=True body_bytes=%d", len(raw_body)
     )
 
-    # TODO(pear-webhook): once Pear publishes the contract:
-    #
-    # 1. Verify signature:
-    #     secret = settings.pear_suite_webhook_secret
-    #     expected = hmac.new(secret.encode(), raw_body, hashlib.sha256).hexdigest()
-    #     if not hmac.compare_digest(expected, x_pear_signature or ""):
-    #         logger.warning("pear_webhook.bad_signature")
-    #         return JSONResponse(status_code=401, content={"error": "bad signature"})
-    #
-    # 2. Parse body:
-    #     event = json.loads(raw_body)
-    #     event_type = event.get("type")
-    #     claim_id = event.get("data", {}).get("claim", {}).get("id")
-    #     new_status = event.get("data", {}).get("claim", {}).get("status")
-    #
-    # 3. Update BillingClaim:
-    #     async with async_session() as db:
-    #         result = await db.execute(
-    #             select(BillingClaim).where(BillingClaim.pear_suite_claim_id == claim_id)
-    #         )
-    #         claim = result.scalar_one_or_none()
-    #         if claim and claim.status != new_status:
-    #             claim.status = new_status
-    #             if new_status == "paid" and claim.paid_at is None:
-    #                 claim.paid_at = datetime.now(UTC)
-    #             await db.commit()
-    #             logger.info("pear_webhook.applied: claim=%s status=%s", claim.id, new_status)
-    #
+    # TODO(pear-webhook): parse + apply the event once the contract lands.
     # The trigger_pending_payouts scheduler job (every 10 min) will then
-    # pick up the now-paid claim and fire the Stripe Connect transfer.
-
-    _ = settings  # silence linter — settings will be used once contract lands
+    # pick up newly-paid claims and fire the Stripe Connect transfer.
 
     return JSONResponse(
         status_code=status.HTTP_200_OK,
