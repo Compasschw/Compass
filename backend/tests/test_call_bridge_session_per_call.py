@@ -32,16 +32,26 @@ from tests.conftest import auth_header, test_session as _test_session_factory
 
 
 async def _register(client: AsyncClient, email: str, role: str) -> dict:
-    """Register a new user via the HTTP endpoint and return the token payload."""
-    res = await client.post(
-        "/api/v1/auth/register",
-        json={
-            "email": email,
-            "password": "testpass123",
-            "name": f"Test {role.upper()} {email[:12]}",
-            "role": role,
-        },
-    )
+    """Register a new user via the HTTP endpoint and return the token payload.
+
+    Members must supply every Pear-required signup field (#14); the CIN is
+    derived from the email so concurrent registrations stay distinct.
+    """
+    payload: dict = {
+        "email": email,
+        "password": "testpass123",
+        "name": f"Test {role.upper()} {email[:12]}",
+        "role": role,
+    }
+    if role == "member":
+        payload.update({
+            "date_of_birth": "1990-01-01",
+            "gender": "Female",
+            "insurance_company": "Health Net",
+            "medi_cal_id": f"{abs(hash(email)) % 100_000_000:08d}A",
+            "zip_code": "90001",
+        })
+    res = await client.post("/api/v1/auth/register", json=payload)
     assert res.status_code == 201, f"Register failed ({email}): {res.text}"
     return res.json()
 

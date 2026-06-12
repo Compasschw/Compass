@@ -47,6 +47,38 @@ async def get_active_session_for_conversation(
     return result.scalar_one_or_none()
 
 
+async def get_active_session_ids_for_conversations(
+    db: AsyncSession,
+    conversation_ids: list[UUID],
+) -> dict[UUID, UUID]:
+    """Batch variant of :func:`get_active_session_for_conversation`.
+
+    Resolves the in_progress Session id for every conversation in one
+    ``DISTINCT ON`` query (newest per conversation wins, matching the
+    single-row helper's tie-break). Conversations with no in_progress
+    Session are simply absent from the result.
+
+    Args:
+        db: The async SQLAlchemy session.
+        conversation_ids: Conversation UUIDs to resolve (empty list is fine).
+
+    Returns:
+        Mapping of conversation_id → active session_id.
+    """
+    if not conversation_ids:
+        return {}
+    result = await db.execute(
+        select(Session.conversation_id, Session.id)
+        .where(
+            Session.conversation_id.in_(conversation_ids),
+            Session.status == "in_progress",
+        )
+        .order_by(Session.conversation_id, Session.created_at.desc())
+        .distinct(Session.conversation_id)
+    )
+    return {conversation_id: session_id for conversation_id, session_id in result.all()}
+
+
 async def find_or_create_conversation_for_pair(
     db: AsyncSession,
     *,

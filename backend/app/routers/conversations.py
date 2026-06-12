@@ -171,14 +171,12 @@ async def list_conversations(
 ) -> list[ConversationResponse]:
     """List all conversations for the current user (CHW or member).
 
-    For each conversation, `active_session_id` is resolved server-side by
-    querying for an in_progress Session. The N+1 here is intentional and
-    acceptable — CHW inboxes are bounded to a single CHW's conversations
-    (typically < 50). If inbox sizes grow, replace with a single query using
-    DISTINCT ON (conversation_id) WHERE status='in_progress'.
+    `active_session_id` for every conversation is resolved in a single
+    DISTINCT ON batch query (was a per-conversation N+1 that saturated the
+    connection pool at ~80 concurrent users — audit 2026-06-12 blocker #7).
     """
     from app.models.conversation import Conversation
-    from app.services.session_lookup import get_active_session_for_conversation
+    from app.services.session_lookup import get_active_session_ids_for_conversations
 
     result = await db.execute(
         select(Conversation).where(
@@ -187,22 +185,23 @@ async def list_conversations(
     )
     conversations = result.scalars().all()
 
+    active_session_ids = await get_active_session_ids_for_conversations(
+        db, [conv.id for conv in conversations]
+    )
+
     # Build response objects manually so we can stamp the computed
     # active_session_id field (from_attributes=True alone cannot populate it).
-    responses: list[ConversationResponse] = []
-    for conv in conversations:
-        active = await get_active_session_for_conversation(db, conv.id)
-        responses.append(
-            ConversationResponse(
-                id=conv.id,
-                chw_id=conv.chw_id,
-                member_id=conv.member_id,
-                session_id=conv.session_id,
-                active_session_id=active.id if active else None,
-                created_at=conv.created_at,
-            )
+    return [
+        ConversationResponse(
+            id=conv.id,
+            chw_id=conv.chw_id,
+            member_id=conv.member_id,
+            session_id=conv.session_id,
+            active_session_id=active_session_ids.get(conv.id),
+            created_at=conv.created_at,
         )
-    return responses
+        for conv in conversations
+    ]
 
 @router.get("/{conversation_id}/messages", response_model=list[MessageResponse])
 async def get_messages(
