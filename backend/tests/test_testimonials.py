@@ -38,7 +38,11 @@ from tests.conftest import auth_header, complete_member_signup_payload
 # ─── Shared fixtures and helpers ──────────────────────────────────────────────
 
 
-ADMIN_KEY = "test-admin-key-for-pytest-1234"
+# Read the live settings value — CI's workflow env sets a different ADMIN_KEY
+# than conftest's local setdefault, so a hardcoded literal 401s in CI.
+from app.config import settings as _settings
+
+ADMIN_KEY = _settings.admin_key
 
 
 def admin_auth_header() -> dict:

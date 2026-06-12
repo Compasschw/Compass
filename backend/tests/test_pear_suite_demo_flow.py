@@ -126,8 +126,10 @@ async def _create_session(
 
 
 def _admin_headers(two_fa_token: str = "fake-2fa") -> dict[str, str]:
+    # settings.admin_key, not a literal — CI's workflow env sets a different
+    # ADMIN_KEY than conftest's local setdefault.
     return {
-        "Authorization": "Bearer test-admin-key-for-pytest-1234",
+        "Authorization": f"Bearer {settings.admin_key}",
         "X-Admin-2FA-Token": two_fa_token,
     }
 

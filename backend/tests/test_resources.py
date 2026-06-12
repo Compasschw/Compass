@@ -58,7 +58,11 @@ async def _register(client: AsyncClient, email: str, role: str) -> dict:
     return res.json()
 
 
-_ADMIN_KEY = "test-admin-key-for-pytest-1234"
+# Read the live settings value — CI's workflow env sets a different ADMIN_KEY
+# than conftest's local setdefault, so a hardcoded literal 401s in CI.
+from app.config import settings as _settings
+
+_ADMIN_KEY = _settings.admin_key
 
 
 def _admin_headers() -> dict:
