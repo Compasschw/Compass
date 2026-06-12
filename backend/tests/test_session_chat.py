@@ -50,16 +50,26 @@ def _aws_creds_available() -> bool:
 
 
 async def _register(client: AsyncClient, email: str, role: str) -> dict:
-    """Register a new user and return the token payload."""
-    res = await client.post(
-        "/api/v1/auth/register",
-        json={
-            "email": email,
-            "password": "testpass123",
-            "name": f"Test {role.upper()} {email[:4]}",
-            "role": role,
-        },
-    )
+    """Register a new user and return the token payload.
+
+    Members must supply every Pear-required signup field (#14); the CIN is
+    derived from the email so multiple members in one test stay distinct.
+    """
+    payload: dict = {
+        "email": email,
+        "password": "testpass123",
+        "name": f"Test {role.upper()} {email[:4]}",
+        "role": role,
+    }
+    if role == "member":
+        payload.update({
+            "date_of_birth": "1990-01-01",
+            "gender": "Female",
+            "insurance_company": "Health Net",
+            "medi_cal_id": f"{abs(hash(email)) % 100_000_000:08d}A",
+            "zip_code": "90001",
+        })
+    res = await client.post("/api/v1/auth/register", json=payload)
     assert res.status_code == 201, res.text
     return res.json()
 

@@ -15,6 +15,7 @@ Coverage:
 
 import base64
 import json
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import AsyncClient
@@ -34,9 +35,21 @@ def _decode_jwt_sub(access_token: str) -> str:
 
 
 async def _register(client: AsyncClient, email: str, role: str, name: str) -> dict:
-    res = await client.post("/api/v1/auth/register", json={
-        "email": email, "password": "testpass123", "name": name, "role": role,
-    })
+    payload: dict = {
+        "email": email,
+        "password": "testpass123",
+        "name": name,
+        "role": role,
+    }
+    if role == "member":
+        payload.update({
+            "date_of_birth": "1990-01-01",
+            "gender": "Female",
+            "insurance_company": "Health Net",
+            "medi_cal_id": f"{abs(hash(email)) % 100_000_000:08d}A",
+            "zip_code": "90001",
+        })
+    res = await client.post("/api/v1/auth/register", json=payload)
     assert res.status_code == 201, res.text
     return res.json()
 
@@ -231,16 +244,64 @@ async def test_risk_is_always_null(
 async def test_masked_id_is_em_dash_when_no_medi_cal_id(
     client: AsyncClient,
     chw_tokens: dict,
-    member_tokens: dict,
 ) -> None:
-    """masked_id is '—' when the member has no medi_cal_id on file."""
-    member_id = _decode_jwt_sub(member_tokens["access_token"])
-    await _create_and_accept_request(client, member_tokens, chw_tokens)
+    """masked_id is '—' when the member has no medi_cal_id on file.
+
+    Registration via the API now REQUIRES medi_cal_id (#14 mandatory-field
+    gate), so the em-dash branch can only be reached with legacy-shaped data.
+    Seed a member WITHOUT a medi_cal_id directly via the ORM and link them to
+    the CHW through an accepted ServiceRequest (relationship gate path 2).
+    """
+    import uuid as _uuid
+    from uuid import UUID
+
+    from app.models.request import ServiceRequest
+    from app.models.user import MemberProfile, User
+    from tests.conftest import test_session as _test_session_factory
+
+    chw_id = UUID(_decode_jwt_sub(chw_tokens["access_token"]))
+    member_id = _uuid.uuid4()
+
+    async with _test_session_factory() as db:
+        db.add(User(
+            id=member_id,
+            email=f"member_nocin_{member_id.hex[:8]}@example.com",
+            password_hash="x",
+            name="Legacy NoCin Member",
+            role="member",
+            is_active=True,
+        ))
+        await db.flush()
+
+        # MemberProfile deliberately has NO medi_cal_id (legacy data shape).
+        db.add(MemberProfile(
+            id=_uuid.uuid4(),
+            user_id=member_id,
+            primary_language="English",
+            zip_code="90001",
+        ))
+
+        # Accepted request → member appears in this CHW's roster.
+        db.add(ServiceRequest(
+            id=_uuid.uuid4(),
+            member_id=member_id,
+            matched_chw_id=chw_id,
+            vertical="housing",
+            verticals=["housing"],
+            status="accepted",
+            urgency="routine",
+            description="Legacy member without CIN — seeded directly",
+            preferred_mode="in_person",
+            estimated_units=1,
+        ))
+        await db.commit()
 
     res = await client.get("/api/v1/chw/members", headers=auth_header(chw_tokens))
     assert res.status_code == 200, res.text
-    item = next((i for i in res.json() if i["id"] == member_id), None)
-    assert item is not None
+    item = next((i for i in res.json() if i["id"] == str(member_id)), None)
+    assert item is not None, (
+        f"Seeded member {member_id} missing from roster: {res.json()}"
+    )
     assert item["masked_id"] == "—"
 
 
@@ -277,14 +338,20 @@ async def test_ordering_by_last_contact_desc(
     member_a_id = _decode_jwt_sub(member_a["access_token"])
     member_b_id = _decode_jwt_sub(member_b["access_token"])
 
-    # Member A: accept (auto-session ≈ now) + explicit session in 2026-05-12.
+    # Dates are computed relative to "now" — fixed literals here rotted once
+    # the calendar passed them, leaving both members tied at their accept-time
+    # auto-sessions.
+    near_future = (datetime.now(UTC) + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    far_future = (datetime.now(UTC) + timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # Member A: accept (auto-session ≈ now) + explicit session in the near future.
     req_a = await _create_and_accept_request(client, member_a, chw_tokens)
     # Member A's max session is in the near future (still less recent than member_b's).
-    await _create_session(client, chw_tokens, req_a, "2026-05-12T09:00:00Z")
+    await _create_session(client, chw_tokens, req_a, near_future)
 
     # Member B: accept + an explicit session further in the future.
     req_b = await _create_and_accept_request(client, member_b, chw_tokens)
-    await _create_session(client, chw_tokens, req_b, "2026-06-01T10:00:00Z")
+    await _create_session(client, chw_tokens, req_b, far_future)
 
     res = await client.get("/api/v1/chw/members", headers=auth_header(chw_tokens))
     assert res.status_code == 200, res.text

@@ -11,7 +11,7 @@ Covers:
 import pytest
 from httpx import AsyncClient
 
-from tests.conftest import auth_header
+from tests.conftest import auth_header, complete_member_signup_payload
 
 
 # ─── Shared helpers ────────────────────────────────────────────────────────────
@@ -189,15 +189,14 @@ async def test_different_chws_can_each_have_active_session(
     chw2_tokens = res.json()
 
     # Register a second member so both CHWs have distinct requests to match.
-    res = await client.post(
-        "/api/v1/auth/register",
-        json={
-            "email": "member2@example.com",
-            "password": "testpass123",
-            "name": "Member Two",
-            "role": "member",
-        },
+    # Members must supply every Pear-required signup field (#14); the CIN is
+    # derived from the email so it differs from the conftest member fixture's.
+    member2_email = "member2@example.com"
+    member2_payload = complete_member_signup_payload(
+        email=member2_email, name="Member Two"
     )
+    member2_payload["medi_cal_id"] = f"{abs(hash(member2_email)) % 100_000_000:08d}A"
+    res = await client.post("/api/v1/auth/register", json=member2_payload)
     assert res.status_code == 201
     member2_tokens = res.json()
 

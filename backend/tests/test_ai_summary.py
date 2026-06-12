@@ -456,6 +456,14 @@ async def test_ai_summary_uses_newest_communication_session_transcript(
     assert res.status_code == 201
     session_id = res.json()["id"]
 
+    # Start the session — generate_session_summary returns empty for any
+    # status outside {completed, in_progress}, and a freshly created
+    # session is still "scheduled".
+    res = await client.patch(
+        f"/api/v1/sessions/{session_id}/start", headers=auth_header(chw_tokens)
+    )
+    assert res.status_code == 200, res.text
+
     # ── Insert two CommunicationSession rows (older + newer) ──────────
     # Simulates a CHW who retried the call: each /call-bridge attempt
     # creates a fresh comm row.  The post-call finalizer stamps

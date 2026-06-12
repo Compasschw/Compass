@@ -90,6 +90,10 @@ async def _seed_claim_at(
                     role="member", name=member_name))
         db.add(User(id=chw_id, email=f"chw-{chw_id}@example.com",
                     password_hash="x", role="chw", name="CHW Tester"))
+        # With no relationship()s configured, SQLAlchemy orders unit-of-work
+        # inserts by mapper name, not FK dependency. Flush in dependency tiers
+        # so each tier's rows exist before their dependents are inserted.
+        await db.flush()
         db.add(MemberProfile(
             id=uuid.uuid4(), user_id=member_id,
             zip_code="90210", primary_language="English",
@@ -105,11 +109,14 @@ async def _seed_claim_at(
             member_id=member_id, vertical="health",
             status="completed", mode="video", notes="",
         ))
+        # Session must exist before SessionDocumentation (session_id FK).
+        await db.flush()
         db.add(SessionDocumentation(
             id=uuid.uuid4(), session_id=session_id,
             summary="visit summary",
             diagnosis_codes=(diagnosis_codes or ["Z71.89"]),
         ))
+        await db.flush()
         claim = BillingClaim(
             id=claim_id, session_id=session_id, chw_id=chw_id,
             member_id=member_id, diagnosis_codes=(diagnosis_codes or ["Z71.89"]),

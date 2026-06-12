@@ -54,13 +54,26 @@ from tests.conftest import auth_header
 
 
 async def _register(client: AsyncClient, email: str, role: str, name: str = "") -> dict:
-    """Register a new user and return the token payload."""
-    res = await client.post("/api/v1/auth/register", json={
+    """Register a new user and return the token payload.
+
+    Members must supply every Pear-required signup field (#14); the CIN is
+    derived from the email so multiple members in one test stay distinct.
+    """
+    payload: dict = {
         "email": email,
         "password": "securePass123!",
         "name": name or f"Test {role.title()} {email[:8]}",
         "role": role,
-    })
+    }
+    if role == "member":
+        payload.update({
+            "date_of_birth": "1990-01-01",
+            "gender": "Female",
+            "insurance_company": "Health Net",
+            "medi_cal_id": f"{abs(hash(email)) % 100_000_000:08d}A",
+            "zip_code": "90001",
+        })
+    res = await client.post("/api/v1/auth/register", json=payload)
     assert res.status_code == 201, f"Register failed for {email}: {res.text}"
     return res.json()
 
@@ -199,28 +212,59 @@ async def test_vonage_webhook_forged_signature_returns_401(
     )
 
 
+def _mint_vonage_webhook_jwt(body_bytes: bytes, secret: str) -> str:
+    """Mint a Vonage signed-webhook JWT the way Vonage does.
+
+    _verify_vonage_signature expects ``Authorization: Bearer <JWT>`` where the
+    JWT is HS256-signed with the account Signature Secret and carries:
+      iat           — issued-at (must be within the 5-minute replay window)
+      jti           — unique token id
+      iss           — "Vonage"
+      application_id — Vonage application UUID (not verified, sent for realism)
+      payload_hash  — SHA-256 hex of the raw request body (verified on POST)
+    """
+    from jose import jwt as jose_jwt
+
+    return jose_jwt.encode(
+        {
+            "iat": int(time.time()),
+            "jti": uuid.uuid4().hex,
+            "iss": "Vonage",
+            "application_id": "00000000-0000-0000-0000-000000000000",
+            "payload_hash": hashlib.sha256(body_bytes).hexdigest(),
+        },
+        secret,
+        algorithm="HS256",
+    )
+
+
 @pytest.mark.asyncio
 async def test_vonage_webhook_valid_signature_passes_voice_events(
     client: AsyncClient,
 ) -> None:
-    """voice/events with a valid HMAC-SHA256 signature must be accepted (200)."""
-    import app.config as _app_cfg
+    """voice/events with a valid Vonage signed-webhook JWT must be accepted (200).
 
-    original = _app_cfg.settings
-    _app_cfg.settings = _patched_settings_with_secret()
-    ts = str(int(time.time()))
+    The body is sent as pre-serialized bytes so the ``payload_hash`` claim is
+    computed over exactly what goes on the wire. The signature secret is set
+    via ``patch.object`` on the real settings object so every other attribute
+    (environment, etc.) keeps its real test-env value.
+    """
+    import json as _json
 
-    try:
-        params = {"status": "completed", "timestamp": ts}
-        valid_sig = _vonage_hmac_sig(params, _VONAGE_SECRET)
+    from app.config import settings as _settings
 
+    body_bytes = _json.dumps({"status": "completed"}).encode("utf-8")
+    token = _mint_vonage_webhook_jwt(body_bytes, _VONAGE_SECRET)
+
+    with patch.object(_settings, "vonage_signature_secret", _VONAGE_SECRET):
         res = await client.post(
             "/api/v1/communication/voice/events",
-            json={"status": "completed", "timestamp": ts},
-            headers={"Authorization": f"Bearer {valid_sig}"},
+            content=body_bytes,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
         )
-    finally:
-        _app_cfg.settings = original
 
     # The handler should process normally and return 200 (not 401).
     # It may return other codes if session/DB lookups fail, but NOT 401.

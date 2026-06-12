@@ -32,7 +32,7 @@ from datetime import UTC, datetime
 import pytest
 from httpx import AsyncClient
 
-from tests.conftest import auth_header
+from tests.conftest import auth_header, complete_member_signup_payload
 
 
 # ─── Shared fixtures and helpers ──────────────────────────────────────────────
@@ -47,16 +47,18 @@ def admin_auth_header() -> dict:
 
 
 async def _register_extra_member(client: AsyncClient, email: str = "other@example.com") -> dict:
-    """Register a second member and return its tokens dict."""
-    res = await client.post(
-        "/api/v1/auth/register",
-        json={
-            "email": email,
-            "password": "testpass123",
-            "name": "Other Member",
-            "role": "member",
-        },
+    """Register a second member and return its tokens dict.
+
+    Members must supply every Pear-required signup field (#14); the CIN is
+    derived from the email so multiple members in one test stay distinct.
+    """
+    payload = complete_member_signup_payload(
+        email=email,
+        name="Other Member",
+        password="testpass123",
     )
+    payload["medi_cal_id"] = f"{abs(hash(email)) % 100_000_000:08d}A"
+    res = await client.post("/api/v1/auth/register", json=payload)
     assert res.status_code == 201, res.text
     return res.json()
 

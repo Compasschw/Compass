@@ -635,8 +635,16 @@ async def test_latest_assessment_404_when_none_completed(
     chw_tokens: dict,
     member_tokens: dict,
 ) -> None:
-    """404 when the member has no completed assessment."""
+    """404 when the member has no completed assessment.
+
+    The endpoint enforces ``assert_shared_session`` before the 404 branch,
+    so the CHW must first establish a care relationship (request → accept →
+    session) — otherwise an unrelated CHW receives 403, not 404.
+    """
     member_id = _extract_user_id_from_token(member_tokens)
+
+    request_id = await _create_request_and_accept(client, member_tokens, chw_tokens)
+    await _create_session(client, chw_tokens, request_id)
 
     res = await client.get(
         f"/api/v1/chw/members/{member_id}/assessments/latest",

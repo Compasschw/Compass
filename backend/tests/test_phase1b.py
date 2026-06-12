@@ -105,6 +105,13 @@ async def test_accept_request_still_returns_session_id_when_email_fails(
 async def test_voice_answer_returns_consent_aware_ncco(client: AsyncClient):
     """The /voice/answer endpoint must NOT include a top-level record action.
     Recording is only allowed AFTER the member presses 1 in the IVR.
+
+    Consent topology: the CHW leg only joins a named conversation here; the
+    member is dialed by a SEPARATE outbound call (placed by
+    VonageProvider.create_proxy_session) whose answer_url runs the
+    /voice/consent-prompt IVR. The member can therefore never enter the
+    recorded conversation without passing the consent gate, and this NCCO
+    must not dial the member directly (no connect action).
     """
     res = await client.post(
         "/api/v1/communication/voice/answer?session=test&member=15551234567",
@@ -120,12 +127,19 @@ async def test_voice_answer_returns_consent_aware_ncco(client: AsyncClient):
         "voice/answer NCCO must not record before consent IVR runs"
     )
 
-    # The member-leg onAnswer must point at the consent-prompt webhook
-    connect = next((item for item in ncco if item.get("action") == "connect"), None)
-    assert connect is not None, "Expected a connect action in voice/answer NCCO"
-    endpoint = (connect.get("endpoint") or [{}])[0]
-    on_answer_url = (endpoint.get("onAnswer") or {}).get("url", "")
-    assert "/voice/consent-prompt" in on_answer_url
+    # No direct dial of the member from this NCCO — the member leg is a
+    # separate outbound call gated by the consent IVR. A connect(phone) here
+    # would bypass that gate (and block the conversation join besides).
+    assert "connect" not in actions, (
+        "voice/answer NCCO must not dial the member directly — the member "
+        "leg goes through /voice/consent-prompt on its own call"
+    )
+
+    # The CHW leg joins the named conversation that the member only enters
+    # after consenting.
+    assert "conversation" in actions, (
+        "voice/answer NCCO must join the named conversation bridge"
+    )
 
 
 @pytest.mark.asyncio

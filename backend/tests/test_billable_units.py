@@ -43,7 +43,11 @@ async def _register_chw(client: AsyncClient, *, email: str) -> dict:
 
 
 async def _register_member(client: AsyncClient, *, email: str) -> dict:
-    """Register a member via the API and return the token response."""
+    """Register a member via the API and return the token response.
+
+    The CIN is derived from the email so tests that register multiple
+    members (e.g. target + other member) keep their Medi-Cal IDs distinct.
+    """
     res = await client.post(
         "/api/v1/auth/register",
         json={
@@ -55,7 +59,7 @@ async def _register_member(client: AsyncClient, *, email: str) -> dict:
             "date_of_birth": "1990-06-01",
             "gender": "Female",
             "insurance_company": "Health Net",
-            "medi_cal_id": "99999999A",
+            "medi_cal_id": f"{abs(hash(email)) % 100_000_000:08d}A",
             "address_line1": "1 Test St",
             "city": "Los Angeles",
             "state": "CA",
@@ -109,6 +113,11 @@ async def _seed_claim(
                 notes="",
             )
         )
+        # Flush the ServiceRequest + Session inserts before adding the claim.
+        # With no relationship()s configured, SQLAlchemy orders unit-of-work
+        # inserts by mapper name (billing_claims before sessions), which would
+        # violate the billing_claims.session_id FK without this flush.
+        await db.flush()
         db.add(
             BillingClaim(
                 id=claim_id,

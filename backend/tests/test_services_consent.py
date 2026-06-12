@@ -337,6 +337,23 @@ class TestCallBridge403Gate:
         )
         chw_user_id = chw_me_res.json()["user_id"]
 
+        # call-bridge validates that both parties have a phone on file (400)
+        # BEFORE the relationship/consent gates run. The chw_tokens fixture
+        # registers without a phone, so seed both phones directly via the ORM
+        # so the request reaches the consent gate we are testing.
+        from uuid import UUID
+
+        from app.models.user import User
+        from tests.conftest import test_session as _db_factory
+
+        async with _db_factory() as db:
+            chw_user = await db.get(User, UUID(chw_user_id))
+            member_user = await db.get(User, UUID(member_user_id))
+            assert chw_user is not None and member_user is not None
+            chw_user.phone = "+15550003001"
+            member_user.phone = member_user.phone or "+15550003002"
+            await db.commit()
+
         # CHW tries to call member
         res = await client.post(
             "/api/v1/communication/call-bridge",

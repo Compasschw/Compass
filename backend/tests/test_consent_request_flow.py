@@ -36,7 +36,11 @@ from httpx import AsyncClient
 from sqlalchemy import select
 
 from app.models.session import ConsentRequest, MemberConsent
-from tests.conftest import auth_header, test_session as _test_session_factory
+from tests.conftest import (
+    auth_header,
+    complete_member_signup_payload,
+    test_session as _test_session_factory,
+)
 
 
 # ─── Shared test helpers ──────────────────────────────────────────────────────
@@ -592,16 +596,14 @@ async def test_unrelated_user_cannot_view_consent_request(
     session_id = await _create_session(client, chw_tokens, request_id)
     cr = await _create_consent_request(client, chw_tokens, session_id)
 
-    # Register a third user.
-    from httpx import AsyncClient as _AC
+    # Register a third user (members must supply every Pear-required field, #14).
     third_party_res = await client.post(
         "/api/v1/auth/register",
-        json={
-            "email": "thirdparty@example.com",
-            "password": "thirdpass123",
-            "name": "Third Party",
-            "role": "member",
-        },
+        json=complete_member_signup_payload(
+            email="thirdparty@example.com",
+            name="Third Party",
+            password="thirdpass123",
+        ),
     )
     assert third_party_res.status_code == 201
     third_tokens = third_party_res.json()

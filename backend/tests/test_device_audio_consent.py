@@ -52,16 +52,24 @@ async def _register_chw(client: AsyncClient, suffix: str = "") -> dict:
 
 
 async def _register_member(client: AsyncClient, suffix: str = "") -> dict:
-    """Register a member user and return the token dict."""
-    res = await client.post(
-        "/api/v1/auth/register",
-        json={
-            "email": f"member{suffix}@audio-consent-test.com",
-            "password": "password123",
-            "name": f"Test Member{suffix}",
-            "role": "member",
-        },
-    )
+    """Register a member user and return the token dict.
+
+    Members must supply every Pear-required signup field (#14); the CIN is
+    derived from the email so concurrent registrations stay distinct.
+    """
+    email = f"member{suffix}@audio-consent-test.com"
+    payload: dict = {
+        "email": email,
+        "password": "password123",
+        "name": f"Test Member{suffix}",
+        "role": "member",
+        "date_of_birth": "1990-01-01",
+        "gender": "Female",
+        "insurance_company": "Health Net",
+        "medi_cal_id": f"{abs(hash(email)) % 100_000_000:08d}A",
+        "zip_code": "90001",
+    }
+    res = await client.post("/api/v1/auth/register", json=payload)
     assert res.status_code == 201, res.text
     return res.json()
 

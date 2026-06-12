@@ -24,7 +24,7 @@ from unittest.mock import patch
 import pytest
 from httpx import AsyncClient
 
-from tests.conftest import auth_header, complete_member_signup_payload
+from tests.conftest import auth_header
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -39,12 +39,25 @@ VALID_DOC_PAYLOAD = {
 
 
 async def _register(client: AsyncClient, email: str, role: str) -> dict:
+    """Register a user and return the token payload.
+
+    Members must supply every Pear-required signup field (#14); the CIN is
+    derived from the email so concurrent registrations stay distinct.
+    """
+    payload: dict = {
+        "email": email,
+        "password": "testpass123",
+        "name": f"Test {role.upper()} {email[:8]}",
+        "role": role,
+    }
     if role == "member":
-        payload = complete_member_signup_payload(email=email, name=f"User {email[:8]}")
-    else:
-        payload = {
-            "email": email, "password": "testpass123", "name": f"CHW {email[:8]}", "role": role,
-        }
+        payload.update({
+            "date_of_birth": "1990-01-01",
+            "gender": "Female",
+            "insurance_company": "Health Net",
+            "medi_cal_id": f"{abs(hash(email)) % 100_000_000:08d}A",
+            "zip_code": "90001",
+        })
     res = await client.post("/api/v1/auth/register", json=payload)
     assert res.status_code == 201, res.text
     return res.json()

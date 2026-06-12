@@ -1,20 +1,30 @@
-"""Tests for the voice/consent-result NCCO WebSocket fork (feat/vonage-ws-ncco).
+"""Tests for the voice/consent-result NCCO (member-leg consent IVR continuation).
 
 Scope
 -----
-Exercises only the digit==1 NCCO construction path of
+Exercises the NCCO construction paths of
 POST /api/v1/communication/voice/consent-result.
 
-Tests that require ``create_vonage_ws_token`` from ``app.utils.security``
-(built by the parallel compass-wt-backend agent) are marked::
+Current product contract (see app/routers/communication.py):
+  digit == "1" → [talk, conversation(name="compass-session-<id>")]
+      The member leg joins the named Vonage Conversation that the CHW leg
+      already joined in /voice/answer. Recording is owned by the CHW leg's
+      conversation action (``record: True`` set by the first joiner), so the
+      member-leg NCCO carries NO record action.
+  anything else → [talk] polite goodbye.
 
-    # un-skipped after feat/vonage-ws-backend merged into main
+Per-leg WebSocket audio forks are intentionally NOT emitted by this endpoint
+anymore: ``connect(websocket)`` blocks a phone leg for its entire duration,
+which prevents the leg from joining the named ``conversation`` that bridges
+the call. Live phone-call captions would require Vonage's Audio Connector and
+are out of scope. These tests pin that contract so the WS fork does not creep
+back into the NCCO and silently break call bridging again.
 
-so this suite stays green before the parallel branch lands. The parent will
-unskip them after merging feat/vonage-ws-backend into main.
-
-All other tests (fallback paths, digit==2) run immediately and need no
-external dependency.
+Settings are patched with ``patch.object`` on the real settings object —
+never by replacing ``app.config.settings`` wholesale — so untouched
+attributes (notably ``vonage_signature_secret`` and ``environment``) keep
+their real test-env values and the Vonage webhook signature dependency stays
+disarmed in non-production.
 """
 
 from __future__ import annotations
@@ -22,7 +32,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import AsyncGenerator
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -39,6 +49,7 @@ os.environ.setdefault(
 )
 
 from app.main import app  # noqa: E402  (app import must follow env setup)
+from app.config import settings  # noqa: E402
 from app.database import get_db  # noqa: E402
 
 
@@ -129,247 +140,183 @@ async def _post_consent_result(
 
 
 # ---------------------------------------------------------------------------
-# Test 1 (skipped): digit=1 + both env vars set → WS connect in NCCO
+# Test 1: digit=1 → talk + conversation-bridge NCCO (no connect / no record)
 # ---------------------------------------------------------------------------
 
 
-# un-skipped after feat/vonage-ws-backend merged into main
 @pytest.mark.asyncio
-async def test_digit_1_ws_fork_present_when_fully_configured() -> None:
-    """digit=1 with vonage_ws_audio_url_base + vonage_ws_jwt_secret set →
-    NCCO contains a websocket connect action with the correct URI.
+async def test_digit_1_returns_talk_then_conversation_bridge() -> None:
+    """digit=1 → NCCO is [talk, conversation] in that order.
 
-    Skipped until create_vonage_ws_token is available from feat/vonage-ws-backend.
+    The conversation name must be ``compass-session-<session_id>`` so the
+    member leg joins the same named bridge the CHW leg created in
+    /voice/answer. No connect (WS fork) and no record action — recording is
+    owned by the CHW leg's conversation action.
     """
     session_id = str(uuid.uuid4())
     stub_row = _StubSessionRow(uuid.UUID(session_id))
-    fake_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test"
-    ws_base = "wss://api.joincompasschw.com"
 
     app.dependency_overrides[get_db] = _make_stub_db(stub_row)
     try:
-        with (
-            patch(
-                "app.config.settings",
-                vonage_ws_audio_url_base=ws_base,
-                vonage_from_number="18127224291",
-            ),
-            patch(
-                "app.utils.security.create_vonage_ws_token",
-                return_value=fake_token,
-            ),
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(transport=transport, base_url="http://test") as client:
-                resp = await _post_consent_result(
-                    client, _DIGIT_1_PAYLOAD, session_id=session_id
-                )
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await _post_consent_result(
+                client, _DIGIT_1_PAYLOAD, session_id=session_id
+            )
 
         assert resp.status_code == 200
         ncco = resp.json()
 
         action_types = [a["action"] for a in ncco]
-        assert "connect" in action_types, f"Expected websocket connect in NCCO, got: {action_types}"
-        assert "record" in action_types, f"Expected record action in NCCO, got: {action_types}"
-
-        # connect must come before record (Vonage action ordering contract)
-        connect_idx = action_types.index("connect")
-        record_idx = action_types.index("record")
-        assert connect_idx < record_idx, "websocket connect must precede record action"
-
-        # Verify the websocket URI is well-formed
-        connect_action = ncco[connect_idx]
-        ws_endpoint = connect_action["endpoint"][0]
-        expected_uri = (
-            f"{ws_base}/api/v1/sessions/{session_id}/transcript/vonage-stream"
-            f"?token={fake_token}"
+        assert action_types[0] == "talk", f"First action must be 'talk', got: {action_types}"
+        assert "conversation" in action_types, (
+            f"Member leg must join the named conversation, got: {action_types}"
         )
-        assert ws_endpoint["uri"] == expected_uri, (
-            f"WebSocket URI mismatch.\n  expected: {expected_uri}\n  got:      {ws_endpoint['uri']}"
+        assert "connect" not in action_types, (
+            "connect(websocket) blocks the leg and must never appear on the "
+            f"member consent continuation NCCO, got: {action_types}"
         )
-        assert ws_endpoint["type"] == "websocket"
-        assert ws_endpoint["content-type"] == "audio/l16;rate=16000"
-        assert ws_endpoint["headers"]["session_id"] == session_id
+        assert "record" not in action_types, (
+            "Recording is owned by the CHW leg's conversation action — the "
+            f"member-leg NCCO must not carry its own record action, got: {action_types}"
+        )
 
+        conversation_action = next(a for a in ncco if a["action"] == "conversation")
+        assert conversation_action["name"] == f"compass-session-{session_id}", (
+            f"Conversation name must match the CHW leg's: {conversation_action}"
+        )
     finally:
         app.dependency_overrides.pop(get_db, None)
 
 
 # ---------------------------------------------------------------------------
-# Test 2 (skipped): websocket URI embeds the session id from the query param
+# Test 2: conversation name embeds the session id from the query param
 # ---------------------------------------------------------------------------
 
 
-# un-skipped after feat/vonage-ws-backend merged into main
 @pytest.mark.asyncio
-async def test_websocket_uri_uses_session_id_from_query_param() -> None:
-    """The session_id threaded through the WS URI must match the query param
-    value, not a hardcoded or default value.
-
-    Skipped until create_vonage_ws_token is available from feat/vonage-ws-backend.
+async def test_conversation_name_uses_session_id_from_query_param() -> None:
+    """The session_id threaded into the conversation name must match the
+    query param value, not a hardcoded or default value — otherwise the two
+    call legs land in different conversations and never bridge.
     """
-    # Use a distinct UUID so we catch any hardcoded value
+    # Use a distinct UUID so we catch any hardcoded value.
     unique_session = str(uuid.uuid4())
     stub_row = _StubSessionRow(uuid.UUID(unique_session))
-    fake_token = "test-token-xyz"
-    ws_base = "wss://api.joincompasschw.com"
 
     app.dependency_overrides[get_db] = _make_stub_db(stub_row)
     try:
-        with (
-            patch(
-                "app.config.settings",
-                vonage_ws_audio_url_base=ws_base,
-                vonage_from_number="18127224291",
-            ),
-            patch(
-                "app.utils.security.create_vonage_ws_token",
-                return_value=fake_token,
-            ),
-        ):
-            transport = ASGITransport(app=app)
-            async with AsyncClient(transport=transport, base_url="http://test") as client:
-                resp = await _post_consent_result(
-                    client, _DIGIT_1_PAYLOAD, session_id=unique_session
-                )
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await _post_consent_result(
+                client, _DIGIT_1_PAYLOAD, session_id=unique_session
+            )
 
         assert resp.status_code == 200
         ncco = resp.json()
 
-        connect_actions = [a for a in ncco if a["action"] == "connect"]
-        assert connect_actions, "Expected at least one connect action"
+        conversation_actions = [a for a in ncco if a["action"] == "conversation"]
+        assert conversation_actions, "Expected a conversation action"
 
-        ws_uri = connect_actions[0]["endpoint"][0]["uri"]
-        assert unique_session in ws_uri, (
-            f"Session ID {unique_session!r} not found in WebSocket URI: {ws_uri!r}"
+        conversation_name = conversation_actions[0].get("name", "")
+        assert unique_session in conversation_name, (
+            f"Session ID {unique_session!r} not found in conversation name: "
+            f"{conversation_name!r}"
         )
     finally:
         app.dependency_overrides.pop(get_db, None)
 
 
 # ---------------------------------------------------------------------------
-# Test 3: digit=1 + vonage_ws_audio_url_base empty → no WS fork, record stays
+# Test 3: digit=1 → no WS fork even when vonage_ws_audio_url_base IS set
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_digit_1_no_ws_fork_when_url_base_empty() -> None:
-    """digit=1 with vonage_ws_audio_url_base='' → no websocket connect action,
-    record action still present (backup path must survive the fallback).
+async def test_digit_1_no_ws_fork_even_when_ws_base_configured() -> None:
+    """digit=1 with vonage_ws_audio_url_base configured → still no websocket
+    connect action.
+
+    The WS fork was removed from this NCCO on purpose (it blocks the leg and
+    breaks the conversation bridge); configuring the URL base must not bring
+    it back.
     """
     session_id = str(uuid.uuid4())
     stub_row = _StubSessionRow(uuid.UUID(session_id))
 
     app.dependency_overrides[get_db] = _make_stub_db(stub_row)
     try:
-        # Both _public_base_url() and the WS-fork block do `from app.config import settings`
-        # lazily inside the function, so we patch the canonical object on app.config.
-        import app.config as _app_config
-
-        original_settings = _app_config.settings
-        mock_settings = MagicMock()
-        mock_settings.vonage_ws_audio_url_base = ""
-        mock_settings.vonage_from_number = "18127224291"
-        # magic_link_base_url is consumed by _public_base_url() for the record eventUrl.
-        mock_settings.magic_link_base_url = "https://api.joincompasschw.com/auth/magic"
-        # Empty signature secret → signature verification is skipped in non-production.
-        mock_settings.vonage_signature_secret = ""
-        mock_settings.environment = "development"
-
-        _app_config.settings = mock_settings
-        try:
+        with patch.object(
+            settings, "vonage_ws_audio_url_base", "wss://api.joincompasschw.com"
+        ):
             transport = ASGITransport(app=app)
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await _post_consent_result(
                     client, _DIGIT_1_PAYLOAD, session_id=session_id
                 )
-        finally:
-            _app_config.settings = original_settings
 
         assert resp.status_code == 200
         ncco = resp.json()
 
         action_types = [a["action"] for a in ncco]
         assert "connect" not in action_types, (
-            "No websocket connect action expected when vonage_ws_audio_url_base is empty"
+            "No websocket connect action may appear even when "
+            f"vonage_ws_audio_url_base is configured, got: {action_types}"
         )
-        assert "record" in action_types, (
-            "Record action must always be present as the backup mp3 path"
+        assert "conversation" in action_types, (
+            f"Member leg must still join the conversation bridge, got: {action_types}"
         )
     finally:
         app.dependency_overrides.pop(get_db, None)
 
 
 # ---------------------------------------------------------------------------
-# Test 4: digit=1 + token generation raises → no WS fork, no exception bubbles
+# Test 4: digit=1 + broken WS token generation → handler unaffected (no 500)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_digit_1_no_ws_fork_when_token_generation_raises() -> None:
-    """digit=1 with vonage_ws_audio_url_base set but create_vonage_ws_token
-    raising RuntimeError (vonage_ws_jwt_secret missing) → graceful fallback,
-    no websocket connect action, no 500.
+async def test_digit_1_unaffected_when_token_generation_would_raise() -> None:
+    """digit=1 must succeed even if create_vonage_ws_token would raise.
 
-    We patch app.utils.security.create_vonage_ws_token with a stub that raises
-    RuntimeError immediately.  The stub is importable even before the parallel
-    branch lands because we inject it at test runtime via patch — the real
-    module does not need to exist for the mock target to work when the path
-    is imported inside the handler function body.
+    The handler no longer mints per-leg WS tokens, so a misconfigured
+    vonage_ws_jwt_secret (RuntimeError from create_vonage_ws_token) must have
+    zero effect on the consent continuation: 200, conversation bridge intact,
+    no websocket connect action.
     """
     session_id = str(uuid.uuid4())
     stub_row = _StubSessionRow(uuid.UUID(session_id))
 
     app.dependency_overrides[get_db] = _make_stub_db(stub_row)
-
-    import app.config as _app_config
-
-    original_settings = _app_config.settings
-    mock_settings = MagicMock()
-    mock_settings.vonage_ws_audio_url_base = "wss://api.joincompasschw.com"
-    mock_settings.vonage_from_number = "18127224291"
-    mock_settings.magic_link_base_url = "https://api.joincompasschw.com/auth/magic"
-    # Empty signature secret → signature verification is skipped in non-production.
-    mock_settings.vonage_signature_secret = ""
-    mock_settings.environment = "development"
-
-    def _raise_runtime(*_args: Any, **_kwargs: Any) -> str:
-        raise RuntimeError("vonage_ws_jwt_secret is not configured")
-
-    _app_config.settings = mock_settings
     try:
-        # Inject a stub module at app.utils.security so the `from app.utils.security
-        # import create_vonage_ws_token` inside the handler resolves to our raising stub.
-        import sys
-        import types
-
-        security_stub = types.ModuleType("app.utils.security")
-        security_stub.create_vonage_ws_token = _raise_runtime  # type: ignore[attr-defined]
-        sys.modules["app.utils.security"] = security_stub
-        try:
+        with (
+            patch.object(
+                settings, "vonage_ws_audio_url_base", "wss://api.joincompasschw.com"
+            ),
+            patch(
+                "app.utils.security.create_vonage_ws_token",
+                side_effect=RuntimeError("vonage_ws_jwt_secret is not configured"),
+            ),
+        ):
             transport = ASGITransport(app=app)
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await _post_consent_result(
                     client, _DIGIT_1_PAYLOAD, session_id=session_id
                 )
-        finally:
-            # Restore the original module slot (or remove if it wasn't there).
-            sys.modules.pop("app.utils.security", None)
     finally:
-        _app_config.settings = original_settings
         app.dependency_overrides.pop(get_db, None)
 
-    # Must not 500 — the handler must degrade gracefully.
+    # Must not 500 — the handler never invokes token generation on this path.
     assert resp.status_code == 200, (
-        f"Handler must not raise when token generation fails; got {resp.status_code}"
+        f"Handler must not depend on WS token generation; got {resp.status_code}"
     )
     ncco = resp.json()
     action_types = [a["action"] for a in ncco]
     assert "connect" not in action_types, (
-        "No websocket connect action expected when token generation raised"
+        f"No websocket connect action expected, got: {action_types}"
     )
-    assert "record" in action_types, (
-        "Record action must survive the fallback path"
+    assert "conversation" in action_types, (
+        f"Conversation bridge must survive, got: {action_types}"
     )
 
 

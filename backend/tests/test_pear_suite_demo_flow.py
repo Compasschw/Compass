@@ -5,7 +5,7 @@ Covers:
 - ensure_member_synced skips when already synced
 - ensure_member_synced calls Pear and persists ID when not synced
 - demo-claim endpoint 400 when CHW lacks pear_suite_user_id
-- demo-claim endpoint 400 when T1016 template ID is missing
+- demo-claim endpoint 400 when the demo template ID is missing
 - demo-claim endpoint orchestrates 4-step chain (schedule, complete, claim, status)
 """
 
@@ -21,6 +21,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.models.session import Session
 from app.models.user import CHWProfile, MemberProfile, User
 
@@ -277,7 +278,7 @@ class TestDemoClaimEndpoint:
             await _create_chw_profile(db, chw_user, pear_suite_user_id=None)
             session = await _create_session(db, chw_user, member_user)
 
-        with patch("app.config.settings.pear_suite_t1016_template_id", "template-t1016"):
+        with patch.object(settings, "pear_suite_demo_template_id", "template-demo"):
             resp = await client.post(
                 "/api/v1/admin/pear-suite/demo-claim",
                 json={"session_id": str(session.id)},
@@ -292,7 +293,7 @@ class TestDemoClaimEndpoint:
     async def test_400_when_t1016_template_id_missing(
         self, client: AsyncClient, setup_db
     ):
-        """Returns 400 when PEAR_SUITE_T1016_TEMPLATE_ID is not configured."""
+        """Returns 400 when PEAR_SUITE_DEMO_TEMPLATE_ID is not configured."""
         from app.database import async_session
 
         async with async_session() as db:
@@ -303,11 +304,9 @@ class TestDemoClaimEndpoint:
             await _create_chw_profile(db, chw_user, pear_suite_user_id="pear-chw-jemal")
             session = await _create_session(db, chw_user, member_user)
 
-        # Ensure template_id is empty
-        with patch("app.routers.admin_demo.settings") as mock_settings:
-            mock_settings.pear_suite_t1016_template_id = ""
-            mock_settings.pear_suite_default_dx_codes = ["Z71.89"]
-
+        # Ensure template_id is empty — patch the real settings object so every
+        # other attribute (dx codes, admin key, etc.) keeps its real value.
+        with patch.object(settings, "pear_suite_demo_template_id", ""):
             resp = await client.post(
                 "/api/v1/admin/pear-suite/demo-claim",
                 json={"session_id": str(session.id)},
@@ -316,7 +315,7 @@ class TestDemoClaimEndpoint:
 
         assert resp.status_code == 400
         detail = resp.json()["detail"]
-        assert "PEAR_SUITE_T1016_TEMPLATE_ID" in detail
+        assert "PEAR_SUITE_DEMO_TEMPLATE_ID" in detail
 
     @pytest.mark.asyncio
     async def test_full_chain_orchestration(
@@ -342,7 +341,7 @@ class TestDemoClaimEndpoint:
 
         async def mock_schedule_activity(**kwargs):
             call_order.append("schedule")
-            assert kwargs["activity_template_id"] == "template-t1016"
+            assert kwargs["activity_template_id"] == "template-demo"
             assert pear_member_id in kwargs["member_ids"]
             assert kwargs["chw_user_id"] == pear_chw_user_id
             return {"id": pear_activity_id}
@@ -374,11 +373,13 @@ class TestDemoClaimEndpoint:
         with (
             patch("app.routers.admin_demo.get_pear_suite_provider", return_value=mock_provider),
             patch("app.routers.admin_demo.ensure_member_synced", new_callable=AsyncMock) as mock_sync,
-            patch("app.routers.admin_demo.settings") as mock_settings,
+            # Patch only the demo-specific settings the endpoint reads, on the
+            # REAL settings object, so all other attributes keep real values
+            # and the endpoint receives a real string template id.
+            patch.object(settings, "pear_suite_demo_template_id", "template-demo"),
+            patch.object(settings, "pear_suite_default_dx_codes", ["Z71.89"]),
         ):
             mock_sync.return_value = pear_member_id
-            mock_settings.pear_suite_t1016_template_id = "template-t1016"
-            mock_settings.pear_suite_default_dx_codes = ["Z71.89"]
 
             resp = await client.post(
                 "/api/v1/admin/pear-suite/demo-claim",

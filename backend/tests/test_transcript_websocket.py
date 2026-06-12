@@ -294,6 +294,11 @@ class TestWebSocketParticipantAuthorization:
         we reuse them across loops we hit "Future attached to a different
         loop". We dispose both engines on the new loop FIRST, then run the
         coroutine — that forces fresh connections on the current loop.
+
+        Before closing the private loop we dispose both engines AGAIN on
+        that same loop: any pool connections opened while running ``coro``
+        are bound to this loop, and leaving them pooled after the loop is
+        closed breaks the next async test's setup_db fixture.
         """
         from app.database import engine as _app_engine
         from tests.conftest import test_engine as _engine
@@ -307,6 +312,10 @@ class TestWebSocketParticipantAuthorization:
         try:
             return loop.run_until_complete(_wrapped())
         finally:
+            # Dispose pooled connections created on this throwaway loop so
+            # they are not reused (and left dangling) on a closed loop.
+            loop.run_until_complete(_engine.dispose())
+            loop.run_until_complete(_app_engine.dispose())
             loop.close()
 
     def _setup_participants_and_session(self) -> tuple[User, User, Session]:
@@ -492,7 +501,11 @@ class TestWebSocketFanOut:
             "speaker_label": "A",
             "speaker_role": "unknown",
             "text": "hello world",
-            "is_final": True,
+            # Non-final on purpose: is_final=True makes hub.publish fire-and-
+            # forget a transcript-persist task against the app DB engine, which
+            # deadlocks with the autouse fixture's DROP SCHEMA at teardown.
+            # This test asserts fan-out only; persistence has its own coverage.
+            "is_final": False,
             "confidence": 0.99,
             "started_at_ms": 0,
             "ended_at_ms": 500,
