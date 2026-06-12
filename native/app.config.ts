@@ -92,6 +92,14 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     "expo-font",
     "expo-secure-store",
     "expo-audio",
+    /**
+     * Sentry crash reporting (native init + source-map upload on EAS builds).
+     * Org/project/auth come from SENTRY_ORG / SENTRY_PROJECT /
+     * SENTRY_AUTH_TOKEN env vars at build time; absent, the build proceeds
+     * with a warning and JS-only events still report at runtime via
+     * EXPO_PUBLIC_SENTRY_DSN (see src/services/crash/index.ts).
+     */
+    "@sentry/react-native/expo",
     [
       "expo-image-picker",
       {
