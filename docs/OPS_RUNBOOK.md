@@ -24,7 +24,8 @@ If a command doesn't do what you need, ping Akram rather than improvising.
 3. [Pear Suite test harness — smoke test the billing integration](#3-pear-suite-test-harness)
 4. [Common scenarios](#4-common-scenarios)
 5. [Troubleshooting](#5-troubleshooting)
-6. [Emergency contacts](#6-emergency-contacts)
+6. [Deploy rollback](#6-deploy-rollback)
+7. [Emergency contacts](#7-emergency-contacts)
 
 ---
 
@@ -504,7 +505,71 @@ for the specific CHW. Ping Akram before retrying.
 
 ---
 
-## 6. Emergency contacts
+## 6. Deploy rollback
+
+Every push to `main` auto-deploys (`.github/workflows/deploy.yml`). When a
+deploy has pending migrations, the workflow takes an RDS snapshot named
+`compass-prod-pre-mig-<utc-timestamp>-<short-sha>` **before** running
+`alembic upgrade heads` and keeps the 5 newest. Pick the rollback path by
+what broke:
+
+### A. Bad code, no migration involved
+
+Roll forward with a revert — never force-push main:
+
+```bash
+git revert <bad-commit-sha>        # or a range: git revert <old>..<new>
+git push origin main               # auto-deploy ships the revert
+```
+
+Deploy takes ~5 min. Watch the Actions run, then spot-check
+`https://api.joincompasschw.com/api/v1/health`.
+
+### B. Bad migration, reversible
+
+If the migration's `downgrade()` is real (check the file under
+`backend/alembic/versions/`), downgrade in place, then revert the code:
+
+```bash
+# On the EC2 box (see §1 for getting in):
+docker compose exec -T -e PYTHONPATH=/code api alembic downgrade -1
+```
+
+Then follow path A to revert the commit that added the migration, and use
+the deploy workflow's `skip_migrations=true` input if you need to redeploy
+without re-running migrations.
+
+### C. Bad migration, data damaged — restore the snapshot
+
+RDS restore always creates a **new** instance; you swap the app over to it.
+
+```bash
+# 1. Find the snapshot taken right before the bad deploy
+aws rds describe-db-snapshots --db-instance-identifier compass-prod \
+  --snapshot-type manual \
+  --query "DBSnapshots[?starts_with(DBSnapshotIdentifier, 'compass-prod-pre-mig-')].{id:DBSnapshotIdentifier,when:SnapshotCreateTime}" \
+  --output table
+
+# 2. Restore it to a new instance (same class/subnet/SG as compass-prod)
+aws rds restore-db-instance-from-db-snapshot \
+  --db-instance-identifier compass-prod-restored \
+  --db-snapshot-identifier <snapshot-id> \
+  --db-instance-class db.t4g.micro
+aws rds wait db-instance-available --db-instance-identifier compass-prod-restored
+
+# 3. Point the backend at it: on the EC2 box, edit the .env DATABASE_URL
+#    host to the new instance's endpoint, then:
+docker compose up -d
+curl -fsS http://localhost:8000/api/v1/health
+```
+
+Anything written between the snapshot and the restore is lost — at pilot
+scale that window is minutes, but tell affected CHWs/members if sessions or
+messages were in flight. Rename/clean up the old instance once stable.
+
+---
+
+## 7. Emergency contacts
 
 | Situation | Contact |
 |-----------|---------|
