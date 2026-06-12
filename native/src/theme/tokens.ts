@@ -80,10 +80,12 @@ export const colors = {
   emerald500: '#10b981',
   emerald900: '#064e3b',
 
-  // Text
-  textPrimary:   '#111827',
-  textSecondary: '#6b7280',
-  textMuted:     '#9ca3af',
+  // Text — every tier must hold ≥4.5:1 on white (WCAG AA for normal text).
+  // textMuted was #9ca3af (2.85:1, AA fail on timestamps/subtitles); it is
+  // now gray-500 and textSecondary moved to gray-600 to keep the hierarchy.
+  textPrimary:   '#111827', // gray-900 — 17.7:1
+  textSecondary: '#4b5563', // gray-600 — 7.6:1
+  textMuted:     '#6b7280', // gray-500 — 4.8:1
 } as const;
 
 export type ColorToken = keyof typeof colors;

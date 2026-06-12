@@ -1067,7 +1067,7 @@ const styles = StyleSheet.create({
   timeAm: {
     fontSize:   11,
     fontWeight: '400',
-    color:      '#9ca3af',
+    color:      tokens.textMuted,
     lineHeight: 14,
   } as TextStyle,
 
@@ -1200,7 +1200,7 @@ const styles = StyleSheet.create({
   activityTime: {
     fontSize:   12,
     fontWeight: '400',
-    color:      '#9ca3af',
+    color:      tokens.textMuted,
     flexShrink: 0,
   } as TextStyle,
 
