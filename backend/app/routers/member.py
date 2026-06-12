@@ -1,3 +1,4 @@
+import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -18,6 +19,8 @@ from app.schemas.member import (
     ServicesConsentUpdate,
 )
 from app.schemas.user import MemberProfileResponse, MemberProfileUpdate
+
+logger = logging.getLogger("compass.member")
 
 router = APIRouter(prefix="/api/v1/member", tags=["member"])
 
@@ -196,6 +199,30 @@ async def delete_my_account(
     )
     for token in token_result.scalars():
         token.revoked = True
+
+    # 5. Wipe member-owned S3 PHI objects + redact document metadata rows.
+    # Mirrors execute_account_deletion step 9 (audit 2026-06-12 blocker #8);
+    # TODO(sprint-4, audit item: dual deletion flow): consolidate this
+    # endpoint onto services/account_deletion.py so the logic lives once.
+    from sqlalchemy import update as _update
+
+    from app.models.member_document import MemberDocument
+    from app.services.s3_phi_cleanup import delete_member_phi_objects
+
+    s3_cleanup = await delete_member_phi_objects(user.id)
+    if not s3_cleanup.ok:
+        # DB deletion proceeds; leftover objects are logged at ERROR inside
+        # the cleanup service and again here for the deletion context.
+        logger.error(
+            "member_account_deletion.s3_cleanup_incomplete user_id=%s errors=%s",
+            user.id,
+            "; ".join(s3_cleanup.errors),
+        )
+    await db.execute(
+        _update(MemberDocument)
+        .where(MemberDocument.member_id == user.id, MemberDocument.deleted_at.is_(None))
+        .values(deleted_at=datetime.now(UTC), filename="[deleted]")
+    )
 
     await db.commit()
     return None

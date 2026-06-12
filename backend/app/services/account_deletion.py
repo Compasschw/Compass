@@ -75,7 +75,13 @@ async def execute_account_deletion(
     6. Hard-delete MagicLinkToken rows (cannot be used after is_active=False anyway).
     7. Hard-delete RefreshToken rows.
     8. Redact MemberConsent signature fields (rows are HIPAA-retained).
-    9. Write a HIPAA audit row capturing exactly what was anonymised vs retained.
+    9. Wipe member-owned S3 PHI objects (documents, attachments, legacy
+       uploads — all versions) and redact MemberDocument metadata rows.
+       Session care records (recordings/transcripts/summaries) are retained
+       under their 7-year lifecycle. S3 failures are recorded in the audit
+       row, never block the DB deletion, and are logged at ERROR.
+    10. Write a HIPAA audit row capturing exactly what was anonymised,
+        deleted, and retained.
 
     Args:
         db: Async SQLAlchemy session. The caller is responsible for commit/rollback.
@@ -178,7 +184,24 @@ async def execute_account_deletion(
         # MemberConsent model may not exist in all project variants — skip gracefully.
         logger.debug("account_deletion: MemberConsent model not found, skipping redaction")
 
-    # ── Step 9: Write HIPAA audit row ─────────────────────────────────────────
+    # ── Step 9a: Wipe member-owned S3 PHI objects ─────────────────────────────
+    from app.services.s3_phi_cleanup import delete_member_phi_objects
+
+    s3_cleanup = await delete_member_phi_objects(user.id)
+
+    # ── Step 9b: Redact MemberDocument metadata rows ──────────────────────────
+    # Rows are soft-deleted + filename-redacted (FKs retained for the audit
+    # window); the underlying S3 objects were just removed in step 9a.
+    from app.models.member_document import MemberDocument
+
+    doc_result = await db.execute(
+        update(MemberDocument)
+        .where(MemberDocument.member_id == user.id, MemberDocument.deleted_at.is_(None))
+        .values(deleted_at=now, filename="[deleted]")
+    )
+    member_documents_redacted = doc_result.rowcount  # type: ignore[union-attr]
+
+    # ── Step 10: Write HIPAA audit row ────────────────────────────────────────
     audit_details: dict = {
         "anonymised": {
             "user_email": True,
@@ -196,7 +219,9 @@ async def execute_account_deletion(
         },
         "redacted": {
             "member_consent_signatures": consent_rows_redacted,
+            "member_documents": member_documents_redacted,
         },
+        "s3_phi_cleanup": s3_cleanup.as_audit_details(),
         "retained_for_hipaa": [
             "service_requests",
             "sessions",
@@ -204,6 +229,7 @@ async def execute_account_deletion(
             "session_followups",
             "audit_log",
             "member_consents (rows retained, signature redacted)",
+            "call recordings / transcripts / AI summaries (care record, 7-yr S3 lifecycle)",
         ],
         "data_retention_until": retention_until.isoformat(),
     }
@@ -219,6 +245,16 @@ async def execute_account_deletion(
             details=audit_details,
         )
     )
+
+    if not s3_cleanup.ok:
+        # The DB deletion still proceeds — but this must never pass silently:
+        # leftover S3 objects are exactly the right-to-delete violation this
+        # step exists to prevent. The audit row carries the per-bucket errors.
+        logger.error(
+            "account_deletion.s3_cleanup_incomplete user_id=%s errors=%s",
+            user.id,
+            "; ".join(s3_cleanup.errors),
+        )
 
     logger.info(
         "account_deletion.complete user_id=%s retention_until=%s",

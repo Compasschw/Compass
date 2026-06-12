@@ -19,6 +19,7 @@ account_deletion.py, or the User / MemberProfile / RefreshToken models.
 """
 
 import uuid
+from unittest.mock import patch
 
 import pytest
 from httpx import AsyncClient
@@ -26,11 +27,27 @@ from sqlalchemy import select
 
 from app.models.auth import RefreshToken
 from app.models.user import MemberProfile, User
+from app.services.s3_phi_cleanup import PhiCleanupResult
 from tests.conftest import auth_header, test_session as _test_session_factory
 
 _DELETE_URL = "/api/v1/member/account"
 _MEMBER_EMAIL = "testmember@example.com"
 _MEMBER_PASSWORD = "testpass123"
+
+
+@pytest.fixture(autouse=True)
+def _stub_s3_phi_cleanup():
+    """Keep deletion tests off real AWS: stub the per-bucket S3 worker.
+
+    Patches the innermost sync function so the async wiring
+    (delete_member_phi_objects → asyncio.to_thread) still executes.
+    Dedicated S3 behaviour tests live in test_s3_phi_cleanup.py.
+    """
+    with patch(
+        "app.services.s3_phi_cleanup._cleanup_sync",
+        return_value=PhiCleanupResult(),
+    ):
+        yield
 
 
 # ---------------------------------------------------------------------------
