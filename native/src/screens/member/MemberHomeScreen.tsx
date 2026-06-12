@@ -60,7 +60,6 @@ import {
   CheckSquare,
   Stethoscope,
   Target,
-  Trophy,
 } from 'lucide-react-native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 
@@ -116,6 +115,21 @@ function formatScheduledDate(iso: string): string {
     hour: 'numeric',
     minute: '2-digit',
   });
+}
+
+/**
+ * Returns a relative timestamp string (e.g. "14m ago", "3h ago", "yesterday").
+ * Same contract as the CHWDashboardScreen helper.
+ */
+function relativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.round(diff / 60_000);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(diff / 3_600_000);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(diff / 86_400_000);
+  if (days === 1) return 'yesterday';
+  return `${days}d ago`;
 }
 
 /**
@@ -417,6 +431,60 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
   // Active journeys for the Your Journeys section.
   const allJourneys   = journeysQuery.data ?? [];
   const activeJourneys = allJourneys.filter((j) => j.status === 'active');
+
+  // Recent Activity — derived from data already loaded (sessions + requests),
+  // newest first, capped at 4. The section hides entirely when empty so a
+  // brand-new member never sees placeholder content.
+  const recentActivity = useMemo(() => {
+    interface ActivityItem {
+      key: string;
+      icon: React.JSX.Element;
+      text: string;
+      timestamp: string;
+    }
+    const items: ActivityItem[] = [];
+
+    for (const s of allSessions) {
+      const chwLabel = s.chwName ?? 'your CHW';
+      if (s.status === 'completed') {
+        items.push({
+          key: `session-completed-${s.id}`,
+          icon: <CheckCircle2 size={16} color={tokens.emerald700} />,
+          text: `Session with ${chwLabel} completed`,
+          timestamp: s.endedAt ?? s.scheduledAt,
+        });
+      } else if (s.status === 'scheduled') {
+        items.push({
+          key: `session-scheduled-${s.id}`,
+          icon: <CalendarCheck size={16} color={tokens.blue700} />,
+          text: `Session with ${chwLabel} scheduled for ${formatScheduledDate(s.scheduledAt)}`,
+          timestamp: s.createdAt,
+        });
+      }
+    }
+
+    for (const r of allRequests) {
+      const verticalLabel =
+        verticalLabels[r.vertical as Vertical] ?? 'support';
+      items.push({
+        key: `request-${r.id}`,
+        icon: <Hand size={16} color={tokens.amber700} />,
+        text:
+          r.status === 'open'
+            ? `You requested help with ${verticalLabel}`
+            : `Your ${verticalLabel} request was picked up by a CHW`,
+        timestamp: r.createdAt,
+      });
+    }
+
+    return items
+      .filter((item) => !Number.isNaN(new Date(item.timestamp).getTime()))
+      .sort(
+        (a, b) =>
+          new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+      )
+      .slice(0, 4);
+  }, [allSessions, allRequests]);
 
   // ─── Navigation callbacks ──────────────────────────────────────────────────
 
@@ -776,41 +844,32 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
           )}
 
           {/* ── Recent Activity ──────────────────────────────────────────
-           *  Static feed; wire to a real activity endpoint when available.
-           *  Icon colours use semantic tokens — not legacy palette.
+           *  Derived from the member's real sessions + requests (see
+           *  recentActivity memo). Hidden entirely when there is nothing
+           *  to show. Icon colours use semantic tokens — not legacy palette.
            */}
-          <SectionHeader title="Recent Activity" marginBottom={spacing.md} />
-          <Card style={styles.activityCard}>
-            {[
-              {
-                icon: <MessageSquare size={16} color={tokens.blue700} />,
-                text: 'Maria sent you a message',
-                time: '1h ago',
-              },
-              {
-                icon: <Trophy size={16} color={tokens.amber700} />,
-                text: 'You earned +25 pts for Eligibility Screening',
-                time: '2d ago',
-              },
-              {
-                icon: <CalendarCheck size={16} color={tokens.emerald700} />,
-                text: 'Your appointment Mon was confirmed',
-                time: '3d ago',
-              },
-            ].map((item, idx) => (
-              <View
-                key={idx}
-                style={[
-                  styles.activityRow,
-                  idx > 0 && { borderTopWidth: 1, borderTopColor: tokens.gray100 },
-                ]}
-              >
-                {item.icon}
-                <Text style={styles.activityText}>{item.text}</Text>
-                <Text style={styles.activityTime}>{item.time}</Text>
-              </View>
-            ))}
-          </Card>
+          {recentActivity.length > 0 && (
+            <>
+              <SectionHeader title="Recent Activity" marginBottom={spacing.md} />
+              <Card style={styles.activityCard}>
+                {recentActivity.map((item, idx) => (
+                  <View
+                    key={item.key}
+                    style={[
+                      styles.activityRow,
+                      idx > 0 && { borderTopWidth: 1, borderTopColor: tokens.gray100 },
+                    ]}
+                  >
+                    {item.icon}
+                    <Text style={styles.activityText} numberOfLines={1}>
+                      {item.text}
+                    </Text>
+                    <Text style={styles.activityTime}>{relativeTime(item.timestamp)}</Text>
+                  </View>
+                ))}
+              </Card>
+            </>
+          )}
 
           {/* ── Find CHW CTA card ────────────────────────────────────────
            *  Solid green action strip — same pattern as CHW dashboard CTAs.
