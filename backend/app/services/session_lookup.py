@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.conversation import Conversation
 from app.models.session import Session
+from app.models.user import User
 
 
 async def get_active_session_for_conversation(
@@ -148,8 +149,8 @@ async def create_followup_session(
     db: AsyncSession,
     *,
     conversation: Conversation,
-    chw_user: object,
-    member_user: object,
+    chw_user: User,
+    member_user: User,
 ) -> Session:
     """Mint a new in_progress Session for a fresh call in an existing conversation.
 

@@ -17,7 +17,7 @@ import logging
 import os
 import time
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from uuid import UUID
 
@@ -31,7 +31,8 @@ logger = logging.getLogger("compass.transcript_hub")
 
 # Type alias for the callback the hub passes into each streaming session.
 # Signature: async def callback(session_id: UUID, payload: dict) -> None
-TranscriptChunkCallback = Callable[[UUID, dict], Awaitable[None]]
+# Coroutine (not Awaitable) so run_coroutine_threadsafe accepts the result.
+TranscriptChunkCallback = Callable[[UUID, dict], Coroutine[object, object, None]]
 
 # Streaming sample rate — must match the client's PCM encoding (16 kHz mono).
 _STREAMING_SAMPLE_RATE = 16_000

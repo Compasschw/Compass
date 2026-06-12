@@ -71,14 +71,14 @@ async def list_requests(current_user=Depends(get_current_user), db: AsyncSession
         return [ServiceRequestSummaryResponse.model_validate(r) for r in requests]
 
     # Member view — full details on their own requests
-    stmt = (
+    member_stmt = (
         select(ServiceRequest, User.name)
         .join(User, ServiceRequest.member_id == User.id)
         .where(ServiceRequest.member_id == current_user.id)
         .order_by(ServiceRequest.created_at.desc())
     )
-    result = await db.execute(stmt)
-    rows = result.all()
+    member_result = await db.execute(member_stmt)
+    rows = member_result.all()
     return [ServiceRequestResponse.model_validate({**req.__dict__, "member_name": name}) for req, name in rows]
 
 

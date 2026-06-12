@@ -218,7 +218,9 @@ class Settings(BaseSettings):
         env_file = ".env"
 
 
-settings = Settings()
+# pydantic-settings populates required fields from env/.env at runtime;
+# mypy cannot see that, so the missing-named-argument warning is suppressed.
+settings = Settings()  # type: ignore[call-arg]
 
 _DANGEROUS_KEYS = {"", "dev-secret-key-change-in-production", "changeme", "secret"}
 if settings.secret_key in _DANGEROUS_KEYS:

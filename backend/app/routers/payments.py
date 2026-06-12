@@ -19,6 +19,7 @@ Webhooks (all go through POST /payments/webhooks/stripe):
 
 import logging
 from datetime import UTC, datetime
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel
@@ -276,7 +277,7 @@ async def _handle_transfer_failed(db: AsyncSession, transfer_obj: dict) -> None:
 
 async def trigger_chw_payout(
     db: AsyncSession,
-    billing_claim_id: "UUID",  # noqa: F821
+    billing_claim_id: UUID,
 ) -> bool:
     """Transfer a CHW's net share from platform balance to their connected account.
 

@@ -38,7 +38,7 @@ import os
 from datetime import UTC, datetime, timedelta, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Cookie, Depends, Form, Header, HTTPException, Query, status
+from fastapi import APIRouter, Cookie, Depends, Form, Header, HTTPException, Query, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from jose import JWTError, jwt
 from pydantic import BaseModel, Field
@@ -391,7 +391,7 @@ def _login_page(error: str = "") -> HTMLResponse:
 
 
 @router.post("/waitlist/login")
-async def admin_login(key: str = Form(...)) -> RedirectResponse:
+async def admin_login(key: str = Form(...)) -> Response:
     """Validate admin key and set httpOnly cookie. Key never appears in URL."""
     import hmac
     if not hmac.compare_digest(key, settings.admin_key):

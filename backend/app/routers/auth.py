@@ -390,15 +390,15 @@ async def request_magic_link(
     import logging
 
     from app.services.email import send_magic_link_email
-    result = await send_magic_link_email(
+    email_result = await send_magic_link_email(
         to=data.email,
         magic_url=magic_url,
         ttl_minutes=settings.magic_link_ttl_minutes,
     )
-    if not result.success:
+    if not email_result.success:
         logger = logging.getLogger("compass.auth")
         logger.warning(
-            "Magic link email for user %s failed: %s", user.id, result.error,
+            "Magic link email for user %s failed: %s", user.id, email_result.error,
         )
         if settings.environment == "development":
             # Local-only convenience when SES isn't configured.

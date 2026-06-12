@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies import get_current_user
+from app.models.conversation import Conversation
 from app.schemas.conversation import (
     ConversationResponse,
     FileAttachmentInline,
@@ -58,7 +59,7 @@ async def find_or_create_conversation(
     body: FindOrCreateConversationRequest,
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> ConversationResponse:
+) -> Conversation:
     """POST /api/v1/conversations/find-or-create
 
     Auth: any authenticated user (CHW or member).
@@ -70,7 +71,6 @@ async def find_or_create_conversation(
     """
     from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-    from app.models.conversation import Conversation
     from app.models.user import User
 
     peer = await db.get(User, body.peer_id)

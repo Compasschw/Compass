@@ -15,6 +15,7 @@ For now, a single-instance deploy with advisory locks is sufficient.
 
 import logging
 from datetime import UTC, date, datetime, timedelta
+from typing import TypedDict
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import and_, select
@@ -118,7 +119,7 @@ async def retry_pending_claims() -> None:
         provider = get_billing_provider()
         for claim in claims:
             try:
-                result = await provider.submit_claim(ClaimSubmission(
+                claim_result = await provider.submit_claim(ClaimSubmission(
                     session_id=claim.session_id,
                     chw_id=claim.chw_id,
                     member_id=claim.member_id,
@@ -129,12 +130,12 @@ async def retry_pending_claims() -> None:
                     units=claim.units,
                     gross_amount=Decimal(str(claim.gross_amount)),
                 ))
-                if result.success and result.provider_claim_id:
-                    claim.pear_suite_claim_id = result.provider_claim_id
-                    claim.status = result.status
+                if claim_result.success and claim_result.provider_claim_id:
+                    claim.pear_suite_claim_id = claim_result.provider_claim_id
+                    claim.status = claim_result.status
                     claim.submitted_at = datetime.now(UTC)
                     await db.commit()
-                    logger.info("Claim retry succeeded: %s → %s", claim.id, result.provider_claim_id)
+                    logger.info("Claim retry succeeded: %s → %s", claim.id, claim_result.provider_claim_id)
             except Exception as e:  # noqa: BLE001
                 logger.warning("Claim retry failed for %s: %s", claim.id, e)
 
@@ -189,11 +190,11 @@ async def poll_pear_claim_status() -> None:
                 if pear_id is None:
                     continue
 
-                result = await provider.get_claim_status(pear_id)
+                status_result = await provider.get_claim_status(pear_id)
                 # ClaimResult.status — canonical (pending|submitted|accepted|
                 # rejected|paid). Compare case-insensitively in case Pear
                 # ships casing changes.
-                normalized = (result.status or "").strip().lower()
+                normalized = (status_result.status or "").strip().lower()
                 if not normalized or normalized == claim.status:
                     continue
 
@@ -411,7 +412,8 @@ async def check_expiring_credentials() -> None:
                     db,
                     credential.chw_id,
                     credential.program_name,  # generic program name — no PHI
-                    credential.expiry_date,   # date
+                    # Never None here — the query filters expiry_date >= today.
+                    credential.expiry_date,  # type: ignore[arg-type]
                 )
                 # Stamp today so we don't re-warn on the next scheduler run
                 record = await db.get(CHWCredentialValidation, credential.id)
@@ -528,7 +530,15 @@ def stop_scheduler() -> None:
     logger.info("Scheduler stopped")
 
 
-def scheduler_status() -> dict[str, object]:
+class SchedulerStatus(TypedDict):
+    """Liveness summary returned by :func:`scheduler_status`."""
+
+    running: bool
+    job_count: int
+    jobs: list[dict[str, str | None]]
+
+
+def scheduler_status() -> SchedulerStatus:
     """Return a small dict summarising the scheduler's liveness.
 
     Exposed via ``GET /api/v1/health`` so monitoring can detect a silently-

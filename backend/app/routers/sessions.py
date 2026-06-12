@@ -18,7 +18,11 @@ from app.schemas.conversation import (
     SessionMessageResponse,
     SessionMessageSend,
 )
-from app.schemas.followup import ExtractFollowupsResponse, SessionFollowupResponse
+from app.schemas.followup import (
+    ExtractFollowupsResponse,
+    SessionFollowupPatch,
+    SessionFollowupResponse,
+)
 from app.schemas.session import (
     ConsentRequestApprove,
     ConsentRequestCreate,
@@ -232,7 +236,7 @@ async def create_session(
     background_tasks: BackgroundTasks,
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> SessionResponse:
+) -> Session:
     req = await db.get(ServiceRequest, data.request_id)
     if not req:
         raise HTTPException(status_code=404, detail="Request not found")
@@ -2144,7 +2148,7 @@ async def extract_followups(
 async def patch_followup(
     session_id: UUID,
     followup_id: UUID,
-    patch: "SessionFollowupPatch",  # noqa: F821 — forward-ref to avoid top-level import churn
+    patch: SessionFollowupPatch,
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -2161,7 +2165,6 @@ async def patch_followup(
     from datetime import UTC, datetime
 
     from app.models.followup import SessionFollowup as SessionFollowupModel
-    from app.schemas.followup import SessionFollowupPatch  # noqa: F401
 
     followup = await db.get(SessionFollowupModel, followup_id)
     if followup is None or followup.session_id != session_id:

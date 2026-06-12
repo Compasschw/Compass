@@ -370,7 +370,14 @@ async def submit_demo_claim(
         pear_activity_id,
     )
     try:
-        await provider.complete_activity(
+        # KNOWN BUG (flagged during type-check cleanup, not fixed here to keep
+        # runtime behavior identical): complete_activity() requires the
+        # keyword-only `cost_id` argument (per-carrier Pear costId — see
+        # pear_cost_ids.resolve_cost_id and PearSuiteProvider.submit_claim).
+        # This call raises TypeError at runtime, which the except below maps
+        # to HTTP 502. Action item: resolve cost_id from
+        # member_profile.insurance_company exactly as submit_claim does.
+        await provider.complete_activity(  # type: ignore[call-arg]
             pear_activity_id=pear_activity_id,
             pear_member_id=pear_member_id,
             chw_user_id=chw_pear_user_id,

@@ -1,10 +1,11 @@
 from datetime import UTC, date, datetime
+from typing import Literal
 from uuid import NAMESPACE_URL, UUID, uuid5
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import HTTPBearer
-from sqlalchemy import case, extract, func, select
+from sqlalchemy import any_, case, extract, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -138,7 +139,9 @@ async def browse_chws(
         .where(~User.email.like("%.demo@compasschw.com"))
     )
     if vertical:
-        stmt = stmt.where(CHWProfile.specializations.any(vertical))
+        # any_(col) == value renders "value = ANY (specializations)" — identical
+        # SQL to ARRAY.Comparator.any(value), but with precise typing.
+        stmt = stmt.where(any_(CHWProfile.specializations) == vertical)
     stmt = stmt.order_by(CHWProfile.rating.desc())
     result = await db.execute(stmt)
     rows = result.all()
@@ -174,14 +177,16 @@ async def get_earnings(current_user=Depends(require_role("chw")), db: AsyncSessi
         .where(extract("month", BillingClaim.created_at) == now.month)
         .where(extract("year", BillingClaim.created_at) == now.year)
     )
-    this_month = float(month_result.scalar())
+    # COALESCE guarantees a non-NULL aggregate row; scalar() is Decimal here.
+    this_month = float(month_result.scalar())  # type: ignore[arg-type]
 
     # All-time earnings
     all_time_result = await db.execute(
         select(func.coalesce(func.sum(BillingClaim.net_payout), 0))
         .where(BillingClaim.chw_id == current_user.id)
     )
-    all_time = float(all_time_result.scalar())
+    # COALESCE guarantees a non-NULL aggregate row; scalar() is Decimal here.
+    all_time = float(all_time_result.scalar())  # type: ignore[arg-type]
 
     # Pending payout (claims with status 'pending')
     pending_result = await db.execute(
@@ -189,7 +194,8 @@ async def get_earnings(current_user=Depends(require_role("chw")), db: AsyncSessi
         .where(BillingClaim.chw_id == current_user.id)
         .where(BillingClaim.status == "pending")
     )
-    pending_payout = float(pending_result.scalar())
+    # COALESCE guarantees a non-NULL aggregate row; scalar() is Decimal here.
+    pending_payout = float(pending_result.scalar())  # type: ignore[arg-type]
 
     # Sessions this week (completed sessions in the last 7 days)
     from datetime import timedelta
@@ -439,10 +445,13 @@ async def list_chw_members(
         # Status: active if session in last 30 days OR open/accepted request.
         has_recent_session = (recent_30_by_member.get(member_id) or 0) > 0
         has_active_request = member_id in active_request_by_member
-        status: str = "active" if (has_recent_session or has_active_request) else "inactive"
+        status: Literal["active", "inactive"] = (
+            "active" if (has_recent_session or has_active_request) else "inactive"
+        )
 
         # Engagement bucket from 60-day session count.
         session_60_count = recent_60_by_member.get(member_id) or 0
+        engagement: Literal["highly", "moderately", "disengaged"]
         if session_60_count >= 3:
             engagement = "highly"
         elif session_60_count >= 1:
@@ -452,11 +461,11 @@ async def list_chw_members(
 
         # Active journey.
         active_journey_info: ActiveJourneyInfo | None = None
-        journey = journey_by_member.get(member_id)
-        if journey is not None:
-            template = templates_by_id.get(journey.template_id)
-            current_step = steps_by_id.get(journey.current_step_id) if journey.current_step_id else None
-            progress_pct = progress_by_journey.get(journey.id, 0.0)
+        member_journey = journey_by_member.get(member_id)
+        if member_journey is not None:
+            template = templates_by_id.get(member_journey.template_id)
+            current_step = steps_by_id.get(member_journey.current_step_id) if member_journey.current_step_id else None
+            progress_pct = progress_by_journey.get(member_journey.id, 0.0)
             if template is not None:
                 active_journey_info = ActiveJourneyInfo(
                     name=template.name,

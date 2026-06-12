@@ -153,13 +153,13 @@ async def execute_account_deletion(
     device_result = await db.execute(
         delete(DeviceToken).where(DeviceToken.user_id == user.id)
     )
-    device_tokens_deleted = device_result.rowcount  # type: ignore[union-attr]
+    device_tokens_deleted = device_result.rowcount  # type: ignore[attr-defined]
 
     # ── Step 6: Hard-delete MagicLinkToken rows ───────────────────────────────
     ml_result = await db.execute(
         delete(MagicLinkToken).where(MagicLinkToken.user_id == user.id)
     )
-    magic_link_tokens_deleted = ml_result.rowcount  # type: ignore[union-attr]
+    magic_link_tokens_deleted = ml_result.rowcount  # type: ignore[attr-defined]
 
     # ── Step 7: Hard-delete RefreshToken rows ─────────────────────────────────
     from app.models.auth import RefreshToken
@@ -167,19 +167,21 @@ async def execute_account_deletion(
     rt_result = await db.execute(
         delete(RefreshToken).where(RefreshToken.user_id == user.id)
     )
-    refresh_tokens_deleted = rt_result.rowcount  # type: ignore[union-attr]
+    refresh_tokens_deleted = rt_result.rowcount  # type: ignore[attr-defined]
 
     # ── Step 8: Redact MemberConsent signatures (rows retained for HIPAA) ─────
     consent_rows_redacted = 0
     try:
-        from app.models.communication import MemberConsent  # type: ignore[import]
+        # Optional model — guarded by the ImportError/AttributeError handler
+        # below; mypy flags the attribute on variants without MemberConsent.
+        from app.models.communication import MemberConsent  # type: ignore[attr-defined]
 
         consent_result = await db.execute(
             update(MemberConsent)
             .where(MemberConsent.user_id == user.id)
             .values(signature="[deleted]")
         )
-        consent_rows_redacted = consent_result.rowcount  # type: ignore[union-attr]
+        consent_rows_redacted = consent_result.rowcount  # type: ignore[attr-defined]
     except (ImportError, AttributeError):
         # MemberConsent model may not exist in all project variants — skip gracefully.
         logger.debug("account_deletion: MemberConsent model not found, skipping redaction")

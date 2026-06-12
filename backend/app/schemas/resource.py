@@ -10,8 +10,9 @@ so they can be constructed directly from SQLAlchemy ORM instances via
 ``model_validate(orm_obj)``.
 """
 
+from collections.abc import Iterable
 from datetime import datetime
-from typing import Literal
+from typing import Literal, cast
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -94,7 +95,9 @@ class ResourceCreate(BaseModel):
             return []
         if isinstance(value, str):
             return [value]
-        return list(value)
+        # cast: pydantic re-validates element types after this before-validator;
+        # a non-iterable still raises TypeError inside list() exactly as before.
+        return list(cast(Iterable[str], value))
 
 
 class ResourceUpdate(BaseModel):
@@ -124,7 +127,9 @@ class ResourceUpdate(BaseModel):
             return None
         if isinstance(value, str):
             return [value]
-        return list(value)
+        # cast: pydantic re-validates element types after this before-validator;
+        # a non-iterable still raises TypeError inside list() exactly as before.
+        return list(cast(Iterable[str], value))
 
 
 # ─── ResourceSuggestion schemas ────────────────────────────────────────────────

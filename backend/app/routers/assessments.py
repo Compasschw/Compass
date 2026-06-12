@@ -44,6 +44,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -204,7 +205,7 @@ async def start_assessment(
     request: Request,
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> AssessmentOut:
+) -> AssessmentOut | JSONResponse:
     """POST /api/v1/sessions/{session_id}/assessments
 
     Idempotency rule: one in_progress assessment per (member_id, template_id).
@@ -238,7 +239,6 @@ async def start_assessment(
             existing.id, session.member_id, data.template_id,
         )
         # Return existing with HTTP 200 to signal idempotent return.
-        from fastapi.responses import JSONResponse
         responses = await _load_responses(existing.id, db)
         out = _assessment_to_out(existing, responses)
         return JSONResponse(

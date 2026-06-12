@@ -50,7 +50,7 @@ class ExpoPushProvider(NotificationProvider):
         return headers
 
     def _build_message(self, payload: NotificationPayload, token: str) -> dict[str, Any]:
-        message = {
+        message: dict[str, Any] = {
             "to": token,
             "title": payload.title,
             "body": payload.body,

@@ -325,7 +325,8 @@ class AssemblyAIProvider(TranscriptionProvider):
         transcriber = stream.provider_handle
 
         def _send() -> None:
-            transcriber.stream(pcm_chunk)
+            # provider_handle is deliberately typed `object` (untyped SDK handle).
+            transcriber.stream(pcm_chunk)  # type: ignore[attr-defined]
 
         await asyncio.to_thread(_send)
 
@@ -350,7 +351,8 @@ class AssemblyAIProvider(TranscriptionProvider):
         transcriber = stream.provider_handle
 
         def _close() -> None:
-            transcriber.close()
+            # provider_handle is deliberately typed `object` (untyped SDK handle).
+            transcriber.close()  # type: ignore[attr-defined]
 
         try:
             await asyncio.to_thread(_close)
@@ -438,7 +440,7 @@ class AssemblyAIProvider(TranscriptionProvider):
         def _poll_until_done(transcript_id: str):
             import time
             aai_local = self._get_sdk()
-            elapsed = 0
+            elapsed: float = 0
             while elapsed < POLL_TIMEOUT_SECONDS:
                 poll = aai_local.Transcript.get_by_id(transcript_id)
                 if poll.status == aai_local.TranscriptStatus.completed:
@@ -531,7 +533,7 @@ class AssemblyAIProvider(TranscriptionProvider):
             import time
 
             aai_local = self._get_sdk()
-            elapsed = 0
+            elapsed: float = 0
             while elapsed < POLL_TIMEOUT_SECONDS:
                 poll = aai_local.Transcript.get_by_id(transcript_id)
                 status = poll.status

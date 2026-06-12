@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies import require_role
+from app.models.flag_note import FlagNote
 from app.schemas.followup import RoadmapItemResponse
 from app.schemas.member import (
     CHWMemberFacingProfile,
@@ -569,7 +570,7 @@ async def get_flag_note(
     member_id: UUID,
     current_user=Depends(require_role("chw")),
     db: AsyncSession = Depends(get_db),
-) -> FlagNoteResponse | None:
+) -> FlagNote | None:
     """Return the currently active flag note for the given member.
 
     Returns the ``FlagNoteResponse`` JSON object when an active note exists,
@@ -584,7 +585,6 @@ async def get_flag_note(
         The ``body`` field is PHI.  This endpoint must never be called from
         member-facing screens — only CHW-authenticated requests are accepted.
     """
-    from app.models.flag_note import FlagNote  # noqa: PLC0415
     from app.services.relationship_guards import assert_shared_session  # noqa: PLC0415
 
     await assert_shared_session(db, chw_id=current_user.id, member_id=member_id)
@@ -610,7 +610,7 @@ async def create_flag_note(
     data: FlagNoteCreate,
     current_user=Depends(require_role("chw")),
     db: AsyncSession = Depends(get_db),
-) -> FlagNoteResponse:
+) -> FlagNote:
     """Create a new active flag note for the given member.
 
     If an active flag note already exists it is soft-deleted (``is_active=False``)
@@ -627,7 +627,6 @@ async def create_flag_note(
     Request body:
         ``body`` (str, required): 1–2000 characters, whitespace stripped.
     """
-    from app.models.flag_note import FlagNote  # noqa: PLC0415
     from app.services.relationship_guards import assert_shared_session  # noqa: PLC0415
 
     await assert_shared_session(db, chw_id=current_user.id, member_id=member_id)
@@ -673,7 +672,6 @@ async def delete_flag_note(
         - Caller must be a CHW (role check via ``require_role("chw")``).
         - CHW must have at least one shared session with the member.
     """
-    from app.models.flag_note import FlagNote  # noqa: PLC0415
     from app.services.relationship_guards import assert_shared_session  # noqa: PLC0415
 
     await assert_shared_session(db, chw_id=current_user.id, member_id=member_id)
