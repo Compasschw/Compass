@@ -654,7 +654,11 @@ class TestWebSocketPayloadShape:
             "speaker_label": "A",
             "speaker_role": "unknown",
             "text": "Hello",
-            "is_final": True,
+            # Non-final on purpose: is_final=True spawns a fire-and-forget
+            # transcript-persist DB task that races the next test's
+            # DROP SCHEMA (flaky deadlocks). The envelope shape asserted
+            # here is identical either way.
+            "is_final": False,
             "confidence": 0.95,
             "started_at_ms": 100,
             "ended_at_ms": 600,
@@ -689,7 +693,8 @@ class TestWebSocketPayloadShape:
             "speaker_label": "B",
             "speaker_role": "unknown",
             "text": "World",
-            "is_final": True,
+            # Non-final on purpose — see test_chunk_payload_has_documented_keys.
+            "is_final": False,
             "confidence": 0.9,
             "started_at_ms": 0,
             "ended_at_ms": 300,
