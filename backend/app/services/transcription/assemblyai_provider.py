@@ -413,7 +413,6 @@ class AssemblyAIProvider(TranscriptionProvider):
         # The SDK accepts a bytes-like path/handle. We stage the bytes into a
         # spooled tempfile so the SDK uploads from a real file handle without
         # us holding the entire payload twice in memory.
-        import io
         import tempfile
 
         def _transcribe_sync():

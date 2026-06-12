@@ -1,5 +1,5 @@
 from datetime import UTC, date, datetime
-from uuid import UUID, uuid5, NAMESPACE_URL
+from uuid import NAMESPACE_URL, UUID, uuid5
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -973,7 +973,6 @@ async def get_chw_member_full_profile(
     GET /api/v1/chw/members/{member_id}/assessments/latest separately and degrades
     gracefully on 404.
     """
-    from datetime import date as _date
 
     from app.models.billing import BillingClaim
     from app.models.followup import SessionFollowup

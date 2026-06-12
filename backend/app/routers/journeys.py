@@ -621,7 +621,7 @@ async def update_step_status(
 
         # Find the index of the completed step, then get the next one.
         completed_index: int | None = None
-        for idx, (state, ts) in enumerate(all_rows):
+        for idx, (state, _ts) in enumerate(all_rows):
             if state.template_step_id == step_id:
                 completed_index = idx
                 break

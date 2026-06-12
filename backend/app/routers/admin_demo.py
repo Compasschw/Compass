@@ -214,8 +214,10 @@ async def submit_demo_claim(
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
+            # S608 false positive: this is operator guidance text in an error
+            # detail, not query construction — nothing here is executed.
             detail=(
-                f"CHW {session_row.chw_id} ({chw_user_row.name}) does not have a "
+                f"CHW {session_row.chw_id} ({chw_user_row.name}) does not have a "  # noqa: S608
                 "pear_suite_user_id set. "
                 "Obtain Jemal's userId from the Pear Suite dashboard → Users, then "
                 "UPDATE chw_profiles SET pear_suite_user_id = '<id>' WHERE user_id = '<chw_id>'."

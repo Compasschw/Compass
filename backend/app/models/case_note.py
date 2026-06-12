@@ -16,7 +16,7 @@ Lifecycle:
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Text, false, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, false, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 

@@ -87,7 +87,7 @@ class PresignedUrlRequest(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def _require_target_member_for_attachment(self) -> "PresignedUrlRequest":
+    def _require_target_member_for_attachment(self) -> PresignedUrlRequest:
         """Enforce that target_member_id is present for message_attachment uploads."""
         if self.purpose == "message_attachment" and self.target_member_id is None:
             raise ValueError(

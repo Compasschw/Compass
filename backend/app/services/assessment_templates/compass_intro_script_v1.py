@@ -19,7 +19,6 @@ language (italicised), and `tips` as callout boxes keyed by `type`.
 
 from typing import Any
 
-
 TEMPLATE: dict[str, Any] = {
     "id": "compass_intro_script_v1",
     "name": "Compass CHW Introduction Script",

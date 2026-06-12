@@ -1234,7 +1234,8 @@ async def get_billing_export(
     _2fa: None = Depends(require_2fa_token),
 ):
     """Stream a Pear-shaped CSV containing claims in the date range."""
-    from datetime import date as _date, time as _time
+    from datetime import date as _date
+    from datetime import time as _time
 
     from fastapi.responses import StreamingResponse
 
@@ -1253,7 +1254,7 @@ async def get_billing_export(
         raise HTTPException(
             status_code=400,
             detail="from/to must be YYYY-MM-DD",
-        )
+        ) from None
     if end < start:
         raise HTTPException(
             status_code=400,

@@ -25,10 +25,11 @@ logged in this module.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import lru_cache
-from typing import Protocol, Sequence
+from typing import Protocol
 
 logger = logging.getLogger("compass.summarizer")
 

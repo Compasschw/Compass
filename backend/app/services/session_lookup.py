@@ -366,7 +366,9 @@ async def resolve_active_session_id_for_redirect(
     # 2026-05-31. Ordering by ended_at DESC NULLS LAST puts the most
     # recently completed Session first.
     from datetime import UTC, datetime, timedelta
+
     from sqlalchemy import or_
+
     from app.models.session import SessionDocumentation
 
     recent_cutoff = datetime.now(UTC) - timedelta(hours=1)

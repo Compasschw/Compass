@@ -39,7 +39,8 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
-from jose import JWTError, jwt as jose_jwt
+from jose import JWTError
+from jose import jwt as jose_jwt
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -545,7 +546,6 @@ async def voice_answer(
     # the member leg is dialed by VonageProvider.create_proxy_session directly.
     _ = member
 
-    from app.config import settings
 
     # Vonage Conversation name — must be identical on both legs so they are
     # joined into the same audio bridge.  We use the session_id so the
@@ -726,7 +726,6 @@ async def voice_consent_result(
         except Exception as e:  # noqa: BLE001
             logger.error("Failed to persist DTMF consent for session %s: %s", session, e)
 
-        from app.config import settings
 
         # Vonage Conversation name — must match what voice/answer set on the
         # CHW leg so both legs join the same named audio bridge.
@@ -912,9 +911,9 @@ async def voice_events(
         and comm_session.status != "completed"
         and payload.get("disconnected_by") == "user"
     ):
-        from datetime import datetime as _dt, timezone as _tz
+        from datetime import datetime as _dt
         comm_session.status = "completed"
-        comm_session.closed_at = _dt.now(_tz.utc)
+        comm_session.closed_at = _dt.now(UTC)
         await db.commit()
         logger.info(
             "CommunicationSession %s marked completed (compass session=%s)",

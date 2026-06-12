@@ -177,8 +177,10 @@ def _maybe_alert_sentry(exc: Exception, *, comm_session_id: UUID) -> None:
             exc,
             extras={"communication_session_id": str(comm_session_id)},
         )
-    except Exception:  # noqa: BLE001
-        pass  # Sentry not configured — log is sufficient
+    except Exception as sentry_exc:  # noqa: BLE001
+        # Sentry not configured/installed — the caller's own log line is the
+        # record of the original failure; note the capture miss at debug.
+        logger.debug("sentry capture skipped: %s", sentry_exc)
 
 
 async def finalize_recording(

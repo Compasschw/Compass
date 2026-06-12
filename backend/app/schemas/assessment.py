@@ -9,8 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
-
+from pydantic import BaseModel, Field
 
 # ---------------------------------------------------------------------------
 # Request schemas

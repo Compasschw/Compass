@@ -50,7 +50,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.dependencies import get_current_user, require_admin_key, require_role
 from app.models.resource import Resource, ResourceSuggestion
-from app.schemas.pagination import PaginatedResponse, pagination, PaginationParams
+from app.schemas.pagination import PaginatedResponse, PaginationParams, pagination
 from app.schemas.resource import (
     AdminResourceResponse,
     ResourceCreate,

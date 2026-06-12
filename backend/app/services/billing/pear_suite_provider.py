@@ -38,7 +38,7 @@ enforcement — the key is logged regardless so retries are traceable.
 
 import logging
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date
 from typing import Any
 
 import httpx

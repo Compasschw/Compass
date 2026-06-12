@@ -16,7 +16,6 @@ Call flow (click-to-connect / masked bridge):
 """
 
 import logging
-from uuid import uuid4
 
 from app.services.communication.base import (
     CommunicationProvider,
@@ -262,6 +261,7 @@ class VonageProvider(CommunicationProvider):
         # The python-jose dependency we already ship handles RS256 signing.
         import time
         import uuid
+
         from jose import jwt as jose_jwt
 
         try:

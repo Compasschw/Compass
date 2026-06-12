@@ -37,7 +37,7 @@ from app.schemas.member_document import (
     MemberDocumentResponse,
     PresignedDownloadUrlResponse,
 )
-from app.schemas.pagination import PaginatedResponse, pagination, PaginationParams
+from app.schemas.pagination import PaginatedResponse, PaginationParams, pagination
 from app.services.s3_service import generate_presigned_download_url
 
 logger = logging.getLogger("compass.member_documents")

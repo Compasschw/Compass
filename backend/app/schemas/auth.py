@@ -5,7 +5,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
-
 # Sex values accepted by Pear Suite's CreateMember endpoint. Mirrors the
 # member-signup dropdown options.
 SexEnum = Literal["Male", "Female", "Other"]

@@ -36,18 +36,21 @@ async def _append_new_member_to_csv(user_id: UUID) -> None:
     ``MemberProfile.member_csv_exported_at``: skips if it's already
     populated, sets it to ``NOW()`` after a successful S3 append.
     """
-    from datetime import UTC, datetime as _dt
+    from datetime import UTC
+    from datetime import datetime as _dt
+
+    from sqlalchemy import select
 
     from app.config import settings as _settings
     from app.database import async_session
-    from app.models.user import MemberProfile, User as _User
+    from app.models.user import MemberProfile
+    from app.models.user import User as _User
     from app.services.member_csv_writer import (
         append_row,
         build_row_from_models,
         is_export_eligible,
         is_pear_complete,
     )
-    from sqlalchemy import select
 
     if not getattr(_settings, "member_csv_enabled", False):
         return
@@ -110,9 +113,11 @@ async def _sync_new_member_to_pear(user_id: UUID) -> None:
     session is closed by the time this fires.  Logs any failure but never
     re-raises — admin can retry later via /admin/members/{id}/sync-to-pear.
     """
-    from app.database import async_session
-    from app.models.user import MemberProfile, User as _User
     from sqlalchemy import select
+
+    from app.database import async_session
+    from app.models.user import MemberProfile
+    from app.models.user import User as _User
     from app.services.pear_suite_member_sync import ensure_member_synced
 
     async with async_session() as db:

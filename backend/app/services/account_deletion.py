@@ -199,7 +199,7 @@ async def execute_account_deletion(
         .where(MemberDocument.member_id == user.id, MemberDocument.deleted_at.is_(None))
         .values(deleted_at=now, filename="[deleted]")
     )
-    member_documents_redacted = doc_result.rowcount  # type: ignore[union-attr]
+    member_documents_redacted = doc_result.rowcount  # type: ignore[attr-defined]
 
     # ── Step 10: Write HIPAA audit row ────────────────────────────────────────
     audit_details: dict = {

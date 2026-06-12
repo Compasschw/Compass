@@ -59,7 +59,7 @@ import csv
 import io
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -201,8 +201,7 @@ def _fmt_la_datetime(value: datetime | None) -> str:
     # If the input has no tzinfo (legacy rows from before we standardized on
     # tz-aware UTC), assume UTC rather than throwing.
     if value.tzinfo is None:
-        from datetime import timezone as _tz
-        value = value.replace(tzinfo=_tz.utc)
+        value = value.replace(tzinfo=UTC)
     local = value.astimezone(_PEAR_TIMEZONE)
     hour_12 = local.hour % 12 or 12
     am_pm = "AM" if local.hour < 12 else "PM"
@@ -416,7 +415,8 @@ def append_row(row: BillingCsvRow, *, environment: str = "sandbox") -> None:
         logger.warning("csv_writer: s3_bucket_billing_csv is empty; skipping write")
         return
 
-    from datetime import UTC, datetime as _dt
+    from datetime import UTC
+    from datetime import datetime as _dt
     # Bucket the row by its Activity Start (LA local) — see _s3_key_for_month
     # docstring for why this matters. Fall back to "now" when the row is
     # missing activity_start_utc (rare: in-person visit with no call leg and

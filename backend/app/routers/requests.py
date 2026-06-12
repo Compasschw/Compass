@@ -7,13 +7,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies import get_current_user, require_role
-from app.services.session_lookup import find_or_create_conversation_for_pair
 from app.schemas.request import (
     IncomingMemberRequestResponse,
     ServiceRequestCreate,
     ServiceRequestResponse,
     ServiceRequestSummaryResponse,
 )
+from app.services.session_lookup import find_or_create_conversation_for_pair
 
 router = APIRouter(prefix="/api/v1/requests", tags=["requests"])
 

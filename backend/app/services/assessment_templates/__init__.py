@@ -5,8 +5,8 @@ no DB migration needed to add/change questions. The template_id is the
 authoritative key; the router resolves it here.
 """
 
-from app.services.assessment_templates.compass_member_v1 import TEMPLATE as _COMPASS_MEMBER_V1
 from app.services.assessment_templates.compass_intro_script_v1 import TEMPLATE as _COMPASS_INTRO_V1
+from app.services.assessment_templates.compass_member_v1 import TEMPLATE as _COMPASS_MEMBER_V1
 
 _REGISTRY: dict[str, dict] = {
     "compass_member_v1": _COMPASS_MEMBER_V1,

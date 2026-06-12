@@ -108,48 +108,62 @@ app.add_middleware(AuditMiddleware)
 
 from app.routers.admin import router as admin_router
 from app.routers.admin_demo import router as admin_demo_router
-from app.routers.pear_webhook import router as pear_webhook_router
 from app.routers.assessments import router as assessments_router
 from app.routers.auth import router as auth_router
+from app.routers.case_notes import router as case_notes_router
 from app.routers.chw import router as chw_router
 from app.routers.chw_intake import router as chw_intake_router
 from app.routers.communication import (
     chw_call_router,
     member_call_router,
+)
+from app.routers.communication import (
     router as communication_router,
 )
 from app.routers.conversations import router as conversations_router
 from app.routers.credentials import router as credentials_router
 from app.routers.devices import router as devices_router
 from app.routers.health import router as health_router
+from app.routers.journeys import router as journeys_router
 from app.routers.matching import router as matching_router
 from app.routers.member import members_router as members_flag_note_router
 from app.routers.member import router as member_router
+from app.routers.member_documents import (
+    documents_router as member_documents_documents_router,
+)
+from app.routers.member_documents import (
+    members_router as member_documents_members_router,
+)
 from app.routers.payments import router as payments_router
+from app.routers.pear_webhook import router as pear_webhook_router
 from app.routers.phone_verification import router as phone_verification_router
 from app.routers.requests import router as requests_router
 from app.routers.resources import (
     _suggestions_router as resource_suggestions_router,
+)
+from app.routers.resources import (
     admin_router as resources_admin_router,
+)
+from app.routers.resources import (
     chw_router as resources_chw_router,
+)
+from app.routers.resources import (
     public_router as resources_public_router,
 )
-from app.routers.testimonials import (
-    admin_router as testimonials_admin_router,
-    member_router as testimonials_member_router,
-    public_router as testimonials_public_router,
-)
-from app.routers.case_notes import router as case_notes_router
-from app.routers.member_documents import (
-    documents_router as member_documents_documents_router,
-    members_router as member_documents_members_router,
-)
+from app.routers.rewards import router as rewards_router
 from app.routers.sessions import _consent_request_router as consent_request_router
 from app.routers.sessions import router as sessions_router
+from app.routers.testimonials import (
+    admin_router as testimonials_admin_router,
+)
+from app.routers.testimonials import (
+    member_router as testimonials_member_router,
+)
+from app.routers.testimonials import (
+    public_router as testimonials_public_router,
+)
 from app.routers.transcript import router as transcript_router
 from app.routers.upload import router as upload_router
-from app.routers.journeys import router as journeys_router
-from app.routers.rewards import router as rewards_router
 from app.routers.vonage_audio import router as vonage_audio_router
 from app.routers.waitlist import router as waitlist_router
 

@@ -54,7 +54,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.dependencies import get_current_user, require_role
+from app.dependencies import get_current_user
 from app.models.rewards import RewardCatalogItem, RewardRedemption
 from app.models.user import MemberProfile
 from app.schemas.rewards import (

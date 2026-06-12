@@ -265,7 +265,8 @@ def append_row(row: MemberCsvRow, *, environment: str = "sandbox") -> None:
         logger.warning("member_csv_writer: s3_bucket_member_csv is empty; skipping write")
         return
 
-    from datetime import UTC, datetime as _dt
+    from datetime import UTC
+    from datetime import datetime as _dt
     when_for_bucket = row.created_at_utc or _dt.now(UTC)
     key = _s3_key_for_month(when_for_bucket, environment=environment)
 
