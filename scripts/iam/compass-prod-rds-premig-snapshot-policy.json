@@ -1,0 +1,26 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CreatePreMigrationSnapshot",
+      "Effect": "Allow",
+      "Action": ["rds:CreateDBSnapshot", "rds:AddTagsToResource"],
+      "Resource": [
+        "arn:aws:rds:us-west-2:340290106499:db:compass-prod",
+        "arn:aws:rds:us-west-2:340290106499:snapshot:compass-prod-pre-mig-*"
+      ]
+    },
+    {
+      "Sid": "DescribeSnapshots",
+      "Effect": "Allow",
+      "Action": ["rds:DescribeDBSnapshots", "rds:DescribeDBInstances"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "PruneOldPreMigrationSnapshots",
+      "Effect": "Allow",
+      "Action": ["rds:DeleteDBSnapshot"],
+      "Resource": "arn:aws:rds:us-west-2:340290106499:snapshot:compass-prod-pre-mig-*"
+    }
+  ]
+}

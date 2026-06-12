@@ -38,8 +38,10 @@ jobs:
           username:   ${{ secrets.EC2_USERNAME }}
           key:        ${{ secrets.EC2_SSH_KEY }}
           port:       22
-          # 15 min cap — covers a slow `docker compose build` on a t3.medium.
-          command_timeout: 15m
+          # 30 min cap — covers a slow `docker compose build` plus the
+          # pre-migration RDS snapshot wait (incremental snapshots normally
+          # finish in 1-5 min; first-ever snapshot can take longer).
+          command_timeout: 30m
           # script_stop intentionally OFF: it intercepts non-zero returns from
           # `[ ]` test conditions inside `if` blocks (false-positive abort).
           # Strict-mode is still enforced by `set -euo pipefail` at the top of
@@ -53,19 +55,22 @@ jobs:
             PROJECT_DIR="${{ secrets.EC2_PROJECT_PATH }}"
             cd "$PROJECT_DIR"
 
-            echo "::group::Step 1/5 — git pull origin main"
+            RDS_INSTANCE_ID="compass-prod"
+            AWS_REGION="us-west-2"
+
+            echo "::group::Step 1/6 — git pull origin main"
             git fetch origin main
             git reset --hard origin/main
             git --no-pager log -1 --oneline
             echo "::endgroup::"
 
-            echo "::group::Step 2/5 — docker compose build + up"
+            echo "::group::Step 2/6 — docker compose build + up"
             # --build rebuilds any image whose layer inputs changed.
             # --no-deps keeps unaffected services running for fewer seconds of downtime.
             docker compose up -d --build
             echo "::endgroup::"
 
-            echo "::group::Step 3/5 — wait for backend health"
+            echo "::group::Step 3/6 — wait for backend health"
             # Give the api container ~20s for uvicorn + DB connect on cold start.
             # `--retry-all-errors` covers curl 56 (connection reset) when the
             # socket is accepted before the app is ready.
@@ -75,12 +80,59 @@ jobs:
                   && docker compose logs --tail=60 api && exit 1)
             echo "::endgroup::"
 
+            echo "::group::Step 4/6 — pre-migration RDS snapshot"
+            # Safety gate (audit 2026-06-12 blocker #6): never run migrations
+            # against compass-prod without a restorable snapshot. The June
+            # audio-path collision incident is why this is non-negotiable.
+            # Skipped only when there is nothing to migrate.
             if [ "${SKIP_MIGRATIONS:-false}" = "true" ]; then
-              echo "::group::Step 4/5 — alembic upgrade heads (SKIPPED via workflow input)"
+              echo "Migrations skipped via workflow input — snapshot not needed."
+            else
+              # Revision ids are 12-char lowercase alphanumerics (NOT hex-only
+              # in this repo — e.g. k1b2c3d4e5f7), one per line, "(head)" suffix.
+              ALEMBIC_CURRENT=$(docker compose exec -T -e PYTHONPATH=/code api alembic current 2>/dev/null | awk '/^[0-9a-z]{8,}/ {print $1}' | sort)
+              ALEMBIC_HEADS=$(docker compose exec -T -e PYTHONPATH=/code api alembic heads 2>/dev/null | awk '/^[0-9a-z]{8,}/ {print $1}' | sort)
+              if [ "$ALEMBIC_CURRENT" = "$ALEMBIC_HEADS" ] && [ -n "$ALEMBIC_HEADS" ]; then
+                echo "DB already at head ($ALEMBIC_HEADS) — no pending migrations, snapshot skipped."
+              else
+                if ! command -v aws >/dev/null 2>&1; then
+                  echo "::error::Pending migrations but the AWS CLI is not installed on this host."
+                  echo "Install it (e.g. 'sudo apt-get install -y awscli' / 'sudo dnf install -y awscli')"
+                  echo "or re-run with skip_migrations=true AFTER taking a manual snapshot."
+                  exit 1
+                fi
+                SNAPSHOT_ID="${RDS_INSTANCE_ID}-pre-mig-$(date -u +%Y%m%d-%H%M%S)-$(git rev-parse --short HEAD)"
+                echo "Creating snapshot ${SNAPSHOT_ID} ..."
+                aws rds create-db-snapshot \
+                  --region "$AWS_REGION" \
+                  --db-instance-identifier "$RDS_INSTANCE_ID" \
+                  --db-snapshot-identifier "$SNAPSHOT_ID" >/dev/null
+                echo "Waiting for snapshot to become available (incremental: typically 1-5 min) ..."
+                aws rds wait db-snapshot-available \
+                  --region "$AWS_REGION" \
+                  --db-snapshot-identifier "$SNAPSHOT_ID"
+                echo "Snapshot ${SNAPSHOT_ID} is available."
+                # Prune: keep the 5 newest pre-migration snapshots.
+                STALE_SNAPSHOTS=$(aws rds describe-db-snapshots \
+                  --region "$AWS_REGION" \
+                  --db-instance-identifier "$RDS_INSTANCE_ID" \
+                  --snapshot-type manual \
+                  --query "DBSnapshots[?starts_with(DBSnapshotIdentifier, '${RDS_INSTANCE_ID}-pre-mig-')] | sort_by(@, &SnapshotCreateTime)[:-5].DBSnapshotIdentifier" \
+                  --output text)
+                for STALE in $STALE_SNAPSHOTS; do
+                  echo "Pruning old pre-migration snapshot ${STALE}"
+                  aws rds delete-db-snapshot --region "$AWS_REGION" --db-snapshot-identifier "$STALE" >/dev/null || true
+                done
+              fi
+            fi
+            echo "::endgroup::"
+
+            if [ "${SKIP_MIGRATIONS:-false}" = "true" ]; then
+              echo "::group::Step 5/6 — alembic upgrade heads (SKIPPED via workflow input)"
               echo "Skipped per workflow_dispatch input."
               echo "::endgroup::"
             else
-              echo "::group::Step 4/5 — alembic upgrade heads"
+              echo "::group::Step 5/6 — alembic upgrade heads"
               # `heads` (plural) advances every head — required because we have
               # multi-head divergence in prod (5 heads as of 2026-06-09).
               # PYTHONPATH=/code is required because env.py imports `app.database`;
@@ -89,7 +141,7 @@ jobs:
               echo "::endgroup::"
             fi
 
-            echo "::group::Step 5/5 — final smoke check"
+            echo "::group::Step 6/6 — final smoke check"
             curl -fsS http://localhost:8000/api/v1/health
             echo
             echo "Deployed commit:"
