@@ -343,9 +343,9 @@ class VonageProvider(CommunicationProvider):
             if transcript is None:
                 return None
             return TranscriptResult(
-                text=transcript.text,
+                text=transcript.full_text,
                 confidence=transcript.confidence,
-                provider_transcript_id=transcript.provider_id,
+                provider_transcript_id=transcript.provider_transcript_id,
             )
         except Exception as e:  # noqa: BLE001
             logger.error("Transcription failed: %s", e)
