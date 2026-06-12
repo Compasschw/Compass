@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import sys
 import time
 import uuid
 from typing import Any
@@ -352,9 +353,12 @@ async def test_assemblyai_baa_gate_passes_in_development() -> None:
     mock_settings.assemblyai_baa_confirmed = False
     _cfg.settings = mock_settings
     try:
-        # Should fail on SDK import / connection, NOT on the BAA gate.
-        with pytest.raises(Exception) as exc_info:
-            await stream.start()
+        # Force the deterministic SDK-import failure path: relying on
+        # client.connect() to fail with an empty key is a live network
+        # handshake whose behavior differs between local and CI runners.
+        with patch.dict(sys.modules, {"assemblyai.streaming.v3": None}):
+            with pytest.raises(Exception) as exc_info:
+                await stream.start()
         # Must NOT be the BAA gate error.
         assert "BAA not confirmed" not in str(exc_info.value), (
             "BAA gate must not block in development environment"
@@ -384,8 +388,11 @@ async def test_assemblyai_baa_gate_passes_in_production_when_confirmed() -> None
     mock_settings.assemblyai_baa_confirmed = True
     _cfg.settings = mock_settings
     try:
-        with pytest.raises(Exception) as exc_info:
-            await stream.start()
+        # Deterministic SDK-import failure path — see the development-gate
+        # test above for why the empty-api-key handshake is not relied on.
+        with patch.dict(sys.modules, {"assemblyai.streaming.v3": None}):
+            with pytest.raises(Exception) as exc_info:
+                await stream.start()
         # Should fail on SDK unavailability, not the BAA gate.
         assert "BAA not confirmed" not in str(exc_info.value)
     finally:
