@@ -116,6 +116,11 @@ async def test_register_member_auto_creates_member_profile(client: AsyncClient):
             "password": "test-password-1234",
             "name": "Test Member",
             "role": "member",
+            "date_of_birth": "1991-07-22",
+            "gender": "Female",
+            "insurance_company": "Health Net",
+            "medi_cal_id": "12345678A",
+            "zip_code": "90001",
         },
     )
     assert register_res.status_code == 201
@@ -129,10 +134,11 @@ async def test_register_member_auto_creates_member_profile(client: AsyncClient):
     assert profile_res.status_code == 200
     body = profile_res.json()
     assert body["primary_language"] == "English"  # default
-    assert body["zip_code"] is None
+    # Signup-time provisioning copies the Pear-required fields supplied at
+    # registration onto the profile (#14).
+    assert body["zip_code"] == "90001"
     # medi_cal_id is not surfaced in the response schema (PHI minimization)
-    # but the underlying column exists and starts NULL — covered by the PUT
-    # test below.
+    # — covered by the PUT test below.
 
 
 @pytest.mark.asyncio

@@ -286,6 +286,15 @@ class TestDeleteAccountMemberProfilePhi:
                 "password": "testpass123",
                 "name": "PHI Test Member",
                 "role": "member",
+                "phone": "+13105550101",
+                "date_of_birth": "1990-03-15",
+                "gender": "Male",
+                "insurance_company": "Health Net",
+                "medi_cal_id": "98765432B",
+                "address_line1": "2 Test Ave",
+                "city": "Los Angeles",
+                "state": "CA",
+                "zip_code": "90001",
             },
         )
         assert reg_res.status_code == 201, reg_res.text
