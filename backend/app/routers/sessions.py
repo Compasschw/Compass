@@ -422,7 +422,13 @@ async def complete_session(session_id: UUID, current_user=Depends(get_current_us
         session.duration_minutes = int((session.ended_at - session.started_at).total_seconds() / 60)
         session.suggested_units = calculate_units(session.duration_minutes)
 
-    # Close communication session + retrieve recording/transcript
+    # Close the communication session. Recording URL + transcript are NOT
+    # fetched inline: the recording lands via the voice/events webhook, which
+    # schedules finalize_recording (download → AssemblyAI batch transcription →
+    # persist) as a background task; web sessions transcribe live over the
+    # streaming socket. The old inline path called provider.get_transcript(),
+    # a 30-120s synchronous poll that blocked this response — and was already
+    # dead for Vonage (get_recording() returns None by design). Audit #16.
     from app.models.communication import CommunicationSession
     from app.services.communication import get_provider
     try:
@@ -435,31 +441,6 @@ async def complete_session(session_id: UUID, current_user=Depends(get_current_us
         if comm_session:
             provider = get_provider()
             await provider.end_proxy_session(comm_session.provider_session_id)
-
-            recording = await provider.get_recording(comm_session.provider_session_id)
-            if recording:
-                # Even though the provider response is server-controlled, we
-                # reject non-https / non-vendor hosts as a defence-in-depth
-                # measure (compromised provider creds, future provider swap).
-                from app.routers.communication import _is_safe_vendor_recording_url
-
-                if _is_safe_vendor_recording_url(recording.recording_url):
-                    comm_session.recording_url = recording.recording_url
-                    comm_session.recording_duration_seconds = recording.duration_seconds
-                    comm_session.provider_recording_id = recording.provider_recording_id
-
-                    transcript = await provider.get_transcript(recording.recording_url)
-                    if transcript:
-                        comm_session.transcript_text = transcript.text
-                        comm_session.transcript_confidence = transcript.confidence
-                else:
-                    import logging
-                    logging.getLogger("compass").warning(
-                        "Rejected provider recording_url=%r for session=%s — not a trusted vendor host",
-                        recording.recording_url,
-                        session_id,
-                    )
-
             comm_session.status = "closed"
             comm_session.closed_at = datetime.now(UTC)
     except Exception as e:
