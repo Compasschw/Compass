@@ -1,36 +1,40 @@
-"""Tests for AssemblyAIStreamingSession and the hub's real-provider wiring.
+"""Tests for AssemblyAIStreamingSession and the hub's real-provider wiring (v3).
+
+Rewritten for the AssemblyAI Universal Streaming **v3** API after the v2
+RealtimeTranscriber endpoint was retired. The session now uses
+``assemblyai.streaming.v3``: a ``StreamingClient`` constructed from
+``StreamingClientOptions``, event handlers registered via
+``client.on(StreamingEvents.X, handler)``, ``client.connect(StreamingParameters)``,
+``client.stream(bytes)``, and ``client.disconnect(terminate=True)``. Transcript
+data arrives as ``TurnEvent`` objects (``.transcript`` / ``.end_of_turn`` /
+``.words[].start/.end/.confidence``), not v2 ``RealtimePartialTranscript``.
 
 Covers:
-- Audio frames are forwarded to the AssemblyAI transcriber.
-- Final transcript callback fires → SessionTranscript row inserted.
-- WebSocket close triggers disconnect on the AssemblyAI client.
-- Graceful degrade: no API key → NoOpStreamingSession; hub stays open.
-- Hub uses AssemblyAIStreamingSession when API key is present.
-- HIPAA: error logs from AssemblyAI callbacks contain no transcript text.
+- start() opens a v3 client with the right options + connect parameters and
+  registers all four event handlers.
+- send_audio() forwards PCM bytes to ``client.stream`` and counts chunks.
+- close() calls ``client.disconnect(terminate=True)``; idempotent.
+- The Turn handler maps a TurnEvent to a fan-out payload (final vs partial,
+  timing/confidence derivation, empty-text skip, speaker_role attribution).
+- Hub provider selection: API key → AssemblyAI, none → NoOp, start-failure
+  falls back to NoOp so the WebSocket stays open.
+- Hub publish persist guard: finals persist, partials don't.
+- HIPAA: the error handler logs the AAI error code/message but no PHI.
 
-All AssemblyAI SDK calls are mocked — no network I/O in tests.
-
-NOTE: AssemblyAI deprecated the v2 RealtimeTranscriber endpoint in 2025;
-``AssemblyAIStreamingSession`` was migrated to the v3 ``StreamingClient``
-API.  These tests still mock the old v2 surface (``aai.RealtimeTranscriber``,
-``aai.RealtimePartialTranscript``) and need to be rewritten to mock
-``assemblyai.streaming.v3.StreamingClient`` and emit ``TurnEvent`` payloads.
-The whole module is skipped until that rewrite lands.
+All AssemblyAI SDK calls are mocked — no network I/O.
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
+import types
 import uuid
+from contextlib import contextmanager
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
-
-pytestmark = pytest.mark.skip(
-    reason="AssemblyAI v3 migration: tests need rewrite against v3 mock surface "
-    "(StreamingClient + TurnEvent). Tracking in TODO post-demo."
-)
 
 from app.services.transcript_hub import (
     AssemblyAIStreamingSession,
@@ -38,363 +42,357 @@ from app.services.transcript_hub import (
     TranscriptHub,
 )
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 _FAKE_API_KEY = "test_fake_key_for_unit_tests_only"
+_HUB_LOGGER = "compass.transcript_hub"
 
 
-def _fake_assemblyai_module() -> MagicMock:
-    """Build a minimal mock of the ``assemblyai`` SDK module.
+# ---------------------------------------------------------------------------
+# v3 SDK mock surface
+# ---------------------------------------------------------------------------
 
-    The mock exposes:
-    - ``aai.settings`` — attribute sink
-    - ``aai.RealtimeTranscriber`` — class that can be instantiated and
-      yields a mock transcriber object with ``.connect()``, ``.stream()``,
-      ``.close()`` methods
-    - ``aai.RealtimePartialTranscript`` — class used for isinstance check
+
+class _FakeStreamingEvents:
+    """Stand-in for ``assemblyai.streaming.v3.StreamingEvents`` — the four
+    members the session registers handlers for."""
+
+    Begin = "Begin"
+    Turn = "Turn"
+    Termination = "Termination"
+    Error = "Error"
+
+
+class _FakeSpeechModel:
+    universal_streaming_english = "universal_streaming_english"
+
+
+class _Captured:
+    """Records everything the session does to the v3 client so tests can assert."""
+
+    def __init__(self) -> None:
+        self.client: Any = None
+        self.handlers: dict[str, Any] = {}
+        self.options_kwargs: dict | None = None
+        self.connect_params: dict | None = None
+        self.streamed: list[bytes] = []
+        self.disconnect_calls: list[bool] = []
+
+    def turn_handler(self):
+        return self.handlers[_FakeStreamingEvents.Turn]
+
+    def error_handler(self):
+        return self.handlers[_FakeStreamingEvents.Error]
+
+
+def _build_v3_modules(connect_error: Exception | None = None) -> tuple[dict, _Captured]:
+    """Build mock ``assemblyai`` / ``.streaming`` / ``.streaming.v3`` modules.
+
+    Returns ``(sys_modules_patch, captured)``. ``connect_error`` makes
+    ``client.connect()`` raise — used to exercise the hub's NoOp fallback.
     """
-    aai = MagicMock(name="assemblyai")
+    captured = _Captured()
 
-    # settings is a simple namespace
-    aai.settings = MagicMock()
+    def _options(**kwargs: Any) -> Any:
+        captured.options_kwargs = kwargs
+        return types.SimpleNamespace(**kwargs)
 
-    # RealtimePartialTranscript — instances are NOT of this type → is_final=True
-    aai.RealtimePartialTranscript = type("RealtimePartialTranscript", (), {})
+    def _params(**kwargs: Any) -> Any:
+        captured.connect_params = kwargs
+        return types.SimpleNamespace(**kwargs)
 
-    # Transcriber mock — returned from aai.RealtimeTranscriber(...)
-    mock_transcriber = MagicMock(name="transcriber")
-    mock_transcriber.connect = MagicMock(return_value=None)
-    mock_transcriber.stream = MagicMock(return_value=None)
-    mock_transcriber.close = MagicMock(return_value=None)
-    aai.RealtimeTranscriber.return_value = mock_transcriber
+    class _Client:
+        def __init__(self, options: Any) -> None:
+            self.options = options
+            captured.client = self
 
-    return aai, mock_transcriber
+        def on(self, event: Any, handler: Any) -> None:
+            captured.handlers[event] = handler
+
+        def connect(self, params: Any) -> None:
+            if connect_error is not None:
+                raise connect_error
+
+        def stream(self, chunk: bytes) -> None:
+            captured.streamed.append(chunk)
+
+        def disconnect(self, terminate: bool = False) -> None:
+            captured.disconnect_calls.append(terminate)
+
+    v3 = types.ModuleType("assemblyai.streaming.v3")
+    v3.SpeechModel = _FakeSpeechModel  # type: ignore[attr-defined]
+    v3.StreamingClient = _Client  # type: ignore[attr-defined]
+    v3.StreamingClientOptions = _options  # type: ignore[attr-defined]
+    v3.StreamingEvents = _FakeStreamingEvents  # type: ignore[attr-defined]
+    v3.StreamingParameters = _params  # type: ignore[attr-defined]
+
+    modules = {
+        "assemblyai": types.ModuleType("assemblyai"),
+        "assemblyai.streaming": types.ModuleType("assemblyai.streaming"),
+        "assemblyai.streaming.v3": v3,
+    }
+    return modules, captured
 
 
-async def _make_real_session(
+@contextmanager
+def _patch_v3(connect_error: Exception | None = None):
+    modules, captured = _build_v3_modules(connect_error=connect_error)
+    with patch.dict("sys.modules", modules):
+        yield captured
+
+
+def _word(start: int, end: int, confidence: float) -> Any:
+    return types.SimpleNamespace(start=start, end=end, confidence=confidence)
+
+
+def _turn_event(
+    transcript: str,
+    *,
+    end_of_turn: bool,
+    words: list | None = None,
+    end_of_turn_confidence: float = 0.0,
+    speaker_label: str | None = None,
+) -> Any:
+    """Build a fake v3 ``TurnEvent``."""
+    return types.SimpleNamespace(
+        transcript=transcript,
+        end_of_turn=end_of_turn,
+        words=words or [],
+        end_of_turn_confidence=end_of_turn_confidence,
+        speaker_label=speaker_label,
+    )
+
+
+async def _make_started_session(
     on_chunk=None,
-    api_key: str = _FAKE_API_KEY,
-) -> tuple[AssemblyAIStreamingSession, MagicMock, MagicMock]:
-    """Construct and start an AssemblyAIStreamingSession with a mocked SDK.
+    speaker_role: str = "unknown",
+    connect_error: Exception | None = None,
+):
+    """Construct + start an AssemblyAIStreamingSession against the v3 mock.
 
-    Returns ``(session, aai_module_mock, transcriber_mock)``.
-    The ``on_chunk`` callback defaults to a no-op AsyncMock.
+    Returns ``(session, captured)``.
     """
-    if on_chunk is None:
-        on_chunk = AsyncMock()
-
-    session_id = uuid.uuid4()
-    aai_mock, transcriber_mock = _fake_assemblyai_module()
-
-    with patch.dict("sys.modules", {"assemblyai": aai_mock}):
-        session = AssemblyAIStreamingSession(
-            session_id=session_id,
-            api_key=api_key,
-            on_transcript_chunk=on_chunk,
-        )
+    on_chunk = on_chunk or AsyncMock()
+    session = AssemblyAIStreamingSession(
+        session_id=uuid.uuid4(),
+        api_key=_FAKE_API_KEY,
+        on_transcript_chunk=on_chunk,
+        speaker_role=speaker_role,
+    )
+    with _patch_v3(connect_error=connect_error) as captured:
         await session.start()
-
-    return session, aai_mock, transcriber_mock
+    return session, captured
 
 
 # ---------------------------------------------------------------------------
-# AssemblyAIStreamingSession unit tests
+# start()
 # ---------------------------------------------------------------------------
 
 
-class TestAssemblyAIStreamingSessionStart:
-    async def test_connect_is_called_on_start(self):
-        """start() must call transcriber.connect() exactly once."""
-        _session, _aai, transcriber = await _make_real_session()
-        transcriber.connect.assert_called_once()
+class TestStreamingSessionStart:
+    async def test_client_is_constructed_and_connected(self):
+        session, captured = await _make_started_session()
+        assert captured.client is not None, "StreamingClient was never constructed"
+        assert session._client is captured.client
 
-    async def test_settings_api_key_is_set(self):
-        """start() must configure aai.settings.api_key before connecting."""
-        session_id = uuid.uuid4()
-        on_chunk = AsyncMock()
-        aai_mock, _transcriber = _fake_assemblyai_module()
+    async def test_options_carry_the_api_key(self):
+        _session, captured = await _make_started_session()
+        # v3 keys the API key on StreamingClientOptions, not aai.settings.
+        assert captured.options_kwargs == {"api_key": _FAKE_API_KEY}
 
-        with patch.dict("sys.modules", {"assemblyai": aai_mock}):
-            session = AssemblyAIStreamingSession(
-                session_id=session_id,
-                api_key=_FAKE_API_KEY,
-                on_transcript_chunk=on_chunk,
-            )
-            await session.start()
+    async def test_connect_uses_universal_streaming_v3_parameters(self):
+        _session, captured = await _make_started_session()
+        params = captured.connect_params
+        assert params is not None, "connect() was not called with StreamingParameters"
+        assert params["sample_rate"] == 16_000
+        assert params["speech_model"] == _FakeSpeechModel.universal_streaming_english
+        assert params["format_turns"] is True
+        # Partial turns must be on, or a continuous monologue never emits.
+        assert params["include_partial_turns"] is True
 
-        assert aai_mock.settings.api_key == _FAKE_API_KEY
+    async def test_all_four_event_handlers_registered(self):
+        _session, captured = await _make_started_session()
+        assert set(captured.handlers) == {
+            _FakeStreamingEvents.Begin,
+            _FakeStreamingEvents.Turn,
+            _FakeStreamingEvents.Termination,
+            _FakeStreamingEvents.Error,
+        }
 
-    async def test_import_error_raises_runtime_error(self):
-        """If the assemblyai package is not installed, start() raises RuntimeError."""
-        session_id = uuid.uuid4()
-        on_chunk = AsyncMock()
-
-        with patch.dict("sys.modules", {"assemblyai": None}):
-            session = AssemblyAIStreamingSession(
-                session_id=session_id,
-                api_key=_FAKE_API_KEY,
-                on_transcript_chunk=on_chunk,
-            )
-            with pytest.raises(RuntimeError, match="assemblyai SDK is not installed"):
+    async def test_missing_v3_module_raises_runtime_error(self):
+        session = AssemblyAIStreamingSession(
+            session_id=uuid.uuid4(),
+            api_key=_FAKE_API_KEY,
+            on_transcript_chunk=AsyncMock(),
+        )
+        # None in sys.modules makes the `from assemblyai.streaming.v3 import …`
+        # raise ImportError, which start() maps to a RuntimeError.
+        with patch.dict("sys.modules", {"assemblyai.streaming.v3": None}):
+            with pytest.raises(RuntimeError, match="v3 streaming module is not available"):
                 await session.start()
 
 
-class TestAssemblyAIStreamingSessionSendAudio:
-    async def test_send_audio_forwards_bytes_to_transcriber(self):
-        """send_audio() must call transcriber.stream() with the exact bytes."""
-        session, _aai, transcriber = await _make_real_session()
-        chunk = b"\x00\x01" * 128  # 256 bytes of fake PCM
+# ---------------------------------------------------------------------------
+# send_audio()
+# ---------------------------------------------------------------------------
 
-        with patch.dict("sys.modules", {"assemblyai": _aai}):
-            await session.send_audio(chunk)
 
-        transcriber.stream.assert_called_once_with(chunk)
+class TestStreamingSessionSendAudio:
+    async def test_forwards_bytes_to_client_stream(self):
+        session, captured = await _make_started_session()
+        chunk = b"\x00\x01" * 128
+        await session.send_audio(chunk)
+        assert captured.streamed == [chunk]
 
-    async def test_send_audio_multiple_chunks_increments_counter(self):
-        """Each send_audio() call must increment the internal chunk counter."""
-        session, _aai, transcriber = await _make_real_session()
-
+    async def test_increments_chunk_counter(self):
+        session, _captured = await _make_started_session()
         for _ in range(5):
             await session.send_audio(b"\x00" * 100)
-
         assert session._chunk_count == 5
 
-    async def test_send_audio_before_start_logs_warning_not_raises(self, caplog):
-        """send_audio() on an unstarted session must log a warning, not raise."""
-        import logging
-
-        session_id = uuid.uuid4()
+    async def test_before_start_logs_warning_not_raises(self, caplog):
         session = AssemblyAIStreamingSession(
-            session_id=session_id,
+            session_id=uuid.uuid4(),
             api_key=_FAKE_API_KEY,
             on_transcript_chunk=AsyncMock(),
-        )
-        # _transcriber is None — session was never started
-
-        with caplog.at_level(logging.WARNING, logger="compass.transcript_hub"):
+        )  # never started → _client is None
+        with caplog.at_level(logging.WARNING, logger=_HUB_LOGGER):
             await session.send_audio(b"\x00" * 10)  # must not raise
-
-        assert any(
-            "before transcriber is connected" in r.message for r in caplog.records
-        )
+        assert any("before client is connected" in r.message for r in caplog.records)
 
 
-class TestAssemblyAIStreamingSessionClose:
-    async def test_close_calls_transcriber_close(self):
-        """close() must call transcriber.close() to flush and disconnect."""
-        session, _aai, transcriber = await _make_real_session()
+# ---------------------------------------------------------------------------
+# close()
+# ---------------------------------------------------------------------------
 
-        with patch.dict("sys.modules", {"assemblyai": _aai}):
-            await session.close()
 
-        transcriber.close.assert_called_once()
+class TestStreamingSessionClose:
+    async def test_close_disconnects_with_terminate(self):
+        session, captured = await _make_started_session()
+        await session.close()
+        assert captured.disconnect_calls == [True]
 
     async def test_close_is_idempotent(self):
-        """Calling close() twice must not raise and must not call SDK close twice."""
-        session, _aai, transcriber = await _make_real_session()
-
-        with patch.dict("sys.modules", {"assemblyai": _aai}):
-            await session.close()
-            await session.close()  # second call is a no-op
-
-        # SDK close is called exactly once (first call) — second call sees
-        # self._transcriber = None and exits early.
-        transcriber.close.assert_called_once()
+        session, captured = await _make_started_session()
+        await session.close()
+        await session.close()  # second call is a no-op (self._client is None)
+        assert captured.disconnect_calls == [True]
 
     async def test_close_before_start_does_not_raise(self):
-        """close() on an unstarted session must be a no-op."""
-        session_id = uuid.uuid4()
         session = AssemblyAIStreamingSession(
-            session_id=session_id,
+            session_id=uuid.uuid4(),
             api_key=_FAKE_API_KEY,
             on_transcript_chunk=AsyncMock(),
         )
-        # Never called start() — _transcriber is None
-        await session.close()  # must not raise
+        await session.close()  # _client is None → no-op, must not raise
 
 
-class TestAssemblyAITranscriptCallback:
-    """Verify the SDK on_data callback correctly fires the hub's publish path."""
+# ---------------------------------------------------------------------------
+# Turn handler → fan-out payload
+# ---------------------------------------------------------------------------
 
-    async def test_final_transcript_fires_on_chunk(self):
-        """A final transcript event must trigger on_transcript_chunk with is_final=True."""
+
+class TestTurnHandler:
+    async def _collect(self):
         received: list[dict] = []
 
-        async def _collect(sid: uuid.UUID, payload: dict) -> None:
+        async def collect(_sid: uuid.UUID, payload: dict) -> None:
             received.append(payload)
 
-        session_id = uuid.uuid4()
-        aai_mock, _transcriber = _fake_assemblyai_module()
+        return received, collect
 
-        # Capture the on_data callable so we can call it directly.
-        captured_on_data: list = []
+    async def test_final_turn_emits_is_final_payload_with_timing(self):
+        received, collect = await self._collect()
+        _session, captured = await _make_started_session(on_chunk=collect)
 
-        def _fake_rt_constructor(**kwargs: Any) -> MagicMock:
-            captured_on_data.append(kwargs.get("on_data"))
-            t = MagicMock()
-            t.connect = MagicMock()
-            t.stream = MagicMock()
-            t.close = MagicMock()
-            return t
+        captured.turn_handler()(
+            None,
+            _turn_event(
+                "Patient needs housing help",
+                end_of_turn=True,
+                words=[_word(200, 800, 0.9), _word(800, 1800, 0.8)],
+            ),
+        )
+        await asyncio.sleep(0)  # let the scheduled dispatch run
 
-        aai_mock.RealtimeTranscriber.side_effect = _fake_rt_constructor
-
-        with patch.dict("sys.modules", {"assemblyai": aai_mock}):
-            session = AssemblyAIStreamingSession(
-                session_id=session_id,
-                api_key=_FAKE_API_KEY,
-                on_transcript_chunk=_collect,
-            )
-            await session.start()
-
-        assert captured_on_data, "on_data callback was not passed to RealtimeTranscriber"
-        on_data_fn = captured_on_data[0]
-
-        # Build a fake final transcript (NOT a RealtimePartialTranscript instance).
-        class _FakeFinalTranscript:
-            text = "Hello from CHW"
-            created = True  # presence of 'created' + not partial → is_final=True
-            words = []  # no word-level timing in this test
-
-        fake_transcript = _FakeFinalTranscript()
-
-        # The callback is synchronous and schedules an async task. We call it and
-        # then drain the event loop to let the scheduled coroutine run.
-        on_data_fn(fake_transcript)
-        await asyncio.sleep(0)  # let run_coroutine_threadsafe task execute
-
-        # The on_chunk callback should have been invoked.
-        assert received, "on_transcript_chunk was not called for a final transcript"
+        assert received, "final turn did not fire the chunk callback"
         chunk = received[0]
-        assert chunk["text"] == "Hello from CHW"
+        assert chunk["text"] == "Patient needs housing help"
         assert chunk["is_final"] is True
+        assert chunk["started_at_ms"] == 200
+        assert chunk["ended_at_ms"] == 1800
+        assert chunk["confidence"] == pytest.approx(0.85)  # avg of word confidences
         assert chunk["speaker_role"] == "unknown"
 
-    async def test_partial_transcript_fires_on_chunk_with_is_final_false(self):
-        """A partial transcript event must fire the callback with is_final=False."""
-        received: list[dict] = []
+    async def test_partial_turn_emits_is_final_false(self):
+        received, collect = await self._collect()
+        _session, captured = await _make_started_session(on_chunk=collect)
 
-        async def _collect(sid: uuid.UUID, payload: dict) -> None:
-            received.append(payload)
-
-        session_id = uuid.uuid4()
-        aai_mock, _transcriber = _fake_assemblyai_module()
-
-        captured_on_data: list = []
-
-        def _fake_rt_constructor(**kwargs: Any) -> MagicMock:
-            captured_on_data.append(kwargs.get("on_data"))
-            t = MagicMock()
-            t.connect = MagicMock()
-            t.stream = MagicMock()
-            t.close = MagicMock()
-            return t
-
-        aai_mock.RealtimeTranscriber.side_effect = _fake_rt_constructor
-
-        # RealtimePartialTranscript is used for isinstance() — make it a real class.
-        class _FakePartialClass:
-            pass
-
-        aai_mock.RealtimePartialTranscript = _FakePartialClass
-
-        with patch.dict("sys.modules", {"assemblyai": aai_mock}):
-            session = AssemblyAIStreamingSession(
-                session_id=session_id,
-                api_key=_FAKE_API_KEY,
-                on_transcript_chunk=_collect,
-            )
-            await session.start()
-
-        on_data_fn = captured_on_data[0]
-
-        # Create a partial transcript — IS an instance of RealtimePartialTranscript.
-        class _FakePartialTranscript(_FakePartialClass):
-            text = "Hello from..."
-            words = []
-
-        on_data_fn(_FakePartialTranscript())
+        captured.turn_handler()(
+            None,
+            _turn_event("Patient needs...", end_of_turn=False, words=[_word(0, 300, 0.7)]),
+        )
         await asyncio.sleep(0)
 
-        assert received, "on_transcript_chunk was not called for a partial transcript"
+        assert received
+        assert received[0]["is_final"] is False
+        assert received[0]["text"] == "Patient needs..."
+
+    async def test_empty_transcript_is_skipped(self):
+        received, collect = await self._collect()
+        _session, captured = await _make_started_session(on_chunk=collect)
+
+        captured.turn_handler()(None, _turn_event("", end_of_turn=True))
+        await asyncio.sleep(0)
+
+        assert not received, "empty transcript must not fan out"
+
+    async def test_no_words_falls_back_to_end_of_turn_confidence(self):
+        received, collect = await self._collect()
+        _session, captured = await _make_started_session(on_chunk=collect)
+
+        captured.turn_handler()(
+            None,
+            _turn_event("Hello", end_of_turn=True, words=[], end_of_turn_confidence=0.88),
+        )
+        await asyncio.sleep(0)
+
+        assert received
         chunk = received[0]
-        assert chunk["text"] == "Hello from..."
-        assert chunk["is_final"] is False
+        assert chunk["confidence"] == pytest.approx(0.88)
+        assert chunk["started_at_ms"] == 0
+        assert chunk["ended_at_ms"] == 0
 
-    async def test_empty_text_does_not_fire_callback(self):
-        """An empty/blank transcript must be skipped — no callback, no fan-out."""
-        received: list[dict] = []
+    async def test_speaker_role_is_propagated_from_construction(self):
+        received, collect = await self._collect()
+        _session, captured = await _make_started_session(on_chunk=collect, speaker_role="chw")
 
-        async def _collect(sid: uuid.UUID, payload: dict) -> None:
-            received.append(payload)
-
-        session_id = uuid.uuid4()
-        aai_mock, _transcriber = _fake_assemblyai_module()
-        captured_on_data: list = []
-
-        def _fake_rt_constructor(**kwargs: Any) -> MagicMock:
-            captured_on_data.append(kwargs.get("on_data"))
-            t = MagicMock()
-            t.connect = MagicMock()
-            t.stream = MagicMock()
-            t.close = MagicMock()
-            return t
-
-        aai_mock.RealtimeTranscriber.side_effect = _fake_rt_constructor
-
-        with patch.dict("sys.modules", {"assemblyai": aai_mock}):
-            session = AssemblyAIStreamingSession(
-                session_id=session_id,
-                api_key=_FAKE_API_KEY,
-                on_transcript_chunk=_collect,
-            )
-            await session.start()
-
-        on_data_fn = captured_on_data[0]
-
-        class _EmptyTranscript:
-            text = ""
-            words = []
-
-        on_data_fn(_EmptyTranscript())
+        captured.turn_handler()(None, _turn_event("CHW speaking", end_of_turn=True))
         await asyncio.sleep(0)
 
-        assert not received, "Empty transcript must not fire the chunk callback"
+        assert received[0]["speaker_role"] == "chw"
 
 
 # ---------------------------------------------------------------------------
-# Hub publish → persist guard
+# Hub publish → persist guard (finals persist, partials don't)
 # ---------------------------------------------------------------------------
 
 
-class TestFinalTranscriptPersistence:
-    """Verifies that a final chunk from AssemblyAI triggers a DB row.
-
-    DB tests use _persist_transcript_chunk directly (same as test_transcript_hub.py).
-    The hub's is_final guard is verified via mock — avoiding cross-test engine
-    state issues that arise when hub.publish() fires a fire-and-forget task.
-    """
-
-    async def test_hub_publish_calls_persist_for_final_chunks(self):
-        """When hub.publish() receives is_final=True, it must call
-        _persist_transcript_chunk via asyncio.create_task.
-
-        We verify this by patching _persist_transcript_chunk and asserting
-        it was scheduled exactly once for a final chunk.
-        """
-        session_id = uuid.uuid4()
+class TestHubPublishPersistGuard:
+    def _hub_with_subscriber(self, session_id):
         hub = TranscriptHub()
-        hub._api_key = ""
+        hub._api_key = ""  # no provider stream needed for this test
 
-        class _FakeWebSocket:
+        class _WS:
             async def send_text(self, _: str) -> None:
                 pass
 
-        await hub.subscribe(session_id, _FakeWebSocket())
+        return hub, _WS()
 
-        final_payload = {
+    async def test_final_chunk_schedules_persist(self):
+        session_id = uuid.uuid4()
+        hub, ws = self._hub_with_subscriber(session_id)
+        await hub.subscribe(session_id, ws)
+
+        payload = {
             "speaker_label": None,
             "speaker_role": "unknown",
             "text": "Patient needs help with housing.",
@@ -403,238 +401,151 @@ class TestFinalTranscriptPersistence:
             "started_at_ms": 200,
             "ended_at_ms": 1800,
         }
-
         with patch(
             "app.services.transcript_hub._persist_transcript_chunk",
             new=AsyncMock(return_value=None),
         ) as mock_persist:
-            await hub.publish(session_id, final_payload)
-            # Drain the event loop so the create_task coroutine runs.
+            await hub.publish(session_id, payload)
             await asyncio.sleep(0)
 
         mock_persist.assert_awaited_once()
-        call_kwargs = mock_persist.call_args
-        # First positional arg is session_id, second is the payload.
-        assert call_kwargs[0][0] == session_id
-        assert call_kwargs[0][1]["is_final"] is True
-        assert call_kwargs[0][1]["speaker_role"] == "unknown"
+        args = mock_persist.call_args[0]
+        assert args[0] == session_id
+        assert args[1]["is_final"] is True
 
-    async def test_hub_publish_skips_persist_for_partial_chunks(self):
-        """When hub.publish() receives is_final=False, _persist_transcript_chunk
-        must NOT be called. Partials are fan-out only.
-        """
+    async def test_partial_chunk_is_not_persisted(self):
         session_id = uuid.uuid4()
-        hub = TranscriptHub()
-        hub._api_key = ""
+        hub, ws = self._hub_with_subscriber(session_id)
+        await hub.subscribe(session_id, ws)
 
-        class _FakeWebSocket:
-            async def send_text(self, _: str) -> None:
-                pass
-
-        await hub.subscribe(session_id, _FakeWebSocket())
-
-        partial_payload = {
+        payload = {
             "speaker_label": None,
             "speaker_role": "unknown",
             "text": "Patient needs...",
             "is_final": False,
-            "confidence": 0.75,
+            "confidence": 0.7,
             "started_at_ms": 0,
             "ended_at_ms": 300,
         }
-
         with patch(
             "app.services.transcript_hub._persist_transcript_chunk",
             new=AsyncMock(return_value=None),
         ) as mock_persist:
-            await hub.publish(session_id, partial_payload)
+            await hub.publish(session_id, payload)
             await asyncio.sleep(0)
 
-        mock_persist.assert_not_awaited(), "Partial chunks must NOT be persisted"
+        mock_persist.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
-# Hub provider-selection tests
+# Hub provider selection
 # ---------------------------------------------------------------------------
+
+
+class _WS:
+    async def send_text(self, _: str) -> None:
+        pass
+
+    async def close(self, code: int = 1000) -> None:
+        pass
 
 
 class TestHubProviderSelection:
-    async def test_no_api_key_creates_noop_session(self):
-        """Without an API key the hub must create a NoOpStreamingSession."""
+    async def test_no_api_key_creates_noop(self):
         hub = TranscriptHub()
-        hub._api_key = ""  # simulate no key
+        hub._api_key = ""
         session_id = uuid.uuid4()
+        await hub.subscribe(session_id, _WS())
 
-        class _FakeWS:
-            async def send_text(self, _: str) -> None:
-                pass
-
-        await hub.subscribe(session_id, _FakeWS())
-        stream = await hub.get_or_create_provider_stream(session_id)
-
+        stream = await hub.get_or_create_provider_stream(session_id, role="chw")
         assert isinstance(stream, NoOpStreamingSession)
         await hub.close_session(session_id)
 
     async def test_api_key_creates_assemblyai_session(self):
-        """With an API key the hub must create an AssemblyAIStreamingSession."""
-        aai_mock, transcriber_mock = _fake_assemblyai_module()
-
         hub = TranscriptHub()
         hub._api_key = _FAKE_API_KEY
         session_id = uuid.uuid4()
+        await hub.subscribe(session_id, _WS())
 
-        class _FakeWS:
-            async def send_text(self, _: str) -> None:
-                pass
-
-        await hub.subscribe(session_id, _FakeWS())
-
-        with patch.dict("sys.modules", {"assemblyai": aai_mock}):
-            stream = await hub.get_or_create_provider_stream(session_id)
-
-        assert isinstance(stream, AssemblyAIStreamingSession)
-
-        # Teardown
-        with patch.dict("sys.modules", {"assemblyai": aai_mock}):
+        with _patch_v3():
+            stream = await hub.get_or_create_provider_stream(session_id, role="chw")
+            assert isinstance(stream, AssemblyAIStreamingSession)
             await hub.close_session(session_id)
 
-    async def test_assemblyai_start_failure_falls_back_to_noop(self, caplog):
-        """If AssemblyAIStreamingSession.start() raises, the hub must fall back
-        to NoOpStreamingSession so the WebSocket stays open."""
-        import logging
-
-        aai_mock, _transcriber = _fake_assemblyai_module()
-        # Make connect() raise so start() propagates the error.
-        aai_mock.RealtimeTranscriber.return_value.connect.side_effect = OSError(
-            "connection refused"
-        )
-
+    async def test_start_failure_falls_back_to_noop(self, caplog):
         hub = TranscriptHub()
         hub._api_key = _FAKE_API_KEY
         session_id = uuid.uuid4()
+        await hub.subscribe(session_id, _WS())
 
-        class _FakeWS:
-            async def send_text(self, _: str) -> None:
-                pass
-
-        await hub.subscribe(session_id, _FakeWS())
-
-        with patch.dict("sys.modules", {"assemblyai": aai_mock}):
-            with caplog.at_level(logging.ERROR, logger="compass.transcript_hub"):
-                stream = await hub.get_or_create_provider_stream(session_id)
+        with _patch_v3(connect_error=OSError("connection refused")):
+            with caplog.at_level(logging.ERROR, logger=_HUB_LOGGER):
+                stream = await hub.get_or_create_provider_stream(session_id, role="chw")
 
         assert isinstance(stream, NoOpStreamingSession), (
-            "Hub must fall back to NoOpStreamingSession on AssemblyAI start failure"
+            "hub must fall back to NoOp when the AssemblyAI session fails to start"
         )
         error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
-        assert error_records, "Hub must log an error when falling back to noop"
-        # Verify no PHI is logged in the error message.
-        for record in error_records:
-            assert "connection refused" not in record.getMessage().lower() or True
-            # The error message should contain the error type, not the PHI.
-            assert "error_type" in record.getMessage() or "error" in record.getMessage().lower()
-
+        assert error_records, "fallback must be logged at ERROR"
+        # The raw exception message (could echo connection detail) is not logged —
+        # only the error_type is.
+        for r in error_records:
+            assert "connection refused" not in r.getMessage()
+            assert "error_type" in r.getMessage()
         await hub.close_session(session_id)
 
-    async def test_hub_audio_frame_forwarded_to_assemblyai(self):
-        """Binary frames received by the hub must reach transcriber.stream()."""
-        aai_mock, transcriber_mock = _fake_assemblyai_module()
-
+    async def test_hub_audio_frame_reaches_client_stream(self):
         hub = TranscriptHub()
         hub._api_key = _FAKE_API_KEY
         session_id = uuid.uuid4()
+        await hub.subscribe(session_id, _WS())
 
-        class _FakeWS:
-            async def send_text(self, _: str) -> None:
-                pass
-
-        await hub.subscribe(session_id, _FakeWS())
-
-        with patch.dict("sys.modules", {"assemblyai": aai_mock}):
-            stream = await hub.get_or_create_provider_stream(session_id)
-            audio_chunk = b"\x01\x02" * 250
-            await stream.send_audio(audio_chunk)
-
-        transcriber_mock.stream.assert_called_once_with(audio_chunk)
-
-        with patch.dict("sys.modules", {"assemblyai": aai_mock}):
+        with _patch_v3() as captured:
+            stream = await hub.get_or_create_provider_stream(session_id, role="chw")
+            chunk = b"\x01\x02" * 250
+            await stream.send_audio(chunk)
+            assert captured.streamed == [chunk]
             await hub.close_session(session_id)
 
-    async def test_hub_close_calls_assemblyai_disconnect(self):
-        """When the hub tears down the session, transcriber.close() must be called."""
-        aai_mock, transcriber_mock = _fake_assemblyai_module()
-
+    async def test_close_session_disconnects_the_client(self):
         hub = TranscriptHub()
         hub._api_key = _FAKE_API_KEY
         session_id = uuid.uuid4()
+        sub = await hub.subscribe(session_id, _WS())
 
-        class _FakeWS:
-            async def send_text(self, _: str) -> None:
-                pass
-
-            async def close(self, code: int = 1000) -> None:
-                pass
-
-        ws = _FakeWS()
-        sub = await hub.subscribe(session_id, ws)
-
-        with patch.dict("sys.modules", {"assemblyai": aai_mock}):
-            await hub.get_or_create_provider_stream(session_id)
+        with _patch_v3() as captured:
+            await hub.get_or_create_provider_stream(session_id, role="chw")
+            # Removing the last subscriber tears the session down.
             await hub.remove_subscriber(sub)
 
-        # After removing the last subscriber close_session is called.
-        transcriber_mock.close.assert_called_once()
+        assert captured.disconnect_calls == [True]
 
 
 # ---------------------------------------------------------------------------
-# HIPAA: AssemblyAI error callback must not log transcript text
+# HIPAA: error handler logs the AAI error, never PHI
 # ---------------------------------------------------------------------------
 
 
-class TestAssemblyAIHIPAALogging:
-    async def test_on_error_callback_does_not_log_phi(self, caplog):
-        """The on_error callback must log only error type, never transcript text."""
-        import logging
+class TestErrorHandlerHIPAA:
+    async def test_error_handler_logs_code_not_phi(self, caplog):
+        _session, captured = await _make_started_session()
+        on_error = captured.error_handler()
 
-        session_id = uuid.uuid4()
-        aai_mock, _transcriber = _fake_assemblyai_module()
-        captured_on_error: list = []
+        # A provider error object — its str() carries a code + message, never PHI.
+        class _StreamingError:
+            code = 4001
 
-        def _fake_rt_constructor(**kwargs: Any) -> MagicMock:
-            captured_on_error.append(kwargs.get("on_error"))
-            t = MagicMock()
-            t.connect = MagicMock()
-            t.stream = MagicMock()
-            t.close = MagicMock()
-            return t
+            def __str__(self) -> str:
+                return "StreamingError(code=4001): bad audio format"
 
-        aai_mock.RealtimeTranscriber.side_effect = _fake_rt_constructor
+        phi_sentinel = "patient-ssn-should-never-appear"
 
-        with patch.dict("sys.modules", {"assemblyai": aai_mock}):
-            session = AssemblyAIStreamingSession(
-                session_id=session_id,
-                api_key=_FAKE_API_KEY,
-                on_transcript_chunk=AsyncMock(),
-            )
-            await session.start()
+        with caplog.at_level(logging.ERROR, logger=_HUB_LOGGER):
+            on_error(None, _StreamingError())
 
-        assert captured_on_error, "on_error callback was not passed to RealtimeTranscriber"
-        on_error_fn = captured_on_error[0]
-
-        # Simulate an error object with a descriptive message.
-        class _FakeError:
-            def __repr__(self) -> str:
-                return "FakeError(some internal detail)"
-
-        phi_text = "patient-ssn-phi-should-not-appear"
-
-        with caplog.at_level(logging.ERROR, logger="compass.transcript_hub"):
-            on_error_fn(_FakeError())
-
-        for record in caplog.records:
-            assert phi_text not in record.getMessage(), (
-                f"PHI appeared in error log: {record.getMessage()!r}"
-            )
-        # Confirm the error IS logged (not silently dropped)
         error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
-        assert error_records, "AssemblyAI errors must be logged (but without PHI)"
+        assert error_records, "AssemblyAI errors must be logged"
+        for r in error_records:
+            assert phi_sentinel not in r.getMessage()
+        # The diagnostic code is logged so ops can act on it.
+        assert any("4001" in r.getMessage() for r in error_records)
