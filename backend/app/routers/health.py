@@ -15,10 +15,11 @@ GET /api/v1/ready   -- lightweight readiness probe: DB connectivity only.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Literal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,6 +30,97 @@ from app.database import get_db
 logger = logging.getLogger("compass.health")
 
 router = APIRouter(tags=["health"])
+
+# Each deep dependency ping is hard-bounded so a slow/hung vendor can never
+# stall the health endpoint. Kept short because these are reachability checks,
+# not data operations.
+_DEEP_PING_TIMEOUT_S = 3.0
+
+
+# ─── Deep dependency pings (only run when ?deep=true) ─────────────────────────
+#
+# These make real authenticated calls to confirm a credential actually works,
+# not merely that it is present. They are OPT-IN: the default /health stays
+# outbound-call-free so frequent/automated probes don't hammer vendor APIs or
+# flip to "degraded" on a transient third-party blip. Point synthetic
+# monitoring at /health?deep=true when you want connectivity surfaced.
+#
+# Every helper returns a short status string and NEVER logs a key or response
+# body (vendor payloads can echo account identifiers).
+
+
+async def _ping_stripe() -> str:
+    """Lightweight authenticated Stripe call (Balance.retrieve) — validates the key."""
+    if not settings.stripe_secret_key:
+        return "missing: STRIPE_SECRET_KEY not set"
+
+    def _retrieve() -> None:
+        import stripe
+
+        # Per-call api_key avoids mutating the global stripe.api_key used by
+        # the payments provider.
+        stripe.Balance.retrieve(api_key=settings.stripe_secret_key)
+
+    try:
+        await asyncio.wait_for(asyncio.to_thread(_retrieve), timeout=_DEEP_PING_TIMEOUT_S)
+        return "ok"
+    except TimeoutError:
+        return "error: timeout"
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("health deep ping: stripe failed: %s", type(exc).__name__)
+        return f"error: {type(exc).__name__}"
+
+
+async def _ping_vonage() -> str:
+    """Lightweight authenticated Vonage call (account balance) — validates key+secret."""
+    if not (settings.vonage_api_key and settings.vonage_api_secret):
+        return "missing: VONAGE_API_KEY/SECRET not set"
+
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(_DEEP_PING_TIMEOUT_S)) as client:
+            resp = await client.get(
+                "https://rest.nexmo.com/account/get-balance",
+                params={
+                    "api_key": settings.vonage_api_key,
+                    "api_secret": settings.vonage_api_secret,
+                },
+            )
+        if resp.status_code == 200:
+            return "ok"
+        return f"error: HTTP {resp.status_code}"
+    except httpx.TimeoutException:
+        return "error: timeout"
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("health deep ping: vonage failed: %s", type(exc).__name__)
+        return f"error: {type(exc).__name__}"
+
+
+async def _ping_assemblyai() -> str:
+    """Lightweight authenticated AssemblyAI call (list 1 transcript) — validates the key."""
+    if settings.transcription_provider != "assemblyai":
+        return f"skipped (provider={settings.transcription_provider})"
+    if not settings.assemblyai_api_key:
+        return "missing: ASSEMBLYAI_API_KEY not set"
+
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(_DEEP_PING_TIMEOUT_S)) as client:
+            resp = await client.get(
+                "https://api.assemblyai.com/v2/transcript",
+                params={"limit": 1},
+                headers={"Authorization": settings.assemblyai_api_key},
+            )
+        if resp.status_code == 200:
+            return "ok"
+        return f"error: HTTP {resp.status_code}"
+    except httpx.TimeoutException:
+        return "error: timeout"
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("health deep ping: assemblyai failed: %s", type(exc).__name__)
+        return f"error: {type(exc).__name__}"
 
 
 # ─── Response schemas ─────────────────────────────────────────────────────────
@@ -59,8 +151,19 @@ class HealthResponse(BaseModel):
     response_model=HealthResponse,
     summary="Deep health check",
 )
-async def health(db: AsyncSession = Depends(get_db)) -> HealthResponse:
-    """Verify database connectivity and required credential configuration.
+async def health(
+    db: AsyncSession = Depends(get_db),
+    deep: bool = Query(
+        default=False,
+        description=(
+            "When true, make real authenticated calls to Vonage/AssemblyAI/Stripe "
+            "to verify the credentials actually work (not just that they are set). "
+            "Each ping is bounded to 3s. Use for on-demand diagnostics or synthetic "
+            "monitoring; leave false for frequent/automated probes."
+        ),
+    ),
+) -> HealthResponse:
+    """Verify database connectivity and dependency health.
 
     Always returns HTTP 200 so that monitoring tools can read the body even
     on a degraded deploy.  Callers should inspect the ``status`` field:
@@ -69,14 +172,11 @@ async def health(db: AsyncSession = Depends(get_db)) -> HealthResponse:
 
     Checks performed:
     - database:   executes ``SELECT 1`` against the configured DATABASE_URL
-    - vonage:     ``VONAGE_API_KEY`` env var is non-empty
-    - assemblyai: ``ASSEMBLYAI_API_KEY`` env var is non-empty when
-                  ``TRANSCRIPTION_PROVIDER == "assemblyai"``
-    - stripe:     ``STRIPE_SECRET_KEY`` env var is non-empty when
-                  ``PAYMENTS_PROVIDER == "stripe"``
-
-    No outbound HTTP calls are made during this check — credentials are
-    validated for presence only, not correctness.
+    - scheduler:  APScheduler running with jobs registered
+    - vonage / assemblyai / stripe:
+        * default (deep=false): credential PRESENCE only — no outbound calls
+        * deep=true: a real lightweight authenticated call per vendor,
+          bounded to 3s each, confirming the credential works
     """
     checks: dict[str, str] = {}
 
@@ -88,33 +188,31 @@ async def health(db: AsyncSession = Depends(get_db)) -> HealthResponse:
         logger.error("health check: database connectivity failed: %s", exc)
         checks["database"] = f"error: {type(exc).__name__}"
 
-    # ── Vonage ────────────────────────────────────────────────────────────────
-    # Required for masked calling regardless of which communication_provider is
-    # active — the key must be present for the Vonage SDK to initialise.
-    if settings.vonage_api_key:
-        checks["vonage"] = "ok"
+    # ── External dependencies (Vonage / AssemblyAI / Stripe) ───────────────────
+    if deep:
+        # Real authenticated pings, run concurrently and bounded per-vendor.
+        checks["vonage"], checks["assemblyai"], checks["stripe"] = await asyncio.gather(
+            _ping_vonage(),
+            _ping_assemblyai(),
+            _ping_stripe(),
+        )
     else:
-        checks["vonage"] = "missing: VONAGE_API_KEY not set"
-
-    # ── AssemblyAI ────────────────────────────────────────────────────────────
-    # Only required when transcription_provider == "assemblyai".
-    if settings.transcription_provider == "assemblyai":
-        if settings.assemblyai_api_key:
-            checks["assemblyai"] = "ok"
+        # Presence-only — required key/secret are set.
+        checks["vonage"] = (
+            "ok" if settings.vonage_api_key else "missing: VONAGE_API_KEY not set"
+        )
+        if settings.transcription_provider == "assemblyai":
+            checks["assemblyai"] = (
+                "ok" if settings.assemblyai_api_key else "missing: ASSEMBLYAI_API_KEY not set"
+            )
         else:
-            checks["assemblyai"] = "missing: ASSEMBLYAI_API_KEY not set"
-    else:
-        checks["assemblyai"] = f"skipped (provider={settings.transcription_provider})"
-
-    # ── Stripe ────────────────────────────────────────────────────────────────
-    # Only required when payments_provider == "stripe".
-    if settings.payments_provider == "stripe":
-        if settings.stripe_secret_key:
-            checks["stripe"] = "ok"
+            checks["assemblyai"] = f"skipped (provider={settings.transcription_provider})"
+        if settings.payments_provider == "stripe":
+            checks["stripe"] = (
+                "ok" if settings.stripe_secret_key else "missing: STRIPE_SECRET_KEY not set"
+            )
         else:
-            checks["stripe"] = "missing: STRIPE_SECRET_KEY not set"
-    else:
-        checks["stripe"] = f"skipped (provider={settings.payments_provider})"
+            checks["stripe"] = f"skipped (provider={settings.payments_provider})"
 
     # ── Scheduler heartbeat ────────────────────────────────────────────────────
     # APScheduler runs session reminders, claim retries, payout triggers, and
