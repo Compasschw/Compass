@@ -195,6 +195,16 @@ async def list_case_notes(
     )
     notes = list_result.scalars().all()
 
+    # HIPAA §164.312(b): record the PHI read (case notes are clinical PHI).
+    from app.services.audit import record_phi_read
+
+    await record_phi_read(
+        actor_user_id=current_user.id,
+        resource="case_note",
+        resource_id=str(member_id),
+        details={"count": len(notes), "actor_role": "chw"},
+    )
+
     return CaseNoteListResponse(
         items=[CaseNoteResponse.model_validate(n) for n in notes],
         total=total,

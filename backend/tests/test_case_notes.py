@@ -22,9 +22,11 @@ Validation:
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
 
+from app.models.audit import AuditLog
 from tests.conftest import auth_header
-
+from tests.conftest import test_session as _test_session_factory
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -211,6 +213,42 @@ async def test_list_case_notes_returns_own_notes_only(
     # Most recent first.
     assert data["items"][0]["body"] == "Second note."
     assert data["items"][1]["body"] == "First note."
+
+
+@pytest.mark.asyncio
+async def test_list_case_notes_writes_phi_read_audit(
+    client: AsyncClient, chw_tokens, member_tokens
+):
+    """Listing a member's case notes must record a phi_read AuditLog row
+    (HIPAA §164.312(b))."""
+    _, member_id = await _register_and_create_request_match(
+        client, member_tokens, chw_tokens
+    )
+    await client.post(
+        "/api/v1/case-notes",
+        json={"member_id": member_id, "body": "Clinical note."},
+        headers=auth_header(chw_tokens),
+    )
+
+    res = await client.get(
+        f"/api/v1/members/{member_id}/case-notes",
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 200
+
+    async with _test_session_factory() as db:
+        rows = (
+            await db.execute(
+                select(AuditLog).where(
+                    AuditLog.action == "phi_read",
+                    AuditLog.resource == "case_note",
+                    AuditLog.resource_id == member_id,
+                )
+            )
+        ).scalars().all()
+    assert rows, "expected a phi_read audit row for the case-note list"
+    assert rows[-1].details["actor_role"] == "chw"
+    assert rows[-1].details["count"] == 1
 
 
 @pytest.mark.asyncio

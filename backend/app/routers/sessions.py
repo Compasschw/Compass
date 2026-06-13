@@ -1471,6 +1471,8 @@ async def get_session_transcript(
 
     # Admin key path — checked first so ops tooling works without a user JWT.
     if hmac.compare_digest(token, settings.admin_key):
+        actor_user_id: UUID | None = None
+        actor_role = "admin"
         session = await db.get(Session, session_id)
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
@@ -1496,6 +1498,8 @@ async def get_session_transcript(
         is_participant = user.id == session.chw_id or user.id == session.member_id
         if not is_participant and user.role != "admin":
             raise HTTPException(status_code=403, detail="Not a participant on this session")
+        actor_user_id = user.id
+        actor_role = user.role
 
     chunk_result = await db.execute(
         select(SessionTranscript)
@@ -1503,6 +1507,16 @@ async def get_session_transcript(
         .order_by(SessionTranscript.created_at.asc())
     )
     chunks = chunk_result.scalars().all()
+
+    # HIPAA §164.312(b): record the PHI read (transcript text is PHI).
+    from app.services.audit import record_phi_read
+
+    await record_phi_read(
+        actor_user_id=actor_user_id,
+        resource="session_transcript",
+        resource_id=str(session_id),
+        details={"chunk_count": len(chunks), "actor_role": actor_role},
+    )
 
     return TranscriptResponse(
         session_id=session_id,
