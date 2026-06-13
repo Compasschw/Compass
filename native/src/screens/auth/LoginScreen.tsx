@@ -60,10 +60,12 @@ type LoginNavProp = NativeStackNavigationProp<AuthStackParamList>;
 
 // ─── Value proposition bullets ────────────────────────────────────────────────
 
+// Role-neutral: this screen is the shared sign-in for both CHWs and members,
+// so the copy speaks to the mission rather than CHW recruitment.
 const VALUE_PROPS = [
-  'Set your own schedule and work flexibly',
-  'Earn $29+/hour via Medi-Cal reimbursement',
-  'Make a real impact in your community',
+  'Local CHWs who know your neighborhood',
+  'Support with housing, food, recovery, and care',
+  'Backed by Medi-Cal',
 ] as const;
 
 // ─── Google SVG icon ──────────────────────────────────────────────────────────
@@ -334,7 +336,7 @@ export function LoginScreen(): React.JSX.Element {
                 {/* Eyebrow */}
                 <View style={s.eyebrowRow}>
                   <View style={s.eyebrowDot} />
-                  <Text style={s.eyebrowText}>START YOUR CHW JOURNEY</Text>
+                  <Text style={s.eyebrowText}>COMMUNITY HEALTH, CONNECTED</Text>
                 </View>
 
                 {/* Headline */}
@@ -347,14 +349,14 @@ export function LoginScreen(): React.JSX.Element {
                     },
                   ]}
                 >
-                  Your career in community health{' '}
-                  <Text style={s.headlineAccent}>starts here.</Text>
+                  Care that knows your{' '}
+                  <Text style={s.headlineAccent}>neighborhood.</Text>
                 </Text>
 
                 {/* Description */}
                 <Text style={s.description}>
-                  Join Compass and start earning by connecting with community members
-                  who need your help navigating housing, food, recovery, and healthcare.
+                  Compass connects Community Health Workers with Medi-Cal members who
+                  need support with housing, food, recovery, and healthcare.
                 </Text>
 
                 {/* Value props */}
