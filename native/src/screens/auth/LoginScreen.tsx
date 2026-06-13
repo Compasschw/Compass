@@ -219,6 +219,14 @@ export function LoginScreen(): React.JSX.Element {
     navigation.navigate('Register');
   }, [navigation]);
 
+  // ── Navigate to passwordless sign-in / account recovery ──────────────────
+  // The MagicLinkScreen (request mode) emails a one-time sign-in link — this
+  // is the recovery path for users who forgot their password.
+
+  const handleNavToMagicLink = useCallback((): void => {
+    navigation.navigate('MagicLink');
+  }, [navigation]);
+
   // ── Navigate back to Landing ─────────────────────────────────────────────
 
   const handleNavToLanding = useCallback((): void => {
@@ -387,47 +395,6 @@ export function LoginScreen(): React.JSX.Element {
                       </View>
                     )}
 
-                    {/* Social login buttons */}
-                    <View style={s.socialButtonsContainer}>
-                      <TouchableOpacity
-                        style={s.socialButton}
-                        onPress={() => handleSocialLogin('Google')}
-                        activeOpacity={0.7}
-                        accessibilityLabel="Continue with Google"
-                        accessibilityRole="button"
-                      >
-                        <GoogleIcon />
-                        <Text style={s.socialButtonText}>Continue with Google</Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        style={s.socialButton}
-                        onPress={() => handleSocialLogin('Apple')}
-                        activeOpacity={0.7}
-                        accessibilityLabel="Continue with Apple"
-                        accessibilityRole="button"
-                      >
-                        <AppleIcon />
-                        <Text style={s.socialButtonText}>Continue with Apple</Text>
-                      </TouchableOpacity>
-                    </View>
-
-                    {/* Inline OAuth-coming-soon notice */}
-                    {socialNotice !== null && (
-                      <View style={s.socialNotice} accessibilityRole="alert" accessibilityLiveRegion="polite">
-                        <Text style={s.socialNoticeText}>
-                          {socialNotice} sign-in is coming soon. Sign in with your email below.
-                        </Text>
-                      </View>
-                    )}
-
-                    {/* OR divider */}
-                    <View style={s.dividerRow}>
-                      <View style={s.dividerLine} />
-                      <Text style={s.dividerLabel}>OR</Text>
-                      <View style={s.dividerLine} />
-                    </View>
-
                     {/* Email input */}
                     <View style={s.inputGroup}>
                       <Text style={s.inputLabel}>EMAIL ADDRESS</Text>
@@ -486,6 +453,16 @@ export function LoginScreen(): React.JSX.Element {
                       </View>
                     </View>
 
+                    {/* Forgot password → passwordless sign-in link (account recovery) */}
+                    <TouchableOpacity
+                      onPress={handleNavToMagicLink}
+                      style={s.forgotPasswordRow}
+                      accessibilityRole="button"
+                      accessibilityLabel="Forgot password? Email me a sign-in link"
+                    >
+                      <Text style={s.forgotPasswordText}>Forgot password?</Text>
+                    </TouchableOpacity>
+
                     {/* Primary submit button */}
                     <TouchableOpacity
                       style={[s.submitButton, isLoading && s.submitButtonDisabled]}
@@ -501,6 +478,49 @@ export function LoginScreen(): React.JSX.Element {
                         <Text style={s.submitButtonText}>Sign In</Text>
                       )}
                     </TouchableOpacity>
+
+                    {/* OR divider — separates the working email path (above)
+                        from the not-yet-live social options (below). */}
+                    <View style={s.dividerRow}>
+                      <View style={s.dividerLine} />
+                      <Text style={s.dividerLabel}>OR</Text>
+                      <View style={s.dividerLine} />
+                    </View>
+
+                    {/* Social login buttons — secondary, below the working path.
+                        OAuth isn't wired yet; tapping surfaces an inline notice. */}
+                    <View style={s.socialButtonsContainer}>
+                      <TouchableOpacity
+                        style={s.socialButton}
+                        onPress={() => handleSocialLogin('Google')}
+                        activeOpacity={0.7}
+                        accessibilityLabel="Continue with Google"
+                        accessibilityRole="button"
+                      >
+                        <GoogleIcon />
+                        <Text style={s.socialButtonText}>Continue with Google</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={s.socialButton}
+                        onPress={() => handleSocialLogin('Apple')}
+                        activeOpacity={0.7}
+                        accessibilityLabel="Continue with Apple"
+                        accessibilityRole="button"
+                      >
+                        <AppleIcon />
+                        <Text style={s.socialButtonText}>Continue with Apple</Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    {/* Inline OAuth-coming-soon notice */}
+                    {socialNotice !== null && (
+                      <View style={s.socialNotice} accessibilityRole="alert" accessibilityLiveRegion="polite">
+                        <Text style={s.socialNoticeText}>
+                          {socialNotice} sign-in is coming soon. Use your email above.
+                        </Text>
+                      </View>
+                    )}
 
                     {/* Self-service signup is the primary path post-launch.
                         Waitlist remains a secondary option for users who want
@@ -859,6 +879,18 @@ const s = StyleSheet.create({
   eyeButton: {
     padding: spacing.xs,
     marginLeft: 'auto',
+  },
+
+  // ── Forgot password ───────────────────────────────────────────────────────
+  forgotPasswordRow: {
+    alignSelf: 'flex-end',
+    paddingVertical: 2,
+    marginTop: -spacing.xs,
+  },
+  forgotPasswordText: {
+    fontFamily: fonts.bodySemibold,
+    fontSize: 13,
+    color: colors.primary,
   },
 
   // ── Submit button ─────────────────────────────────────────────────────────
