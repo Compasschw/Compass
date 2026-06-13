@@ -396,14 +396,13 @@ interface FooterColumn {
   links: string[];
 }
 
+// Only links with a real destination are listed — no-op placeholders
+// (Start Earning, How It Works, CHW Resources, FAQs, About, Blog, Careers)
+// were removed rather than left as dead clicks. Re-add each when its page exists.
 const FOOTER_COLUMNS: FooterColumn[] = [
   {
-    heading: 'For CHWs',
-    links: ['Start Earning', 'How It Works', 'CHW Resources', 'FAQs'],
-  },
-  {
     heading: 'Company',
-    links: ['About', 'Blog', 'Careers', 'Contact'],
+    links: ['Contact'],
   },
   {
     heading: 'Legal',
@@ -539,11 +538,11 @@ export function LandingScreen(): React.JSX.Element {
   }, [navigation]);
 
   /**
-   * Footer link click handler. Routes legal-column links (Privacy / Terms /
-   * HIPAA) and the Company-column "Contact" link to LegalScreen with the
-   * appropriate `page` param. Other footer links (Start Earning, FAQs, About,
-   * Blog, Careers, etc.) are intentional no-ops until those destinations are
-   * built — kept clickable so the visual styling stays consistent.
+   * Footer link click handler. Every footer link now has a real destination:
+   * the legal-column links (Privacy / Terms / HIPAA) and the Company-column
+   * "Contact" link all route to LegalScreen with the appropriate `page` param.
+   * No-op placeholder links were removed from FOOTER_COLUMNS rather than left
+   * as dead clicks. The `default` branch is a defensive fall-through only.
    */
   const handleFooterLinkPress = useCallback(
     (link: string): void => {
