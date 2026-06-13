@@ -39,6 +39,7 @@ from app.dependencies import require_admin_key
 from app.models.session import Session
 from app.models.user import CHWProfile, MemberProfile, User
 from app.routers.admin import require_2fa_token
+from app.services.billing.pear_cost_ids import resolve_cost_id
 from app.services.billing.pear_suite_provider import PearSuiteProvider
 from app.services.pear_suite_member_sync import ensure_member_synced, get_pear_suite_provider
 
@@ -109,7 +110,9 @@ async def submit_demo_claim(
         DemoClaimResponse with all Pear Suite IDs and a dashboard hint.
 
     Raises:
-        HTTP 400: session not found, CHW missing pear_suite_user_id, demo template not configured.
+        HTTP 400: session not found, CHW missing pear_suite_user_id, demo
+            template not configured, or member's insurance carrier has no
+            Pear costId.
         HTTP 502: Pear Suite API returned an unexpected error.
     """
     session_id = body.session_id
@@ -277,6 +280,35 @@ async def submit_demo_claim(
         dx_codes,
     )
 
+    # ── Step 7b: Resolve Pear costId from the member's insurance carrier ───────
+    # complete_activity() requires a per-carrier costId; Pear rejects the
+    # billing PUT (400 "Expected billing details") without it. Resolve it here
+    # and fail fast with a clear 400 BEFORE any Pear network calls — mirrors
+    # PearSuiteProvider.submit_claim's cost_id gate.
+    cost_id = resolve_cost_id(member_profile.insurance_company)
+    if not cost_id:
+        logger.error(
+            "demo_claim.cost_id_unresolved: session_id=%s insurance_company=%r "
+            "Fix: set the member's insurance_company to a contracted carrier, or "
+            "add the carrier's costId to pear_cost_ids.py.",
+            session_id,
+            member_profile.insurance_company,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "No Pear costId for the member's insurance carrier "
+                f"({member_profile.insurance_company!r}). Pear would reject the "
+                "bill. Set the member's insurance to a contracted carrier or add "
+                "its costId mapping in pear_cost_ids.py before running the demo claim."
+            ),
+        )
+    logger.info(
+        "demo_claim.cost_id_resolved: session_id=%s carrier=%r",
+        session_id,
+        member_profile.insurance_company,
+    )
+
     # ── Step 8: Get provider ──────────────────────────────────────────────────
     try:
         provider: PearSuiteProvider = get_pear_suite_provider()
@@ -370,20 +402,14 @@ async def submit_demo_claim(
         pear_activity_id,
     )
     try:
-        # KNOWN BUG (flagged during type-check cleanup, not fixed here to keep
-        # runtime behavior identical): complete_activity() requires the
-        # keyword-only `cost_id` argument (per-carrier Pear costId — see
-        # pear_cost_ids.resolve_cost_id and PearSuiteProvider.submit_claim).
-        # This call raises TypeError at runtime, which the except below maps
-        # to HTTP 502. Action item: resolve cost_id from
-        # member_profile.insurance_company exactly as submit_claim does.
-        await provider.complete_activity(  # type: ignore[call-arg]
+        await provider.complete_activity(
             pear_activity_id=pear_activity_id,
             pear_member_id=pear_member_id,
             chw_user_id=chw_pear_user_id,
             service_date=service_date,
             diagnosis_codes=dx_codes,
             session_id=session_id,
+            cost_id=cost_id,
         )
     except Exception as exc:
         logger.error(

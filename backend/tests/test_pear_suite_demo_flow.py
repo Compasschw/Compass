@@ -57,12 +57,19 @@ async def _create_member_profile(
     user: User,
     *,
     pear_suite_member_id: str | None = None,
+    insurance_company: str | None = "Health Net",
 ) -> MemberProfile:
-    """Create and persist a MemberProfile."""
+    """Create and persist a MemberProfile.
+
+    ``insurance_company`` defaults to a carrier that resolves to a known Pear
+    costId so the billing chain completes; pass None to exercise the
+    unresolvable-carrier path.
+    """
     profile = MemberProfile(
         user_id=user.id,
         primary_language="English",
         pear_suite_member_id=pear_suite_member_id,
+        insurance_company=insurance_company,
         zip_code="90210",
     )
     db.add(profile)
@@ -352,6 +359,11 @@ class TestDemoClaimEndpoint:
             call_order.append("complete")
             assert kwargs["pear_activity_id"] == pear_activity_id
             assert kwargs["pear_member_id"] == pear_member_id
+            # cost_id is required by complete_activity and must be resolved
+            # from the member's insurance carrier (Health Net → this UUID).
+            assert kwargs["cost_id"] == "42456f6f-d745-46ad-85b1-755e2c48721b", (
+                f"complete_activity must receive the Health Net costId, got {kwargs.get('cost_id')!r}"
+            )
             return {"id": pear_activity_id, "status": "Complete"}
 
         async def mock_generate_claim(**kwargs):
@@ -401,6 +413,47 @@ class TestDemoClaimEndpoint:
         # Assert chain order
         assert call_order == ["schedule", "complete", "generate", "status"]
         mock_sync.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_400_when_member_insurance_unresolvable(
+        self, client: AsyncClient, setup_db
+    ):
+        """A member whose insurance carrier maps to no Pear costId must 400
+        BEFORE any Pear network call — billing would be rejected downstream."""
+        from app.database import async_session
+
+        async with async_session() as db:
+            chw_user = await _create_user(db, role="chw", name="Jemal", email="jemal4@test.com")
+            member_user = await _create_user(db, role="member", name="No Ins Member", email="demo4@test.com")
+            # Carrier not in the costId map → resolve_cost_id returns None.
+            await _create_member_profile(
+                db, member_user,
+                pear_suite_member_id="pear-member-noins",
+                insurance_company="Unmapped Mystery Plan",
+            )
+            await _create_chw_profile(db, chw_user, pear_suite_user_id="pear-chw-jemal")
+            session = await _create_session(db, chw_user, member_user)
+
+        mock_provider = AsyncMock()
+
+        with (
+            patch("app.routers.admin_demo.get_pear_suite_provider", return_value=mock_provider),
+            patch("app.routers.admin_demo.ensure_member_synced", new_callable=AsyncMock) as mock_sync,
+            patch.object(settings, "pear_suite_demo_template_id", "template-demo"),
+            patch.object(settings, "pear_suite_default_dx_codes", ["Z71.89"]),
+        ):
+            mock_sync.return_value = "pear-member-noins"
+            resp = await client.post(
+                "/api/v1/admin/pear-suite/demo-claim",
+                json={"session_id": str(session.id)},
+                headers=_admin_headers(),
+            )
+
+        assert resp.status_code == 400, resp.text
+        assert "cost" in resp.json()["detail"].lower() or "insurance" in resp.json()["detail"].lower()
+        # Must fail fast — no activity scheduling/completion attempted.
+        mock_provider.schedule_activity.assert_not_called()
+        mock_provider.complete_activity.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_401_without_admin_key(self, client: AsyncClient):
