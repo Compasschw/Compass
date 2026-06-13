@@ -25,7 +25,8 @@ If a command doesn't do what you need, ping Akram rather than improvising.
 4. [Common scenarios](#4-common-scenarios)
 5. [Troubleshooting](#5-troubleshooting)
 6. [Deploy rollback](#6-deploy-rollback)
-7. [Emergency contacts](#7-emergency-contacts)
+7. [Observability & credential rotation](#7-observability--credential-rotation)
+8. [Emergency contacts](#8-emergency-contacts)
 
 ---
 
@@ -569,7 +570,68 @@ messages were in flight. Rename/clean up the old instance once stable.
 
 ---
 
-## 7. Emergency contacts
+## 7. Observability & credential rotation
+
+### CloudWatch alarms (audit #12)
+
+`scripts/setup_cloudwatch_alarms.sh` creates an SNS topic + email subscription
+and alarms on prod RDS (CPU, free storage, freeable memory) and the API EC2
+box (CPU). RDS/EC2 metrics are auto-collected — no log shipping needed for
+these.
+
+```bash
+ALERT_EMAIL=akram@joincompasschw.com ./scripts/setup_cloudwatch_alarms.sh
+# then CONFIRM the SNS subscription email AWS sends, or nothing is delivered
+```
+
+### CloudWatch log shipping + retention (audit #11 — NOT yet wired)
+
+Heads-up: the backend does **not** currently ship application logs to
+CloudWatch (only the auto-created `RDSOSMetrics` group exists). Setting log
+**retention** is meaningless until app logs actually flow. To wire it:
+
+1. **IAM** — add to the `CompassEC2SSMRole` an inline policy granting
+   `logs:CreateLogGroup`, `logs:CreateLogStream`, `logs:PutLogEvents` on
+   `arn:aws:logs:us-west-2:340290106499:log-group:/compass/*`.
+2. **docker-compose** (on the EC2 box) — set the api service's logging driver:
+   ```yaml
+   logging:
+     driver: awslogs
+     options:
+       awslogs-region: us-west-2
+       awslogs-group: /compass/api
+       awslogs-create-group: "true"
+   ```
+3. **Retention** — once the group exists:
+   ```bash
+   aws logs put-retention-policy --region us-west-2 \
+     --log-group-name /compass/api --retention-in-days 365
+   ```
+
+This is a prod IAM + compose change; review before applying.
+
+### Vonage credential rotation (audit #18 — deferred, user-timed)
+
+Rotate the Vonage API key/secret and the signed-webhook secret periodically
+and immediately if exposure is suspected.
+
+1. In the Vonage dashboard, roll the **API secret** (Settings → keep the old
+   one active during the cutover window) and generate a new **signature
+   secret** (Settings → "Signature method: SHA-256 HMAC").
+2. Update prod env on the EC2 box (`.env`): `VONAGE_API_SECRET`,
+   `VONAGE_SIGNATURE_SECRET` (and `VONAGE_API_KEY` if rolled).
+3. Redeploy (Actions → "Run workflow", or push) so the api container picks up
+   the new values. Verify masked calling still works and
+   `/api/v1/health?deep=true` shows `vonage: ok`.
+4. Revoke the old secret in the Vonage dashboard once the new one is live.
+
+The signature secret rotation matters: it's what `_verify_vonage_signature`
+checks on inbound webhooks. Rotating it without updating prod env will 401
+every Vonage webhook (recordings, call events).
+
+---
+
+## 8. Emergency contacts
 
 | Situation | Contact |
 |-----------|---------|
