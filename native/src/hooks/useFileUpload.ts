@@ -53,6 +53,13 @@ export interface PresignedUrlPayload {
   content_type: string;
   purpose: FileUploadPurpose;
   size_bytes: number;
+  /**
+   * Required by the backend when purpose === 'message_attachment' — the member
+   * the attachment is scoped to (the S3 key lives under this member's prefix).
+   * Omitting it makes the presigned-URL endpoint return 422 before the file
+   * ever reaches S3. Ignored for all other purposes.
+   */
+  target_member_id?: string;
 }
 
 export interface PresignedUrlResponse {
@@ -371,6 +378,13 @@ export interface MessageAttachmentUploadResult {
 }
 
 export interface UseMessageAttachmentUploadOptions {
+  /**
+   * The member the attachment is scoped to. For a member messaging their CHW
+   * this is the member's own id; for a CHW messaging a member this is that
+   * member's id. REQUIRED — the backend rejects message_attachment presign
+   * requests without it (422), so the upload never reaches S3.
+   */
+  targetMemberId: string;
   /** Called with attachment metadata after a successful presign + S3 PUT. */
   onSuccess?: (result: MessageAttachmentUploadResult) => void;
   /** Called when any step in the pipeline fails. */
@@ -416,9 +430,9 @@ export interface UseMessageAttachmentUploadReturn {
  *   const result = await uploadAttachment(null);
  */
 export function useMessageAttachmentUpload(
-  options: UseMessageAttachmentUploadOptions = {},
+  options: UseMessageAttachmentUploadOptions,
 ): UseMessageAttachmentUploadReturn {
-  const { onSuccess, onError } = options;
+  const { targetMemberId, onSuccess, onError } = options;
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<Error | null>(null);
 
@@ -486,12 +500,22 @@ export function useMessageAttachmentUpload(
           pickedFile = { ...picked, blob };
         }
 
+        // Guard: the backend requires target_member_id for message_attachment
+        // presign requests. Fail fast with a clear message instead of letting
+        // the request 422 after the user already picked a file.
+        if (!targetMemberId) {
+          throw new Error(
+            'Cannot attach a file to this conversation yet — member not resolved. Please reopen the chat and try again.',
+          );
+        }
+
         // Step 1 — get presigned upload URL.
         const presignedPayload: PresignedUrlPayload = {
           filename: pickedFile.filename,
           content_type: pickedFile.mimeType,
           purpose: 'message_attachment',
           size_bytes: pickedFile.sizeBytes,
+          target_member_id: targetMemberId,
         };
         const presigned = await api<PresignedUrlResponse>('/upload/presigned-url', {
           method: 'POST',
@@ -529,7 +553,7 @@ export function useMessageAttachmentUpload(
         setIsUploading(false);
       }
     },
-    [onSuccess, onError],
+    [targetMemberId, onSuccess, onError],
   );
 
   return { isUploading, uploadError, uploadAttachment };

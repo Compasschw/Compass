@@ -970,6 +970,8 @@ function ConversationPane({
   }, []);
 
   const { uploadAttachment, isUploading: isAttachmentUploading } = useMessageAttachmentUpload({
+    // A CHW uploads attachments scoped to the member they're messaging.
+    targetMemberId: session.memberId ?? '',
     onError: (err) => showToast(err.message, true),
   });
 

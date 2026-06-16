@@ -19,11 +19,12 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 # Allowlisted MIME types for uploads. Adding new types is a conscious decision --
 # never accept arbitrary content_type strings from clients.
 ALLOWED_MIME_TYPES = frozenset({
-    # Images (profile photos, document scans)
+    # Images (profile photos, document scans, chat attachments)
     "image/jpeg",
     "image/png",
     "image/webp",
     "image/heic",
+    "image/gif",
     # Documents (credentials, referrals, signed consents)
     "application/pdf",
     # Audio (session recordings -- when enabled)

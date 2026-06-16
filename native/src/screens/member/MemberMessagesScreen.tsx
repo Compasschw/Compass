@@ -1334,6 +1334,8 @@ function ConversationPane({
   }, []);
 
   const { uploadAttachment, isUploading: isAttachmentUploading } = useMessageAttachmentUpload({
+    // A member uploads attachments scoped to themselves (session.memberId).
+    targetMemberId: session.memberId ?? '',
     onError: (err) => showToast(err.message, true),
   });
 
