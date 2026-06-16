@@ -21,6 +21,7 @@ import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Linking,
   Platform,
   Pressable,
@@ -31,6 +32,7 @@ import {
   View,
   type ViewStyle,
   type TextStyle,
+  type ImageStyle,
 } from 'react-native';
 import {
   CheckCircle2,
@@ -161,6 +163,67 @@ function DownloadButton({ docId }: { docId: string }): React.JSX.Element {
   );
 }
 
+// ─── DocThumbnail — image preview or category icon ────────────────────────────
+
+interface DocThumbnailProps {
+  doc: MemberDocumentData;
+  config: CategoryConfig;
+  isImage: boolean;
+}
+
+/**
+ * Renders a small preview inside the card's icon box.
+ *
+ * For image documents we fetch a short-lived presigned GET URL and render the
+ * actual image (cover-fit, clipped to the box). For non-image documents (PDFs),
+ * or if the image URL fails to load, we fall back to the category glyph so the
+ * card never renders empty.
+ *
+ * The presigned URL is only requested for images (`enabled: isImage`) so PDF
+ * cards don't make a needless network round-trip.
+ */
+function DocThumbnail({ doc, config, isImage }: DocThumbnailProps): React.JSX.Element {
+  const [failed, setFailed] = useState(false);
+  const thumbQuery = useMemberDocumentDownloadUrl(doc.id, { enabled: isImage && !failed });
+
+  const thumbUrl = isImage && !failed ? thumbQuery.data?.downloadUrl : undefined;
+
+  if (thumbUrl) {
+    return (
+      <View style={[dc.iconBox, dc.iconBoxImage]}>
+        <Image
+          source={{ uri: thumbUrl }}
+          style={dc.thumbImage}
+          resizeMode="cover"
+          onError={() => setFailed(true)}
+          accessibilityLabel={`Preview of ${doc.filename}`}
+        />
+      </View>
+    );
+  }
+
+  // Loading an image preview.
+  if (isImage && !failed && thumbQuery.isFetching) {
+    return (
+      <View style={dc.iconBox}>
+        <ActivityIndicator size="small" color={tokens.primary} />
+      </View>
+    );
+  }
+
+  // PDF / non-image, or image preview unavailable → category glyph.
+  return (
+    <View style={dc.iconBox}>
+      <config.Icon
+        size={28}
+        color={tokens.primary}
+        strokeWidth={1.5}
+        accessibilityLabel={`${config.label} icon`}
+      />
+    </View>
+  );
+}
+
 // ─── DocCard — uploaded document ─────────────────────────────────────────────
 
 interface DocCardProps {
@@ -198,15 +261,8 @@ function DocCard({ doc, config, memberId }: DocCardProps): React.JSX.Element {
         <Text style={dc.typeBadgeText}>{isImage ? 'IMG' : 'PDF'}</Text>
       </View>
 
-      {/* Icon */}
-      <View style={dc.iconBox}>
-        <config.Icon
-          size={28}
-          color={tokens.primary}
-          strokeWidth={1.5}
-          accessibilityLabel={`${config.label} icon`}
-        />
-      </View>
+      {/* Image preview (for image docs) or category icon */}
+      <DocThumbnail doc={doc} config={config} isImage={isImage} />
 
       {/* Filename */}
       <Text style={dc.filename} numberOfLines={2}>{doc.filename}</Text>
@@ -370,6 +426,19 @@ const dc = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   } as ViewStyle,
+
+  // When showing an image preview: clip the photo to the rounded box and drop
+  // the emerald tint so it doesn't bleed at the edges.
+  iconBoxImage: {
+    overflow: 'hidden',
+    backgroundColor: tokens.gray100,
+  } as ViewStyle,
+
+  thumbImage: {
+    width: '100%' as unknown as number,
+    height: '100%' as unknown as number,
+    borderRadius: 12,
+  } as ImageStyle,
 
   iconBoxPlaceholder: {
     width: '100%' as unknown as number,
