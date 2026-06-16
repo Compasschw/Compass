@@ -294,6 +294,16 @@ export function useFileUpload(
       setIsUploading(true);
 
       try {
+        // Guard: a member_document upload must be scoped to a resolved member.
+        // Without this, an empty/invalid memberId would still presign + PUT to S3
+        // (the presign endpoint doesn't require target_member_id for this purpose),
+        // and only the *metadata* POST would 404 — leaving an orphaned object in
+        // the bucket that never appears in any member's Documents list. Fail fast
+        // before touching S3.
+        if (purpose === 'member_document' && !memberId) {
+          throw new Error('Select a member before uploading a document.');
+        }
+
         let pickedFile: PickedFile;
         let blob: Blob;
 

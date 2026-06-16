@@ -48,14 +48,16 @@ import {
   Trash2,
 } from 'lucide-react-native';
 
-import { AppShell, Card, EmptyState, PageHeader, Pill, RightRail, StatTile } from '../../components/ui';
+import { AppShell, Card, EmptyState, PageHeader, Pill, RightDrawer, RightRail, StatTile } from '../../components/ui';
 import { colors, numerals, spacing, radius } from '../../theme/tokens';
 import { useAuth } from '../../context/AuthContext';
 import {
   useMemberDocuments,
   useMemberDocumentDelete,
   useMemberDocumentDownloadUrl,
+  useChwMembers,
   type MemberDocumentData,
+  type MembersRosterItem,
 } from '../../hooks/useApiQueries';
 import {
   useFileUpload,
@@ -242,32 +244,89 @@ function TableRow({ doc, idx }: TableRowProps): React.JSX.Element {
 
 // ─── Upload trigger (CHW uploads on behalf of a member) ───────────────────────
 
+/** Document categories offered in the picker, in display order. */
+const DOC_TYPE_OPTIONS: DocumentType[] = ['id', 'income', 'address', 'medical', 'other'];
+
 /**
- * CHWUploadTrigger — minimal upload initiation.
- * On press, prompts for a member UUID (Phase 1: bare input; Phase 2: caseload picker),
- * then prompts for a document type, then runs the upload pipeline.
+ * CHWUploadTrigger — upload a document on behalf of a member in the CHW's caseload.
+ *
+ * Flow:
+ *   1. Tap "Upload for Member" → opens a drawer listing the CHW's caseload
+ *      (`useChwMembers` → GET /chw/members), searchable by name or masked ID.
+ *   2. Pick a member → pick a document type.
+ *   3. The file dialog opens and the upload pipeline runs scoped to that member.
+ *
+ * This replaces the legacy free-text "Member UUID:" prompt, which let a CHW
+ * paste a wrong/blank UUID. That caused the file to PUT to S3 (step 2 of the
+ * pipeline) and only 404 on the metadata POST (step 3) — orphaning the object in
+ * the bucket where it never appeared in any member's Documents list. The member
+ * id now always comes from a real caseload row, and `useFileUpload` additionally
+ * refuses a `member_document` upload with no resolved member.
  */
 function CHWUploadTrigger(): React.JSX.Element {
-  const [memberId, setMemberId] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const [selectedMember, setSelectedMember] = useState<MembersRosterItem | null>(null);
+  const [memberId, setMemberId] = useState<string>('');
   const [docType, setDocType] = useState<DocumentType>('other');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // Captured at selection time so the async onSuccess can name the member.
+  const selectedMemberName = useRef<string>('');
+
+  const membersQuery = useChwMembers();
 
   const { upload, isUploading } = useFileUpload('member_document', {
-    memberId: memberId ?? '',
+    memberId,
     documentType: docType,
+    onSuccess: (doc) => {
+      const who = selectedMemberName.current || 'the member';
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.alert(`Uploaded "${doc.filename}" for ${who}.`);
+      } else {
+        Alert.alert('Document uploaded', `"${doc.filename}" was uploaded for ${who}.`);
+      }
+      setSelectedMember(null);
+    },
     onError: (err) => showError(err.message),
   });
 
-  const triggerUpload = useCallback((mid: string, dt: DocumentType) => {
-    setMemberId(mid);
-    setDocType(dt);
-    if (Platform.OS === 'web') {
-      // Give state a tick to settle before clicking the file input.
-      setTimeout(() => fileInputRef.current?.click(), 50);
-    } else {
-      void upload();
-    }
-  }, [upload]);
+  const filteredMembers = useMemo(() => {
+    const items = membersQuery.data ?? [];
+    const q = search.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter(
+      (m) =>
+        m.displayName.toLowerCase().includes(q) ||
+        m.maskedId.toLowerCase().includes(q),
+    );
+  }, [membersQuery.data, search]);
+
+  const openPicker = useCallback(() => {
+    if (isUploading) return;
+    setSelectedMember(null);
+    setSearch('');
+    setPickerOpen(true);
+  }, [isUploading]);
+
+  const handleSelectDocType = useCallback(
+    (dt: DocumentType) => {
+      // Guard: never start an upload without a resolved caseload member.
+      if (!selectedMember) return;
+      setMemberId(selectedMember.id);
+      setDocType(dt);
+      selectedMemberName.current = selectedMember.displayName;
+      setPickerOpen(false);
+      if (Platform.OS === 'web') {
+        // The file-input .click() must run inside this user gesture; the tick
+        // lets the memberId/docType state settle before the resulting onChange
+        // fires the upload (which reads the latest memberId via the hook).
+        setTimeout(() => fileInputRef.current?.click(), 50);
+      } else {
+        void upload();
+      }
+    },
+    [selectedMember, upload],
+  );
 
   const handleWebFileChange = useCallback(
     (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -278,46 +337,10 @@ function CHWUploadTrigger(): React.JSX.Element {
     [upload],
   );
 
-  const handlePress = useCallback(() => {
-    if (isUploading) return;
-
-    const docTypes: DocumentType[] = ['id', 'income', 'address', 'medical', 'other'];
-
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      const mid = window.prompt('Member UUID:');
-      if (!mid?.trim()) return;
-      const dtRaw = window.prompt(
-        `Document type (${docTypes.join(', ')}):`,
-        'other',
-      );
-      const dt: DocumentType = docTypes.includes(dtRaw as DocumentType)
-        ? (dtRaw as DocumentType)
-        : 'other';
-      triggerUpload(mid.trim(), dt);
-    } else {
-      Alert.prompt(
-        'Upload document',
-        'Enter member UUID:',
-        (mid) => {
-          if (!mid?.trim()) return;
-          Alert.alert(
-            'Document type',
-            'Select a category:',
-            docTypes.map((dt) => ({
-              text: DOC_TYPE_LABELS[dt],
-              onPress: () => triggerUpload(mid.trim(), dt),
-            })),
-          );
-        },
-        'plain-text',
-      );
-    }
-  }, [isUploading, triggerUpload]);
-
   return (
     <>
       <TouchableOpacity
-        onPress={handlePress}
+        onPress={openPicker}
         disabled={isUploading}
         accessible
         accessibilityRole="button"
@@ -332,6 +355,93 @@ function CHWUploadTrigger(): React.JSX.Element {
           {isUploading ? 'Uploading…' : 'Upload for Member'}
         </Text>
       </TouchableOpacity>
+
+      <RightDrawer
+        isOpen={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        title={selectedMember ? 'Choose document type' : 'Select a member'}
+        subtitle={
+          selectedMember
+            ? `Uploading for ${selectedMember.displayName}`
+            : 'Upload a document on behalf of someone in your caseload'
+        }
+      >
+        {!selectedMember ? (
+          <View style={styles.pickerBody}>
+            <View style={styles.pickerSearchWrap}>
+              <Search size={14} color={colors.textSecondary} />
+              <TextInput
+                style={styles.pickerSearchInput}
+                placeholder="Search your caseload…"
+                placeholderTextColor={colors.textMuted}
+                value={search}
+                onChangeText={setSearch}
+                accessibilityLabel="Search caseload"
+                autoFocus
+              />
+            </View>
+
+            {membersQuery.isLoading ? (
+              <ActivityIndicator size="small" color={colors.primary} style={styles.pickerSpinner} />
+            ) : membersQuery.isError ? (
+              <Text style={styles.pickerEmpty}>Could not load your caseload. Pull to retry.</Text>
+            ) : filteredMembers.length === 0 ? (
+              <Text style={styles.pickerEmpty}>
+                {search.trim() ? 'No members match your search.' : 'No members in your caseload yet.'}
+              </Text>
+            ) : (
+              <ScrollView style={styles.pickerList} keyboardShouldPersistTaps="handled">
+                {filteredMembers.map((m) => (
+                  <TouchableOpacity
+                    key={m.id}
+                    style={styles.memberRow}
+                    onPress={() => setSelectedMember(m)}
+                    accessible
+                    accessibilityRole="button"
+                    accessibilityLabel={`Select ${m.displayName}`}
+                  >
+                    <View style={styles.memberAvatar}>
+                      <Text style={styles.memberAvatarText}>{m.avatarInitials}</Text>
+                    </View>
+                    <View style={styles.memberRowText}>
+                      <Text style={styles.memberName} numberOfLines={1}>{m.displayName}</Text>
+                      <Text style={styles.memberMeta} numberOfLines={1}>
+                        {m.maskedId}{m.age != null ? ` · ${m.age} yrs` : ''}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
+          </View>
+        ) : (
+          <View style={styles.pickerBody}>
+            <TouchableOpacity
+              style={styles.backRow}
+              onPress={() => setSelectedMember(null)}
+              accessible
+              accessibilityRole="button"
+              accessibilityLabel="Back to member list"
+            >
+              <Text style={styles.backText}>‹ Back to members</Text>
+            </TouchableOpacity>
+            {DOC_TYPE_OPTIONS.map((dt) => (
+              <TouchableOpacity
+                key={dt}
+                style={styles.docTypeRow}
+                onPress={() => handleSelectDocType(dt)}
+                accessible
+                accessibilityRole="button"
+                accessibilityLabel={`Upload ${DOC_TYPE_LABELS[dt]}`}
+              >
+                <DocTypeIcon docType={dt} size={18} />
+                <Text style={styles.docTypeLabel}>{DOC_TYPE_LABELS[dt]}</Text>
+                <Plus size={14} color={colors.textSecondary} />
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+      </RightDrawer>
 
       {Platform.OS === 'web' && (
         <input
@@ -739,5 +849,117 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.textSecondary,
     lineHeight: 18,
+  } as unknown as TextStyle,
+
+  // ─── Member picker drawer ──────────────────────────────────────────────────
+  pickerBody: {
+    gap: spacing.sm,
+    padding: spacing.lg,
+  } as ViewStyle,
+
+  pickerSearchWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.cardBg,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.sm,
+    height: 38,
+    gap: spacing.xs,
+  } as ViewStyle,
+
+  pickerSearchInput: {
+    flex: 1,
+    fontSize: 13,
+    color: colors.textPrimary,
+    height: '100%',
+    outlineStyle: 'none',
+  } as unknown as TextStyle,
+
+  pickerSpinner: {
+    marginTop: spacing.lg,
+  } as ViewStyle,
+
+  pickerEmpty: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    paddingVertical: spacing.xl,
+  } as unknown as TextStyle,
+
+  pickerList: {
+    maxHeight: 420,
+  } as ViewStyle,
+
+  memberRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.xs,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
+  } as ViewStyle,
+
+  memberAvatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#ecfdf5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  } as ViewStyle,
+
+  memberAvatarText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#065f46',
+  } as TextStyle,
+
+  memberRowText: {
+    flex: 1,
+    gap: 1,
+  } as ViewStyle,
+
+  memberName: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.textPrimary,
+  } as unknown as TextStyle,
+
+  memberMeta: {
+    fontSize: 11,
+    color: colors.textSecondary,
+  } as unknown as TextStyle,
+
+  backRow: {
+    paddingVertical: spacing.xs,
+  } as ViewStyle,
+
+  backText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.primary,
+  } as unknown as TextStyle,
+
+  docTypeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    borderRadius: radius.md,
+    backgroundColor: colors.cardBg,
+  } as ViewStyle,
+
+  docTypeLabel: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '500',
+    color: colors.textPrimary,
   } as unknown as TextStyle,
 });
