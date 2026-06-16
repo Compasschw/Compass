@@ -15,6 +15,7 @@ from __future__ import annotations
 import uuid as _uuid_module
 
 import boto3
+from botocore.config import Config
 
 from app.config import settings
 
@@ -22,10 +23,28 @@ _client = None
 
 
 def get_s3_client():
-    """Return a module-level cached boto3 S3 client."""
+    """Return a module-level cached boto3 S3 client.
+
+    The PHI buckets enforce default server-side encryption with AWS KMS
+    (``SSEAlgorithm: aws:kms``).  S3 **rejects any PUT to a KMS-encrypted bucket
+    that is not signed with AWS Signature Version 4** -- the legacy SigV2
+    presigned URL (boto3's fallback on the global ``s3.amazonaws.com`` endpoint)
+    fails with ``400 InvalidArgument: Requests specifying Server Side Encryption
+    with AWS KMS managed keys require AWS Signature Version 4``.  Pinning the
+    client to SigV4 makes every presigned upload URL (all purposes) valid against
+    the KMS-encrypted buckets.
+
+    ``region_name`` must match the buckets' region (us-west-2) because the SigV4
+    credential scope is region-specific; a mismatch yields
+    ``400 AuthorizationHeaderMalformed``.
+    """
     global _client
     if _client is None:
-        _client = boto3.client("s3", region_name=settings.aws_region)
+        _client = boto3.client(
+            "s3",
+            region_name=settings.aws_region,
+            config=Config(signature_version="s3v4"),
+        )
     return _client
 
 
