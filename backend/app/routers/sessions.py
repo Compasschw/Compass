@@ -1617,11 +1617,13 @@ def _to_session_message_response(
 
     attachment_payload = None
     if attachment is not None:
-        # Chat attachments live in the PHI bucket per upload.py routing
-        # ("document" purpose). Use the same bucket here when minting the
-        # download URL so we don't 404 on read.
+        # Message attachments are uploaded to the message-attachments bucket
+        # (upload.py routes purpose="message_attachment" ->
+        # s3_message_attachments_bucket). Mint the download URL against the SAME
+        # bucket or the read 404s with NoSuchKey. (Was previously reading from
+        # s3_bucket_phi, which holds no message attachments.)
         download_url = generate_presigned_download_url(
-            _settings.s3_bucket_phi,
+            _settings.s3_message_attachments_bucket,
             attachment.s3_key,
         )
         attachment_payload = SessionMessageAttachmentResponse(

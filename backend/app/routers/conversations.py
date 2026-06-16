@@ -359,8 +359,11 @@ async def get_attachment_download_url(
     if conv.chw_id != current_user.id and conv.member_id != current_user.id and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Not authorized")
 
+    # Message attachments are uploaded to s3_message_attachments_bucket (see
+    # upload.py purpose routing); read from the same bucket or S3 returns
+    # NoSuchKey. s3_bucket_phi holds no message attachments.
     url = generate_presigned_download_url(
-        bucket=settings.s3_bucket_phi,
+        bucket=settings.s3_message_attachments_bucket,
         key=attachment.s3_key,
         expires_in=300,
     )
