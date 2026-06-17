@@ -448,12 +448,15 @@ export function CHWJourneysScreen(): React.JSX.Element {
   // Real data hook — falls back to mock data if the endpoint is unavailable.
   const { data: apiJourneys, isLoading, isError } = useChwJourneys();
 
-  // Use API data when available, fall back to mock data on error or during
-  // initial development when the endpoint may not yet be registered.
+  // Show the REAL caseload journeys whenever the query succeeded — including an
+  // empty list (so a CHW with no journeys sees the true empty state rather than
+  // fake demo names). Only fall back to mock data when the endpoint itself is
+  // unreachable (isError), which also surfaces the "preview data" banner above.
   const journeys: MemberJourneyResponse[] = useMemo(() => {
-    if (apiJourneys !== undefined && apiJourneys.length > 0) return apiJourneys;
-    return MOCK_JOURNEYS;
-  }, [apiJourneys]);
+    if (apiJourneys !== undefined) return apiJourneys;
+    if (isError) return MOCK_JOURNEYS;
+    return [];
+  }, [apiJourneys, isError]);
 
   const filtered = useMemo(() => {
     if (activeStatus === 'all') return journeys;

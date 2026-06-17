@@ -2766,6 +2766,9 @@ export function useCreateMemberJourney(memberId: string) {
     onSuccess: () => {
       // Invalidate the member journey list so Active Journeys + Roadmap refresh.
       void qc.invalidateQueries({ queryKey: memberJourneysKey(memberId) });
+      // Also refresh the CHW caseload Journeys page (GET /chw/journeys) so a
+      // newly-assigned journey shows up there without a hard reload.
+      void qc.invalidateQueries({ queryKey: queryKeys.chwJourneys });
     },
     onError: (_error: unknown) => {
       // Callers handle errors inline — no silent failures.
