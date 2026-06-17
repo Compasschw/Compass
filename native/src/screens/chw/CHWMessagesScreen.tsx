@@ -31,8 +31,7 @@
  *
  * STUB NOTES:
  *   - "Add Case Note" → Wired to POST /api/v1/case-notes (shipped 2026-06-09).
- *   - "Request Recording Consent" → uses useCreateConsentRequest.
- *   - "End Session" → POST /sessions/{id}/end, opens DocumentationModal.
+ *   - "Complete Session" → POST /sessions/{id}/end, opens DocumentationModal.
  */
 
 import React, {
@@ -78,7 +77,6 @@ import {
   XCircle,
   X,
   Download,
-  Sparkles,
   LogOut,
   Home,
   ShoppingCart,
@@ -113,10 +111,6 @@ import {
   useSubmitDocumentation,
   useChwJourneys,
   useMemberServicesConsent,
-  useCreateConsentRequest,
-  useCreateFlagNote,
-  useDeleteFlagNote,
-  useFlagNote,
   useCreateCaseNote,
   useEndSession as useEndSessionHook,
   type SessionData,
@@ -127,7 +121,6 @@ import {
 } from '../../hooks/useApiQueries';
 import {
   useEngagementStatus,
-  useCompassInsight,
 } from '../../hooks/useMessagesInsights';
 import {
   useMessageAttachmentUpload,
@@ -1238,7 +1231,6 @@ function ConversationPane({
   // Derive engagement status for header pill.
   // senderRole='chw' is the primary signal; chwId is a secondary guard.
   const engagement = useEngagementStatus(mergedMessages, session.chwId ?? '');
-  const modality = formatModality(session.mode);
 
   // ── Quick-reply templates — 4 chips per mockup spec ───────────────────────
 
@@ -1248,23 +1240,23 @@ function ConversationPane({
     text: string;
   }> = useMemo(() => [
     {
-      label: 'Appointment reminder',
+      label: 'Appointment Reminder',
       icon: CalendarPlus,
       text: `Hi ${memberFirstName}, this is a reminder about your upcoming appointment. Please reply to confirm or reschedule.`,
     },
     {
-      label: 'Document upload reminder',
+      label: 'Document Reminder',
       icon: FileText,
       text: `Hi ${memberFirstName}, we still need a few documents to move forward. Can you upload them when you get a chance?`,
     },
     {
-      label: 'Resource link',
+      label: 'Resource Link',
       icon: LinkIcon,
       // TODO(resources): Replace with actual resource URL when resource picker is available.
       text: '[resource]',
     },
     {
-      label: 'Check-in',
+      label: 'Follow-Up Check-In',
       icon: Activity,
       text: `Hey ${memberFirstName} — just checking in. How are things going this week?`,
     },
@@ -1310,7 +1302,7 @@ function ConversationPane({
             </Pill>
           </View>
           <Text style={styles.convHeaderMeta}>
-            {modality} · Active Member
+            Member Available · Best contact time: 4–7 PM · Avg response: 30 min
           </Text>
         </View>
 
@@ -1530,7 +1522,7 @@ function ConversationPane({
             style={styles.composerInput}
             value={draftText}
             onChangeText={setDraftText}
-            placeholder={`Reply to ${memberFirstName}...`}
+            placeholder="Type a message..."
             placeholderTextColor={tokens.textMuted}
             multiline
             numberOfLines={2}
@@ -1662,206 +1654,6 @@ const consentStyles = StyleSheet.create({
   label: {
     fontSize: 13,
     color: tokens.textMuted,
-  } as TextStyle,
-});
-
-// ─── Flag Thread Modal ────────────────────────────────────────────────────────
-
-interface FlagThreadModalProps {
-  readonly memberId: string;
-  readonly visible: boolean;
-  readonly onClose: () => void;
-}
-
-/**
- * Re-uses the flag-note backend contract to attach a CHW-only note
- * to this member directly from the messages screen.
- */
-function FlagThreadModal({ memberId, visible, onClose }: FlagThreadModalProps): React.JSX.Element {
-  const { data: existingNote, isLoading: noteLoading } = useFlagNote(memberId);
-  const createNote = useCreateFlagNote(memberId);
-  const deleteNote = useDeleteFlagNote(memberId);
-  const [noteText, setNoteText] = useState('');
-
-  const handleSave = useCallback(async (): Promise<void> => {
-    const trimmed = noteText.trim();
-    if (!trimmed) return;
-    await createNote.mutateAsync(trimmed);
-    setNoteText('');
-    onClose();
-  }, [noteText, createNote, onClose]);
-
-  const handleDelete = useCallback(async (): Promise<void> => {
-    await deleteNote.mutateAsync();
-    onClose();
-  }, [deleteNote, onClose]);
-
-  if (!visible) return <></>;
-
-  return (
-    <RightDrawer
-      isOpen={visible}
-      onClose={onClose}
-      title="Flag Thread"
-      subtitle="CHW-only note attached to this member's profile"
-      footer={
-        <View style={flagModalStyles.footer}>
-          <TouchableOpacity
-            style={flagModalStyles.cancelBtn}
-            onPress={onClose}
-            accessibilityRole="button"
-            accessibilityLabel="Cancel"
-          >
-            <Text style={flagModalStyles.cancelBtnText}>Cancel</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[
-              flagModalStyles.saveBtn,
-              (createNote.isPending || noteText.trim().length === 0) && flagModalStyles.saveBtnDisabled,
-            ]}
-            onPress={() => { void handleSave(); }}
-            disabled={createNote.isPending || noteText.trim().length === 0}
-            accessibilityRole="button"
-            accessibilityLabel="Save flag note"
-          >
-            {createNote.isPending ? (
-              <ActivityIndicator size="small" color="#ffffff" />
-            ) : (
-              <Text style={flagModalStyles.saveBtnText}>Save Flag</Text>
-            )}
-          </TouchableOpacity>
-        </View>
-      }
-    >
-      <View style={flagModalStyles.content}>
-        {noteLoading ? (
-          <ActivityIndicator size="small" color={tokens.textMuted} />
-        ) : null}
-
-        {existingNote && !noteLoading ? (
-          <View style={flagModalStyles.existingNote}>
-            <View style={flagModalStyles.existingNoteHeader}>
-              <Flag size={14} color="#DC2626" />
-              <Text style={flagModalStyles.existingNoteTitle}>Current Flag Note</Text>
-            </View>
-            <Text style={flagModalStyles.existingNoteBody}>{existingNote.body}</Text>
-            <TouchableOpacity
-              style={flagModalStyles.removeBtn}
-              onPress={() => { void handleDelete(); }}
-              disabled={deleteNote.isPending}
-              accessibilityRole="button"
-              accessibilityLabel="Remove flag note"
-            >
-              {deleteNote.isPending ? (
-                <ActivityIndicator size="small" color="#DC2626" />
-              ) : (
-                <Text style={flagModalStyles.removeBtnText}>Remove Flag</Text>
-              )}
-            </TouchableOpacity>
-          </View>
-        ) : null}
-
-        <Text style={flagModalStyles.inputLabel}>
-          {existingNote ? 'Replace with a new note:' : 'Add a flag note:'}
-        </Text>
-        <TextInput
-          style={flagModalStyles.noteInput}
-          value={noteText}
-          onChangeText={setNoteText}
-          placeholder="e.g. Member expressed concern about housing — follow up next session."
-          placeholderTextColor={tokens.textMuted}
-          multiline
-          numberOfLines={4}
-          accessibilityLabel="Flag note text"
-        />
-      </View>
-    </RightDrawer>
-  );
-}
-
-const flagModalStyles = StyleSheet.create({
-  content: {
-    gap: spacing.md,
-    padding: spacing.lg,
-  } as ViewStyle,
-  existingNote: {
-    backgroundColor: '#fef3c7',
-    borderWidth: 1,
-    borderColor: '#fde68a',
-    borderRadius: radius.md,
-    padding: spacing.md,
-    gap: spacing.sm,
-  } as ViewStyle,
-  existingNoteHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-  } as ViewStyle,
-  existingNoteTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#92400e',
-  } as TextStyle,
-  existingNoteBody: {
-    fontSize: 13,
-    color: '#78350f',
-    lineHeight: 18,
-  } as TextStyle,
-  removeBtn: {
-    alignSelf: 'flex-start',
-  } as ViewStyle,
-  removeBtnText: {
-    fontSize: 12,
-    color: '#DC2626',
-    fontWeight: '500',
-  } as TextStyle,
-  inputLabel: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: tokens.textSecondary,
-  } as TextStyle,
-  noteInput: {
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: radius.md,
-    padding: spacing.md,
-    fontSize: 14,
-    color: tokens.textPrimary,
-    minHeight: 96,
-    textAlignVertical: 'top',
-  } as unknown as TextStyle,
-  footer: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    padding: spacing.lg,
-  } as ViewStyle,
-  cancelBtn: {
-    flex: 1,
-    paddingVertical: 11,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: radius.md,
-    alignItems: 'center',
-  } as ViewStyle,
-  cancelBtnText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: tokens.textSecondary,
-  } as TextStyle,
-  saveBtn: {
-    flex: 1,
-    paddingVertical: 11,
-    backgroundColor: tokens.primary,
-    borderRadius: radius.md,
-    alignItems: 'center',
-  } as ViewStyle,
-  saveBtnDisabled: {
-    opacity: 0.5,
-  } as ViewStyle,
-  saveBtnText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#ffffff',
   } as TextStyle,
 });
 
@@ -2069,13 +1861,13 @@ interface MemberContextRailProps {
 
 /**
  * Right pane: member context sections in order:
- *   1. Active Journey card (progress bar + numerals.tabular %)
- *   2. Top Resource Needs card (ranked by severity, border-top dividers)
- *   3. Compass Insight card (emerald tinted bg, purple "AI suggested" Pill)
- *   4. Quick Actions (PressableCard buttons, OpenQuestionsDrawer trigger)
- *   5. Generate AI Summary (disabled stub)
- *   6. End Session (red destructive, inline slide-up confirm panel)
- *   7. Services Consent (informational)
+ *   1. Care Status card — journey name, progress bar, 5-stage vertical stepper
+ *   2. Active Needs card — top 3 resource needs ranked by severity
+ *   3. Session Focus card — last interaction, today's goal, next step
+ *   4. Screening Questions card — opens the suggested-questions drawer
+ *   5. Quick Actions — Add Case Note, Open Member Profile, Schedule Session
+ *   6. Complete Session — red destructive, inline slide-up confirm panel
+ *   7. Services Consent — informational read-only widget
  *
  * No nested cards within a single Card region — border-top dividers used instead.
  */
@@ -2086,7 +1878,6 @@ function MemberContextRail({
   const navigation = useNavigation<any>(); // eslint-disable-line @typescript-eslint/no-explicit-any
 
   const [questionsDrawerOpen, setQuestionsDrawerOpen] = useState(false);
-  const [flagModalOpen, setFlagModalOpen] = useState(false);
   const [caseNoteModalOpen, setCaseNoteModalOpen] = useState(false);
   const [endSessionPending, setEndSessionPending] = useState(false);
   const [showEndConfirm, setShowEndConfirm] = useState(false);
@@ -2128,8 +1919,6 @@ function MemberContextRail({
   }, [showEndConfirm, confirmSlideY, confirmOpacity]);
 
   const endSession = useEndSessionHook();
-  const consentRequestMutation = useCreateConsentRequest(session.id);
-  const messagesQuery = useSessionMessages(session.id);
 
   // Journey data
   const journeysQuery = useChwJourneys();
@@ -2160,11 +1949,6 @@ function MemberContextRail({
   const consentValue = consentQuery.data?.value ?? null;
   const servicesRefused = consentValue === 'refuse_services';
 
-  // Compass insight
-  const messages = messagesQuery.data ?? [];
-  const memberFirstName = getFirstName(session.memberName);
-  const compassInsight = useCompassInsight(messages, memberFirstName);
-
   // Journey display values
   const journeyPercent = activeJourney?.progressPercent ?? 0;
   const journeyName = activeJourney?.template.name ?? session.vertical?.replace(/_/g, ' ') ?? 'General';
@@ -2180,7 +1964,34 @@ function MemberContextRail({
     return `Current step: ${journeyCurrentStep} (due in ${daysUntilDue}d)`;
   }, [journeyCurrentStep, journeyDueDate]);
 
+  // 5-stage care stepper derived from journeyPercent (20% per stage)
+  const CARE_STAGES = [
+    'Intake Complete',
+    'Eligibility Checked',
+    'Documents Needed',
+    'Application Submitted',
+    'Approved',
+  ] as const;
+
+  type StageState = 'completed' | 'current' | 'future';
+
+  const stageStates = useMemo((): StageState[] => {
+    // Each stage covers a 20% band: stage 0 = 0–20, stage 1 = 20–40, …, stage 4 = 80–100
+    const currentStageIndex = Math.min(
+      Math.floor(journeyPercent / 20),
+      CARE_STAGES.length - 1,
+    );
+    return CARE_STAGES.map((_, i): StageState => {
+      if (i < currentStageIndex) return 'completed';
+      if (i === currentStageIndex) return 'current';
+      return 'future';
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [journeyPercent]);
+
   // ── End Session handler ───────────────────────────────────────────────────
+
+  const memberFirstName = getFirstName(session.memberName);
 
   const handleEndSessionConfirmed = useCallback(async (): Promise<void> => {
     setShowEndConfirm(false);
@@ -2200,32 +2011,8 @@ function MemberContextRail({
     }
   }, [session.id, endSession, onEndSessionComplete]);
 
-  // ── Request Recording Consent handler ────────────────────────────────────
-
-  const handleRequestRecordingConsent = useCallback(async (): Promise<void> => {
-    try {
-      await consentRequestMutation.mutateAsync('ai_transcription');
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.alert('Consent request sent — the member will receive an in-app notification.');
-      } else {
-        Alert.alert(
-          'Consent request sent',
-          'The member will receive an in-app notification to approve or deny recording.',
-        );
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Could not send consent request.';
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.alert(`Could not send consent request\n\n${message}`);
-      } else {
-        Alert.alert('Could not send consent request', message);
-      }
-    }
-  }, [consentRequestMutation]);
-
   const memberName = session.memberName ?? 'Unknown Member';
   const initials = getInitials(memberName);
-  const { bg, fg } = avatarColorFor(memberName);
 
   // Suggested questions drawer context
   const questionsJourney = activeJourney
@@ -2248,11 +2035,11 @@ function MemberContextRail({
         contentContainerStyle={styles.railContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* 1. Active Journey */}
+        {/* CARD 1 — Care Status */}
         <Card style={styles.railCard}>
           <View style={styles.railCardTitleRow}>
             <Activity size={13} color={tokens.textSecondary} />
-            <Text style={styles.railCardTitle}>Active Journey</Text>
+            <Text style={styles.railCardTitle}>Care Status</Text>
           </View>
           <View style={styles.journeyNameRow}>
             <Text style={styles.railJourneyName} numberOfLines={1}>
@@ -2284,14 +2071,59 @@ function MemberContextRail({
               {journeyPercent}% complete
             </Text>
           )}
+
+          {/* 5-stage vertical stepper */}
+          <View style={railCardStyles.stepper}>
+            {CARE_STAGES.map((stageName, i) => {
+              const state = stageStates[i] ?? 'future';
+              return (
+                <View key={stageName} style={railCardStyles.stepRow}>
+                  {/* Connector line above (all except first) */}
+                  {i > 0 ? (
+                    <View
+                      style={[
+                        railCardStyles.stepConnector,
+                        state === 'future' && stageStates[i - 1] === 'future'
+                          ? railCardStyles.stepConnectorFuture
+                          : railCardStyles.stepConnectorDone,
+                      ]}
+                    />
+                  ) : (
+                    <View style={railCardStyles.stepConnectorSpacer} />
+                  )}
+                  <View style={railCardStyles.stepDotCol}>
+                    {state === 'completed' ? (
+                      <View style={railCardStyles.stepDotCompleted}>
+                        <CheckCircle2 size={14} color="#15803d" />
+                      </View>
+                    ) : state === 'current' ? (
+                      <View style={railCardStyles.stepDotCurrent} />
+                    ) : (
+                      <View style={railCardStyles.stepDotFuture} />
+                    )}
+                  </View>
+                  <Text
+                    style={[
+                      railCardStyles.stepLabel,
+                      state === 'completed' && railCardStyles.stepLabelCompleted,
+                      state === 'current' && railCardStyles.stepLabelCurrent,
+                      state === 'future' && railCardStyles.stepLabelFuture,
+                    ]}
+                  >
+                    {stageName}
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
         </Card>
 
-        {/* 2. Top Resource Needs */}
+        {/* CARD 2 — Active Needs */}
         {topResourceNeeds.length > 0 ? (
           <Card style={styles.railCard}>
             <View style={styles.railCardTitleRow}>
               <Flag size={13} color={tokens.textSecondary} />
-              <Text style={styles.railCardTitle}>Top Resource Needs</Text>
+              <Text style={styles.railCardTitle}>Active Needs</Text>
             </View>
             {topResourceNeeds.map((journey, index) => {
               const severity = deriveSeverity(journey.progressPercent);
@@ -2318,32 +2150,51 @@ function MemberContextRail({
           </Card>
         ) : null}
 
-        {/* 3. Compass Insight (emerald tinted, purple "AI suggested" Pill) */}
-        <View style={styles.insightCard} role="region" accessibilityLabel="Compass Insight">
-          <View style={styles.insightHeader}>
-            <Sparkles size={14} color="#15803d" />
-            <Text style={styles.insightTitle}>Compass Insight</Text>
+        {/* CARD 3 — Session Focus */}
+        <Card style={styles.railCard}>
+          <View style={styles.railCardTitleRow}>
+            <BookOpen size={13} color={tokens.textSecondary} />
+            <Text style={styles.railCardTitle}>Session Focus</Text>
           </View>
-          <Text style={styles.insightBody}>{compassInsight}</Text>
-          <View style={styles.insightFooter}>
-            <Pill variant="purple" size="sm">AI suggested</Pill>
+          <View style={railCardStyles.sessionFocusSection}>
+            <Text style={railCardStyles.sessionFocusFieldLabel}>Last Interaction</Text>
+            <Text style={railCardStyles.sessionFocusFieldValue}>
+              Member completed housing intake and needs income verification.
+            </Text>
           </View>
-        </View>
+          <View style={[railCardStyles.sessionFocusSection, railCardStyles.sessionFocusBorder]}>
+            <Text style={railCardStyles.sessionFocusFieldLabel}>Today's Goal</Text>
+            <Text style={railCardStyles.sessionFocusFieldValue}>
+              Obtain proof of income documents.
+            </Text>
+          </View>
+          <View style={[railCardStyles.sessionFocusSection, railCardStyles.sessionFocusBorder]}>
+            <Text style={railCardStyles.sessionFocusFieldLabel}>Next Step</Text>
+            <Text style={railCardStyles.sessionFocusFieldValue}>
+              Upload documents by the agreed date.
+            </Text>
+          </View>
+        </Card>
 
-        {/* 4. Quick Actions */}
+        {/* CARD 4 — Screening Questions */}
+        <Card style={styles.railCard}>
+          <PressableCard
+            onPress={() => setQuestionsDrawerOpen(true)}
+            accessibilityLabel="Open SDOH / Health Screening"
+            style={railCardStyles.screeningRow}
+          >
+            <View style={railCardStyles.screeningLeft}>
+              <MessageSquare size={14} color={tokens.textSecondary} />
+              <Text style={railCardStyles.screeningLabel}>SDOH / Health Screening</Text>
+            </View>
+            <ArrowRight size={14} color={tokens.textMuted} />
+          </PressableCard>
+        </Card>
+
+        {/* QUICK ACTIONS */}
         <View role="region" accessibilityLabel="Quick Actions">
           <Text style={styles.quickActionsLabel}>QUICK ACTIONS</Text>
           <View style={styles.quickActionsStack}>
-            {/* Open Suggested Questions */}
-            <PressableCard
-              onPress={() => setQuestionsDrawerOpen(true)}
-              accessibilityLabel="Open suggested questions"
-              style={styles.quickActionBtn}
-            >
-              <MessageSquare size={16} color={tokens.textSecondary} style={styles.quickActionIcon} />
-              <Text style={styles.quickActionBtnText}>Open Suggested Questions</Text>
-            </PressableCard>
-
             {/* Add Case Note */}
             <PressableCard
               onPress={() => setCaseNoteModalOpen(true)}
@@ -2354,51 +2205,30 @@ function MemberContextRail({
               <Text style={styles.quickActionBtnText}>Add Case Note</Text>
             </PressableCard>
 
-            {/* Flag this Thread */}
+            {/* Open Member Profile */}
+            <PressableMember
+              memberId={session.memberId ?? ''}
+              displayName={memberName}
+              enabled={!!session.memberId}
+              style={[styles.quickActionBtn, railCardStyles.quickActionPressableMember]}
+            >
+              <ArrowRight size={16} color={tokens.textSecondary} style={styles.quickActionIcon} />
+              <Text style={styles.quickActionBtnText}>Open Member Profile</Text>
+            </PressableMember>
+
+            {/* Schedule Session */}
             <PressableCard
-              onPress={() => setFlagModalOpen(true)}
-              accessibilityLabel="Flag this thread"
+              onPress={() => navigation.navigate('Calendar')}
+              accessibilityLabel="Schedule session"
               style={styles.quickActionBtn}
             >
-              <Flag size={16} color={tokens.textSecondary} style={styles.quickActionIcon} />
-              <Text style={styles.quickActionBtnText}>Flag this Thread</Text>
-            </PressableCard>
-
-            {/* Request Recording Consent */}
-            <PressableCard
-              onPress={() => { void handleRequestRecordingConsent(); }}
-              disabled={consentRequestMutation.isPending}
-              accessibilityLabel="Request recording consent"
-              style={[styles.quickActionBtn, consentRequestMutation.isPending && styles.quickActionBtnDisabled]}
-            >
-              {consentRequestMutation.isPending ? (
-                <ActivityIndicator size="small" color={tokens.textSecondary} style={styles.quickActionIcon} />
-              ) : (
-                <FileText size={16} color={tokens.textSecondary} style={styles.quickActionIcon} />
-              )}
-              <Text style={styles.quickActionBtnText}>
-                {consentRequestMutation.isPending ? 'Sending...' : 'Request Recording Consent'}
-              </Text>
+              <CalendarPlus size={16} color={tokens.textSecondary} style={styles.quickActionIcon} />
+              <Text style={styles.quickActionBtnText}>Schedule Session</Text>
             </PressableCard>
           </View>
         </View>
 
-        {/* 5. Generate AI Summary (disabled) */}
-        <View role="region" accessibilityLabel="AI Summary">
-          <TouchableOpacity
-            style={styles.aiSummaryBtn}
-            disabled
-            accessibilityRole="button"
-            accessibilityLabel="Generate AI summary — available after session ends"
-            accessibilityState={{ disabled: true }}
-          >
-            <Sparkles size={15} color={tokens.textMuted} />
-            <Text style={styles.aiSummaryBtnText}>Generate AI Summary</Text>
-          </TouchableOpacity>
-          <Text style={styles.aiSummaryCaption}>Available after session ends</Text>
-        </View>
-
-        {/* 6. End Session (destructive) */}
+        {/* Complete Session (destructive) */}
         <View role="region" accessibilityLabel="Complete Session" style={styles.endSessionRegion}>
           <TouchableOpacity
             style={[
@@ -2468,7 +2298,7 @@ function MemberContextRail({
           ) : null}
         </View>
 
-        {/* 7. Services Consent (informational) */}
+        {/* Services Consent (informational) */}
         <View style={styles.railConsentSection}>
           <SectionHeader title="Services Consent" marginBottom={spacing.sm} />
           <ServicesConsentStatus
@@ -2485,14 +2315,6 @@ function MemberContextRail({
         member={questionsMember}
         journey={questionsJourney}
       />
-
-      {session.memberId ? (
-        <FlagThreadModal
-          memberId={session.memberId}
-          visible={flagModalOpen}
-          onClose={() => setFlagModalOpen(false)}
-        />
-      ) : null}
 
       {session.memberId ? (
         <CaseNoteModal
@@ -2514,7 +2336,7 @@ function MemberContextRail({
  * Panes:
  *   ThreadListPane      — thread list with search + 4 filter tabs
  *   ConversationPane    — message thread + templates + composer
- *   MemberContextRail   — journey, resource needs, Compass Insight, quick actions, End Session
+ *   MemberContextRail   — Care Status, Active Needs, Session Focus, Screening Questions, Quick Actions, Complete Session
  */
 export function CHWMessagesScreen(): React.JSX.Element {
   const { userName } = useAuth();
@@ -2754,6 +2576,143 @@ export function CHWMessagesScreen(): React.JSX.Element {
     </AppShell>
   );
 }
+
+// ─── Rail card sub-styles ─────────────────────────────────────────────────────
+
+/**
+ * Additional styles scoped to the new card components inside MemberContextRail.
+ * Kept separate from the large `styles` block to avoid StyleSheet growth.
+ */
+const railCardStyles = StyleSheet.create({
+  // Care Status stepper
+  stepper: {
+    marginTop: 12,
+    gap: 0,
+  } as ViewStyle,
+  stepRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    position: 'relative',
+  } as ViewStyle,
+  stepConnector: {
+    position: 'absolute',
+    left: 6,
+    top: -8,
+    width: 2,
+    height: 8,
+    borderRadius: 1,
+  } as ViewStyle,
+  stepConnectorSpacer: {
+    width: 0,
+    height: 0,
+  } as ViewStyle,
+  stepConnectorDone: {
+    backgroundColor: tokens.emerald500,
+  } as ViewStyle,
+  stepConnectorFuture: {
+    backgroundColor: tokens.cardBorder,
+  } as ViewStyle,
+  stepDotCol: {
+    width: 14,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  } as ViewStyle,
+  stepDotCompleted: {
+    width: 14,
+    height: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+  stepDotCurrent: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: tokens.amber700,
+    borderWidth: 2,
+    borderColor: tokens.orange100,
+  } as ViewStyle,
+  stepDotFuture: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: tokens.cardBorder,
+  } as ViewStyle,
+  stepLabel: {
+    fontSize: 12,
+    flex: 1,
+  } as TextStyle,
+  stepLabelCompleted: {
+    color: tokens.emerald700,
+    fontWeight: '500',
+  } as TextStyle,
+  stepLabelCurrent: {
+    color: tokens.amber700,
+    fontWeight: '600',
+  } as TextStyle,
+  stepLabelFuture: {
+    color: tokens.textMuted,
+  } as TextStyle,
+
+  // Session Focus card
+  sessionFocusSection: {
+    paddingVertical: 6,
+    gap: 2,
+  } as ViewStyle,
+  sessionFocusBorder: {
+    borderTopWidth: 1,
+    borderTopColor: tokens.cardBorder,
+  } as ViewStyle,
+  sessionFocusFieldLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: tokens.textMuted,
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+  } as TextStyle,
+  sessionFocusFieldValue: {
+    fontSize: 12,
+    color: tokens.textPrimary,
+    lineHeight: 17,
+  } as TextStyle,
+
+  // Screening Questions card
+  screeningRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 2,
+    paddingHorizontal: 0,
+    borderWidth: 0,
+    backgroundColor: 'transparent',
+  } as ViewStyle,
+  screeningLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+  } as ViewStyle,
+  screeningLabel: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: tokens.textPrimary,
+  } as TextStyle,
+
+  // Quick Action — PressableMember wrapper sizing
+  quickActionPressableMember: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: tokens.cardBorder,
+    borderRadius: 10,
+    backgroundColor: tokens.cardBg,
+  } as ViewStyle,
+});
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
@@ -3554,42 +3513,6 @@ const styles = StyleSheet.create({
     color: tokens.amber700,
   } as TextStyle,
 
-  // Compass Insight card (emerald tinted — no Card wrapper)
-  insightCard: {
-    backgroundColor: '#ecfdf5',
-    borderWidth: 1,
-    borderColor: '#a7f3d0',
-    borderRadius: radius.xl,
-    padding: 14,
-    gap: spacing.sm,
-    ...(shadows.card as object),
-  } as ViewStyle,
-
-  insightHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 2,
-  } as ViewStyle,
-
-  insightTitle: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#047857',
-    flex: 1,
-  } as TextStyle,
-
-  insightBody: {
-    fontSize: 12,
-    color: '#065f46',
-    lineHeight: 19,
-  } as TextStyle,
-
-  insightFooter: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-  } as ViewStyle,
-
   // Quick Actions
   quickActionsLabel: {
     fontSize: 10,
@@ -3630,34 +3553,6 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: tokens.textPrimary,
     flex: 1,
-  } as TextStyle,
-
-  // Generate AI Summary
-  aiSummaryBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.sm,
-    paddingVertical: 10,
-    paddingHorizontal: spacing.md,
-    borderWidth: 1,
-    borderColor: tokens.cardBorder,
-    borderRadius: radius.md,
-    backgroundColor: tokens.gray100,
-    opacity: 0.6,
-  } as ViewStyle,
-
-  aiSummaryBtnText: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: tokens.textMuted,
-  } as TextStyle,
-
-  aiSummaryCaption: {
-    fontSize: 11,
-    color: tokens.textMuted,
-    textAlign: 'center',
-    marginTop: 4,
   } as TextStyle,
 
   // End Session (destructive)
