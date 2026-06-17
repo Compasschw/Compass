@@ -31,6 +31,13 @@ class CHWProfileResponse(BaseModel):
     # Profile picture URL stored on the User row (S3 public bucket).
     # Null when no photo has been uploaded.
     profile_picture_url: str | None = None
+    # ── Compliance ───────────────────────────────────────────────────────
+    # Surfaced on the CHW Profile screen so the worker (and admins) can see
+    # onboarding status at a glance. background_check_status is one of:
+    # "not_started" | "pending" | "clear" | "consider".
+    hipaa_training_completed: bool = False
+    chw_certification: str | None = None
+    background_check_status: str = "not_started"
 
 class CHWProfileUpdate(BaseModel):
     specializations: list[str] | None = None
@@ -42,6 +49,10 @@ class CHWProfileUpdate(BaseModel):
     # Use an explicit sentinel (unset vs null) so callers can clear the photo by
     # sending null without accidentally wiping it when the field is simply absent.
     profile_picture_url: str | None = None
+    # ── Compliance (CHW-editable) ────────────────────────────────────────
+    hipaa_training_completed: bool | None = None
+    chw_certification: str | None = None
+    background_check_status: str | None = None
 
 class MemberProfileCreate(BaseModel):
     zip_code: str | None = None

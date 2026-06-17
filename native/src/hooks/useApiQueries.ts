@@ -105,6 +105,14 @@ export interface ChwProfile {
    * Null when no photo has been uploaded.
    */
   profilePictureUrl?: string | null;
+  /**
+   * Compliance status, surfaced on the CHW Profile screen.
+   * backgroundCheckStatus is one of: "not_started" | "pending" | "clear" | "consider".
+   * Optional because older API responses may pre-date the compliance columns.
+   */
+  hipaaTrainingCompleted?: boolean;
+  chwCertification?: string | null;
+  backgroundCheckStatus?: 'not_started' | 'pending' | 'clear' | 'consider';
 }
 
 export interface MemberProfile {

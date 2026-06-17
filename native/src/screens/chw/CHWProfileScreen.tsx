@@ -141,6 +141,30 @@ const MODALITY_LABELS: Record<Modality, string> = {
 
 const ALL_MODALITIES: Modality[] = ['in_person', 'virtual', 'hybrid'];
 
+// ─── Background check (mirrors backend _BACKGROUND_CHECK_STATUSES) ─────────────
+type BackgroundCheckStatus = 'not_started' | 'pending' | 'clear' | 'consider';
+
+const BACKGROUND_CHECK_OPTIONS: BackgroundCheckStatus[] = [
+  'not_started',
+  'pending',
+  'clear',
+  'consider',
+];
+
+const BACKGROUND_CHECK_LABELS: Record<BackgroundCheckStatus, string> = {
+  not_started: 'Not Started',
+  pending:     'Pending',
+  clear:       'Clear',
+  consider:    'Consider',
+};
+
+const BACKGROUND_CHECK_COLORS: Record<BackgroundCheckStatus, string> = {
+  not_started: '#6B7280', // gray
+  pending:     '#F59E0B', // amber
+  clear:       '#10B981', // green
+  consider:    '#EF4444', // red
+};
+
 // ─── TabBar ───────────────────────────────────────────────────────────────────
 
 interface TabBarProps {
@@ -955,6 +979,70 @@ export function CHWProfileScreen(): React.JSX.Element {
                       colors={VERTICAL_COLORS}
                       onChange={(next) => void handleSaveSpecializations(next)}
                     />
+                  </View>
+
+                  {/* Compliance — HIPAA training, certification, background check */}
+                  <View style={profileStyles.specializationsSection}>
+                    <Text style={profileStyles.formTitle}>Compliance</Text>
+                    <ToggleRow
+                      label="HIPAA training completed"
+                      description="Confirms you have completed required HIPAA privacy & security training."
+                      value={profile?.hipaaTrainingCompleted ?? false}
+                      onValueChange={(v) =>
+                        void handleSaveField('HIPAA Training', { hipaaTrainingCompleted: v })
+                      }
+                    />
+                    <EditableField
+                      label="CHW Certification"
+                      value={profile?.chwCertification ?? ''}
+                      placeholder="e.g. California CHW Certification #12345"
+                      isEditing={editingField === 'chwCertification'}
+                      onEditStart={() => setEditingField('chwCertification')}
+                      onEditCancel={() => setEditingField(null)}
+                      onSave={(v) =>
+                        handleSaveField('CHW Certification', {
+                          chwCertification: v.trim() || null,
+                        })
+                      }
+                    />
+                    <View style={profileStyles.chipsSection}>
+                      <Text style={profileStyles.chipsSectionLabel}>Background Check</Text>
+                      <View style={chipStyles.row}>
+                        {BACKGROUND_CHECK_OPTIONS.map((status) => {
+                          const isSelected =
+                            (profile?.backgroundCheckStatus ?? 'not_started') === status;
+                          const color = BACKGROUND_CHECK_COLORS[status];
+                          return (
+                            <Pressable
+                              key={status}
+                              onPress={() =>
+                                void handleSaveField('Background Check', {
+                                  backgroundCheckStatus: status,
+                                })
+                              }
+                              accessibilityRole="radio"
+                              accessibilityState={{ checked: isSelected }}
+                              accessibilityLabel={BACKGROUND_CHECK_LABELS[status]}
+                              style={[
+                                chipStyles.chip,
+                                isSelected
+                                  ? { backgroundColor: `${color}20`, borderColor: color }
+                                  : chipStyles.chipInactive,
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  chipStyles.chipText,
+                                  { color: isSelected ? color : '#6B7280' },
+                                ]}
+                              >
+                                {BACKGROUND_CHECK_LABELS[status]}
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
+                      </View>
+                    </View>
                   </View>
                 </>
               )}

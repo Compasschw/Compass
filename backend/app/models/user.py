@@ -84,6 +84,15 @@ class CHWProfile(Base):
     # billing audit + future Pear API submissions. Nullable until the CHW
     # provides it during onboarding / admin sets it via the admin endpoint.
     npi: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    # ── Compliance (HIPAA training, certification, background check) ─────────
+    hipaa_training_completed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+    chw_certification: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    # "not_started" | "pending" | "clear" | "consider"
+    background_check_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="not_started"
+    )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

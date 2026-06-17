@@ -51,7 +51,15 @@ def _serialize_chw_profile(profile, current_user) -> "CHWProfileResponse":
         email=current_user.email,
         phone=current_user.phone,
         profile_picture_url=current_user.profile_picture_url,
+        hipaa_training_completed=profile.hipaa_training_completed,
+        chw_certification=profile.chw_certification,
+        background_check_status=profile.background_check_status,
     )
+
+
+# Allowed values for CHWProfile.background_check_status. Kept in sync with the
+# model column comment and the frontend picker.
+_BACKGROUND_CHECK_STATUSES = {"not_started", "pending", "clear", "consider"}
 
 
 @router.get("/profile", response_model=CHWProfileResponse)
@@ -79,6 +87,14 @@ async def update_profile(data: CHWProfileUpdate, current_user=Depends(require_ro
         raise HTTPException(status_code=404, detail="Profile not found")
 
     payload = data.model_dump(exclude_unset=True)
+
+    # Validate the compliance enum at the boundary before it reaches setattr.
+    bg_status = payload.get("background_check_status")
+    if bg_status is not None and bg_status not in _BACKGROUND_CHECK_STATUSES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"background_check_status must be one of {sorted(_BACKGROUND_CHECK_STATUSES)}",
+        )
 
     # Route profile_picture_url to the User row, not the CHWProfile row.
     if "profile_picture_url" in payload:
