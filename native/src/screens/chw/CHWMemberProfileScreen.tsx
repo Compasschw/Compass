@@ -263,7 +263,7 @@ function useAssessmentLatest(memberId: string) {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const SESSIONS_PAGE_SIZE = 20;
+const SESSIONS_PAGE_SIZE = 10;
 
 const SESSION_STATUS_LABELS: Record<string, string> = {
   scheduled: 'Scheduled',
@@ -2799,9 +2799,10 @@ function SessionsTable({
       {/* Table header */}
       <View style={tableStyles.header}>
         <Text style={[tableStyles.headerCell, tableStyles.colDate]}>Date & Time</Text>
+        <Text style={[tableStyles.headerCell, tableStyles.colModality]}>Type</Text>
         <Text style={[tableStyles.headerCell, tableStyles.colStatus]}>Status</Text>
-        <Text style={[tableStyles.headerCell, tableStyles.colModality]}>Modality</Text>
         <Text style={[tableStyles.headerCell, tableStyles.colDuration]}>Duration</Text>
+        <Text style={[tableStyles.headerCell, tableStyles.colModality]}>Modality</Text>
         <Text style={[tableStyles.headerCell, tableStyles.colActions]}>Actions</Text>
       </View>
 
@@ -2823,6 +2824,9 @@ function SessionsTable({
             <Text style={[tableStyles.cell, tableStyles.colDate, tableStyles.dateText]}>
               {formatDateTime(session.scheduledAt ?? session.startedAt)}
             </Text>
+            <Text style={[tableStyles.cell, tableStyles.colModality]}>
+              {modeLabel}
+            </Text>
             <View style={tableStyles.colStatus}>
               <View style={[tableStyles.statusPill, { backgroundColor: statusColor + '18' }]}>
                 <Text style={[tableStyles.statusText, { color: statusColor }]}>
@@ -2830,13 +2834,13 @@ function SessionsTable({
                 </Text>
               </View>
             </View>
-            <Text style={[tableStyles.cell, tableStyles.colModality]}>
-              {modeLabel}
-            </Text>
             <Text style={[tableStyles.cell, tableStyles.colDuration]}>
               {session.durationMinutes != null
                 ? `${session.durationMinutes} min`
                 : '—'}
+            </Text>
+            <Text style={[tableStyles.cell, tableStyles.colModality]}>
+              Individual
             </Text>
             <View style={tableStyles.colActions}>
               <TouchableOpacity
