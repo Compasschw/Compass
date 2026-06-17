@@ -36,10 +36,14 @@ import {
   CalendarDays,
   Clock,
   MapPin,
+  Phone,
+  Video,
+  ArrowRight,
   Target,
   Plus,
   X,
 } from 'lucide-react-native';
+import { useNavigation } from '@react-navigation/native';
 
 import { colors as tokens, numerals, spacing, radius } from '../../theme/tokens';
 import { colors } from '../../theme/colors';
@@ -193,6 +197,8 @@ function deriveSessionEvents(sessions: SessionData[]): CalendarEvent[] {
       type: 'session' as const,
       chwName: session.chwName,
       memberName: session.memberName,
+      memberId: session.memberId,
+      mode: session.mode,
     };
   });
 }
@@ -250,11 +256,29 @@ function formatDateTimeLabel(value: string): string {
 
 // ─── EventDetailCard sub-component ───────────────────────────────────────────
 
-interface EventDetailCardProps {
-  event: CalendarEvent;
+/** Lucide icon for a session modality (phone / video / in-person). */
+function ModalityIcon({ mode, size = 12, color }: { mode?: string; size?: number; color?: string }): React.JSX.Element {
+  const c = color ?? colors.mutedForeground;
+  if (mode === 'phone') return <Phone size={size} color={c} />;
+  if (mode === 'video') return <Video size={size} color={c} />;
+  return <MapPin size={size} color={c} />; // in_person / default
 }
 
-function EventDetailCard({ event }: EventDetailCardProps): React.JSX.Element {
+/** Human label for a session modality. */
+function modalityLabel(mode?: string): string {
+  if (mode === 'phone') return 'Phone session';
+  if (mode === 'video') return 'Video session';
+  if (mode === 'in_person' || mode === 'in-person') return 'In-person session';
+  return 'Session';
+}
+
+interface EventDetailCardProps {
+  event: CalendarEvent;
+  /** Opens the member profile for this session's member, if known. */
+  onOpenProfile?: () => void;
+}
+
+function EventDetailCard({ event, onOpenProfile }: EventDetailCardProps): React.JSX.Element {
   const barColor = eventColor(event);
   const isSession = event.type === 'session';
   const journey = mockJourneyStatus(event.id);
@@ -293,6 +317,14 @@ function EventDetailCard({ event }: EventDetailCardProps): React.JSX.Element {
           </Text>
         </View>
 
+        {/* Session modality (phone / video / in-person) */}
+        {isSession ? (
+          <View style={detailStyles.metaRow}>
+            <ModalityIcon mode={event.mode} />
+            <Text style={detailStyles.metaText}>{modalityLabel(event.mode)}</Text>
+          </View>
+        ) : null}
+
         {event.memberName ? (
           <View style={detailStyles.metaRow}>
             <CalendarDays size={12} color={colors.mutedForeground} />
@@ -319,6 +351,19 @@ function EventDetailCard({ event }: EventDetailCardProps): React.JSX.Element {
               Goal: walk through Medi-Cal renewal paperwork together.
             </Text>
           </View>
+        ) : null}
+
+        {/* Primary action — open the member's full profile */}
+        {isSession && event.memberId && onOpenProfile ? (
+          <TouchableOpacity
+            style={detailStyles.openProfileBtn}
+            onPress={onOpenProfile}
+            accessibilityRole="button"
+            accessibilityLabel={`Open ${event.memberName ?? 'member'} profile`}
+          >
+            <Text style={detailStyles.openProfileText}>Open Member Profile</Text>
+            <ArrowRight size={14} color={colors.primary} />
+          </TouchableOpacity>
         ) : null}
       </View>
     </View>
@@ -427,6 +472,22 @@ const detailStyles = StyleSheet.create({
     color: colors.foreground,
     lineHeight: 16,
   },
+  openProfileBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 10,
+    paddingVertical: 9,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.primary,
+  },
+  openProfileText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 13,
+    color: colors.primary,
+  },
 });
 
 // ─── WeekViewGrid — web-only ──────────────────────────────────────────────────
@@ -508,9 +569,13 @@ function WeekViewGrid({
                   return (
                     <View
                       key={event.id}
-                      style={[weekStyles.eventChip, { backgroundColor: barColor + '22', borderLeftColor: barColor }]}
+                      style={[
+                        weekStyles.eventChip,
+                        { backgroundColor: barColor + '22', borderLeftColor: barColor, flexDirection: 'row', alignItems: 'center', gap: 3 },
+                      ]}
                     >
-                      <Text style={[weekStyles.eventChipText, { color: barColor }]} numberOfLines={1}>
+                      {event.type === 'session' ? <ModalityIcon mode={event.mode} size={9} color={barColor} /> : null}
+                      <Text style={[weekStyles.eventChipText, { color: barColor, flex: 1 }]} numberOfLines={1}>
                         {event.memberName ?? event.title}
                       </Text>
                     </View>
@@ -1174,6 +1239,15 @@ export function CHWCalendarScreen(): React.JSX.Element {
   const { data: rawSessions, isLoading, error, refetch } = useSessions();
   const { data: rawRequests, isLoading: isLoadingRequests } = useRequests();
   const refresh = useRefreshControl([refetch]);
+  const navigation = useNavigation();
+
+  // Open a member's full profile from a session detail card.
+  const handleOpenProfile = useCallback((memberId: string) => {
+    (navigation as any).navigate('SessionsStack', {
+      screen: 'MemberProfile',
+      params: { memberId },
+    });
+  }, [navigation]);
 
   // View mode: web defaults to 'week', native stays 'month'
   const [viewMode, setViewMode] = useState<CalendarViewMode>(
@@ -1500,7 +1574,13 @@ export function CHWCalendarScreen(): React.JSX.Element {
                 </View>
               ) : (
                 selectedEvents.map((event) => (
-                  <EventDetailCard key={event.id} event={event} />
+                  <EventDetailCard
+                  key={event.id}
+                  event={event}
+                  onOpenProfile={
+                    event.memberId ? () => handleOpenProfile(event.memberId!) : undefined
+                  }
+                />
                 ))
               )}
             </View>
@@ -1566,7 +1646,13 @@ export function CHWCalendarScreen(): React.JSX.Element {
               </View>
             ) : (
               selectedEvents.map((event) => (
-                <EventDetailCard key={event.id} event={event} />
+                <EventDetailCard
+                  key={event.id}
+                  event={event}
+                  onOpenProfile={
+                    event.memberId ? () => handleOpenProfile(event.memberId!) : undefined
+                  }
+                />
               ))
             )}
           </View>

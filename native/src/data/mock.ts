@@ -121,6 +121,10 @@ export interface CalendarEvent {
   type: 'session' | 'goal_milestone';
   chwName?: string;
   memberName?: string;
+  /** Owning member's User id — used to open the member profile from a session. */
+  memberId?: string;
+  /** Session modality (e.g. "phone" | "video" | "in_person") for the type icon. */
+  mode?: string;
 }
 
 export interface RewardHistoryEntry {
