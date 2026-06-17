@@ -2399,7 +2399,7 @@ function MemberContextRail({
         </View>
 
         {/* 6. End Session (destructive) */}
-        <View role="region" accessibilityLabel="End Session" style={styles.endSessionRegion}>
+        <View role="region" accessibilityLabel="Complete Session" style={styles.endSessionRegion}>
           <TouchableOpacity
             style={[
               styles.endSessionBtn,
@@ -2410,10 +2410,10 @@ function MemberContextRail({
             accessibilityRole="button"
             accessibilityLabel={
               servicesRefused
-                ? 'End session disabled — member has refused services'
+                ? 'Complete session disabled — member has refused services'
                 : endSessionPending
-                ? 'Ending session...'
-                : 'End session'
+                ? 'Completing session...'
+                : 'Complete session'
             }
             accessibilityState={{ disabled: endSessionPending || servicesRefused }}
           >
@@ -2423,7 +2423,7 @@ function MemberContextRail({
               <LogOut size={16} color="#fff" />
             )}
             <Text style={styles.endSessionBtnText}>
-              {endSessionPending ? 'Ending...' : 'End Session'}
+              {endSessionPending ? 'Completing...' : 'Complete Session'}
             </Text>
           </TouchableOpacity>
 
@@ -2441,7 +2441,7 @@ function MemberContextRail({
               accessibilityLabel="Confirm end session"
             >
               <Text style={styles.endConfirmTitle}>
-                End the session for {memberFirstName}?
+                Complete the session for {memberFirstName}?
               </Text>
               <Text style={styles.endConfirmBody}>
                 Recording stops and you will be prompted to document the session before the claim can be filed.
@@ -2459,9 +2459,9 @@ function MemberContextRail({
                   style={styles.endConfirmProceed}
                   onPress={() => void handleEndSessionConfirmed()}
                   accessibilityRole="button"
-                  accessibilityLabel="Confirm end session"
+                  accessibilityLabel="Confirm complete session"
                 >
-                  <Text style={styles.endConfirmProceedText}>End Session</Text>
+                  <Text style={styles.endConfirmProceedText}>Complete Session</Text>
                 </TouchableOpacity>
               </View>
             </Animated.View>
