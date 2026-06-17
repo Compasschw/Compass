@@ -15,7 +15,7 @@
  *     journeys in rank order, 6 steps each, with per-step state + points).
  *   - Quick Access row — Add Note, Flag Member, Schedule Session, Document Session.
  *   - Billable Units widget (today vs daily cap; this year vs yearly cap).
- *   - Sessions table — paginated (20 rows/page).
+ *   - Sessions table — paginated (10 rows/page).
  *
  * Severity heuristic (client-side, no backend change):
  *   progressPercent < 33   → High   (red)
@@ -41,6 +41,7 @@ import {
   ScrollView,
   StatusBar,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   TouchableOpacity,
@@ -109,6 +110,8 @@ import {
 } from '../../components/chw/OpenQuestionsDrawer';
 import {
   useMemberServicesConsent,
+  useMemberBillingStatus,
+  useUpdateMemberBillingStatus,
   useFlagNote,
   useCreateFlagNote,
   useDeleteFlagNote,
@@ -842,6 +845,25 @@ function BillingConsentCard({
   const consentValue: ServicesConsentStatus = consentData?.value ?? null;
   const isRefused = consentValue === 'refuse_services';
 
+  // Billable / non-billable toggle (CHW-controlled). Defaults to billable.
+  const { data: billingStatus } = useMemberBillingStatus(memberId);
+  const updateBilling = useUpdateMemberBillingStatus(memberId);
+  const isBillable = billingStatus?.isBillable ?? true;
+
+  const handleToggleBillable = (next: boolean): void => {
+    if (updateBilling.isPending) return;
+    updateBilling.mutate(next, {
+      onError: () => {
+        const msg = 'Could not update billing status. Please try again.';
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.alert(msg);
+        } else {
+          Alert.alert('Error', msg);
+        }
+      },
+    });
+  };
+
   const statusLabel = isRefused
     ? 'Refused Services'
     : consentValue === 'consent_to_services'
@@ -880,6 +902,37 @@ function BillingConsentCard({
       {consentData?.changedAt && (
         <Text style={billingConsentCardStyles.changedAt}>
           Updated {formatDate(consentData.changedAt)}
+        </Text>
+      )}
+
+      {/* Billable / non-billable toggle (CHW-controlled) */}
+      <View style={billingConsentCardStyles.billableRow}>
+        <View style={billingConsentCardStyles.billableLabelWrap}>
+          <Text style={billingConsentCardStyles.billableLabel}>
+            {isBillable ? 'Billable' : 'Non-billable'}
+          </Text>
+          <Text style={billingConsentCardStyles.billableSub}>
+            {isBillable
+              ? 'Sessions are billable to Medi-Cal'
+              : 'Sessions excluded from billing'}
+          </Text>
+        </View>
+        {updateBilling.isPending ? (
+          <ActivityIndicator size="small" color="#15803D" />
+        ) : (
+          <Switch
+            value={isBillable}
+            onValueChange={handleToggleBillable}
+            trackColor={{ false: '#D1D5DB', true: '#86EFAC' }}
+            thumbColor={isBillable ? '#15803D' : '#9CA3AF'}
+            accessibilityLabel="Toggle billable status"
+          />
+        )}
+      </View>
+
+      {billingStatus?.changedAt && (
+        <Text style={billingConsentCardStyles.changedAt}>
+          Billing status updated {formatDate(billingStatus.changedAt)}
         </Text>
       )}
 
@@ -934,6 +987,30 @@ const billingConsentCardStyles = StyleSheet.create({
     fontSize: 12,
   } as TextStyle,
   changedAt: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 10,
+    color: '#6B7280',
+  } as TextStyle,
+  billableRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    marginTop: 4,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#DCFCE7',
+  } as ViewStyle,
+  billableLabelWrap: {
+    flex: 1,
+    gap: 1,
+  } as ViewStyle,
+  billableLabel: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 12,
+    color: '#166534',
+  } as TextStyle,
+  billableSub: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 10,
     color: '#6B7280',

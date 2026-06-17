@@ -112,6 +112,7 @@ from app.routers.admin import router as admin_router
 from app.routers.admin_demo import router as admin_demo_router
 from app.routers.assessments import router as assessments_router
 from app.routers.auth import router as auth_router
+from app.routers.billing_status import router as billing_status_router
 from app.routers.case_notes import router as case_notes_router
 from app.routers.chw import router as chw_router
 from app.routers.chw_intake import router as chw_intake_router
@@ -178,6 +179,7 @@ app.include_router(members_flag_note_router)
 app.include_router(sessions_router)
 app.include_router(consent_request_router)
 app.include_router(case_notes_router)
+app.include_router(billing_status_router)
 app.include_router(member_documents_members_router)
 app.include_router(member_documents_documents_router)
 app.include_router(transcript_router)

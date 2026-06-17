@@ -160,6 +160,22 @@ class MemberProfile(Base):
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
     )
 
+    # ── Billing eligibility (billable / non-billable) ────────────────────────
+    # CHW-controlled toggle on the Member Profile. Default true (billable).
+    # When false, the member is marked non-billable: their completed sessions
+    # should be excluded from Pear Suite billing submission. changed_at +
+    # changed_by give the compliance audit trail (who flipped it, when),
+    # mirroring the services_consent pattern above.
+    is_billable: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="true"
+    )
+    billing_status_changed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    billing_status_changed_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+
     rewards_balance: Mapped[int] = mapped_column(Integer, default=0)
     preferred_mode: Mapped[str | None] = mapped_column(String(20))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

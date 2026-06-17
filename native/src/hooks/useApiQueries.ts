@@ -1913,6 +1913,57 @@ export function useOwnServicesConsent() {
   });
 }
 
+// ─── Member billing status (billable / non-billable) ───────────────────────────
+
+/** Shape returned by GET/PATCH /api/v1/members/{id}/billing-status (camelCase). */
+export interface MemberBillingStatusData {
+  isBillable: boolean;
+  /** ISO timestamp of the last flip, or null when never changed from default. */
+  changedAt: string | null;
+  /** User ID of the CHW/admin who last changed it, or null. */
+  changedBy: string | null;
+}
+
+/**
+ * Fetch a member's billable/non-billable status (CHW or admin view).
+ *
+ * Endpoint: GET /api/v1/members/{member_id}/billing-status. Empty memberId
+ * disables the query.
+ */
+export function useMemberBillingStatus(memberId: string) {
+  return useQuery({
+    queryKey: ['member', memberId, 'billing-status'] as const,
+    queryFn: async (): Promise<MemberBillingStatusData> => {
+      const raw = await api<unknown>(`/members/${memberId}/billing-status`);
+      return transformKeys<MemberBillingStatusData>(raw);
+    },
+    enabled: !!memberId,
+    staleTime: 30_000,
+  });
+}
+
+/**
+ * Toggle a member's billable/non-billable status (CHW or admin only).
+ *
+ * Endpoint: PATCH /api/v1/members/{member_id}/billing-status { is_billable }.
+ * Optimistically updates the cached billing-status on success.
+ */
+export function useUpdateMemberBillingStatus(memberId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (isBillable: boolean): Promise<MemberBillingStatusData> => {
+      const raw = await api<unknown>(`/members/${memberId}/billing-status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ is_billable: isBillable }),
+      });
+      return transformKeys<MemberBillingStatusData>(raw);
+    },
+    onSuccess: (data) => {
+      qc.setQueryData(['member', memberId, 'billing-status'], data);
+    },
+  });
+}
+
 /**
  * Fetch the services-consent status for a given member from the CHW side.
  *

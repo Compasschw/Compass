@@ -140,6 +140,39 @@ class ServicesConsentUpdate(BaseModel):
         return value
 
 
+class BillingStatusResponse(BaseModel):
+    """Response body for GET/PATCH /api/v1/members/{member_id}/billing-status.
+
+    Fields:
+        is_billable: True when the member's completed sessions are billable;
+                     False marks them non-billable (excluded from Pear Suite
+                     submission).
+        changed_at:  ISO-8601 UTC timestamp of the last flip, or None when the
+                     field has never been explicitly set (legacy rows on the
+                     server default).
+        changed_by:  UUID of the CHW/admin who last changed it, or None.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    is_billable: bool
+    changed_at: datetime | None = None
+    changed_by: UUID | None = None
+
+
+class BillingStatusUpdate(BaseModel):
+    """Request body for PATCH /api/v1/members/{member_id}/billing-status.
+
+    Only ``is_billable`` is accepted — the server stamps ``changed_at`` and
+    ``changed_by`` from the request context so the client cannot forge them.
+    """
+
+    is_billable: bool = Field(
+        ...,
+        description="True = billable, False = non-billable.",
+    )
+
+
 class InsuranceCINUpdate(BaseModel):
     """Request body for PATCH /api/v1/member/profile/insurance-cin.
 
