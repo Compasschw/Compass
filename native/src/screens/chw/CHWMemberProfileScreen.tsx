@@ -72,12 +72,10 @@ import {
   ShieldCheck,
   ShieldOff,
   ShieldX,
-  Sparkles,
   Star,
   User,
   CheckSquare,
   UploadCloud,
-  RadioTower,
   ChevronRight,
   ClipboardList,
   X,
@@ -512,15 +510,25 @@ const emptyStyles = StyleSheet.create({
 
 interface DemographicsColumnProps {
   profile: CHWMemberProfileDetail;
+  displayName: string;
+  servicesConsentRefused: boolean;
+  onNavigateToConversation: (conversationId: string) => void;
+  onNavigateAndCall: () => void;
 }
 
 /**
  * Left column of the 3-column top card.
  * Renders avatar + name banner, then demographic data rows (all read-only).
  */
-function DemographicsColumn({ profile }: DemographicsColumnProps): React.JSX.Element {
+function DemographicsColumn({
+  profile,
+  displayName,
+  servicesConsentRefused,
+  onNavigateToConversation,
+  onNavigateAndCall,
+}: DemographicsColumnProps): React.JSX.Element {
   const initials = getInitials(profile.firstName, profile.lastName);
-  const displayName = `${profile.firstName} ${profile.lastName}`.trim();
+  const ctaDisabled = servicesConsentRefused;
 
   const addressLabel = profile.address
     ? [profile.address, profile.city, profile.zipCode].filter(Boolean).join(', ')
@@ -551,9 +559,45 @@ function DemographicsColumn({ profile }: DemographicsColumnProps): React.JSX.Ele
         </View>
       </View>
 
+      {/* Stacked Call / Message actions, directly below the avatar */}
+      <View style={[demoColStyles.ctaStack, ctaDisabled && demoColStyles.ctaStackDisabled]}>
+        <TouchableOpacity
+          style={[demoColStyles.ctaBtn, demoColStyles.callBtn]}
+          onPress={ctaDisabled ? undefined : onNavigateAndCall}
+          disabled={ctaDisabled}
+          accessibilityRole="button"
+          accessibilityLabel={
+            ctaDisabled ? 'Call disabled — member has refused services' : `Call ${displayName}`
+          }
+          accessibilityState={{ disabled: ctaDisabled }}
+        >
+          <Phone size={14} color="#FFFFFF" />
+          <Text style={demoColStyles.ctaBtnText}>Call</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[demoColStyles.ctaBtn, demoColStyles.messageBtn]}
+          onPress={ctaDisabled ? undefined : () => onNavigateToConversation('')}
+          disabled={ctaDisabled}
+          accessibilityRole="button"
+          accessibilityLabel={
+            ctaDisabled ? 'Message disabled — member has refused services' : `Message ${displayName}`
+          }
+          accessibilityState={{ disabled: ctaDisabled }}
+        >
+          <MessageSquare size={14} color={tokens.primary} />
+          <Text style={[demoColStyles.ctaBtnText, { color: tokens.primary }]}>Message</Text>
+        </TouchableOpacity>
+      </View>
+
       {/* Demographics rows */}
       <View style={demoColStyles.rows}>
         <ColumnHeading text="Demographics" sub="(CHW read-only)" />
+        <InfoRow
+          icon={<User size={13} color={tokens.primary} />}
+          label="Preferred Name"
+          value={profile.firstName || 'Not provided'}
+          placeholder={!profile.firstName}
+        />
         <InfoRow
           icon={<Phone size={13} color={tokens.primary} />}
           label="Phone"
@@ -598,7 +642,7 @@ function DemographicsColumn({ profile }: DemographicsColumnProps): React.JSX.Ele
         />
         <InfoRow
           icon={<Shield size={13} color={tokens.primary} />}
-          label="Medi-Cal ID (CIN)"
+          label="Member ID"
           value={profile.mediCalId ?? 'Not provided'}
           placeholder={!profile.mediCalId}
         />
@@ -656,6 +700,35 @@ const demoColStyles = StyleSheet.create({
     flexWrap: 'wrap',
     justifyContent: 'center',
   } as ViewStyle,
+  ctaStack: {
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+  } as ViewStyle,
+  ctaStackDisabled: {
+    opacity: 0.45,
+  } as ViewStyle,
+  ctaBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 9,
+    borderRadius: radius.md,
+  } as ViewStyle,
+  callBtn: {
+    backgroundColor: tokens.primary,
+  } as ViewStyle,
+  messageBtn: {
+    backgroundColor: tokens.primary + '12',
+    borderWidth: 1,
+    borderColor: tokens.primary + '40',
+  } as ViewStyle,
+  ctaBtnText: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 13,
+    color: '#FFFFFF',
+  } as TextStyle,
   rows: {
     paddingHorizontal: 16,
     paddingBottom: 16,
@@ -1605,11 +1678,8 @@ const RANK_CHIP_COLOR: Record<number, string> = {
 
 interface ResourceNeedsColumnProps {
   memberId: string;
-  displayName: string;
   sessionCount: number;
   servicesConsentRefused: boolean;
-  onNavigateToConversation: (conversationId: string) => void;
-  onNavigateAndCall: () => void;
 }
 
 /**
@@ -1627,11 +1697,8 @@ interface ResourceNeedsColumnProps {
  */
 function ResourceNeedsColumn({
   memberId,
-  displayName,
   sessionCount,
   servicesConsentRefused,
-  onNavigateToConversation,
-  onNavigateAndCall,
 }: ResourceNeedsColumnProps): React.JSX.Element {
   const { data: journeys, isLoading: journeysLoading } = useMemberJourneys(memberId);
   const { data: rewardsBalance } = useMemberRewardsBalance(memberId);
@@ -1652,9 +1719,6 @@ function ResourceNeedsColumn({
         .slice(0, 3),
     [activeJourneys],
   );
-
-  const ctaDisabled = servicesConsentRefused;
-  const ctaOpacity = ctaDisabled ? 0.45 : 1;
 
   return (
     <View style={resourceColStyles.container}>
@@ -1744,42 +1808,6 @@ function ResourceNeedsColumn({
           </Text>
         </View>
       )}
-
-      {/* Call / Message CTAs */}
-      <View style={[resourceColStyles.ctaRow, { opacity: ctaOpacity }]}>
-        <TouchableOpacity
-          style={[resourceColStyles.ctaBtn, resourceColStyles.callBtn]}
-          onPress={ctaDisabled ? undefined : onNavigateAndCall}
-          disabled={ctaDisabled}
-          accessibilityRole="button"
-          accessibilityLabel={
-            ctaDisabled
-              ? 'Call disabled — member has refused services'
-              : `Call ${displayName}`
-          }
-          accessibilityState={{ disabled: ctaDisabled }}
-        >
-          <Phone size={14} color="#FFFFFF" />
-          <Text style={resourceColStyles.ctaBtnText}>Call</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[resourceColStyles.ctaBtn, resourceColStyles.messageBtn]}
-          onPress={ctaDisabled ? undefined : () => onNavigateToConversation('')}
-          disabled={ctaDisabled}
-          accessibilityRole="button"
-          accessibilityLabel={
-            ctaDisabled
-              ? 'Message disabled — member has refused services'
-              : `Message ${displayName}`
-          }
-          accessibilityState={{ disabled: ctaDisabled }}
-        >
-          <MessageSquare size={14} color={tokens.primary} />
-          <Text style={[resourceColStyles.ctaBtnText, { color: tokens.primary }]}>
-            Message
-          </Text>
-        </TouchableOpacity>
-      </View>
 
       {/* Session count chip */}
       {sessionCount > 0 && (
@@ -3580,8 +3608,14 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
             <Card style={s.topCard}>
               <View style={s.topCardRow}>
 
-                {/* LEFT: Demographics */}
-                <DemographicsColumn profile={profile} />
+                {/* LEFT: Demographics + Call/Message */}
+                <DemographicsColumn
+                  profile={profile}
+                  displayName={displayName}
+                  servicesConsentRefused={servicesConsentRefused}
+                  onNavigateToConversation={handleNavigateToConversation}
+                  onNavigateAndCall={handleNavigateAndCall}
+                />
 
                 {/* CENTER: Flag Note + Billing Consent */}
                 <CenterColumn
@@ -3595,14 +3629,11 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                   }
                 />
 
-                {/* RIGHT: Resource Needs (Priority) + Call/Message */}
+                {/* RIGHT: Resource Needs (Priority) */}
                 <ResourceNeedsColumn
                   memberId={memberId}
-                  displayName={displayName}
                   sessionCount={profile.sessionCount}
                   servicesConsentRefused={servicesConsentRefused}
-                  onNavigateToConversation={handleNavigateToConversation}
-                  onNavigateAndCall={handleNavigateAndCall}
                 />
 
               </View>
@@ -3821,13 +3852,6 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                       }
                     />
                     <RailAccessItem
-                      icon={<Flag size={14} color="#DC2626" />}
-                      iconBg="#FEF2F2"
-                      label="Flag Member"
-                      sublabel="Add/edit flag note"
-                      onPress={() => setFlagModalOpen(true)}
-                    />
-                    <RailAccessItem
                       icon={<CheckSquare size={14} color="#EA580C" />}
                       iconBg="#FFF7ED"
                       label="Screening Results"
@@ -3842,8 +3866,8 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                     <RailAccessItem
                       icon={<CheckCircle size={14} color="#16A34A" />}
                       iconBg="#F0FDF4"
-                      label="Eligibility"
-                      sublabel="Verification status"
+                      label="Eligibility Verification"
+                      sublabel="CalFresh pending"
                       onPress={() =>
                         Alert.alert(
                           'Coming soon',
@@ -3854,7 +3878,7 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                     <RailAccessItem
                       icon={<UploadCloud size={14} color="#64748B" />}
                       iconBg="#F8FAFC"
-                      label="Documents"
+                      label="Uploaded Documents"
                       sublabel="Member uploads"
                       onPress={() =>
                         Alert.alert(
@@ -3862,25 +3886,6 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                           'CHW-scoped document review ships in an upcoming sprint.',
                         )
                       }
-                    />
-                    <RailAccessItem
-                      icon={<RadioTower size={14} color="#D97706" />}
-                      iconBg="#FFFBEB"
-                      label="Outreach History"
-                      sublabel="All interactions"
-                      onPress={() =>
-                        Alert.alert(
-                          'Coming soon',
-                          'Outreach history tracking is planned for an upcoming sprint.',
-                        )
-                      }
-                    />
-                    <RailAccessItem
-                      icon={<Sparkles size={14} color={tokens.emerald500} />}
-                      iconBg={tokens.emerald500 + '18'}
-                      label="Open Questions"
-                      sublabel="AI-suggested prompts"
-                      onPress={() => setOpenQuestionsOpen(true)}
                     />
                   </Card>
                 </RightRail>
