@@ -700,6 +700,7 @@ async def submit_documentation(
         diagnosis_codes=data.diagnosis_codes,
         procedure_code=data.procedure_code,
         units_to_bill=computed_units,
+        members_served=data.members_served,
         # AI summary provenance — persisted so audit trails can distinguish
         # the AI-generated draft from the CHW-authored note permanently.
         ai_summary=data.ai_summary,

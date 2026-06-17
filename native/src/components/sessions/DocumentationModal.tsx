@@ -925,6 +925,8 @@ export function DocumentationModal({
   const [selectedResources, setSelectedResources] = useState<string[]>([]);
   const [followUpNeeded, setFollowUpNeeded] = useState<boolean | null>(null);
   const [followUpDate, setFollowUpDate] = useState('');
+  // Number of Medi-Cal members served (1 = individual). String for the input.
+  const [membersServedStr, setMembersServedStr] = useState('1');
   // CHW-authored notes — required, separate from AI summary.
   const [chwNotes, setChwNotes] = useState('');
   // AI summary state — fetched once on modal open, regeneratable via button.
@@ -1072,6 +1074,7 @@ export function DocumentationModal({
       diagnosisCodes: selectedDiagnosisCodes,
       procedureCode: selectedProcedureCode,
       unitsToBill,
+      membersServed: Math.max(1, parseInt(membersServedStr, 10) || 1),
       submittedAt: new Date().toISOString(),
       // AI summary fields — included when a summary was generated.
       aiSummary: aiSummary ?? null,
@@ -1239,6 +1242,23 @@ export function DocumentationModal({
 
           {/* Units to bill */}
           <UnitsSummary value={unitsToBill} durationMinutes={durationMinutes} />
+
+          {/* Members served (Medi-Cal) */}
+          <View style={mo.membersServedSection}>
+            <SectionHeader title="Members Served" marginBottom={spacing.sm} />
+            <TextInput
+              style={mo.membersServedInput}
+              value={membersServedStr}
+              onChangeText={(t) => setMembersServedStr(t.replace(/[^0-9]/g, ''))}
+              keyboardType="number-pad"
+              placeholder="1"
+              maxLength={2}
+              accessibilityLabel="Number of Medi-Cal members served in this session"
+            />
+            <Text style={mo.membersServedHint}>
+              Number of Medi-Cal members served (1 for an individual session).
+            </Text>
+          </View>
 
           {/* Member goals */}
           <MultiSelectList
@@ -1511,6 +1531,27 @@ const mo = StyleSheet.create({
     ...typography.bodyMd,
     color: tokens.textPrimary,
     backgroundColor: tokens.cardBg,
+  },
+  membersServedSection: {
+    paddingHorizontal: spacing.xl,
+    paddingTop: spacing.lg,
+  },
+  membersServedInput: {
+    width: 96,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderWidth: 1,
+    borderColor: tokens.cardBorder,
+    borderRadius: radius.md,
+    ...typography.bodyMd,
+    color: tokens.textPrimary,
+    backgroundColor: tokens.cardBg,
+    ...(Platform.OS === 'web' ? { outlineStyle: 'none' as unknown as undefined } : {}),
+  },
+  membersServedHint: {
+    ...typography.bodySm,
+    color: tokens.textSecondary,
+    marginTop: spacing.xs,
   },
   footer: {
     paddingHorizontal: spacing.xl,

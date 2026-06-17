@@ -94,6 +94,9 @@ class SessionDocumentation(Base):
     diagnosis_codes: Mapped[list | None] = mapped_column(ARRAY(String))
     procedure_code: Mapped[str | None] = mapped_column(String(10))
     units_to_bill: Mapped[int | None] = mapped_column(Integer)
+    # Number of Medi-Cal members served in this session (1 for individual
+    # sessions; >1 for group encounters). Required on the Pear billing claim.
+    members_served: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     # Stamped when the LLM extraction pass completes for this session.
     # NULL means extraction has not run yet — used as the primary idempotency

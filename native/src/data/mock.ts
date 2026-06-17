@@ -90,6 +90,8 @@ export interface SessionDocumentation {
   diagnosisCodes: string[];
   procedureCode?: string;
   unitsToBill: number;
+  /** Number of Medi-Cal members served in the session (1 = individual). */
+  membersServed: number;
   submittedAt?: string;
   /** AI-generated summary text from session transcript. Null when unavailable. */
   aiSummary?: string | null;

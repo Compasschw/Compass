@@ -84,6 +84,8 @@ class SessionDocumentationSubmit(BaseModel):
     # CHW upcoding. The field is accepted (with the ge/le bounds) for legacy
     # clients but the value is overwritten server-side at submission.
     units_to_bill: int | None = Field(default=None, ge=1, le=4)
+    # Number of Medi-Cal members served in this session (1 = individual).
+    members_served: int = Field(default=1, ge=1, le=50)
 
     # AI summary provenance — optional; frontend passes through what it received
     # from POST /ai-summary so the submission record has permanent provenance.
@@ -112,6 +114,7 @@ class SessionDocumentationResponse(BaseModel):
     diagnosis_codes: list[str] | None
     procedure_code: str | None
     units_to_bill: int | None
+    members_served: int
     submitted_at: datetime
     ai_summary: str | None
     ai_summary_generated_at: datetime | None
