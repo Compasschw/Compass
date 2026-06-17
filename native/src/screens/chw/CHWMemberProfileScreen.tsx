@@ -199,9 +199,18 @@ interface CHWMemberProfileDetail {
   mediCalId: string | null;
 }
 
+interface AssessmentResponseItem {
+  questionId: string;
+  questionText: string;
+  answerValue: string;
+  answerLabel: string;
+}
+
 interface AssessmentLatest {
   completedAt: string;
   responseCounts: Record<string, number>;
+  /** Per-question answers (snapshots) returned by the latest-assessment endpoint. */
+  responses: AssessmentResponseItem[];
 }
 
 // ─── Query keys ───────────────────────────────────────────────────────────────
@@ -1307,6 +1316,25 @@ const consentModalStyles = StyleSheet.create({
     fontFamily: 'DMSans_700Bold',
     fontSize: 13,
     color: '#FFFFFF',
+  } as TextStyle,
+});
+
+const screeningStyles = StyleSheet.create({
+  qaRow: {
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  } as ViewStyle,
+  question: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 12,
+    color: '#6B7280',
+  } as TextStyle,
+  answer: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 13,
+    color: '#111827',
+    marginTop: 2,
   } as TextStyle,
 });
 
@@ -3707,11 +3735,13 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
   const { data: profile, isLoading, error } = useMemberDetail(memberId);
   const { data: servicesConsentData } = useMemberServicesConsent(memberId);
   const servicesConsentRefused = servicesConsentData?.value === 'refuse_services';
+  const { data: assessmentLatest } = useAssessmentLatest(memberId);
 
   // ── Drawer / modal state ─────────────────────────────────────────────────────
   const [openQuestionsOpen, setOpenQuestionsOpen] = useState(false);
   const [flagModalOpen, setFlagModalOpen] = useState(false);
   const [addJourneyOpen, setAddJourneyOpen] = useState(false);
+  const [showScreening, setShowScreening] = useState(false);
 
   // Journeys data used both by ResourceNeedsColumn and AddJourneyModal dedup guard.
   const { data: journeysForModal } = useMemberJourneys(memberId);
@@ -4138,13 +4168,12 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                       icon={<CheckSquare size={14} color="#EA580C" />}
                       iconBg="#FFF7ED"
                       label="Screening Results"
-                      sublabel="View history"
-                      onPress={() =>
-                        Alert.alert(
-                          'Coming soon',
-                          'Screening results tracking is planned for an upcoming sprint.',
-                        )
+                      sublabel={
+                        assessmentLatest?.responses?.length
+                          ? `${assessmentLatest.responses.length} answers`
+                          : 'View answers'
                       }
+                      onPress={() => setShowScreening(true)}
                     />
                     <RailAccessItem
                       icon={<CheckCircle size={14} color="#16A34A" />}
@@ -4184,6 +4213,60 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
           visible={flagModalOpen}
           onClose={() => setFlagModalOpen(false)}
         />
+
+        {/* Screening answers modal — the member's latest SDOH/health responses */}
+        <Modal
+          visible={showScreening}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setShowScreening(false)}
+          accessibilityViewIsModal
+        >
+          <View style={consentModalStyles.overlay}>
+            <View style={[consentModalStyles.sheet, { maxWidth: 520 }]}>
+              <View style={consentModalStyles.headerRow}>
+                <Text style={consentModalStyles.title}>Screening Answers</Text>
+                <TouchableOpacity
+                  onPress={() => setShowScreening(false)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Close"
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <X size={18} color="#6B7280" />
+                </TouchableOpacity>
+              </View>
+              {assessmentLatest?.completedAt ? (
+                <Text style={consentModalStyles.meta}>
+                  Completed {formatDate(assessmentLatest.completedAt)}
+                </Text>
+              ) : null}
+              <View style={consentModalStyles.divider} />
+              {assessmentLatest?.responses?.length ? (
+                <ScrollView style={{ maxHeight: 360 }}>
+                  {assessmentLatest.responses.map((r, i) => (
+                    <View key={`${r.questionId}-${i}`} style={screeningStyles.qaRow}>
+                      <Text style={screeningStyles.question}>{r.questionText}</Text>
+                      <Text style={screeningStyles.answer}>{r.answerLabel}</Text>
+                    </View>
+                  ))}
+                </ScrollView>
+              ) : (
+                <Text style={consentModalStyles.bodyText}>
+                  No screening completed for this member yet. Run the SDOH / Health
+                  Screening from the conversation or session to capture answers.
+                </Text>
+              )}
+              <TouchableOpacity
+                style={consentModalStyles.closeBtn}
+                onPress={() => setShowScreening(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Done"
+              >
+                <Text style={consentModalStyles.closeBtnText}>Done</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
 
         {/*
           ── Open Questions drawer — overlay mode (narrow viewports / native) ──
