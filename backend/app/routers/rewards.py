@@ -58,6 +58,8 @@ from app.dependencies import get_current_user
 from app.models.rewards import RewardCatalogItem, RewardRedemption
 from app.models.user import MemberProfile
 from app.schemas.rewards import (
+    AwardPointsRequest,
+    AwardPointsResponse,
     RewardCatalogItemResponse,
     RewardRedemptionFulfillRequest,
     RewardRedemptionRequest,
@@ -510,3 +512,62 @@ async def fulfill_redemption(
         current_user.role,
     )
     return RewardRedemptionResponse.model_validate(redemption)
+
+
+# ─── POST /members/{member_id}/rewards/award ──────────────────────────────────
+
+
+@router.post(
+    "/members/{member_id}/rewards/award",
+    response_model=AwardPointsResponse,
+    summary="CHW/admin awards wellness points to a member",
+)
+async def award_points(
+    member_id: UUID,
+    body: AwardPointsRequest,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> AwardPointsResponse:
+    """Grant wellness points to a member (CHW with a care relationship, or admin).
+
+    Members cannot award their own points. Increments the balance source of
+    truth (member_profiles.rewards_balance) and writes a RewardTransaction ledger
+    row for the audit trail.
+
+    Errors:
+      403 — caller is a member, or a CHW without a care relationship
+      404 — member profile not found
+    """
+    from app.models.reward import RewardTransaction
+
+    if current_user.role == "member":
+        raise HTTPException(
+            status_code=403,
+            detail="Members cannot award their own reward points.",
+        )
+    # admin → allowed; chw → must have a care relationship.
+    await _assert_member_access(member_id, current_user, db)
+
+    profile = await _get_member_profile_or_404(member_id, db)
+    new_balance = profile.rewards_balance + body.points
+    profile.rewards_balance = new_balance
+
+    db.add(
+        RewardTransaction(
+            member_id=member_id,
+            action="chw_awarded",
+            description=body.reason or "Points awarded by CHW",
+            points=body.points,
+            balance_after=new_balance,
+        )
+    )
+    await db.commit()
+
+    logger.info(
+        "rewards: %s points awarded to member %s by %s (role=%s)",
+        body.points,
+        member_id,
+        current_user.id,
+        current_user.role,
+    )
+    return AwardPointsResponse(current_balance=new_balance, points_awarded=body.points)

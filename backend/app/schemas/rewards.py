@@ -36,6 +36,20 @@ class RewardRedemptionRequest(BaseModel):
     catalog_item_id: UUID
 
 
+class AwardPointsRequest(BaseModel):
+    """Body for POST /members/{member_id}/rewards/award — CHW/admin grants points."""
+
+    points: int = Field(..., ge=1, le=1000)
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class AwardPointsResponse(BaseModel):
+    """Result of a CHW/admin point award."""
+
+    current_balance: int
+    points_awarded: int
+
+
 class RewardRedemptionResponse(BaseModel):
     """Serialised redemption record returned after create or fetch."""
 

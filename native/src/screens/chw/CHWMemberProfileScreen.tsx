@@ -118,6 +118,7 @@ import {
   useJourneyTemplates,
   useMemberJourneys,
   useMemberRewardsBalance,
+  useAwardMemberPoints,
   type CreateMemberJourneyPayload,
   type JourneyTemplateResponse,
   type ServicesConsentValue,
@@ -2018,6 +2019,30 @@ function ResourceNeedsColumn({
 }: ResourceNeedsColumnProps): React.JSX.Element {
   const { data: journeys, isLoading: journeysLoading } = useMemberJourneys(memberId);
   const { data: rewardsBalance } = useMemberRewardsBalance(memberId);
+  const award = useAwardMemberPoints(memberId);
+  const [awardOpen, setAwardOpen] = useState(false);
+  const [awardPointsStr, setAwardPointsStr] = useState('');
+  const [awardReason, setAwardReason] = useState('');
+
+  const handleAward = (): void => {
+    const points = parseInt(awardPointsStr, 10);
+    if (!points || points < 1) return;
+    award.mutate(
+      { points, reason: awardReason.trim() || undefined },
+      {
+        onSuccess: () => {
+          setAwardOpen(false);
+          setAwardPointsStr('');
+          setAwardReason('');
+        },
+        onError: () => {
+          const msg = 'Could not award points. Please try again.';
+          if (Platform.OS === 'web' && typeof window !== 'undefined') window.alert(msg);
+          else Alert.alert('Error', msg);
+        },
+      },
+    );
+  };
 
   const activeJourneys = useMemo(
     () => journeys?.filter((j) => j.status === 'active') ?? [],
@@ -2105,7 +2130,7 @@ function ResourceNeedsColumn({
         </View>
       )}
 
-      {/* Rewards balance */}
+      {/* Rewards balance + Award Points */}
       {rewardsBalance !== undefined && (
         <View style={resourceColStyles.rewardsBadge}>
           <Star size={12} color="#D97706" />
@@ -2114,6 +2139,86 @@ function ResourceNeedsColumn({
           </Text>
         </View>
       )}
+      <TouchableOpacity
+        style={resourceColStyles.awardBtn}
+        onPress={() => setAwardOpen(true)}
+        accessibilityRole="button"
+        accessibilityLabel="Award wellness points to this member"
+      >
+        <Star size={12} color={tokens.primary} />
+        <Text style={resourceColStyles.awardBtnText}>Award Points</Text>
+      </TouchableOpacity>
+
+      <Modal
+        visible={awardOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setAwardOpen(false)}
+        accessibilityViewIsModal
+      >
+        <View style={consentModalStyles.overlay}>
+          <View style={[consentModalStyles.sheet, { maxWidth: 420 }]}>
+            <View style={consentModalStyles.headerRow}>
+              <Text style={consentModalStyles.title}>Award Wellness Points</Text>
+              <TouchableOpacity
+                onPress={() => setAwardOpen(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Close"
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <X size={18} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+            <Text style={consentModalStyles.meta}>Points</Text>
+            <TextInput
+              style={resourceColStyles.awardInput}
+              value={awardPointsStr}
+              onChangeText={(t) => setAwardPointsStr(t.replace(/[^0-9]/g, ''))}
+              keyboardType="number-pad"
+              placeholder="e.g. 25"
+              placeholderTextColor="#9CA3AF"
+              maxLength={4}
+              accessibilityLabel="Points to award"
+            />
+            <Text style={consentModalStyles.meta}>Reason (optional)</Text>
+            <TextInput
+              style={resourceColStyles.awardInput}
+              value={awardReason}
+              onChangeText={setAwardReason}
+              placeholder="e.g. Completed onboarding"
+              placeholderTextColor="#9CA3AF"
+              maxLength={120}
+              accessibilityLabel="Reason for award"
+            />
+            <View style={resourceColStyles.awardActions}>
+              <TouchableOpacity
+                onPress={() => setAwardOpen(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Cancel"
+                style={resourceColStyles.awardCancel}
+              >
+                <Text style={resourceColStyles.awardCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  consentModalStyles.closeBtn,
+                  (!awardPointsStr || award.isPending) && { opacity: 0.5 },
+                ]}
+                onPress={handleAward}
+                disabled={!awardPointsStr || award.isPending}
+                accessibilityRole="button"
+                accessibilityLabel="Award points"
+              >
+                {award.isPending ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={consentModalStyles.closeBtnText}>Award</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* Services refused caption */}
       {servicesConsentRefused && (
@@ -2231,6 +2336,52 @@ const resourceColStyles = StyleSheet.create({
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 11,
     color: '#D97706',
+  } as TextStyle,
+  awardBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 8,
+    paddingVertical: 8,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: tokens.primary + '40',
+    backgroundColor: tokens.primary + '0D',
+  } as ViewStyle,
+  awardBtnText: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 12,
+    color: tokens.primary,
+  } as TextStyle,
+  awardInput: {
+    borderWidth: 1,
+    borderColor: tokens.cardBorder ?? '#E5E7EB',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: tokens.textPrimary ?? '#111827',
+    marginTop: 2,
+    marginBottom: 4,
+    outlineStyle: 'none',
+  } as unknown as TextStyle,
+  awardActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 6,
+  } as ViewStyle,
+  awardCancel: {
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+  } as ViewStyle,
+  awardCancelText: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 13,
+    color: '#6B7280',
   } as TextStyle,
   refusedCaption: {
     flexDirection: 'row',

@@ -2934,6 +2934,30 @@ export function useMemberRewardsBalance(memberId: string) {
 }
 
 /**
+ * CHW/admin awards wellness points to a member.
+ *
+ * POST /members/{member_id}/rewards/award { points, reason }. Members cannot
+ * award their own points (backend 403). Invalidates the member's balance.
+ */
+export function useAwardMemberPoints(memberId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (
+      vars: { points: number; reason?: string },
+    ): Promise<{ currentBalance: number; pointsAwarded: number }> => {
+      const raw = await api<unknown>(`/members/${memberId}/rewards/award`, {
+        method: 'POST',
+        body: JSON.stringify({ points: vars.points, reason: vars.reason ?? null }),
+      });
+      return transformKeys<{ currentBalance: number; pointsAwarded: number }>(raw);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: memberRewardsBalanceKey(memberId) });
+    },
+  });
+}
+
+/**
  * Fetch all redemption records for the given member (newest first).
  *
  * GET /members/{member_id}/rewards/redemptions
