@@ -2617,6 +2617,26 @@ export interface MemberJourneyResponse {
   startedAt: string;
   completedAt: string | null;
   createdAt: string;
+  /** Present on the CHW caseload list (GET /chw/journeys) — joined member name. */
+  memberName?: string;
+  /** Present on the CHW caseload list — current step name (lightweight, no full step state). */
+  currentStepName?: string | null;
+}
+
+/** Raw flat item returned by GET /chw/journeys (lightweight, no step-state detail). */
+interface ChwJourneyApiItem {
+  id: string;
+  memberId: string;
+  memberName: string;
+  templateName: string;
+  templateSlug: string;
+  templateIcon: string;
+  status: 'active' | 'paused' | 'completed' | 'abandoned';
+  progressPercent: number;
+  currentStepName: string | null;
+  wellnessPointsEarned: number;
+  startedAt: string;
+  completedAt: string | null;
 }
 
 /**
@@ -2630,7 +2650,30 @@ export function useChwJourneys() {
     queryKey: queryKeys.chwJourneys,
     queryFn: async (): Promise<MemberJourneyResponse[]> => {
       const raw = await api<unknown[]>('/chw/journeys');
-      return transformKeys<MemberJourneyResponse[]>(raw);
+      const items = transformKeys<ChwJourneyApiItem[]>(raw);
+      // GET /chw/journeys returns a LIGHTWEIGHT flat item (member_name,
+      // template_name, current_step_name; NO nested template object or steps
+      // array). Adapt it to the MemberJourneyResponse shape the Journeys screen
+      // renders so field access (template.name, steps.map) never crashes.
+      return items.map((it): MemberJourneyResponse => ({
+        id: it.id,
+        memberId: it.memberId,
+        memberName: it.memberName,
+        chwId: '',
+        template: {
+          name: it.templateName,
+          slug: it.templateSlug,
+        } as unknown as JourneyTemplateResponse,
+        steps: [],
+        status: it.status,
+        progressPercent: it.progressPercent,
+        currentStep: null,
+        currentStepName: it.currentStepName,
+        wellnessPointsEarned: it.wellnessPointsEarned,
+        startedAt: it.startedAt,
+        completedAt: it.completedAt,
+        createdAt: it.startedAt,
+      }));
     },
     staleTime: 60_000,
   });

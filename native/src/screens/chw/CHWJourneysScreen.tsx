@@ -576,7 +576,7 @@ export function CHWJourneysScreen(): React.JSX.Element {
                     <Text style={styles.sectionHead}>In Progress</Text>
                     <View style={styles.gridInner}>
                       {activeJourneys.map((journey) => {
-                        const memberName = MOCK_MEMBER_NAMES[journey.memberId] ?? `Member ${journey.memberId.slice(-4)}`;
+                        const memberName = journey.memberName ?? MOCK_MEMBER_NAMES[journey.memberId] ?? `Member ${journey.memberId.slice(-4)}`;
                         return <JourneyCard key={journey.id} journey={journey} memberName={memberName} />;
                       })}
                     </View>
@@ -588,7 +588,7 @@ export function CHWJourneysScreen(): React.JSX.Element {
                     <Text style={[styles.sectionHead, styles.stalledHead]}>Stalled — need your attention</Text>
                     <View style={styles.gridInner}>
                       {stalledJourneys.map((journey) => {
-                        const memberName = MOCK_MEMBER_NAMES[journey.memberId] ?? `Member ${journey.memberId.slice(-4)}`;
+                        const memberName = journey.memberName ?? MOCK_MEMBER_NAMES[journey.memberId] ?? `Member ${journey.memberId.slice(-4)}`;
                         return <JourneyCard key={journey.id} journey={journey} memberName={memberName} stalled />;
                       })}
                     </View>
@@ -600,7 +600,7 @@ export function CHWJourneysScreen(): React.JSX.Element {
                     <Text style={styles.sectionHead}>Completed / Abandoned</Text>
                     <View style={styles.gridInner}>
                       {otherJourneys.map((journey) => {
-                        const memberName = MOCK_MEMBER_NAMES[journey.memberId] ?? `Member ${journey.memberId.slice(-4)}`;
+                        const memberName = journey.memberName ?? MOCK_MEMBER_NAMES[journey.memberId] ?? `Member ${journey.memberId.slice(-4)}`;
                         return <JourneyCard key={journey.id} journey={journey} memberName={memberName} />;
                       })}
                     </View>
@@ -655,7 +655,7 @@ export function CHWJourneysScreen(): React.JSX.Element {
                     <View key={j.id} style={styles.atRiskItem}>
                       <XCircle size={11} color={colors.red700} />
                       <Text style={styles.atRiskName} numberOfLines={1}>
-                        {MOCK_MEMBER_NAMES[j.memberId] ?? j.memberId} — {j.template.name}
+                        {j.memberName ?? MOCK_MEMBER_NAMES[j.memberId] ?? j.memberId} — {j.template.name}
                       </Text>
                     </View>
                   ))}
