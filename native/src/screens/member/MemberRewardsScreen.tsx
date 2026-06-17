@@ -113,7 +113,11 @@ export function MemberRewardsScreen(): React.JSX.Element {
   const profileQuery = useMemberProfile();
   const rewardsQuery = useMemberRewards();
   const catalogQuery = useRewardsCatalog();
-  const memberId = profileQuery.data?.id ?? '';
+  // The rewards endpoints are keyed by the member's User id (the relationship
+  // gate compares current_user.id, and the profile is resolved via
+  // MemberProfile.user_id == member_id). Use userId, not the MemberProfile row
+  // id, or every call 403s. (Mirrors MemberDocumentsScreen's id resolution.)
+  const memberId = profileQuery.data?.userId ?? profileQuery.data?.id ?? '';
   const balanceQuery = useMemberRewardsBalance(memberId);
   const redemptionsQuery = useMemberRedemptions(memberId);
   const createRedemption = useCreateRedemption(memberId);
