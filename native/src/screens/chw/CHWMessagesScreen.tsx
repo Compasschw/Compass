@@ -715,6 +715,19 @@ function ImageAttachmentBubble({
 }: ImageAttachmentBubbleProps): React.JSX.Element {
   const [zoomVisible, setZoomVisible] = useState(false);
 
+  // Freeze the first presigned URL we render. The session-messages query
+  // refetches every 4s and the backend mints a fresh presigned GET URL on each
+  // serialization, so this prop changes every poll. Re-pointing the <Image> at a
+  // new signed URL forces the browser to re-download → the image visibly
+  // flickers/reloads. Pin the first URL (presigned URLs are valid ~1h, far
+  // longer than a thread stays open) so the rendered image holds still. Taps
+  // still use the live `downloadUrl` so opening full-size always gets a fresh URL.
+  const stableUriRef = useRef<string>('');
+  if (!stableUriRef.current && downloadUrl) {
+    stableUriRef.current = downloadUrl;
+  }
+  const imageUri = stableUriRef.current || downloadUrl;
+
   const handleTap = useCallback((): void => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       window.open(downloadUrl, '_blank', 'noopener,noreferrer');
@@ -732,7 +745,7 @@ function ImageAttachmentBubble({
         accessibilityLabel={`Attachment: ${filename}. Tap to view full size.`}
       >
         <Image
-          source={{ uri: downloadUrl }}
+          source={{ uri: imageUri }}
           style={[
             styles.attachmentImageThumb,
             isSentByChw ? styles.attachmentImageOutbound : styles.attachmentImageInbound,
@@ -761,7 +774,7 @@ function ImageAttachmentBubble({
               <X size={24} color="#fff" />
             </TouchableOpacity>
             <Image
-              source={{ uri: downloadUrl }}
+              source={{ uri: imageUri }}
               style={styles.imageZoomFull}
               resizeMode="contain"
               accessibilityIgnoresInvertColors
