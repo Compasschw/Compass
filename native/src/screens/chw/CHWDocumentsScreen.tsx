@@ -18,10 +18,11 @@
  * the cofounder demo.
  */
 
-import React, { useMemo, useState, useCallback, useRef } from 'react';
+import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Linking,
   Platform,
   ScrollView,
@@ -32,6 +33,7 @@ import {
   View,
   type ViewStyle,
   type TextStyle,
+  type ImageStyle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
@@ -156,14 +158,53 @@ function DownloadButton({ docId }: { docId: string }): React.JSX.Element {
   );
 }
 
+// ─── RowThumbnail — image preview or IMG/PDF badge ────────────────────────────
+
+/**
+ * Small file preview for a table row. Image documents render an actual
+ * thumbnail (presigned GET URL, fetched only for images); PDFs and any image
+ * that fails to load fall back to the IMG/PDF type badge so a row never renders
+ * blank.
+ */
+function RowThumbnail({ doc, isImage }: { doc: MemberDocumentData; isImage: boolean }): React.JSX.Element {
+  const [failed, setFailed] = useState(false);
+  const thumbQuery = useMemberDocumentDownloadUrl(doc.id, { enabled: isImage && !failed });
+  const thumbUrl = isImage && !failed ? thumbQuery.data?.downloadUrl : undefined;
+
+  if (thumbUrl) {
+    return (
+      <View style={[styles.fileTypeBadge, styles.fileThumbWrap]}>
+        <Image
+          source={{ uri: thumbUrl }}
+          style={styles.fileThumbImage}
+          resizeMode="cover"
+          onError={() => setFailed(true)}
+          accessibilityLabel={`Preview of ${doc.filename}`}
+        />
+      </View>
+    );
+  }
+
+  return (
+    <View style={[styles.fileTypeBadge, { backgroundColor: isImage ? '#7c3aed' : '#dc2626' }]}>
+      {isImage && !failed && thumbQuery.isFetching ? (
+        <ActivityIndicator size="small" color="#ffffff" />
+      ) : (
+        <Text style={styles.fileTypeBadgeText}>{isImage ? 'IMG' : 'PDF'}</Text>
+      )}
+    </View>
+  );
+}
+
 // ─── TableRow ─────────────────────────────────────────────────────────────────
 
 interface TableRowProps {
   doc: MemberDocumentData;
   idx: number;
+  memberName: string;
 }
 
-function TableRow({ doc, idx }: TableRowProps): React.JSX.Element {
+function TableRow({ doc, idx, memberName }: TableRowProps): React.JSX.Element {
   const deleteMutation = useMemberDocumentDelete(doc.memberId);
 
   const handleDelete = useCallback(() => {
@@ -190,13 +231,11 @@ function TableRow({ doc, idx }: TableRowProps): React.JSX.Element {
       <View style={styles.tableRow}>
         {/* File */}
         <View style={[styles.colFile, styles.fileCell]}>
-          <View style={[styles.fileTypeBadge, { backgroundColor: isImage ? '#7c3aed' : '#dc2626' }]}>
-            <Text style={styles.fileTypeBadgeText}>{isImage ? 'IMG' : 'PDF'}</Text>
-          </View>
+          <RowThumbnail doc={doc} isImage={isImage} />
           <View style={styles.fileCellText}>
             <Text style={styles.filename} numberOfLines={1}>{doc.filename}</Text>
             <Text style={styles.fileSubtitle} numberOfLines={1}>
-              {DOC_TYPE_LABELS[docType] ?? docType} · {doc.memberId.slice(0, 8)}…
+              {DOC_TYPE_LABELS[docType] ?? docType} · {memberName}
             </Text>
           </View>
         </View>
@@ -478,11 +517,21 @@ function CHWUploadTrigger(): React.JSX.Element {
 
 interface MemberDocumentTableProps {
   memberId: string;
+  memberName: string;
   query: string;
   activeType: FilterType;
+  /** Reports this member's matching-document count once loaded (for the parent's
+   *  combined empty/loading state). `null` count means "still loading". */
+  onResult: (memberId: string, count: number | null) => void;
 }
 
-function MemberDocumentTable({ memberId, query, activeType }: MemberDocumentTableProps): React.JSX.Element | null {
+function MemberDocumentTable({
+  memberId,
+  memberName,
+  query,
+  activeType,
+  onResult,
+}: MemberDocumentTableProps): React.JSX.Element | null {
   const docsQuery = useMemberDocuments(memberId);
   const docs = docsQuery.data?.items ?? [];
 
@@ -495,13 +544,19 @@ function MemberDocumentTable({ memberId, query, activeType }: MemberDocumentTabl
     });
   }, [docs, query, activeType]);
 
+  // Report load state + matching count up so the screen can render a single
+  // combined loading spinner / empty state across the whole caseload.
+  useEffect(() => {
+    onResult(memberId, docsQuery.isLoading ? null : filtered.length);
+  }, [memberId, docsQuery.isLoading, filtered.length, onResult]);
+
   if (docsQuery.isLoading) return null;
   if (filtered.length === 0) return null;
 
   return (
     <>
       {filtered.map((doc, idx) => (
-        <TableRow key={doc.id} doc={doc} idx={idx} />
+        <TableRow key={doc.id} doc={doc} idx={idx} memberName={memberName} />
       ))}
     </>
   );
@@ -514,12 +569,27 @@ export function CHWDocumentsScreen(): React.JSX.Element {
   const [query, setQuery] = useState('');
   const [activeType, setActiveType] = useState<FilterType>('all');
 
-  // Phase 1: use own member profile to seed the member ID list.
-  // A real CHW doesn't have member profiles, but we use the same hook pattern.
-  // In practice, the CHW documents page will be navigated to from a member profile
-  // which passes memberId as a route param.  We render a placeholder here.
-  // TODO(documents): add GET /chw/documents endpoint that returns all docs across
-  // the CHW's caseload in one call.
+  // Document list across the CHW's caseload. We fetch each member's documents
+  // (GET /members/{id}/documents is relationship-gated, and the caseload from
+  // useChwMembers is exactly the members the CHW is allowed to read). Each
+  // MemberDocumentTable reports its matching-document count so we can render a
+  // single combined loading spinner / empty state for the whole screen.
+  // NOTE(N+1): this issues one request per caseload member. The follow-up is a
+  // dedicated GET /chw/documents endpoint that aggregates in a single call.
+  const membersQuery = useChwMembers();
+  const members = useMemo(() => membersQuery.data ?? [], [membersQuery.data]);
+  const [resultCounts, setResultCounts] = useState<Record<string, number | null>>({});
+
+  const handleResult = useCallback((memberId: string, count: number | null) => {
+    setResultCounts((prev) => (prev[memberId] === count ? prev : { ...prev, [memberId]: count }));
+  }, []);
+
+  const allSettled =
+    members.length > 0 && members.every((m) => typeof resultCounts[m.id] === 'number');
+  const totalMatching = members.reduce((sum, m) => sum + (resultCounts[m.id] ?? 0), 0);
+  const isLoadingDocs = membersQuery.isLoading || (members.length > 0 && !allSettled);
+  const isFiltering = query.trim().length > 0 || activeType !== 'all';
+  const showEmpty = !isLoadingDocs && totalMatching === 0;
 
   const filterTypes = Object.keys(DOC_TYPE_LABELS) as FilterType[];
 
@@ -534,7 +604,7 @@ export function CHWDocumentsScreen(): React.JSX.Element {
     <>
       <PageHeader
         title="Member Documents"
-        subtitle="Documents you've uploaded on behalf of your members"
+        subtitle="Documents across your caseload"
         right={
           <View style={styles.headerRight}>
             <View style={styles.searchWrap}>
@@ -590,12 +660,39 @@ export function CHWDocumentsScreen(): React.JSX.Element {
             <Text style={[styles.colHeader, styles.colAction]}>{' '}</Text>
           </View>
 
-          <EmptyState
-            icon={FileText}
-            title="No documents yet"
-            body="Use the 'Upload for Member' button to upload documents on behalf of a member in your caseload."
-            style={styles.emptyStateHint}
-          />
+          {/* One table per caseload member; each renders only its matching rows. */}
+          {members.map((m) => (
+            <MemberDocumentTable
+              key={m.id}
+              memberId={m.id}
+              memberName={m.displayName}
+              query={query}
+              activeType={activeType}
+              onResult={handleResult}
+            />
+          ))}
+
+          {isLoadingDocs && (
+            <ActivityIndicator
+              size="small"
+              color={colors.primary}
+              style={styles.tableLoading}
+              accessibilityLabel="Loading documents"
+            />
+          )}
+
+          {showEmpty && (
+            <EmptyState
+              icon={FileText}
+              title={isFiltering ? 'No matching documents' : 'No documents yet'}
+              body={
+                isFiltering
+                  ? 'Try a different search term or document type.'
+                  : "Use the 'Upload for Member' button to upload a document on behalf of someone in your caseload."
+              }
+              style={styles.emptyStateHint}
+            />
+          )}
         </View>
 
         {Platform.OS === 'web' && (
@@ -603,9 +700,9 @@ export function CHWDocumentsScreen(): React.JSX.Element {
             <Card style={styles.railCard}>
               <Text style={styles.railTitle}>Quick Tip</Text>
               <Text style={styles.railBody}>
-                Click "Upload for Member" and enter the member's UUID to upload
-                a document on their behalf.{'\n\n'}
-                The member will see it immediately in their My Documents page.
+                Click "Upload for Member" and pick someone from your caseload to
+                upload a document on their behalf.{'\n\n'}
+                The member sees it immediately in their My Documents page.
               </Text>
             </Card>
           </RightRail>
@@ -805,6 +902,22 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#ffffff',
   } as TextStyle,
+
+  // Image-preview variant of the file badge: clip the photo, drop the tint.
+  fileThumbWrap: {
+    overflow: 'hidden',
+    backgroundColor: '#f3f4f6',
+  } as ViewStyle,
+
+  fileThumbImage: {
+    width: '100%' as unknown as number,
+    height: '100%' as unknown as number,
+    borderRadius: radius.sm,
+  } as ImageStyle,
+
+  tableLoading: {
+    paddingVertical: 32,
+  } as ViewStyle,
 
   fileCellText: {
     flex: 1,
