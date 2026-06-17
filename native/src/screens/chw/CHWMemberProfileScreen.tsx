@@ -897,8 +897,6 @@ interface CenterColumnProps {
   memberId: string;
   /** Opens the Flag Member edit drawer (re-uses FlagMemberModal). */
   onEditFlag: () => void;
-  /** Opens the Billing Consent view — placeholder, no behavior yet. */
-  onViewConsent: () => void;
 }
 
 /**
@@ -912,12 +910,11 @@ interface CenterColumnProps {
 function CenterColumn({
   memberId,
   onEditFlag,
-  onViewConsent,
 }: CenterColumnProps): React.JSX.Element {
   return (
     <View style={centerColStyles.container}>
       <FlagNoteCard memberId={memberId} onEditFlag={onEditFlag} />
-      <BillingConsentCard memberId={memberId} onViewConsent={onViewConsent} />
+      <BillingConsentCard memberId={memberId} />
     </View>
   );
 }
@@ -1054,7 +1051,6 @@ const flagNoteCardStyles = StyleSheet.create({
 
 interface BillingConsentCardProps {
   memberId: string;
-  onViewConsent: () => void;
 }
 
 /**
@@ -1063,8 +1059,8 @@ interface BillingConsentCardProps {
  */
 function BillingConsentCard({
   memberId,
-  onViewConsent,
 }: BillingConsentCardProps): React.JSX.Element {
+  const [showConsent, setShowConsent] = useState(false);
   const { data: consentData, isLoading } = useMemberServicesConsent(memberId);
   const consentValue: ServicesConsentStatus = consentData?.value ?? null;
   const isRefused = consentValue === 'refuse_services';
@@ -1177,15 +1173,142 @@ function BillingConsentCard({
       {/* View Consent CTA */}
       <TouchableOpacity
         style={billingConsentCardStyles.viewBtn}
-        onPress={onViewConsent}
+        onPress={() => setShowConsent(true)}
         accessibilityRole="button"
         accessibilityLabel="View full consent details"
       >
         <Text style={billingConsentCardStyles.viewBtnText}>View Consent</Text>
       </TouchableOpacity>
+
+      {/* Consent detail modal */}
+      <Modal
+        visible={showConsent}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowConsent(false)}
+        accessibilityViewIsModal
+      >
+        <View style={consentModalStyles.overlay}>
+          <View style={consentModalStyles.sheet}>
+            <View style={consentModalStyles.headerRow}>
+              <Text style={consentModalStyles.title}>Billing &amp; Services Consent</Text>
+              <TouchableOpacity
+                onPress={() => setShowConsent(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Close"
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <X size={18} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={consentModalStyles.statusRow}>
+              {statusIcon}
+              <Text style={[consentModalStyles.statusLabel, { color: statusColor }]}>
+                {statusLabel}
+              </Text>
+            </View>
+
+            <Text style={consentModalStyles.meta}>
+              {consentData?.changedAt
+                ? `Last updated ${formatDate(consentData.changedAt)}`
+                : 'No consent change recorded yet.'}
+            </Text>
+            <Text style={consentModalStyles.meta}>
+              Billing: {isBillable ? 'Billable to Medi-Cal' : 'Non-billable (excluded)'}
+              {billingStatus?.changedAt ? ` · updated ${formatDate(billingStatus.changedAt)}` : ''}
+            </Text>
+
+            <View style={consentModalStyles.divider} />
+
+            <Text style={consentModalStyles.bodyText}>
+              The member consents to receive Community Health Worker services and to the
+              sharing of their information as needed for care coordination and Medi-Cal
+              billing. Consent is captured from and controlled by the member; this card
+              reflects their current choice. Billing eligibility is set by the CHW via the
+              Billable toggle.
+            </Text>
+
+            <TouchableOpacity
+              style={consentModalStyles.closeBtn}
+              onPress={() => setShowConsent(false)}
+              accessibilityRole="button"
+              accessibilityLabel="Done"
+            >
+              <Text style={consentModalStyles.closeBtnText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
+
+const consentModalStyles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(17,24,39,0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  } as ViewStyle,
+  sheet: {
+    width: '100%',
+    maxWidth: 440,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+    gap: 10,
+  } as ViewStyle,
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  } as ViewStyle,
+  title: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 15,
+    color: '#111827',
+  } as TextStyle,
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  } as ViewStyle,
+  statusLabel: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 14,
+  } as TextStyle,
+  meta: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 12,
+    color: '#6B7280',
+  } as TextStyle,
+  divider: {
+    height: 1,
+    backgroundColor: '#F3F4F6',
+    marginVertical: 4,
+  } as ViewStyle,
+  bodyText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: '#374151',
+    lineHeight: 19,
+  } as TextStyle,
+  closeBtn: {
+    marginTop: 6,
+    alignSelf: 'flex-end',
+    backgroundColor: '#15803D',
+    paddingHorizontal: 18,
+    paddingVertical: 9,
+    borderRadius: 8,
+  } as ViewStyle,
+  closeBtnText: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 13,
+    color: '#FFFFFF',
+  } as TextStyle,
+});
 
 const billingConsentCardStyles = StyleSheet.create({
   container: {
@@ -3787,12 +3910,6 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                 <CenterColumn
                   memberId={memberId}
                   onEditFlag={() => setFlagModalOpen(true)}
-                  onViewConsent={() =>
-                    Alert.alert(
-                      'Billing Consent',
-                      'Full consent details are managed by the member. This status reflects their current choice.',
-                    )
-                  }
                 />
 
                 {/* RIGHT: Resource Needs (Priority) */}
