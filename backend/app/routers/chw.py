@@ -1264,8 +1264,17 @@ async def get_chw_member_full_profile(
         email=member_user.email,
         primary_language=member_profile.primary_language,
         additional_languages=additional_languages,
-        address=None,         # Not stored in current schema — Phase 2 field
-        city=None,            # Not stored in current schema — Phase 2 field
+        address=(
+            ", ".join(
+                p for p in (member_profile.address_line1, member_profile.address_line2) if p
+            )
+            or None
+        ),
+        city=(
+            f"{member_profile.city}, {member_profile.state}"
+            if member_profile.city and member_profile.state
+            else member_profile.city
+        ),
         zip_code=member_profile.zip_code,
         mco=member_profile.insurance_provider,  # MCO = insurance plan in Medi-Cal context
         ecm_eligible=False,   # ECM eligibility not yet stored — Phase 2 flag

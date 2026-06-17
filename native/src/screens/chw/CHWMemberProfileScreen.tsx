@@ -459,13 +459,26 @@ const infoRowStyles = StyleSheet.create({
 interface ColumnHeadingProps {
   text: string;
   sub?: string;
+  /** When provided, renders a section-level edit pencil on the right. */
+  onEdit?: () => void;
 }
 
-function ColumnHeading({ text, sub }: ColumnHeadingProps): React.JSX.Element {
+function ColumnHeading({ text, sub, onEdit }: ColumnHeadingProps): React.JSX.Element {
   return (
     <View style={colHeadingStyles.row}>
       <Text style={colHeadingStyles.text}>{text}</Text>
       {sub ? <Text style={colHeadingStyles.sub}>{sub}</Text> : null}
+      {onEdit ? (
+        <TouchableOpacity
+          style={colHeadingStyles.editBtn}
+          onPress={onEdit}
+          accessibilityRole="button"
+          accessibilityLabel={`Edit ${text}`}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Pencil size={12} color={tokens.textSecondary} />
+        </TouchableOpacity>
+      ) : null}
     </View>
   );
 }
@@ -473,9 +486,12 @@ function ColumnHeading({ text, sub }: ColumnHeadingProps): React.JSX.Element {
 const colHeadingStyles = StyleSheet.create({
   row: {
     flexDirection: 'row',
-    alignItems: 'baseline',
+    alignItems: 'center',
     gap: 5,
     marginBottom: 12,
+  } as ViewStyle,
+  editBtn: {
+    marginLeft: 'auto',
   } as ViewStyle,
   text: {
     fontFamily: 'DMSans_700Bold',
@@ -529,24 +545,27 @@ interface DemographicsColumnProps {
 function PreferredNameRow({
   memberId,
   profile,
+  editing,
+  onClose,
 }: {
   memberId: string;
   profile: CHWMemberProfileDetail;
+  editing: boolean;
+  onClose: () => void;
 }): React.JSX.Element {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState('');
+  const [draft, setDraft] = useState(profile.preferredName ?? '');
   const update = useUpdateMemberPreferredName(memberId);
 
   const current = profile.preferredName ?? profile.firstName ?? '';
 
-  const startEdit = (): void => {
-    setDraft(profile.preferredName ?? '');
-    setEditing(true);
-  };
+  // Re-seed the draft each time we enter edit mode (triggered by the section pencil).
+  useEffect(() => {
+    if (editing) setDraft(profile.preferredName ?? '');
+  }, [editing, profile.preferredName]);
 
   const save = (): void => {
     update.mutate(draft.trim() || null, {
-      onSuccess: () => setEditing(false),
+      onSuccess: () => onClose(),
       onError: () => {
         const msg = 'Could not update preferred name. Please try again.';
         if (Platform.OS === 'web' && typeof window !== 'undefined') window.alert(msg);
@@ -578,7 +597,7 @@ function PreferredNameRow({
             <TouchableOpacity onPress={save} accessibilityRole="button" accessibilityLabel="Save preferred name" hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
               <Check size={16} color={tokens.primary} />
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => setEditing(false)} accessibilityRole="button" accessibilityLabel="Cancel" hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <TouchableOpacity onPress={onClose} accessibilityRole="button" accessibilityLabel="Cancel" hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
               <X size={16} color="#9CA3AF" />
             </TouchableOpacity>
           </>
@@ -588,35 +607,16 @@ function PreferredNameRow({
   }
 
   return (
-    <View style={prefNameStyles.viewRow}>
-      <View style={prefNameStyles.infoWrap}>
-        <InfoRow
-          icon={<User size={13} color={tokens.primary} />}
-          label="Preferred Name"
-          value={current || 'Not provided'}
-          placeholder={!current}
-        />
-      </View>
-      <TouchableOpacity
-        onPress={startEdit}
-        accessibilityRole="button"
-        accessibilityLabel="Edit preferred name"
-        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-      >
-        <Pencil size={13} color={tokens.textSecondary} />
-      </TouchableOpacity>
-    </View>
+    <InfoRow
+      icon={<User size={13} color={tokens.primary} />}
+      label="Preferred Name"
+      value={current || 'Not provided'}
+      placeholder={!current}
+    />
   );
 }
 
 const prefNameStyles = StyleSheet.create({
-  viewRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  } as ViewStyle,
-  infoWrap: {
-    flex: 1,
-  } as ViewStyle,
   editRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -651,6 +651,7 @@ function DemographicsColumn({
 }: DemographicsColumnProps): React.JSX.Element {
   const initials = getInitials(profile.firstName, profile.lastName);
   const ctaDisabled = servicesConsentRefused;
+  const [editingPreferred, setEditingPreferred] = useState(false);
 
   const addressLabel = profile.address
     ? [profile.address, profile.city, profile.zipCode].filter(Boolean).join(', ')
@@ -713,8 +714,25 @@ function DemographicsColumn({
 
       {/* Demographics rows */}
       <View style={demoColStyles.rows}>
-        <ColumnHeading text="Demographics" />
-        <PreferredNameRow memberId={memberId} profile={profile} />
+        <ColumnHeading text="Demographics" onEdit={() => setEditingPreferred(true)} />
+        <InfoRow
+          icon={<User size={13} color={tokens.primary} />}
+          label="Last Name"
+          value={profile.lastName || 'Not provided'}
+          placeholder={!profile.lastName}
+        />
+        <InfoRow
+          icon={<User size={13} color={tokens.primary} />}
+          label="First Name"
+          value={profile.firstName || 'Not provided'}
+          placeholder={!profile.firstName}
+        />
+        <PreferredNameRow
+          memberId={memberId}
+          profile={profile}
+          editing={editingPreferred}
+          onClose={() => setEditingPreferred(false)}
+        />
         <InfoRow
           icon={<Phone size={13} color={tokens.primary} />}
           label="Phone"
@@ -943,7 +961,7 @@ function FlagNoteCard({ memberId, onEditFlag }: FlagNoteCardProps): React.JSX.El
             {flagNote.body}
           </Text>
           <Text style={flagNoteCardStyles.noteDate}>
-            {formatDate(flagNote.createdAt)}
+            Added {formatDate(flagNote.createdAt)} by You
           </Text>
         </View>
       ) : (
@@ -1072,6 +1090,20 @@ function BillingConsentCard({
       {/* Header */}
       <View style={billingConsentCardStyles.headerRow}>
         <Text style={billingConsentCardStyles.title}>Billing Consent</Text>
+        <TouchableOpacity
+          style={{ marginLeft: 'auto' }}
+          onPress={() => {
+            const msg =
+              'Billing consent is captured from the member. Use the Billable toggle below to set whether this member’s sessions are billable.';
+            if (Platform.OS === 'web' && typeof window !== 'undefined') window.alert(msg);
+            else Alert.alert('Billing Consent', msg);
+          }}
+          accessibilityRole="button"
+          accessibilityLabel="Edit billing consent"
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Pencil size={12} color="#15803D" />
+        </TouchableOpacity>
       </View>
 
       {/* Status indicator */}
@@ -3081,9 +3113,9 @@ function SessionsTable({
       {/* Pagination controls */}
       <View style={tableStyles.pagination}>
         <Text style={tableStyles.pageInfo}>
-          {sessions.length} session{sessions.length !== 1 ? 's' : ''}
-          {totalCount > sessions.length ? ` (showing ${sessions.length})` : ''}
-          {' · '}Page {currentPage} of {totalPages}
+          {`Showing ${(currentPage - 1) * SESSIONS_PAGE_SIZE + 1} to ` +
+            `${Math.min(currentPage * SESSIONS_PAGE_SIZE, sessions.length)} of ` +
+            `${sessions.length} session${sessions.length !== 1 ? 's' : ''}`}
         </Text>
         <View style={tableStyles.pageButtons}>
           <TouchableOpacity
@@ -3875,7 +3907,7 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                     profile.sessionCount > 0 ? (
                       <View style={s.countBadge}>
                         <Text style={s.countBadgeText}>
-                          {profile.sessionCount} total
+                          {profile.sessionCount} completed
                         </Text>
                       </View>
                     ) : undefined
