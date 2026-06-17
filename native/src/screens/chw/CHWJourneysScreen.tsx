@@ -32,12 +32,21 @@ import {
   Trophy,
   TrendingUp,
   Sparkles,
+  ChevronDown,
+  ChevronUp,
+  Circle,
 } from 'lucide-react-native';
 
 import { AppShell, EmptyState, PageHeader, Card, Pill, RightRail, StatTile } from '../../components/ui';
 import { colors, spacing, radius } from '../../theme/tokens';
 import { useAuth } from '../../context/AuthContext';
-import { useChwJourneys, type MemberJourneyResponse } from '../../hooks/useApiQueries';
+import {
+  useChwJourneys,
+  useChwJourneyDetail,
+  useUpdateJourneyStep,
+  type MemberJourneyResponse,
+  type MemberJourneyStepResponse,
+} from '../../hooks/useApiQueries';
 import { PressableMember } from '../../components/shared/PressableMember';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -257,13 +266,107 @@ interface JourneyCardProps {
   stalled?: boolean;
 }
 
+/** Per-step icon for the expanded step list. */
+function StepStatusIcon({ status }: { status: StepStatus }): React.JSX.Element {
+  switch (status) {
+    case 'completed':   return <CheckCircle2 size={18} color={colors.emerald700} />;
+    case 'in_progress': return <CircleDot size={18} color={colors.amber700} />;
+    case 'missed':      return <XCircle size={18} color={colors.red700} />;
+    default:            return <Circle size={18} color={colors.textSecondary} />;
+  }
+}
+
+interface StepRowProps {
+  step: MemberJourneyStepResponse;
+  /** True when this is the member's current position on the journey. */
+  isCurrent: boolean;
+  /** True while any step mutation on this journey is in flight. */
+  busy: boolean;
+  onComplete: (step: MemberJourneyStepResponse) => void;
+}
+
+/** A single expanded step row: status icon, name/description, points, reward action. */
+function StepRow({ step, isCurrent, busy, onComplete }: StepRowProps): React.JSX.Element {
+  const isCompleted = step.status === 'completed';
+  return (
+    <View style={[stepStyles.row, isCurrent && stepStyles.rowCurrent]}>
+      <StepStatusIcon status={step.status} />
+      <View style={stepStyles.body}>
+        <View style={stepStyles.titleRow}>
+          <Text style={[stepStyles.name, isCurrent && stepStyles.nameCurrent]} numberOfLines={2}>
+            {step.stepName}
+          </Text>
+          {isCurrent && (
+            <View style={stepStyles.currentBadge}>
+              <Text style={stepStyles.currentBadgeText}>Current</Text>
+            </View>
+          )}
+        </View>
+        {step.stepDescription ? (
+          <Text style={stepStyles.description} numberOfLines={2}>
+            {step.stepDescription}
+          </Text>
+        ) : null}
+      </View>
+      <View style={stepStyles.action}>
+        {isCompleted ? (
+          <View style={stepStyles.awardedPill}>
+            <Trophy size={11} color={colors.emerald700} />
+            <Text style={stepStyles.awardedText}>{step.pointsAwarded} pts</Text>
+          </View>
+        ) : (
+          <TouchableOpacity
+            style={[stepStyles.rewardBtn, busy && stepStyles.rewardBtnDisabled]}
+            disabled={busy}
+            accessibilityRole="button"
+            accessibilityLabel={`Mark ${step.stepName} complete and award ${step.pointsOnCompletion} points`}
+            onPress={() => onComplete(step)}
+          >
+            <Trophy size={12} color="#FFFFFF" />
+            <Text style={stepStyles.rewardBtnText}>
+              Complete · +{step.pointsOnCompletion} pts
+            </Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    </View>
+  );
+}
+
 function JourneyCard({ journey, memberName, stalled = false }: JourneyCardProps): React.JSX.Element {
   const hasMissedStep = journey.steps.some((s) => s.status === 'missed');
+  const [expanded, setExpanded] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Only fetch full step detail once the card is expanded — keeps the list light.
+  const detail = useChwJourneyDetail(journey.id, expanded);
+  const updateStep = useUpdateJourneyStep();
+
+  const steps = detail.data?.steps ?? [];
+  const currentStepId = detail.data?.currentStep?.id ?? null;
+
+  const handleComplete = (step: MemberJourneyStepResponse) => {
+    setErrorMsg(null);
+    updateStep.mutate(
+      { journeyId: journey.id, stepId: step.templateStepId, status: 'completed' },
+      {
+        onError: () =>
+          setErrorMsg(`Could not award "${step.stepName}". Please try again.`),
+      },
+    );
+  };
 
   return (
     <Card style={[journeyCardStyles.card, stalled && journeyCardStyles.stalledCard]}>
-      {/* Header: icon-circle + member/template + progress % pill */}
-      <View style={journeyCardStyles.headerRow}>
+      {/* Header: tap to expand/collapse the step detail */}
+      <TouchableOpacity
+        style={journeyCardStyles.headerRow}
+        activeOpacity={0.7}
+        accessibilityRole="button"
+        accessibilityState={{ expanded }}
+        accessibilityLabel={`${expanded ? 'Collapse' : 'Expand'} ${memberName}'s ${journey.template.name} journey`}
+        onPress={() => setExpanded((v) => !v)}
+      >
         <View style={[journeyCardStyles.iconCircle, journeyCardStyles[`iconBg_${journey.template.category}` as keyof typeof journeyCardStyles] ?? journeyCardStyles.iconBg_default]}>
           <Route size={18} color={colors.emerald700} />
         </View>
@@ -278,35 +381,74 @@ function JourneyCard({ journey, memberName, stalled = false }: JourneyCardProps)
               {' · '}{journey.template.name}
             </Text>
           </View>
-          {stalled && (
+          {stalled ? (
             <Text style={journeyCardStyles.stalledSubtitle}>
               {hasMissedStep ? 'Missed step — needs attention' : 'Paused · no movement'}
             </Text>
-          )}
+          ) : journey.currentStepName ? (
+            <Text style={journeyCardStyles.currentStepSubtitle}>
+              Current: {journey.currentStepName}
+            </Text>
+          ) : null}
         </View>
         <View style={[journeyCardStyles.pctBadge, { backgroundColor: colors.emerald100 }]}>
           <Text style={journeyCardStyles.pctBadgeText}>
             {Math.round(journey.progressPercent)}%
           </Text>
         </View>
-      </View>
+        {expanded ? (
+          <ChevronUp size={18} color={colors.textSecondary} />
+        ) : (
+          <ChevronDown size={18} color={colors.textSecondary} />
+        )}
+      </TouchableOpacity>
 
       {/* Horizontal progress bar */}
       <ProgressBar percent={journey.progressPercent} />
 
-      {/* Step pills row */}
-      <View style={journeyCardStyles.stepPills}>
-        {journey.steps.map((step) => {
-          const { bg, text } = stepPillColors(step.status);
-          return (
-            <View key={step.id} style={[journeyCardStyles.stepPill, { backgroundColor: bg }]}>
-              <Text style={[journeyCardStyles.stepPillText, { color: text }]}>
-                {stepPillLabel(step.status)}{step.stepName}
-              </Text>
-            </View>
-          );
-        })}
-      </View>
+      {/* Step pills row (collapsed summary, only when detail is loaded) */}
+      {steps.length > 0 && (
+        <View style={journeyCardStyles.stepPills}>
+          {steps.map((step) => {
+            const { bg, text } = stepPillColors(step.status);
+            return (
+              <View key={step.id} style={[journeyCardStyles.stepPill, { backgroundColor: bg }]}>
+                <Text style={[journeyCardStyles.stepPillText, { color: text }]}>
+                  {stepPillLabel(step.status)}{step.stepName}
+                </Text>
+              </View>
+            );
+          })}
+        </View>
+      )}
+
+      {/* Expanded step detail + reward actions */}
+      {expanded && (
+        <View style={journeyCardStyles.expandedPanel}>
+          {detail.isLoading ? (
+            <ActivityIndicator color={colors.emerald700} style={{ marginVertical: spacing.md }} />
+          ) : detail.isError ? (
+            <Text style={stepStyles.errorText}>
+              Could not load steps. Pull to refresh or try again.
+            </Text>
+          ) : steps.length === 0 ? (
+            <Text style={stepStyles.emptyText}>This journey has no steps yet.</Text>
+          ) : (
+            <>
+              {steps.map((step) => (
+                <StepRow
+                  key={step.id}
+                  step={step}
+                  isCurrent={step.id === currentStepId}
+                  busy={updateStep.isPending}
+                  onComplete={handleComplete}
+                />
+              ))}
+              {errorMsg ? <Text style={stepStyles.errorText}>{errorMsg}</Text> : null}
+            </>
+          )}
+        </View>
+      )}
 
       {/* Points + started date */}
       <View style={journeyCardStyles.pointsRow}>
@@ -321,6 +463,101 @@ function JourneyCard({ journey, memberName, stalled = false }: JourneyCardProps)
     </Card>
   );
 }
+
+const stepStyles = StyleSheet.create({
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingVertical: spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.gray100,
+  } as ViewStyle,
+  rowCurrent: {
+    backgroundColor: colors.amber100,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.sm,
+    borderBottomColor: 'transparent',
+  } as ViewStyle,
+  body: {
+    flex: 1,
+    gap: 2,
+  } as ViewStyle,
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    flexWrap: 'wrap',
+  } as ViewStyle,
+  name: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.textPrimary,
+  } as TextStyle,
+  nameCurrent: {
+    color: colors.amber700,
+  } as TextStyle,
+  currentBadge: {
+    backgroundColor: colors.amber700,
+    borderRadius: radius.sm,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+  } as ViewStyle,
+  currentBadgeText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    textTransform: 'uppercase',
+  } as TextStyle,
+  description: {
+    fontSize: 11,
+    color: colors.textSecondary,
+  } as TextStyle,
+  action: {
+    flexShrink: 0,
+  } as ViewStyle,
+  rewardBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: colors.emerald700,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+  } as ViewStyle,
+  rewardBtnDisabled: {
+    opacity: 0.5,
+  } as ViewStyle,
+  rewardBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  } as TextStyle,
+  awardedPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: colors.emerald100,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+  } as ViewStyle,
+  awardedText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.emerald700,
+  } as TextStyle,
+  errorText: {
+    fontSize: 12,
+    color: colors.red700,
+    marginTop: spacing.sm,
+  } as TextStyle,
+  emptyText: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    marginVertical: spacing.sm,
+  } as TextStyle,
+});
 
 const journeyCardStyles = StyleSheet.create({
   card: {
@@ -384,6 +621,20 @@ const journeyCardStyles = StyleSheet.create({
     color: colors.amber700,
     fontWeight: '500',
   } as TextStyle,
+
+  currentStepSubtitle: {
+    fontSize: 11,
+    color: colors.textSecondary,
+    fontWeight: '500',
+  } as TextStyle,
+
+  expandedPanel: {
+    marginTop: spacing.xs,
+    paddingTop: spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.gray100,
+    gap: 2,
+  } as ViewStyle,
 
   pctBadge: {
     borderRadius: radius.pill,

@@ -3,6 +3,7 @@
 Endpoint summary:
   GET    /api/v1/journeys/templates
   GET    /api/v1/chw/journeys
+  GET    /api/v1/journeys/{member_journey_id}
   GET    /api/v1/members/{member_id}/journeys
   POST   /api/v1/members/{member_id}/journeys
   PATCH  /api/v1/journeys/{member_journey_id}/steps/{step_id}
@@ -365,6 +366,47 @@ async def list_chw_journeys(
             )
         )
     return results
+
+
+# ─── GET /api/v1/journeys/{member_journey_id} ─────────────────────────────────
+
+
+@router.get(
+    "/api/v1/journeys/{member_journey_id}",
+    response_model=MemberJourneyResponse,
+    summary="Full detail for a single member journey (CHW caseload expand)",
+)
+async def get_chw_journey_detail(
+    member_journey_id: uuid.UUID,
+    current_user=Depends(require_role("chw")),
+    db: AsyncSession = Depends(get_db),
+) -> MemberJourneyResponse:
+    """Return the full step-state detail for one MemberJourney on the CHW's caseload.
+
+    Backs the expandable Journeys card: the lightweight GET /chw/journeys list
+    omits steps to keep the payload small, so the screen calls this endpoint when
+    a card is expanded to show the ordered steps and the member's current position.
+
+    Authorization: the requesting CHW must be the assigned chw_id on the journey.
+    Returns 403 (not 404) when another CHW requests it, mirroring the relationship
+    guard used elsewhere — never disclose whether the journey id exists.
+    """
+    journey_result = await db.execute(
+        select(MemberJourney).where(MemberJourney.id == member_journey_id)
+    )
+    member_journey = journey_result.scalar_one_or_none()
+    if member_journey is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Journey not found."
+        )
+
+    if member_journey.chw_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not the assigned CHW for this journey.",
+        )
+
+    return await _build_member_journey_response(member_journey, db)
 
 
 # ─── GET /api/v1/members/{member_id}/journeys ─────────────────────────────────

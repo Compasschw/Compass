@@ -521,3 +521,71 @@ async def test_wellness_points_balance_after_step_completion(
     assert len(data["ledger"]) == 1
     assert data["ledger"][0]["reason"] == "journey_step_completed"
     assert data["ledger"][0]["points"] == step1_points
+
+
+# ─── Test 11: GET /journeys/{id} returns full detail for the assigned CHW ──────
+
+
+@pytest.mark.asyncio
+async def test_chw_journey_detail_returns_steps_and_current(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_tokens: dict,
+    seeded_db: AsyncSession,
+):
+    """GET /journeys/{id} should return the full ordered step list + current step."""
+    await _create_and_accept_request(client, member_tokens, chw_tokens)
+    member_id = _decode_jwt_sub(member_tokens["access_token"])
+
+    create_res = await client.post(
+        f"/api/v1/members/{member_id}/journeys",
+        json={"member_id": member_id, "template_slug": "food_assistance"},
+        headers=auth_header(chw_tokens),
+    )
+    assert create_res.status_code == 201, create_res.text
+    journey_id = create_res.json()["id"]
+
+    detail = await client.get(
+        f"/api/v1/journeys/{journey_id}",
+        headers=auth_header(chw_tokens),
+    )
+    assert detail.status_code == 200, detail.text
+    body = detail.json()
+    assert body["id"] == journey_id
+    assert len(body["steps"]) >= 1
+    # Steps are returned in template order.
+    orders = [s["step_order"] for s in body["steps"]]
+    assert orders == sorted(orders)
+    # A freshly-created journey has a current step (the first one).
+    assert body["current_step"] is not None
+
+
+# ─── Test 12: GET /journeys/{id} is 403 for a non-assigned CHW ────────────────
+
+
+@pytest.mark.asyncio
+async def test_chw_journey_detail_403_for_other_chw(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_tokens: dict,
+    chw2_tokens: dict,
+    seeded_db: AsyncSession,
+):
+    """A CHW who is not the assigned chw_id must get 403, never the journey detail."""
+    await _create_and_accept_request(client, member_tokens, chw_tokens)
+    member_id = _decode_jwt_sub(member_tokens["access_token"])
+
+    create_res = await client.post(
+        f"/api/v1/members/{member_id}/journeys",
+        json={"member_id": member_id, "template_slug": "food_assistance"},
+        headers=auth_header(chw_tokens),
+    )
+    assert create_res.status_code == 201, create_res.text
+    journey_id = create_res.json()["id"]
+
+    # CHW2 (no relationship to this journey) attempts to read it.
+    res = await client.get(
+        f"/api/v1/journeys/{journey_id}",
+        headers=auth_header(chw2_tokens),
+    )
+    assert res.status_code == 403, res.text

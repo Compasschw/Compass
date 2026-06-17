@@ -2687,6 +2687,70 @@ export function useChwJourneys() {
   });
 }
 
+/** Query key for GET /journeys/{journeyId} — full step detail for one journey. */
+export const chwJourneyDetailKey = (journeyId: string) =>
+  ['chw', 'journeys', journeyId] as const;
+
+/**
+ * Fetch full step-state detail for a single journey on the CHW caseload.
+ *
+ * GET /journeys/{journeyId} — returns a full MemberJourneyResponse (with the
+ * ordered `steps` array and `currentStep`). Backs the expandable Journeys card:
+ * only fetched when `enabled` is true (i.e. the card has been expanded), so the
+ * list view stays lightweight.
+ */
+export function useChwJourneyDetail(journeyId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: chwJourneyDetailKey(journeyId),
+    enabled,
+    queryFn: async (): Promise<MemberJourneyResponse> => {
+      const raw = await api<unknown>(`/journeys/${journeyId}`);
+      return transformKeys<MemberJourneyResponse>(raw);
+    },
+    staleTime: 30_000,
+  });
+}
+
+/** Body for PATCH /journeys/{journeyId}/steps/{stepId}. */
+export interface UpdateJourneyStepPayload {
+  journeyId: string;
+  stepId: string;
+  status: 'in_progress' | 'completed' | 'missed';
+  notes?: string;
+}
+
+/**
+ * Mark a journey step in_progress / completed / missed.
+ *
+ * PATCH /journeys/{journeyId}/steps/{stepId}. When status='completed' the backend
+ * awards the step's points_on_completion, writes a wellness-points ledger row, and
+ * advances the journey to the next step. This is the "reward this step" action on
+ * the expandable Journeys card. Returns the refreshed MemberJourneyResponse.
+ *
+ * Invalidates the caseload list, this journey's detail query, and the member's
+ * rewards balance so the points update everywhere without a reload.
+ */
+export function useUpdateJourneyStep() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (
+      payload: UpdateJourneyStepPayload,
+    ): Promise<MemberJourneyResponse> => {
+      const { journeyId, stepId, status, notes } = payload;
+      const raw = await api<unknown>(`/journeys/${journeyId}/steps/${stepId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status, ...(notes != null ? { notes } : {}) }),
+      });
+      return transformKeys<MemberJourneyResponse>(raw);
+    },
+    onSuccess: (updated) => {
+      void qc.invalidateQueries({ queryKey: queryKeys.chwJourneys });
+      void qc.invalidateQueries({ queryKey: chwJourneyDetailKey(updated.id) });
+      void qc.invalidateQueries({ queryKey: memberRewardsBalanceKey(updated.memberId) });
+    },
+  });
+}
+
 /**
  * CHW members roster from GET /chw/members.
  *
