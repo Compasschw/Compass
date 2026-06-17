@@ -176,6 +176,10 @@ class MemberProfile(Base):
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
     )
 
+    # Member's chosen/preferred name (what they go by), distinct from the legal
+    # name stored on User.name. Nullable — falls back to first name in the UI.
+    preferred_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
     rewards_balance: Mapped[int] = mapped_column(Integer, default=0)
     preferred_mode: Mapped[str | None] = mapped_column(String(20))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

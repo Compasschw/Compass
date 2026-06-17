@@ -19,7 +19,7 @@ from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class CHWMemberProfileView(BaseModel):
@@ -144,6 +144,8 @@ class CHWMemberProfileDetail(BaseModel):
     id: UUID
     first_name: str
     last_name: str
+    # Member's chosen/preferred name (nullable — UI falls back to first_name).
+    preferred_name: str | None = None
     phone_e164: str | None
     email: str | None
     primary_language: str
@@ -172,6 +174,30 @@ class CHWMemberProfileDetail(BaseModel):
     medi_cal_id: str | None = None
     """Full Medi-Cal CIN (8 digits + 1 letter). Returned in plain text — the
     EncryptedString descriptor decrypts on read. Required for billing verification."""
+
+
+class PreferredNameUpdate(BaseModel):
+    """Request body for PATCH /api/v1/chw/members/{member_id}/preferred-name.
+
+    A null or empty value clears the preferred name (UI falls back to first name).
+    Whitespace is trimmed; max 100 chars.
+    """
+
+    preferred_name: str | None = Field(default=None, max_length=100)
+
+    @field_validator("preferred_name")
+    @classmethod
+    def _normalize(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        trimmed = v.strip()
+        return trimmed or None
+
+
+class PreferredNameResponse(BaseModel):
+    """Response body for the preferred-name GET/PATCH endpoints."""
+
+    preferred_name: str | None = None
 
 
 # ─── Members Roster ───────────────────────────────────────────────────────────

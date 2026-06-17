@@ -1964,6 +1964,34 @@ export function useUpdateMemberBillingStatus(memberId: string) {
   });
 }
 
+/** Shape returned by PATCH /chw/members/{id}/preferred-name (camelCase). */
+export interface PreferredNameData {
+  preferredName: string | null;
+}
+
+/**
+ * Set a member's preferred name from the CHW Member Profile (CHW or admin).
+ *
+ * Endpoint: PATCH /api/v1/chw/members/{member_id}/preferred-name
+ * { preferred_name }. A null/blank value clears it. Invalidates the CHW member
+ * detail query so the demographics row refreshes.
+ */
+export function useUpdateMemberPreferredName(memberId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (preferredName: string | null): Promise<PreferredNameData> => {
+      const raw = await api<unknown>(`/chw/members/${memberId}/preferred-name`, {
+        method: 'PATCH',
+        body: JSON.stringify({ preferred_name: preferredName }),
+      });
+      return transformKeys<PreferredNameData>(raw);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['chw', 'members', memberId, 'detail'] });
+    },
+  });
+}
+
 /**
  * Fetch the services-consent status for a given member from the CHW side.
  *

@@ -66,6 +66,7 @@ import {
   MapPin,
   MessageSquare,
   NotebookPen,
+  Pencil,
   Phone,
   Plus,
   Shield,
@@ -110,6 +111,7 @@ import {
   useMemberServicesConsent,
   useMemberBillingStatus,
   useUpdateMemberBillingStatus,
+  useUpdateMemberPreferredName,
   useFlagNote,
   useCreateFlagNote,
   useDeleteFlagNote,
@@ -171,6 +173,8 @@ interface CHWMemberProfileDetail {
   id: string;
   firstName: string;
   lastName: string;
+  /** Member's chosen name; null falls back to firstName in the UI. */
+  preferredName: string | null;
   phoneE164: string | null;
   email: string | null;
   primaryLanguage: string;
@@ -510,6 +514,7 @@ const emptyStyles = StyleSheet.create({
 
 interface DemographicsColumnProps {
   profile: CHWMemberProfileDetail;
+  memberId: string;
   displayName: string;
   servicesConsentRefused: boolean;
   onNavigateToConversation: (conversationId: string) => void;
@@ -517,11 +522,128 @@ interface DemographicsColumnProps {
 }
 
 /**
+ * Inline-editable Preferred Name row. View mode shows the value (falling back to
+ * first name) with a pencil; tapping the pencil reveals a text field + save/cancel
+ * that PATCHes /chw/members/{id}/preferred-name.
+ */
+function PreferredNameRow({
+  memberId,
+  profile,
+}: {
+  memberId: string;
+  profile: CHWMemberProfileDetail;
+}): React.JSX.Element {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const update = useUpdateMemberPreferredName(memberId);
+
+  const current = profile.preferredName ?? profile.firstName ?? '';
+
+  const startEdit = (): void => {
+    setDraft(profile.preferredName ?? '');
+    setEditing(true);
+  };
+
+  const save = (): void => {
+    update.mutate(draft.trim() || null, {
+      onSuccess: () => setEditing(false),
+      onError: () => {
+        const msg = 'Could not update preferred name. Please try again.';
+        if (Platform.OS === 'web' && typeof window !== 'undefined') window.alert(msg);
+        else Alert.alert('Error', msg);
+      },
+    });
+  };
+
+  if (editing) {
+    return (
+      <View style={prefNameStyles.editRow}>
+        <User size={13} color={tokens.primary} />
+        <TextInput
+          style={prefNameStyles.input}
+          value={draft}
+          onChangeText={setDraft}
+          placeholder="Preferred name"
+          placeholderTextColor="#9CA3AF"
+          autoFocus
+          maxLength={100}
+          editable={!update.isPending}
+          onSubmitEditing={save}
+          accessibilityLabel="Preferred name input"
+        />
+        {update.isPending ? (
+          <ActivityIndicator size="small" color={tokens.primary} />
+        ) : (
+          <>
+            <TouchableOpacity onPress={save} accessibilityRole="button" accessibilityLabel="Save preferred name" hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Check size={16} color={tokens.primary} />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setEditing(false)} accessibilityRole="button" accessibilityLabel="Cancel" hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <X size={16} color="#9CA3AF" />
+            </TouchableOpacity>
+          </>
+        )}
+      </View>
+    );
+  }
+
+  return (
+    <View style={prefNameStyles.viewRow}>
+      <View style={prefNameStyles.infoWrap}>
+        <InfoRow
+          icon={<User size={13} color={tokens.primary} />}
+          label="Preferred Name"
+          value={current || 'Not provided'}
+          placeholder={!current}
+        />
+      </View>
+      <TouchableOpacity
+        onPress={startEdit}
+        accessibilityRole="button"
+        accessibilityLabel="Edit preferred name"
+        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+      >
+        <Pencil size={13} color={tokens.textSecondary} />
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+const prefNameStyles = StyleSheet.create({
+  viewRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  } as ViewStyle,
+  infoWrap: {
+    flex: 1,
+  } as ViewStyle,
+  editRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 6,
+  } as ViewStyle,
+  input: {
+    flex: 1,
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: tokens.textPrimary ?? '#111827',
+    borderWidth: 1,
+    borderColor: tokens.cardBorder ?? '#E5E7EB',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    outlineStyle: 'none',
+  } as unknown as TextStyle,
+});
+
+/**
  * Left column of the 3-column top card.
  * Renders avatar + name banner, then demographic data rows (all read-only).
  */
 function DemographicsColumn({
   profile,
+  memberId,
   displayName,
   servicesConsentRefused,
   onNavigateToConversation,
@@ -591,13 +713,8 @@ function DemographicsColumn({
 
       {/* Demographics rows */}
       <View style={demoColStyles.rows}>
-        <ColumnHeading text="Demographics" sub="(CHW read-only)" />
-        <InfoRow
-          icon={<User size={13} color={tokens.primary} />}
-          label="Preferred Name"
-          value={profile.firstName || 'Not provided'}
-          placeholder={!profile.firstName}
-        />
+        <ColumnHeading text="Demographics" />
+        <PreferredNameRow memberId={memberId} profile={profile} />
         <InfoRow
           icon={<Phone size={13} color={tokens.primary} />}
           label="Phone"
@@ -3611,6 +3728,7 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                 {/* LEFT: Demographics + Call/Message */}
                 <DemographicsColumn
                   profile={profile}
+                  memberId={memberId}
                   displayName={displayName}
                   servicesConsentRefused={servicesConsentRefused}
                   onNavigateToConversation={handleNavigateToConversation}
