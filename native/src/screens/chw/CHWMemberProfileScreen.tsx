@@ -61,9 +61,7 @@ import {
   CheckCircle,
   Edit2,
   Flag,
-  Globe,
   Heart,
-  MapPin,
   MessageSquare,
   NotebookPen,
   Pencil,
@@ -638,8 +636,35 @@ const prefNameStyles = StyleSheet.create({
 });
 
 /**
- * Left column of the 3-column top card.
- * Renders avatar + name banner, then demographic data rows (all read-only).
+ * Compact demographics field — label on the left (muted), value on the right
+ * (bold). No icon, tight vertical rhythm. Matches the mockup's right-of-avatar
+ * field list.
+ */
+function DemoField({
+  label,
+  value,
+  placeholder = false,
+}: {
+  label: string;
+  value: string;
+  placeholder?: boolean;
+}): React.JSX.Element {
+  return (
+    <View style={demoColStyles.fieldRow}>
+      <Text style={demoColStyles.fieldLabel}>{label}</Text>
+      <Text
+        style={[demoColStyles.fieldValue, placeholder && demoColStyles.fieldValuePlaceholder]}
+        numberOfLines={2}
+      >
+        {value}
+      </Text>
+    </View>
+  );
+}
+
+/**
+ * Left column of the 3-column top card. Compact two-sub-column card: avatar +
+ * Call/Message on the left, demographic fields listed to the right (per mockup).
  */
 function DemographicsColumn({
   profile,
@@ -665,122 +690,90 @@ function DemographicsColumn({
 
   return (
     <View style={demoColStyles.container}>
-      {/* Banner + avatar hero */}
-      <View style={demoColStyles.banner} />
-      <View style={demoColStyles.heroSection}>
-        <View style={demoColStyles.avatarWrapper}>
+      {/* Card header: title + section edit pencil */}
+      <View style={demoColStyles.cardHeader}>
+        <Text style={demoColStyles.cardTitle}>Member Demographics</Text>
+        <TouchableOpacity
+          onPress={() => setEditingPreferred(true)}
+          accessibilityRole="button"
+          accessibilityLabel="Edit demographics"
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Pencil size={13} color={tokens.textSecondary} />
+        </TouchableOpacity>
+      </View>
+
+      {/* Body: avatar + Call/Message on the left, fields on the right */}
+      <View style={demoColStyles.body}>
+        {/* Left sub-column */}
+        <View style={demoColStyles.leftCol}>
           <View style={demoColStyles.avatar}>
             <Text style={demoColStyles.avatarText}>{initials}</Text>
           </View>
+          <View style={demoColStyles.badgesRow}>
+            <Pill variant="emerald" size="sm">Active</Pill>
+            {profile.ecmEligible && <Pill variant="blue" size="sm">ECM</Pill>}
+          </View>
+          <View style={[demoColStyles.ctaStack, ctaDisabled && demoColStyles.ctaStackDisabled]}>
+            <TouchableOpacity
+              style={[demoColStyles.ctaBtn, demoColStyles.callBtn]}
+              onPress={ctaDisabled ? undefined : onNavigateAndCall}
+              disabled={ctaDisabled}
+              accessibilityRole="button"
+              accessibilityLabel={
+                ctaDisabled ? 'Call disabled — member has refused services' : `Call ${displayName}`
+              }
+              accessibilityState={{ disabled: ctaDisabled }}
+            >
+              <Phone size={14} color="#FFFFFF" />
+              <Text style={demoColStyles.ctaBtnText}>Call</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[demoColStyles.ctaBtn, demoColStyles.messageBtn]}
+              onPress={ctaDisabled ? undefined : () => onNavigateToConversation('')}
+              disabled={ctaDisabled}
+              accessibilityRole="button"
+              accessibilityLabel={
+                ctaDisabled ? 'Message disabled — member has refused services' : `Message ${displayName}`
+              }
+              accessibilityState={{ disabled: ctaDisabled }}
+            >
+              <MessageSquare size={14} color={tokens.primary} />
+              <Text style={[demoColStyles.ctaBtnText, { color: tokens.primary }]}>Message</Text>
+            </TouchableOpacity>
+          </View>
         </View>
-        <Text style={demoColStyles.displayName}>{displayName}</Text>
-        <View style={demoColStyles.badgesRow}>
-          <Pill variant="emerald" size="sm">Active</Pill>
-          {profile.ecmEligible && (
-            <Pill variant="blue" size="sm">ECM Eligible</Pill>
+
+        {/* Right sub-column: fields */}
+        <View style={demoColStyles.fields}>
+          <DemoField label="Last Name" value={profile.lastName || 'Not provided'} placeholder={!profile.lastName} />
+          <DemoField label="First Name" value={profile.firstName || 'Not provided'} placeholder={!profile.firstName} />
+          {editingPreferred ? (
+            <PreferredNameRow
+              memberId={memberId}
+              profile={profile}
+              editing
+              onClose={() => setEditingPreferred(false)}
+            />
+          ) : (
+            <DemoField
+              label="Preferred Name"
+              value={(profile.preferredName ?? profile.firstName) || 'Not provided'}
+              placeholder={!(profile.preferredName ?? profile.firstName)}
+            />
           )}
+          <View style={demoColStyles.divider} />
+          <DemoField label="Date of Birth" value={formatDob(profile.dateOfBirth)} placeholder={!profile.dateOfBirth} />
+          <DemoField label="Sex" value={profile.gender ?? 'Not provided'} placeholder={!profile.gender} />
+          <View style={demoColStyles.divider} />
+          <DemoField label="Insurance" value={profile.mco ?? 'Not provided'} placeholder={!profile.mco} />
+          <DemoField label="Member ID" value={profile.mediCalId ?? 'Not provided'} placeholder={!profile.mediCalId} />
+          <View style={demoColStyles.divider} />
+          <DemoField label="Address" value={addressLabel} placeholder={!profile.address && !profile.zipCode} />
+          <DemoField label="Phone" value={profile.phoneE164 ?? 'Not provided'} placeholder={!profile.phoneE164} />
+          <DemoField label="Primary Language" value={languageValue || 'Not provided'} placeholder={!languageValue} />
+          {profile.email ? <DemoField label="Email" value={profile.email} /> : null}
         </View>
-      </View>
-
-      {/* Stacked Call / Message actions, directly below the avatar */}
-      <View style={[demoColStyles.ctaStack, ctaDisabled && demoColStyles.ctaStackDisabled]}>
-        <TouchableOpacity
-          style={[demoColStyles.ctaBtn, demoColStyles.callBtn]}
-          onPress={ctaDisabled ? undefined : onNavigateAndCall}
-          disabled={ctaDisabled}
-          accessibilityRole="button"
-          accessibilityLabel={
-            ctaDisabled ? 'Call disabled — member has refused services' : `Call ${displayName}`
-          }
-          accessibilityState={{ disabled: ctaDisabled }}
-        >
-          <Phone size={14} color="#FFFFFF" />
-          <Text style={demoColStyles.ctaBtnText}>Call</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[demoColStyles.ctaBtn, demoColStyles.messageBtn]}
-          onPress={ctaDisabled ? undefined : () => onNavigateToConversation('')}
-          disabled={ctaDisabled}
-          accessibilityRole="button"
-          accessibilityLabel={
-            ctaDisabled ? 'Message disabled — member has refused services' : `Message ${displayName}`
-          }
-          accessibilityState={{ disabled: ctaDisabled }}
-        >
-          <MessageSquare size={14} color={tokens.primary} />
-          <Text style={[demoColStyles.ctaBtnText, { color: tokens.primary }]}>Message</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Demographics rows */}
-      <View style={demoColStyles.rows}>
-        <ColumnHeading text="Demographics" onEdit={() => setEditingPreferred(true)} />
-        <InfoRow
-          icon={<User size={13} color={tokens.primary} />}
-          label="Last Name"
-          value={profile.lastName || 'Not provided'}
-          placeholder={!profile.lastName}
-        />
-        <InfoRow
-          icon={<User size={13} color={tokens.primary} />}
-          label="First Name"
-          value={profile.firstName || 'Not provided'}
-          placeholder={!profile.firstName}
-        />
-        <PreferredNameRow
-          memberId={memberId}
-          profile={profile}
-          editing={editingPreferred}
-          onClose={() => setEditingPreferred(false)}
-        />
-        <InfoRow
-          icon={<Phone size={13} color={tokens.primary} />}
-          label="Phone"
-          value={profile.phoneE164 ?? 'Not provided'}
-          placeholder={!profile.phoneE164}
-        />
-        <InfoRow
-          icon={<MapPin size={13} color={tokens.primary} />}
-          label={profile.address ? 'Address' : 'ZIP Code'}
-          value={addressLabel}
-          placeholder={!profile.address && !profile.zipCode}
-        />
-        <InfoRow
-          icon={<Globe size={13} color={tokens.primary} />}
-          label="Language"
-          value={languageValue}
-        />
-        <InfoRow
-          icon={<Heart size={13} color={tokens.primary} />}
-          label="MCO / Insurance"
-          value={profile.mco ?? 'Not provided'}
-          placeholder={!profile.mco}
-        />
-        {profile.email ? (
-          <InfoRow
-            icon={<User size={13} color={tokens.primary} />}
-            label="Email"
-            value={profile.email}
-          />
-        ) : null}
-        <InfoRow
-          icon={<Calendar size={13} color={tokens.primary} />}
-          label="Date of Birth"
-          value={formatDob(profile.dateOfBirth)}
-          placeholder={!profile.dateOfBirth}
-        />
-        <InfoRow
-          icon={<User size={13} color={tokens.primary} />}
-          label="Gender"
-          value={profile.gender ?? 'Not provided'}
-          placeholder={!profile.gender}
-        />
-        <InfoRow
-          icon={<Shield size={13} color={tokens.primary} />}
-          label="Member ID"
-          value={profile.mediCalId ?? 'Not provided'}
-          placeholder={!profile.mediCalId}
-        />
       </View>
     </View>
   );
@@ -788,45 +781,44 @@ function DemographicsColumn({
 
 const demoColStyles = StyleSheet.create({
   container: {
-    flex: Platform.OS === 'web' ? 3 : undefined,
+    flex: Platform.OS === 'web' ? 5 : undefined,
     borderRightWidth: Platform.OS === 'web' ? 1 : 0,
     borderRightColor: '#F3F4F6',
-    overflow: 'hidden',
+    padding: 16,
   } as ViewStyle,
-  banner: {
-    height: 64,
-    backgroundColor: '#3D5A3E',
-  } as ViewStyle,
-  heroSection: {
+  cardHeader: {
+    flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingBottom: 16,
-    gap: 6,
+    justifyContent: 'space-between',
+    marginBottom: 12,
   } as ViewStyle,
-  avatarWrapper: {
-    marginTop: -40,
-    marginBottom: 4,
+  cardTitle: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 13,
+    color: '#111827',
+  } as TextStyle,
+  body: {
+    flexDirection: 'row',
+    gap: 16,
+    alignItems: 'flex-start',
+  } as ViewStyle,
+  leftCol: {
+    width: 132,
+    alignItems: 'center',
+    gap: 8,
   } as ViewStyle,
   avatar: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+    width: 72,
+    height: 72,
+    borderRadius: 36,
     backgroundColor: '#CBD5E1',
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 3,
-    borderColor: '#FFFFFF',
   } as ViewStyle,
   avatarText: {
     fontFamily: 'DMSans_700Bold',
     fontSize: 22,
     color: '#FFFFFF',
-  } as TextStyle,
-  displayName: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 16,
-    color: '#111827',
-    textAlign: 'center',
   } as TextStyle,
   badgesRow: {
     flexDirection: 'row',
@@ -836,9 +828,9 @@ const demoColStyles = StyleSheet.create({
     justifyContent: 'center',
   } as ViewStyle,
   ctaStack: {
+    alignSelf: 'stretch',
     gap: 8,
-    paddingHorizontal: 16,
-    paddingTop: 12,
+    marginTop: 4,
   } as ViewStyle,
   ctaStackDisabled: {
     opacity: 0.45,
@@ -864,12 +856,36 @@ const demoColStyles = StyleSheet.create({
     fontSize: 13,
     color: '#FFFFFF',
   } as TextStyle,
-  rows: {
-    paddingHorizontal: 16,
-    paddingBottom: 16,
-    borderTopWidth: 1,
-    borderTopColor: '#F3F4F6',
-    paddingTop: 12,
+  fields: {
+    flex: 1,
+  } as ViewStyle,
+  fieldRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingVertical: 3,
+    gap: 8,
+  } as ViewStyle,
+  fieldLabel: {
+    width: 112,
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 12,
+    color: '#6B7280',
+  } as TextStyle,
+  fieldValue: {
+    flex: 1,
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 13,
+    color: '#111827',
+  } as TextStyle,
+  fieldValuePlaceholder: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    color: '#9CA3AF',
+    fontStyle: 'italic',
+  } as TextStyle,
+  divider: {
+    height: 1,
+    backgroundColor: '#F3F4F6',
+    marginVertical: 6,
   } as ViewStyle,
 });
 
@@ -908,7 +924,7 @@ function CenterColumn({
 
 const centerColStyles = StyleSheet.create({
   container: {
-    flex: Platform.OS === 'web' ? 3 : undefined,
+    flex: Platform.OS === 'web' ? 4 : undefined,
     borderRightWidth: Platform.OS === 'web' ? 1 : 0,
     borderRightColor: '#F3F4F6',
     borderTopWidth: Platform.OS === 'web' ? 0 : 1,
