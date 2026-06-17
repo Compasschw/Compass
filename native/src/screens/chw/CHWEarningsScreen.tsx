@@ -16,13 +16,16 @@
  * Bank & payout setup card, Stripe status column in the sessions table.
  */
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useCallback } from 'react';
 import {
   View,
   Text,
   ScrollView,
   StyleSheet,
   TouchableOpacity,
+  ActivityIndicator,
+  Linking,
+  Platform,
   type ViewStyle,
   type TextStyle,
 } from 'react-native';
@@ -34,6 +37,7 @@ import {
   Banknote,
   CheckCircle2,
   DollarSign,
+  Landmark,
   Wallet,
 } from 'lucide-react-native';
 
@@ -41,6 +45,7 @@ import { formatCurrency } from '../../data/mock';
 import {
   useChwClaims,
   useChwEarnings,
+  useConnectOnboardingLink,
   type ChwClaim,
 } from '../../hooks/useApiQueries';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
@@ -106,6 +111,23 @@ export function CHWEarningsScreen(): React.JSX.Element {
   const navigation = useNavigation<DrawerNavigationProp<CHWTabParamList>>();
   const earningsQuery = useChwEarnings();
   const claimsQuery = useChwClaims();
+  const connectOnboarding = useConnectOnboardingLink();
+
+  // "Update Bank Account" opens Stripe Connect onboarding/management. Stripe is
+  // the source of truth for bank accounts, identity, tax forms, and payout
+  // config — CompassCHW never handles banking details directly.
+  const handleUpdateBankAccount = useCallback(() => {
+    if (connectOnboarding.isPending) return;
+    connectOnboarding.mutate(undefined, {
+      onSuccess: ({ onboardingUrl }) => {
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.open(onboardingUrl, '_blank', 'noopener,noreferrer');
+        } else {
+          void Linking.openURL(onboardingUrl);
+        }
+      },
+    });
+  }, [connectOnboarding]);
 
   const isLoading = earningsQuery.isLoading || claimsQuery.isLoading;
   const queryError = earningsQuery.error ?? claimsQuery.error;
@@ -209,7 +231,26 @@ export function CHWEarningsScreen(): React.JSX.Element {
           <View style={styles.pageWrap}>
 
             {/* ── Page header ── */}
-            <PageHeader title="Earnings" />
+            <PageHeader
+              title="Earnings"
+              subtitle="Overview of your earnings and payouts"
+              right={
+                <TouchableOpacity
+                  style={styles.updateBankBtn}
+                  onPress={handleUpdateBankAccount}
+                  disabled={connectOnboarding.isPending}
+                  accessibilityRole="button"
+                  accessibilityLabel="Update bank account"
+                >
+                  {connectOnboarding.isPending ? (
+                    <ActivityIndicator size="small" color={tokens.textPrimary} />
+                  ) : (
+                    <Landmark size={14} color={tokens.textPrimary} />
+                  )}
+                  <Text style={styles.updateBankBtnText}>Update Bank Account</Text>
+                </TouchableOpacity>
+              }
+            />
 
             {/* ── 3 KPI stat tiles ── */}
             <View style={styles.statGrid}>
@@ -260,13 +301,13 @@ export function CHWEarningsScreen(): React.JSX.Element {
             <Card style={styles.tableCard}>
               <View style={styles.tableCardHeader}>
                 <SectionHeader
-                  title="Sessions billed this month"
+                  title="Sessions Completed"
                   right={
                     <TouchableOpacity
                       accessibilityRole="button"
                       accessibilityLabel="View all sessions"
                     >
-                      <Text style={styles.viewAllLink}>View all →</Text>
+                      <Text style={styles.viewAllLink}>View all sessions →</Text>
                     </TouchableOpacity>
                   }
                   marginBottom={0}
@@ -302,29 +343,21 @@ export function CHWEarningsScreen(): React.JSX.Element {
                       const pear = pearPill(claim.status);
                       return (
                         <View key={claim.id} style={[styles.tableRow, styles.tableDataRow]}>
-                          {/* Member — ChwClaim has no memberName field.
-                              TODO: wire memberName when /chw/claims exposes it. */}
-                          <Text style={[styles.td, styles.tdMemberName, colWidths.Member]}>
-                            —
-                          </Text>
-                          <Text style={[styles.td, colWidths.Date]}>
+                          <Text style={[styles.td, colWidths['Session Date']]}>
                             {formatClaimDate(claim.serviceDate)}
                           </Text>
-                          <View style={[colWidths.CPT, styles.tdCenter]}>
-                            <Pill variant="blue" size="sm">
-                              {claim.procedureCode || '—'}
-                            </Pill>
-                          </View>
+                          {/* Member name — ChwClaim has no memberName field yet.
+                              TODO: wire memberName when /chw/claims exposes it. */}
+                          <Text style={[styles.td, styles.tdMemberName, colWidths['Member Name']]}>
+                            —
+                          </Text>
                           <Text style={[styles.td, styles.tdNumeric, colWidths.Units, numerals.tabular]}>
                             {claim.units ?? '—'}
                           </Text>
-                          <Text style={[styles.td, colWidths.Gross, numerals.tabular]}>
-                            {formatCurrency(claim.grossAmount)}
-                          </Text>
-                          <Text style={[styles.td, styles.tdBold, colWidths.Net, numerals.tabular]}>
+                          <Text style={[styles.td, styles.tdBold, colWidths['Amount Earned'], numerals.tabular]}>
                             {formatCurrency(claim.netPayout)}
                           </Text>
-                          <View style={[colWidths['Pear Suite'], styles.tdCenter]}>
+                          <View style={[colWidths['Payment Status'], styles.tdCenter]}>
                             <Pill variant={pear.variant} size="sm">
                               {pear.label}
                             </Pill>
@@ -344,7 +377,18 @@ export function CHWEarningsScreen(): React.JSX.Element {
                 returning aggregate payout transfer records (not per-claim). */}
             <Card style={styles.payoutsCard}>
               <View style={styles.payoutsCardHeader}>
-                <SectionHeader title="Recent payouts" marginBottom={0} />
+                <SectionHeader
+                  title="Recent Payouts"
+                  right={
+                    <TouchableOpacity
+                      accessibilityRole="button"
+                      accessibilityLabel="View all payouts"
+                    >
+                      <Text style={styles.viewAllLink}>View All Payouts →</Text>
+                    </TouchableOpacity>
+                  }
+                  marginBottom={0}
+                />
               </View>
 
               <View style={styles.payoutsList}>
@@ -395,18 +439,16 @@ export function CHWEarningsScreen(): React.JSX.Element {
 
 // ─── Table column definitions ─────────────────────────────────────────────────
 
-type TableCol = 'Member' | 'Date' | 'CPT' | 'Units' | 'Gross' | 'Net' | 'Pear Suite';
+type TableCol = 'Session Date' | 'Member Name' | 'Units' | 'Amount Earned' | 'Payment Status';
 
-const TABLE_COLS: TableCol[] = ['Member', 'Date', 'CPT', 'Units', 'Gross', 'Net', 'Pear Suite'];
+const TABLE_COLS: TableCol[] = ['Session Date', 'Member Name', 'Units', 'Amount Earned', 'Payment Status'];
 
 const colWidths: Record<TableCol, ViewStyle> = {
-  Member:       { width: 140 },
-  Date:         { width: 80 },
-  CPT:          { width: 80 },
-  Units:        { width: 60 },
-  Gross:        { width: 90 },
-  Net:          { width: 90 },
-  'Pear Suite': { width: 110 },
+  'Session Date':   { width: 100 },
+  'Member Name':    { width: 150 },
+  Units:            { width: 60 },
+  'Amount Earned':  { width: 120 },
+  'Payment Status': { width: 120 },
 };
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
@@ -463,6 +505,24 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: '#16a34a',
+  } as TextStyle,
+
+  updateBankBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    height: 36,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: tokens.cardBorder ?? '#e5e7eb',
+    backgroundColor: tokens.cardBg ?? '#ffffff',
+  } as ViewStyle,
+
+  updateBankBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: tokens.textPrimary ?? '#111827',
   } as TextStyle,
 
   tableScroll: {

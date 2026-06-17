@@ -643,7 +643,7 @@ export function CHWDashboardScreen(): React.JSX.Element {
                 <Search size={14} color={tokens.textSecondary} style={styles.searchIcon} />
                 <TextInput
                   style={styles.searchInput}
-                  placeholder="Search members, journeys, resources…"
+                  placeholder="Search members"
                   placeholderTextColor={tokens.textSecondary}
                   accessibilityLabel="Search"
                 />
