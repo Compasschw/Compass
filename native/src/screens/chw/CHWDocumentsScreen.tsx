@@ -486,7 +486,7 @@ function CHWUploadTrigger(): React.JSX.Element {
         <input
           ref={fileInputRef}
           type="file"
-          accept="application/pdf,image/jpeg,image/png,image/heic,image/*"
+          accept="application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/jpeg,image/png,image/heic,image/*"
           style={{ display: 'none' }}
           onChange={handleWebFileChange}
           aria-hidden="true"

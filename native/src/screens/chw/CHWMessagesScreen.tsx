@@ -1451,7 +1451,7 @@ function ConversationPane({
               <input
                 ref={fileInputDocRef}
                 type="file"
-                accept="application/pdf,image/jpeg,image/png,image/gif,image/webp"
+                accept="application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/jpeg,image/png,image/gif,image/webp"
                 style={{ display: 'none' }}
                 onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
                   const file = e.target.files?.[0];

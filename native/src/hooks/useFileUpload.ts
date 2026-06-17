@@ -105,9 +105,16 @@ export interface UseFileUploadOptions {
 /** Client-side size cap: 10 MB (conservative; server cap is 20 MB). */
 export const MAX_FILE_BYTES = 10 * 1024 * 1024;
 
+/** Word document MIME types (.doc + .docx). */
+const WORD_MIME_TYPES = [
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+] as const;
+
 /** Allowed MIME types for member_document uploads. */
 const ALLOWED_MIME_TYPES: ReadonlySet<string> = new Set([
   'application/pdf',
+  ...WORD_MIME_TYPES,
   'image/jpeg',
   'image/png',
   'image/heic',
@@ -119,6 +126,7 @@ const ALLOWED_MIME_TYPES: ReadonlySet<string> = new Set([
  */
 export const ALLOWED_MESSAGE_ATTACHMENT_MIME_TYPES: ReadonlySet<string> = new Set([
   'application/pdf',
+  ...WORD_MIME_TYPES,
   'image/jpeg',
   'image/png',
   'image/gif',
@@ -128,6 +136,7 @@ export const ALLOWED_MESSAGE_ATTACHMENT_MIME_TYPES: ReadonlySet<string> = new Se
 
 const ALLOWED_EXTENSIONS = [
   'application/pdf',
+  ...WORD_MIME_TYPES,
   'image/*',
 ];
 

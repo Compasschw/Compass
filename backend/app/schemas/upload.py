@@ -27,6 +27,8 @@ ALLOWED_MIME_TYPES = frozenset({
     "image/gif",
     # Documents (credentials, referrals, signed consents)
     "application/pdf",
+    "application/msword",  # .doc
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # .docx
     # Audio (session recordings -- when enabled)
     "audio/mpeg",
     "audio/mp4",
