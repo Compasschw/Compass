@@ -78,6 +78,7 @@ import {
   X,
   Download,
   LogOut,
+  Play,
   Home,
   ShoppingCart,
   Truck,
@@ -113,6 +114,7 @@ import {
   useMemberServicesConsent,
   useCreateCaseNote,
   useEndSession as useEndSessionHook,
+  useStartSession as useStartSessionHook,
   type SessionData,
   type SessionMessageLocal,
   type SessionMessageData,
@@ -948,6 +950,9 @@ function ConversationPane({
   const [draftText, setDraftText] = useState('');
   const [localMessages, setLocalMessages] = useState<SessionMessageLocal[]>([]);
   const [callInitiating, setCallInitiating] = useState(false);
+  // While a session is in progress, placing the call is the next expected step —
+  // surfaced as a green-tinted call button in the header (see Phone button below).
+  const sessionInProgress = session.status === 'in_progress';
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [toastIsError, setToastIsError] = useState(false);
   const [documentingSessionId, setDocumentingSessionId] = useState<string | null>(null);
@@ -1306,17 +1311,27 @@ function ConversationPane({
           </Text>
         </View>
 
-        {/* Call button */}
+        {/* Call button — tinted green while a session is in progress to cue the
+            CHW that calling the member is the next expected step. */}
         <PressableCard
           onPress={() => void handleCall()}
           disabled={callInitiating}
-          accessibilityLabel={callInitiating ? 'Call initiating...' : 'Call member'}
-          style={styles.iconBtnCard}
+          accessibilityLabel={
+            callInitiating
+              ? 'Call initiating...'
+              : sessionInProgress
+              ? 'Call member — next step'
+              : 'Call member'
+          }
+          style={[styles.iconBtnCard, sessionInProgress && styles.iconBtnCardActive]}
         >
           {callInitiating ? (
             <ActivityIndicator size="small" color={tokens.textSecondary} />
           ) : (
-            <Phone size={20} color={tokens.textSecondary} />
+            <Phone
+              size={20}
+              color={sessionInProgress ? '#FFFFFF' : tokens.textSecondary}
+            />
           )}
         </PressableCard>
 
@@ -1881,6 +1896,14 @@ function MemberContextRail({
   const [caseNoteModalOpen, setCaseNoteModalOpen] = useState(false);
   const [endSessionPending, setEndSessionPending] = useState(false);
   const [showEndConfirm, setShowEndConfirm] = useState(false);
+  const [beginSessionPending, setBeginSessionPending] = useState(false);
+
+  // Session lifecycle gating for the primary action button:
+  //   scheduled    → green "Begin Session" (PATCH /sessions/{id}/start)
+  //   in_progress  → red "Complete Session" (existing end flow)
+  // Any other status (awaiting_documentation / completed) keeps the red button
+  // so the CHW can still open documentation; it is disabled by the status guard.
+  const canBeginSession = session.status === 'scheduled';
 
   // Slide-up animation for the end-session confirmation panel
   const confirmSlideY = useRef(new Animated.Value(60)).current;
@@ -1919,6 +1942,7 @@ function MemberContextRail({
   }, [showEndConfirm, confirmSlideY, confirmOpacity]);
 
   const endSession = useEndSessionHook();
+  const startSession = useStartSessionHook();
 
   // Journey data
   const journeysQuery = useChwJourneys();
@@ -1992,6 +2016,25 @@ function MemberContextRail({
   // ── End Session handler ───────────────────────────────────────────────────
 
   const memberFirstName = getFirstName(session.memberName);
+
+  const handleBeginSession = useCallback(async (): Promise<void> => {
+    setBeginSessionPending(true);
+    try {
+      await startSession.mutateAsync(session.id);
+      // On success the sessions query invalidates → session.status flips to
+      // 'in_progress', turning this button red and the header call icon green.
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'Could not begin session. Try again.';
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.alert(`Failed to begin session\n\n${message}`);
+      } else {
+        Alert.alert('Failed to begin session', message);
+      }
+    } finally {
+      setBeginSessionPending(false);
+    }
+  }, [session.id, startSession]);
 
   const handleEndSessionConfirmed = useCallback(async (): Promise<void> => {
     setShowEndConfirm(false);
@@ -2228,37 +2271,70 @@ function MemberContextRail({
           </View>
         </View>
 
-        {/* Complete Session (destructive) */}
-        <View role="region" accessibilityLabel="Complete Session" style={styles.endSessionRegion}>
-          <TouchableOpacity
-            style={[
-              styles.endSessionBtn,
-              (endSessionPending || servicesRefused) && styles.endSessionBtnDisabled,
-            ]}
-            onPress={() => setShowEndConfirm(true)}
-            disabled={endSessionPending || servicesRefused}
-            accessibilityRole="button"
-            accessibilityLabel={
-              servicesRefused
-                ? 'Complete session disabled — member has refused services'
-                : endSessionPending
-                ? 'Completing session...'
-                : 'Complete session'
-            }
-            accessibilityState={{ disabled: endSessionPending || servicesRefused }}
-          >
-            {endSessionPending ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <LogOut size={16} color="#fff" />
-            )}
-            <Text style={styles.endSessionBtnText}>
-              {endSessionPending ? 'Completing...' : 'Complete Session'}
-            </Text>
-          </TouchableOpacity>
+        {/* Primary session action — Begin (scheduled) or Complete (in progress) */}
+        <View
+          role="region"
+          accessibilityLabel={canBeginSession ? 'Begin Session' : 'Complete Session'}
+          style={styles.endSessionRegion}
+        >
+          {canBeginSession ? (
+            <TouchableOpacity
+              style={[
+                styles.beginSessionBtn,
+                (beginSessionPending || servicesRefused) && styles.endSessionBtnDisabled,
+              ]}
+              onPress={() => void handleBeginSession()}
+              disabled={beginSessionPending || servicesRefused}
+              accessibilityRole="button"
+              accessibilityLabel={
+                servicesRefused
+                  ? 'Begin session disabled — member has refused services'
+                  : beginSessionPending
+                  ? 'Beginning session...'
+                  : 'Begin session'
+              }
+              accessibilityState={{ disabled: beginSessionPending || servicesRefused }}
+            >
+              {beginSessionPending ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Play size={16} color="#fff" />
+              )}
+              <Text style={styles.endSessionBtnText}>
+                {beginSessionPending ? 'Beginning...' : 'Begin Session'}
+              </Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              style={[
+                styles.endSessionBtn,
+                (endSessionPending || servicesRefused) && styles.endSessionBtnDisabled,
+              ]}
+              onPress={() => setShowEndConfirm(true)}
+              disabled={endSessionPending || servicesRefused}
+              accessibilityRole="button"
+              accessibilityLabel={
+                servicesRefused
+                  ? 'Complete session disabled — member has refused services'
+                  : endSessionPending
+                  ? 'Completing session...'
+                  : 'Complete session'
+              }
+              accessibilityState={{ disabled: endSessionPending || servicesRefused }}
+            >
+              {endSessionPending ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <LogOut size={16} color="#fff" />
+              )}
+              <Text style={styles.endSessionBtnText}>
+                {endSessionPending ? 'Completing...' : 'Complete Session'}
+              </Text>
+            </TouchableOpacity>
+          )}
 
           {/* Inline slide-up confirmation panel — no window.confirm */}
-          {showEndConfirm ? (
+          {!canBeginSession && showEndConfirm ? (
             <Animated.View
               style={[
                 styles.endConfirmPanel,
@@ -2375,6 +2451,15 @@ export function CHWMessagesScreen(): React.JSX.Element {
   }, []);
 
   const allSessions: SessionData[] = sessionsQuery.data ?? [];
+
+  // selectedSession is a local snapshot frozen at selection time, but mutations
+  // like start/end invalidate the sessions query and refetch fresh rows. Re-resolve
+  // the live row by id so the rail's Begin/Complete button and the call-icon cue
+  // reflect the current status; fall back to the snapshot if it hasn't loaded yet.
+  const liveSelectedSession = useMemo<SessionData | null>(() => {
+    if (!selectedSession) return null;
+    return allSessions.find((s) => s.id === selectedSession.id) ?? selectedSession;
+  }, [allSessions, selectedSession]);
 
   const navigation = useNavigation<any>(); // eslint-disable-line @typescript-eslint/no-explicit-any
 
@@ -2515,7 +2600,7 @@ export function CHWMessagesScreen(): React.JSX.Element {
           <View style={styles.convPaneWrap}>
             <ConversationPane
               key={selectedSession.id}
-              session={selectedSession}
+              session={liveSelectedSession ?? selectedSession}
               onBack={handleBack}
               showBackButton={hideList}
               autoCallOnMount={
@@ -2556,7 +2641,7 @@ export function CHWMessagesScreen(): React.JSX.Element {
         {!hideRail && selectedSession ? (
           <View style={[styles.railWrap, { width: rightWidth }]}>
             <MemberContextRail
-              session={selectedSession}
+              session={liveSelectedSession ?? selectedSession}
               onEndSessionComplete={handleEndSessionComplete}
             />
           </View>
@@ -2949,6 +3034,13 @@ const styles = StyleSheet.create({
     borderColor: tokens.cardBorder,
     backgroundColor: tokens.cardBg,
     // No boxShadow override — inherits shadows.card from PressableCard
+  } as ViewStyle,
+
+  // Green-tinted call button: cues the CHW that calling the member is the next
+  // expected step once a session is in progress.
+  iconBtnCardActive: {
+    borderColor: tokens.emerald700,
+    backgroundColor: tokens.emerald700,
   } as ViewStyle,
 
   convHeaderAvatar: {
@@ -3568,6 +3660,18 @@ const styles = StyleSheet.create({
     paddingVertical: 11,
     paddingHorizontal: spacing.lg,
     backgroundColor: '#dc2626',
+    borderRadius: 10,
+  } as ViewStyle,
+
+  // Green "Begin Session" variant — shown when the session is still scheduled.
+  beginSessionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    paddingVertical: 11,
+    paddingHorizontal: spacing.lg,
+    backgroundColor: tokens.emerald700,
     borderRadius: 10,
   } as ViewStyle,
 
