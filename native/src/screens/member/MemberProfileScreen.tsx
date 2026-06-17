@@ -45,15 +45,10 @@ import {
   ClipboardList,
   Edit2,
   Gift,
-  Globe,
-  Heart,
   LogOut,
-  Mail,
-  MapPin,
   Phone,
   ShoppingBag,
   Star,
-  User,
   X,
 } from 'lucide-react-native';
 
@@ -818,54 +813,56 @@ function DemographicsCard({
         </TouchableOpacity>
       </View>
 
-      {/* Avatar + name */}
-      <View style={demoCardStyles.avatarBlock}>
-        <ProfilePictureEditor
-          currentUrl={profilePictureUrl}
-          role="member"
-          size={56}
-          initials={initials}
-          initialsBackground={`${tokens.primary}18`}
-          onChange={onPhotoChange}
-        />
-        <Text style={demoCardStyles.displayName} numberOfLines={2}>{name}</Text>
-        <View style={demoCardStyles.memberBadge}>
-          <Text style={demoCardStyles.memberBadgeText}>Member</Text>
+      {/* Body: avatar + name on the left, fields listed on the right */}
+      <View style={demoCardStyles.body}>
+        <View style={demoCardStyles.leftCol}>
+          <ProfilePictureEditor
+            currentUrl={profilePictureUrl}
+            role="member"
+            size={64}
+            initials={initials}
+            initialsBackground={`${tokens.primary}18`}
+            onChange={onPhotoChange}
+          />
+          <Text style={demoCardStyles.displayName} numberOfLines={2}>{name}</Text>
+          <View style={demoCardStyles.memberBadge}>
+            <Text style={demoCardStyles.memberBadgeText}>Member</Text>
+          </View>
+        </View>
+
+        <View style={demoCardStyles.fields}>
+          <DemoRow label="ZIP" value={profile.zipCode || NOT_PROVIDED} />
+          <DemoRow label="Primary Language" value={profile.primaryLanguage || NOT_PROVIDED} />
+          <DemoRow
+            label={isPhoneVerified ? 'Phone (verified)' : 'Phone'}
+            value={profile.phone || NOT_PROVIDED}
+          />
+          <DemoRow label="Email" value={profile.email || NOT_PROVIDED} />
+          <View style={demoCardStyles.divider} />
+          <DemoRow label="Primary Need" value={verticalLabels[profile.primaryNeed] ?? profile.primaryNeed} />
+          <DemoRow label="Insurance" value={insuranceProvider || NOT_PROVIDED} />
         </View>
       </View>
-
-      {/* Info rows */}
-      <DemoRow icon={<MapPin size={13} color={tokens.primary} />} label="ZIP" value={profile.zipCode || NOT_PROVIDED} />
-      <DemoRow icon={<Globe size={13} color={tokens.primary} />} label="Language" value={profile.primaryLanguage || NOT_PROVIDED} />
-      <DemoRow
-        icon={<Phone size={13} color={tokens.primary} />}
-        label={isPhoneVerified ? 'Phone (verified)' : 'Phone'}
-        value={profile.phone || NOT_PROVIDED}
-      />
-      <DemoRow icon={<Mail size={13} color={tokens.primary} />} label="Email" value={profile.email || NOT_PROVIDED} />
-      <DemoRow icon={<Heart size={13} color={tokens.primary} />} label="Primary Need" value={verticalLabels[profile.primaryNeed] ?? profile.primaryNeed} />
-      <DemoRow icon={<User size={13} color={tokens.primary} />} label="Insurance" value={insuranceProvider || NOT_PROVIDED} />
     </View>
   );
 }
 
 interface DemoRowProps {
-  icon: React.ReactNode;
   label: string;
   value: string;
 }
 
-function DemoRow({ icon, label, value }: DemoRowProps): React.JSX.Element {
+function DemoRow({ label, value }: DemoRowProps): React.JSX.Element {
   const isPlaceholder = value === NOT_PROVIDED;
   return (
-    <View style={demoCardStyles.row}>
-      <View style={demoCardStyles.rowIcon}>{icon}</View>
-      <View style={demoCardStyles.rowText}>
-        <Text style={demoCardStyles.rowLabel}>{label}</Text>
-        <Text style={[demoCardStyles.rowValue, isPlaceholder && demoCardStyles.rowValueMuted]}>
-          {value}
-        </Text>
-      </View>
+    <View style={demoCardStyles.fieldRow}>
+      <Text style={demoCardStyles.fieldLabel}>{label}</Text>
+      <Text
+        style={[demoCardStyles.fieldValue, isPlaceholder && demoCardStyles.fieldValueMuted]}
+        numberOfLines={2}
+      >
+        {value}
+      </Text>
     </View>
   );
 }
@@ -898,35 +895,16 @@ const demoCardStyles = StyleSheet.create({
     borderRadius: radius.sm,
     backgroundColor: `${tokens.primary}10`,
   } as ViewStyle,
-  avatarBlock: {
+  body: {
+    flexDirection: 'row',
+    gap: spacing.lg,
+    alignItems: 'flex-start',
+  } as ViewStyle,
+  leftCol: {
+    width: 120,
     alignItems: 'center',
-    marginBottom: spacing.md,
     gap: spacing.xs,
   } as ViewStyle,
-  avatar: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: `${tokens.primary}18`,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: tokens.cardBg,
-    ...Platform.select({
-      ios: {
-        shadowColor: tokens.primary,
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.12,
-        shadowRadius: 6,
-      },
-      android: { elevation: 2 },
-    }),
-  } as ViewStyle,
-  avatarText: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: tokens.primary,
-  } as TextStyle,
   displayName: {
     fontSize: 14,
     fontWeight: '700',
@@ -946,39 +924,37 @@ const demoCardStyles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 0.8,
   } as TextStyle,
-  row: {
+  fields: {
+    flex: 1,
+  } as ViewStyle,
+  fieldRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: spacing.sm,
-    paddingVertical: 5,
-    borderBottomWidth: 1,
-    borderBottomColor: tokens.cardBorder,
+    paddingVertical: 3,
   } as ViewStyle,
-  rowIcon: {
-    marginTop: 2,
-    width: 18,
-    alignItems: 'center',
-  } as ViewStyle,
-  rowText: {
-    flex: 1,
-  } as ViewStyle,
-  rowLabel: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: tokens.textSecondary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-  } as TextStyle,
-  rowValue: {
+  fieldLabel: {
+    width: 116,
     fontSize: 12,
     fontWeight: '400',
-    color: tokens.textPrimary,
-    marginTop: 1,
+    color: tokens.textSecondary,
   } as TextStyle,
-  rowValueMuted: {
+  fieldValue: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '700',
+    color: tokens.textPrimary,
+  } as TextStyle,
+  fieldValueMuted: {
+    fontWeight: '400',
     color: tokens.textMuted,
     fontStyle: 'italic',
   } as TextStyle,
+  divider: {
+    height: 1,
+    backgroundColor: tokens.cardBorder,
+    marginVertical: 6,
+  } as ViewStyle,
 });
 
 // ─── ServicesConsentCard ───────────────────────────────────────────────────────
