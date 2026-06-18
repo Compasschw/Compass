@@ -35,6 +35,17 @@ import {
   Gift,
   Lightbulb,
   Route,
+  Utensils,
+  Home,
+  Brain,
+  Baby,
+  Building2,
+  Zap,
+  ShoppingBasket,
+  Stethoscope,
+  Package,
+  BookOpen,
+  type LucideIcon,
 } from 'lucide-react-native';
 
 import { useAuth } from '../../context/AuthContext';
@@ -301,6 +312,29 @@ const sd = StyleSheet.create({
   } as TextStyle,
 });
 
+// Backend journey templates store `icon` as a lucide kebab-case NAME
+// (e.g. "package", "shopping-basket"), not an emoji — see journey_seeds.py.
+// Map it to the actual component; unknown names fall back to the generic Route
+// icon. Rendering the raw string in a tiny box made the name wrap one char per
+// line ("p / a / c / k / a / g / e").
+const JOURNEY_ICONS: Record<string, LucideIcon> = {
+  utensils: Utensils,
+  home: Home,
+  brain: Brain,
+  baby: Baby,
+  'building-2': Building2,
+  zap: Zap,
+  'shopping-basket': ShoppingBasket,
+  stethoscope: Stethoscope,
+  package: Package,
+  'book-open': BookOpen,
+};
+
+function JourneyIcon({ name }: { name: string | null | undefined }): React.JSX.Element {
+  const Icon = (name && JOURNEY_ICONS[name]) || Route;
+  return <Icon size={18} color={tokens.emerald700} />;
+}
+
 interface OtherJourneyRowProps {
   journey: MemberJourneyResponse;
   isActive: boolean;
@@ -319,8 +353,10 @@ function OtherJourneyRow({ journey, isActive, onPress }: OtherJourneyRowProps): 
       accessibilityRole="button"
       accessibilityLabel={`Switch to journey: ${journey.template.name}`}
     >
-      <Text style={oj.icon}>{journey.template.icon}</Text>
-      <View style={{ flex: 1 }}>
+      <View style={oj.iconCircle}>
+        <JourneyIcon name={journey.template.icon} />
+      </View>
+      <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={oj.name} numberOfLines={1}>{journey.template.name}</Text>
         <Text style={oj.progress}>{Math.round(journey.progressPercent)}% complete</Text>
       </View>
@@ -343,11 +379,15 @@ const oj = StyleSheet.create({
   rowActive: {
     backgroundColor: `${tokens.primary}10`,
   } as ViewStyle,
-  icon: {
-    fontSize: 20,
-    width: 28,
-    textAlign: 'center',
-  } as TextStyle,
+  iconCircle: {
+    width: 34,
+    height: 34,
+    borderRadius: 9,
+    backgroundColor: tokens.emerald100,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  } as ViewStyle,
   name: {
     fontSize: 13,
     fontWeight: '600',
