@@ -98,6 +98,21 @@ class TestValidateClaim:
         errors = validate_claim(["Z59.1"], "98960", 0)
         assert any("Units" in e for e in errors)
 
+    def test_frontend_picker_codes_all_valid(self):
+        """Every ICD-10 code the CHW can pick in the app must pass validation.
+
+        Guards against the drift that 422'd documentation submit: the frontend
+        picker (native/src/data/mock.ts `diagnosisCodes`) offered SDOH Z-codes the
+        backend allow-list didn't recognise. Keep this list in sync with the
+        frontend catalog; if a picker code is removed here the submit will 422.
+        """
+        frontend_picker_codes = [
+            "Z71.89", "Z59.12", "Z72.3", "Z75.3", "Z59.00",
+            "Z59.89", "Z55.6", "Z59.9", "Z59.86", "Z65.3",
+        ]
+        errors = validate_claim(frontend_picker_codes, "98960", 1)
+        assert errors == [], f"Frontend picker codes rejected by backend: {errors}"
+
 
 class TestConstants:
     def test_medi_cal_rate_matches_state_schedule(self):

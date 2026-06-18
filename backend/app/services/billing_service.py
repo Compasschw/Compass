@@ -17,9 +17,30 @@ PEAR_SUITE_FEE_RATE = Decimal("0.25")
 MAX_UNITS_PER_DAY = 4
 MAX_UNITS_PER_YEAR = 10
 
+# Allowed ICD-10-CM (SDOH Z-code) diagnoses for CHW service claims.
+#
+# MUST be a superset of the codes the CHW can actually pick in the app —
+# `native/src/data/mock.ts` `diagnosisCodes`. The two lists had drifted to almost
+# no overlap, so nearly every real pick (e.g. Z59.12 "Utility Insecurity",
+# Z72.3 "Lack of physical exercise") was rejected at documentation submit with a
+# 422 "Invalid ICD-10 code". If you add a code to the frontend picker, add it
+# here too (see tests/test_billing_service.py::test_frontend_picker_codes_all_valid,
+# which guards the sync). Ideally this list is served from one source later.
 VALID_ICD10_CODES = [
-    "Z59.1", "Z59.7", "Z71.89", "Z63.0", "Z56.9",
-    "Z60.2", "Z72.89", "Z71.1", "Z76.89", "Z13.89",
+    # ── Frontend picker catalog (native/src/data/mock.ts `diagnosisCodes`) ──
+    "Z71.89",  # Other specified counseling, wellness visits  (also the default)
+    "Z59.12",  # Utility insecurity
+    "Z72.3",   # Lack of physical exercise
+    "Z75.3",   # Unavailability/inaccessibility of health-care facilities
+    "Z59.00",  # Living situation, unspecified
+    "Z59.89",  # Other problems related to housing and economic circumstances
+    "Z55.6",   # Problems related to health literacy
+    "Z59.9",   # Problem related to housing/economic circumstances, unspecified
+    "Z59.86",  # Financial insecurity
+    "Z65.3",   # Problems related to other legal circumstances
+    # ── Legacy / default codes (kept valid for existing claims, demo, tests) ──
+    "Z59.1", "Z59.7", "Z63.0", "Z56.9", "Z60.2",
+    "Z72.89", "Z71.1", "Z76.89", "Z13.89",
 ]
 VALID_CPT_CODES = ["98960", "98961", "98962"]
 
