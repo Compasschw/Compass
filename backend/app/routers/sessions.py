@@ -332,9 +332,18 @@ async def start_session(session_id: UUID, current_user=Depends(get_current_user)
         if session.status != "scheduled":
             raise HTTPException(status_code=409, detail=f"Cannot start session with status '{session.status}'. Must be 'scheduled'.")
 
-        # Enforce one active session per CHW. A CHW may only have a single session
-        # in `in_progress` at any time — the device shows one live timer and the
-        # billing pipeline assumes a 1:1 CHW→session relationship per window.
+        # One active session per CHW. A CHW can only physically be in one session
+        # at a time, so any OTHER session still marked in_progress when starting a
+        # new one was abandoned (or is a stale artifact from an interrupted start).
+        # Auto-cancel them to restore the one-active invariant and let the new
+        # session start.
+        #
+        # NOTE: use .scalars().all() — NOT scalar_one_or_none(), which RAISES
+        # MultipleResultsFound when more than one stale in_progress row exists. That
+        # raise was the bug that 500'd Begin Session once orphaned rows piled up.
+        # They are marked "cancelled" (not "completed"), so abandoned sessions are
+        # never billed; a CHW who wants to bill a session must Complete it (which
+        # moves it to awaiting_documentation) before starting another.
         existing_result = await db.execute(
             select(Session).where(
                 Session.chw_id == current_user.id,
@@ -342,22 +351,19 @@ async def start_session(session_id: UUID, current_user=Depends(get_current_user)
                 Session.id != session_id,
             )
         )
-        existing_in_progress = existing_result.scalar_one_or_none()
-        if existing_in_progress is not None:
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "code": "ANOTHER_SESSION_IN_PROGRESS",
-                    "message": (
-                        "You already have a session in progress. "
-                        "Complete or cancel it before starting another."
-                    ),
-                    "active_session_id": str(existing_in_progress.id),
-                },
+        now_utc = datetime.now(UTC)
+        for stale in existing_result.scalars().all():
+            stale.status = "cancelled"
+            if stale.ended_at is None:
+                stale.ended_at = now_utc
+            logging.getLogger("compass.sessions").info(
+                "start_session: auto-cancelled abandoned in_progress session %s "
+                "for chw %s when starting %s",
+                stale.id, current_user.id, session_id,
             )
 
         session.status = "in_progress"
-        session.started_at = datetime.now(UTC)
+        session.started_at = now_utc
         await db.commit()
         await db.refresh(session)
 

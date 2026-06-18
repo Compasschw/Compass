@@ -67,32 +67,32 @@ async def _create_session(
 
 
 @pytest.mark.asyncio
-async def test_cannot_start_second_session_while_one_in_progress(
+async def test_starting_a_second_session_supersedes_the_first(
     client: AsyncClient,
     chw_tokens: dict,
     member_tokens: dict,
 ) -> None:
     """
-    Full lifecycle:
+    A CHW can only physically be in one session at a time, so starting a second
+    session auto-cancels (supersedes) the first rather than blocking:
+
       1. Create two service requests (both matched to the same CHW).
       2. Create a session for each request.
       3. Start session A — succeeds (200, status=in_progress).
-      4. Attempt to start session B — must be rejected with 409,
-         detail.code == 'ANOTHER_SESSION_IN_PROGRESS', and
-         detail.active_session_id == session_a_id.
-      5. Complete session A (200, status=completed).
-      6. Start session B — now succeeds (200, status=in_progress).
+      4. Start session B — succeeds (200, status=in_progress); A is auto-cancelled.
+      5. Verify A is now 'cancelled' and B is the only in_progress session.
+
+    This also self-heals stale in_progress rows (the orphans that previously
+    accumulated and made the one-active check raise MultipleResultsFound → 500).
     """
     # ── Setup: two matched requests → two sessions ─────────────────────────────
     request_a_id = await _create_matched_request(client, member_tokens, chw_tokens)
     session_a_id = await _create_session(client, chw_tokens, request_a_id)
 
-    # For session B we need a second, independent service request.
-    # The member creates another request and the CHW accepts it.
     request_b_id = await _create_matched_request(client, member_tokens, chw_tokens)
     session_b_id = await _create_session(client, chw_tokens, request_b_id)
 
-    # ── Step 3: Start session A — must succeed ─────────────────────────────────
+    # ── Start session A — succeeds ─────────────────────────────────────────────
     res = await client.patch(
         f"/api/v1/sessions/{session_a_id}/start",
         headers=auth_header(chw_tokens),
@@ -100,47 +100,25 @@ async def test_cannot_start_second_session_while_one_in_progress(
     assert res.status_code == 200, f"Start session A failed: {res.text}"
     assert res.json()["status"] == "in_progress"
 
-    # ── Step 4: Start session B — must be rejected ─────────────────────────────
-    res = await client.patch(
-        f"/api/v1/sessions/{session_b_id}/start",
-        headers=auth_header(chw_tokens),
-    )
-    assert res.status_code == 409, (
-        f"Expected 409 when starting second session; got {res.status_code}: {res.text}"
-    )
-
-    body = res.json()
-    detail = body.get("detail", {})
-
-    # FastAPI wraps the dict detail under a "detail" key.
-    assert isinstance(detail, dict), (
-        f"Expected detail to be a dict, got {type(detail)}: {detail}"
-    )
-    assert detail.get("code") == "ANOTHER_SESSION_IN_PROGRESS", (
-        f"Expected code=ANOTHER_SESSION_IN_PROGRESS, got: {detail.get('code')}"
-    )
-    assert detail.get("active_session_id") == session_a_id, (
-        f"Expected active_session_id={session_a_id!r}, got: {detail.get('active_session_id')!r}"
-    )
-    assert "message" in detail, "Expected 'message' key in 409 detail"
-
-    # ── Step 5: Complete session A ─────────────────────────────────────────────
-    res = await client.patch(
-        f"/api/v1/sessions/{session_a_id}/complete",
-        headers=auth_header(chw_tokens),
-    )
-    assert res.status_code == 200, f"Complete session A failed: {res.text}"
-    assert res.json()["status"] == "completed"
-
-    # ── Step 6: Start session B — must now succeed ─────────────────────────────
+    # ── Start session B — succeeds and supersedes A ────────────────────────────
     res = await client.patch(
         f"/api/v1/sessions/{session_b_id}/start",
         headers=auth_header(chw_tokens),
     )
     assert res.status_code == 200, (
-        f"Expected session B to start after A completed; got {res.status_code}: {res.text}"
+        f"Expected session B to start (superseding A); got {res.status_code}: {res.text}"
     )
     assert res.json()["status"] == "in_progress"
+
+    # ── Session A must now be cancelled (auto-superseded, not billable) ────────
+    res = await client.get(
+        f"/api/v1/sessions/{session_a_id}",
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 200, f"Fetch session A failed: {res.text}"
+    assert res.json()["status"] == "cancelled", (
+        f"Expected session A to be auto-cancelled; got {res.json()['status']!r}"
+    )
 
 
 @pytest.mark.asyncio
