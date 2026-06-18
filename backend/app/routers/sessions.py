@@ -349,67 +349,22 @@ async def start_session(session_id: UUID, current_user=Depends(get_current_user)
 
     session.status = "in_progress"
     session.started_at = datetime.now(UTC)
-
-    # Commit the status transition FIRST so starting a session never depends on
-    # masked-call provisioning. The Vonage create_proxy_session call below is a
-    # slow, blocking, network operation; keeping it (and the comm-session INSERT)
-    # inside this transaction previously let any failure there — a Vonage error,
-    # the blocking call disrupting the async DB connection, or a constraint
-    # violation on commit — 500 the whole request and roll back the start. The
-    # session is "started" the moment this commits.
     await db.commit()
     await db.refresh(session)
 
-    # Snapshot the response BEFORE the best-effort comm work so a rollback below
-    # can never affect what we return to the caller.
-    response = SessionResponse.model_validate(session)
-
-    # ── Best-effort masked-call provisioning (must never fail the start) ───────
-    # Runs in its own transaction. ANY exception is rolled back + logged; the
-    # session has already started and the CHW can still place the call. A failure
-    # here is an ops concern, not a request error.
-    import logging
-
-    from app.models.communication import CommunicationSession
-    from app.services.communication import get_provider
-
-    try:
-        # Pull both parties' phone numbers for masked-call routing.
-        chw_user = await db.get(User, session.chw_id)
-        member_user = await db.get(User, session.member_id)
-        chw_phone = (chw_user.phone if chw_user else "") or ""
-        member_phone = (member_user.phone if member_user else "") or ""
-
-        if not chw_phone or not member_phone:
-            logging.getLogger("compass").warning(
-                "Session %s starting without both phone numbers (chw=%s, member=%s). "
-                "Masked calling disabled for this session.",
-                session_id, bool(chw_phone), bool(member_phone),
-            )
-
-        provider = get_provider()
-        proxy = await provider.create_proxy_session(
-            session_id=str(session_id),
-            chw_phone=chw_phone,
-            member_phone=member_phone,
-        )
-        comm_session = CommunicationSession(
-            session_id=session_id,
-            provider=proxy.provider,
-            provider_session_id=proxy.provider_session_id,
-            proxy_number=proxy.proxy_number,
-        )
-        db.add(comm_session)
-        await db.commit()
-    except Exception as e:
-        # Roll back the failed comm-session transaction so the session is left
-        # in a clean state. The start itself is already committed above.
-        await db.rollback()
-        logging.getLogger("compass").warning(
-            "Failed to create communication session for %s: %s", session_id, e
-        )
-
-    return response
+    # NOTE: masked-call provisioning is intentionally NOT done here. The Vonage
+    # proxy/CommunicationSession is created lazily when the CHW actually places
+    # the call via POST /sessions/{id}/call (see initiate_session_call). Starting
+    # a session only flips status -> in_progress and stamps started_at.
+    #
+    # Provisioning at start used to run a synchronous, blocking Vonage HTTP call
+    # inside this async handler. In production (Vonage configured) that blocking
+    # call disrupted the request's DB connection, and the resulting failure
+    # surfaced as an unhandled 500 with no CORS header — which the browser
+    # reported as "Failed to fetch". Deferring it to the call action removes that
+    # coupling entirely and matches the UX: Begin Session starts the timer, then
+    # the (now green) phone button places the masked call.
+    return session
 
 
 @router.patch("/{session_id}/complete", response_model=SessionResponse)

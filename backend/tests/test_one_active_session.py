@@ -265,23 +265,25 @@ class _CommFailProvider:
 
 
 @pytest.mark.asyncio
-async def test_start_succeeds_when_comm_provisioning_fails(
+async def test_start_does_not_provision_masked_calling(
     client: AsyncClient,
     chw_tokens: dict,
     member_tokens: dict,
     monkeypatch,
 ) -> None:
-    """Starting a session must succeed (200, in_progress) even when masked-call
-    provisioning fails — the comm-session write is best-effort and isolated, so
-    its failure can no longer roll back or 500 the start.
+    """Starting a session must succeed (200, in_progress) and must NOT touch the
+    masked-call provider — provisioning is deferred to POST /sessions/{id}/call.
 
-    Before the fix this returned 500 (uncaught DataError at the shared commit).
+    A provider whose proxy session would break the comm-session commit is patched
+    in; if start ever calls it again the broken write would 500 the request (the
+    original production bug, surfaced in the browser as "Failed to fetch"). This
+    test guards against re-coupling start to telephony.
     """
     request_id = await _create_matched_request(client, member_tokens, chw_tokens)
     session_id = await _create_session(client, chw_tokens, request_id)
 
-    # The endpoint resolves get_provider() from app.services.communication at call
-    # time, so patch it there.
+    # The /call endpoint resolves get_provider() from app.services.communication
+    # at call time; patch it there. start() must never invoke it.
     monkeypatch.setattr(
         "app.services.communication.get_provider",
         lambda: _CommFailProvider(),
@@ -292,6 +294,7 @@ async def test_start_succeeds_when_comm_provisioning_fails(
         headers=auth_header(chw_tokens),
     )
     assert res.status_code == 200, (
-        f"Start must survive comm-provisioning failure; got {res.status_code}: {res.text}"
+        f"Start must not depend on the masked-call provider; got {res.status_code}: {res.text}"
     )
     assert res.json()["status"] == "in_progress"
+    assert res.json()["started_at"] is not None, "start must stamp started_at"
