@@ -70,8 +70,8 @@ import {
   useDeleteAccount,
   useOwnServicesConsent,
   useUpdateServicesConsent,
-  useUpdateInsuranceCin,
   useMemberJourneys,
+  type MemberProfile,
   type RewardTransaction,
   type ServicesConsentValue,
   type MemberJourneyResponse,
@@ -271,88 +271,149 @@ function normalizeCin(raw: string): { normalized: string; valid: boolean } {
   return { normalized, valid: CIN_PATTERN.test(normalized) };
 }
 
-// ─── InsuranceCinEditModal ─────────────────────────────────────────────────────
+// ─── EditProfileModal ──────────────────────────────────────────────────────────
 
-interface InsuranceCinEditModalProps {
+const SEX_OPTIONS = ['Male', 'Female', 'Other'] as const;
+
+/** Convert an ISO date ("YYYY-MM-DD") to the MM/DD/YYYY a member types. */
+function isoToMmddyyyy(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[2]}/${m[3]}/${m[1]}` : '';
+}
+
+/** Parse MM/DD/YYYY → ISO "YYYY-MM-DD"; returns null when not a valid date. */
+function mmddyyyyToIso(value: string): string | null {
+  const m = value.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!m) return null;
+  const month = Number(m[1]);
+  const day = Number(m[2]);
+  const year = Number(m[3]);
+  if (month < 1 || month > 12 || day < 1 || day > 31 || year < 1900 || year > 2100) {
+    return null;
+  }
+  return `${m[3]}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+interface EditProfileModalProps {
   visible: boolean;
-  initialInsurance: string;
-  initialCin: string;
+  profile: MemberProfile | undefined;
   onClose: () => void;
   onSaved: () => void;
 }
 
 /**
- * Modal that lets a member edit their insurance carrier (dropdown) and
- * Medi-Cal CIN (text input with format validation).
+ * Full demographics editor — every field a CHW can see on the member profile is
+ * editable here: name, preferred name, DOB, sex, address, ZIP, primary language,
+ * insurance carrier, and Medi-Cal CIN.
  *
- * On submit it PATCHes /api/v1/member/profile/insurance-cin. Closes on success.
- * CIN is validated to `^\d{8}[A-Z]$` before the network call is made — no
- * invalid bodies reach the server.
+ * Saves via PUT /member/profile (useUpdateMemberProfile). The backend validates
+ * CIN (8 digits + 1 letter), gender enum, and 2-letter state. Phone is edited
+ * separately through the SMS re-verification flow (PhoneVerificationModal);
+ * email is the account identity and is read-only.
  */
-function InsuranceCinEditModal({
+function EditProfileModal({
   visible,
-  initialInsurance,
-  initialCin,
+  profile,
   onClose,
   onSaved,
-}: InsuranceCinEditModalProps): React.JSX.Element {
-  const [selectedInsurance, setSelectedInsurance] = useState(initialInsurance);
-  const [cinInput, setCinInput] = useState(initialCin);
-  const [cinError, setCinError] = useState<string | null>(null);
+}: EditProfileModalProps): React.JSX.Element {
+  const [fullName, setFullName] = useState('');
+  const [preferredName, setPreferredName] = useState('');
+  const [dob, setDob] = useState(''); // MM/DD/YYYY
+  const [sex, setSex] = useState('');
+  const [addr1, setAddr1] = useState('');
+  const [addr2, setAddr2] = useState('');
+  const [city, setCity] = useState('');
+  const [stateCode, setStateCode] = useState('');
+  const [zip, setZip] = useState('');
+  const [language, setLanguage] = useState('');
+  const [insurance, setInsurance] = useState('');
+  const [cin, setCin] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [showSexPicker, setShowSexPicker] = useState(false);
   const [showCarrierPicker, setShowCarrierPicker] = useState(false);
 
-  const updateInsuranceCin = useUpdateInsuranceCin();
+  const updateProfile = useUpdateMemberProfile();
 
-  // Reset form to initial values whenever the modal opens.
+  // Hydrate the form from the current profile whenever the modal opens.
   React.useEffect(() => {
-    if (visible) {
-      setSelectedInsurance(initialInsurance);
-      setCinInput(initialCin);
-      setCinError(null);
+    if (visible && profile) {
+      setFullName(profile.name ?? '');
+      setPreferredName(profile.preferredName ?? '');
+      setDob(isoToMmddyyyy(profile.dateOfBirth));
+      setSex(profile.gender ?? '');
+      setAddr1(profile.addressLine1 ?? '');
+      setAddr2(profile.addressLine2 ?? '');
+      setCity(profile.city ?? '');
+      setStateCode(profile.state ?? '');
+      setZip(profile.zipCode ?? '');
+      setLanguage(profile.primaryLanguage ?? '');
+      setInsurance(profile.insuranceCompany ?? profile.insuranceProvider ?? '');
+      setCin(profile.mediCalId ?? '');
+      setError(null);
+      setShowSexPicker(false);
       setShowCarrierPicker(false);
     }
-  }, [visible, initialInsurance, initialCin]);
-
-  const handleCinChange = useCallback((text: string) => {
-    setCinInput(text);
-    // Clear error as user types so they get immediate feedback on correction.
-    if (cinError !== null) {
-      setCinError(null);
-    }
-  }, [cinError]);
+  }, [visible, profile]);
 
   const handleSubmit = useCallback(async () => {
-    const { normalized, valid } = normalizeCin(cinInput);
+    setError(null);
 
-    if (!valid) {
-      setCinError('CIN must be 8 digits followed by 1 letter (e.g. 12345678A).');
-      return;
+    // Build a partial payload of ONLY the fields the member touched / has data
+    // for. snake_case conversion + backend validation happen server-side.
+    const payload: Record<string, unknown> = {};
+
+    if (fullName.trim()) payload.name = fullName.trim();
+    payload.preferredName = preferredName.trim() || null;
+
+    if (dob.trim()) {
+      const iso = mmddyyyyToIso(dob);
+      if (!iso) {
+        setError('Date of birth must be MM/DD/YYYY (e.g. 05/21/1990).');
+        return;
+      }
+      payload.dateOfBirth = iso;
     }
 
-    if (selectedInsurance.trim().length === 0) {
-      setCinError('Please select an insurance carrier.');
+    if (sex) payload.gender = sex;
+    payload.addressLine1 = addr1.trim() || null;
+    payload.addressLine2 = addr2.trim() || null;
+    payload.city = city.trim() || null;
+    if (stateCode.trim() && stateCode.trim().length !== 2) {
+      setError('State must be a 2-letter code (e.g. CA).');
       return;
+    }
+    payload.state = stateCode.trim().toUpperCase() || null;
+    payload.zipCode = zip.trim() || null;
+    if (language.trim()) payload.primaryLanguage = language.trim();
+    if (insurance.trim()) payload.insuranceCompany = insurance.trim();
+
+    if (cin.trim()) {
+      const { normalized, valid } = normalizeCin(cin);
+      if (!valid) {
+        setError('CIN must be 8 digits followed by 1 letter (e.g. 12345678A).');
+        return;
+      }
+      payload.mediCalId = normalized;
     }
 
     try {
-      await updateInsuranceCin.mutateAsync({
-        insuranceCompany: selectedInsurance.trim(),
-        mediCalId: normalized,
-      });
+      await updateProfile.mutateAsync(payload as Parameters<typeof updateProfile.mutateAsync>[0]);
       onSaved();
       onClose();
     } catch (err: unknown) {
-      // Surface 422 field-level errors; fall back to generic message.
       const detail =
-        err != null &&
-        typeof err === 'object' &&
-        'detail' in err &&
+        err != null && typeof err === 'object' && 'detail' in err &&
         typeof (err as { detail: unknown }).detail === 'string'
           ? (err as { detail: string }).detail
           : 'Could not save. Please check your entries and try again.';
-      setCinError(detail);
+      setError(detail);
     }
-  }, [cinInput, selectedInsurance, updateInsuranceCin, onSaved, onClose]);
+  }, [
+    fullName, preferredName, dob, sex, addr1, addr2, city, stateCode, zip,
+    language, insurance, cin, updateProfile, onSaved, onClose,
+  ]);
 
   return (
     <Modal
@@ -364,9 +425,8 @@ function InsuranceCinEditModal({
     >
       <Pressable style={cinModalStyles.backdrop} onPress={onClose} accessibilityLabel="Close modal" />
       <View style={cinModalStyles.sheet}>
-        {/* Header */}
         <View style={cinModalStyles.sheetHeader}>
-          <Text style={cinModalStyles.sheetTitle}>Edit Insurance & CIN</Text>
+          <Text style={cinModalStyles.sheetTitle}>Edit Profile</Text>
           <TouchableOpacity
             onPress={onClose}
             accessibilityRole="button"
@@ -377,87 +437,193 @@ function InsuranceCinEditModal({
           </TouchableOpacity>
         </View>
 
-        {/* Insurance carrier selector */}
-        <Text style={cinModalStyles.fieldLabel}>Insurance Carrier</Text>
-        <TouchableOpacity
-          style={cinModalStyles.selectorBtn}
-          onPress={() => setShowCarrierPicker((prev) => !prev)}
-          accessibilityRole="button"
-          accessibilityLabel={`Insurance carrier: ${selectedInsurance || 'Select carrier'}`}
-        >
-          <Text
-            style={[
-              cinModalStyles.selectorText,
-              selectedInsurance.length === 0 && cinModalStyles.selectorPlaceholder,
-            ]}
-            numberOfLines={1}
+        <ScrollView style={editModalStyles.scroll} keyboardShouldPersistTaps="handled">
+          <Text style={cinModalStyles.fieldLabel}>Full Name</Text>
+          <TextInput
+            style={editModalStyles.input}
+            value={fullName}
+            onChangeText={setFullName}
+            placeholder="Full name"
+            placeholderTextColor={tokens.textMuted}
+            accessibilityLabel="Full name"
+          />
+
+          <Text style={[cinModalStyles.fieldLabel, editModalStyles.spaced]}>Preferred Name</Text>
+          <TextInput
+            style={editModalStyles.input}
+            value={preferredName}
+            onChangeText={setPreferredName}
+            placeholder="What you'd like to be called"
+            placeholderTextColor={tokens.textMuted}
+            accessibilityLabel="Preferred name"
+          />
+
+          <Text style={[cinModalStyles.fieldLabel, editModalStyles.spaced]}>Date of Birth</Text>
+          <TextInput
+            style={editModalStyles.input}
+            value={dob}
+            onChangeText={setDob}
+            placeholder="MM/DD/YYYY"
+            placeholderTextColor={tokens.textMuted}
+            autoCorrect={false}
+            maxLength={10}
+            accessibilityLabel="Date of birth"
+          />
+
+          <Text style={[cinModalStyles.fieldLabel, editModalStyles.spaced]}>Sex</Text>
+          <TouchableOpacity
+            style={cinModalStyles.selectorBtn}
+            onPress={() => { setShowSexPicker((p) => !p); setShowCarrierPicker(false); }}
+            accessibilityRole="button"
+            accessibilityLabel={`Sex: ${sex || 'Select'}`}
           >
-            {selectedInsurance.length > 0 ? selectedInsurance : 'Select carrier…'}
-          </Text>
-          <Text style={cinModalStyles.selectorChevron}>{showCarrierPicker ? '▲' : '▼'}</Text>
-        </TouchableOpacity>
-
-        {showCarrierPicker && (
-          <View style={cinModalStyles.pickerList}>
-            {INSURANCE_OPTIONS.map((carrier) => {
-              const isSelected = carrier === selectedInsurance;
-              return (
-                <TouchableOpacity
-                  key={carrier}
-                  style={[
-                    cinModalStyles.pickerItem,
-                    isSelected && cinModalStyles.pickerItemSelected,
-                  ]}
-                  onPress={() => {
-                    setSelectedInsurance(carrier);
-                    setShowCarrierPicker(false);
-                  }}
-                  accessibilityRole="radio"
-                  accessibilityState={{ selected: isSelected }}
-                  accessibilityLabel={carrier}
-                >
-                  <Text
-                    style={[
-                      cinModalStyles.pickerItemText,
-                      isSelected && cinModalStyles.pickerItemTextSelected,
-                    ]}
+            <Text style={[cinModalStyles.selectorText, !sex && cinModalStyles.selectorPlaceholder]}>
+              {sex || 'Select…'}
+            </Text>
+            <Text style={cinModalStyles.selectorChevron}>{showSexPicker ? '▲' : '▼'}</Text>
+          </TouchableOpacity>
+          {showSexPicker && (
+            <View style={cinModalStyles.pickerList}>
+              {SEX_OPTIONS.map((opt) => {
+                const isSelected = opt === sex;
+                return (
+                  <TouchableOpacity
+                    key={opt}
+                    style={[cinModalStyles.pickerItem, isSelected && cinModalStyles.pickerItemSelected]}
+                    onPress={() => { setSex(opt); setShowSexPicker(false); }}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected: isSelected }}
+                    accessibilityLabel={opt}
                   >
-                    {carrier}
-                  </Text>
-                  {isSelected && <Check size={14} color={tokens.primary} />}
-                </TouchableOpacity>
-              );
-            })}
+                    <Text style={[cinModalStyles.pickerItemText, isSelected && cinModalStyles.pickerItemTextSelected]}>{opt}</Text>
+                    {isSelected && <Check size={14} color={tokens.primary} />}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          )}
+
+          <Text style={[cinModalStyles.fieldLabel, editModalStyles.spaced]}>Address Line 1</Text>
+          <TextInput
+            style={editModalStyles.input}
+            value={addr1}
+            onChangeText={setAddr1}
+            placeholder="Street address"
+            placeholderTextColor={tokens.textMuted}
+            accessibilityLabel="Address line 1"
+          />
+          <Text style={[cinModalStyles.fieldLabel, editModalStyles.spaced]}>Address Line 2</Text>
+          <TextInput
+            style={editModalStyles.input}
+            value={addr2}
+            onChangeText={setAddr2}
+            placeholder="Apt, unit, etc. (optional)"
+            placeholderTextColor={tokens.textMuted}
+            accessibilityLabel="Address line 2"
+          />
+          <View style={editModalStyles.row}>
+            <View style={editModalStyles.rowItemGrow}>
+              <Text style={[cinModalStyles.fieldLabel, editModalStyles.spaced]}>City</Text>
+              <TextInput
+                style={editModalStyles.input}
+                value={city}
+                onChangeText={setCity}
+                placeholder="City"
+                placeholderTextColor={tokens.textMuted}
+                accessibilityLabel="City"
+              />
+            </View>
+            <View style={editModalStyles.rowItemState}>
+              <Text style={[cinModalStyles.fieldLabel, editModalStyles.spaced]}>State</Text>
+              <TextInput
+                style={editModalStyles.input}
+                value={stateCode}
+                onChangeText={(t) => setStateCode(t.toUpperCase())}
+                placeholder="CA"
+                placeholderTextColor={tokens.textMuted}
+                autoCapitalize="characters"
+                maxLength={2}
+                accessibilityLabel="State"
+              />
+            </View>
+            <View style={editModalStyles.rowItemZip}>
+              <Text style={[cinModalStyles.fieldLabel, editModalStyles.spaced]}>ZIP</Text>
+              <TextInput
+                style={editModalStyles.input}
+                value={zip}
+                onChangeText={setZip}
+                placeholder="90001"
+                placeholderTextColor={tokens.textMuted}
+                keyboardType="number-pad"
+                maxLength={10}
+                accessibilityLabel="ZIP code"
+              />
+            </View>
           </View>
-        )}
 
-        {/* CIN input */}
-        <Text style={[cinModalStyles.fieldLabel, { marginTop: spacing.md }]}>
-          Medi-Cal CIN
-        </Text>
-        <TextInput
-          style={[cinModalStyles.cinInput, cinError !== null && cinModalStyles.cinInputError]}
-          value={cinInput}
-          onChangeText={handleCinChange}
-          placeholder="12345678A"
-          placeholderTextColor={tokens.textMuted}
-          autoCapitalize="characters"
-          autoCorrect={false}
-          maxLength={9}
-          accessibilityLabel="Medi-Cal CIN"
-          accessibilityHint="8 digits followed by 1 letter"
-        />
-        <Text style={cinModalStyles.cinHint}>
-          Format: 8 digits + 1 letter, e.g. 12345678A
-        </Text>
+          <Text style={[cinModalStyles.fieldLabel, editModalStyles.spaced]}>Primary Language</Text>
+          <TextInput
+            style={editModalStyles.input}
+            value={language}
+            onChangeText={setLanguage}
+            placeholder="English"
+            placeholderTextColor={tokens.textMuted}
+            accessibilityLabel="Primary language"
+          />
 
-        {cinError !== null && (
-          <Text style={cinModalStyles.errorText} accessibilityRole="alert">
-            {cinError}
-          </Text>
-        )}
+          <Text style={[cinModalStyles.fieldLabel, editModalStyles.spaced]}>Insurance Carrier</Text>
+          <TouchableOpacity
+            style={cinModalStyles.selectorBtn}
+            onPress={() => { setShowCarrierPicker((p) => !p); setShowSexPicker(false); }}
+            accessibilityRole="button"
+            accessibilityLabel={`Insurance carrier: ${insurance || 'Select carrier'}`}
+          >
+            <Text style={[cinModalStyles.selectorText, !insurance && cinModalStyles.selectorPlaceholder]} numberOfLines={1}>
+              {insurance || 'Select carrier…'}
+            </Text>
+            <Text style={cinModalStyles.selectorChevron}>{showCarrierPicker ? '▲' : '▼'}</Text>
+          </TouchableOpacity>
+          {showCarrierPicker && (
+            <View style={cinModalStyles.pickerList}>
+              {INSURANCE_OPTIONS.map((carrier) => {
+                const isSelected = carrier === insurance;
+                return (
+                  <TouchableOpacity
+                    key={carrier}
+                    style={[cinModalStyles.pickerItem, isSelected && cinModalStyles.pickerItemSelected]}
+                    onPress={() => { setInsurance(carrier); setShowCarrierPicker(false); }}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected: isSelected }}
+                    accessibilityLabel={carrier}
+                  >
+                    <Text style={[cinModalStyles.pickerItemText, isSelected && cinModalStyles.pickerItemTextSelected]}>{carrier}</Text>
+                    {isSelected && <Check size={14} color={tokens.primary} />}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          )}
 
-        {/* Actions */}
+          <Text style={[cinModalStyles.fieldLabel, editModalStyles.spaced]}>Medi-Cal CIN</Text>
+          <TextInput
+            style={cinModalStyles.cinInput}
+            value={cin}
+            onChangeText={(t) => setCin(t.toUpperCase())}
+            placeholder="12345678A"
+            placeholderTextColor={tokens.textMuted}
+            autoCapitalize="characters"
+            autoCorrect={false}
+            maxLength={9}
+            accessibilityLabel="Medi-Cal CIN"
+            accessibilityHint="8 digits followed by 1 letter"
+          />
+          <Text style={cinModalStyles.cinHint}>Format: 8 digits + 1 letter, e.g. 12345678A</Text>
+
+          {error !== null && (
+            <Text style={cinModalStyles.errorText} accessibilityRole="alert">{error}</Text>
+          )}
+        </ScrollView>
+
         <View style={cinModalStyles.actions}>
           <TouchableOpacity
             style={cinModalStyles.cancelBtn}
@@ -468,16 +634,13 @@ function InsuranceCinEditModal({
             <Text style={cinModalStyles.cancelBtnText}>Cancel</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[
-              cinModalStyles.saveBtn,
-              updateInsuranceCin.isPending && cinModalStyles.saveBtnDisabled,
-            ]}
+            style={[cinModalStyles.saveBtn, updateProfile.isPending && cinModalStyles.saveBtnDisabled]}
             onPress={() => void handleSubmit()}
-            disabled={updateInsuranceCin.isPending}
+            disabled={updateProfile.isPending}
             accessibilityRole="button"
-            accessibilityLabel="Save insurance and CIN"
+            accessibilityLabel="Save profile"
           >
-            {updateInsuranceCin.isPending ? (
+            {updateProfile.isPending ? (
               <ActivityIndicator size="small" color="#FFFFFF" />
             ) : (
               <Text style={cinModalStyles.saveBtnText}>Save</Text>
@@ -488,6 +651,38 @@ function InsuranceCinEditModal({
     </Modal>
   );
 }
+
+const editModalStyles = StyleSheet.create({
+  scroll: {
+    maxHeight: 420,
+  } as ViewStyle,
+  input: {
+    borderWidth: 1,
+    borderColor: tokens.cardBorder,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: tokens.textPrimary,
+    backgroundColor: tokens.cardBg,
+  } as TextStyle,
+  spaced: {
+    marginTop: spacing.md,
+  } as TextStyle,
+  row: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  } as ViewStyle,
+  rowItemGrow: {
+    flex: 1,
+  } as ViewStyle,
+  rowItemState: {
+    width: 64,
+  } as ViewStyle,
+  rowItemZip: {
+    width: 96,
+  } as ViewStyle,
+});
 
 const cinModalStyles = StyleSheet.create({
   backdrop: {
@@ -780,11 +975,14 @@ interface DemographicsCardProps {
   profilePictureUrl: string | null | undefined;
   /** Called after a successful upload or removal so the parent can sync state. */
   onPhotoChange: (newUrl: string | null) => void;
+  /** Full member profile from the API — source for DOB, sex, address, CIN, etc. */
+  apiProfile: MemberProfile | undefined;
 }
 
 /**
- * Left card: read-only demographics display with pencil-icon action
- * to open the Insurance/CIN edit modal. Profile photo is editable inline.
+ * Left card: demographics display with a pencil-icon action that opens the full
+ * Edit Profile modal. Shows every field a CHW can see on the member profile.
+ * Profile photo is editable inline.
  */
 function DemographicsCard({
   name,
@@ -794,8 +992,18 @@ function DemographicsCard({
   onEditInsuranceCin,
   profilePictureUrl,
   onPhotoChange,
+  apiProfile,
 }: DemographicsCardProps): React.JSX.Element {
   const initials = getInitials(name);
+
+  const addressLabel = [
+    apiProfile?.addressLine1,
+    apiProfile?.addressLine2,
+    [apiProfile?.city, apiProfile?.state].filter(Boolean).join(', '),
+  ]
+    .filter((part) => part && part.trim().length > 0)
+    .join('\n');
+  const insuranceLabel = apiProfile?.insuranceCompany || insuranceProvider || NOT_PROVIDED;
 
   return (
     <View style={demoCardStyles.card}>
@@ -831,6 +1039,10 @@ function DemographicsCard({
         </View>
 
         <View style={demoCardStyles.fields}>
+          <DemoRow label="Preferred Name" value={apiProfile?.preferredName || NOT_PROVIDED} />
+          <DemoRow label="Date of Birth" value={isoToMmddyyyy(apiProfile?.dateOfBirth) || NOT_PROVIDED} />
+          <DemoRow label="Sex" value={apiProfile?.gender || NOT_PROVIDED} />
+          <DemoRow label="Address" value={addressLabel || NOT_PROVIDED} />
           <DemoRow label="ZIP" value={profile.zipCode || NOT_PROVIDED} />
           <DemoRow label="Primary Language" value={profile.primaryLanguage || NOT_PROVIDED} />
           <DemoRow
@@ -840,7 +1052,8 @@ function DemographicsCard({
           <DemoRow label="Email" value={profile.email || NOT_PROVIDED} />
           <View style={demoCardStyles.divider} />
           <DemoRow label="Primary Need" value={verticalLabels[profile.primaryNeed] ?? profile.primaryNeed} />
-          <DemoRow label="Insurance" value={insuranceProvider || NOT_PROVIDED} />
+          <DemoRow label="Insurance" value={insuranceLabel} />
+          <DemoRow label="Medi-Cal CIN" value={apiProfile?.mediCalId || NOT_PROVIDED} />
         </View>
       </View>
     </View>
@@ -2070,6 +2283,7 @@ export function MemberProfileScreen(): React.JSX.Element {
               isPhoneVerified={!!apiProfile?.phoneVerifiedAt}
               onEditInsuranceCin={() => setIsInsuranceCinModalVisible(true)}
               profilePictureUrl={apiProfile?.profilePictureUrl}
+              apiProfile={apiProfile}
               onPhotoChange={() => {
                 // The useUploadProfilePicture hook invalidates the memberProfile
                 // query on success, causing profileQuery to refetch automatically.
@@ -2347,10 +2561,9 @@ export function MemberProfileScreen(): React.JSX.Element {
 
       {/* ── Modals ── */}
 
-      <InsuranceCinEditModal
+      <EditProfileModal
         visible={isInsuranceCinModalVisible}
-        initialInsurance={apiProfile?.insuranceProvider ?? ''}
-        initialCin={''}
+        profile={apiProfile}
         onClose={() => setIsInsuranceCinModalVisible(false)}
         onSaved={() => void profileQuery.refetch()}
       />

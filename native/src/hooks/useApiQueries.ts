@@ -138,6 +138,18 @@ export interface MemberProfile {
    * Null when no photo has been uploaded.
    */
   profilePictureUrl?: string | null;
+  // ── Full demographics (member-editable on their own profile) ──────────────
+  // Returned in full by GET /member/profile (member-only). mediCalId is the full
+  // CIN (the member is the data subject viewing their own record).
+  preferredName?: string | null;
+  dateOfBirth?: string | null; // ISO date "YYYY-MM-DD"
+  gender?: string | null;      // "Male" | "Female" | "Other"
+  addressLine1?: string | null;
+  addressLine2?: string | null;
+  city?: string | null;
+  state?: string | null;       // 2-letter USPS code
+  insuranceCompany?: string | null;
+  mediCalId?: string | null;   // full CIN, e.g. "12345678A"
 }
 
 export interface ChwBrowseItem {

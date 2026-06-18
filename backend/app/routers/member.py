@@ -25,15 +25,14 @@ logger = logging.getLogger("compass.member")
 
 router = APIRouter(prefix="/api/v1/member", tags=["member"])
 
-@router.get("/profile", response_model=MemberProfileResponse)
-async def get_profile(current_user=Depends(require_role("member")), db: AsyncSession = Depends(get_db)):
-    from app.models.user import MemberProfile
-    result = await db.execute(select(MemberProfile).where(MemberProfile.user_id == current_user.id))
-    profile = result.scalar_one_or_none()
-    if not profile:
-        raise HTTPException(status_code=404, detail="Profile not found")
-    # Merge associated User fields into the response so the mobile screen
-    # can render phone/email/name/profile_picture_url without a second round trip.
+def _build_member_profile_response(profile, user) -> MemberProfileResponse:
+    """Assemble the full member profile response from the MemberProfile row plus
+    the joined User fields (name/phone/email/photo).
+
+    Centralised so GET and PUT return identical shapes. medi_cal_id (CIN) is
+    returned in full — this endpoint is member-only and the member is the data
+    subject viewing their own record.
+    """
     return MemberProfileResponse(
         id=profile.id,
         user_id=profile.user_id,
@@ -42,11 +41,30 @@ async def get_profile(current_user=Depends(require_role("member")), db: AsyncSes
         primary_need=profile.primary_need,
         rewards_balance=profile.rewards_balance,
         insurance_provider=profile.insurance_provider,
-        name=current_user.name,
-        phone=current_user.phone,
-        email=current_user.email,
-        profile_picture_url=current_user.profile_picture_url,
+        name=user.name,
+        phone=user.phone,
+        email=user.email,
+        profile_picture_url=user.profile_picture_url,
+        preferred_name=profile.preferred_name,
+        date_of_birth=profile.date_of_birth,
+        gender=profile.gender,
+        address_line1=profile.address_line1,
+        address_line2=profile.address_line2,
+        city=profile.city,
+        state=profile.state,
+        insurance_company=profile.insurance_company,
+        medi_cal_id=profile.medi_cal_id,
     )
+
+
+@router.get("/profile", response_model=MemberProfileResponse)
+async def get_profile(current_user=Depends(require_role("member")), db: AsyncSession = Depends(get_db)):
+    from app.models.user import MemberProfile
+    result = await db.execute(select(MemberProfile).where(MemberProfile.user_id == current_user.id))
+    profile = result.scalar_one_or_none()
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return _build_member_profile_response(profile, current_user)
 
 @router.put("/profile", response_model=MemberProfileResponse)
 async def update_profile(data: MemberProfileUpdate, current_user=Depends(require_role("member")), db: AsyncSession = Depends(get_db)):
@@ -70,29 +88,26 @@ async def update_profile(data: MemberProfileUpdate, current_user=Depends(require
 
     payload = data.model_dump(exclude_unset=True)
 
-    # Route profile_picture_url to the User row, not the MemberProfile row.
+    # Route User-row fields out of the MemberProfile setattr loop.
+    #   profile_picture_url + name live on the User row, not MemberProfile.
+    #   (phone is intentionally NOT updated here — it has its own SMS
+    #   re-verification flow via /phone/start-verification.)
     if "profile_picture_url" in payload:
         current_user.profile_picture_url = payload.pop("profile_picture_url")
+    if "name" in payload:
+        name = (payload.pop("name") or "").strip()
+        if name:
+            current_user.name = name
 
+    # Everything else is a MemberProfile column (zip_code, primary_language,
+    # primary_need, insurance_provider/_company, preferred_mode/_name, medi_cal_id,
+    # date_of_birth, gender, address_line1/2, city, state).
     for field, value in payload.items():
         setattr(profile, field, value)
 
     await db.commit()
     await db.refresh(profile)
-    # Re-read with the User join so the response matches GET /profile shape.
-    return MemberProfileResponse(
-        id=profile.id,
-        user_id=profile.user_id,
-        zip_code=profile.zip_code,
-        primary_language=profile.primary_language,
-        primary_need=profile.primary_need,
-        rewards_balance=profile.rewards_balance,
-        insurance_provider=profile.insurance_provider,
-        name=current_user.name,
-        phone=current_user.phone,
-        email=current_user.email,
-        profile_picture_url=current_user.profile_picture_url,
-    )
+    return _build_member_profile_response(profile, current_user)
 
 @router.get("/rewards")
 async def get_rewards(current_user=Depends(require_role("member")), db: AsyncSession = Depends(get_db)):
