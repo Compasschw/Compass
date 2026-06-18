@@ -317,54 +317,75 @@ async def get_session(session_id: UUID, current_user=Depends(get_current_user), 
 
 @router.patch("/{session_id}/start", response_model=SessionResponse)
 async def start_session(session_id: UUID, current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    session = await db.get(Session, session_id)
-    if not session or session.chw_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Session not found")
-    if session.status != "scheduled":
-        raise HTTPException(status_code=409, detail=f"Cannot start session with status '{session.status}'. Must be 'scheduled'.")
+    # The whole body is wrapped so any UNEXPECTED failure is surfaced as an
+    # HTTPException (which keeps CORS headers) carrying the real error, instead of
+    # an unhandled 500 — those drop the Access-Control-Allow-Origin header, so the
+    # browser only sees "Failed to fetch" / a CORS error and the actual cause is
+    # invisible. The full traceback is also logged server-side.
+    import logging
+    import traceback
 
-    # Enforce one active session per CHW. A CHW may only have a single session
-    # in `in_progress` at any time — the device shows one live timer and the
-    # billing pipeline assumes a 1:1 CHW→session relationship per window.
-    existing_result = await db.execute(
-        select(Session).where(
-            Session.chw_id == current_user.id,
-            Session.status == "in_progress",
-            Session.id != session_id,
+    try:
+        session = await db.get(Session, session_id)
+        if not session or session.chw_id != current_user.id:
+            raise HTTPException(status_code=404, detail="Session not found")
+        if session.status != "scheduled":
+            raise HTTPException(status_code=409, detail=f"Cannot start session with status '{session.status}'. Must be 'scheduled'.")
+
+        # Enforce one active session per CHW. A CHW may only have a single session
+        # in `in_progress` at any time — the device shows one live timer and the
+        # billing pipeline assumes a 1:1 CHW→session relationship per window.
+        existing_result = await db.execute(
+            select(Session).where(
+                Session.chw_id == current_user.id,
+                Session.status == "in_progress",
+                Session.id != session_id,
+            )
         )
-    )
-    existing_in_progress = existing_result.scalar_one_or_none()
-    if existing_in_progress is not None:
+        existing_in_progress = existing_result.scalar_one_or_none()
+        if existing_in_progress is not None:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "ANOTHER_SESSION_IN_PROGRESS",
+                    "message": (
+                        "You already have a session in progress. "
+                        "Complete or cancel it before starting another."
+                    ),
+                    "active_session_id": str(existing_in_progress.id),
+                },
+            )
+
+        session.status = "in_progress"
+        session.started_at = datetime.now(UTC)
+        await db.commit()
+        await db.refresh(session)
+
+        # NOTE: masked-call provisioning is intentionally NOT done here. The
+        # Vonage proxy/CommunicationSession is created lazily when the CHW places
+        # the call via POST /sessions/{id}/call. Starting a session only flips
+        # status -> in_progress and stamps started_at. Validate the response
+        # inside the try so any serialization error is surfaced too.
+        return SessionResponse.model_validate(session)
+    except HTTPException:
+        # Expected, CORS-safe responses (404 / 409) pass through unchanged.
+        raise
+    except Exception as exc:
+        # Roll back defensively; never let a broken-connection rollback mask the
+        # real error below.
+        try:
+            await db.rollback()
+        except Exception:  # noqa: BLE001, S110 — rollback failure must not mask the real error logged below
+            pass
+        logging.getLogger("compass.sessions").error(
+            "start_session failed for session %s:\n%s",
+            session_id,
+            traceback.format_exc(),
+        )
         raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "ANOTHER_SESSION_IN_PROGRESS",
-                "message": (
-                    "You already have a session in progress. "
-                    "Complete or cancel it before starting another."
-                ),
-                "active_session_id": str(existing_in_progress.id),
-            },
-        )
-
-    session.status = "in_progress"
-    session.started_at = datetime.now(UTC)
-    await db.commit()
-    await db.refresh(session)
-
-    # NOTE: masked-call provisioning is intentionally NOT done here. The Vonage
-    # proxy/CommunicationSession is created lazily when the CHW actually places
-    # the call via POST /sessions/{id}/call (see initiate_session_call). Starting
-    # a session only flips status -> in_progress and stamps started_at.
-    #
-    # Provisioning at start used to run a synchronous, blocking Vonage HTTP call
-    # inside this async handler. In production (Vonage configured) that blocking
-    # call disrupted the request's DB connection, and the resulting failure
-    # surfaced as an unhandled 500 with no CORS header — which the browser
-    # reported as "Failed to fetch". Deferring it to the call action removes that
-    # coupling entirely and matches the UX: Begin Session starts the timer, then
-    # the (now green) phone button places the masked call.
-    return session
+            status_code=500,
+            detail=f"start_session failed: {type(exc).__name__}: {exc}",
+        ) from exc
 
 
 @router.patch("/{session_id}/complete", response_model=SessionResponse)
