@@ -3,9 +3,11 @@
 Covers:
   1. Starting session A succeeds.
   2. Starting session B (different session, same CHW) while A is in_progress
-     returns HTTP 409 with code=ANOTHER_SESSION_IN_PROGRESS and the correct
-     active_session_id pointing at A.
-  3. Completing A, then starting B succeeds — the constraint is lifted.
+     SUPERSEDES A — B becomes in_progress and A is auto-cancelled (a CHW can only
+     be in one session at a time). Replaced the old 409 ANOTHER_SESSION_IN_PROGRESS
+     hard-block (2026-06-17); also self-heals stale in_progress orphans.
+  3. Two different CHWs may each hold an in_progress session simultaneously.
+  4. Start does not depend on the masked-call provider.
 """
 
 import pytest

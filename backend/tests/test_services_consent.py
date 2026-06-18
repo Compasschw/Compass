@@ -239,15 +239,30 @@ class TestGetServicesConsent:
         res = await client.get("/api/v1/member/services-consent")
         assert res.status_code in (401, 403)
 
-    async def test_chw_cannot_access_own_consent(
+    async def test_chw_requires_member_id(
         self, client: AsyncClient, chw_tokens: dict
     ):
-        """CHW role cannot access the member-only consent endpoint."""
+        """A CHW must specify whose consent to read; omitting member_id is 422.
+
+        The endpoint now serves the CHW Messages rail / Member Profile widget, so
+        CHW callers are allowed — but only for a specific, related member.
+        """
         res = await client.get(
             "/api/v1/member/services-consent",
             headers=auth_header(chw_tokens),
         )
-        assert res.status_code == 403
+        assert res.status_code == 422, res.text
+
+    async def test_chw_unrelated_member_forbidden(
+        self, client: AsyncClient, chw_tokens: dict
+    ):
+        """A CHW with no shared session with the member gets 403 (relationship gate)."""
+        unrelated_member_id = "00000000-0000-0000-0000-0000000000ab"
+        res = await client.get(
+            f"/api/v1/member/services-consent?member_id={unrelated_member_id}",
+            headers=auth_header(chw_tokens),
+        )
+        assert res.status_code == 403, res.text
 
 
 class TestUpdateServicesConsent:
