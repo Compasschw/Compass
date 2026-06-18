@@ -1869,6 +1869,36 @@ const caseNoteModalStyles = StyleSheet.create({
 
 // ─── Member context rail ──────────────────────────────────────────────────────
 
+/**
+ * Terminal session statuses — the session is over and cannot be ended. Showing a
+ * "Complete Session" button for these produces a confusing 409 from POST /end
+ * ("Cannot end session with status '...'. Must be 'in_progress'."), so the rail
+ * renders a read-only status note instead.
+ *
+ * `cancelled_no_consent` is set by the masked-call flow when the member declines
+ * the California §632 recording-consent IVR (or it times out) — see
+ * app/routers/communication.py.
+ */
+const TERMINAL_SESSION_STATUSES: readonly string[] = [
+  'completed',
+  'cancelled',
+  'cancelled_no_consent',
+];
+
+/** Human-readable label for a terminal session status, shown in the rail. */
+function terminalSessionLabel(status: string): string {
+  switch (status) {
+    case 'completed':
+      return 'Session completed';
+    case 'cancelled_no_consent':
+      return 'Cancelled — member declined recording consent';
+    case 'cancelled':
+      return 'Session cancelled';
+    default:
+      return 'Session ended';
+  }
+}
+
 interface MemberContextRailProps {
   readonly session: SessionData;
   readonly onEndSessionComplete?: () => void;
@@ -1899,11 +1929,14 @@ function MemberContextRail({
   const [beginSessionPending, setBeginSessionPending] = useState(false);
 
   // Session lifecycle gating for the primary action button:
-  //   scheduled    → green "Begin Session" (PATCH /sessions/{id}/start)
-  //   in_progress  → red "Complete Session" (existing end flow)
-  // Any other status (awaiting_documentation / completed) keeps the red button
-  // so the CHW can still open documentation; it is disabled by the status guard.
+  //   scheduled              → green "Begin Session" (PATCH /sessions/{id}/start)
+  //   in_progress            → red "Complete Session" (end flow + documentation)
+  //   awaiting_documentation → red "Complete Session" (re-opens documentation; /end is idempotent)
+  //   terminal (completed /  → non-actionable status note. These sessions cannot
+  //     cancelled / no-consent)  be ended; showing a Complete button here just
+  //                              produces a confusing 409 (the bug this guards).
   const canBeginSession = session.status === 'scheduled';
+  const isTerminalSession = TERMINAL_SESSION_STATUSES.includes(session.status);
 
   // Slide-up animation for the end-session confirmation panel
   const confirmSlideY = useRef(new Animated.Value(60)).current;
@@ -2271,13 +2304,26 @@ function MemberContextRail({
           </View>
         </View>
 
-        {/* Primary session action — Begin (scheduled) or Complete (in progress) */}
+        {/* Primary session action — Begin (scheduled) / Complete (in progress) /
+            read-only status note (terminal: completed / cancelled). */}
         <View
           role="region"
-          accessibilityLabel={canBeginSession ? 'Begin Session' : 'Complete Session'}
+          accessibilityLabel={
+            isTerminalSession
+              ? terminalSessionLabel(session.status)
+              : canBeginSession
+              ? 'Begin Session'
+              : 'Complete Session'
+          }
           style={styles.endSessionRegion}
         >
-          {canBeginSession ? (
+          {isTerminalSession ? (
+            <View style={styles.sessionStatusNote} accessibilityRole="text">
+              <Text style={styles.sessionStatusNoteText}>
+                {terminalSessionLabel(session.status)}
+              </Text>
+            </View>
+          ) : canBeginSession ? (
             <TouchableOpacity
               style={[
                 styles.beginSessionBtn,
@@ -2334,7 +2380,7 @@ function MemberContextRail({
           )}
 
           {/* Inline slide-up confirmation panel — no window.confirm */}
-          {!canBeginSession && showEndConfirm ? (
+          {!canBeginSession && !isTerminalSession && showEndConfirm ? (
             <Animated.View
               style={[
                 styles.endConfirmPanel,
@@ -3678,6 +3724,27 @@ const styles = StyleSheet.create({
   endSessionBtnDisabled: {
     opacity: 0.5,
   } as ViewStyle,
+
+  // Read-only status note shown in place of the action button for terminal
+  // sessions (completed / cancelled / cancelled_no_consent).
+  sessionStatusNote: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 11,
+    paddingHorizontal: spacing.lg,
+    backgroundColor: tokens.gray100,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: tokens.cardBorder,
+  } as ViewStyle,
+
+  sessionStatusNoteText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: tokens.textSecondary,
+    textAlign: 'center',
+  } as TextStyle,
 
   endSessionBtnText: {
     fontSize: 13,
