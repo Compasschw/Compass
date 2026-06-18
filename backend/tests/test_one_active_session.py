@@ -237,3 +237,61 @@ async def test_different_chws_can_each_have_active_session(
         f"CHW2 session start blocked incorrectly; got {res.status_code}: {res.text}"
     )
     assert res.json()["status"] == "in_progress"
+
+
+# ─── Regression: masked-call provisioning failure must not 500 the start ───────
+
+
+class _CommFailProvider:
+    """A provider whose proxy session forces the communication_sessions INSERT to
+    violate the ``proxy_number`` varchar(20) constraint.
+
+    Reproduces the production 500 where starting a session ran a real (configured)
+    Vonage provider; the comm-session work was committed in the same transaction
+    as the status change, so a failure there took down the whole request (the
+    browser saw "Failed to fetch" because the 500 carried no CORS header).
+    """
+
+    async def create_proxy_session(self, session_id, chw_phone, member_phone):
+        from app.services.communication.base import ProxySession
+
+        return ProxySession(
+            provider_session_id="compass-session-regression",
+            # 64 chars — exceeds communication_sessions.proxy_number varchar(20),
+            # so the comm-session commit raises on Postgres.
+            proxy_number="9" * 64,
+            provider="vonage",
+        )
+
+
+@pytest.mark.asyncio
+async def test_start_succeeds_when_comm_provisioning_fails(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_tokens: dict,
+    monkeypatch,
+) -> None:
+    """Starting a session must succeed (200, in_progress) even when masked-call
+    provisioning fails — the comm-session write is best-effort and isolated, so
+    its failure can no longer roll back or 500 the start.
+
+    Before the fix this returned 500 (uncaught DataError at the shared commit).
+    """
+    request_id = await _create_matched_request(client, member_tokens, chw_tokens)
+    session_id = await _create_session(client, chw_tokens, request_id)
+
+    # The endpoint resolves get_provider() from app.services.communication at call
+    # time, so patch it there.
+    monkeypatch.setattr(
+        "app.services.communication.get_provider",
+        lambda: _CommFailProvider(),
+    )
+
+    res = await client.patch(
+        f"/api/v1/sessions/{session_id}/start",
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 200, (
+        f"Start must survive comm-provisioning failure; got {res.status_code}: {res.text}"
+    )
+    assert res.json()["status"] == "in_progress"
