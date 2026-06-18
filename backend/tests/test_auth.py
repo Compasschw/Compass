@@ -443,7 +443,9 @@ async def test_member_profile_put_creates_row_if_missing(client: AsyncClient, me
     res = await client.put(
         "/api/v1/member/profile",
         headers=auth_header(member_tokens),
-        json={"zip_code": "90210", "medi_cal_id": "9TEST12345"},
+        # Valid CIN (8 digits + 1 letter) — the PUT now validates medi_cal_id
+        # format, so the prior junk placeholder ("9TEST12345") no longer passes.
+        json={"zip_code": "90210", "medi_cal_id": "12345678A"},
     )
     assert res.status_code == 200
     assert res.json()["zip_code"] == "90210"
