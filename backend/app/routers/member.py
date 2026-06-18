@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.dependencies import require_role
+from app.dependencies import get_current_user, require_role
 from app.models.flag_note import FlagNote
 from app.schemas.followup import RoadmapItemResponse
 from app.schemas.member import (
@@ -428,10 +428,11 @@ async def get_chw_member_facing_profile(
     summary="Get the member's current services-consent status",
 )
 async def get_services_consent(
-    current_user=Depends(require_role("member")),
+    member_id: UUID | None = None,
+    current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ServicesConsentResponse:
-    """Return the services-consent state for the authenticated member.
+    """Return the services-consent state for a member.
 
     Response fields:
         status:     "consent_to_services" | "refuse_services"
@@ -439,13 +440,44 @@ async def get_services_consent(
                     None for rows that have only ever held the server default.
         changed_by: UUID of the user who made the last change, or None.
 
-    Used by the Member Profile screen to render the toggle in its current
-    state without a full profile round-trip.
+    Access (the ``member_id`` query param selects whose consent to read):
+        - member: reads their OWN consent. ``member_id`` is ignored — a member
+          can never read another member's status.
+        - chw:    reads a related member's consent. ``member_id`` is required and
+          the CHW must share at least one session with them
+          (``assert_shared_session``). Powers the consent widget on the CHW
+          Messages rail and Member Profile.
+        - admin:  reads any member's consent; ``member_id`` is required.
+
+    Previously this endpoint was member-only (``require_role("member")``), so the
+    CHW-facing widget always got 403 — the bug this fixes.
     """
     from app.models.user import MemberProfile
+    from app.services.relationship_guards import assert_shared_session
+
+    role = current_user.role
+    if role == "member":
+        target_member_id = current_user.id
+    elif role == "chw":
+        if member_id is None:
+            raise HTTPException(
+                status_code=422,
+                detail="member_id query parameter is required for CHW callers.",
+            )
+        await assert_shared_session(db, chw_id=current_user.id, member_id=member_id)
+        target_member_id = member_id
+    elif role == "admin":
+        if member_id is None:
+            raise HTTPException(
+                status_code=422,
+                detail="member_id query parameter is required for admin callers.",
+            )
+        target_member_id = member_id
+    else:
+        raise HTTPException(status_code=403, detail="Not authorized.")
 
     result = await db.execute(
-        select(MemberProfile).where(MemberProfile.user_id == current_user.id)
+        select(MemberProfile).where(MemberProfile.user_id == target_member_id)
     )
     profile = result.scalar_one_or_none()
     if profile is None:
