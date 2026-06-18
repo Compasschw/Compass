@@ -3,8 +3,8 @@ template.
 
 Critical correctness paths covered:
 
-- Format quirks: Birthdate M/D/YYYY (no leading zeros), Activity Start/End
-  MM/DD/YYYY h:MM AM/PM (leading zero on month+day, none on hour) in LA
+- Format quirks: Birthdate MM/DD/YYYY (zero-padded), Activity Start/End
+  MM/DD/YYYY hh:MM AM/PM (fully zero-padded: month, day, AND hour) in LA
   local time, phone 10 digits, Place of Service raw 2-digit code, Service
   column keyed off procedure code, Billable rendered as "Yes"/"No".
 - Header preservation: 22 columns including the intentional "Adress 2"
@@ -46,16 +46,16 @@ from app.services.billing_csv_writer import (
 # ─── Format helpers (pure unit, no IO) ───────────────────────────────────────
 
 
-def test_fmt_birthdate_renders_m_d_yyyy_with_no_leading_zeros() -> None:
-    """Pear's samples are '9/20/1991' and '11/7/1985' — no leading zeros."""
-    assert _fmt_birthdate(date(1991, 9, 20)) == "9/20/1991"
-    assert _fmt_birthdate(date(1985, 11, 7)) == "11/7/1985"
+def test_fmt_birthdate_renders_mm_dd_yyyy_zero_padded() -> None:
+    """Billing import requires zero-padded MM/DD/YYYY (ops, 2026-06-17)."""
+    assert _fmt_birthdate(date(1991, 9, 20)) == "09/20/1991"
+    assert _fmt_birthdate(date(1985, 11, 7)) == "11/07/1985"
     assert _fmt_birthdate(date(2024, 12, 31)) == "12/31/2024"
 
 
 def test_fmt_birthdate_handles_iso_string_input() -> None:
     """Some callsites pass an ISO string instead of a date object."""
-    assert _fmt_birthdate("1993-01-05") == "1/5/1993"
+    assert _fmt_birthdate("1993-01-05") == "01/05/1993"
 
 
 def test_fmt_birthdate_empty_for_none() -> None:
@@ -74,17 +74,17 @@ def test_fmt_la_datetime_converts_utc_to_la_local_with_slashes() -> None:
     assert _fmt_la_datetime(utc_dt) == "08/19/2026 12:00 AM"
 
 
-def test_fmt_la_datetime_midday_and_pm_no_leading_zero_on_hour() -> None:
-    """6:15 PM PDT = 1:15 AM UTC the next day; rendered without hour padding."""
+def test_fmt_la_datetime_midday_and_pm_zero_pads_hour() -> None:
+    """6:15 PM PDT = 1:15 AM UTC the next day; hour is zero-padded."""
     utc_dt = datetime(2026, 8, 20, 1, 15, 0, tzinfo=UTC)
-    assert _fmt_la_datetime(utc_dt) == "08/19/2026 6:15 PM"
+    assert _fmt_la_datetime(utc_dt) == "08/19/2026 06:15 PM"
 
 
-def test_fmt_la_datetime_single_digit_hour_has_no_leading_zero() -> None:
-    """Matches Pear's sample: '05/21/2025 1:30 PM' (no '01:30 PM')."""
+def test_fmt_la_datetime_single_digit_hour_is_zero_padded() -> None:
+    """Billing import requires padded hour: '05/21/2025 01:30 PM' (ops 2026-06-17)."""
     # 8:30 PM UTC = 1:30 PM PDT
     utc_dt = datetime(2025, 5, 21, 20, 30, 0, tzinfo=UTC)
-    assert _fmt_la_datetime(utc_dt) == "05/21/2025 1:30 PM"
+    assert _fmt_la_datetime(utc_dt) == "05/21/2025 01:30 PM"
 
 
 def test_fmt_la_datetime_assumes_utc_when_naive() -> None:
@@ -222,7 +222,7 @@ def test_row_to_csv_cells_matches_pear_v2_sample_row() -> None:
     assert cells[0] == "Adam"
     assert cells[1] == "Tester"
     assert cells[2] == "1234567890"
-    assert cells[3] == "9/20/1991"                  # M/D/YYYY no leading zeros
+    assert cells[3] == "09/20/1991"                 # MM/DD/YYYY zero-padded
     assert cells[4] == "Male"
     assert cells[5] == "Health Net"
     assert cells[6] == "11111111111"
@@ -236,8 +236,8 @@ def test_row_to_csv_cells_matches_pear_v2_sample_row() -> None:
     assert cells[14] == "Z59.9"
     assert cells[15] == "11"                         # POS raw digits
     assert cells[16] == "CHW Service 1 Person"       # Service from proc code
-    assert cells[17] == "05/21/2025 1:30 PM"         # MM/DD/YYYY h:MM AM/PM
-    assert cells[18] == "05/21/2025 2:30 PM"
+    assert cells[17] == "05/21/2025 01:30 PM"        # MM/DD/YYYY hh:MM AM/PM
+    assert cells[18] == "05/21/2025 02:30 PM"
     assert cells[19] == "chw@example.com"
     assert cells[20] == "Yes"                        # Billable
     assert cells[21] == "Testing member"             # Notes
@@ -379,7 +379,7 @@ def test_append_row_initializes_csv_with_header_when_empty(
     assert "Responsible User Email" in rows[0]
     # Data row has the Pear sample values
     assert "Adam" in rows[1]
-    assert "9/20/1991" in rows[1]
+    assert "09/20/1991" in rows[1]
 
 
 @patch("app.services.billing_csv_writer.get_s3_client")
@@ -409,9 +409,9 @@ def test_append_row_idempotent_on_duplicate_session_id(
     session_id = UUID("22222222-2222-2222-2222-222222222222")
     existing_body = (
         ",".join(_PEAR_CSV_HEADER) + "\n"
-        'Adam,Tester,1234567890,9/20/1991,Male,Health Net,11111111111,'
+        'Adam,Tester,1234567890,09/20/1991,Male,Health Net,11111111111,'
         '"1, Golden Gate Avenue",,San Francisco,CA,94103-0000,98960,U2,'
-        'Z59.9,11,CHW Service 1 Person,05/21/2025 1:30 PM,05/21/2025 2:30 PM,'
+        'Z59.9,11,CHW Service 1 Person,05/21/2025 01:30 PM,05/21/2025 02:30 PM,'
         'chw@example.com,Yes,'
         '"Earlier note\n[compass-session:22222222-2222-2222-2222-222222222222]"\n'
     )

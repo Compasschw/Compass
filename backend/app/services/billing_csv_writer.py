@@ -19,19 +19,22 @@ Critical format quirks — verified against Pear's two sample rows.  Do not
 "fix" these without ops + Pear approval:
 
   - **Phone**: 10 digits, no formatting, no country code (strip leading "1").
-  - **Birthdate**: ``M/D/YYYY`` (no leading zeros — Pear's samples are
-    "9/20/1991" and "11/7/1985").
+  - **Birthdate**: ``MM/DD/YYYY`` (zero-padded month and day, e.g.
+    "09/20/1991", "11/07/1985").  Ops confirmed 2026-06-17 the import
+    requires the padded form; unpadded values force manual correction.
   - **Sex**: Title-case "Male"/"Female"/"Other".
   - **State**: 2-letter uppercase USPS code.
   - **Place of Service**: raw 2-digit CMS-1500 POS code (e.g. ``"11"``).
     No ``" - Label"`` suffix in this template — that was the v1 layout.
   - **Service**: human-readable activity name keyed on procedure code
     (``98960 → "CHW Service 1 Person"``).
-  - **Activity Start/End**: ``MM/DD/YYYY h:MM AM/PM`` in
-    America/Los_Angeles wall-clock (leading zero on month and day,
-    no leading zero on hour).  Pear's parser is timezone-naive; it
-    treats the timestamp as local for the CBO's locale, and Compass
-    operates exclusively in California.
+  - **Activity Start/End**: ``MM/DD/YYYY hh:MM AM/PM`` in
+    America/Los_Angeles wall-clock — fully zero-padded (month, day, AND
+    the 12-hour clock hour, e.g. "05/21/2025 01:30 PM").  Ops confirmed
+    2026-06-17 the import requires padded hours; unpadded values force
+    manual correction.  Pear's parser is timezone-naive; it treats the
+    timestamp as local for the CBO's locale, and Compass operates
+    exclusively in California.
   - **Billable**: ``"Yes"``/``"No"`` (replaces the v1 ``TRUE``/``FALSE``).
   - **Adress 2 (sic)**: Pear's header has the typo "Adress 2".  It is
     preserved verbatim — Pear's parser keys on the exact header text.
@@ -169,12 +172,15 @@ class BillingCsvRow:
 
 
 def _fmt_birthdate(value: Any) -> str:
-    """Render a date-of-birth as ``M/D/YYYY`` with no leading zeros.
+    """Render a date-of-birth as ``MM/DD/YYYY`` with leading zeros.
 
-    Matches Pear's samples ("9/20/1991", "11/7/1985").  Accepts a
-    ``datetime.date``, ``datetime.datetime``, ISO 8601 string, or None.
-    Returns an empty string when the value is missing — Pear's parser
-    treats empty as "no DOB on file" rather than a parse error.
+    Zero-padded month and day (e.g. "09/20/1991", "11/07/1985"). Ops
+    confirmed 2026-06-17 that the billing upload requires the padded
+    ``MM/DD/YYYY`` form — unpadded values (the earlier "9/20/1991" style)
+    force manual correction during import. Accepts a ``datetime.date``,
+    ``datetime.datetime``, ISO 8601 string, or None. Returns an empty string
+    when the value is missing — the parser treats empty as "no DOB on file"
+    rather than a parse error.
     """
     if value is None:
         return ""
@@ -184,17 +190,19 @@ def _fmt_birthdate(value: Any) -> str:
         except ValueError:
             return ""
     if hasattr(value, "year") and hasattr(value, "month") and hasattr(value, "day"):
-        return f"{value.month}/{value.day}/{value.year:04d}"
+        return f"{value.month:02d}/{value.day:02d}/{value.year:04d}"
     return ""
 
 
 def _fmt_la_datetime(value: datetime | None) -> str:
-    """Render a UTC datetime as ``MM/DD/YYYY h:MM AM/PM`` in LA local time.
+    """Render a UTC datetime as ``MM/DD/YYYY hh:MM AM/PM`` in LA local time.
 
-    Leading zero on month and day (matches Pear's sample "05/21/2025"); no
-    leading zero on the 12-hour clock hour ("1:30 PM", not "01:30 PM").
-    Returns empty string for None so a missing timestamp renders blank
-    rather than as the literal "None".
+    Fully zero-padded: month, day, and the 12-hour clock hour ("01:30 PM",
+    not "1:30 PM"). Ops confirmed 2026-06-17 that the billing upload requires
+    the padded ``MM/DD/YYYY hh:MM AM/PM`` form for Activity Start/End —
+    unpadded hours force manual correction during import. Returns empty
+    string for None so a missing timestamp renders blank rather than as the
+    literal "None".
     """
     if value is None:
         return ""
@@ -205,7 +213,7 @@ def _fmt_la_datetime(value: datetime | None) -> str:
     local = value.astimezone(_PEAR_TIMEZONE)
     hour_12 = local.hour % 12 or 12
     am_pm = "AM" if local.hour < 12 else "PM"
-    return f"{local.month:02d}/{local.day:02d}/{local.year:04d} {hour_12}:{local.minute:02d} {am_pm}"
+    return f"{local.month:02d}/{local.day:02d}/{local.year:04d} {hour_12:02d}:{local.minute:02d} {am_pm}"
 
 
 def _fmt_yes_no(value: bool) -> str:
