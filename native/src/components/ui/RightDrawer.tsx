@@ -308,12 +308,22 @@ const webInlineStyles = StyleSheet.create({
     borderLeftColor: colors.cardBorder,
     // Prevent the panel from growing beyond its declared width.
     flexShrink:      0,
-    // Stretch the full height of its flex-row parent.
-    alignSelf:       'stretch',
+    // Absolutely fill the parent (which must be position:relative with a
+    // bounded height) so the inner flex:1 ScrollView gets a definite height
+    // ceiling and actually scrolls. Without this the in-flow panel grows to
+    // its content height and overflows the viewport — the bottom of long
+    // drawers (e.g. the suggested-questions list) gets clipped with no scroll.
+    position:        'absolute' as 'absolute',
+    top:             0,
+    right:           0,
+    bottom:          0,
   } as ViewStyle,
 
   body: {
     flex: 1,
+    // Cap to the parent so RN-web renders the ScrollView as an overflow:auto
+    // region rather than expanding to fit all children.
+    minHeight: 0,
   } as ViewStyle,
 
   bodyContent: {
