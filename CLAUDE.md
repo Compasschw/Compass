@@ -18,3 +18,11 @@ Key routing rules:
 - Architecture review → invoke plan-eng-review
 - Save progress, checkpoint, resume → invoke checkpoint
 - Code quality, health check → invoke health
+
+## Testing
+
+Before writing or changing a backend endpoint, follow `backend/TESTING.md` — the
+TDD checklist distilled from real production incidents (negative-auth, invariant-
+violation, no-unhandled-500, post-failure DB state, prod-configured branch). Every
+fixed production bug ships a regression test in the same PR that fails on the
+pre-fix code.
