@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, require_role
 from app.models.billing import BillingClaim
 from app.models.request import ServiceRequest
 from app.models.session import ConsentRequest, MemberConsent, Session, SessionDocumentation
@@ -28,6 +28,7 @@ from app.schemas.session import (
     ConsentRequestCreate,
     ConsentRequestResponse,
     ConsentSubmit,
+    ScheduleSessionRequest,
     SessionArchiveUpdate,
     SessionCreate,
     SessionDocumentationSubmit,
@@ -312,6 +313,108 @@ async def get_session(session_id: UUID, current_user=Depends(get_current_user), 
         raise HTTPException(status_code=404, detail="Session not found")
     if session.chw_id != current_user.id and session.member_id != current_user.id and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Not authorized")
+    return session
+
+
+@router.post("/schedule", response_model=SessionResponse, status_code=201)
+async def schedule_session(
+    data: ScheduleSessionRequest,
+    current_user=Depends(require_role("chw")),
+    db: AsyncSession = Depends(get_db),
+) -> Session:
+    """CHW schedules a session directly with one of their members.
+
+    Unlike ``POST /sessions/`` (which requires an accepted ServiceRequest), this
+    lets a CHW book a follow-up with any member they already have a care
+    relationship with — the Calendar "Schedule Session" flow. The request_id
+    NOT NULL invariant is satisfied by reusing an existing CHW↔member
+    ServiceRequest, or auto-creating a minimal one when none exists.
+    """
+    from app.models.user import MemberProfile
+
+    member_id = data.member_id
+
+    # ── Relationship gate ────────────────────────────────────────────────────
+    # CHW may only schedule with their own members. A relationship is a prior
+    # shared Session OR a ServiceRequest matched to this CHW (mirrors the
+    # /chw/members roster definition).
+    shared_session = (
+        await db.execute(
+            select(Session.id)
+            .where(Session.chw_id == current_user.id, Session.member_id == member_id)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    matched_request = (
+        await db.execute(
+            select(ServiceRequest)
+            .where(
+                ServiceRequest.matched_chw_id == current_user.id,
+                ServiceRequest.member_id == member_id,
+            )
+            .order_by(ServiceRequest.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    if shared_session is None and matched_request is None:
+        raise HTTPException(
+            status_code=403,
+            detail="You can only schedule sessions with your own members.",
+        )
+
+    # ── Resolve request_id: reuse the matched request, else auto-create one ──
+    if matched_request is not None:
+        request_id = matched_request.id
+        vertical = matched_request.vertical
+    else:
+        member_profile = (
+            await db.execute(
+                select(MemberProfile).where(MemberProfile.user_id == member_id)
+            )
+        ).scalar_one_or_none()
+        vertical = (
+            member_profile.primary_need
+            if member_profile and member_profile.primary_need
+            else "other"
+        )
+        auto_request = ServiceRequest(
+            member_id=member_id,
+            matched_chw_id=current_user.id,
+            vertical=vertical,
+            verticals=[vertical],
+            urgency="routine",
+            description="Auto-created for a CHW-scheduled session.",
+            preferred_mode=data.mode.value,
+            status="matched",
+        )
+        db.add(auto_request)
+        await db.flush()
+        request_id = auto_request.id
+
+    session = Session(
+        request_id=request_id,
+        chw_id=current_user.id,
+        member_id=member_id,
+        vertical=vertical,
+        mode=data.mode.value,
+        scheduled_at=data.scheduled_at,
+        scheduled_end_at=data.scheduled_end_at,
+        scheduling_status=data.scheduling_status,
+        notes=data.notes,
+        status="scheduled",
+    )
+    db.add(session)
+
+    # Back-link the conversation so session-per-call lookups resolve this row.
+    conversation = await find_or_create_conversation_for_pair(
+        db, chw_id=current_user.id, member_id=member_id,
+    )
+    session.conversation_id = conversation.id
+
+    await db.commit()
+    await db.refresh(session)
     return session
 
 

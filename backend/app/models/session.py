@@ -45,6 +45,13 @@ class Session(Base):
     status: Mapped[str] = mapped_column(String(30), default="scheduled", index=True)
     mode: Mapped[str] = mapped_column(String(20), nullable=False)
     scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Appointment end time (calendar duration). Distinct from ended_at, which is
+    # the ACTUAL end stamped when a live session completes.
+    scheduled_end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # CHW's Confirmed/Pending choice for a scheduled appointment:
+    # "confirmed" | "pending" | None. Separate from the lifecycle `status` above;
+    # Completed/Missed calendar badges derive from the lifecycle, not this field.
+    scheduling_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     duration_minutes: Mapped[int | None] = mapped_column(Integer)

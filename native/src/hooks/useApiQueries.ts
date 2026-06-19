@@ -27,6 +27,10 @@ export interface SessionData {
   status: string;
   mode: string;
   scheduledAt: string;
+  /** Appointment end time (calendar duration). Distinct from endedAt (actual end). */
+  scheduledEndAt?: string | null;
+  /** CHW's Confirmed/Pending choice for a scheduled appointment. */
+  schedulingStatus?: 'confirmed' | 'pending' | null;
   startedAt?: string;
   endedAt?: string;
   durationMinutes?: number;
@@ -874,6 +878,53 @@ export function useCreateSession() {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.sessions });
       void qc.invalidateQueries({ queryKey: queryKeys.requests });
+    },
+    onError: (error: Error) => {
+      Alert.alert('Failed to schedule session', error?.message ?? 'Please try again.');
+    },
+  });
+}
+
+export interface ScheduleSessionPayload {
+  /** The member to schedule with (CHW must already work with them). */
+  memberId: string;
+  /** ISO-8601 datetime for the appointment start. */
+  scheduledAt: string;
+  /** ISO-8601 datetime for the appointment end (optional). */
+  scheduledEndAt?: string | null;
+  /** Session delivery modality — mirrors backend SessionMode (virtual = video). */
+  mode: 'in_person' | 'virtual' | 'phone';
+  /** CHW's Confirmed/Pending choice. */
+  schedulingStatus?: 'confirmed' | 'pending';
+  notes?: string;
+}
+
+/**
+ * CHW mutation — schedule a session directly with one of their members.
+ *
+ * POST /api/v1/sessions/schedule. Unlike useCreateSession, no pre-existing
+ * service request is needed: the backend reuses or auto-creates the underlying
+ * request. Powers the Calendar "Schedule Session" flow.
+ */
+export function useScheduleSession() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: ScheduleSessionPayload): Promise<SessionData> => {
+      const raw = await api<unknown>('/sessions/schedule', {
+        method: 'POST',
+        body: JSON.stringify({
+          member_id: payload.memberId,
+          scheduled_at: payload.scheduledAt,
+          scheduled_end_at: payload.scheduledEndAt ?? null,
+          mode: payload.mode,
+          scheduling_status: payload.schedulingStatus ?? 'confirmed',
+          notes: payload.notes ?? null,
+        }),
+      });
+      return transformKeys<SessionData>(raw);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.sessions });
     },
     onError: (error: Error) => {
       Alert.alert('Failed to schedule session', error?.message ?? 'Please try again.');

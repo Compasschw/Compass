@@ -17,6 +17,23 @@ class SessionCreate(BaseModel):
     mode: SessionMode = SessionMode.in_person
 
 
+class ScheduleSessionRequest(BaseModel):
+    """Body for POST /api/v1/sessions/schedule — CHW schedules a session directly
+    with one of their members (no pre-existing service request required).
+
+    The backend reuses an existing CHW↔member ServiceRequest as the session's
+    request_id when one exists, or auto-creates a minimal one, so the
+    request_id NOT NULL invariant holds without the CHW filing a request first.
+    """
+
+    member_id: UUID
+    scheduled_at: datetime
+    scheduled_end_at: datetime | None = None
+    mode: SessionMode = SessionMode.in_person
+    scheduling_status: Literal["confirmed", "pending"] = "confirmed"
+    notes: str | None = Field(default=None, max_length=2000)
+
+
 class SessionResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
@@ -27,6 +44,8 @@ class SessionResponse(BaseModel):
     status: str
     mode: str
     scheduled_at: datetime | None
+    scheduled_end_at: datetime | None = None
+    scheduling_status: str | None = None
     started_at: datetime | None
     ended_at: datetime | None
     duration_minutes: int | None

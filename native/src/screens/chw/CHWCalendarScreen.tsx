@@ -2,21 +2,19 @@
  * CHWCalendarScreen — Full-width calendar grid with Schedule Session modal.
  *
  * Features:
- *  - Day/Week/Month toggle in header
- *  - Week view: 7 columns × hourly rows 8 AM–6 PM, today highlighted (web default)
- *  - Month view: 7-column grid with member-count badges (all platforms)
- *  - "Schedule Session" CTA in the page header — opens a modal to schedule a new
- *    session from an accepted service request (POSTs to POST /api/v1/sessions/).
- *  - No right-side rail — calendar grid occupies full screen width.
- *  - Tap a day/slot to reveal events in detail panel
- *  - Color-coded legend for member journey statuses
+ *  - Day/Week/Month toggle in header (Week default on web)
+ *  - Week view: 7 columns × hourly rows 8 AM–5 PM, today highlighted
+ *  - Month view: 7-column grid with session-count badges
+ *  - Day view: single-column hourly grid for today
+ *  - "+ Schedule Session" CTA — opens member-based scheduling modal
+ *  - Session card tap → Session Details modal with "Open Member Profile" action
+ *  - No right-side rail — calendar occupies full width
  */
 
 import React, {
   useState,
   useMemo,
   useCallback,
-  useRef,
 } from 'react';
 import {
   View,
@@ -38,61 +36,31 @@ import {
   MapPin,
   Phone,
   Video,
-  ArrowRight,
-  Target,
   Plus,
   X,
+  CheckCircle,
+  AlertCircle,
+  User,
 } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
 
 import { colors as tokens, numerals, spacing, radius } from '../../theme/tokens';
 import { colors } from '../../theme/colors';
-import { typography } from '../../theme/typography';
-import {
-  verticalLabels,
-  type CalendarEvent,
-  type Vertical,
-} from '../../data/mock';
 import {
   AppShell,
   PageHeader,
   Card,
-  SectionHeader,
 } from '../../components/ui';
 import {
   useSessions,
-  useRequests,
-  useCreateSession,
+  useChwMembers,
+  useScheduleSession,
   type SessionData,
-  type ServiceRequestData,
+  type MembersRosterItem,
 } from '../../hooks/useApiQueries';
 import { useRefreshControl } from '../../hooks/useRefreshControl';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
-
-// ─── Member need-journey status (mocked) — see CHWDashboardScreen ─────────────
-// TODO(backend): expose journey_status per session.
-type JourneyStatus = 'starting' | 'awaiting_confirmation' | 'resolved';
-const JOURNEY_COLORS: Record<JourneyStatus, string> = {
-  starting: '#EF4444',
-  awaiting_confirmation: '#F59E0B',
-  resolved: '#22C55E',
-};
-const JOURNEY_LABELS: Record<JourneyStatus, string> = {
-  starting: 'Starting',
-  awaiting_confirmation: 'Awaiting confirmation',
-  resolved: 'Resolved',
-};
-function mockJourneyStatus(id: string): JourneyStatus {
-  const sum = id.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
-  const idx = sum % 3;
-  return idx === 0 ? 'starting' : idx === 1 ? 'awaiting_confirmation' : 'resolved';
-}
-const JOURNEY_DESCRIPTIONS: Record<JourneyStatus, string> = {
-  starting: 'Just started finding the resource',
-  awaiting_confirmation: 'Resources shared — waiting on member',
-  resolved: 'Resources used and member moved on',
-};
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -101,31 +69,80 @@ const MONTH_NAMES = [
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
 
+const MONTH_NAMES_SHORT = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+];
+
 const DAY_LABELS_LONG = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const DAY_LABELS_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-const VERTICAL_COLORS: Record<Vertical | 'goal_milestone', string> = {
-  housing: '#3B82F6',
-  rehab: '#EF4444',
-  food: '#F59E0B',
-  mental_health: '#8B5CF6',
-  healthcare: '#06B6D4',
-  goal_milestone: colors.secondary,
-};
+/** Hours displayed in the week/day view grid (8 AM – 5 PM inclusive). */
+const WEEK_VIEW_HOURS = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
 
-/** Hours displayed in the week-view grid (8 AM – 6 PM inclusive = 11 slots). */
-const WEEK_VIEW_HOURS = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
+/** Height in px for a single 1-hour slot in the week grid. */
+const SLOT_HEIGHT = 60;
 
 type CalendarViewMode = 'day' | 'week' | 'month';
 
-type SessionModality = 'in_person' | 'virtual';
+type SessionMode = 'in_person' | 'virtual' | 'phone';
 
-const MODALITY_LABELS: Record<SessionModality, string> = {
-  in_person: 'In-Person',
-  virtual: 'Virtual',
+// ─── Status badge helpers ─────────────────────────────────────────────────────
+
+type SessionBadgeStatus = 'Confirmed' | 'Pending' | 'Completed' | 'Missed';
+
+/**
+ * Derives a display status badge from a SessionData row.
+ *
+ * Priority:
+ *  1. completed  → "Completed"
+ *  2. cancelled* → "Missed"
+ *  3. past scheduled (scheduledAt < now && status === 'scheduled') → "Missed"
+ *  4. schedulingStatus 'pending' → "Pending"
+ *  5. default → "Confirmed"
+ */
+function deriveBadgeStatus(session: SessionData, now: Date): SessionBadgeStatus {
+  if (session.status === 'completed') return 'Completed';
+  if (session.status === 'cancelled' || session.status === 'cancelled_no_consent') return 'Missed';
+  if (session.status === 'scheduled' && new Date(session.scheduledAt) < now) return 'Missed';
+  if (session.schedulingStatus === 'pending') return 'Pending';
+  return 'Confirmed';
+}
+
+const BADGE_COLORS: Record<SessionBadgeStatus, { bg: string; text: string; border: string }> = {
+  Confirmed: { bg: '#DCFCE7', text: '#15803D', border: '#BBF7D0' },
+  Pending: { bg: '#FEF9C3', text: '#A16207', border: '#FDE68A' },
+  Completed: { bg: '#F3F4F6', text: '#374151', border: '#E5E7EB' },
+  Missed: { bg: '#FEE2E2', text: '#B91C1C', border: '#FECACA' },
 };
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Icon helpers ─────────────────────────────────────────────────────────────
+
+/** Session mode → lucide icon component. */
+function SessionModeIcon({
+  mode,
+  size = 12,
+  color: colorProp,
+}: {
+  mode?: string;
+  size?: number;
+  color?: string;
+}): React.JSX.Element {
+  const c = colorProp ?? colors.mutedForeground;
+  if (mode === 'phone') return <Phone size={size} color={c} />;
+  if (mode === 'virtual') return <Video size={size} color={c} />;
+  return <MapPin size={size} color={c} />;
+}
+
+/** Human-readable label for a session mode. */
+function sessionModeLabel(mode?: string): string {
+  if (mode === 'phone') return 'Phone Session';
+  if (mode === 'virtual') return 'Video Session';
+  if (mode === 'in_person') return 'In-Person Session';
+  return 'Session';
+}
+
+// ─── Grid math helpers ────────────────────────────────────────────────────────
 
 /**
  * Returns 7-aligned cell array for the given month.
@@ -140,7 +157,7 @@ function getMonthCells(year: number, month: number): (number | null)[] {
   return cells;
 }
 
-/** Returns the 7-day Date[] for the ISO week containing the given date. */
+/** Returns the Mon–Sun 7-day Date[] for the ISO week containing the given date. */
 function getWeekDays(anchor: Date): Date[] {
   const day = anchor.getDay(); // 0=Sun
   const monday = new Date(anchor);
@@ -164,64 +181,6 @@ function dateToKey(d: Date): string {
   return toDateKey(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
-/** Groups CalendarEvent[] by their `date` field into a Map<string, CalendarEvent[]>. */
-function groupByDate(events: CalendarEvent[]): Map<string, CalendarEvent[]> {
-  const map = new Map<string, CalendarEvent[]>();
-  for (const event of events) {
-    const bucket = map.get(event.date) ?? [];
-    map.set(event.date, [...bucket, event]);
-  }
-  return map;
-}
-
-/**
- * Derives CalendarEvent records from the sessions array.
- */
-function deriveSessionEvents(sessions: SessionData[]): CalendarEvent[] {
-  return sessions.map((session) => {
-    const dt = new Date(session.scheduledAt);
-    const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
-    const dd = String(dt.getUTCDate()).padStart(2, '0');
-    const date = `${dt.getUTCFullYear()}-${mm}-${dd}`;
-    const hh = String(dt.getUTCHours()).padStart(2, '0');
-    const min = String(dt.getUTCMinutes()).padStart(2, '0');
-    const endHour = String(dt.getUTCHours() + 1).padStart(2, '0');
-
-    return {
-      id: `derived-${session.id}`,
-      title: `Session: ${session.memberName ?? 'Member'}`,
-      date,
-      startTime: `${hh}:${min}`,
-      endTime: `${endHour}:${min}`,
-      vertical: session.vertical as Vertical | undefined,
-      type: 'session' as const,
-      chwName: session.chwName,
-      memberName: session.memberName,
-      memberId: session.memberId,
-      mode: session.mode,
-    };
-  });
-}
-
-/**
- * Resolves the dot color for a calendar event.
- */
-function eventColor(event: CalendarEvent): string {
-  if (event.vertical) return VERTICAL_COLORS[event.vertical];
-  return VERTICAL_COLORS.goal_milestone;
-}
-
-/**
- * Formats HH:MM 24h → "2:00 PM"
- */
-function formatTimeFull(time: string): string {
-  const [hourStr, minuteStr] = time.split(':');
-  const hour = parseInt(hourStr, 10);
-  const suffix = hour >= 12 ? 'PM' : 'AM';
-  const display = hour % 12 === 0 ? 12 : hour % 12;
-  return `${display}:${minuteStr} ${suffix}`;
-}
-
 /**
  * Formats an hour integer (24h) → "8 AM" / "12 PM" etc.
  */
@@ -232,289 +191,217 @@ function formatHourLabel(hour: number): string {
 }
 
 /**
- * Converts a local Date to an ISO-8601 string suitable for datetime-local inputs
- * and backend scheduled_at payloads (UTC).
+ * Formats an ISO datetime string to "10:00 AM" local time.
+ */
+function formatTimeAMPM(isoString: string): string {
+  const d = new Date(isoString);
+  if (isNaN(d.getTime())) return '';
+  const h = d.getHours();
+  const m = d.getMinutes();
+  const suffix = h >= 12 ? 'PM' : 'AM';
+  const display = h % 12 === 0 ? 12 : h % 12;
+  return `${display}:${String(m).padStart(2, '0')} ${suffix}`;
+}
+
+/**
+ * Formats two ISO strings to a range label: "10:00 AM – 11:00 AM".
+ * If end is null/undefined, returns just the start time.
+ */
+function formatTimeRange(startIso: string, endIso?: string | null): string {
+  const start = formatTimeAMPM(startIso);
+  if (!endIso) return start;
+  const end = formatTimeAMPM(endIso);
+  return `${start} – ${end}`;
+}
+
+/**
+ * Returns the fractional top offset within the grid for a given ISO start time
+ * (relative to WEEK_VIEW_HOURS[0] = 8 AM).
+ */
+function computeTopOffset(scheduledAt: string): number {
+  const d = new Date(scheduledAt);
+  const hour = d.getHours();
+  const minute = d.getMinutes();
+  const offset = (hour - WEEK_VIEW_HOURS[0]) + minute / 60;
+  return Math.max(0, offset) * SLOT_HEIGHT;
+}
+
+/**
+ * Returns the block height for a session in the grid.
+ * Uses scheduledEndAt when available; defaults to 1 hr.
+ */
+function computeBlockHeight(scheduledAt: string, scheduledEndAt?: string | null): number {
+  if (!scheduledEndAt) return SLOT_HEIGHT;
+  const start = new Date(scheduledAt).getTime();
+  const end = new Date(scheduledEndAt).getTime();
+  const durationHours = (end - start) / (1000 * 60 * 60);
+  return Math.max(SLOT_HEIGHT * 0.5, durationHours * SLOT_HEIGHT);
+}
+
+/**
+ * Formats an ISO datetime string to a short date label: "Fri, Jun 20, 2026"
+ */
+function formatDateLabel(isoString: string): string {
+  const d = new Date(isoString);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+/**
+ * Converts a local Date to a YYYY-MM-DDTHH:mm string for datetime-local inputs.
  */
 function toISODateTimeLocal(date: Date): string {
-  // Returns YYYY-MM-DDTHH:mm (local time, for <input type="datetime-local">)
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 /**
- * Formats a local datetime-local string to a display-friendly label.
- * Input: "2026-06-15T14:30" → "Jun 15, 2026 at 2:30 PM"
+ * Groups SessionData[] by their local calendar date key (YYYY-MM-DD).
  */
-function formatDateTimeLabel(value: string): string {
-  if (!value) return '';
-  const d = new Date(value);
-  if (isNaN(d.getTime())) return value;
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) +
-    ' at ' +
-    d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+function groupSessionsByDate(sessions: SessionData[]): Map<string, SessionData[]> {
+  const map = new Map<string, SessionData[]>();
+  for (const session of sessions) {
+    const d = new Date(session.scheduledAt);
+    const key = toDateKey(d.getFullYear(), d.getMonth(), d.getDate());
+    const bucket = map.get(key) ?? [];
+    map.set(key, [...bucket, session]);
+  }
+  return map;
 }
 
-// ─── EventDetailCard sub-component ───────────────────────────────────────────
+// ─── Session card (week/day grid) ─────────────────────────────────────────────
 
-/** Lucide icon for a session modality (phone / video / in-person). */
-function ModalityIcon({ mode, size = 12, color }: { mode?: string; size?: number; color?: string }): React.JSX.Element {
-  const c = color ?? colors.mutedForeground;
-  if (mode === 'phone') return <Phone size={size} color={c} />;
-  if (mode === 'video') return <Video size={size} color={c} />;
-  return <MapPin size={size} color={c} />; // in_person / default
+interface SessionCardProps {
+  session: SessionData;
+  now: Date;
+  onPress: (session: SessionData) => void;
 }
 
-/** Human label for a session modality. */
-function modalityLabel(mode?: string): string {
-  if (mode === 'phone') return 'Phone session';
-  if (mode === 'video') return 'Video session';
-  if (mode === 'in_person' || mode === 'in-person') return 'In-person session';
-  return 'Session';
-}
-
-interface EventDetailCardProps {
-  event: CalendarEvent;
-  /** Opens the member profile for this session's member, if known. */
-  onOpenProfile?: () => void;
-}
-
-function EventDetailCard({ event, onOpenProfile }: EventDetailCardProps): React.JSX.Element {
-  const barColor = eventColor(event);
-  const isSession = event.type === 'session';
-  const journey = mockJourneyStatus(event.id);
+/** A positioned absolute card rendered inside a weekly time grid column. */
+function SessionCard({ session, now, onPress }: SessionCardProps): React.JSX.Element {
+  const badge = deriveBadgeStatus(session, now);
+  const badgeStyle = BADGE_COLORS[badge];
+  const topOffset = computeTopOffset(session.scheduledAt);
+  const blockHeight = computeBlockHeight(session.scheduledAt, session.scheduledEndAt);
 
   return (
-    <View style={detailStyles.card}>
-      <View style={[detailStyles.colorStrip, { backgroundColor: barColor }]} />
-      <View style={detailStyles.cardBody}>
-        <View style={detailStyles.titleRow}>
-          <Text style={detailStyles.title} numberOfLines={2}>
-            {event.title}
-          </Text>
-          {event.vertical ? (
-            <View style={[detailStyles.badge, { backgroundColor: barColor + '20' }]}>
-              <Text style={[detailStyles.badgeText, { color: barColor }]}>
-                {verticalLabels[event.vertical]}
-              </Text>
-            </View>
-          ) : null}
-          {/* Journey-status pill — same dashboard treatment per Jemal */}
-          {isSession ? (
-            <View style={detailStyles.journeyPill}>
-              <View style={[detailStyles.journeyDot, { backgroundColor: JOURNEY_COLORS[journey] }]} />
-              <Text style={detailStyles.journeyText}>{JOURNEY_LABELS[journey]}</Text>
-            </View>
-          ) : null}
-        </View>
-
-        <View style={detailStyles.metaRow}>
-          <Clock size={12} color={colors.mutedForeground} />
-          <Text style={[detailStyles.metaText, numerals.tabular]}>
-            {formatTimeFull(event.startTime)}
-            {event.endTime !== event.startTime
-              ? ` – ${formatTimeFull(event.endTime)}`
-              : ''}
+    <TouchableOpacity
+      style={[
+        sessionCardStyles.card,
+        { top: topOffset, height: blockHeight },
+      ]}
+      onPress={() => onPress(session)}
+      accessibilityRole="button"
+      accessibilityLabel={`Session with ${session.memberName ?? 'member'} at ${formatTimeAMPM(session.scheduledAt)}`}
+    >
+      <View style={sessionCardStyles.leftBorder} />
+      <View style={sessionCardStyles.body}>
+        <Text style={[sessionCardStyles.time, numerals.tabular]} numberOfLines={1}>
+          {formatTimeAMPM(session.scheduledAt)}
+        </Text>
+        <Text style={sessionCardStyles.memberName} numberOfLines={1}>
+          {session.memberName ?? 'Member'}
+        </Text>
+        <View style={sessionCardStyles.typeRow}>
+          <SessionModeIcon mode={session.mode} size={10} color={tokens.emerald700} />
+          <Text style={sessionCardStyles.typeLabel} numberOfLines={1}>
+            {sessionModeLabel(session.mode)}
           </Text>
         </View>
-
-        {/* Session modality (phone / video / in-person) */}
-        {isSession ? (
-          <View style={detailStyles.metaRow}>
-            <ModalityIcon mode={event.mode} />
-            <Text style={detailStyles.metaText}>{modalityLabel(event.mode)}</Text>
+        {blockHeight >= 50 ? (
+          <View style={[sessionCardStyles.badge, { backgroundColor: badgeStyle.bg, borderColor: badgeStyle.border }]}>
+            <Text style={[sessionCardStyles.badgeText, { color: badgeStyle.text }]}>{badge}</Text>
           </View>
-        ) : null}
-
-        {event.memberName ? (
-          <View style={detailStyles.metaRow}>
-            <CalendarDays size={12} color={colors.mutedForeground} />
-            <Text style={detailStyles.metaText}>
-              {event.memberName}
-              {isSession && event.chwName ? ` · ${event.chwName}` : ''}
-            </Text>
-          </View>
-        ) : null}
-
-        {/* Member address — TODO(backend): expose member.address on SessionData */}
-        {isSession ? (
-          <View style={detailStyles.metaRow}>
-            <MapPin size={12} color={colors.mutedForeground} />
-            <Text style={detailStyles.metaText}>1834 W 6th St, Los Angeles, CA 90057</Text>
-          </View>
-        ) : null}
-
-        {/* Quick-action goal note — TODO(backend): expose session.goal_note */}
-        {isSession ? (
-          <View style={detailStyles.actionNote}>
-            <Target size={12} color={colors.primary} />
-            <Text style={detailStyles.actionNoteText}>
-              Goal: walk through Medi-Cal renewal paperwork together.
-            </Text>
-          </View>
-        ) : null}
-
-        {/* Primary action — open the member's full profile */}
-        {isSession && event.memberId && onOpenProfile ? (
-          <TouchableOpacity
-            style={detailStyles.openProfileBtn}
-            onPress={onOpenProfile}
-            accessibilityRole="button"
-            accessibilityLabel={`Open ${event.memberName ?? 'member'} profile`}
-          >
-            <Text style={detailStyles.openProfileText}>Open Member Profile</Text>
-            <ArrowRight size={14} color={colors.primary} />
-          </TouchableOpacity>
         ) : null}
       </View>
-    </View>
+    </TouchableOpacity>
   );
 }
 
-const detailStyles = StyleSheet.create({
+const sessionCardStyles = StyleSheet.create({
   card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
+    position: 'absolute',
+    left: 2,
+    right: 2,
+    backgroundColor: '#F0FDF4',
+    borderRadius: 6,
     flexDirection: 'row',
     overflow: 'hidden',
-    marginBottom: 10,
-    shadowColor: '#3D5A3E',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 24,
-    elevation: 3,
+    zIndex: 1,
   },
-  colorStrip: {
-    width: 4,
+  leftBorder: {
+    width: 3,
+    backgroundColor: tokens.primary,
     flexShrink: 0,
   },
-  cardBody: {
+  body: {
     flex: 1,
-    padding: 14,
-    gap: 6,
+    padding: 4,
+    gap: 1,
   },
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: 8,
-    flexWrap: 'wrap',
+  time: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 9,
+    color: tokens.emerald700,
   },
-  title: {
+  memberName: {
     fontFamily: 'DMSans_700Bold',
-    fontSize: 14,
-    lineHeight: 20,
+    fontSize: 10,
     color: '#1E3320',
-    flex: 1,
+    lineHeight: 13,
+  },
+  typeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+  typeLabel: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 9,
+    color: tokens.emerald700,
   },
   badge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 100,
-    flexShrink: 0,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 4,
+    borderWidth: 1,
+    marginTop: 2,
   },
   badgeText: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 12,
-    lineHeight: 16,
-  },
-  metaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  metaText: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 12,
-    letterSpacing: 1,
-    color: '#6B7A6B',
-    flex: 1,
-  },
-  journeyPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 100,
-    backgroundColor: '#F4F1ED',
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-    flexShrink: 0,
-  },
-  journeyDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-  },
-  journeyText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 11,
-    color: '#6B7A6B',
-  },
-  actionNote: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 6,
-    marginTop: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 8,
-    backgroundColor: colors.primary + '0D',
-    borderLeftWidth: 3,
-    borderLeftColor: colors.primary,
-  },
-  actionNoteText: {
-    flex: 1,
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 12,
-    color: colors.foreground,
-    lineHeight: 16,
-  },
-  openProfileBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    marginTop: 10,
-    paddingVertical: 9,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: colors.primary,
-  },
-  openProfileText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 13,
-    color: colors.primary,
+    fontSize: 8,
   },
 });
 
-// ─── WeekViewGrid — web-only ──────────────────────────────────────────────────
+// ─── WeekViewGrid ─────────────────────────────────────────────────────────────
 
 interface WeekViewGridProps {
   weekDays: Date[];
-  eventsByDate: Map<string, CalendarEvent[]>;
+  sessionsByDate: Map<string, SessionData[]>;
   today: { year: number; month: number; day: number };
-  onSlotPress: (date: Date, hour: number) => void;
+  now: Date;
+  onSessionPress: (session: SessionData) => void;
 }
 
 /**
- * 7-column × hourly-row week-view grid. Matches the appointments.html mockup:
- * each cell is 48px tall, today's column highlighted in a pale tint, events
- * rendered as colored chips inside their hour slot.
+ * Mon–Sun weekly grid with hourly rows (8 AM – 5 PM).
+ * Today's date number sits in a green filled circle.
+ * Session cards are positioned absolutely within each column.
  */
 function WeekViewGrid({
   weekDays,
-  eventsByDate,
+  sessionsByDate,
   today,
-  onSlotPress,
+  now,
+  onSessionPress,
 }: WeekViewGridProps): React.JSX.Element {
+  const totalGridHeight = WEEK_VIEW_HOURS.length * SLOT_HEIGHT;
+
   return (
-    <ScrollView horizontal={false} showsVerticalScrollIndicator={false}>
+    <ScrollView showsVerticalScrollIndicator={false}>
       {/* Day header row */}
       <View style={weekStyles.headerRow}>
-        {/* Time gutter header */}
         <View style={weekStyles.timeGutter} />
         {weekDays.map((date) => {
           const isToday =
@@ -522,70 +409,61 @@ function WeekViewGrid({
             date.getMonth() === today.month &&
             date.getDate() === today.day;
           return (
-            <View
-              key={dateToKey(date)}
-              style={[weekStyles.dayHeader, isToday && weekStyles.dayHeaderToday]}
-            >
-              <Text style={[weekStyles.dayHeaderLabel, isToday && weekStyles.dayHeaderLabelToday]}>
-                {DAY_LABELS[date.getDay()]}
+            <View key={dateToKey(date)} style={weekStyles.dayHeaderCell}>
+              <Text style={[weekStyles.dayLabel, isToday && weekStyles.dayLabelToday]}>
+                {DAY_LABELS_SHORT[weekDays.indexOf(date)]}
               </Text>
-              <Text style={[weekStyles.dayHeaderDate, isToday && weekStyles.dayHeaderDateToday]}>
-                {date.getDate()}
-              </Text>
+              <View style={[weekStyles.dateCircle, isToday && weekStyles.dateCircleToday]}>
+                <Text style={[weekStyles.dateNumber, isToday && weekStyles.dateNumberToday]}>
+                  {date.getDate()}
+                </Text>
+              </View>
             </View>
           );
         })}
       </View>
 
-      {/* Hourly rows */}
-      {WEEK_VIEW_HOURS.map((hour) => (
-        <View key={hour} style={weekStyles.hourRow}>
-          {/* Time label */}
-          <View style={weekStyles.timeGutter}>
-            <Text style={[weekStyles.timeLabel, numerals.tabular]}>{formatHourLabel(hour)}</Text>
-          </View>
-          {/* Day columns */}
-          {weekDays.map((date) => {
-            const key = dateToKey(date);
-            const dayEvents = (eventsByDate.get(key) ?? []).filter((e) => {
-              const eventHour = parseInt(e.startTime.split(':')[0], 10);
-              return eventHour === hour;
-            });
-            const isToday =
-              date.getFullYear() === today.year &&
-              date.getMonth() === today.month &&
-              date.getDate() === today.day;
-
-            return (
-              <TouchableOpacity
-                key={key + '-' + hour}
-                style={[weekStyles.hourCell, isToday && weekStyles.hourCellToday]}
-                onPress={() => onSlotPress(date, hour)}
-                accessibilityRole="button"
-                accessibilityLabel={`${DAY_LABELS_LONG[date.getDay()]} ${date.getDate()}, ${formatHourLabel(hour)}`}
-              >
-                {dayEvents.map((event) => {
-                  const barColor = eventColor(event);
-                  return (
-                    <View
-                      key={event.id}
-                      style={[
-                        weekStyles.eventChip,
-                        { backgroundColor: barColor + '22', borderLeftColor: barColor, flexDirection: 'row', alignItems: 'center', gap: 3 },
-                      ]}
-                    >
-                      {event.type === 'session' ? <ModalityIcon mode={event.mode} size={9} color={barColor} /> : null}
-                      <Text style={[weekStyles.eventChipText, { color: barColor, flex: 1 }]} numberOfLines={1}>
-                        {event.memberName ?? event.title}
-                      </Text>
-                    </View>
-                  );
-                })}
-              </TouchableOpacity>
-            );
-          })}
+      {/* Grid body: time gutter + column for each day */}
+      <View style={weekStyles.gridBody}>
+        {/* Time gutter */}
+        <View style={weekStyles.timeGutter}>
+          {WEEK_VIEW_HOURS.map((hour) => (
+            <View key={hour} style={{ height: SLOT_HEIGHT, justifyContent: 'flex-start', paddingTop: 4 }}>
+              <Text style={[weekStyles.timeLabel, numerals.tabular]}>{formatHourLabel(hour)}</Text>
+            </View>
+          ))}
         </View>
-      ))}
+
+        {/* Day columns */}
+        {weekDays.map((date) => {
+          const key = dateToKey(date);
+          const daySessions = sessionsByDate.get(key) ?? [];
+          const isToday =
+            date.getFullYear() === today.year &&
+            date.getMonth() === today.month &&
+            date.getDate() === today.day;
+
+          return (
+            <View key={key} style={[weekStyles.dayColumn, isToday && weekStyles.dayColumnToday]}>
+              {/* Hour grid lines */}
+              {WEEK_VIEW_HOURS.map((hour) => (
+                <View key={hour} style={weekStyles.hourLine} />
+              ))}
+              {/* Absolute-position session cards */}
+              <View style={[weekStyles.cardsLayer, { height: totalGridHeight }]}>
+                {daySessions.map((session) => (
+                  <SessionCard
+                    key={session.id}
+                    session={session}
+                    now={now}
+                    onPress={onSessionPress}
+                  />
+                ))}
+              </View>
+            </View>
+          );
+        })}
+      </View>
     </ScrollView>
   );
 }
@@ -593,372 +471,441 @@ function WeekViewGrid({
 const weekStyles = StyleSheet.create({
   headerRow: {
     flexDirection: 'row',
-    borderBottomWidth: 2,
-    borderBottomColor: '#DDD6CC',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
     backgroundColor: '#FFFFFF',
+    paddingVertical: 10,
   },
   timeGutter: {
-    width: 64,
+    width: 56,
     paddingRight: 8,
     alignItems: 'flex-end',
+  },
+  dayHeaderCell: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 4,
+  },
+  dayLabel: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 11,
+    color: '#6B7280',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  dayLabelToday: {
+    color: tokens.primary,
+  },
+  dateCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
     justifyContent: 'center',
-    borderRightWidth: 1,
-    borderRightColor: '#F0EDE9',
+  },
+  dateCircleToday: {
+    backgroundColor: tokens.primary,
+  },
+  dateNumber: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 14,
+    color: '#1E3320',
+  },
+  dateNumberToday: {
+    color: '#FFFFFF',
+  },
+  gridBody: {
+    flexDirection: 'row',
+  },
+  dayColumn: {
+    flex: 1,
+    borderLeftWidth: 1,
+    borderLeftColor: '#F3F4F6',
+    position: 'relative',
+  },
+  dayColumnToday: {
+    backgroundColor: tokens.primary + '04',
+  },
+  hourLine: {
+    height: SLOT_HEIGHT,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  cardsLayer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
   },
   timeLabel: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 10,
     color: '#9CA3AF',
-    paddingTop: 2,
-  },
-  dayHeader: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 10,
-    borderRightWidth: 1,
-    borderRightColor: '#F0EDE9',
-    gap: 2,
-  },
-  dayHeaderToday: {
-    backgroundColor: tokens.primary + '08',
-  },
-  dayHeaderLabel: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 11,
-    letterSpacing: 0.5,
-    textTransform: 'uppercase',
-    color: '#6B7A6B',
-  },
-  dayHeaderLabelToday: {
-    color: tokens.primary,
-  },
-  dayHeaderDate: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 18,
-    color: '#1E3320',
-  },
-  dayHeaderDateToday: {
-    color: '#FFFFFF',
-    backgroundColor: tokens.primary,
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    textAlign: 'center',
-    lineHeight: 32,
-    overflow: 'hidden',
-  },
-  hourRow: {
-    flexDirection: 'row',
-    height: 56,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0EDE9',
-  },
-  hourCell: {
-    flex: 1,
-    borderRightWidth: 1,
-    borderRightColor: '#F0EDE9',
-    padding: 2,
-    gap: 2,
-  },
-  hourCellToday: {
-    backgroundColor: tokens.primary + '05',
-  },
-  eventChip: {
-    borderLeftWidth: 2,
-    borderRadius: 3,
-    paddingHorizontal: 4,
-    paddingVertical: 2,
-  },
-  eventChipText: {
-    fontSize: 10,
-    fontWeight: '600',
+    textAlign: 'right',
   },
 });
 
-// ─── ScheduleSessionModal ─────────────────────────────────────────────────────
+// ─── Day view grid ────────────────────────────────────────────────────────────
 
-interface ScheduleSessionModalProps {
-  visible: boolean;
-  onClose: () => void;
-  onSuccess: () => void;
-  acceptedRequests: ServiceRequestData[];
-  isLoadingRequests: boolean;
+interface DayViewGridProps {
+  date: Date;
+  sessions: SessionData[];
+  now: Date;
+  onSessionPress: (session: SessionData) => void;
 }
 
-/**
- * Modal for scheduling a new session from an accepted service request.
- *
- * Workflow:
- *  1. CHW selects a member (from their accepted service requests).
- *  2. Picks a date and time (datetime-local input on web; text input on native).
- *  3. Picks a modality (In-Person / Virtual).
- *  4. Submits — POSTs to POST /api/v1/sessions/.
- *
- * The `request_id` is resolved from the selected accepted request row.
- * The backend derives vertical, chw_id, and member_id from the request.
- */
-function ScheduleSessionModal({
+function DayViewGrid({ date, sessions, now, onSessionPress }: DayViewGridProps): React.JSX.Element {
+  const totalGridHeight = WEEK_VIEW_HOURS.length * SLOT_HEIGHT;
+
+  return (
+    <ScrollView showsVerticalScrollIndicator={false}>
+      <View style={dayViewStyles.dateHeader}>
+        <Text style={dayViewStyles.dateText}>
+          {DAY_LABELS_LONG[date.getDay()]}, {MONTH_NAMES[date.getMonth()]} {date.getDate()}, {date.getFullYear()}
+        </Text>
+      </View>
+      <View style={dayViewStyles.grid}>
+        <View style={weekStyles.timeGutter}>
+          {WEEK_VIEW_HOURS.map((hour) => (
+            <View key={hour} style={{ height: SLOT_HEIGHT, justifyContent: 'flex-start', paddingTop: 4 }}>
+              <Text style={[weekStyles.timeLabel, numerals.tabular]}>{formatHourLabel(hour)}</Text>
+            </View>
+          ))}
+        </View>
+        <View style={dayViewStyles.column}>
+          {WEEK_VIEW_HOURS.map((hour) => (
+            <View key={hour} style={weekStyles.hourLine} />
+          ))}
+          <View style={[weekStyles.cardsLayer, { height: totalGridHeight }]}>
+            {sessions.map((session) => (
+              <SessionCard
+                key={session.id}
+                session={session}
+                now={now}
+                onPress={onSessionPress}
+              />
+            ))}
+          </View>
+        </View>
+      </View>
+    </ScrollView>
+  );
+}
+
+const dayViewStyles = StyleSheet.create({
+  dateHeader: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  },
+  dateText: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 14,
+    color: '#1E3320',
+  },
+  grid: {
+    flexDirection: 'row',
+  },
+  column: {
+    flex: 1,
+    borderLeftWidth: 1,
+    borderLeftColor: '#F3F4F6',
+    position: 'relative',
+  },
+});
+
+// ─── Month view grid ──────────────────────────────────────────────────────────
+
+interface MonthViewGridProps {
+  year: number;
+  month: number;
+  cells: (number | null)[];
+  sessionsByDate: Map<string, SessionData[]>;
+  today: { year: number; month: number; day: number };
+  selectedDay: number | null;
+  onDayPress: (day: number) => void;
+}
+
+function MonthViewGrid({
+  year,
+  month,
+  cells,
+  sessionsByDate,
+  today,
+  selectedDay,
+  onDayPress,
+}: MonthViewGridProps): React.JSX.Element {
+  const DAY_HEADERS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+  return (
+    <View>
+      {/* Day-of-week headers */}
+      <View style={monthStyles.headerRow}>
+        {DAY_HEADERS.map((label) => (
+          <View key={label} style={monthStyles.headerCell}>
+            <Text style={monthStyles.headerText}>{label}</Text>
+          </View>
+        ))}
+      </View>
+
+      {/* Calendar grid */}
+      <View style={monthStyles.grid}>
+        {cells.map((day, index) => {
+          if (day === null) {
+            return <View key={`empty-${index}`} style={monthStyles.emptyCell} />;
+          }
+
+          const key = toDateKey(year, month, day);
+          const count = (sessionsByDate.get(key) ?? []).length;
+          const isToday = year === today.year && month === today.month && day === today.day;
+          const isSelected = selectedDay === day;
+
+          return (
+            <TouchableOpacity
+              key={key}
+              style={[monthStyles.dayCell, isSelected && monthStyles.dayCellSelected]}
+              onPress={() => onDayPress(day)}
+              accessibilityRole="button"
+              accessibilityLabel={`${MONTH_NAMES[month]} ${day}${count > 0 ? `, ${count} session${count !== 1 ? 's' : ''}` : ''}`}
+              accessibilityState={{ selected: isSelected }}
+            >
+              <View style={[monthStyles.dayNumber, isToday && monthStyles.dayNumberToday]}>
+                <Text style={[monthStyles.dayText, isToday && monthStyles.dayTextToday]}>
+                  {day}
+                </Text>
+              </View>
+              {count > 0 ? (
+                <View style={monthStyles.countBadge}>
+                  <Text style={monthStyles.countText}>{count}</Text>
+                </View>
+              ) : null}
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+const CELL_SIZE = 52;
+
+const monthStyles = StyleSheet.create({
+  headerRow: {
+    flexDirection: 'row',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  },
+  headerCell: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  headerText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 11,
+    color: '#6B7280',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  grid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  emptyCell: {
+    width: '14.2857%',
+    minHeight: CELL_SIZE,
+    borderRightWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: '#F3F4F6',
+    backgroundColor: '#FAFAFA',
+  },
+  dayCell: {
+    width: '14.2857%',
+    minHeight: CELL_SIZE,
+    padding: 4,
+    borderRightWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: '#F3F4F6',
+    alignItems: 'flex-start',
+  },
+  dayCellSelected: {
+    backgroundColor: tokens.primary + '10',
+  },
+  dayNumber: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dayNumberToday: {
+    backgroundColor: tokens.primary,
+  },
+  dayText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 12,
+    color: '#1E3320',
+  },
+  dayTextToday: {
+    color: '#FFFFFF',
+    fontFamily: 'DMSans_700Bold',
+  },
+  countBadge: {
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 4,
+    borderRadius: 9,
+    backgroundColor: tokens.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 3,
+  },
+  countText: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 10,
+    color: '#FFFFFF',
+  },
+});
+
+// ─── Session Details Modal ────────────────────────────────────────────────────
+
+interface SessionDetailsModalProps {
+  session: SessionData | null;
+  now: Date;
+  visible: boolean;
+  onClose: () => void;
+  onOpenProfile: (memberId: string) => void;
+}
+
+function SessionDetailsModal({
+  session,
+  now,
   visible,
   onClose,
-  onSuccess,
-  acceptedRequests,
-  isLoadingRequests,
-}: ScheduleSessionModalProps): React.JSX.Element {
-  const { mutateAsync: createSession, isPending } = useCreateSession();
+  onOpenProfile,
+}: SessionDetailsModalProps): React.JSX.Element {
+  if (!session) return <View />;
 
-  const [selectedRequestId, setSelectedRequestId] = useState<string>('');
-  const [scheduledAt, setScheduledAt] = useState<string>(() => {
-    // Default to tomorrow at 10:00 AM local time
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    tomorrow.setHours(10, 0, 0, 0);
-    return toISODateTimeLocal(tomorrow);
-  });
-  const [modality, setModality] = useState<SessionModality>('in_person');
-  const [fieldError, setFieldError] = useState<string | null>(null);
-
-  // Reset form when modal closes
-  const handleClose = useCallback(() => {
-    setSelectedRequestId('');
-    setScheduledAt(() => {
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      tomorrow.setHours(10, 0, 0, 0);
-      return toISODateTimeLocal(tomorrow);
-    });
-    setModality('in_person');
-    setFieldError(null);
-    onClose();
-  }, [onClose]);
-
-  const selectedRequest = acceptedRequests.find((r) => r.id === selectedRequestId);
-
-  const handleSubmit = useCallback(async () => {
-    setFieldError(null);
-
-    if (!selectedRequestId) {
-      setFieldError('Please select a member.');
-      return;
-    }
-
-    if (!scheduledAt) {
-      setFieldError('Please select a date and time.');
-      return;
-    }
-
-    const scheduledDate = new Date(scheduledAt);
-    if (isNaN(scheduledDate.getTime())) {
-      setFieldError('Invalid date/time. Please re-enter.');
-      return;
-    }
-
-    if (scheduledDate <= new Date()) {
-      setFieldError('Scheduled time must be in the future.');
-      return;
-    }
-
-    try {
-      await createSession({
-        requestId: selectedRequestId,
-        scheduledAt: scheduledDate.toISOString(),
-        mode: modality,
-      });
-      handleClose();
-      onSuccess();
-    } catch {
-      // Error alert is handled by useCreateSession's onError
-    }
-  }, [selectedRequestId, scheduledAt, modality, createSession, handleClose, onSuccess]);
-
-  const canSubmit =
-    selectedRequestId.length > 0 &&
-    scheduledAt.length > 0 &&
-    !isPending;
+  const badge = deriveBadgeStatus(session, now);
+  const badgeStyle = BADGE_COLORS[badge];
 
   return (
     <Modal
       visible={visible}
       transparent
       animationType="fade"
-      onRequestClose={handleClose}
+      onRequestClose={onClose}
       accessibilityViewIsModal
     >
-      <View style={modalStyles.overlay}>
-        <View style={modalStyles.sheet}>
+      <View style={detailModalStyles.overlay}>
+        <View style={detailModalStyles.sheet}>
           {/* Header */}
-          <View style={modalStyles.header}>
-            <Text style={modalStyles.headerTitle}>Schedule Session</Text>
+          <View style={detailModalStyles.header}>
+            <View style={detailModalStyles.headerLeft}>
+              <Text style={detailModalStyles.headerTitle}>Session Details</Text>
+            </View>
             <TouchableOpacity
-              style={modalStyles.closeBtn}
-              onPress={handleClose}
+              style={detailModalStyles.closeBtn}
+              onPress={onClose}
               accessibilityRole="button"
-              accessibilityLabel="Close schedule session modal"
+              accessibilityLabel="Close session details"
             >
               <X size={18} color={tokens.textSecondary} />
             </TouchableOpacity>
           </View>
 
           <ScrollView
-            style={modalStyles.body}
-            contentContainerStyle={modalStyles.bodyContent}
+            style={detailModalStyles.body}
+            contentContainerStyle={detailModalStyles.bodyContent}
             showsVerticalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled"
           >
-            {/* Member selector */}
-            <View style={modalStyles.field}>
-              <Text style={modalStyles.fieldLabel}>Member</Text>
-              {isLoadingRequests ? (
-                <View style={modalStyles.loadingRow}>
-                  <ActivityIndicator size="small" color={tokens.primary} />
-                  <Text style={modalStyles.loadingText}>Loading members...</Text>
-                </View>
-              ) : acceptedRequests.length === 0 ? (
-                <View style={modalStyles.emptyHint}>
-                  <Text style={modalStyles.emptyHintText}>
-                    No accepted service requests. Accept a member request first before scheduling a session.
+            {/* Member name */}
+            <View style={detailModalStyles.memberRow}>
+              <View style={detailModalStyles.avatarCircle}>
+                <User size={20} color={tokens.primary} />
+              </View>
+              <Text style={detailModalStyles.memberName}>
+                {session.memberName ?? 'Member'}
+              </Text>
+            </View>
+
+            {/* Status badge */}
+            <View style={[detailModalStyles.statusBadge, { backgroundColor: badgeStyle.bg, borderColor: badgeStyle.border }]}>
+              {badge === 'Confirmed' ? (
+                <CheckCircle size={12} color={badgeStyle.text} />
+              ) : badge === 'Missed' ? (
+                <AlertCircle size={12} color={badgeStyle.text} />
+              ) : null}
+              <Text style={[detailModalStyles.statusText, { color: badgeStyle.text }]}>{badge}</Text>
+            </View>
+
+            {/* Details rows */}
+            <View style={detailModalStyles.detailsCard}>
+              <View style={detailModalStyles.detailRow}>
+                <CalendarDays size={14} color={tokens.textSecondary} />
+                <View style={detailModalStyles.detailContent}>
+                  <Text style={detailModalStyles.detailLabel}>Date</Text>
+                  <Text style={detailModalStyles.detailValue}>
+                    {formatDateLabel(session.scheduledAt)}
                   </Text>
                 </View>
-              ) : (
-                <View style={modalStyles.memberList}>
-                  {acceptedRequests.map((req) => {
-                    const isActive = selectedRequestId === req.id;
-                    return (
-                      <TouchableOpacity
-                        key={req.id}
-                        style={[modalStyles.memberRow, isActive && modalStyles.memberRowActive]}
-                        onPress={() => setSelectedRequestId(req.id)}
-                        accessibilityRole="radio"
-                        accessibilityState={{ checked: isActive }}
-                        accessibilityLabel={`Select ${req.memberName ?? 'member'}`}
-                      >
-                        <View style={[modalStyles.memberRadio, isActive && modalStyles.memberRadioActive]}>
-                          {isActive ? <View style={modalStyles.memberRadioDot} /> : null}
-                        </View>
-                        <View style={modalStyles.memberInfo}>
-                          <Text style={[modalStyles.memberName, isActive && modalStyles.memberNameActive]}>
-                            {req.memberName ?? 'Unknown Member'}
-                          </Text>
-                          <Text style={modalStyles.memberMeta}>
-                            {req.vertical
-                              ? (verticalLabels[req.vertical as Vertical] ?? req.vertical)
-                              : 'General'} · {req.preferredMode.replace('_', '-')}
-                          </Text>
-                        </View>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              )}
-            </View>
-
-            {/* Date & time */}
-            <View style={modalStyles.field}>
-              <Text style={modalStyles.fieldLabel}>Date &amp; Time</Text>
-              {Platform.OS === 'web' ? (
-                // Web: native datetime-local input
-                <View style={modalStyles.dateInputWrapper}>
-                  {/* @ts-ignore — datetime-local is a valid HTML input type on web */}
-                  <TextInput
-                    style={modalStyles.dateInput}
-                    // @ts-ignore — type is a valid HTML attribute on web
-                    type="datetime-local"
-                    value={scheduledAt}
-                    onChangeText={setScheduledAt}
-                    accessibilityLabel="Scheduled date and time"
-                  />
-                </View>
-              ) : (
-                // Native: text input for datetime — YYYY-MM-DDTHH:mm format
-                <View style={modalStyles.dateInputWrapper}>
-                  <TextInput
-                    style={modalStyles.dateInput}
-                    value={scheduledAt}
-                    onChangeText={setScheduledAt}
-                    placeholder="YYYY-MM-DDTHH:mm (e.g. 2026-06-15T14:00)"
-                    placeholderTextColor={tokens.textMuted}
-                    accessibilityLabel="Scheduled date and time"
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    keyboardType="numbers-and-punctuation"
-                  />
-                </View>
-              )}
-              {scheduledAt.length > 0 && (
-                <Text style={modalStyles.datePreview}>{formatDateTimeLabel(scheduledAt)}</Text>
-              )}
-            </View>
-
-            {/* Modality */}
-            <View style={modalStyles.field}>
-              <Text style={modalStyles.fieldLabel}>Modality</Text>
-              <View style={modalStyles.modalityRow}>
-                {(['in_person', 'virtual'] as SessionModality[]).map((m) => {
-                  const isActive = modality === m;
-                  return (
-                    <TouchableOpacity
-                      key={m}
-                      style={[modalStyles.modalityBtn, isActive && modalStyles.modalityBtnActive]}
-                      onPress={() => setModality(m)}
-                      accessibilityRole="radio"
-                      accessibilityState={{ checked: isActive }}
-                      accessibilityLabel={MODALITY_LABELS[m]}
-                    >
-                      <Text style={[modalStyles.modalityText, isActive && modalStyles.modalityTextActive]}>
-                        {MODALITY_LABELS[m]}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
               </View>
-            </View>
 
-            {/* Session type context (read-only, derived from request) */}
-            {selectedRequest != null && (
-              <View style={modalStyles.field}>
-                <Text style={modalStyles.fieldLabel}>Session Type</Text>
-                <View style={modalStyles.readonlyRow}>
-                  <Text style={modalStyles.readonlyValue}>
-                    {selectedRequest.vertical
-                      ? (verticalLabels[selectedRequest.vertical as Vertical] ?? selectedRequest.vertical)
-                      : 'General'}
+              <View style={detailModalStyles.divider} />
+
+              <View style={detailModalStyles.detailRow}>
+                <Clock size={14} color={tokens.textSecondary} />
+                <View style={detailModalStyles.detailContent}>
+                  <Text style={detailModalStyles.detailLabel}>Time</Text>
+                  <Text style={detailModalStyles.detailValue}>
+                    {formatTimeRange(session.scheduledAt, session.scheduledEndAt)}
                   </Text>
-                  <Text style={modalStyles.readonlyHint}>Derived from service request</Text>
                 </View>
               </View>
-            )}
 
-            {/* Inline field error */}
-            {fieldError != null ? (
-              <View style={modalStyles.errorBanner}>
-                <Text style={modalStyles.errorText}>{fieldError}</Text>
+              <View style={detailModalStyles.divider} />
+
+              <View style={detailModalStyles.detailRow}>
+                <SessionModeIcon mode={session.mode} size={14} color={tokens.textSecondary} />
+                <View style={detailModalStyles.detailContent}>
+                  <Text style={detailModalStyles.detailLabel}>Session Type</Text>
+                  <Text style={detailModalStyles.detailValue}>
+                    {sessionModeLabel(session.mode)}
+                  </Text>
+                </View>
               </View>
-            ) : null}
+
+              {session.notes ? (
+                <>
+                  <View style={detailModalStyles.divider} />
+                  <View style={detailModalStyles.detailRow}>
+                    <View style={{ width: 14, alignItems: 'center' }}>
+                      <Text style={{ fontSize: 14 }}>📝</Text>
+                    </View>
+                    <View style={detailModalStyles.detailContent}>
+                      <Text style={detailModalStyles.detailLabel}>Notes</Text>
+                      <Text style={detailModalStyles.detailValue}>{session.notes}</Text>
+                    </View>
+                  </View>
+                </>
+              ) : null}
+            </View>
           </ScrollView>
 
-          {/* Footer actions */}
-          <View style={modalStyles.footer}>
+          {/* Footer */}
+          <View style={detailModalStyles.footer}>
             <TouchableOpacity
-              style={modalStyles.cancelBtn}
-              onPress={handleClose}
+              style={detailModalStyles.openProfileBtn}
+              onPress={() => {
+                onClose();
+                onOpenProfile(session.memberId);
+              }}
               accessibilityRole="button"
+              accessibilityLabel={`Open ${session.memberName ?? 'member'} profile`}
             >
-              <Text style={modalStyles.cancelText}>Cancel</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[modalStyles.submitBtn, !canSubmit && modalStyles.submitBtnDisabled]}
-              onPress={() => void handleSubmit()}
-              disabled={!canSubmit}
-              accessibilityRole="button"
-              accessibilityLabel="Confirm and schedule session"
-              accessibilityState={{ disabled: !canSubmit }}
-            >
-              {isPending ? (
-                <ActivityIndicator size="small" color="#FFFFFF" />
-              ) : (
-                <Text style={modalStyles.submitText}>Schedule Session</Text>
-              )}
+              <User size={14} color="#FFFFFF" />
+              <Text style={detailModalStyles.openProfileText}>Open Member Profile</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -967,7 +914,7 @@ function ScheduleSessionModal({
   );
 }
 
-const modalStyles = StyleSheet.create({
+const detailModalStyles = StyleSheet.create({
   overlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.45)',
@@ -976,13 +923,12 @@ const modalStyles = StyleSheet.create({
     padding: spacing.xl,
   },
   sheet: {
-    backgroundColor: tokens.cardBg,
+    backgroundColor: '#FFFFFF',
     borderRadius: radius.xl,
     width: '100%',
-    maxWidth: Platform.OS === 'web' ? 520 : undefined,
-    maxHeight: '90%',
+    maxWidth: Platform.OS === 'web' ? 480 : undefined,
+    maxHeight: '85%',
     overflow: 'hidden',
-    // Shadow
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.18,
@@ -997,18 +943,21 @@ const modalStyles = StyleSheet.create({
     paddingTop: spacing.xl,
     paddingBottom: spacing.lg,
     borderBottomWidth: 1,
-    borderBottomColor: tokens.cardBorder,
+    borderBottomColor: '#F3F4F6',
+  },
+  headerLeft: {
+    flex: 1,
   },
   headerTitle: {
     fontFamily: 'DMSans_700Bold',
     fontSize: 18,
-    color: tokens.textPrimary,
+    color: '#1E3320',
   },
   closeBtn: {
     width: 32,
     height: 32,
     borderRadius: radius.pill,
-    backgroundColor: tokens.gray100,
+    backgroundColor: '#F9FAFB',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1017,17 +966,605 @@ const modalStyles = StyleSheet.create({
   },
   bodyContent: {
     padding: spacing.xl,
-    gap: spacing.xl,
+    gap: spacing.lg,
+    paddingBottom: spacing.xxl,
+  },
+  memberRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  avatarCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: tokens.primary + '15',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  memberName: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 20,
+    color: '#1E3320',
+    flex: 1,
+  },
+  statusBadge: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 100,
+    borderWidth: 1,
+  },
+  statusText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 13,
+  },
+  detailsCard: {
+    backgroundColor: '#F9FAFB',
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: '#F3F4F6',
+    overflow: 'hidden',
+  },
+  detailRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+  },
+  detailContent: {
+    flex: 1,
+    gap: 2,
+  },
+  detailLabel: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: '#6B7280',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  detailValue: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 14,
+    color: '#1E3320',
+    lineHeight: 20,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: '#F3F4F6',
+    marginHorizontal: spacing.lg,
+  },
+  footer: {
+    padding: spacing.xl,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+  },
+  openProfileBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    backgroundColor: tokens.primary,
+    paddingVertical: 12,
+    borderRadius: radius.md,
+    minHeight: 44,
+  },
+  openProfileText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 14,
+    color: '#FFFFFF',
+  },
+});
+
+// ─── Schedule Session Modal ───────────────────────────────────────────────────
+
+type ScheduleSessionMode = 'in_person' | 'virtual' | 'phone';
+
+const SESSION_MODES: { value: ScheduleSessionMode; label: string }[] = [
+  { value: 'phone', label: 'Phone' },
+  { value: 'in_person', label: 'In-Person' },
+  { value: 'virtual', label: 'Video' },
+];
+
+const SCHEDULING_STATUS_OPTIONS: { value: 'confirmed' | 'pending'; label: string }[] = [
+  { value: 'confirmed', label: 'Confirmed' },
+  { value: 'pending', label: 'Pending' },
+];
+
+interface ScheduleSessionModalProps {
+  visible: boolean;
+  onClose: () => void;
+  members: MembersRosterItem[];
+  isLoadingMembers: boolean;
+}
+
+/**
+ * Modal for scheduling a session with one of the CHW's members.
+ *
+ * Collects: member (searchable list), session type, date, start time, end time,
+ * scheduling status, and optional notes. Submits via useScheduleSession().
+ */
+function ScheduleSessionModal({
+  visible,
+  onClose,
+  members,
+  isLoadingMembers,
+}: ScheduleSessionModalProps): React.JSX.Element {
+  const { mutateAsync, isPending } = useScheduleSession();
+
+  // Form state
+  const [memberSearch, setMemberSearch] = useState('');
+  const [selectedMemberId, setSelectedMemberId] = useState<string>('');
+  const [selectedMemberName, setSelectedMemberName] = useState<string>('');
+  const [sessionMode, setSessionMode] = useState<ScheduleSessionMode>('in_person');
+  const [dateInput, setDateInput] = useState<string>(() => {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const mm = String(tomorrow.getMonth() + 1).padStart(2, '0');
+    const dd = String(tomorrow.getDate()).padStart(2, '0');
+    return `${mm}/${dd}/${tomorrow.getFullYear()}`;
+  });
+  const [startTimeInput, setStartTimeInput] = useState('10:00 AM');
+  const [endTimeInput, setEndTimeInput] = useState('11:00 AM');
+  const [schedulingStatus, setSchedulingStatus] = useState<'confirmed' | 'pending'>('confirmed');
+  const [notes, setNotes] = useState('');
+  const [fieldError, setFieldError] = useState<string | null>(null);
+
+  const filteredMembers = useMemo(() => {
+    const q = memberSearch.trim().toLowerCase();
+    if (!q) return members;
+    return members.filter((m) => m.displayName.toLowerCase().includes(q));
+  }, [members, memberSearch]);
+
+  const resetForm = useCallback(() => {
+    setMemberSearch('');
+    setSelectedMemberId('');
+    setSelectedMemberName('');
+    setSessionMode('in_person');
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const mm = String(tomorrow.getMonth() + 1).padStart(2, '0');
+    const dd = String(tomorrow.getDate()).padStart(2, '0');
+    setDateInput(`${mm}/${dd}/${tomorrow.getFullYear()}`);
+    setStartTimeInput('10:00 AM');
+    setEndTimeInput('11:00 AM');
+    setSchedulingStatus('confirmed');
+    setNotes('');
+    setFieldError(null);
+  }, []);
+
+  const handleClose = useCallback(() => {
+    resetForm();
+    onClose();
+  }, [resetForm, onClose]);
+
+  /**
+   * Parses "MM/DD/YYYY" and "HH:MM AM/PM" into a combined ISO string.
+   * Returns null on parse failure.
+   */
+  function parseDateTime(datePart: string, timePart: string): string | null {
+    try {
+      const [mm, dd, yyyy] = datePart.split('/').map(Number);
+      if (!mm || !dd || !yyyy || isNaN(mm) || isNaN(dd) || isNaN(yyyy)) return null;
+
+      const timeMatch = timePart.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+      if (!timeMatch) return null;
+
+      let hour = parseInt(timeMatch[1], 10);
+      const minute = parseInt(timeMatch[2], 10);
+      const meridiem = timeMatch[3].toUpperCase();
+
+      if (meridiem === 'AM' && hour === 12) hour = 0;
+      if (meridiem === 'PM' && hour !== 12) hour += 12;
+
+      const d = new Date(yyyy, mm - 1, dd, hour, minute, 0);
+      if (isNaN(d.getTime())) return null;
+      return d.toISOString();
+    } catch {
+      return null;
+    }
+  }
+
+  const handleSubmit = useCallback(async () => {
+    setFieldError(null);
+
+    if (!selectedMemberId) {
+      setFieldError('Please select a member.');
+      return;
+    }
+
+    const scheduledAt = parseDateTime(dateInput, startTimeInput);
+    if (!scheduledAt) {
+      setFieldError('Invalid date or start time. Use MM/DD/YYYY and "10:00 AM" format.');
+      return;
+    }
+
+    const scheduledEndAt = parseDateTime(dateInput, endTimeInput);
+    if (!scheduledEndAt) {
+      setFieldError('Invalid end time. Use "11:00 AM" format.');
+      return;
+    }
+
+    if (new Date(scheduledEndAt) <= new Date(scheduledAt)) {
+      setFieldError('End time must be after start time.');
+      return;
+    }
+
+    try {
+      await mutateAsync({
+        memberId: selectedMemberId,
+        scheduledAt,
+        scheduledEndAt,
+        mode: sessionMode,
+        schedulingStatus,
+        notes: notes.trim() || undefined,
+      });
+      handleClose();
+    } catch {
+      // Error alert handled by useScheduleSession onError
+    }
+  }, [
+    selectedMemberId,
+    dateInput,
+    startTimeInput,
+    endTimeInput,
+    sessionMode,
+    schedulingStatus,
+    notes,
+    mutateAsync,
+    handleClose,
+  ]);
+
+  const canSubmit = selectedMemberId.length > 0 && !isPending;
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={handleClose}
+      accessibilityViewIsModal
+    >
+      <View style={scheduleModalStyles.overlay}>
+        <View style={scheduleModalStyles.sheet}>
+          {/* Header */}
+          <View style={scheduleModalStyles.header}>
+            <Text style={scheduleModalStyles.headerTitle}>Schedule Session</Text>
+            <TouchableOpacity
+              style={scheduleModalStyles.closeBtn}
+              onPress={handleClose}
+              accessibilityRole="button"
+              accessibilityLabel="Close schedule session modal"
+            >
+              <X size={18} color={tokens.textSecondary} />
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView
+            style={scheduleModalStyles.body}
+            contentContainerStyle={scheduleModalStyles.bodyContent}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
+            {/* Member picker */}
+            <View style={scheduleModalStyles.field}>
+              <Text style={scheduleModalStyles.fieldLabel}>Member *</Text>
+              {selectedMemberId ? (
+                <View style={scheduleModalStyles.selectedMember}>
+                  <View style={scheduleModalStyles.selectedMemberAvatar}>
+                    <User size={14} color={tokens.primary} />
+                  </View>
+                  <Text style={scheduleModalStyles.selectedMemberName}>{selectedMemberName}</Text>
+                  <TouchableOpacity
+                    onPress={() => { setSelectedMemberId(''); setSelectedMemberName(''); setMemberSearch(''); }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Clear member selection"
+                  >
+                    <X size={14} color={tokens.textSecondary} />
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <>
+                  <TextInput
+                    style={scheduleModalStyles.searchInput}
+                    value={memberSearch}
+                    onChangeText={setMemberSearch}
+                    placeholder="Search members..."
+                    placeholderTextColor="#9CA3AF"
+                    accessibilityLabel="Search members"
+                    autoCapitalize="words"
+                  />
+                  {isLoadingMembers ? (
+                    <View style={scheduleModalStyles.loadingRow}>
+                      <ActivityIndicator size="small" color={tokens.primary} />
+                      <Text style={scheduleModalStyles.loadingText}>Loading members...</Text>
+                    </View>
+                  ) : filteredMembers.length === 0 ? (
+                    <View style={scheduleModalStyles.emptyHint}>
+                      <Text style={scheduleModalStyles.emptyHintText}>
+                        {memberSearch.trim() ? 'No members match your search.' : 'No members found.'}
+                      </Text>
+                    </View>
+                  ) : (
+                    <View style={scheduleModalStyles.memberList}>
+                      {filteredMembers.slice(0, 6).map((member) => (
+                        <TouchableOpacity
+                          key={member.id}
+                          style={scheduleModalStyles.memberRow}
+                          onPress={() => {
+                            setSelectedMemberId(member.id);
+                            setSelectedMemberName(member.displayName);
+                            setMemberSearch('');
+                          }}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Select ${member.displayName}`}
+                        >
+                          <View style={scheduleModalStyles.memberAvatar}>
+                            <Text style={scheduleModalStyles.memberInitials}>
+                              {member.avatarInitials}
+                            </Text>
+                          </View>
+                          <Text style={scheduleModalStyles.memberName}>{member.displayName}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
+                </>
+              )}
+            </View>
+
+            {/* Session Type */}
+            <View style={scheduleModalStyles.field}>
+              <Text style={scheduleModalStyles.fieldLabel}>Session Type</Text>
+              <View style={scheduleModalStyles.segmentRow}>
+                {SESSION_MODES.map(({ value, label }) => {
+                  const isActive = sessionMode === value;
+                  return (
+                    <TouchableOpacity
+                      key={value}
+                      style={[scheduleModalStyles.segmentBtn, isActive && scheduleModalStyles.segmentBtnActive]}
+                      onPress={() => setSessionMode(value)}
+                      accessibilityRole="radio"
+                      accessibilityState={{ checked: isActive }}
+                      accessibilityLabel={label}
+                    >
+                      <SessionModeIcon mode={value} size={12} color={isActive ? '#FFFFFF' : '#6B7280'} />
+                      <Text style={[scheduleModalStyles.segmentText, isActive && scheduleModalStyles.segmentTextActive]}>
+                        {label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+
+            {/* Date */}
+            <View style={scheduleModalStyles.field}>
+              <Text style={scheduleModalStyles.fieldLabel}>Date</Text>
+              <TextInput
+                style={scheduleModalStyles.textInput}
+                value={dateInput}
+                onChangeText={setDateInput}
+                placeholder="MM/DD/YYYY"
+                placeholderTextColor="#9CA3AF"
+                accessibilityLabel="Session date"
+                keyboardType="numbers-and-punctuation"
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            </View>
+
+            {/* Start + End Time */}
+            <View style={scheduleModalStyles.timeRow}>
+              <View style={[scheduleModalStyles.field, { flex: 1 }]}>
+                <Text style={scheduleModalStyles.fieldLabel}>Start Time</Text>
+                <TextInput
+                  style={scheduleModalStyles.textInput}
+                  value={startTimeInput}
+                  onChangeText={setStartTimeInput}
+                  placeholder="10:00 AM"
+                  placeholderTextColor="#9CA3AF"
+                  accessibilityLabel="Session start time"
+                  autoCapitalize="characters"
+                  autoCorrect={false}
+                />
+              </View>
+              <View style={[scheduleModalStyles.field, { flex: 1 }]}>
+                <Text style={scheduleModalStyles.fieldLabel}>End Time</Text>
+                <TextInput
+                  style={scheduleModalStyles.textInput}
+                  value={endTimeInput}
+                  onChangeText={setEndTimeInput}
+                  placeholder="11:00 AM"
+                  placeholderTextColor="#9CA3AF"
+                  accessibilityLabel="Session end time"
+                  autoCapitalize="characters"
+                  autoCorrect={false}
+                />
+              </View>
+            </View>
+
+            {/* Status */}
+            <View style={scheduleModalStyles.field}>
+              <Text style={scheduleModalStyles.fieldLabel}>Status</Text>
+              <View style={scheduleModalStyles.segmentRow}>
+                {SCHEDULING_STATUS_OPTIONS.map(({ value, label }) => {
+                  const isActive = schedulingStatus === value;
+                  return (
+                    <TouchableOpacity
+                      key={value}
+                      style={[scheduleModalStyles.segmentBtn, isActive && scheduleModalStyles.segmentBtnActive]}
+                      onPress={() => setSchedulingStatus(value)}
+                      accessibilityRole="radio"
+                      accessibilityState={{ checked: isActive }}
+                      accessibilityLabel={label}
+                    >
+                      <Text style={[scheduleModalStyles.segmentText, isActive && scheduleModalStyles.segmentTextActive]}>
+                        {label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+
+            {/* Notes (optional) */}
+            <View style={scheduleModalStyles.field}>
+              <Text style={scheduleModalStyles.fieldLabel}>Notes (optional)</Text>
+              <TextInput
+                style={[scheduleModalStyles.textInput, scheduleModalStyles.notesInput]}
+                value={notes}
+                onChangeText={setNotes}
+                placeholder="Add any notes about this session..."
+                placeholderTextColor="#9CA3AF"
+                accessibilityLabel="Session notes"
+                multiline
+                numberOfLines={3}
+                textAlignVertical="top"
+              />
+            </View>
+
+            {/* Inline error */}
+            {fieldError != null ? (
+              <View style={scheduleModalStyles.errorBanner}>
+                <AlertCircle size={14} color={tokens.red700} />
+                <Text style={scheduleModalStyles.errorText}>{fieldError}</Text>
+              </View>
+            ) : null}
+          </ScrollView>
+
+          {/* Footer actions */}
+          <View style={scheduleModalStyles.footer}>
+            <TouchableOpacity
+              style={scheduleModalStyles.cancelBtn}
+              onPress={handleClose}
+              accessibilityRole="button"
+            >
+              <Text style={scheduleModalStyles.cancelText}>Cancel</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[scheduleModalStyles.submitBtn, !canSubmit && scheduleModalStyles.submitBtnDisabled]}
+              onPress={() => void handleSubmit()}
+              disabled={!canSubmit}
+              accessibilityRole="button"
+              accessibilityLabel="Schedule session"
+              accessibilityState={{ disabled: !canSubmit }}
+            >
+              {isPending ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Text style={scheduleModalStyles.submitText}>Schedule Session</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+const scheduleModalStyles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.xl,
+  },
+  sheet: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: radius.xl,
+    width: '100%',
+    maxWidth: Platform.OS === 'web' ? 520 : undefined,
+    maxHeight: '90%',
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.18,
+    shadowRadius: 32,
+    elevation: 12,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.xl,
+    paddingTop: spacing.xl,
+    paddingBottom: spacing.lg,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  headerTitle: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 18,
+    color: '#1E3320',
+  },
+  closeBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: radius.pill,
+    backgroundColor: '#F9FAFB',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  body: {
+    flex: 1,
+  },
+  bodyContent: {
+    padding: spacing.xl,
+    gap: spacing.lg,
     paddingBottom: spacing.xxl,
   },
   field: {
-    gap: spacing.sm,
+    gap: spacing.xs,
   },
   fieldLabel: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 13,
-    color: tokens.textPrimary,
-    letterSpacing: 0.3,
+    color: '#374151',
+    letterSpacing: 0.2,
+  },
+  selectedMember: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: tokens.primary,
+    backgroundColor: '#F0FDF4',
+  },
+  selectedMemberAvatar: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: tokens.primary + '20',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  selectedMemberName: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 14,
+    color: '#1E3320',
+    flex: 1,
+  },
+  searchInput: {
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 14,
+    color: '#1E3320',
+    backgroundColor: '#FFFFFF',
+    minHeight: 44,
   },
   loadingRow: {
     flexDirection: 'row',
@@ -1041,135 +1578,103 @@ const modalStyles = StyleSheet.create({
     color: tokens.textSecondary,
   },
   emptyHint: {
-    backgroundColor: tokens.amber100,
-    borderRadius: radius.md,
     padding: spacing.md,
+    backgroundColor: '#F9FAFB',
+    borderRadius: radius.md,
   },
   emptyHintText: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 13,
-    color: tokens.amber700,
-    lineHeight: 18,
+    color: '#6B7280',
   },
   memberList: {
-    gap: spacing.xs,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: radius.md,
+    overflow: 'hidden',
   },
   memberRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: tokens.cardBorder,
-    backgroundColor: tokens.cardBg,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+    backgroundColor: '#FFFFFF',
   },
-  memberRowActive: {
-    borderColor: tokens.primary,
-    backgroundColor: tokens.emerald100,
-  },
-  memberRadio: {
-    width: 18,
-    height: 18,
-    borderRadius: radius.pill,
-    borderWidth: 2,
-    borderColor: '#D1D5DB',
+  memberAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: tokens.primary + '15',
     alignItems: 'center',
     justifyContent: 'center',
-    flexShrink: 0,
   },
-  memberRadioActive: {
-    borderColor: tokens.primary,
-  },
-  memberRadioDot: {
-    width: 8,
-    height: 8,
-    borderRadius: radius.pill,
-    backgroundColor: tokens.primary,
-  },
-  memberInfo: {
-    flex: 1,
-    gap: 2,
+  memberInitials: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 12,
+    color: tokens.primary,
   },
   memberName: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 14,
-    color: tokens.textPrimary,
-  },
-  memberNameActive: {
-    color: tokens.emerald700,
-  },
-  memberMeta: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 12,
-    color: tokens.textSecondary,
-  },
-  dateInputWrapper: {
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    borderRadius: radius.md,
-    overflow: 'hidden',
-  },
-  dateInput: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 14,
-    color: tokens.textPrimary,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-    backgroundColor: tokens.cardBg,
-    minHeight: 44,
-  },
-  datePreview: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 12,
-    color: tokens.textSecondary,
-    marginTop: 2,
-  },
-  modalityRow: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-  },
-  modalityBtn: {
+    color: '#1E3320',
     flex: 1,
-    paddingVertical: spacing.md,
+  },
+  segmentRow: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+  },
+  segmentBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingVertical: 9,
     borderRadius: radius.md,
     borderWidth: 1,
     borderColor: '#D1D5DB',
-    alignItems: 'center',
-    backgroundColor: tokens.cardBg,
+    backgroundColor: '#FFFFFF',
   },
-  modalityBtnActive: {
+  segmentBtnActive: {
     borderColor: tokens.primary,
-    backgroundColor: tokens.emerald100,
+    backgroundColor: tokens.primary,
   },
-  modalityText: {
+  segmentText: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 13,
-    color: tokens.textSecondary,
+    color: '#6B7280',
   },
-  modalityTextActive: {
-    color: tokens.emerald700,
+  segmentTextActive: {
+    color: '#FFFFFF',
   },
-  readonlyRow: {
-    gap: 2,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-    backgroundColor: tokens.gray100,
+  textInput: {
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
     borderRadius: radius.md,
-  },
-  readonlyValue: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 14,
-    color: tokens.textPrimary,
-  },
-  readonlyHint: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
     fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 11,
-    color: tokens.textMuted,
+    fontSize: 14,
+    color: '#1E3320',
+    backgroundColor: '#FFFFFF',
+    minHeight: 44,
+  },
+  notesInput: {
+    minHeight: 80,
+    paddingTop: 10,
+  },
+  timeRow: {
+    flexDirection: 'row',
+    gap: spacing.md,
   },
   errorBanner: {
-    backgroundColor: tokens.red100,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+    backgroundColor: '#FEF2F2',
     borderRadius: radius.md,
     padding: spacing.md,
   },
@@ -1177,31 +1682,34 @@ const modalStyles = StyleSheet.create({
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 13,
     color: tokens.red700,
+    flex: 1,
+    lineHeight: 18,
   },
   footer: {
     flexDirection: 'row',
     gap: spacing.sm,
     padding: spacing.xl,
     borderTopWidth: 1,
-    borderTopColor: tokens.cardBorder,
+    borderTopColor: '#F3F4F6',
   },
   cancelBtn: {
     flex: 1,
-    paddingVertical: spacing.md,
+    paddingVertical: 11,
     borderRadius: radius.md,
     borderWidth: 1,
     borderColor: '#D1D5DB',
     alignItems: 'center',
     justifyContent: 'center',
+    minHeight: 44,
   },
   cancelText: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 14,
-    color: tokens.textSecondary,
+    color: '#374151',
   },
   submitBtn: {
     flex: 2,
-    paddingVertical: spacing.md,
+    paddingVertical: 11,
     borderRadius: radius.md,
     backgroundColor: tokens.primary,
     alignItems: 'center',
@@ -1209,7 +1717,7 @@ const modalStyles = StyleSheet.create({
     minHeight: 44,
   },
   submitBtnDisabled: {
-    backgroundColor: tokens.textMuted,
+    backgroundColor: '#9CA3AF',
   },
   submitText: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
@@ -1220,28 +1728,26 @@ const modalStyles = StyleSheet.create({
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-const now = new Date();
-const TODAY_YEAR = now.getFullYear();
-const TODAY_MONTH = now.getMonth();
-const TODAY_DAY = now.getDate();
+const NOW = new Date();
+const TODAY_YEAR = NOW.getFullYear();
+const TODAY_MONTH = NOW.getMonth();
+const TODAY_DAY = NOW.getDate();
 
 /**
- * CHW Calendar screen — full-width week/month view + Schedule Session modal.
+ * CHW Calendar screen — full-width week/day/month view + Schedule Session modal.
  *
- * The right-side rail has been stripped per T12 spec. The calendar grid now
- * occupies 100% of the available width on both web and native.
- *
- * The "Schedule Session" CTA in the page header opens a modal that lets the
- * CHW pick a member from their accepted service requests, choose a date/time
- * and modality, then POST to /api/v1/sessions/.
+ * No right-side rail. The calendar grid occupies 100% of available width.
+ * Session cards are positioned in the week grid at their scheduled time.
+ * Tapping a session card opens the Session Details modal.
+ * The "+ Schedule Session" button opens the member-based scheduling modal.
  */
 export function CHWCalendarScreen(): React.JSX.Element {
   const { data: rawSessions, isLoading, error, refetch } = useSessions();
-  const { data: rawRequests, isLoading: isLoadingRequests } = useRequests();
+  const { data: rawMembers, isLoading: isLoadingMembers } = useChwMembers();
   const refresh = useRefreshControl([refetch]);
   const navigation = useNavigation();
 
-  // Open a member's full profile from a session detail card.
+  // Navigate to a member's full profile from a session detail.
   const handleOpenProfile = useCallback((memberId: string) => {
     (navigation as any).navigate('SessionsStack', {
       screen: 'MemberProfile',
@@ -1249,79 +1755,37 @@ export function CHWCalendarScreen(): React.JSX.Element {
     });
   }, [navigation]);
 
-  // View mode: web defaults to 'week', native stays 'month'
+  // View mode: web defaults to 'week'.
   const [viewMode, setViewMode] = useState<CalendarViewMode>(
     Platform.OS === 'web' ? 'week' : 'month',
   );
 
-  // Default to today's month/week so the chart reflects real data on first open.
-  const [currentDate, setCurrentDate] = useState(
-    () => new Date(TODAY_YEAR, TODAY_MONTH, 1),
-  );
+  // Week anchor — tracks which week is shown in week view.
+  const [weekAnchor, setWeekAnchor] = useState(() => new Date(TODAY_YEAR, TODAY_MONTH, TODAY_DAY));
+  const weekDays = useMemo(() => getWeekDays(weekAnchor), [weekAnchor]);
+
+  // Month nav state.
+  const [currentDate, setCurrentDate] = useState(() => new Date(TODAY_YEAR, TODAY_MONTH, 1));
   const [selectedDay, setSelectedDay] = useState<number | null>(null);
 
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
   const cells = useMemo(() => getMonthCells(year, month), [year, month]);
 
-  // Current week anchor: track a week anchor date (defaults to today).
-  const [weekAnchor, setWeekAnchor] = useState(() => new Date(TODAY_YEAR, TODAY_MONTH, TODAY_DAY));
-  const weekDays = useMemo(() => getWeekDays(weekAnchor), [weekAnchor]);
-
-  // Schedule Session modal state
+  // Modal state.
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
+  const [detailSession, setDetailSession] = useState<SessionData | null>(null);
+  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
 
   const allSessions = rawSessions ?? [];
+  const allMembers = rawMembers ?? [];
 
-  const allEvents = useMemo<CalendarEvent[]>(() => {
-    return deriveSessionEvents(allSessions);
-  }, [allSessions]);
+  const sessionsByDate = useMemo(() => groupSessionsByDate(allSessions), [allSessions]);
 
-  const eventsByDate = useMemo(() => groupByDate(allEvents), [allEvents]);
+  // Now reference — stable within a render pass for badge derivation.
+  const nowRef = useMemo(() => new Date(), []);
 
-  // Today's key (for day view)
-  const todayKey = toDateKey(TODAY_YEAR, TODAY_MONTH, TODAY_DAY);
-
-  // Accepted service requests — the only ones the CHW can create sessions for
-  const acceptedRequests = useMemo<ServiceRequestData[]>(() => {
-    return (rawRequests ?? []).filter((r) => r.status === 'accepted');
-  }, [rawRequests]);
-
-  const handleOpenScheduleModal = useCallback(() => {
-    setIsScheduleModalOpen(true);
-  }, []);
-
-  const handleCloseScheduleModal = useCallback(() => {
-    setIsScheduleModalOpen(false);
-  }, []);
-
-  const handleScheduleSuccess = useCallback(() => {
-    void refetch();
-  }, [refetch]);
-
-  if (isLoading) {
-    return (
-      <AppShell role="chw" activeKey="appointments" userBlock={{ initials: '...', name: '...', role: 'CHW' }}>
-        <SafeAreaView style={styles.safe} edges={['top']}>
-          <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
-            <Text style={styles.pageTitle}>Calendar</Text>
-            <LoadingSkeleton variant="card" />
-          </ScrollView>
-        </SafeAreaView>
-      </AppShell>
-    );
-  }
-
-  if (error) {
-    return (
-      <AppShell role="chw" activeKey="appointments" userBlock={{ initials: '...', name: '...', role: 'CHW' }}>
-        <SafeAreaView style={styles.safe} edges={['top']}>
-          <ErrorState message="Failed to load calendar" onRetry={() => void refetch()} />
-        </SafeAreaView>
-      </AppShell>
-    );
-  }
-
+  // Handlers
   const handlePrevMonth = useCallback(() => {
     setCurrentDate((prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1));
     setSelectedDay(null);
@@ -1352,201 +1816,203 @@ export function CHWCalendarScreen(): React.JSX.Element {
     setSelectedDay((prev) => (prev === day ? null : day));
   }, []);
 
-  const handleSlotPress = useCallback((_date: Date, _hour: number) => {
-    // Preserve scheduling/reschedule flow:
-    // TODO(nav): navigate to CreateAppointment when the route is wired by parent.
-    // For now this is a no-op to avoid referencing navigation that isn't in scope.
+  const handleSessionPress = useCallback((session: SessionData) => {
+    setDetailSession(session);
+    setIsDetailModalOpen(true);
   }, []);
 
+  // Month-view selected day sessions (for expanded detail under grid)
   const selectedDateKey = selectedDay !== null ? toDateKey(year, month, selectedDay) : null;
-  const selectedEvents = selectedDateKey ? (eventsByDate.get(selectedDateKey) ?? []) : [];
+  const selectedDaySessions = selectedDateKey ? (sessionsByDate.get(selectedDateKey) ?? []) : [];
 
-  // ── View mode header title ─────────────────────────────────────────────────
+  // Week range label
+  const weekRangeLabel = useMemo(() => {
+    const start = weekDays[0];
+    const end = weekDays[6];
+    const sameMonth = start.getMonth() === end.getMonth() && start.getFullYear() === end.getFullYear();
+    if (sameMonth) {
+      return `${MONTH_NAMES[start.getMonth()]} ${start.getDate()} – ${end.getDate()}, ${end.getFullYear()}`;
+    }
+    return `${MONTH_NAMES_SHORT[start.getMonth()]} ${start.getDate()} – ${MONTH_NAMES_SHORT[end.getMonth()]} ${end.getDate()}, ${end.getFullYear()}`;
+  }, [weekDays]);
 
+  // Navigation title for the week/month nav bar
   const navTitle = viewMode === 'month'
     ? `${MONTH_NAMES[month]} ${year}`
     : viewMode === 'week'
-    ? `${MONTH_NAMES[weekDays[0].getMonth()]} ${weekDays[0].getDate()} – ${MONTH_NAMES[weekDays[6].getMonth()]} ${weekDays[6].getDate()}, ${weekDays[6].getFullYear()}`
+    ? weekRangeLabel
     : `${MONTH_NAMES[TODAY_MONTH]} ${TODAY_DAY}, ${TODAY_YEAR}`;
 
-  // ── Rendered content ───────────────────────────────────────────────────────
+  // Handle prev/next navigation for all modes
+  const handlePrev = viewMode === 'week' ? handlePrevWeek : handlePrevMonth;
+  const handleNext = viewMode === 'week' ? handleNextWeek : handleNextMonth;
 
-  /** View mode toggle chips — rendered in the PageHeader right slot alongside the CTA. */
+  // Today's sessions (day view)
+  const todayKey = toDateKey(TODAY_YEAR, TODAY_MONTH, TODAY_DAY);
+  const todaySessions = sessionsByDate.get(todayKey) ?? [];
+
+  // Loading / error states
+  if (isLoading) {
+    return (
+      <AppShell role="chw" activeKey="appointments" userBlock={{ initials: '...', name: '...', role: 'CHW' }}>
+        <SafeAreaView style={mainStyles.safe} edges={['top']}>
+          <ScrollView style={mainStyles.scroll} contentContainerStyle={mainStyles.content}>
+            <LoadingSkeleton variant="card" />
+          </ScrollView>
+        </SafeAreaView>
+      </AppShell>
+    );
+  }
+
+  if (error) {
+    return (
+      <AppShell role="chw" activeKey="appointments" userBlock={{ initials: '...', name: '...', role: 'CHW' }}>
+        <SafeAreaView style={mainStyles.safe} edges={['top']}>
+          <ErrorState message="Failed to load calendar" onRetry={() => void refetch()} />
+        </SafeAreaView>
+      </AppShell>
+    );
+  }
+
+  // ─── Header right slot ───────────────────────────────────────────────────────
+
   const headerRight = (
-    <View style={styles.headerRightRow}>
-      {/* Schedule Session CTA */}
-      <TouchableOpacity
-        style={styles.scheduleBtn}
-        onPress={handleOpenScheduleModal}
-        accessibilityRole="button"
-        accessibilityLabel="Schedule a new session"
-      >
-        <Plus size={14} color="#FFFFFF" />
-        <Text style={styles.scheduleBtnText}>Schedule Session</Text>
-      </TouchableOpacity>
-
+    <View style={mainStyles.headerRight}>
       {/* View mode toggle */}
-      <View style={styles.viewToggle}>
+      <View style={mainStyles.viewToggle}>
         {(['day', 'week', 'month'] as CalendarViewMode[]).map((mode) => (
           <TouchableOpacity
             key={mode}
-            style={[styles.toggleBtn, viewMode === mode && styles.toggleBtnActive]}
+            style={[mainStyles.toggleBtn, viewMode === mode && mainStyles.toggleBtnActive]}
             onPress={() => setViewMode(mode)}
             accessibilityRole="button"
             accessibilityState={{ selected: viewMode === mode }}
+            accessibilityLabel={`${mode} view`}
           >
-            <Text style={[styles.toggleBtnText, viewMode === mode && styles.toggleBtnTextActive]}>
+            <Text style={[mainStyles.toggleBtnText, viewMode === mode && mainStyles.toggleBtnTextActive]}>
               {mode.charAt(0).toUpperCase() + mode.slice(1)}
             </Text>
           </TouchableOpacity>
         ))}
       </View>
+
+      {/* Schedule Session CTA */}
+      <TouchableOpacity
+        style={mainStyles.scheduleBtn}
+        onPress={() => setIsScheduleModalOpen(true)}
+        accessibilityRole="button"
+        accessibilityLabel="Schedule a new session"
+      >
+        <Plus size={14} color="#FFFFFF" />
+        <Text style={mainStyles.scheduleBtnText}>Schedule Session</Text>
+      </TouchableOpacity>
     </View>
   );
 
+  // ─── Calendar card content ───────────────────────────────────────────────────
+
   const calendarContent = (
-    <View style={styles.calendarOuter}>
-      {/* Month nav bar (shared across all modes) */}
-      <View style={styles.monthNav}>
+    <View style={mainStyles.calendarOuter}>
+      {/* Week/Month nav bar */}
+      <View style={mainStyles.navBar}>
         <TouchableOpacity
-          style={styles.navButton}
-          onPress={viewMode === 'week' ? handlePrevWeek : handlePrevMonth}
+          style={mainStyles.navBtn}
+          onPress={handlePrev}
+          accessibilityRole="button"
           accessibilityLabel={viewMode === 'week' ? 'Previous week' : 'Previous month'}
         >
-          <ChevronLeft size={20} color="#FFFFFF" />
+          <ChevronLeft size={18} color="#374151" />
         </TouchableOpacity>
-        <Text style={styles.monthLabel}>{navTitle}</Text>
+        <Text style={mainStyles.navTitle}>{navTitle}</Text>
         <TouchableOpacity
-          style={styles.navButton}
-          onPress={viewMode === 'week' ? handleNextWeek : handleNextMonth}
+          style={mainStyles.navBtn}
+          onPress={handleNext}
+          accessibilityRole="button"
           accessibilityLabel={viewMode === 'week' ? 'Next week' : 'Next month'}
         >
-          <ChevronRight size={20} color="#FFFFFF" />
+          <ChevronRight size={18} color="#374151" />
         </TouchableOpacity>
       </View>
 
-      {/* Week view */}
+      {/* Grid */}
       {viewMode === 'week' ? (
         <WeekViewGrid
           weekDays={weekDays}
-          eventsByDate={eventsByDate}
+          sessionsByDate={sessionsByDate}
           today={{ year: TODAY_YEAR, month: TODAY_MONTH, day: TODAY_DAY }}
-          onSlotPress={handleSlotPress}
+          now={nowRef}
+          onSessionPress={handleSessionPress}
         />
       ) : viewMode === 'day' ? (
-        // Day view: single-column hourly grid for today
-        <View>
-          <View style={styles.dayHeaderRow}>
-            <Text style={styles.dayHeaderDate}>
-              {DAY_LABELS_LONG[new Date(TODAY_YEAR, TODAY_MONTH, TODAY_DAY).getDay()]}
-              {', '}
-              {MONTH_NAMES[TODAY_MONTH]} {TODAY_DAY}
-            </Text>
-          </View>
-          {WEEK_VIEW_HOURS.map((hour) => {
-            const dayEvents = (eventsByDate.get(todayKey) ?? []).filter((e) => {
-              const eventHour = parseInt(e.startTime.split(':')[0], 10);
-              return eventHour === hour;
-            });
-            return (
-              <View key={hour} style={styles.dayHourRow}>
-                <Text style={[styles.dayHourLabel, numerals.tabular]}>{formatHourLabel(hour)}</Text>
-                <View style={styles.dayHourCell}>
-                  {dayEvents.map((event) => {
-                    const barColor = eventColor(event);
-                    return (
-                      <View key={event.id} style={[styles.dayEventChip, { backgroundColor: barColor + '18', borderLeftColor: barColor }]}>
-                        <Text style={[styles.dayEventText, { color: barColor }]} numberOfLines={1}>
-                          {event.memberName ?? event.title}
-                        </Text>
-                        <Text style={[styles.dayEventMeta, { color: barColor }, numerals.tabular]}>
-                          {formatTimeFull(event.startTime)}
-                        </Text>
-                      </View>
-                    );
-                  })}
-                </View>
-              </View>
-            );
-          })}
-        </View>
+        <DayViewGrid
+          date={new Date(TODAY_YEAR, TODAY_MONTH, TODAY_DAY)}
+          sessions={todaySessions}
+          now={nowRef}
+          onSessionPress={handleSessionPress}
+        />
       ) : (
-        // Month view
         <>
-          {/* Day-of-week headers */}
-          <View style={styles.dayHeaderRow}>
-            {DAY_LABELS.map((label) => (
-              <View key={label} style={styles.dayHeaderCell}>
-                <Text style={styles.dayHeaderText}>{label}</Text>
-              </View>
-            ))}
-          </View>
-
-          {/* Calendar grid */}
-          <View style={styles.gridContainer}>
-            {cells.map((day, index) => {
-              if (day === null) {
-                return (
-                  <View
-                    key={`empty-${index}`}
-                    style={[styles.dayCell, styles.dayCellEmpty]}
-                  />
-                );
-              }
-
-              const key = toDateKey(year, month, day);
-              const dayEvents = eventsByDate.get(key) ?? [];
-              const memberCount = dayEvents.length;
-              const isToday =
-                year === TODAY_YEAR && month === TODAY_MONTH && day === TODAY_DAY;
-              const isSelected = selectedDay === day;
-
-              return (
-                <TouchableOpacity
-                  key={key}
-                  style={[
-                    styles.dayCell,
-                    isSelected && styles.dayCellSelected,
-                  ]}
-                  onPress={() => handleDayPress(day)}
-                  accessibilityRole="button"
-                  accessibilityLabel={`${MONTH_NAMES[month]} ${day}${memberCount > 0 ? `, ${memberCount} member${memberCount !== 1 ? 's' : ''}` : ''}`}
-                  accessibilityState={{ selected: isSelected }}
-                >
-                  {/* Day number */}
-                  <View
-                    style={[
-                      styles.dayNumber,
-                      isToday && styles.dayNumberToday,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.dayNumberText,
-                        isToday && styles.dayNumberTextToday,
-                        isSelected && !isToday && styles.dayNumberTextSelected,
-                      ]}
+          <MonthViewGrid
+            year={year}
+            month={month}
+            cells={cells}
+            sessionsByDate={sessionsByDate}
+            today={{ year: TODAY_YEAR, month: TODAY_MONTH, day: TODAY_DAY }}
+            selectedDay={selectedDay}
+            onDayPress={handleDayPress}
+          />
+          {/* Expanded day sessions beneath month grid */}
+          {selectedDay !== null ? (
+            <View style={mainStyles.dayDetail}>
+              <Text style={mainStyles.dayDetailHeading}>
+                {MONTH_NAMES[month]} {selectedDay}
+              </Text>
+              {selectedDaySessions.length === 0 ? (
+                <View style={mainStyles.emptyDay}>
+                  <CalendarDays size={24} color="#D1D5DB" />
+                  <Text style={mainStyles.emptyDayText}>No sessions on this day</Text>
+                </View>
+              ) : (
+                selectedDaySessions.map((session) => {
+                  const badge = deriveBadgeStatus(session, nowRef);
+                  const badgeStyle = BADGE_COLORS[badge];
+                  return (
+                    <TouchableOpacity
+                      key={session.id}
+                      style={mainStyles.monthSessionRow}
+                      onPress={() => handleSessionPress(session)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Session with ${session.memberName ?? 'member'}`}
                     >
-                      {day}
-                    </Text>
-                  </View>
-
-                  {/* Member-count badge — per Jemal's Calendar Figma feedback */}
-                  {memberCount > 0 ? (
-                    <View style={styles.memberCountBadge}>
-                      <Text style={styles.memberCountText}>{memberCount}</Text>
-                    </View>
-                  ) : null}
-                </TouchableOpacity>
-              );
-            })}
-          </View>
+                      <View style={mainStyles.monthSessionLeftBar} />
+                      <View style={mainStyles.monthSessionBody}>
+                        <Text style={mainStyles.monthSessionTime} numberOfLines={1}>
+                          {formatTimeRange(session.scheduledAt, session.scheduledEndAt)}
+                        </Text>
+                        <Text style={mainStyles.monthSessionMember} numberOfLines={1}>
+                          {session.memberName ?? 'Member'}
+                        </Text>
+                        <View style={mainStyles.monthSessionMeta}>
+                          <SessionModeIcon mode={session.mode} size={11} color={tokens.emerald700} />
+                          <Text style={mainStyles.monthSessionMode}>{sessionModeLabel(session.mode)}</Text>
+                          <View style={[mainStyles.monthBadge, { backgroundColor: badgeStyle.bg, borderColor: badgeStyle.border }]}>
+                            <Text style={[mainStyles.monthBadgeText, { color: badgeStyle.text }]}>{badge}</Text>
+                          </View>
+                        </View>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })
+              )}
+            </View>
+          ) : null}
         </>
       )}
     </View>
   );
 
-  // Web: full-width single-column layout (no right rail)
+  // ─── Web layout ──────────────────────────────────────────────────────────────
+
   if (Platform.OS === 'web') {
     return (
       <AppShell role="chw" activeKey="appointments" userBlock={{ initials: 'C', name: 'CHW', role: 'CHW' }}>
@@ -1560,128 +2026,68 @@ export function CHWCalendarScreen(): React.JSX.Element {
           <Card style={webStyles.calendarCard}>
             {calendarContent}
           </Card>
-
-          {/* Selected day detail panel (month view) */}
-          {viewMode === 'month' && selectedDay !== null ? (
-            <View style={styles.detailSection}>
-              <Text style={styles.detailHeading}>
-                {MONTH_NAMES[month]} {selectedDay}
-              </Text>
-              {selectedEvents.length === 0 ? (
-                <View style={styles.emptyDay}>
-                  <CalendarDays size={28} color={colors.border} />
-                  <Text style={styles.emptyDayText}>No events on this day</Text>
-                </View>
-              ) : (
-                selectedEvents.map((event) => (
-                  <EventDetailCard
-                  key={event.id}
-                  event={event}
-                  onOpenProfile={
-                    event.memberId ? () => handleOpenProfile(event.memberId!) : undefined
-                  }
-                />
-                ))
-              )}
-            </View>
-          ) : null}
-
-          {/* Legend */}
-          <Card style={webStyles.legendCard}>
-            <SectionHeader title="Member Journey" marginBottom={spacing.md} />
-            {(Object.keys(JOURNEY_COLORS) as JourneyStatus[]).map((key) => (
-              <View key={key} style={styles.legendRow}>
-                <View style={[styles.legendDot, { backgroundColor: JOURNEY_COLORS[key] }]} />
-                <View style={styles.legendTextBlock}>
-                  <Text style={styles.legendLabel}>{JOURNEY_LABELS[key]}</Text>
-                  <Text style={styles.legendDesc}>{JOURNEY_DESCRIPTIONS[key]}</Text>
-                </View>
-              </View>
-            ))}
-          </Card>
         </View>
+
+        {/* Session Details modal */}
+        <SessionDetailsModal
+          session={detailSession}
+          now={nowRef}
+          visible={isDetailModalOpen}
+          onClose={() => setIsDetailModalOpen(false)}
+          onOpenProfile={handleOpenProfile}
+        />
 
         {/* Schedule Session modal */}
         <ScheduleSessionModal
           visible={isScheduleModalOpen}
-          onClose={handleCloseScheduleModal}
-          onSuccess={handleScheduleSuccess}
-          acceptedRequests={acceptedRequests}
-          isLoadingRequests={isLoadingRequests}
+          onClose={() => setIsScheduleModalOpen(false)}
+          members={allMembers}
+          isLoadingMembers={isLoadingMembers}
         />
       </AppShell>
     );
   }
 
-  // Native layout — full-width single-column + refresh control
+  // ─── Native layout ───────────────────────────────────────────────────────────
+
   return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
+    <SafeAreaView style={mainStyles.safe} edges={['top']}>
       <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.content}
+        style={mainStyles.scroll}
+        contentContainerStyle={mainStyles.content}
         showsVerticalScrollIndicator={false}
         refreshControl={refresh.control}
       >
-        {/* Page header */}
-        <View style={styles.nativeHeaderRow}>
-          <Text style={styles.pageTitle}>Calendar</Text>
+        {/* Page header row */}
+        <View style={mainStyles.nativeHeader}>
+          <View style={mainStyles.nativeTitleBlock}>
+            <Text style={mainStyles.nativeTitle}>Calendar</Text>
+            <Text style={mainStyles.nativeSubtitle}>Your schedule and appointments</Text>
+          </View>
           {headerRight}
         </View>
 
         {/* Calendar card */}
-        <View style={styles.calendarCard}>
+        <View style={mainStyles.calendarCard}>
           {calendarContent}
         </View>
-
-        {/* Selected day detail panel */}
-        {viewMode === 'month' && selectedDay !== null ? (
-          <View style={styles.detailSection}>
-            <Text style={styles.detailHeading}>
-              {MONTH_NAMES[month]} {selectedDay}
-            </Text>
-            {selectedEvents.length === 0 ? (
-              <View style={styles.emptyDay}>
-                <CalendarDays size={28} color={colors.border} />
-                <Text style={styles.emptyDayText}>No events on this day</Text>
-              </View>
-            ) : (
-              selectedEvents.map((event) => (
-                <EventDetailCard
-                  key={event.id}
-                  event={event}
-                  onOpenProfile={
-                    event.memberId ? () => handleOpenProfile(event.memberId!) : undefined
-                  }
-                />
-              ))
-            )}
-          </View>
-        ) : null}
-
-        {/* Legend */}
-        <View style={styles.legendCard}>
-          <Text style={styles.legendTitle}>Member Journey</Text>
-          {(Object.keys(JOURNEY_COLORS) as JourneyStatus[]).map((key) => (
-            <View key={key} style={styles.legendRow}>
-              <View
-                style={[styles.legendDot, { backgroundColor: JOURNEY_COLORS[key] }]}
-              />
-              <View style={styles.legendTextBlock}>
-                <Text style={styles.legendLabel}>{JOURNEY_LABELS[key]}</Text>
-                <Text style={styles.legendDesc}>{JOURNEY_DESCRIPTIONS[key]}</Text>
-              </View>
-            </View>
-          ))}
-        </View>
       </ScrollView>
+
+      {/* Session Details modal */}
+      <SessionDetailsModal
+        session={detailSession}
+        now={nowRef}
+        visible={isDetailModalOpen}
+        onClose={() => setIsDetailModalOpen(false)}
+        onOpenProfile={handleOpenProfile}
+      />
 
       {/* Schedule Session modal */}
       <ScheduleSessionModal
         visible={isScheduleModalOpen}
-        onClose={handleCloseScheduleModal}
-        onSuccess={handleScheduleSuccess}
-        acceptedRequests={acceptedRequests}
-        isLoadingRequests={isLoadingRequests}
+        onClose={() => setIsScheduleModalOpen(false)}
+        members={allMembers}
+        isLoadingMembers={isLoadingMembers}
       />
     </SafeAreaView>
   );
@@ -1692,23 +2098,16 @@ export function CHWCalendarScreen(): React.JSX.Element {
 const webStyles = StyleSheet.create({
   root: {
     flex: 1,
-    padding: 0,
   },
   calendarCard: {
     marginBottom: spacing.xxl,
     overflow: 'hidden',
   },
-  legendCard: {
-    padding: spacing.xl,
-    marginBottom: spacing.xxl,
-  },
 });
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
+// ─── Main styles ──────────────────────────────────────────────────────────────
 
-const CELL_ASPECT = 52;
-
-const styles = StyleSheet.create({
+const mainStyles = StyleSheet.create({
   safe: {
     flex: 1,
     backgroundColor: tokens.pageBg,
@@ -1720,46 +2119,40 @@ const styles = StyleSheet.create({
     padding: spacing.xl,
     paddingBottom: 48,
   },
-  nativeHeaderRow: {
+  nativeHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
     marginBottom: spacing.xl,
     gap: spacing.md,
     flexWrap: 'wrap',
   },
-  pageTitle: {
+  nativeTitleBlock: {
+    gap: 2,
+  },
+  nativeTitle: {
     fontFamily: 'DMSans_700Bold',
     fontSize: 24,
     lineHeight: 30,
     color: tokens.textPrimary,
   },
-  headerRightRow: {
+  nativeSubtitle: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: tokens.textSecondary,
+  },
+  headerRight: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
     flexWrap: 'wrap',
   },
-  scheduleBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    backgroundColor: tokens.primary,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.lg,
-  },
-  scheduleBtnText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 13,
-    color: '#FFFFFF',
-  },
   viewToggle: {
     flexDirection: 'row',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F9FAFB',
     borderRadius: radius.sm + 2,
     borderWidth: 1,
-    borderColor: '#DDD6CC',
+    borderColor: '#E5E7EB',
     padding: 2,
   },
   toggleBtn: {
@@ -1773,9 +2166,24 @@ const styles = StyleSheet.create({
   toggleBtnText: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 12,
-    color: '#6B7A6B',
+    color: '#6B7280',
   },
   toggleBtnTextActive: {
+    color: '#FFFFFF',
+  },
+  scheduleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    backgroundColor: tokens.primary,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.lg,
+    minHeight: 36,
+  },
+  scheduleBtnText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 13,
     color: '#FFFFFF',
   },
   calendarOuter: {
@@ -1785,230 +2193,114 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: radius.xl,
     borderWidth: 1,
-    borderColor: '#DDD6CC',
+    borderColor: '#E5E7EB',
     overflow: 'hidden',
     marginBottom: spacing.xl,
     shadowColor: '#3D5A3E',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 24,
+    shadowOpacity: 0.07,
+    shadowRadius: 20,
     elevation: 3,
   },
-  monthNav: {
+  navBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: spacing.md,
-    paddingVertical: 14,
-    backgroundColor: tokens.primary,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: tokens.primary,
+    borderBottomColor: '#E5E7EB',
+    backgroundColor: '#FFFFFF',
   },
-  navButton: {
-    padding: 6,
-    borderRadius: radius.sm + 2,
-    backgroundColor: 'rgba(255,255,255,0.15)',
-  },
-  monthLabel: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 15,
-    lineHeight: 22,
-    color: '#FFFFFF',
-  },
-  dayHeaderRow: {
-    flexDirection: 'row',
-    borderBottomWidth: 1,
-    borderBottomColor: '#DDD6CC',
-  },
-  dayHeaderCell: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: 8,
-  },
-  dayHeaderText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 11,
-    color: '#6B7A6B',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-  },
-  dayHeaderDate: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 15,
-    color: tokens.textPrimary,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-  dayHourRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    minHeight: 52,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0EDE9',
-  },
-  dayHourLabel: {
-    width: 64,
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 10,
-    color: '#9CA3AF',
-    paddingTop: 8,
-    paddingRight: 8,
-    textAlign: 'right',
-  },
-  dayHourCell: {
-    flex: 1,
-    padding: 4,
-    gap: 3,
-  },
-  dayEventChip: {
-    borderLeftWidth: 2,
-    borderRadius: 4,
-    padding: 6,
-    gap: 1,
-  },
-  dayEventText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 12,
-  },
-  dayEventMeta: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 10,
-  },
-  gridContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-  },
-  dayCell: {
-    width: '14.2857%',
-    minHeight: CELL_ASPECT,
-    padding: 4,
-    borderRightWidth: 1,
-    borderRightColor: '#DDD6CC',
-    borderBottomWidth: 1,
-    borderBottomColor: '#DDD6CC',
-    alignItems: 'flex-start',
-  },
-  dayCellEmpty: {
-    backgroundColor: tokens.pageBg,
-  },
-  dayCellSelected: {
-    backgroundColor: tokens.primary + '15',
-  },
-  dayNumber: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+  navBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F9FAFB',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 2,
-    borderWidth: 1.5,
-    borderColor: 'transparent',
   },
-  dayNumberToday: {
-    borderColor: tokens.primary,
-    backgroundColor: 'transparent',
-  },
-  dayNumberText: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 11,
-    color: tokens.textPrimary,
-    lineHeight: 14,
-  },
-  dayNumberTextToday: {
-    color: tokens.primary,
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-  },
-  dayNumberTextSelected: {
-    color: tokens.emerald700,
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-  },
-  memberCountBadge: {
-    minWidth: 22,
-    height: 22,
-    paddingHorizontal: 6,
-    borderRadius: 11,
-    backgroundColor: tokens.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 2,
-  },
-  memberCountText: {
+  navTitle: {
     fontFamily: 'DMSans_700Bold',
-    fontSize: 11,
-    lineHeight: 14,
-    color: '#FFFFFF',
+    fontSize: 15,
+    color: '#1E3320',
   },
-  detailSection: {
-    marginBottom: spacing.xl,
+  dayDetail: {
+    padding: spacing.lg,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+    gap: spacing.sm,
   },
-  detailHeading: {
+  dayDetailHeading: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 12,
-    letterSpacing: 1,
-    color: tokens.textSecondary,
+    color: '#6B7280',
     textTransform: 'uppercase',
-    marginBottom: spacing.md,
+    letterSpacing: 0.8,
+    marginBottom: 4,
   },
   emptyDay: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: radius.xl,
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-    padding: 28,
     alignItems: 'center',
-    gap: 8,
+    justifyContent: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.xl,
   },
   emptyDayText: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 14,
-    color: tokens.textSecondary,
+    color: '#9CA3AF',
   },
-  legendCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: radius.xl,
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-    padding: 16,
-    shadowColor: '#3D5A3E',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 24,
-    elevation: 3,
-  },
-  legendTitle: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 12,
-    letterSpacing: 1,
-    color: tokens.textSecondary,
-    textTransform: 'uppercase',
-    marginBottom: spacing.md,
-  },
-  legendRow: {
+  monthSessionRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-    paddingVertical: 6,
+    backgroundColor: '#FFFFFF',
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    overflow: 'hidden',
   },
-  legendDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+  monthSessionLeftBar: {
+    width: 3,
+    backgroundColor: tokens.primary,
     flexShrink: 0,
-    marginTop: 2,
   },
-  legendTextBlock: {
+  monthSessionBody: {
     flex: 1,
-    gap: 1,
+    padding: 10,
+    gap: 3,
   },
-  legendLabel: {
+  monthSessionTime: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: tokens.emerald700,
+    ...numerals.tabular,
+  },
+  monthSessionMember: {
     fontFamily: 'DMSans_700Bold',
     fontSize: 13,
-    color: tokens.textPrimary,
+    color: '#1E3320',
   },
-  legendDesc: {
+  monthSessionMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginTop: 2,
+  },
+  monthSessionMode: {
     fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 12,
-    color: tokens.textSecondary,
-    lineHeight: 16,
+    fontSize: 11,
+    color: tokens.emerald700,
+    flex: 1,
+  },
+  monthBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+  },
+  monthBadgeText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 10,
   },
 });
