@@ -1,29 +1,39 @@
 /**
- * CHWDocumentsScreen — document management for CHWs.
+ * CHWDocumentsScreen — member-grouped document management for CHWs.
  *
- * Shows all MemberDocument rows where uploaded_by == current CHW's user ID.
- * Provides:
- *   - Search by filename or member ID
- *   - Filter by document type (all, id, income, address, medical, other)
- *   - Table rows with filename, type, uploaded date, size, Download, Delete
- *   - Right rail stat tiles (web only)
- *   - Upload button: triggers upload flow for a chosen member + document type.
- *     The CHW enters the member UUID (or navigates here from a member profile
- *     with memberId pre-filled via route params) and selects a document type.
+ * Organises all member documents by member so a CHW can quickly locate a
+ * specific person's files when asked to produce documentation. Each member is
+ * a collapsible section showing their full name and age as the identifier,
+ * followed by their documents grouped by doc_type (id → income → address →
+ * medical → other). Image files render as a thumbnail grid; PDFs and other
+ * non-image files render as rows.
  *
- * NOTE: Phase 1 scope — the "Upload on behalf of member" CTA opens an Alert
- * (native) or prompt (web) asking for the member UUID, then calls the full
- * useFileUpload pipeline.  A member-selector picker (from the CHW's caseload)
- * is deferred to Phase 2; the bare-UUID input is functional and sufficient for
- * the cofounder demo.
+ * Data flow: fan-out per caseload member (same N+1 pattern as before — a
+ * dedicated GET /chw/documents aggregation endpoint is tracked as a follow-up).
+ * Grouping is done with useMemo in each MemberDocumentGroup; the parent screen
+ * maintains only the aggregated counts.
+ *
+ * Preserved features:
+ *   - CHWUploadTrigger (member picker → doc type → file dialog)
+ *   - Search: filters member groups by member name OR filename within
+ *   - Per-doc Download (presigned URL), Delete (with confirm), thumbnail preview
+ *   - EmptyState for zero documents across all members
+ *   - Right-rail Quick Tip on web
  */
 
-import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react';
+import React, {
+  useMemo,
+  useState,
+  useCallback,
+  useEffect,
+  useRef,
+} from 'react';
 import {
   ActivityIndicator,
   Alert,
   Image,
   Linking,
+  Modal,
   Platform,
   ScrollView,
   StyleSheet,
@@ -37,21 +47,36 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
+  Calendar,
+  ChevronDown,
+  ChevronRight,
   ClipboardList,
   Download,
-  Eye,
   FileBadge,
   FileSignature,
   FileScan,
   FileText,
   Filter,
+  FolderOpen,
+  Image as ImageIcon,
   Plus,
   Search,
   Trash2,
+  X,
 } from 'lucide-react-native';
 
-import { AppShell, Card, EmptyState, PageHeader, Pill, RightDrawer, RightRail, StatTile } from '../../components/ui';
-import { colors, numerals, spacing, radius } from '../../theme/tokens';
+import {
+  AppShell,
+  Card,
+  EmptyState,
+  PageHeader,
+  Pill,
+  PressableCard,
+  RightDrawer,
+  RightRail,
+  StatTile,
+} from '../../components/ui';
+import { colors, numerals, spacing, radius, shadows } from '../../theme/tokens';
 import { useAuth } from '../../context/AuthContext';
 import {
   useMemberDocuments,
@@ -61,16 +86,13 @@ import {
   type MemberDocumentData,
   type MembersRosterItem,
 } from '../../hooks/useApiQueries';
-import {
-  useFileUpload,
-  type DocumentType,
-} from '../../hooks/useFileUpload';
+import { useFileUpload, type DocumentType } from '../../hooks/useFileUpload';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type FilterType = 'all' | DocumentType;
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Constants ────────────────────────────────────────────────────────────────
 
 const DOC_TYPE_LABELS: Record<FilterType, string> = {
   all:     'All Types',
@@ -89,14 +111,22 @@ const DOC_TYPE_PILL: Record<DocumentType, 'blue' | 'purple' | 'emerald' | 'amber
   other:   'gray',
 };
 
-function DocTypeIcon({ docType, size = 16 }: { docType: DocumentType; size?: number }): React.JSX.Element {
-  const c = colors.textSecondary;
-  switch (docType) {
-    case 'id':      return <FileSignature size={size} color={c} />;
-    case 'income':  return <ClipboardList  size={size} color={c} />;
-    case 'address': return <FileBadge      size={size} color={c} />;
-    case 'medical': return <FileScan       size={size} color={c} />;
-    default:        return <FileText       size={size} color={c} />;
+/** Display order for doc types within a member group. */
+const DOC_TYPE_ORDER: DocumentType[] = ['id', 'income', 'address', 'medical', 'other'];
+
+/** Document categories offered in the picker, in display order. */
+const DOC_TYPE_OPTIONS: DocumentType[] = ['id', 'income', 'address', 'medical', 'other'];
+
+/** Default collapse threshold — groups are collapsed by default when caseload > this. */
+const COLLAPSE_THRESHOLD = 5;
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function showError(msg: string): void {
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    window.alert(msg);
+  } else {
+    Alert.alert('Error', msg);
   }
 }
 
@@ -108,15 +138,42 @@ function formatBytes(bytes: number): string {
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-US', {
-    month: 'short', day: 'numeric', year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
   });
 }
 
-function showError(msg: string): void {
-  if (Platform.OS === 'web' && typeof window !== 'undefined') {
-    window.alert(msg);
-  } else {
-    Alert.alert('Error', msg);
+/**
+ * Sort MembersRosterItem alphabetically by last name. Falls back to
+ * displayName sort when the name has a single word.
+ */
+function sortMembersByLastName(members: MembersRosterItem[]): MembersRosterItem[] {
+  return [...members].sort((a, b) => {
+    const lastA = a.displayName.trim().split(' ').pop() ?? a.displayName;
+    const lastB = b.displayName.trim().split(' ').pop() ?? b.displayName;
+    return lastA.localeCompare(lastB);
+  });
+}
+
+// ─── DocTypeIcon ──────────────────────────────────────────────────────────────
+
+function DocTypeIcon({
+  docType,
+  size = 16,
+  color,
+}: {
+  docType: DocumentType;
+  size?: number;
+  color?: string;
+}): React.JSX.Element {
+  const c = color ?? colors.textSecondary;
+  switch (docType) {
+    case 'id':      return <FileSignature size={size} color={c} />;
+    case 'income':  return <ClipboardList  size={size} color={c} />;
+    case 'address': return <FileBadge      size={size} color={c} />;
+    case 'medical': return <FileScan       size={size} color={c} />;
+    default:        return <FileText       size={size} color={c} />;
   }
 }
 
@@ -131,7 +188,7 @@ function DownloadButton({ docId }: { docId: string }): React.JSX.Element {
     setEnabled(true);
   }, [q.isFetching]);
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (!enabled || !q.data) return;
     void Linking.openURL(q.data.downloadUrl).catch(() =>
       showError('Could not open the file. Please try again.')
@@ -139,8 +196,11 @@ function DownloadButton({ docId }: { docId: string }): React.JSX.Element {
     setEnabled(false);
   }, [enabled, q.data]);
 
-  React.useEffect(() => {
-    if (q.isError) { showError('Could not generate a download link.'); setEnabled(false); }
+  useEffect(() => {
+    if (q.isError) {
+      showError('Could not generate a download link.');
+      setEnabled(false);
+    }
   }, [q.isError]);
 
   return (
@@ -148,64 +208,192 @@ function DownloadButton({ docId }: { docId: string }): React.JSX.Element {
       onPress={handlePress}
       accessible
       accessibilityLabel="Download document"
-      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+      style={styles.actionButton}
     >
-      {q.isFetching
-        ? <ActivityIndicator size="small" color={colors.primary} />
-        : <Download size={14} color={colors.textSecondary} />
-      }
+      {q.isFetching ? (
+        <ActivityIndicator size="small" color={colors.primary} />
+      ) : (
+        <Download size={14} color={colors.textSecondary} />
+      )}
     </TouchableOpacity>
   );
 }
 
-// ─── RowThumbnail — image preview or IMG/PDF badge ────────────────────────────
+// ─── ImageThumbnailModal — full-size image viewer ─────────────────────────────
+
+interface ImageThumbnailModalProps {
+  docId: string;
+  filename: string;
+  onClose: () => void;
+}
 
 /**
- * Small file preview for a table row. Image documents render an actual
- * thumbnail (presigned GET URL, fetched only for images); PDFs and any image
- * that fails to load fall back to the IMG/PDF type badge so a row never renders
- * blank.
+ * Web variant: fetches the presigned URL and opens it in a new browser tab.
+ * Rendered as a transient loading indicator while the URL resolves; calls
+ * onClose immediately after opening (or on error) so the caller can clean up.
  */
-function RowThumbnail({ doc, isImage }: { doc: MemberDocumentData; isImage: boolean }): React.JSX.Element {
-  const [failed, setFailed] = useState(false);
-  const thumbQuery = useMemberDocumentDownloadUrl(doc.id, { enabled: isImage && !failed });
-  const thumbUrl = isImage && !failed ? thumbQuery.data?.downloadUrl : undefined;
+function ImageThumbnailModalWeb({
+  docId,
+  onClose,
+}: Omit<ImageThumbnailModalProps, 'filename'>): React.JSX.Element {
+  const q = useMemberDocumentDownloadUrl(docId, { enabled: true });
 
-  if (thumbUrl) {
-    return (
-      <View style={[styles.fileTypeBadge, styles.fileThumbWrap]}>
-        <Image
-          source={{ uri: thumbUrl }}
-          style={styles.fileThumbImage}
-          resizeMode="cover"
-          onError={() => setFailed(true)}
-          accessibilityLabel={`Preview of ${doc.filename}`}
-        />
-      </View>
-    );
-  }
+  useEffect(() => {
+    if (q.data?.downloadUrl) {
+      window.open(q.data.downloadUrl, '_blank', 'noopener,noreferrer');
+      onClose();
+    }
+  }, [q.data?.downloadUrl, onClose]);
+
+  useEffect(() => {
+    if (q.isError) onClose();
+  }, [q.isError, onClose]);
 
   return (
-    <View style={[styles.fileTypeBadge, { backgroundColor: isImage ? '#7c3aed' : '#dc2626' }]}>
-      {isImage && !failed && thumbQuery.isFetching ? (
-        <ActivityIndicator size="small" color="#ffffff" />
-      ) : (
-        <Text style={styles.fileTypeBadgeText}>{isImage ? 'IMG' : 'PDF'}</Text>
-      )}
+    <View
+      style={styles.fullImageLoadingWrap}
+      accessible
+      accessibilityLabel="Opening image"
+    >
+      <ActivityIndicator size="small" color={colors.primary} />
     </View>
   );
 }
 
-// ─── TableRow ─────────────────────────────────────────────────────────────────
+/**
+ * Native variant: fetches the presigned URL and renders it full-screen in a
+ * transparent Modal with a close button.
+ */
+function ImageThumbnailModalNative({
+  docId,
+  filename,
+  onClose,
+}: ImageThumbnailModalProps): React.JSX.Element {
+  const q = useMemberDocumentDownloadUrl(docId, { enabled: true });
 
-interface TableRowProps {
-  doc: MemberDocumentData;
-  idx: number;
-  memberName: string;
+  return (
+    <Modal
+      visible
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+      accessibilityLabel={`Full size view of ${filename}`}
+    >
+      <View style={styles.fullImageOverlay}>
+        <TouchableOpacity
+          style={styles.fullImageClose}
+          onPress={onClose}
+          accessible
+          accessibilityRole="button"
+          accessibilityLabel="Close image"
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          <X size={20} color="#ffffff" />
+        </TouchableOpacity>
+
+        {q.isLoading ? (
+          <ActivityIndicator size="large" color="#ffffff" />
+        ) : q.isError || !q.data?.downloadUrl ? (
+          <Text style={styles.fullImageError}>Could not load image.</Text>
+        ) : (
+          <Image
+            source={{ uri: q.data.downloadUrl }}
+            style={styles.fullImage}
+            resizeMode="contain"
+            accessibilityLabel={`Full size: ${filename}`}
+          />
+        )}
+      </View>
+    </Modal>
+  );
 }
 
-function TableRow({ doc, idx, memberName }: TableRowProps): React.JSX.Element {
+/** Platform-routing wrapper — always rendered on the same platform. */
+function ImageThumbnailModal(props: ImageThumbnailModalProps): React.JSX.Element {
+  if (Platform.OS === 'web') {
+    return <ImageThumbnailModalWeb docId={props.docId} onClose={props.onClose} />;
+  }
+  return <ImageThumbnailModalNative {...props} />;
+}
+
+// ─── ImageTile — thumbnail in the grid ───────────────────────────────────────
+
+interface ImageTileProps {
+  doc: MemberDocumentData;
+}
+
+function ImageTile({ doc }: ImageTileProps): React.JSX.Element {
+  const [failed, setFailed] = useState(false);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const thumbQuery = useMemberDocumentDownloadUrl(doc.id, { enabled: !failed });
+  const thumbUrl = !failed ? thumbQuery.data?.downloadUrl : undefined;
+  const docType = doc.documentType as DocumentType;
+
+  const handlePress = useCallback(() => {
+    if (Platform.OS === 'web' && thumbUrl) {
+      window.open(thumbUrl, '_blank', 'noopener,noreferrer');
+    } else {
+      setLightboxOpen(true);
+    }
+  }, [thumbUrl]);
+
+  return (
+    <>
+      <TouchableOpacity
+        onPress={handlePress}
+        accessible
+        accessibilityRole="button"
+        accessibilityLabel={`View ${DOC_TYPE_LABELS[docType] ?? doc.documentType} image: ${doc.filename}`}
+        style={styles.imageTile}
+      >
+        {thumbUrl ? (
+          <Image
+            source={{ uri: thumbUrl }}
+            style={styles.imageTileImg}
+            resizeMode="cover"
+            onError={() => setFailed(true)}
+            accessibilityLabel={`Thumbnail of ${doc.filename}`}
+          />
+        ) : thumbQuery.isFetching ? (
+          <View style={styles.imageTilePlaceholder}>
+            <ActivityIndicator size="small" color={colors.primary} />
+          </View>
+        ) : (
+          <View style={[styles.imageTilePlaceholder, { backgroundColor: '#7c3aed' }]}>
+            <ImageIcon size={22} color="#ffffff" />
+          </View>
+        )}
+
+        {/* Doc type label */}
+        <View style={styles.imageTileLabel}>
+          <Text style={styles.imageTileLabelText} numberOfLines={1}>
+            {DOC_TYPE_LABELS[docType] ?? doc.documentType}
+          </Text>
+        </View>
+      </TouchableOpacity>
+
+      {lightboxOpen && Platform.OS !== 'web' && (
+        <ImageThumbnailModal
+          docId={doc.id}
+          filename={doc.filename}
+          onClose={() => setLightboxOpen(false)}
+        />
+      )}
+    </>
+  );
+}
+
+// ─── DocumentRow — non-image (PDF/doc) row ────────────────────────────────────
+
+interface DocumentRowProps {
+  doc: MemberDocumentData;
+  isAlt: boolean;
+}
+
+function DocumentRow({ doc, isAlt }: DocumentRowProps): React.JSX.Element {
   const deleteMutation = useMemberDocumentDelete(doc.memberId);
+  const docType = doc.documentType as DocumentType;
 
   const handleDelete = useCallback(() => {
     const proceed = (): void => {
@@ -223,68 +411,228 @@ function TableRow({ doc, idx, memberName }: TableRowProps): React.JSX.Element {
     }
   }, [doc, deleteMutation]);
 
-  const isImage = doc.contentType.startsWith('image/');
-  const docType = doc.documentType as DocumentType;
-
   return (
-    <Card style={[styles.tableRowCard, idx % 2 === 1 && styles.tableRowAlt]}>
-      <View style={styles.tableRow}>
-        {/* File */}
-        <View style={[styles.colFile, styles.fileCell]}>
-          <RowThumbnail doc={doc} isImage={isImage} />
-          <View style={styles.fileCellText}>
-            <Text style={styles.filename} numberOfLines={1}>{doc.filename}</Text>
-            <Text style={styles.fileSubtitle} numberOfLines={1}>
-              {DOC_TYPE_LABELS[docType] ?? docType} · {memberName}
-            </Text>
-          </View>
-        </View>
+    <View style={[styles.docRow, isAlt && styles.docRowAlt]}>
+      {/* Icon badge */}
+      <View style={styles.docRowIcon}>
+        <DocTypeIcon docType={docType} size={16} color="#065f46" />
+      </View>
 
-        {/* Type */}
-        <View style={styles.colType}>
+      {/* File info */}
+      <View style={styles.docRowInfo}>
+        <Text style={styles.docRowFilename} numberOfLines={1}>
+          {doc.filename}
+        </Text>
+        <View style={styles.docRowMeta}>
           <Pill variant={DOC_TYPE_PILL[docType] ?? 'gray'} size="sm">
-            {DOC_TYPE_LABELS[docType] ?? docType}
+            {DOC_TYPE_LABELS[docType] ?? doc.documentType}
           </Pill>
-        </View>
-
-        {/* Date */}
-        <Text style={[styles.cellText, styles.colDate, numerals.tabular as object]}>
-          {formatDate(doc.uploadedAt)}
-        </Text>
-
-        {/* Size */}
-        <Text style={[styles.cellText, styles.colSize, numerals.tabular as object]}>
-          {formatBytes(doc.sizeBytes)}
-        </Text>
-
-        {/* Actions */}
-        <View style={styles.colAction}>
-          <TouchableOpacity accessible accessibilityLabel={`Preview ${doc.filename}`} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
-            <Eye size={14} color={colors.textSecondary} />
-          </TouchableOpacity>
-          <DownloadButton docId={doc.id} />
-          <TouchableOpacity
-            accessible
-            accessibilityLabel={`Delete ${doc.filename}`}
-            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-            onPress={handleDelete}
-            disabled={deleteMutation.isPending}
-          >
-            {deleteMutation.isPending
-              ? <ActivityIndicator size="small" color="#dc2626" />
-              : <Trash2 size={14} color={colors.textSecondary} />
-            }
-          </TouchableOpacity>
+          <Text style={[styles.docRowMetaText, numerals.tabular as object]}>
+            {formatDate(doc.uploadedAt)}
+          </Text>
+          <Text style={[styles.docRowMetaText, numerals.tabular as object]}>
+            {formatBytes(doc.sizeBytes)}
+          </Text>
         </View>
       </View>
-    </Card>
+
+      {/* Actions */}
+      <View style={styles.docRowActions}>
+        <DownloadButton docId={doc.id} />
+        <TouchableOpacity
+          accessible
+          accessibilityLabel={`Delete ${doc.filename}`}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          onPress={handleDelete}
+          disabled={deleteMutation.isPending}
+          style={styles.actionButton}
+        >
+          {deleteMutation.isPending ? (
+            <ActivityIndicator size="small" color="#dc2626" />
+          ) : (
+            <Trash2 size={14} color={colors.textSecondary} />
+          )}
+        </TouchableOpacity>
+      </View>
+    </View>
   );
 }
 
-// ─── Upload trigger (CHW uploads on behalf of a member) ───────────────────────
+// ─── MemberDocumentGroup ──────────────────────────────────────────────────────
 
-/** Document categories offered in the picker, in display order. */
-const DOC_TYPE_OPTIONS: DocumentType[] = ['id', 'income', 'address', 'medical', 'other'];
+/**
+ * Fetches and renders all documents for a single caseload member, grouped into:
+ *   1. Images: thumbnail grid
+ *   2. Non-images: file rows sorted by doc_type (id, income, address, medical, other)
+ *
+ * Collapsible via PressableCard header. Reports its visible document count
+ * to the parent screen for aggregated loading/empty-state logic.
+ */
+interface MemberDocumentGroupProps {
+  member: MembersRosterItem;
+  searchQuery: string;
+  activeType: FilterType;
+  defaultExpanded: boolean;
+  onResult: (memberId: string, count: number | null) => void;
+}
+
+function MemberDocumentGroup({
+  member,
+  searchQuery,
+  activeType,
+  defaultExpanded,
+  onResult,
+}: MemberDocumentGroupProps): React.JSX.Element | null {
+  const [expanded, setExpanded] = useState(defaultExpanded);
+  const docsQuery = useMemberDocuments(member.id);
+  const docs = docsQuery.data?.items ?? [];
+
+  // Filter by search query and active type filter.
+  const filtered = useMemo<MemberDocumentData[]>(() => {
+    const lq = searchQuery.toLowerCase();
+    return docs.filter((d) => {
+      const typeMatch = activeType === 'all' || d.documentType === activeType;
+      const nameMatch =
+        searchQuery.length === 0 ||
+        d.filename.toLowerCase().includes(lq) ||
+        member.displayName.toLowerCase().includes(lq);
+      return typeMatch && nameMatch;
+    });
+  }, [docs, searchQuery, activeType, member.displayName]);
+
+  // Report load state and matching count to the parent.
+  useEffect(() => {
+    onResult(member.id, docsQuery.isLoading ? null : filtered.length);
+  }, [member.id, docsQuery.isLoading, filtered.length, onResult]);
+
+  // Hide members with zero matching documents unless we're actively searching
+  // by member name (in that case, keep the empty group visible so the CHW
+  // knows the member exists but has no docs of the filtered type).
+  const memberNameMatches =
+    searchQuery.length > 0 &&
+    member.displayName.toLowerCase().includes(searchQuery.toLowerCase());
+
+  if (!docsQuery.isLoading && filtered.length === 0 && !memberNameMatches) {
+    return null;
+  }
+
+  // Separate images from non-images.
+  const images = filtered.filter((d) => d.contentType.startsWith('image/'));
+  const nonImages = filtered.filter((d) => !d.contentType.startsWith('image/'));
+
+  // Sort non-images by doc_type in canonical order, then by upload date desc.
+  const sortedNonImages = [...nonImages].sort((a, b) => {
+    const orderA = DOC_TYPE_ORDER.indexOf(a.documentType as DocumentType);
+    const orderB = DOC_TYPE_ORDER.indexOf(b.documentType as DocumentType);
+    const typeSort = (orderA === -1 ? 99 : orderA) - (orderB === -1 ? 99 : orderB);
+    if (typeSort !== 0) return typeSort;
+    return new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime();
+  });
+
+  const docCount = filtered.length;
+  const ageLabel = member.age != null ? ` · ${member.age} yrs` : '';
+
+  return (
+    <View style={styles.memberGroup}>
+      {/* Collapsible header */}
+      <PressableCard
+        onPress={() => setExpanded((prev) => !prev)}
+        accessibilityLabel={`${member.displayName}, ${docCount} document${docCount !== 1 ? 's' : ''}. ${expanded ? 'Collapse' : 'Expand'}`}
+        style={styles.memberGroupHeader}
+      >
+        <View style={styles.memberGroupHeaderInner}>
+          {/* Avatar */}
+          <View style={styles.memberAvatar}>
+            <Text style={styles.memberAvatarText}>{member.avatarInitials}</Text>
+          </View>
+
+          {/* Identity */}
+          <View style={styles.memberGroupIdentity}>
+            <Text style={styles.memberGroupName}>{member.displayName}</Text>
+            <View style={styles.memberGroupSubRow}>
+              <Calendar size={11} color={colors.textMuted} />
+              <Text style={styles.memberGroupMeta}>
+                {member.maskedId}{ageLabel}
+              </Text>
+            </View>
+          </View>
+
+          {/* Right: pill + chevron */}
+          <View style={styles.memberGroupRight}>
+            {docsQuery.isLoading ? (
+              <ActivityIndicator size="small" color={colors.primary} />
+            ) : (
+              <Pill variant="emerald" size="sm">
+                <Text style={[numerals.tabular as object]}>
+                  {docCount} doc{docCount !== 1 ? 's' : ''}
+                </Text>
+              </Pill>
+            )}
+            <View style={styles.chevronWrap}>
+              {expanded ? (
+                <ChevronDown size={16} color={colors.textSecondary} />
+              ) : (
+                <ChevronRight size={16} color={colors.textSecondary} />
+              )}
+            </View>
+          </View>
+        </View>
+      </PressableCard>
+
+      {/* Expanded body */}
+      {expanded && (
+        <Card style={styles.memberGroupBody}>
+          {docsQuery.isLoading ? (
+            <ActivityIndicator
+              size="small"
+              color={colors.primary}
+              style={styles.groupLoading}
+              accessibilityLabel={`Loading documents for ${member.displayName}`}
+            />
+          ) : docsQuery.isError ? (
+            <Text style={styles.groupError}>
+              Could not load documents for this member. Please try again.
+            </Text>
+          ) : filtered.length === 0 ? (
+            <Text style={styles.groupEmpty}>
+              No documents match the current filter.
+            </Text>
+          ) : (
+            <>
+              {/* Image grid */}
+              {images.length > 0 && (
+                <View style={styles.imageSection}>
+                  <View style={styles.imageSectionHeader}>
+                    <ImageIcon size={13} color={colors.textSecondary} />
+                    <Text style={styles.imageSectionLabel}>
+                      Images ({images.length})
+                    </Text>
+                  </View>
+                  <View style={styles.imageGrid}>
+                    {images.map((doc) => (
+                      <ImageTile key={doc.id} doc={doc} />
+                    ))}
+                  </View>
+                </View>
+              )}
+
+              {/* Non-image rows */}
+              {sortedNonImages.length > 0 && (
+                <View style={[styles.docRowsSection, images.length > 0 && styles.docRowsSectionTop]}>
+                  {sortedNonImages.map((doc, idx) => (
+                    <DocumentRow key={doc.id} doc={doc} isAlt={idx % 2 === 1} />
+                  ))}
+                </View>
+              )}
+            </>
+          )}
+        </Card>
+      )}
+    </View>
+  );
+}
+
+// ─── CHWUploadTrigger ─────────────────────────────────────────────────────────
 
 /**
  * CHWUploadTrigger — upload a document on behalf of a member in the CHW's caseload.
@@ -294,13 +642,6 @@ const DOC_TYPE_OPTIONS: DocumentType[] = ['id', 'income', 'address', 'medical', 
  *      (`useChwMembers` → GET /chw/members), searchable by name or masked ID.
  *   2. Pick a member → pick a document type.
  *   3. The file dialog opens and the upload pipeline runs scoped to that member.
- *
- * This replaces the legacy free-text "Member UUID:" prompt, which let a CHW
- * paste a wrong/blank UUID. That caused the file to PUT to S3 (step 2 of the
- * pipeline) and only 404 on the metadata POST (step 3) — orphaning the object in
- * the bucket where it never appeared in any member's Documents list. The member
- * id now always comes from a real caseload row, and `useFileUpload` additionally
- * refuses a `member_document` upload with no resolved member.
  */
 function CHWUploadTrigger(): React.JSX.Element {
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -309,7 +650,6 @@ function CHWUploadTrigger(): React.JSX.Element {
   const [memberId, setMemberId] = useState<string>('');
   const [docType, setDocType] = useState<DocumentType>('other');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  // Captured at selection time so the async onSuccess can name the member.
   const selectedMemberName = useRef<string>('');
 
   const membersQuery = useChwMembers();
@@ -349,16 +689,12 @@ function CHWUploadTrigger(): React.JSX.Element {
 
   const handleSelectDocType = useCallback(
     (dt: DocumentType) => {
-      // Guard: never start an upload without a resolved caseload member.
       if (!selectedMember) return;
       setMemberId(selectedMember.id);
       setDocType(dt);
       selectedMemberName.current = selectedMember.displayName;
       setPickerOpen(false);
       if (Platform.OS === 'web') {
-        // The file-input .click() must run inside this user gesture; the tick
-        // lets the memberId/docType state settle before the resulting onChange
-        // fires the upload (which reads the latest memberId via the hook).
         setTimeout(() => fileInputRef.current?.click(), 50);
       } else {
         void upload();
@@ -386,12 +722,13 @@ function CHWUploadTrigger(): React.JSX.Element {
         accessibilityLabel="Upload document for a member"
         style={styles.uploadTrigger}
       >
-        {isUploading
-          ? <ActivityIndicator size="small" color="#ffffff" />
-          : <Plus size={14} color="#ffffff" />
-        }
+        {isUploading ? (
+          <ActivityIndicator size="small" color="#ffffff" />
+        ) : (
+          <Plus size={14} color="#ffffff" />
+        )}
         <Text style={styles.uploadTriggerText}>
-          {isUploading ? 'Uploading…' : 'Upload for Member'}
+          {isUploading ? 'Uploading...' : 'Upload for Member'}
         </Text>
       </TouchableOpacity>
 
@@ -411,7 +748,7 @@ function CHWUploadTrigger(): React.JSX.Element {
               <Search size={14} color={colors.textSecondary} />
               <TextInput
                 style={styles.pickerSearchInput}
-                placeholder="Search your caseload…"
+                placeholder="Search your caseload..."
                 placeholderTextColor={colors.textMuted}
                 value={search}
                 onChangeText={setSearch}
@@ -421,31 +758,47 @@ function CHWUploadTrigger(): React.JSX.Element {
             </View>
 
             {membersQuery.isLoading ? (
-              <ActivityIndicator size="small" color={colors.primary} style={styles.pickerSpinner} />
+              <ActivityIndicator
+                size="small"
+                color={colors.primary}
+                style={styles.pickerSpinner}
+              />
             ) : membersQuery.isError ? (
-              <Text style={styles.pickerEmpty}>Could not load your caseload. Pull to retry.</Text>
+              <Text style={styles.pickerEmpty}>
+                Could not load your caseload. Pull to retry.
+              </Text>
             ) : filteredMembers.length === 0 ? (
               <Text style={styles.pickerEmpty}>
-                {search.trim() ? 'No members match your search.' : 'No members in your caseload yet.'}
+                {search.trim()
+                  ? 'No members match your search.'
+                  : 'No members in your caseload yet.'}
               </Text>
             ) : (
-              <ScrollView style={styles.pickerList} keyboardShouldPersistTaps="handled">
+              <ScrollView
+                style={styles.pickerList}
+                keyboardShouldPersistTaps="handled"
+              >
                 {filteredMembers.map((m) => (
                   <TouchableOpacity
                     key={m.id}
-                    style={styles.memberRow}
+                    style={styles.pickerMemberRow}
                     onPress={() => setSelectedMember(m)}
                     accessible
                     accessibilityRole="button"
                     accessibilityLabel={`Select ${m.displayName}`}
                   >
                     <View style={styles.memberAvatar}>
-                      <Text style={styles.memberAvatarText}>{m.avatarInitials}</Text>
+                      <Text style={styles.memberAvatarText}>
+                        {m.avatarInitials}
+                      </Text>
                     </View>
-                    <View style={styles.memberRowText}>
-                      <Text style={styles.memberName} numberOfLines={1}>{m.displayName}</Text>
-                      <Text style={styles.memberMeta} numberOfLines={1}>
-                        {m.maskedId}{m.age != null ? ` · ${m.age} yrs` : ''}
+                    <View style={styles.pickerMemberRowText}>
+                      <Text style={styles.pickerMemberName} numberOfLines={1}>
+                        {m.displayName}
+                      </Text>
+                      <Text style={styles.pickerMemberMeta} numberOfLines={1}>
+                        {m.maskedId}
+                        {m.age != null ? ` · ${m.age} yrs` : ''}
                       </Text>
                     </View>
                   </TouchableOpacity>
@@ -462,7 +815,7 @@ function CHWUploadTrigger(): React.JSX.Element {
               accessibilityRole="button"
               accessibilityLabel="Back to member list"
             >
-              <Text style={styles.backText}>‹ Back to members</Text>
+              <Text style={styles.backText}>Back to members</Text>
             </TouchableOpacity>
             {DOC_TYPE_OPTIONS.map((dt) => (
               <TouchableOpacity
@@ -496,100 +849,46 @@ function CHWUploadTrigger(): React.JSX.Element {
   );
 }
 
-// ─── MemberDocumentsTable — fetches + renders docs for one member ─────────────
-
-/**
- * Internally, the CHW Documents screen renders a flat list of documents across
- * all members the CHW has uploaded for.  We achieve this by fetching documents
- * for each member ID that appears in the CHW's session/request caseload.
- *
- * Phase 1 simplification: the screen shows documents uploaded by the current
- * CHW (identified server-side via ``uploaded_by``).  To get a per-member list,
- * we query each member the CHW has a relationship with.
- *
- * For the cofounder demo this is fine.  A dedicated `GET /chw/documents`
- * endpoint aggregating across all member relationships is tracked as a follow-up.
- *
- * KNOWN FOLLOW-UP: Replace with a CHW-scoped documents list endpoint that
- * returns all documents the CHW uploaded across their caseload in a single
- * query (avoids N+1 HTTP calls).
- */
-
-interface MemberDocumentTableProps {
-  memberId: string;
-  memberName: string;
-  query: string;
-  activeType: FilterType;
-  /** Reports this member's matching-document count once loaded (for the parent's
-   *  combined empty/loading state). `null` count means "still loading". */
-  onResult: (memberId: string, count: number | null) => void;
-}
-
-function MemberDocumentTable({
-  memberId,
-  memberName,
-  query,
-  activeType,
-  onResult,
-}: MemberDocumentTableProps): React.JSX.Element | null {
-  const docsQuery = useMemberDocuments(memberId);
-  const docs = docsQuery.data?.items ?? [];
-
-  const filtered = useMemo(() => {
-    const lq = query.toLowerCase();
-    return docs.filter((d) => {
-      const typeMatch = activeType === 'all' || d.documentType === activeType;
-      const qMatch = query.length === 0 || d.filename.toLowerCase().includes(lq);
-      return typeMatch && qMatch;
-    });
-  }, [docs, query, activeType]);
-
-  // Report load state + matching count up so the screen can render a single
-  // combined loading spinner / empty state across the whole caseload.
-  useEffect(() => {
-    onResult(memberId, docsQuery.isLoading ? null : filtered.length);
-  }, [memberId, docsQuery.isLoading, filtered.length, onResult]);
-
-  if (docsQuery.isLoading) return null;
-  if (filtered.length === 0) return null;
-
-  return (
-    <>
-      {filtered.map((doc, idx) => (
-        <TableRow key={doc.id} doc={doc} idx={idx} memberName={memberName} />
-      ))}
-    </>
-  );
-}
-
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export function CHWDocumentsScreen(): React.JSX.Element {
   const { userName } = useAuth();
   const [query, setQuery] = useState('');
   const [activeType, setActiveType] = useState<FilterType>('all');
-
-  // Document list across the CHW's caseload. We fetch each member's documents
-  // (GET /members/{id}/documents is relationship-gated, and the caseload from
-  // useChwMembers is exactly the members the CHW is allowed to read). Each
-  // MemberDocumentTable reports its matching-document count so we can render a
-  // single combined loading spinner / empty state for the whole screen.
-  // NOTE(N+1): this issues one request per caseload member. The follow-up is a
-  // dedicated GET /chw/documents endpoint that aggregates in a single call.
-  const membersQuery = useChwMembers();
-  const members = useMemo(() => membersQuery.data ?? [], [membersQuery.data]);
   const [resultCounts, setResultCounts] = useState<Record<string, number | null>>({});
 
+  const membersQuery = useChwMembers();
+  const rawMembers = useMemo(() => membersQuery.data ?? [], [membersQuery.data]);
+
+  // Sort members alphabetically by last name for consistent "pull up when
+  // requested" findability.
+  const members = useMemo(() => sortMembersByLastName(rawMembers), [rawMembers]);
+
+  // Collapse by default when the caseload exceeds the threshold.
+  const defaultExpanded = members.length <= COLLAPSE_THRESHOLD;
+
   const handleResult = useCallback((memberId: string, count: number | null) => {
-    setResultCounts((prev) => (prev[memberId] === count ? prev : { ...prev, [memberId]: count }));
+    setResultCounts((prev) =>
+      prev[memberId] === count ? prev : { ...prev, [memberId]: count },
+    );
   }, []);
 
   const allSettled =
-    members.length > 0 && members.every((m) => typeof resultCounts[m.id] === 'number');
-  const totalMatching = members.reduce((sum, m) => sum + (resultCounts[m.id] ?? 0), 0);
-  const isLoadingDocs = membersQuery.isLoading || (members.length > 0 && !allSettled);
+    members.length > 0 &&
+    members.every((m) => typeof resultCounts[m.id] === 'number');
+
+  const totalMatching = members.reduce(
+    (sum, m) => sum + (resultCounts[m.id] ?? 0),
+    0,
+  );
+
+  const isLoadingDocs =
+    membersQuery.isLoading || (members.length > 0 && !allSettled);
+
   const isFiltering = query.trim().length > 0 || activeType !== 'all';
-  const showEmpty = !isLoadingDocs && totalMatching === 0;
+  const showEmpty = !isLoadingDocs && totalMatching === 0 && !isFiltering;
+  const showNoMatch =
+    !isLoadingDocs && totalMatching === 0 && isFiltering;
 
   const filterTypes = Object.keys(DOC_TYPE_LABELS) as FilterType[];
 
@@ -604,18 +903,18 @@ export function CHWDocumentsScreen(): React.JSX.Element {
     <>
       <PageHeader
         title="Member Documents"
-        subtitle="Documents across your caseload"
+        subtitle="Documents across your caseload, organised by member"
         right={
           <View style={styles.headerRight}>
             <View style={styles.searchWrap}>
               <Search size={14} color={colors.textSecondary} />
               <TextInput
                 style={styles.searchInput}
-                placeholder="Search documents…"
+                placeholder="Search members or files..."
                 placeholderTextColor={colors.textMuted}
                 value={query}
                 onChangeText={setQuery}
-                accessibilityLabel="Search documents"
+                accessibilityLabel="Search members or documents"
               />
             </View>
             <CHWUploadTrigger />
@@ -629,19 +928,33 @@ export function CHWDocumentsScreen(): React.JSX.Element {
         showsHorizontalScrollIndicator={false}
         style={styles.chipRow}
         contentContainerStyle={styles.chipRowContent}
+        accessibilityLabel="Filter by document type"
       >
         {filterTypes.map((type) => (
           <TouchableOpacity
             key={type}
             onPress={() => setActiveType(type)}
-            style={[styles.filterChip, activeType === type && styles.filterChipActive]}
+            style={[
+              styles.filterChip,
+              activeType === type && styles.filterChipActive,
+            ]}
             accessible
             accessibilityRole="button"
             accessibilityLabel={`Filter by ${DOC_TYPE_LABELS[type]}`}
             accessibilityState={{ selected: activeType === type }}
           >
-            <Filter size={10} color={activeType === type ? colors.cardBg : colors.textSecondary} />
-            <Text style={[styles.filterChipText, activeType === type && styles.filterChipTextActive]}>
+            <Filter
+              size={10}
+              color={
+                activeType === type ? colors.cardBg : colors.textSecondary
+              }
+            />
+            <Text
+              style={[
+                styles.filterChipText,
+                activeType === type && styles.filterChipTextActive,
+              ]}
+            >
               {DOC_TYPE_LABELS[type]}
             </Text>
           </TouchableOpacity>
@@ -650,47 +963,56 @@ export function CHWDocumentsScreen(): React.JSX.Element {
 
       {/* Body */}
       <View style={styles.bodyRow}>
-        <View style={styles.tableWrap}>
-          {/* Table header */}
-          <View style={styles.tableHeaderRow}>
-            <Text style={[styles.colHeader, styles.colFile]}>File</Text>
-            <Text style={[styles.colHeader, styles.colType]}>Type</Text>
-            <Text style={[styles.colHeader, styles.colDate]}>Uploaded</Text>
-            <Text style={[styles.colHeader, styles.colSize]}>Size</Text>
-            <Text style={[styles.colHeader, styles.colAction]}>{' '}</Text>
-          </View>
+        <View style={styles.groupsWrap}>
+          {/* Global loading state while member list loads */}
+          {membersQuery.isLoading && (
+            <ActivityIndicator
+              size="small"
+              color={colors.primary}
+              style={styles.globalLoading}
+              accessibilityLabel="Loading members"
+            />
+          )}
 
-          {/* One table per caseload member; each renders only its matching rows. */}
+          {/* Member groups */}
           {members.map((m) => (
-            <MemberDocumentTable
+            <MemberDocumentGroup
               key={m.id}
-              memberId={m.id}
-              memberName={m.displayName}
-              query={query}
+              member={m}
+              searchQuery={query}
               activeType={activeType}
+              defaultExpanded={defaultExpanded}
               onResult={handleResult}
             />
           ))}
 
-          {isLoadingDocs && (
+          {/* Per-member queries still settling */}
+          {!membersQuery.isLoading && isLoadingDocs && (
             <ActivityIndicator
               size="small"
               color={colors.primary}
-              style={styles.tableLoading}
+              style={styles.globalLoading}
               accessibilityLabel="Loading documents"
             />
           )}
 
+          {/* Zero documents across entire caseload */}
           {showEmpty && (
             <EmptyState
+              icon={FolderOpen}
+              title="No documents yet"
+              body="Use 'Upload for Member' to upload a document on behalf of someone in your caseload. It will appear here immediately."
+              style={styles.emptyState}
+            />
+          )}
+
+          {/* Search / filter returned nothing */}
+          {showNoMatch && (
+            <EmptyState
               icon={FileText}
-              title={isFiltering ? 'No matching documents' : 'No documents yet'}
-              body={
-                isFiltering
-                  ? 'Try a different search term or document type.'
-                  : "Use the 'Upload for Member' button to upload a document on behalf of someone in your caseload."
-              }
-              style={styles.emptyStateHint}
+              title="No matching documents"
+              body="Try a different search term or document type filter."
+              style={styles.emptyState}
             />
           )}
         </View>
@@ -700,9 +1022,11 @@ export function CHWDocumentsScreen(): React.JSX.Element {
             <Card style={styles.railCard}>
               <Text style={styles.railTitle}>Quick Tip</Text>
               <Text style={styles.railBody}>
-                Click "Upload for Member" and pick someone from your caseload to
-                upload a document on their behalf.{'\n\n'}
-                The member sees it immediately in their My Documents page.
+                Click "Upload for Member" and pick someone from your caseload
+                to upload a document on their behalf.{'\n\n'}
+                Members are sorted alphabetically and can be searched by name.
+                The member sees the document immediately in their My Documents
+                page.
               </Text>
             </Card>
           </RightRail>
@@ -714,7 +1038,10 @@ export function CHWDocumentsScreen(): React.JSX.Element {
   if (Platform.OS !== 'web') {
     return (
       <SafeAreaView style={styles.safeArea} edges={['top']}>
-        <ScrollView contentContainerStyle={styles.nativeScroll} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          contentContainerStyle={styles.nativeScroll}
+          showsVerticalScrollIndicator={false}
+        >
           {content}
         </ScrollView>
       </SafeAreaView>
@@ -734,7 +1061,11 @@ export function CHWDocumentsScreen(): React.JSX.Element {
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
+const THUMB_SIZE = 80;
+const THUMB_GAP = spacing.sm;
+
 const styles = StyleSheet.create({
+  // ─── Screen shell ──────────────────────────────────────────────────────────
   safeArea: {
     flex: 1,
     backgroundColor: colors.pageBg,
@@ -745,6 +1076,7 @@ const styles = StyleSheet.create({
     flexGrow: 1,
   } as ViewStyle,
 
+  // ─── Header ────────────────────────────────────────────────────────────────
   headerRight: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -761,7 +1093,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     height: 36,
     gap: spacing.xs,
-    minWidth: 220,
+    minWidth: 240,
   } as ViewStyle,
 
   searchInput: {
@@ -772,6 +1104,7 @@ const styles = StyleSheet.create({
     outlineStyle: 'none',
   } as unknown as TextStyle,
 
+  // ─── Upload button ─────────────────────────────────────────────────────────
   uploadTrigger: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -789,6 +1122,7 @@ const styles = StyleSheet.create({
     color: '#ffffff',
   } as TextStyle,
 
+  // ─── Filter chips ──────────────────────────────────────────────────────────
   chipRow: {
     marginBottom: spacing.lg,
     flexGrow: 0,
@@ -831,44 +1165,138 @@ const styles = StyleSheet.create({
     color: '#065f46',
   } as unknown as TextStyle,
 
+  // ─── Body layout ───────────────────────────────────────────────────────────
   bodyRow: {
     flexDirection: 'row',
     gap: spacing.xl,
     alignItems: 'flex-start',
   } as ViewStyle,
 
-  tableWrap: {
+  groupsWrap: {
+    flex: 1,
+    gap: spacing.md,
+  } as ViewStyle,
+
+  globalLoading: {
+    paddingVertical: 32,
+  } as ViewStyle,
+
+  emptyState: {
+    paddingTop: 32,
+  } as ViewStyle,
+
+  // ─── Member group ──────────────────────────────────────────────────────────
+  memberGroup: {
+    gap: 4,
+  } as ViewStyle,
+
+  memberGroupHeader: {
+    padding: spacing.md,
+    borderRadius: radius.xl,
+  } as ViewStyle,
+
+  memberGroupHeaderInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+  } as ViewStyle,
+
+  memberAvatar: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#ecfdf5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  } as ViewStyle,
+
+  memberAvatarText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#065f46',
+  } as TextStyle,
+
+  memberGroupIdentity: {
     flex: 1,
     gap: 2,
   } as ViewStyle,
 
-  tableHeaderRow: {
+  memberGroupName: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.textPrimary,
+    lineHeight: 20,
+  } as unknown as TextStyle,
+
+  memberGroupSubRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  } as ViewStyle,
+
+  memberGroupMeta: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    lineHeight: 16,
+  } as unknown as TextStyle,
+
+  memberGroupRight: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    backgroundColor: '#f9fafb',
+    flexShrink: 0,
+  } as ViewStyle,
+
+  chevronWrap: {
+    width: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+
+  // ─── Member group body card ────────────────────────────────────────────────
+  memberGroupBody: {
+    marginHorizontal: 2,
+    overflow: 'hidden',
+    borderRadius: radius.xl,
+    padding: 0,
+  } as ViewStyle,
+
+  groupLoading: {
+    paddingVertical: spacing.xl,
+  } as ViewStyle,
+
+  groupError: {
+    fontSize: 13,
+    color: '#dc2626',
+    padding: spacing.lg,
+    textAlign: 'center',
+  } as unknown as TextStyle,
+
+  groupEmpty: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    padding: spacing.lg,
+    textAlign: 'center',
+  } as unknown as TextStyle,
+
+  // ─── Image grid section ────────────────────────────────────────────────────
+  imageSection: {
+    padding: spacing.md,
+    gap: spacing.sm,
     borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
+    borderBottomColor: colors.cardBorder,
   } as ViewStyle,
 
-  tableRowCard: {
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-  } as ViewStyle,
-
-  tableRowAlt: {
-    backgroundColor: '#fafafa',
-  } as ViewStyle,
-
-  tableRow: {
+  imageSectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.sm,
+    gap: 5,
+    marginBottom: spacing.xs,
   } as ViewStyle,
 
-  colHeader: {
+  imageSectionLabel: {
     fontSize: 11,
     fontWeight: '600',
     color: colors.textSecondary,
@@ -876,76 +1304,157 @@ const styles = StyleSheet.create({
     letterSpacing: 0.4,
   } as unknown as TextStyle,
 
-  colFile:   { flex: 2.5 } as ViewStyle,
-  colType:   { flex: 1   } as ViewStyle,
-  colDate:   { flex: 1   } as ViewStyle,
-  colSize:   { width: 72 } as ViewStyle,
-  colAction: { width: 72, flexDirection: 'row' as const, alignItems: 'center' as const, gap: 10 } as ViewStyle,
+  imageGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: THUMB_GAP,
+  } as ViewStyle,
 
-  fileCell: {
+  // ─── Image tile ────────────────────────────────────────────────────────────
+  imageTile: {
+    width: THUMB_SIZE,
+    gap: 4,
+    // Minimum 44×44 touch target: tile width satisfies it; label adds height.
+  } as ViewStyle,
+
+  imageTileImg: {
+    width: THUMB_SIZE,
+    height: THUMB_SIZE,
+    borderRadius: radius.md,
+  } as ImageStyle,
+
+  imageTilePlaceholder: {
+    width: THUMB_SIZE,
+    height: THUMB_SIZE,
+    borderRadius: radius.md,
+    backgroundColor: '#f3f4f6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+
+  imageTileLabel: {
+    width: THUMB_SIZE,
+  } as ViewStyle,
+
+  imageTileLabelText: {
+    fontSize: 10,
+    fontWeight: '500',
+    color: colors.textSecondary,
+    textAlign: 'center',
+  } as unknown as TextStyle,
+
+  // ─── Non-image (PDF) rows section ─────────────────────────────────────────
+  docRowsSection: {
+    gap: 0,
+  } as ViewStyle,
+
+  docRowsSectionTop: {
+    borderTopWidth: 1,
+    borderTopColor: colors.cardBorder,
+  } as ViewStyle,
+
+  docRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    minHeight: 52,
   } as ViewStyle,
 
-  fileTypeBadge: {
+  docRowAlt: {
+    backgroundColor: '#f9fafb',
+  } as ViewStyle,
+
+  docRowIcon: {
     width: 34,
-    height: 42,
-    borderRadius: radius.sm,
+    height: 34,
+    borderRadius: radius.md,
+    backgroundColor: '#ecfdf5',
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
   } as ViewStyle,
 
-  fileTypeBadgeText: {
-    fontSize: 9,
-    fontWeight: '700',
-    color: '#ffffff',
-  } as TextStyle,
-
-  // Image-preview variant of the file badge: clip the photo, drop the tint.
-  fileThumbWrap: {
-    overflow: 'hidden',
-    backgroundColor: '#f3f4f6',
-  } as ViewStyle,
-
-  fileThumbImage: {
-    width: '100%' as unknown as number,
-    height: '100%' as unknown as number,
-    borderRadius: radius.sm,
-  } as ImageStyle,
-
-  tableLoading: {
-    paddingVertical: 32,
-  } as ViewStyle,
-
-  fileCellText: {
+  docRowInfo: {
     flex: 1,
-    gap: 2,
+    gap: 3,
   } as ViewStyle,
 
-  filename: {
+  docRowFilename: {
     fontSize: 13,
-    color: colors.textPrimary,
     fontWeight: '600',
+    color: colors.textPrimary,
     lineHeight: 18,
   } as unknown as TextStyle,
 
-  fileSubtitle: {
-    fontSize: 11,
-    color: colors.textSecondary,
-  } as unknown as TextStyle,
-
-  cellText: {
-    fontSize: 12,
-    color: colors.textSecondary,
-    lineHeight: 16,
-  } as unknown as TextStyle,
-
-  emptyStateHint: {
-    paddingTop: 32,
+  docRowMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    flexWrap: 'wrap',
   } as ViewStyle,
 
+  docRowMetaText: {
+    fontSize: 11,
+    color: colors.textSecondary,
+    lineHeight: 15,
+  } as unknown as TextStyle,
+
+  docRowActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    flexShrink: 0,
+  } as ViewStyle,
+
+  actionButton: {
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+
+  // ─── Full-size image viewer ────────────────────────────────────────────────
+  fullImageOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.92)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+
+  fullImageClose: {
+    position: 'absolute',
+    top: 52,
+    right: 20,
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    borderRadius: 22,
+    zIndex: 10,
+  } as ViewStyle,
+
+  fullImage: {
+    width: '90%' as unknown as number,
+    height: '80%' as unknown as number,
+    borderRadius: radius.md,
+  } as ImageStyle,
+
+  fullImageLoadingWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.xl,
+  } as ViewStyle,
+
+  fullImageError: {
+    fontSize: 13,
+    color: '#ffffff',
+    textAlign: 'center',
+  } as unknown as TextStyle,
+
+  // ─── Rail ─────────────────────────────────────────────────────────────────
   railCard: {
     padding: spacing.lg,
     gap: spacing.md,
@@ -964,7 +1473,7 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   } as unknown as TextStyle,
 
-  // ─── Member picker drawer ──────────────────────────────────────────────────
+  // ─── Upload picker drawer ──────────────────────────────────────────────────
   pickerBody: {
     gap: spacing.sm,
     padding: spacing.lg,
@@ -1005,7 +1514,7 @@ const styles = StyleSheet.create({
     maxHeight: 420,
   } as ViewStyle,
 
-  memberRow: {
+  pickerMemberRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
@@ -1015,40 +1524,25 @@ const styles = StyleSheet.create({
     borderBottomColor: '#f3f4f6',
   } as ViewStyle,
 
-  memberAvatar: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: '#ecfdf5',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  } as ViewStyle,
-
-  memberAvatarText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#065f46',
-  } as TextStyle,
-
-  memberRowText: {
+  pickerMemberRowText: {
     flex: 1,
     gap: 1,
   } as ViewStyle,
 
-  memberName: {
+  pickerMemberName: {
     fontSize: 13,
     fontWeight: '600',
     color: colors.textPrimary,
   } as unknown as TextStyle,
 
-  memberMeta: {
+  pickerMemberMeta: {
     fontSize: 11,
     color: colors.textSecondary,
   } as unknown as TextStyle,
 
   backRow: {
     paddingVertical: spacing.xs,
+    marginBottom: spacing.xs,
   } as ViewStyle,
 
   backText: {
