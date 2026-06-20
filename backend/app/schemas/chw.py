@@ -355,11 +355,14 @@ class MembersRosterItem(BaseModel):
     age: int | None
     """Age in whole years, derived from DOB. Null when DOB is not recorded."""
 
-    date_of_birth: date | None = None
+    date_of_birth: date | None
     """Member's date of birth (ISO). Exposed to the CHW for their own caseload as
     the canonical patient-matching identifier when retrieving documents ("confirm
     your date of birth"). Consistent with CHWMemberProfileDetail, which already
     discloses full DOB to the relationship-gated CHW. Null when not recorded."""
+
+    masked_id: str
+    """Last 4 characters of medi_cal_id, formatted '...XXXX'. '—' when absent."""
 
     avatar_initials: str
     """Up to 2 uppercase initials derived from display_name."""
