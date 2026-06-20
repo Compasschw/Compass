@@ -2113,6 +2113,46 @@ export function useUpdateMemberPreferredName(memberId: string) {
   });
 }
 
+/** CHW-editable member demographics payload (PATCH /chw/members/{id}/demographics). */
+export interface MemberDemographicsUpdate {
+  firstName?: string;
+  lastName?: string;
+  preferredName?: string | null;
+  dateOfBirth?: string | null; // ISO "YYYY-MM-DD"
+  gender?: string | null;      // Male | Female | Other
+  insurance?: string | null;
+  mediCalId?: string | null;   // CIN 8 digits + 1 letter
+  addressLine1?: string | null;
+  addressLine2?: string | null;
+  city?: string | null;
+  state?: string | null;       // 2-letter USPS
+  zipCode?: string | null;
+  phone?: string | null;
+  primaryLanguage?: string | null;
+}
+
+/**
+ * Edit a member's demographics from the CHW Member Profile pencil.
+ *
+ * PATCH /api/v1/chw/members/{member_id}/demographics. Only supplied fields
+ * change. Backend validates CIN / gender / state and combines first+last into
+ * the name. Invalidates the CHW member detail query so the card refreshes.
+ */
+export function useUpdateMemberDemographics(memberId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: MemberDemographicsUpdate): Promise<void> => {
+      await api(`/chw/members/${memberId}/demographics`, {
+        method: 'PATCH',
+        body: JSON.stringify(toSnakeCase(payload)),
+      });
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['chw', 'members', memberId, 'detail'] });
+    },
+  });
+}
+
 /**
  * Fetch the services-consent status for a given member from the CHW side.
  *

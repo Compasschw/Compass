@@ -110,6 +110,7 @@ import {
   useMemberBillingStatus,
   useUpdateMemberBillingStatus,
   useUpdateMemberPreferredName,
+  useUpdateMemberDemographics,
   useFlagNote,
   useCreateFlagNote,
   useDeleteFlagNote,
@@ -123,6 +124,7 @@ import {
   type JourneyTemplateResponse,
   type ServicesConsentValue,
   type MemberJourneyResponse,
+  type MemberDemographicsUpdate,
 } from '../../hooks/useApiQueries';
 
 // ─── Navigation types ─────────────────────────────────────────────────────────
@@ -182,6 +184,12 @@ interface CHWMemberProfileDetail {
   city: string | null;
   zipCode: string | null;
   mco: string | null;
+  // Raw address parts for the demographics edit modal (joined `address`/`city`
+  // above are display-only).
+  addressLine1: string | null;
+  addressLine2: string | null;
+  cityName: string | null;
+  state: string | null;
   ecmEligible: boolean;
   primaryCategories: string[];
   billingUnits: BillingUnitsLegacy;
@@ -396,6 +404,30 @@ function formatDob(iso: string | null | undefined): string {
   return `${formatted} (${age} yrs)`;
 }
 
+// ─── Date helpers (shared by EditDemographicsModal) ───────────────────────────
+
+/** Convert an ISO date ("YYYY-MM-DD") to the MM/DD/YYYY display string. */
+function isoToMmddyyyy(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[2]}/${m[3]}/${m[1]}` : '';
+}
+
+/** Parse MM/DD/YYYY → ISO "YYYY-MM-DD"; returns null when the value is unparseable. */
+function mmddyyyyToIso(value: string): string | null {
+  const m = value.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!m) return null;
+  const month = Number(m[1]);
+  const day = Number(m[2]);
+  const year = Number(m[3]);
+  if (month < 1 || month > 12 || day < 1 || day > 31 || year < 1900 || year > 2100) {
+    return null;
+  }
+  return `${m[3]}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+const DEMOGRAPHICS_SEX_OPTIONS = ['Male', 'Female', 'Other'] as const;
+
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 interface InfoRowProps {
@@ -534,6 +566,695 @@ const emptyStyles = StyleSheet.create({
   } as TextStyle,
 });
 
+// ─── EditDemographicsModal ────────────────────────────────────────────────────
+
+interface EditDemographicsModalProps {
+  visible: boolean;
+  profile: CHWMemberProfileDetail;
+  memberId: string;
+  onClose: () => void;
+}
+
+/**
+ * Full demographics editor for the CHW Member Profile.
+ *
+ * Covers every field the CHW can see on the demographics card:
+ * first name, last name, preferred name, date of birth (MM/DD/YYYY),
+ * sex (Male/Female/Other picker), insurance, Medi-Cal CIN, address
+ * line 1 & 2, city, state, ZIP, phone, and primary language.
+ *
+ * On save it calls useUpdateMemberDemographics which PATCHes only the
+ * supplied fields and then invalidates the CHW member-detail query so
+ * the demographics card refreshes automatically.
+ *
+ * Backend 422 errors surface the response `detail` string inline.
+ * DOB is validated client-side before the network call.
+ */
+function EditDemographicsModal({
+  visible,
+  profile,
+  memberId,
+  onClose,
+}: EditDemographicsModalProps): React.JSX.Element {
+  const updateDemographics = useUpdateMemberDemographics(memberId);
+
+  // ── Form state ────────────────────────────────────────────────────────────
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [preferredName, setPreferredName] = useState('');
+  const [dob, setDob] = useState(''); // MM/DD/YYYY
+  const [sex, setSex] = useState('');
+  const [insurance, setInsurance] = useState('');
+  const [cin, setCin] = useState('');
+  const [addr1, setAddr1] = useState('');
+  const [addr2, setAddr2] = useState('');
+  const [city, setCity] = useState('');
+  const [stateCode, setStateCode] = useState('');
+  const [zip, setZip] = useState('');
+  const [phone, setPhone] = useState('');
+  const [language, setLanguage] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [showSexPicker, setShowSexPicker] = useState(false);
+
+  // Hydrate form whenever the modal opens.
+  useEffect(() => {
+    if (visible) {
+      setFirstName(profile.firstName ?? '');
+      setLastName(profile.lastName ?? '');
+      setPreferredName(profile.preferredName ?? '');
+      setDob(isoToMmddyyyy(profile.dateOfBirth));
+      setSex(profile.gender ?? '');
+      setInsurance(profile.mco ?? '');
+      setCin(profile.mediCalId ?? '');
+      setAddr1(profile.addressLine1 ?? '');
+      setAddr2(profile.addressLine2 ?? '');
+      setCity(profile.cityName ?? '');
+      setStateCode(profile.state ?? '');
+      setZip(profile.zipCode ?? '');
+      setPhone(profile.phoneE164 ?? '');
+      setLanguage(profile.primaryLanguage ?? '');
+      setError(null);
+      setShowSexPicker(false);
+    }
+  }, [visible, profile]);
+
+  // Esc key closes on web.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !visible) return;
+    const handler = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [visible, onClose]);
+
+  const handleSave = useCallback(async (): Promise<void> => {
+    setError(null);
+
+    const payload: MemberDemographicsUpdate = {};
+
+    if (firstName.trim()) payload.firstName = firstName.trim();
+    if (lastName.trim()) payload.lastName = lastName.trim();
+    payload.preferredName = preferredName.trim() || null;
+
+    if (dob.trim()) {
+      const iso = mmddyyyyToIso(dob);
+      if (!iso) {
+        setError('Date of birth must be MM/DD/YYYY (e.g. 05/21/1990).');
+        return;
+      }
+      payload.dateOfBirth = iso;
+    } else {
+      payload.dateOfBirth = null;
+    }
+
+    if (sex) payload.gender = sex;
+    if (insurance.trim()) payload.insurance = insurance.trim();
+
+    if (cin.trim()) {
+      const normalized = cin.trim().toUpperCase();
+      const cinValid = /^\d{8}[A-Z]$/.test(normalized);
+      if (!cinValid) {
+        setError('Member ID / Medi-Cal CIN must be 8 digits followed by 1 letter (e.g. 12345678A).');
+        return;
+      }
+      payload.mediCalId = normalized;
+    } else {
+      payload.mediCalId = null;
+    }
+
+    payload.addressLine1 = addr1.trim() || null;
+    payload.addressLine2 = addr2.trim() || null;
+    payload.city = city.trim() || null;
+
+    if (stateCode.trim() && stateCode.trim().length !== 2) {
+      setError('State must be a 2-letter code (e.g. CA).');
+      return;
+    }
+    payload.state = stateCode.trim().toUpperCase() || null;
+    payload.zipCode = zip.trim() || null;
+    if (phone.trim()) payload.phone = phone.trim();
+    if (language.trim()) payload.primaryLanguage = language.trim();
+
+    try {
+      await updateDemographics.mutateAsync(payload);
+      onClose();
+    } catch (err: unknown) {
+      const detail =
+        err != null &&
+        typeof err === 'object' &&
+        'detail' in err &&
+        typeof (err as { detail: unknown }).detail === 'string'
+          ? (err as { detail: string }).detail
+          : 'Could not save. Please check your entries and try again.';
+      setError(detail);
+    }
+  }, [
+    firstName, lastName, preferredName, dob, sex, insurance, cin,
+    addr1, addr2, city, stateCode, zip, phone, language,
+    updateDemographics, onClose,
+  ]);
+
+  const body = (
+    <View style={editDemoStyles.container}>
+      {/* Header */}
+      <View style={editDemoStyles.header}>
+        <Text style={editDemoStyles.title}>Edit Demographics</Text>
+        <TouchableOpacity
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Close"
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <X size={18} color="#6B7280" />
+        </TouchableOpacity>
+      </View>
+
+      {/* Scrollable fields */}
+      <ScrollView
+        style={editDemoStyles.scroll}
+        contentContainerStyle={editDemoStyles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Name section */}
+        <Text style={editDemoStyles.sectionLabel}>Name</Text>
+
+        <Text style={editDemoStyles.fieldLabel}>First Name</Text>
+        <TextInput
+          style={editDemoStyles.input}
+          value={firstName}
+          onChangeText={setFirstName}
+          placeholder="First name"
+          placeholderTextColor="#9CA3AF"
+          accessibilityLabel="First name"
+        />
+
+        <Text style={[editDemoStyles.fieldLabel, editDemoStyles.fieldLabelSpaced]}>Last Name</Text>
+        <TextInput
+          style={editDemoStyles.input}
+          value={lastName}
+          onChangeText={setLastName}
+          placeholder="Last name"
+          placeholderTextColor="#9CA3AF"
+          accessibilityLabel="Last name"
+        />
+
+        <Text style={[editDemoStyles.fieldLabel, editDemoStyles.fieldLabelSpaced]}>Preferred Name</Text>
+        <TextInput
+          style={editDemoStyles.input}
+          value={preferredName}
+          onChangeText={setPreferredName}
+          placeholder="What they'd like to be called (optional)"
+          placeholderTextColor="#9CA3AF"
+          accessibilityLabel="Preferred name"
+        />
+
+        <View style={editDemoStyles.divider} />
+        <Text style={editDemoStyles.sectionLabel}>Personal Details</Text>
+
+        <Text style={editDemoStyles.fieldLabel}>Date of Birth</Text>
+        <TextInput
+          style={editDemoStyles.input}
+          value={dob}
+          onChangeText={setDob}
+          placeholder="MM/DD/YYYY"
+          placeholderTextColor="#9CA3AF"
+          autoCorrect={false}
+          maxLength={10}
+          accessibilityLabel="Date of birth"
+        />
+
+        <Text style={[editDemoStyles.fieldLabel, editDemoStyles.fieldLabelSpaced]}>Sex</Text>
+        <TouchableOpacity
+          style={editDemoStyles.selectorBtn}
+          onPress={() => setShowSexPicker((p) => !p)}
+          accessibilityRole="button"
+          accessibilityLabel={`Sex: ${sex || 'Select'}`}
+        >
+          <Text
+            style={[
+              editDemoStyles.selectorText,
+              !sex && editDemoStyles.selectorPlaceholder,
+            ]}
+          >
+            {sex || 'Select…'}
+          </Text>
+          <Text style={editDemoStyles.selectorChevron}>
+            {showSexPicker ? '▲' : '▼'}
+          </Text>
+        </TouchableOpacity>
+        {showSexPicker && (
+          <View style={editDemoStyles.pickerList}>
+            {DEMOGRAPHICS_SEX_OPTIONS.map((opt) => {
+              const isSelected = opt === sex;
+              return (
+                <TouchableOpacity
+                  key={opt}
+                  style={[
+                    editDemoStyles.pickerItem,
+                    isSelected && editDemoStyles.pickerItemSelected,
+                  ]}
+                  onPress={() => {
+                    setSex(opt);
+                    setShowSexPicker(false);
+                  }}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: isSelected }}
+                  accessibilityLabel={opt}
+                >
+                  <Text
+                    style={[
+                      editDemoStyles.pickerItemText,
+                      isSelected && editDemoStyles.pickerItemTextSelected,
+                    ]}
+                  >
+                    {opt}
+                  </Text>
+                  {isSelected && <Check size={14} color={tokens.primary} />}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        )}
+
+        <View style={editDemoStyles.divider} />
+        <Text style={editDemoStyles.sectionLabel}>Insurance</Text>
+
+        <Text style={editDemoStyles.fieldLabel}>Insurance</Text>
+        <TextInput
+          style={editDemoStyles.input}
+          value={insurance}
+          onChangeText={setInsurance}
+          placeholder="Insurance carrier"
+          placeholderTextColor="#9CA3AF"
+          accessibilityLabel="Insurance carrier"
+        />
+
+        <Text style={[editDemoStyles.fieldLabel, editDemoStyles.fieldLabelSpaced]}>Member ID / Medi-Cal CIN</Text>
+        <TextInput
+          style={editDemoStyles.input}
+          value={cin}
+          onChangeText={(t) => setCin(t.toUpperCase())}
+          placeholder="12345678A"
+          placeholderTextColor="#9CA3AF"
+          autoCapitalize="characters"
+          autoCorrect={false}
+          maxLength={9}
+          accessibilityLabel="Medi-Cal CIN"
+          accessibilityHint="8 digits followed by 1 letter"
+        />
+        <Text style={editDemoStyles.hint}>8 digits + 1 letter, e.g. 12345678A</Text>
+
+        <View style={editDemoStyles.divider} />
+        <Text style={editDemoStyles.sectionLabel}>Address</Text>
+
+        <Text style={editDemoStyles.fieldLabel}>Address Line 1</Text>
+        <TextInput
+          style={editDemoStyles.input}
+          value={addr1}
+          onChangeText={setAddr1}
+          placeholder="Street address"
+          placeholderTextColor="#9CA3AF"
+          accessibilityLabel="Address line 1"
+        />
+
+        <Text style={[editDemoStyles.fieldLabel, editDemoStyles.fieldLabelSpaced]}>Address Line 2</Text>
+        <TextInput
+          style={editDemoStyles.input}
+          value={addr2}
+          onChangeText={setAddr2}
+          placeholder="Apt, unit, etc. (optional)"
+          placeholderTextColor="#9CA3AF"
+          accessibilityLabel="Address line 2"
+        />
+
+        {/* City / State / ZIP row */}
+        <View style={editDemoStyles.inlineRow}>
+          <View style={editDemoStyles.inlineGrow}>
+            <Text style={[editDemoStyles.fieldLabel, editDemoStyles.fieldLabelSpaced]}>City</Text>
+            <TextInput
+              style={editDemoStyles.input}
+              value={city}
+              onChangeText={setCity}
+              placeholder="City"
+              placeholderTextColor="#9CA3AF"
+              accessibilityLabel="City"
+            />
+          </View>
+          <View style={editDemoStyles.inlineState}>
+            <Text style={[editDemoStyles.fieldLabel, editDemoStyles.fieldLabelSpaced]}>State</Text>
+            <TextInput
+              style={editDemoStyles.input}
+              value={stateCode}
+              onChangeText={(t) => setStateCode(t.toUpperCase())}
+              placeholder="CA"
+              placeholderTextColor="#9CA3AF"
+              autoCapitalize="characters"
+              maxLength={2}
+              accessibilityLabel="State"
+            />
+          </View>
+          <View style={editDemoStyles.inlineZip}>
+            <Text style={[editDemoStyles.fieldLabel, editDemoStyles.fieldLabelSpaced]}>ZIP</Text>
+            <TextInput
+              style={editDemoStyles.input}
+              value={zip}
+              onChangeText={setZip}
+              placeholder="90001"
+              placeholderTextColor="#9CA3AF"
+              keyboardType="number-pad"
+              maxLength={10}
+              accessibilityLabel="ZIP code"
+            />
+          </View>
+        </View>
+
+        <View style={editDemoStyles.divider} />
+        <Text style={editDemoStyles.sectionLabel}>Contact & Language</Text>
+
+        <Text style={editDemoStyles.fieldLabel}>Phone</Text>
+        <TextInput
+          style={editDemoStyles.input}
+          value={phone}
+          onChangeText={setPhone}
+          placeholder="+1 (555) 000-0000"
+          placeholderTextColor="#9CA3AF"
+          keyboardType="phone-pad"
+          accessibilityLabel="Phone number"
+        />
+
+        <Text style={[editDemoStyles.fieldLabel, editDemoStyles.fieldLabelSpaced]}>Primary Language</Text>
+        <TextInput
+          style={editDemoStyles.input}
+          value={language}
+          onChangeText={setLanguage}
+          placeholder="English"
+          placeholderTextColor="#9CA3AF"
+          accessibilityLabel="Primary language"
+        />
+
+        {/* Inline error */}
+        {error !== null && (
+          <Text style={editDemoStyles.errorText} accessibilityRole="alert">
+            {error}
+          </Text>
+        )}
+      </ScrollView>
+
+      {/* Footer actions */}
+      <View style={editDemoStyles.footer}>
+        <TouchableOpacity
+          style={editDemoStyles.cancelBtn}
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Cancel"
+        >
+          <Text style={editDemoStyles.cancelBtnText}>Cancel</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            editDemoStyles.saveBtn,
+            updateDemographics.isPending && editDemoStyles.saveBtnDisabled,
+          ]}
+          onPress={() => { void handleSave(); }}
+          disabled={updateDemographics.isPending}
+          accessibilityRole="button"
+          accessibilityLabel="Save demographics"
+        >
+          {updateDemographics.isPending ? (
+            <ActivityIndicator size="small" color="#FFFFFF" />
+          ) : (
+            <Text style={editDemoStyles.saveBtnText}>Save</Text>
+          )}
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
+  if (Platform.OS !== 'web') {
+    return (
+      <Modal
+        visible={visible}
+        animationType="slide"
+        presentationStyle="formSheet"
+        onRequestClose={onClose}
+        accessibilityViewIsModal
+      >
+        <View style={editDemoStyles.nativeContainer}>{body}</View>
+      </Modal>
+    );
+  }
+
+  if (!visible) return <></>;
+
+  return (
+    <View style={editDemoStyles.webOverlay}>
+      <Pressable
+        style={editDemoStyles.webBackdrop}
+        onPress={onClose}
+        accessibilityRole="button"
+        accessibilityLabel="Close modal"
+      />
+      <View style={editDemoStyles.webPanel}>{body}</View>
+    </View>
+  );
+}
+
+const editDemoStyles = StyleSheet.create({
+  // Web overlay
+  webOverlay: {
+    position: 'fixed' as 'absolute',
+    inset: 0,
+    zIndex: 200,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+  webBackdrop: {
+    position: 'absolute' as 'absolute',
+    inset: 0,
+    backgroundColor: 'rgba(17,24,39,0.45)',
+  } as ViewStyle,
+  webPanel: {
+    width: '100%',
+    maxWidth: 560,
+    maxHeight: '90vh' as unknown as number,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    overflow: 'hidden',
+    zIndex: 1,
+  } as ViewStyle,
+
+  // Native container
+  nativeContainer: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  } as ViewStyle,
+
+  // Modal body wrapper (shared)
+  container: {
+    flex: 1,
+    flexDirection: 'column',
+    backgroundColor: '#FFFFFF',
+  } as ViewStyle,
+
+  // Header
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  } as ViewStyle,
+  title: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 17,
+    color: '#111827',
+  } as TextStyle,
+
+  // Scroll
+  scroll: {
+    flex: 1,
+  } as ViewStyle,
+  scrollContent: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 20,
+    gap: 4,
+  } as ViewStyle,
+
+  // Section labels (group headings within the form)
+  sectionLabel: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 11,
+    color: '#6B7280',
+    textTransform: 'uppercase' as const,
+    letterSpacing: 0.8,
+    marginBottom: 8,
+    marginTop: 2,
+  } as TextStyle,
+
+  // Field label
+  fieldLabel: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 11,
+    color: '#6B7280',
+    textTransform: 'uppercase' as const,
+    letterSpacing: 0.7,
+    marginBottom: 4,
+  } as TextStyle,
+  fieldLabelSpaced: {
+    marginTop: 12,
+  } as TextStyle,
+
+  // Text input
+  input: {
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    fontFamily: 'PlusJakartaSans_400Regular',
+    color: '#111827',
+    backgroundColor: '#FAFAFA',
+  } as TextStyle,
+
+  // Hint text (below CIN input)
+  hint: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: '#9CA3AF',
+    marginTop: 4,
+  } as TextStyle,
+
+  // Sex dropdown
+  selectorBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: '#FAFAFA',
+  } as ViewStyle,
+  selectorText: {
+    flex: 1,
+    fontSize: 14,
+    fontFamily: 'PlusJakartaSans_400Regular',
+    color: '#111827',
+  } as TextStyle,
+  selectorPlaceholder: {
+    color: '#9CA3AF',
+  } as TextStyle,
+  selectorChevron: {
+    fontSize: 10,
+    color: '#6B7280',
+    marginLeft: 8,
+  } as TextStyle,
+  pickerList: {
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 8,
+    marginTop: 4,
+    overflow: 'hidden',
+    backgroundColor: '#FFFFFF',
+  } as ViewStyle,
+  pickerItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  } as ViewStyle,
+  pickerItemSelected: {
+    backgroundColor: `${tokens.primary}10`,
+  } as ViewStyle,
+  pickerItemText: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: 'PlusJakartaSans_400Regular',
+    color: '#111827',
+  } as TextStyle,
+  pickerItemTextSelected: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    color: tokens.primary,
+  } as TextStyle,
+
+  // Inline city/state/ZIP row
+  inlineRow: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'flex-end',
+  } as ViewStyle,
+  inlineGrow: { flex: 1 } as ViewStyle,
+  inlineState: { width: 64 } as ViewStyle,
+  inlineZip: { width: 96 } as ViewStyle,
+
+  // Section divider
+  divider: {
+    height: 1,
+    backgroundColor: '#F3F4F6',
+    marginVertical: 16,
+  } as ViewStyle,
+
+  // Error
+  errorText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12,
+    color: '#B91C1C',
+    marginTop: 12,
+    lineHeight: 18,
+  } as TextStyle,
+
+  // Footer
+  footer: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+  } as ViewStyle,
+  cancelBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    alignItems: 'center',
+    backgroundColor: '#FAFAFA',
+  } as ViewStyle,
+  cancelBtnText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 14,
+    color: '#6B7280',
+  } as TextStyle,
+  saveBtn: {
+    flex: 2,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: tokens.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+  saveBtnDisabled: {
+    opacity: 0.6,
+  } as ViewStyle,
+  saveBtnText: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 14,
+    color: '#FFFFFF',
+  } as TextStyle,
+});
+
 // ─── DemographicsColumn ───────────────────────────────────────────────────────
 
 interface DemographicsColumnProps {
@@ -543,6 +1264,9 @@ interface DemographicsColumnProps {
   servicesConsentRefused: boolean;
   onNavigateToConversation: (conversationId: string) => void;
   onNavigateAndCall: () => void;
+  /** When provided, the demographics pencil opens this callback instead of
+   *  the legacy inline preferred-name editor. Supplied by the parent screen. */
+  onEditDemographics?: () => void;
 }
 
 /**
@@ -675,18 +1399,21 @@ function DemoField({
 /**
  * Left column of the 3-column top card. Compact two-sub-column card: avatar +
  * Call/Message on the left, demographic fields listed to the right (per mockup).
+ *
+ * The section-level pencil now opens the full EditDemographicsModal (via
+ * onEditDemographics) rather than the legacy inline preferred-name editor.
  */
 function DemographicsColumn({
   profile,
-  memberId,
+  memberId: _memberId,
   displayName,
   servicesConsentRefused,
   onNavigateToConversation,
   onNavigateAndCall,
+  onEditDemographics,
 }: DemographicsColumnProps): React.JSX.Element {
   const initials = getInitials(profile.firstName, profile.lastName);
   const ctaDisabled = servicesConsentRefused;
-  const [editingPreferred, setEditingPreferred] = useState(false);
 
   const addressLabel = profile.address
     ? [profile.address, profile.city, profile.zipCode].filter(Boolean).join(', ')
@@ -704,7 +1431,7 @@ function DemographicsColumn({
       <View style={demoColStyles.cardHeader}>
         <Text style={demoColStyles.cardTitle}>Member Demographics</Text>
         <TouchableOpacity
-          onPress={() => setEditingPreferred(true)}
+          onPress={onEditDemographics}
           accessibilityRole="button"
           accessibilityLabel="Edit demographics"
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -758,20 +1485,11 @@ function DemographicsColumn({
         <View style={demoColStyles.fields}>
           <DemoField label="Last Name" value={profile.lastName || 'Not provided'} placeholder={!profile.lastName} />
           <DemoField label="First Name" value={profile.firstName || 'Not provided'} placeholder={!profile.firstName} />
-          {editingPreferred ? (
-            <PreferredNameRow
-              memberId={memberId}
-              profile={profile}
-              editing
-              onClose={() => setEditingPreferred(false)}
-            />
-          ) : (
-            <DemoField
-              label="Preferred Name"
-              value={(profile.preferredName ?? profile.firstName) || 'Not provided'}
-              placeholder={!(profile.preferredName ?? profile.firstName)}
-            />
-          )}
+          <DemoField
+            label="Preferred Name"
+            value={(profile.preferredName ?? profile.firstName) || 'Not provided'}
+            placeholder={!(profile.preferredName ?? profile.firstName)}
+          />
           <View style={demoColStyles.divider} />
           <DemoField label="Date of Birth" value={formatDob(profile.dateOfBirth)} placeholder={!profile.dateOfBirth} />
           <DemoField label="Sex" value={profile.gender ?? 'Not provided'} placeholder={!profile.gender} />
@@ -3891,6 +4609,7 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
   // ── Drawer / modal state ─────────────────────────────────────────────────────
   const [openQuestionsOpen, setOpenQuestionsOpen] = useState(false);
   const [flagModalOpen, setFlagModalOpen] = useState(false);
+  const [editDemographicsOpen, setEditDemographicsOpen] = useState(false);
   const [addJourneyOpen, setAddJourneyOpen] = useState(false);
   const [showScreening, setShowScreening] = useState(false);
 
@@ -4085,6 +4804,7 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                   servicesConsentRefused={servicesConsentRefused}
                   onNavigateToConversation={handleNavigateToConversation}
                   onNavigateAndCall={handleNavigateAndCall}
+                  onEditDemographics={() => setEditDemographicsOpen(true)}
                 />
 
                 {/* CENTER: Flag Note + Billing Consent */}
@@ -4357,6 +5077,14 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
 
           </View>
         </ScrollView>
+
+        {/* ── Edit Demographics modal ── */}
+        <EditDemographicsModal
+          visible={editDemographicsOpen}
+          profile={profile}
+          memberId={memberId}
+          onClose={() => setEditDemographicsOpen(false)}
+        />
 
         {/* ── Flag Member drawer/modal ── */}
         <FlagMemberModal

@@ -18,6 +18,7 @@ from app.schemas.chw import (
     CHWMemberProfileView,
     MapMemberPin,
     MapResourcePin,
+    MemberDemographicsUpdate,
     MembersRosterItem,
     PreferredNameResponse,
     PreferredNameUpdate,
@@ -1452,6 +1453,10 @@ async def get_chw_member_full_profile(
         ),
         zip_code=member_profile.zip_code,
         mco=member_profile.insurance_provider,  # MCO = insurance plan in Medi-Cal context
+        address_line1=member_profile.address_line1,
+        address_line2=member_profile.address_line2,
+        city_name=member_profile.city,
+        state=member_profile.state,
         ecm_eligible=False,   # ECM eligibility not yet stored — Phase 2 flag
         primary_categories=primary_categories,
         billing_units=billing_units,
@@ -1529,6 +1534,90 @@ async def update_member_preferred_name(
     await db.commit()
     await db.refresh(profile)
     return PreferredNameResponse(preferred_name=profile.preferred_name)
+
+
+@router.patch("/members/{member_id}/demographics")
+async def update_member_demographics(
+    member_id: UUID,
+    data: MemberDemographicsUpdate,
+    caller=Depends(_require_chw_or_admin_key),
+    db: AsyncSession = Depends(get_db),
+):
+    """CHW edits a member's demographics from the Member Profile pencil.
+
+    Only the supplied fields change. first_name/last_name combine into
+    User.name; phone → User.phone; insurance → both insurance_provider (display)
+    and insurance_company (billing); the rest → MemberProfile.
+
+    Authorization mirrors the preferred-name endpoint: the CHW must have an
+    active relationship (session or matched request); admins are unrestricted.
+    """
+    from app.models.request import ServiceRequest
+    from app.models.session import Session
+    from app.models.user import MemberProfile, User
+
+    caller_role: str = caller["role"]
+    caller_user = caller["user"]
+
+    if caller_role != "admin":
+        assert caller_user is not None
+        session_exists = await db.execute(
+            select(func.count())
+            .select_from(Session)
+            .where(Session.chw_id == caller_user.id)
+            .where(Session.member_id == member_id)
+        )
+        if (session_exists.scalar() or 0) == 0:
+            request_exists = await db.execute(
+                select(func.count())
+                .select_from(ServiceRequest)
+                .where(ServiceRequest.matched_chw_id == caller_user.id)
+                .where(ServiceRequest.member_id == member_id)
+            )
+            if (request_exists.scalar() or 0) == 0:
+                raise HTTPException(
+                    status_code=403,
+                    detail="You do not have an active relationship with this member.",
+                )
+
+    profile = (
+        await db.execute(select(MemberProfile).where(MemberProfile.user_id == member_id))
+    ).scalar_one_or_none()
+    member_user = await db.get(User, member_id)
+    if profile is None or member_user is None:
+        raise HTTPException(status_code=404, detail="Member not found.")
+
+    payload = data.model_dump(exclude_unset=True)
+
+    # first/last name → User.name (preserve the untouched half from the current name).
+    if "first_name" in payload or "last_name" in payload:
+        cur_parts = (member_user.name or "").split(" ", 1)
+        cur_first = cur_parts[0] if cur_parts else ""
+        cur_last = cur_parts[1] if len(cur_parts) > 1 else ""
+        new_first = (payload.pop("first_name", None) if "first_name" in payload else None)
+        new_last = (payload.pop("last_name", None) if "last_name" in payload else None)
+        first = (new_first if new_first is not None else cur_first).strip()
+        last = (new_last if new_last is not None else cur_last).strip()
+        combined = f"{first} {last}".strip()
+        if combined:
+            member_user.name = combined
+
+    if "phone" in payload:
+        member_user.phone = payload.pop("phone") or None
+
+    if "insurance" in payload:
+        insurance = payload.pop("insurance")
+        profile.insurance_provider = insurance
+        profile.insurance_company = insurance
+
+    # Remaining keys map 1:1 to MemberProfile columns (preferred_name,
+    # date_of_birth, gender, medi_cal_id, address_line1/2, city, state, zip_code,
+    # primary_language).
+    for field, value in payload.items():
+        setattr(profile, field, value)
+
+    await db.commit()
+    return {"member_id": str(member_id), "updated": True}
 
 
 # ─── Billable Units aggregation (per-member cap widget) ───────────────────────

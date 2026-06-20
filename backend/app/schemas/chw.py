@@ -15,6 +15,7 @@ HIPAA minimum-necessary enforcement (45 CFR §164.514(d)):
 - MapResourcePin: precise coordinates from the resource record (not PHI).
 """
 
+import re
 from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
@@ -154,6 +155,12 @@ class CHWMemberProfileDetail(BaseModel):
     city: str | None
     zip_code: str | None
     mco: str | None
+    # Raw address parts for the CHW demographics edit modal — the joined
+    # `address` / `city` above are display-only. Default None (additive/safe).
+    address_line1: str | None = None
+    address_line2: str | None = None
+    city_name: str | None = None
+    state: str | None = None
     ecm_eligible: bool
     primary_categories: list[str]
     billing_units: BillingUnitsView
@@ -198,6 +205,74 @@ class PreferredNameResponse(BaseModel):
     """Response body for the preferred-name GET/PATCH endpoints."""
 
     preferred_name: str | None = None
+
+
+# CIN format: 8 digits + 1 letter (e.g. 12345678A). Mirrors the signup +
+# member-self-edit validators so CHW edits enforce the same billable format.
+_DEMO_CIN_PATTERN = re.compile(r"^\d{8}[A-Z]$")
+_DEMO_GENDER_VALUES = {"Male", "Female", "Other"}
+
+
+class MemberDemographicsUpdate(BaseModel):
+    """Request body for PATCH /api/v1/chw/members/{member_id}/demographics.
+
+    CHW-editable demographics from the Member Profile pencil. Every field is
+    optional so a partial update only touches what changed. first_name/last_name
+    combine into User.name; phone updates User.phone; the rest live on
+    MemberProfile. ``insurance`` writes both the displayed (insurance_provider)
+    and billing (insurance_company) fields so they stay in sync.
+    """
+
+    first_name: str | None = Field(default=None, max_length=120)
+    last_name: str | None = Field(default=None, max_length=120)
+    preferred_name: str | None = Field(default=None, max_length=100)
+    date_of_birth: date | None = None
+    gender: str | None = None
+    insurance: str | None = Field(default=None, max_length=120)
+    medi_cal_id: str | None = None
+    address_line1: str | None = Field(default=None, max_length=160)
+    address_line2: str | None = Field(default=None, max_length=160)
+    city: str | None = Field(default=None, max_length=80)
+    state: str | None = None
+    zip_code: str | None = Field(default=None, max_length=10)
+    phone: str | None = Field(default=None, max_length=20)
+    primary_language: str | None = Field(default=None, max_length=50)
+
+    @field_validator("medi_cal_id")
+    @classmethod
+    def _normalize_cin(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cin = value.strip().upper()
+        if not cin:
+            return None
+        if not _DEMO_CIN_PATTERN.match(cin):
+            raise ValueError("CIN must be 8 digits followed by 1 letter (e.g. 12345678A)")
+        return cin
+
+    @field_validator("gender")
+    @classmethod
+    def _validate_gender(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        v = value.strip().title()
+        if not v:
+            return None
+        if v not in _DEMO_GENDER_VALUES:
+            raise ValueError(f"gender must be one of {sorted(_DEMO_GENDER_VALUES)}")
+        return v
+
+    @field_validator("state")
+    @classmethod
+    def _normalize_state(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        v = value.strip().upper()
+        if not v:
+            return None
+        if len(v) != 2 or not v.isalpha():
+            raise ValueError("state must be a 2-letter USPS code (e.g. CA)")
+        return v
 
 
 # ─── Members Roster ───────────────────────────────────────────────────────────
