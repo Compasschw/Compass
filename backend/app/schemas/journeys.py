@@ -156,21 +156,33 @@ class CreateCustomJourneyRequest(BaseModel):
 
 class JourneyNodeUpsert(BaseModel):
     """Body for adding (POST .../nodes) or editing (PATCH .../nodes/{id}) a node
-    on a custom journey. Both fields optional; on add, a blank node is created."""
+    on a custom journey. Both fields optional; on add, a blank node is created.
+
+    Positional insert fields (add only):
+      ``position`` and ``relative_to_step_id`` must be supplied together.
+      When provided the new node is inserted before/after the referenced step
+      rather than appended at the end.
+    """
 
     name: str | None = Field(default=None, max_length=255)
     description: str | None = Field(default=None, max_length=2000)
+    position: Literal["before", "after"] | None = None
+    relative_to_step_id: uuid.UUID | None = None
 
 
 class UpdateStepStatusRequest(BaseModel):
     """Body for PATCH /journeys/{member_journey_id}/steps/{step_id}.
 
-    CHW can mark a step in_progress, completed, or missed.
+    CHW can mark a step upcoming, in_progress, completed, or missed.
+    Setting status to 'upcoming' or 'in_progress' on a step that is already
+    'completed' (and the journey is 'completed') triggers a reversal: awarded
+    points are clawed back via a negative ledger entry and the journey is
+    reopened to 'active'.
     Optional notes are stored on the MemberJourneyStepState row (CHW-only,
     not surfaced to the member in the default response).
     """
 
-    status: Literal["in_progress", "completed", "missed"]
+    status: Literal["upcoming", "in_progress", "completed", "missed"]
     notes: str | None = None
 
 

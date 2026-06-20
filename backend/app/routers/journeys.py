@@ -24,7 +24,7 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -696,42 +696,121 @@ async def add_journey_node(
     current_user=Depends(require_role("chw")),
     db: AsyncSession = Depends(get_db),
 ) -> MemberJourneyResponse:
-    """Append a node to a custom journey (worth 5 points; 10 if it is the first).
+    """Add a node to a custom journey.
 
-    Adds a JourneyTemplateStep to the private template + an 'upcoming'
-    MemberJourneyStepState so the new node renders on the roadmap.
+    Default (append) mode:
+      Appends a new node at the end of the journey (worth 10 points for the
+      first node, 5 for every subsequent node).
+
+    Positional insert mode:
+      When ``position`` and ``relative_to_step_id`` are both provided, the new
+      node is inserted before or after the referenced step. All existing steps at
+      or after the insert point have their ``order`` incremented by 1. The new
+      node is always worth 5 points in positional mode (it is never the first).
+
+    Both ``position`` and ``relative_to_step_id`` must be supplied together;
+    providing only one raises HTTP 400.
     """
     member_journey, template = await _load_custom_journey_for_chw(
         member_journey_id, current_user, db
     )
 
-    max_order = (
+    # ── Validate positional-insert field pairing ────────────────────────────────
+    position_provided = body.position is not None
+    ref_step_provided = body.relative_to_step_id is not None
+
+    if position_provided != ref_step_provided:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Both 'position' and 'relative_to_step_id' must be provided together.",
+        )
+
+    if position_provided and ref_step_provided:
+        # ── Positional insert branch ────────────────────────────────────────────
+        #
+        # 1. Validate relative_to_step_id belongs to this journey's template.
+        # 2. Determine insert_point from target step's order.
+        # 3. Shift all steps at or after insert_point up by 1.
+        # 4. Insert new step at insert_point (always 5 points).
+        # 5. Create MemberJourneyStepState with status='upcoming'.
+
+        target_step_result = await db.execute(
+            select(JourneyTemplateStep)
+            .where(JourneyTemplateStep.id == body.relative_to_step_id)
+            .where(JourneyTemplateStep.template_id == template.id)
+        )
+        target_step = target_step_result.scalar_one_or_none()
+        if target_step is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="relative_to_step_id does not belong to this journey.",
+            )
+
+        insert_point: int = (
+            target_step.order if body.position == "before" else target_step.order + 1
+        )
+
+        # Shift existing steps whose order >= insert_point to make room.
         await db.execute(
-            select(func.coalesce(func.max(JourneyTemplateStep.order), 0)).where(
-                JourneyTemplateStep.template_id == template.id
+            update(JourneyTemplateStep)
+            .where(JourneyTemplateStep.template_id == template.id)
+            .where(JourneyTemplateStep.order >= insert_point)
+            .values(order=JourneyTemplateStep.order + 1)
+        )
+        # Flush the shift before inserting so the new step's order doesn't collide.
+        await db.flush()
+
+        step = JourneyTemplateStep(
+            id=uuid.uuid4(),
+            template_id=template.id,
+            order=insert_point,
+            name=(body.name or "").strip(),
+            description=(body.description or "").strip(),
+            points_on_completion=5,
+        )
+        db.add(step)
+        await db.flush()
+
+        db.add(
+            MemberJourneyStepState(
+                id=uuid.uuid4(),
+                member_journey_id=member_journey.id,
+                template_step_id=step.id,
+                status="upcoming",
             )
         )
-    ).scalar() or 0
-    points = await _next_node_points(template.id, db)
 
-    step = JourneyTemplateStep(
-        id=uuid.uuid4(),
-        template_id=template.id,
-        order=max_order + 1,
-        name=(body.name or "").strip(),
-        description=(body.description or "").strip(),
-        points_on_completion=points,
-    )
-    db.add(step)
-    await db.flush()
-    db.add(
-        MemberJourneyStepState(
+    else:
+        # ── Append (default) branch ─────────────────────────────────────────────
+        max_order = (
+            await db.execute(
+                select(func.coalesce(func.max(JourneyTemplateStep.order), 0)).where(
+                    JourneyTemplateStep.template_id == template.id
+                )
+            )
+        ).scalar() or 0
+        points = await _next_node_points(template.id, db)
+
+        step = JourneyTemplateStep(
             id=uuid.uuid4(),
-            member_journey_id=member_journey.id,
-            template_step_id=step.id,
-            status="upcoming",
+            template_id=template.id,
+            order=max_order + 1,
+            name=(body.name or "").strip(),
+            description=(body.description or "").strip(),
+            points_on_completion=points,
         )
-    )
+        db.add(step)
+        await db.flush()
+
+        db.add(
+            MemberJourneyStepState(
+                id=uuid.uuid4(),
+                member_journey_id=member_journey.id,
+                template_step_id=step.id,
+                status="upcoming",
+            )
+        )
+
     await db.commit()
     await db.refresh(member_journey)
     return await _build_member_journey_response(member_journey, db)
@@ -797,6 +876,12 @@ async def update_step_status(
         and clears current_step_id.
       - Sets the next step's state to 'in_progress'.
 
+    Reversal (status='upcoming' or 'in_progress' on a completed journey):
+      - Only permitted when the target step itself is currently 'completed'.
+      - Writes a negative WellnessPointsLedger entry (reason='correction') to
+        claw back the awarded points, resets the step state, and reopens the
+        journey (status='active').
+
     Authorization: the CHW must be the assigned chw_id on the MemberJourney.
     Returns 403 if another CHW attempts to modify this journey.
     """
@@ -815,13 +900,8 @@ async def update_step_status(
             detail="You are not the assigned CHW for this journey.",
         )
 
-    if member_journey.status not in ("active", "paused"):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Cannot update steps on a journey with status '{member_journey.status}'.",
-        )
-
-    # Load the specific step state.
+    # Load the specific step state BEFORE the reversal guard so the guard can
+    # inspect the step's current status.
     state_result = await db.execute(
         select(MemberJourneyStepState)
         .where(MemberJourneyStepState.member_journey_id == member_journey_id)
@@ -834,36 +914,103 @@ async def update_step_status(
             detail="Step not found on this journey.",
         )
 
+    # Allow reversal of a completed journey (un-completing a step reopens it).
+    # Reversal is only possible when:
+    #   - the target status is 'upcoming' or 'in_progress', AND
+    #   - the journey is 'completed', AND
+    #   - the specific step itself is 'completed'.
+    # The step-status guard prevents bypassing this check on a non-completed step
+    # while the journey happens to be completed via other steps.
+    # All other modifications require the journey to be in an editable state.
+    is_reversal_attempt = (
+        body.status in ("upcoming", "in_progress")
+        and member_journey.status == "completed"
+        and step_state.status == "completed"
+    )
+    if not is_reversal_attempt and member_journey.status not in ("active", "paused"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cannot update steps on a journey with status '{member_journey.status}'.",
+        )
+
     now = datetime.now(UTC)
     old_status = step_state.status
 
-    # Apply the status update.
-    step_state.status = body.status
-    if body.notes is not None:
-        step_state.notes = body.notes
-    if body.status == "in_progress" and step_state.started_at is None:
-        step_state.started_at = now
+    # ── Transition matrix ──────────────────────────────────────────────────────
+    #
+    # completed → completed        : no-op (idempotent — don't double-award).
+    # completed → upcoming|in_prog : reversal — write negative ledger entry,
+    #                                 reset state, reopen journey if needed.
+    # any → completed (not already): award points + ledger, advance current_step.
+    # any → in_progress            : set started_at if None. No ledger.
+    # any → upcoming (non-completed): no ledger action.
+    # ---------------------------------------------------------------------------
 
-    if body.status == "completed" and old_status != "completed":
+    if body.status == "completed" and old_status == "completed":
+        # Idempotent no-op — don't re-award points.
+        pass
+
+    elif old_status == "completed" and body.status in ("upcoming", "in_progress"):
+        # Reversal: un-complete a previously completed step.
+        step_state.status = body.status
+        step_state.completed_at = None
+
+        if body.notes is not None:
+            step_state.notes = body.notes
+
+        if body.status == "in_progress" and step_state.started_at is None:
+            step_state.started_at = now
+
+        # Write a negative ledger entry only if points were actually awarded.
+        if step_state.points_awarded != 0:
+            reversal_entry = WellnessPointsLedger(
+                id=uuid.uuid4(),
+                member_id=member_journey.member_id,
+                points=-step_state.points_awarded,
+                reason="correction",
+                related_id=step_state.id,
+            )
+            db.add(reversal_entry)
+
+        step_state.points_awarded = 0
+
+        # Reopen the journey if it was marked completed.
+        if member_journey.status == "completed":
+            member_journey.status = "active"
+            member_journey.completed_at = None
+            member_journey.current_step_id = step_state.template_step_id
+
+    elif body.status == "completed" and old_status != "completed":
+        # Award points and advance the journey.
+        step_state.status = "completed"
         step_state.completed_at = now
+        if step_state.started_at is None:
+            step_state.started_at = now
+
+        if body.notes is not None:
+            step_state.notes = body.notes
 
         # Load the template step to get points_on_completion.
         tpl_step_result = await db.execute(
             select(JourneyTemplateStep).where(JourneyTemplateStep.id == step_id)
         )
         tpl_step = tpl_step_result.scalar_one_or_none()
-        if tpl_step is not None:
-            step_state.points_awarded = tpl_step.points_on_completion
-
-            # Write append-only ledger entry.
-            ledger_entry = WellnessPointsLedger(
-                id=uuid.uuid4(),
-                member_id=member_journey.member_id,
-                points=tpl_step.points_on_completion,
-                reason="journey_step_completed",
-                related_id=step_state.id,
+        if tpl_step is None:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Journey template step configuration is missing; cannot complete step.",
             )
-            db.add(ledger_entry)
+        step_state.points_awarded = tpl_step.points_on_completion
+
+        # Write append-only ledger entry.
+        ledger_entry = WellnessPointsLedger(
+            id=uuid.uuid4(),
+            member_id=member_journey.member_id,
+            points=tpl_step.points_on_completion,
+            reason="journey_step_completed",
+            related_id=step_state.id,
+        )
+        db.add(ledger_entry)
 
         # Advance current_step_id to the next step in template order.
         all_states_result = await db.execute(
@@ -884,7 +1031,13 @@ async def update_step_status(
                 completed_index = idx
                 break
 
-        if completed_index is not None and completed_index + 1 < len(all_rows):
+        if completed_index is None:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Journey step state is inconsistent; cannot advance journey.",
+            )
+
+        if completed_index + 1 < len(all_rows):
             next_state, next_tpl_step = all_rows[completed_index + 1]
             member_journey.current_step_id = next_tpl_step.id
             # Advance the next step to in_progress if it is still upcoming.
@@ -897,6 +1050,19 @@ async def update_step_status(
             member_journey.completed_at = now
             member_journey.current_step_id = None
 
+    else:
+        # any → in_progress or any → upcoming (non-reversal paths).
+        step_state.status = body.status
+
+        if body.notes is not None:
+            step_state.notes = body.notes
+
+        if body.status == "in_progress" and step_state.started_at is None:
+            step_state.started_at = now
+
+    # ── Persist and return ────────────────────────────────────────────────────
+    # progress_percent is computed dynamically by _build_member_journey_response
+    # from the current step states — no column update needed.
     await db.commit()
     await db.refresh(member_journey)
 

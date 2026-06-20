@@ -2930,6 +2930,75 @@ export function useUpdateJourneyStep() {
   });
 }
 
+/** Body for PATCH /journeys/{journeyId}/steps/{stepId} — member-journey node editor. */
+export interface UpdateStepStatusPayload {
+  journeyId: string;
+  stepId: string;
+  status: 'upcoming' | 'in_progress' | 'completed' | 'missed';
+  notes?: string;
+}
+
+/**
+ * PATCH a step's status for a specific member's journey, with optimistic update.
+ *
+ * Differs from `useUpdateJourneyStep` in two ways:
+ * 1. Accepts `memberId` to scope `memberJourneysKey` invalidation (which the
+ *    CHW-facing hook omits).
+ * 2. Applies an optimistic cache update so the Node Editor UI reflects the new
+ *    status immediately, with rollback on error.
+ *
+ * On success invalidates chwJourneyDetailKey, memberJourneysKey, and
+ * memberRewardsBalanceKey so all three cache slices stay consistent.
+ */
+export function useUpdateJourneyStepStatus(memberId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: UpdateStepStatusPayload): Promise<MemberJourneyResponse> => {
+      const { journeyId, stepId, status, notes } = payload;
+      const raw = await api<unknown>(`/journeys/${journeyId}/steps/${stepId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status, ...(notes != null ? { notes } : {}) }),
+      });
+      return transformKeys<MemberJourneyResponse>(raw);
+    },
+    onMutate: async (payload) => {
+      // Cancel in-flight fetches for this key so they don't overwrite our optimistic update.
+      await qc.cancelQueries({ queryKey: memberJourneysKey(memberId) });
+      // Snapshot the current value for rollback.
+      const previous = qc.getQueryData(memberJourneysKey(memberId));
+      // Apply optimistic update: patch the matching step's status in the cache.
+      qc.setQueryData(
+        memberJourneysKey(memberId),
+        (old: MemberJourneyResponse[] | undefined) => {
+          if (old == null) return old;
+          return old.map((journey) => {
+            if (journey.id !== payload.journeyId) return journey;
+            return {
+              ...journey,
+              steps: journey.steps.map((step) => {
+                if (step.templateStepId !== payload.stepId) return step;
+                return { ...step, status: payload.status };
+              }),
+            };
+          });
+        },
+      );
+      return { previous };
+    },
+    onError: (_err, _payload, context) => {
+      // Rollback the optimistic update on mutation failure.
+      if (context?.previous !== undefined) {
+        qc.setQueryData(memberJourneysKey(memberId), context.previous);
+      }
+    },
+    onSuccess: (updated) => {
+      void qc.invalidateQueries({ queryKey: chwJourneyDetailKey(updated.id) });
+      void qc.invalidateQueries({ queryKey: memberJourneysKey(memberId) });
+      void qc.invalidateQueries({ queryKey: memberRewardsBalanceKey(memberId) });
+    },
+  });
+}
+
 /**
  * CHW members roster from GET /chw/members.
  *
@@ -3102,10 +3171,20 @@ export function useAddJourneyNode(memberId: string) {
       journeyId: string;
       name?: string;
       description?: string;
+      /** When provided, inserts the node relative to an existing step rather than appending. */
+      insertOptions?: { position: 'before' | 'after'; relativeToStepId: string };
     }): Promise<MemberJourneyResponse> => {
+      const body: Record<string, unknown> = {
+        name: vars.name ?? null,
+        description: vars.description ?? null,
+      };
+      if (vars.insertOptions != null) {
+        body.position = vars.insertOptions.position;
+        body.relative_to_step_id = vars.insertOptions.relativeToStepId;
+      }
       const raw = await api<unknown>(`/journeys/${vars.journeyId}/nodes`, {
         method: 'POST',
-        body: JSON.stringify({ name: vars.name ?? null, description: vars.description ?? null }),
+        body: JSON.stringify(body),
       });
       return transformKeys<MemberJourneyResponse>(raw);
     },

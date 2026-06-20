@@ -129,6 +129,7 @@ import {
   useAddJourneyNode,
   useUpdateJourneyNode,
   useUpdateJourneyStep,
+  useUpdateJourneyStepStatus,
   type CreateMemberJourneyPayload,
   type JourneyTemplateResponse,
   type ServicesConsentValue,
@@ -3506,6 +3507,12 @@ interface EditJourneyNodeModalProps {
   initialName: string;
   /** Current step description. */
   initialDescription: string;
+  /** Current step status — drives the tri-state segmented control. */
+  stepStatus: string;
+  /** Whether this journey was built with the custom-journey creator. */
+  isCustomJourney: boolean;
+  /** Called when the CHW taps Add Left or Add Right. */
+  onAddNode: (position: 'before' | 'after') => void;
   onClose: () => void;
 }
 
@@ -3522,13 +3529,22 @@ function EditJourneyNodeModal({
   stepId,
   initialName,
   initialDescription,
+  stepStatus,
+  isCustomJourney,
+  onAddNode,
   onClose,
 }: EditJourneyNodeModalProps): React.JSX.Element {
   const updateNode = useUpdateJourneyNode(memberId);
+  const updateStepStatus = useUpdateJourneyStepStatus(memberId);
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [error, setError] = useState<string | null>(null);
+  // Local optimistic status state — initialized to a safe default; hydrated by the
+  // useEffect below whenever the modal opens. Do not compute from props here: if the
+  // modal is ever switched to a visibility-prop pattern (no unmount), the useState
+  // initializer would be stale while the effect correctly re-hydrates.
+  const [selectedStatus, setSelectedStatus] = useState<'upcoming' | 'in_progress' | 'completed'>('upcoming');
 
   // Hydrate from props whenever the modal opens.
   useEffect(() => {
@@ -3536,8 +3552,11 @@ function EditJourneyNodeModal({
       setName(initialName);
       setDescription(initialDescription);
       setError(null);
+      setSelectedStatus(
+        stepStatus === 'completed' ? 'completed' : stepStatus === 'in_progress' ? 'in_progress' : 'upcoming',
+      );
     }
-  }, [visible, initialName, initialDescription]);
+  }, [visible, initialName, initialDescription, stepStatus]);
 
   // Esc key closes on web.
   useEffect(() => {
@@ -3571,6 +3590,26 @@ function EditJourneyNodeModal({
     }
   }, [name, description, journeyId, stepId, updateNode, onClose]);
 
+  // Segmented status control handler — optimistic update with rollback.
+  const handleStatusChange = useCallback(
+    (newStatus: 'upcoming' | 'in_progress' | 'completed'): void => {
+      const previousStatus = selectedStatus;
+      setSelectedStatus(newStatus);
+      updateStepStatus.mutate(
+        { journeyId, stepId, status: newStatus },
+        {
+          onError: () => {
+            setSelectedStatus(previousStatus);
+            setError('Could not update status. Please try again.');
+          },
+        },
+      );
+    },
+    [selectedStatus, journeyId, stepId, updateStepStatus],
+  );
+
+  const isMissed = stepStatus === 'missed';
+
   const body = (
     <View style={editNodeStyles.container}>
       {/* Header */}
@@ -3586,73 +3625,166 @@ function EditJourneyNodeModal({
         </TouchableOpacity>
       </View>
 
-      {/* Fields */}
+      {/* Body */}
       <View style={editNodeStyles.body}>
-        <Text style={editNodeStyles.fieldLabel}>Step name</Text>
-        <TextInput
-          style={editNodeStyles.input}
-          value={name}
-          onChangeText={setName}
-          placeholder="e.g. Schedule Housing Appointment"
-          placeholderTextColor="#9CA3AF"
-          autoFocus
-          maxLength={200}
-          returnKeyType="next"
-          accessibilityLabel="Step name"
-          editable={!updateNode.isPending}
-        />
+        {/* Section 1 — Status segmented control */}
+        {isMissed ? (
+          <View style={editNodeStyles.missedChip}>
+            <Text style={editNodeStyles.missedChipText}>Step marked missed</Text>
+          </View>
+        ) : (
+          <View style={editNodeStyles.segmentRow}>
+            {(
+              [
+                { value: 'upcoming', label: 'Not Started' },
+                { value: 'in_progress', label: 'In Progress' },
+                { value: 'completed', label: 'Completed' },
+              ] as const
+            ).map(({ value, label }) => {
+              const isSelected = selectedStatus === value;
+              const segBg = isSelected
+                ? value === 'completed'
+                  ? '#16A34A'
+                  : value === 'in_progress'
+                    ? '#D1FAE5'
+                    : '#F3F4F6'
+                : 'transparent';
+              const segTextColor = isSelected
+                ? value === 'completed'
+                  ? '#FFFFFF'
+                  : value === 'in_progress'
+                    ? '#16A34A'
+                    : '#374151'
+                : '#9CA3AF';
+              return (
+                <TouchableOpacity
+                  key={value}
+                  style={[editNodeStyles.segment, { backgroundColor: segBg }]}
+                  onPress={() => { if (!isSelected && !updateStepStatus.isPending) handleStatusChange(value); }}
+                  disabled={updateStepStatus.isPending}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Set status to ${label}`}
+                  accessibilityState={{ selected: isSelected }}
+                >
+                  <Text style={[editNodeStyles.segmentText, { color: segTextColor }]}>{label}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        )}
 
-        <Text style={[editNodeStyles.fieldLabel, editNodeStyles.fieldLabelSpaced]}>
-          Description (optional)
-        </Text>
-        <TextInput
-          style={[editNodeStyles.input, editNodeStyles.textArea]}
-          value={description}
-          onChangeText={setDescription}
-          placeholder="What the member should do for this step…"
-          placeholderTextColor="#9CA3AF"
-          multiline
-          numberOfLines={3}
-          textAlignVertical="top"
-          maxLength={1000}
-          accessibilityLabel="Step description"
-          editable={!updateNode.isPending}
-        />
+        {/* Section 2 — Name field */}
+        {isCustomJourney ? (
+          <>
+            <Text style={editNodeStyles.fieldLabel}>Step name</Text>
+            <TextInput
+              style={editNodeStyles.input}
+              value={name}
+              onChangeText={setName}
+              placeholder="e.g. Schedule Housing Appointment"
+              placeholderTextColor="#9CA3AF"
+              autoFocus
+              maxLength={200}
+              returnKeyType="next"
+              accessibilityLabel="Step name"
+              editable={!updateNode.isPending}
+            />
+
+            <Text style={[editNodeStyles.fieldLabel, editNodeStyles.fieldLabelSpaced]}>
+              Description (optional)
+            </Text>
+            <TextInput
+              style={[editNodeStyles.input, editNodeStyles.textArea]}
+              value={description}
+              onChangeText={setDescription}
+              placeholder="What the member should do for this step…"
+              placeholderTextColor="#9CA3AF"
+              multiline
+              numberOfLines={3}
+              textAlignVertical="top"
+              maxLength={1000}
+              accessibilityLabel="Step description"
+              editable={!updateNode.isPending}
+            />
+          </>
+        ) : (
+          <Text style={editNodeStyles.standardNote}>
+            Step names are fixed for standard journeys.
+          </Text>
+        )}
 
         {error !== null && (
           <Text style={editNodeStyles.errorText} accessibilityRole="alert">
             {error}
           </Text>
         )}
+
+        {/* Section 3 — Add Left / Add Right (custom journeys only) */}
+        {isCustomJourney && (
+          <View style={editNodeStyles.addNodeRow}>
+            <TouchableOpacity
+              style={editNodeStyles.addNodeSideBtn}
+              onPress={() => { onAddNode('before'); onClose(); }}
+              accessibilityRole="button"
+              accessibilityLabel="Add step before this step"
+            >
+              <ArrowLeft size={14} color={tokens.primary} />
+              <Text style={editNodeStyles.addNodeSideBtnText}>Add Left</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={editNodeStyles.addNodeSideBtn}
+              onPress={() => { onAddNode('after'); onClose(); }}
+              accessibilityRole="button"
+              accessibilityLabel="Add step after this step"
+            >
+              <Text style={editNodeStyles.addNodeSideBtnText}>Add Right</Text>
+              <ArrowRight size={14} color={tokens.primary} />
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
 
-      {/* Footer */}
-      <View style={editNodeStyles.footer}>
-        <TouchableOpacity
-          style={editNodeStyles.cancelBtn}
-          onPress={onClose}
-          accessibilityRole="button"
-          accessibilityLabel="Cancel"
-        >
-          <Text style={editNodeStyles.cancelBtnText}>Cancel</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[
-            editNodeStyles.saveBtn,
-            updateNode.isPending && editNodeStyles.saveBtnDisabled,
-          ]}
-          onPress={() => { void handleSave(); }}
-          disabled={updateNode.isPending}
-          accessibilityRole="button"
-          accessibilityLabel="Save step"
-        >
-          {updateNode.isPending ? (
-            <ActivityIndicator size="small" color="#FFFFFF" />
-          ) : (
-            <Text style={editNodeStyles.saveBtnText}>Save</Text>
-          )}
-        </TouchableOpacity>
-      </View>
+      {/* Footer — only shown for custom journeys (name save) */}
+      {isCustomJourney && (
+        <View style={editNodeStyles.footer}>
+          <TouchableOpacity
+            style={editNodeStyles.cancelBtn}
+            onPress={onClose}
+            accessibilityRole="button"
+            accessibilityLabel="Cancel"
+          >
+            <Text style={editNodeStyles.cancelBtnText}>Cancel</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              editNodeStyles.saveBtn,
+              updateNode.isPending && editNodeStyles.saveBtnDisabled,
+            ]}
+            onPress={() => { void handleSave(); }}
+            disabled={updateNode.isPending}
+            accessibilityRole="button"
+            accessibilityLabel="Save step"
+          >
+            {updateNode.isPending ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <Text style={editNodeStyles.saveBtnText}>Save</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      )}
+      {!isCustomJourney && (
+        <View style={editNodeStyles.footer}>
+          <TouchableOpacity
+            style={editNodeStyles.cancelBtn}
+            onPress={onClose}
+            accessibilityRole="button"
+            accessibilityLabel="Close"
+          >
+            <Text style={editNodeStyles.cancelBtnText}>Close</Text>
+          </TouchableOpacity>
+        </View>
+      )}
     </View>
   );
 
@@ -3806,6 +3938,72 @@ const editNodeStyles = StyleSheet.create({
     fontFamily: 'DMSans_700Bold',
     fontSize: 13,
     color: '#FFFFFF',
+  } as TextStyle,
+  // Tri-state status segmented control
+  segmentRow: {
+    flexDirection: 'row',
+    borderRadius: 8,
+    backgroundColor: '#F9FAFB',
+    padding: 2,
+    marginBottom: 16,
+    gap: 2,
+  } as ViewStyle,
+  segment: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    borderRadius: 6,
+    minHeight: 44,
+  } as ViewStyle,
+  segmentText: {
+    fontFamily: 'DMSans_500Medium',
+    fontSize: 12,
+  } as TextStyle,
+  // Standard journey name note
+  standardNote: {
+    fontFamily: 'DMSans_400Regular',
+    fontSize: 12,
+    color: tokens.textSecondary,
+    marginBottom: 12,
+    fontStyle: 'italic',
+  } as TextStyle,
+  // Add Left / Add Right buttons
+  addNodeRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+  } as ViewStyle,
+  addNodeSideBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: tokens.primary,
+    minHeight: 44,
+  } as ViewStyle,
+  addNodeSideBtnText: {
+    fontFamily: 'DMSans_500Medium',
+    fontSize: 13,
+    color: tokens.primary,
+  } as TextStyle,
+  // Missed step chip
+  missedChip: {
+    backgroundColor: '#FEE2E2',
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginBottom: 16,
+    alignSelf: 'flex-start',
+  } as ViewStyle,
+  missedChipText: {
+    fontFamily: 'DMSans_500Medium',
+    fontSize: 12,
+    color: '#B91C1C',
   } as TextStyle,
 });
 
@@ -4640,6 +4838,7 @@ const SingleJourneyTrack = React.memo(function SingleJourneyTrack({
 
   // ── Edit-mode sub-state ──────────────────────────────────────────────────────
   const [editingStep, setEditingStep] = useState<MemberJourneyStepResponse | null>(null);
+  const [pressedStepId, setPressedStepId] = useState<string | null>(null);
   const addNode = useAddJourneyNode(memberId);
   const completeStep = useUpdateJourneyStep();
 
@@ -4669,6 +4868,25 @@ const SingleJourneyTrack = React.memo(function SingleJourneyTrack({
     );
   }, [completeStep, journey.id]);
 
+  const handleAddNodePositional = useCallback(
+    (position: 'before' | 'after', relativeStep: MemberJourneyStepResponse): void => {
+      addNode.mutate(
+        {
+          journeyId: journey.id,
+          insertOptions: { position, relativeToStepId: relativeStep.templateStepId },
+        },
+        {
+          onError: () => {
+            const msg = 'Could not add node. Please try again.';
+            if (Platform.OS === 'web' && typeof window !== 'undefined') window.alert(msg);
+            else Alert.alert('Error', msg);
+          },
+        },
+      );
+    },
+    [addNode, journey.id],
+  );
+
   return (
     <View style={trackStyles.container}>
       {/* Header row */}
@@ -4691,20 +4909,36 @@ const SingleJourneyTrack = React.memo(function SingleJourneyTrack({
       </View>
 
       {/* Step layout by viewport */}
-      {editMode && isCustom ? (
-        // Edit mode: always render the vertical list so each node is tappable
+      {editMode ? (
+        // Edit mode: always render the vertical list so each node is tappable (custom and standard)
         <View style={trackStyles.editNodeList}>
           {journey.steps.map((step) => {
             const isCompleted = step.status === 'completed';
             const isInProgress = step.status === 'in_progress';
-            const isCurrentIncomplete = (isInProgress || step.status === 'upcoming') && !isCompleted;
             const hasName = step.stepName.trim().length > 0;
+            const isPressed = pressedStepId === step.id;
 
             const dotBg = isCompleted ? '#16A34A' : isInProgress ? '#16A34A' : '#E5E7EB';
             const dotBorderColor = isInProgress ? '#34D399' : 'transparent';
 
             return (
-              <View key={step.id} style={trackStyles.editNodeRow}>
+              <Pressable
+                key={step.id}
+                style={[
+                  trackStyles.editNodeRow,
+                  isPressed && {
+                    transform: [{ scale: 0.97 }],
+                    borderWidth: 2,
+                    borderColor: tokens.primary,
+                    borderRadius: 8,
+                  },
+                ]}
+                onPress={() => setEditingStep(step)}
+                onPressIn={() => setPressedStepId(step.id)}
+                onPressOut={() => setPressedStepId(null)}
+                accessibilityRole="button"
+                accessibilityLabel={`Edit step: ${step.stepName || 'Untitled step'}`}
+              >
                 {/* Step dot */}
                 <View
                   style={[
@@ -4736,59 +4970,40 @@ const SingleJourneyTrack = React.memo(function SingleJourneyTrack({
                   <Text style={trackStyles.editNodePts}>+{step.pointsOnCompletion} pts</Text>
                 </View>
 
-                {/* Action buttons */}
+                {/* Status indicator dot (right side) */}
                 <View style={trackStyles.editNodeActions}>
-                  {/* Edit pencil — opens EditJourneyNodeModal */}
-                  {!isCompleted && (
-                    <TouchableOpacity
-                      style={trackStyles.editNodeActionBtn}
-                      onPress={() => setEditingStep(step)}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Edit step: ${step.stepName || 'Untitled step'}`}
-                      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                    >
-                      <Edit2 size={13} color={tokens.textMuted} />
-                    </TouchableOpacity>
-                  )}
-                  {/* Mark complete — only on the current incomplete node */}
-                  {isCurrentIncomplete && (
-                    <TouchableOpacity
-                      style={[trackStyles.editNodeActionBtn, trackStyles.completeNodeBtn]}
-                      onPress={() => handleCompleteStep(step)}
-                      disabled={completeStep.isPending}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Mark "${step.stepName || 'step'}" completed`}
-                      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                    >
-                      {completeStep.isPending ? (
-                        <ActivityIndicator size="small" color={tokens.primary} />
-                      ) : (
-                        <Check size={13} color={tokens.primary} strokeWidth={2.5} />
-                      )}
-                    </TouchableOpacity>
-                  )}
+                  <View
+                    style={[
+                      trackStyles.editNodeActionBtn,
+                      { backgroundColor: '#F9FAFB' },
+                    ]}
+                  >
+                    <Edit2 size={13} color={tokens.textMuted} />
+                  </View>
                 </View>
-              </View>
+              </Pressable>
             );
           })}
 
-          {/* Add node button */}
-          <TouchableOpacity
-            style={trackStyles.addNodeBtn}
-            onPress={handleAddNode}
-            disabled={addNode.isPending}
-            accessibilityRole="button"
-            accessibilityLabel="Add a new step to this journey"
-          >
-            {addNode.isPending ? (
-              <ActivityIndicator size="small" color={tokens.primary} />
-            ) : (
-              <>
-                <Plus size={13} color={tokens.primary} />
-                <Text style={trackStyles.addNodeBtnText}>Add step</Text>
-              </>
-            )}
-          </TouchableOpacity>
+          {/* Add step at bottom — custom journeys only */}
+          {isCustom && (
+            <TouchableOpacity
+              style={trackStyles.addNodeBtn}
+              onPress={handleAddNode}
+              disabled={addNode.isPending}
+              accessibilityRole="button"
+              accessibilityLabel="Add a new step to this journey"
+            >
+              {addNode.isPending ? (
+                <ActivityIndicator size="small" color={tokens.primary} />
+              ) : (
+                <>
+                  <Plus size={13} color={tokens.primary} />
+                  <Text style={trackStyles.addNodeBtnText}>Add step</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          )}
         </View>
       ) : isNarrow ? (
         <View style={trackStyles.verticalList}>
@@ -4831,6 +5046,12 @@ const SingleJourneyTrack = React.memo(function SingleJourneyTrack({
           stepId={editingStep.templateStepId}
           initialName={editingStep.stepName}
           initialDescription={editingStep.stepDescription}
+          stepStatus={editingStep.status}
+          isCustomJourney={isCustom}
+          onAddNode={(position) => {
+            handleAddNodePositional(position, editingStep);
+            setEditingStep(null);
+          }}
           onClose={() => setEditingStep(null)}
         />
       )}
@@ -4901,6 +5122,7 @@ const trackStyles = StyleSheet.create({
     alignItems: 'flex-start',
     gap: 10,
     paddingVertical: 8,
+    minHeight: 44,  // WCAG 44×44 minimum touch target
     borderBottomWidth: 1,
     borderBottomColor: '#F9FAFB',
   } as ViewStyle,
