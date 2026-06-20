@@ -1,16 +1,16 @@
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Literal
 from uuid import NAMESPACE_URL, UUID, uuid5
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.security import HTTPBearer
 from sqlalchemy import any_, case, extract, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies import require_role
-from app.schemas.billing import EarningsSummary
+from app.schemas.billing import EarningsSummary, PayoutItem, SessionEarningItem
 from app.schemas.chw import (
     ActiveJourneyInfo,
     CHWMapDataResponse,
@@ -180,58 +180,99 @@ async def browse_chws(
         for profile, name in rows
     ]
 
+# Earnings-page period selector. "custom" is reserved for a future date-range.
+EarningsPeriod = Literal["this_month", "last_month"]
+
+
+def _period_year_month(period: str, now: datetime) -> tuple[int, int]:
+    """Resolve a period selector to a (year, month) pair. Defaults to this month."""
+    if period == "last_month":
+        first_of_this_month = now.replace(day=1)
+        last_month = first_of_this_month - timedelta(days=1)
+        return last_month.year, last_month.month
+    return now.year, now.month
+
+
+def _next_friday(now: datetime) -> date:
+    """Next Friday (CompassCHW pays out weekly on Fridays). Today, if a Friday,
+    rolls to the following Friday so a stale 'paid today' is never shown."""
+    days_ahead = (4 - now.weekday()) % 7  # Mon=0 … Fri=4
+    if days_ahead == 0:
+        days_ahead = 7
+    return (now + timedelta(days=days_ahead)).date()
+
+
+def _claim_paid_clause():
+    """A claim has reached the CHW once the transfer settled (paid_to_chw_at) or
+    its status is 'paid'."""
+    from app.models.billing import BillingClaim
+
+    return (BillingClaim.paid_to_chw_at.isnot(None)) | (BillingClaim.status == "paid")
+
+
 @router.get("/earnings", response_model=EarningsSummary)
-async def get_earnings(current_user=Depends(require_role("chw")), db: AsyncSession = Depends(get_db)):
+async def get_earnings(
+    period: EarningsPeriod = Query(default="this_month"),
+    current_user=Depends(require_role("chw")),
+    db: AsyncSession = Depends(get_db),
+):
     from app.models.billing import BillingClaim
     from app.models.session import Session
     from app.models.user import CHWProfile
 
     now = datetime.now(UTC)
+    year, month = _period_year_month(period, now)
 
-    # This month's earnings
-    month_result = await db.execute(
-        select(func.coalesce(func.sum(BillingClaim.net_payout), 0))
-        .where(BillingClaim.chw_id == current_user.id)
-        .where(extract("month", BillingClaim.created_at) == now.month)
-        .where(extract("year", BillingClaim.created_at) == now.year)
+    async def _sum(*clauses) -> float:
+        stmt = select(func.coalesce(func.sum(BillingClaim.net_payout), 0)).where(
+            BillingClaim.chw_id == current_user.id, *clauses
+        )
+        return float((await db.execute(stmt)).scalar())  # type: ignore[arg-type]
+
+    # Earnings booked in the selected period (claim created in that month).
+    earnings_this_period = await _sum(
+        extract("month", BillingClaim.created_at) == month,
+        extract("year", BillingClaim.created_at) == year,
     )
-    # COALESCE guarantees a non-NULL aggregate row; scalar() is Decimal here.
-    this_month = float(month_result.scalar())  # type: ignore[arg-type]
-
-    # All-time earnings
-    all_time_result = await db.execute(
-        select(func.coalesce(func.sum(BillingClaim.net_payout), 0))
-        .where(BillingClaim.chw_id == current_user.id)
+    # "This month" field kept for backward compat with existing dashboard callers.
+    this_month = (
+        earnings_this_period
+        if period == "this_month"
+        else await _sum(
+            extract("month", BillingClaim.created_at) == now.month,
+            extract("year", BillingClaim.created_at) == now.year,
+        )
     )
-    # COALESCE guarantees a non-NULL aggregate row; scalar() is Decimal here.
-    all_time = float(all_time_result.scalar())  # type: ignore[arg-type]
-
-    # Pending payout (claims with status 'pending')
-    pending_result = await db.execute(
-        select(func.coalesce(func.sum(BillingClaim.net_payout), 0))
-        .where(BillingClaim.chw_id == current_user.id)
-        .where(BillingClaim.status == "pending")
+    all_time = await _sum()
+    # Paid out in the selected period (transfer settled that month).
+    paid_this_period = await _sum(
+        _claim_paid_clause(),
+        extract("month", BillingClaim.paid_to_chw_at) == month,
+        extract("year", BillingClaim.paid_to_chw_at) == year,
     )
-    # COALESCE guarantees a non-NULL aggregate row; scalar() is Decimal here.
-    pending_payout = float(pending_result.scalar())  # type: ignore[arg-type]
+    # Pending payout = ALL outstanding (not period-scoped): what's owed to the CHW.
+    pending_payout = await _sum(~_claim_paid_clause())
 
-    # Sessions this week (completed sessions in the last 7 days)
-    from datetime import timedelta
+    # Sessions this week (completed sessions in the last 7 days) — legacy field.
     week_ago = now - timedelta(days=7)
-    sessions_result = await db.execute(
-        select(func.count())
-        .select_from(Session)
-        .where(Session.chw_id == current_user.id)
-        .where(Session.status == "completed")
-        .where(Session.ended_at >= week_ago)
-    )
-    sessions_this_week = sessions_result.scalar() or 0
+    sessions_this_week = (
+        await db.execute(
+            select(func.count())
+            .select_from(Session)
+            .where(Session.chw_id == current_user.id)
+            .where(Session.status == "completed")
+            .where(Session.ended_at >= week_ago)
+        )
+    ).scalar() or 0
 
-    # CHW rating
-    profile_result = await db.execute(
-        select(CHWProfile.rating).where(CHWProfile.user_id == current_user.id)
+    avg_rating = float(
+        (
+            await db.execute(
+                select(CHWProfile.rating).where(CHWProfile.user_id == current_user.id)
+            )
+        ).scalar()
+        or 0
     )
-    avg_rating = float(profile_result.scalar() or 0)
 
     return EarningsSummary(
         this_month=this_month,
@@ -239,7 +280,125 @@ async def get_earnings(current_user=Depends(require_role("chw")), db: AsyncSessi
         avg_rating=avg_rating,
         sessions_this_week=sessions_this_week,
         pending_payout=pending_payout,
+        earnings_this_period=earnings_this_period,
+        paid_this_period=paid_this_period,
+        pending_in_transit=pending_payout > 0,
+        next_payout_date=_next_friday(now) if pending_payout > 0 else None,
     )
+
+
+@router.get("/earnings/sessions", response_model=list[SessionEarningItem])
+async def list_earning_sessions(
+    period: EarningsPeriod = Query(default="this_month"),
+    limit: int = Query(default=50, ge=1, le=200),
+    current_user=Depends(require_role("chw")),
+    db: AsyncSession = Depends(get_db),
+) -> list[SessionEarningItem]:
+    """Completed-session earnings for the Sessions Completed table.
+
+    One row per billable claim: service date, member name, units, net amount, and
+    a simple Paid/Pending payment status. Scoped to the selected period by the
+    claim's service date (falls back to created_at when service_date is null).
+    """
+    from app.models.billing import BillingClaim
+    from app.models.session import Session
+    from app.models.user import User
+
+    now = datetime.now(UTC)
+    year, month = _period_year_month(period, now)
+
+    paid_case = case((_claim_paid_clause(), "paid"), else_="pending")
+    rows = (
+        await db.execute(
+            select(
+                BillingClaim.session_id,
+                func.coalesce(BillingClaim.service_date, func.date(BillingClaim.created_at)).label("svc_date"),
+                User.name.label("member_name"),
+                Session.mode.label("session_mode"),
+                BillingClaim.units,
+                BillingClaim.net_payout,
+                paid_case.label("payment_status"),
+            )
+            .join(Session, Session.id == BillingClaim.session_id)
+            .join(User, User.id == BillingClaim.member_id)
+            .where(BillingClaim.chw_id == current_user.id)
+            .where(
+                extract(
+                    "month", func.coalesce(BillingClaim.service_date, BillingClaim.created_at)
+                )
+                == month
+            )
+            .where(
+                extract(
+                    "year", func.coalesce(BillingClaim.service_date, BillingClaim.created_at)
+                )
+                == year
+            )
+            .order_by(func.coalesce(BillingClaim.service_date, func.date(BillingClaim.created_at)).desc())
+            .limit(limit)
+        )
+    ).all()
+
+    return [
+        SessionEarningItem(
+            session_id=r.session_id,
+            service_date=r.svc_date,
+            member_name=r.member_name or "Member",
+            session_mode=r.session_mode or "in_person",
+            units=int(r.units),
+            amount_earned=float(r.net_payout),
+            payment_status=r.payment_status,
+        )
+        for r in rows
+    ]
+
+
+@router.get("/payouts", response_model=list[PayoutItem])
+async def list_payouts(
+    period: EarningsPeriod = Query(default="this_month"),
+    limit: int = Query(default=50, ge=1, le=200),
+    current_user=Depends(require_role("chw")),
+    db: AsyncSession = Depends(get_db),
+) -> list[PayoutItem]:
+    """Recent payouts for the Recent Payouts table.
+
+    No separate payout ledger exists today, so a payout == a paid BillingClaim:
+    the Stripe transfer that moved the CHW's net share. Scoped to the period by
+    paid_to_chw_at. ``reference`` is the Stripe transfer id; ``method`` is a
+    generic label since Stripe owns the bank details.
+    """
+    from app.models.billing import BillingClaim
+
+    now = datetime.now(UTC)
+    year, month = _period_year_month(period, now)
+
+    rows = (
+        await db.execute(
+            select(
+                BillingClaim.paid_to_chw_at,
+                BillingClaim.net_payout,
+                BillingClaim.stripe_transfer_id,
+            )
+            .where(BillingClaim.chw_id == current_user.id)
+            .where(_claim_paid_clause())
+            .where(BillingClaim.paid_to_chw_at.isnot(None))
+            .where(extract("month", BillingClaim.paid_to_chw_at) == month)
+            .where(extract("year", BillingClaim.paid_to_chw_at) == year)
+            .order_by(BillingClaim.paid_to_chw_at.desc())
+            .limit(limit)
+        )
+    ).all()
+
+    return [
+        PayoutItem(
+            date=r.paid_to_chw_at,
+            amount=float(r.net_payout),
+            status="paid",
+            method="Bank Account",
+            reference=r.stripe_transfer_id,
+        )
+        for r in rows
+    ]
 
 
 # ─── Members Roster ───────────────────────────────────────────────────────────

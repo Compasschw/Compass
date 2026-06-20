@@ -81,6 +81,34 @@ export interface EarningsSummary {
   avgRating: number;
   sessionsThisWeek: number;
   pendingPayout: number;
+  // Earnings-page fields (respect the ?period= selector).
+  earningsThisPeriod: number;
+  paidThisPeriod: number;
+  pendingInTransit: boolean;
+  nextPayoutDate?: string | null; // ISO date
+}
+
+/** Period selector for the Earnings page. */
+export type EarningsPeriod = 'this_month' | 'last_month';
+
+/** One completed-session earning row (Sessions Completed table). */
+export interface SessionEarningItem {
+  sessionId: string;
+  serviceDate?: string | null; // ISO date
+  memberName: string;
+  sessionMode: string; // 'in_person' | 'virtual' | 'phone'
+  units: number;
+  amountEarned: number;
+  paymentStatus: 'paid' | 'pending';
+}
+
+/** One payout row (Recent Payouts table). */
+export interface PayoutItem {
+  date?: string | null; // ISO datetime
+  amount: number;
+  status: string;
+  method: string;
+  reference?: string | null;
 }
 
 export interface ChwProfile {
@@ -525,12 +553,34 @@ export function useMyRequests() {
   });
 }
 
-export function useChwEarnings() {
+export function useChwEarnings(period: EarningsPeriod = 'this_month') {
   return useQuery({
-    queryKey: queryKeys.chwEarnings,
+    queryKey: [...queryKeys.chwEarnings, period] as const,
     queryFn: async () => {
-      const raw = await api<unknown>('/chw/earnings');
+      const raw = await api<unknown>(`/chw/earnings?period=${period}`);
       return transformKeys<EarningsSummary>(raw);
+    },
+  });
+}
+
+/** Completed-session earnings for the Sessions Completed table. */
+export function useChwEarningSessions(period: EarningsPeriod = 'this_month') {
+  return useQuery({
+    queryKey: ['chw', 'earnings', 'sessions', period] as const,
+    queryFn: async () => {
+      const raw = await api<unknown[]>(`/chw/earnings/sessions?period=${period}`);
+      return transformKeys<SessionEarningItem[]>(raw);
+    },
+  });
+}
+
+/** Recent payouts (paid claims) for the Recent Payouts table. */
+export function useChwPayouts(period: EarningsPeriod = 'this_month') {
+  return useQuery({
+    queryKey: ['chw', 'payouts', period] as const,
+    queryFn: async () => {
+      const raw = await api<unknown[]>(`/chw/payouts?period=${period}`);
+      return transformKeys<PayoutItem[]>(raw);
     },
   });
 }

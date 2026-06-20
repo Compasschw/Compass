@@ -2,21 +2,22 @@
  * CHWEarningsScreen — Earnings dashboard for CHW users.
  *
  * Sections:
- *  1. Page header — title only
- *  2. 3 KPI stat tiles — Earnings this month, Pending payout, Paid out this month
- *  3. Sessions billed table card (full width, Pear Suite status, no Stripe column)
- *  4. Recent payouts card (full width)
+ *  1. Page header — title + subtitle, period selector, "Update Bank Account" button
+ *  2. 3 summary cards — Earnings this period, Pending payout, Paid out this period
+ *  3. Sessions Completed table card — driven by useChwEarningSessions(period)
+ *  4. Recent Payouts table card     — driven by useChwPayouts(period)
  *
- * Data wiring:
- *  - useChwEarnings()  → KPI tiles (thisMonth, pendingPayout)
- *  - useChwClaims()    → KPI tile 3 (paidOutThisMonth, derived), sessions table,
- *                        recent payouts list (derived from paid claims)
+ * The `period` state at the top drives all three data hooks so every section
+ * updates together when the user switches between "This Month" / "Last Month".
  *
- * Stripped in T13: 1099 export, Stripe Connect checklist, earnings trend chart,
- * Bank & payout setup card, Stripe status column in the sessions table.
+ * Session detail modal: tapping a row shows Member Name, Session Date,
+ * Session Type, Units, Amount Earned, Payment Status.
+ *
+ * The Update Bank Account button opens Stripe Connect onboarding (unchanged
+ * from the previous implementation).
  */
 
-import React, { useMemo, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -26,96 +27,429 @@ import {
   ActivityIndicator,
   Linking,
   Platform,
+  Modal,
+  Pressable,
   type ViewStyle,
   type TextStyle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
-import type { DrawerNavigationProp } from '@react-navigation/drawer';
-import type { CHWTabParamList } from '../../navigation/CHWTabNavigator';
 import {
-  Banknote,
-  CheckCircle2,
   DollarSign,
-  Landmark,
   Wallet,
+  CheckCircle2,
+  ChevronDown,
+  X,
 } from 'lucide-react-native';
 
 import { formatCurrency } from '../../data/mock';
 import {
-  useChwClaims,
   useChwEarnings,
+  useChwEarningSessions,
+  useChwPayouts,
   useConnectOnboardingLink,
-  type ChwClaim,
+  type EarningsPeriod,
+  type SessionEarningItem,
 } from '../../hooks/useApiQueries';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 import {
   AppShell,
-  EmptyState,
   PageHeader,
   Card,
-  StatTile,
   SectionHeader,
   Pill,
-  PressableCard,
   type PillVariant,
 } from '../../components/ui';
 import { colors as tokens, numerals } from '../../theme/tokens';
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
- * Formats an ISO date string as "May 7" for the sessions table Date column.
+ * Formats an ISO date string as "May 9, 2026" for table cells.
  */
-function formatClaimDate(iso: string | null): string {
+function formatLongDate(iso: string | null | undefined): string {
   if (!iso) return '—';
   return new Date(iso).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
+/**
+ * Formats an ISO date string as "Fri May 16" for the payout date subtext.
+ */
+function formatPayoutDate(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleDateString('en-US', {
+    weekday: 'short',
     month: 'short',
     day: 'numeric',
   });
 }
 
 /**
- * Returns true when the claim's serviceDate falls within the current calendar month.
+ * Maps a sessionMode string to the human-readable label.
  */
-function isCurrentMonth(iso: string | null): boolean {
-  if (!iso) return false;
-  const d = new Date(iso);
-  const now = new Date();
-  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+function sessionModeLabel(mode: string): string {
+  switch (mode) {
+    case 'in_person': return 'In-Person';
+    case 'virtual':   return 'Video';
+    case 'phone':     return 'Phone';
+    default:          return mode;
+  }
 }
 
 /**
- * Maps a ChwClaim.status string to the Pear Suite Pill variant + label tuple.
+ * Returns a Pill variant + label for a session payment status.
  */
-function pearPill(status: string): { variant: PillVariant; label: string } {
-  switch (status) {
-    case 'paid':
-      return { variant: 'emerald', label: 'paid' };
-    case 'submitted':
-      return { variant: 'amber', label: 'submitted' };
-    case 'rejected':
-      return { variant: 'red', label: 'denied' };
-    default:
-      return { variant: 'amber', label: 'submitted' };
-  }
+function sessionStatusPill(status: 'paid' | 'pending'): { variant: PillVariant; label: string } {
+  return status === 'paid'
+    ? { variant: 'emerald', label: 'Paid' }
+    : { variant: 'amber',   label: 'Pending' };
 }
+
+/**
+ * Returns a Pill variant + label for a payout status.
+ */
+function payoutStatusPill(status: string): { variant: PillVariant; label: string } {
+  return status === 'paid' || status === 'completed'
+    ? { variant: 'emerald', label: 'Paid' }
+    : { variant: 'amber',   label: status };
+}
+
+// ─── Period Selector ──────────────────────────────────────────────────────────
+
+interface PeriodSelectorProps {
+  value: EarningsPeriod;
+  onChange: (p: EarningsPeriod) => void;
+}
+
+/**
+ * Inline period segmented control for the page header right slot.
+ * Shows "This Month" / "Last Month" as pressable tabs.
+ */
+function PeriodSelector({ value, onChange }: PeriodSelectorProps): React.JSX.Element {
+  const now = new Date();
+  const thisMonthLabel = now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+  const prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const lastMonthLabel = prevDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+  const options: { key: EarningsPeriod; label: string }[] = [
+    { key: 'this_month', label: `This month (${thisMonthLabel})` },
+    { key: 'last_month', label: `Last month (${lastMonthLabel})` },
+  ];
+
+  return (
+    <View style={periodStyles.wrap} accessibilityRole="tablist">
+      {options.map((opt, idx) => {
+        const isActive = value === opt.key;
+        return (
+          <Pressable
+            key={opt.key}
+            onPress={() => onChange(opt.key)}
+            style={[
+              periodStyles.tab,
+              isActive && periodStyles.tabActive,
+              idx === 0 && periodStyles.tabFirst,
+              idx === options.length - 1 && periodStyles.tabLast,
+            ]}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: isActive }}
+            accessibilityLabel={opt.label}
+          >
+            <Text style={[periodStyles.tabText, isActive && periodStyles.tabTextActive]}>
+              {opt.label}
+            </Text>
+            {idx < options.length - 1 && <ChevronDown size={12} color={isActive ? '#ffffff' : tokens.textPrimary} style={periodStyles.chevron} />}
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+const periodStyles = StyleSheet.create({
+  wrap: {
+    flexDirection: 'row',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: tokens.cardBorder,
+    overflow: 'hidden',
+  } as ViewStyle,
+  tab: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    backgroundColor: tokens.cardBg,
+    gap: 4,
+  } as ViewStyle,
+  tabActive: {
+    backgroundColor: tokens.emerald700,
+  } as ViewStyle,
+  tabFirst: {
+    borderTopLeftRadius: 7,
+    borderBottomLeftRadius: 7,
+  } as ViewStyle,
+  tabLast: {
+    borderTopRightRadius: 7,
+    borderBottomRightRadius: 7,
+  } as ViewStyle,
+  tabText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: tokens.textPrimary,
+  } as TextStyle,
+  tabTextActive: {
+    color: '#ffffff',
+  } as TextStyle,
+  chevron: {
+    display: 'none',
+  },
+});
+
+// ─── Summary Card ─────────────────────────────────────────────────────────────
+
+interface SummaryCardProps {
+  icon: React.ReactNode;
+  iconBg: string;
+  label: string;
+  value: string;
+  /** Top-right badge text. */
+  badge?: string;
+  badgeVariant?: PillVariant;
+  /** Small subtext below the value. */
+  subtext?: string;
+}
+
+/**
+ * One of the three equal-width summary cards in the top row.
+ * Lays out: icon (top-left) + optional badge (top-right) / big value / label / subtext.
+ */
+function SummaryCard({
+  icon,
+  iconBg,
+  label,
+  value,
+  badge,
+  badgeVariant = 'emerald',
+  subtext,
+}: SummaryCardProps): React.JSX.Element {
+  return (
+    <Card style={summaryCardStyles.card}>
+      <View style={summaryCardStyles.topRow}>
+        <View style={[summaryCardStyles.iconCircle, { backgroundColor: iconBg }]}>
+          {icon}
+        </View>
+        {badge !== undefined && (
+          <Pill variant={badgeVariant} size="sm">{badge}</Pill>
+        )}
+      </View>
+      <Text style={[summaryCardStyles.value, numerals.tabular]}>{value}</Text>
+      <Text style={summaryCardStyles.label}>{label}</Text>
+      {subtext !== undefined && (
+        <Text style={summaryCardStyles.subtext}>{subtext}</Text>
+      )}
+    </Card>
+  );
+}
+
+const summaryCardStyles = StyleSheet.create({
+  card: {
+    flex: 1,
+    minWidth: 200,
+    padding: 20,
+    gap: 6,
+  } as ViewStyle,
+  topRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  } as ViewStyle,
+  iconCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+  value: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: tokens.textPrimary,
+    letterSpacing: -0.5,
+  } as TextStyle,
+  label: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#6b7280',
+  } as TextStyle,
+  subtext: {
+    fontSize: 12,
+    color: '#9ca3af',
+    marginTop: 2,
+  } as TextStyle,
+});
+
+// ─── Session Detail Modal ─────────────────────────────────────────────────────
+
+interface SessionDetailModalProps {
+  visible: boolean;
+  session: SessionEarningItem | null;
+  onClose: () => void;
+}
+
+/**
+ * Bottom-sheet style modal showing detail for a tapped session row.
+ * Omits "Open Member Profile" since SessionEarningItem has no member id.
+ */
+function SessionDetailModal({ visible, session, onClose }: SessionDetailModalProps): React.JSX.Element {
+  if (!session) return <></>;
+
+  const statusPill = sessionStatusPill(session.paymentStatus);
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+      accessibilityViewIsModal
+    >
+      <Pressable style={detailModalStyles.backdrop} onPress={onClose}>
+        <Pressable
+          style={detailModalStyles.sheet}
+          onPress={(e) => e.stopPropagation()}
+          accessibilityLabel="Session detail"
+        >
+          {/* Header */}
+          <View style={detailModalStyles.sheetHeader}>
+            <Text style={detailModalStyles.sheetTitle}>Session Detail</Text>
+            <TouchableOpacity
+              onPress={onClose}
+              style={detailModalStyles.closeBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+            >
+              <X size={18} color="#6b7280" />
+            </TouchableOpacity>
+          </View>
+
+          {/* Fields */}
+          <View style={detailModalStyles.fields}>
+            <DetailRow label="Member Name"    value={session.memberName} />
+            <DetailRow label="Session Date"   value={formatLongDate(session.serviceDate)} />
+            <DetailRow label="Session Type"   value={sessionModeLabel(session.sessionMode)} />
+            <DetailRow label="Units"          value={session.units.toFixed(2)} />
+            <DetailRow label="Amount Earned"  value={formatCurrency(session.amountEarned)} />
+            <View style={detailModalStyles.fieldRow}>
+              <Text style={detailModalStyles.fieldLabel}>Payment Status</Text>
+              <Pill variant={statusPill.variant} size="sm">{statusPill.label}</Pill>
+            </View>
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+interface DetailRowProps {
+  label: string;
+  value: string;
+}
+
+function DetailRow({ label, value }: DetailRowProps): React.JSX.Element {
+  return (
+    <View style={detailModalStyles.fieldRow}>
+      <Text style={detailModalStyles.fieldLabel}>{label}</Text>
+      <Text style={detailModalStyles.fieldValue}>{value}</Text>
+    </View>
+  );
+}
+
+const detailModalStyles = StyleSheet.create({
+  backdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+  sheet: {
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    width: '100%',
+    maxWidth: 480,
+    padding: 24,
+    margin: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.12,
+    shadowRadius: 24,
+    elevation: 10,
+  } as ViewStyle,
+  sheetHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 20,
+  } as ViewStyle,
+  sheetTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: tokens.textPrimary,
+  } as TextStyle,
+  closeBtn: {
+    padding: 4,
+  } as ViewStyle,
+  fields: {
+    gap: 16,
+  } as ViewStyle,
+  fieldRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
+  } as ViewStyle,
+  fieldLabel: {
+    fontSize: 13,
+    color: '#6b7280',
+    fontWeight: '500',
+  } as TextStyle,
+  fieldValue: {
+    fontSize: 13,
+    color: tokens.textPrimary,
+    fontWeight: '600',
+  } as TextStyle,
+});
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 /**
- * CHW Earnings screen — 3-card KPI row, sessions billed table, recent payouts.
+ * CHW Earnings screen — period selector, 3 summary cards, sessions table,
+ * payouts table.
+ *
+ * One-screen answer to the four core CHW questions:
+ *   1. How much have I earned?
+ *   2. How much is paid soon?
+ *   3. Which sessions earned it?
+ *   4. Have I actually been paid?
  */
 export function CHWEarningsScreen(): React.JSX.Element {
-  const navigation = useNavigation<DrawerNavigationProp<CHWTabParamList>>();
-  const earningsQuery = useChwEarnings();
-  const claimsQuery = useChwClaims();
-  const connectOnboarding = useConnectOnboardingLink();
+  const [period, setPeriod] = useState<EarningsPeriod>('this_month');
+  const [selectedSession, setSelectedSession] = useState<SessionEarningItem | null>(null);
+  const [sessionModalVisible, setSessionModalVisible] = useState(false);
 
-  // "Update Bank Account" opens Stripe Connect onboarding/management. Stripe is
-  // the source of truth for bank accounts, identity, tax forms, and payout
-  // config — CompassCHW never handles banking details directly.
+  const earningsQuery       = useChwEarnings(period);
+  const earningSessionsQuery = useChwEarningSessions(period);
+  const payoutsQuery        = useChwPayouts(period);
+  const connectOnboarding   = useConnectOnboardingLink();
+
+  // ── Stripe Connect onboarding flow ────────────────────────────────────────
   const handleUpdateBankAccount = useCallback(() => {
     if (connectOnboarding.isPending) return;
     connectOnboarding.mutate(undefined, {
@@ -129,59 +463,55 @@ export function CHWEarningsScreen(): React.JSX.Element {
     });
   }, [connectOnboarding]);
 
-  const isLoading = earningsQuery.isLoading || claimsQuery.isLoading;
-  const queryError = earningsQuery.error ?? claimsQuery.error;
+  // ── Session detail modal handlers ─────────────────────────────────────────
+  const handleSessionPress = useCallback((session: SessionEarningItem) => {
+    setSelectedSession(session);
+    setSessionModalVisible(true);
+  }, []);
 
-  const handleRetry = (): void => {
-    void earningsQuery.refetch();
-    void claimsQuery.refetch();
-  };
+  const handleSessionModalClose = useCallback(() => {
+    setSessionModalVisible(false);
+    setSelectedSession(null);
+  }, []);
 
-  const earnings = earningsQuery.data;
-  const allClaims: ChwClaim[] = claimsQuery.data ?? [];
+  // ── Derived values ─────────────────────────────────────────────────────────
+  const earnings         = earningsQuery.data;
+  const earningSessions  = useMemo(() => earningSessionsQuery.data ?? [], [earningSessionsQuery.data]);
+  const payouts          = useMemo(() => payoutsQuery.data ?? [], [payoutsQuery.data]);
 
-  // ── Derived values ────────────────────────────────────────────────────────
-
-  /**
-   * Sum of netPayout for claims with status='paid' in the current calendar month.
-   */
-  const paidOutThisMonth = useMemo<number>(() => {
-    return allClaims
-      .filter((c) => c.status === 'paid' && isCurrentMonth(c.serviceDate ?? c.paidAt))
-      .reduce((acc, c) => acc + c.netPayout, 0);
-  }, [allClaims]);
-
-  /**
-   * Claims filtered to the current calendar month for the sessions table,
-   * sorted newest-first.
-   */
-  const currentMonthClaims = useMemo<ChwClaim[]>(() => {
-    return allClaims
-      .filter((c) => isCurrentMonth(c.serviceDate ?? c.createdAt))
-      .sort((a, b) => {
-        const ta = new Date(a.serviceDate ?? a.createdAt ?? '').getTime();
-        const tb = new Date(b.serviceDate ?? b.createdAt ?? '').getTime();
-        return tb - ta;
-      });
-  }, [allClaims]);
-
-  /**
-   * Paid claims for the recent payouts list (newest paidAt first, capped at 3).
-   * TODO: replace with a dedicated /chw/payouts hook when it ships, which will
-   * return aggregate payout transfer records rather than per-claim rows.
-   */
-  const recentPayoutClaims = useMemo<ChwClaim[]>(() => {
-    return allClaims
-      .filter((c) => c.status === 'paid')
-      .sort((a, b) => {
-        const ta = new Date(a.paidAt ?? '').getTime();
-        const tb = new Date(b.paidAt ?? '').getTime();
-        return tb - ta;
-      })
-      .slice(0, 3);
-  }, [allClaims]);
+  const nextPayoutFormatted = useMemo<string | null>(() => {
+    if (!earnings?.nextPayoutDate) return null;
+    return formatPayoutDate(earnings.nextPayoutDate);
+  }, [earnings?.nextPayoutDate]);
 
   // ── Loading / error guards ────────────────────────────────────────────────
+  const isLoading  = earningsQuery.isLoading || earningSessionsQuery.isLoading || payoutsQuery.isLoading;
+  const queryError = earningsQuery.error ?? earningSessionsQuery.error ?? payoutsQuery.error;
+
+  const handleRetry = useCallback(() => {
+    void earningsQuery.refetch();
+    void earningSessionsQuery.refetch();
+    void payoutsQuery.refetch();
+  }, [earningsQuery, earningSessionsQuery, payoutsQuery]);
+
+  // ── Header right slot (shared between loading and loaded states) ──────────
+  const headerRight = (
+    <View style={styles.headerRight}>
+      <PeriodSelector value={period} onChange={setPeriod} />
+      <TouchableOpacity
+        style={styles.updateBankBtn}
+        onPress={handleUpdateBankAccount}
+        disabled={connectOnboarding.isPending}
+        accessibilityRole="button"
+        accessibilityLabel="Update bank account"
+      >
+        {connectOnboarding.isPending ? (
+          <ActivityIndicator size="small" color={tokens.textPrimary} />
+        ) : null}
+        <Text style={styles.updateBankBtnText}>Update bank account</Text>
+      </TouchableOpacity>
+    </View>
+  );
 
   if (isLoading) {
     return (
@@ -193,6 +523,11 @@ export function CHWEarningsScreen(): React.JSX.Element {
         <SafeAreaView style={styles.safe} edges={['top']}>
           <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
             <View style={styles.pageWrap}>
+              <PageHeader
+                title="Earnings"
+                subtitle="Overview of your earnings and payouts"
+                right={headerRight}
+              />
               <LoadingSkeleton variant="stat-grid" />
               <LoadingSkeleton variant="rows" rows={4} />
             </View>
@@ -210,7 +545,16 @@ export function CHWEarningsScreen(): React.JSX.Element {
         userBlock={{ initials: '...', name: '...', role: 'CHW' }}
       >
         <SafeAreaView style={styles.safe} edges={['top']}>
-          <ErrorState message="Failed to load earnings" onRetry={handleRetry} />
+          <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
+            <View style={styles.pageWrap}>
+              <PageHeader
+                title="Earnings"
+                subtitle="Overview of your earnings and payouts"
+                right={headerRight}
+              />
+              <ErrorState message="Failed to load earnings" onRetry={handleRetry} />
+            </View>
+          </ScrollView>
         </SafeAreaView>
       </AppShell>
     );
@@ -230,225 +574,199 @@ export function CHWEarningsScreen(): React.JSX.Element {
         >
           <View style={styles.pageWrap}>
 
-            {/* ── Page header ── */}
+            {/* ── Page header ─────────────────────────────────────────────── */}
             <PageHeader
               title="Earnings"
               subtitle="Overview of your earnings and payouts"
-              right={
-                <TouchableOpacity
-                  style={styles.updateBankBtn}
-                  onPress={handleUpdateBankAccount}
-                  disabled={connectOnboarding.isPending}
-                  accessibilityRole="button"
-                  accessibilityLabel="Update bank account"
-                >
-                  {connectOnboarding.isPending ? (
-                    <ActivityIndicator size="small" color={tokens.textPrimary} />
-                  ) : (
-                    <Landmark size={14} color={tokens.textPrimary} />
-                  )}
-                  <Text style={styles.updateBankBtnText}>Update Bank Account</Text>
-                </TouchableOpacity>
-              }
+              right={headerRight}
             />
 
-            {/* ── 3 KPI stat tiles ── */}
-            <View style={styles.statGrid}>
+            {/* ── 3 summary cards ─────────────────────────────────────────── */}
+            <View style={styles.cardRow}>
+              {/* Card 1 — Earnings this period */}
+              <SummaryCard
+                icon={<DollarSign size={18} color={tokens.emerald700} />}
+                iconBg={tokens.emerald100}
+                label="Earnings this month"
+                value={formatCurrency(earnings?.earningsThisPeriod ?? 0)}
+              />
 
-              {/* 1. Earnings this month */}
-              <View style={styles.statTileWrap}>
-                <StatTile
-                  icon={<DollarSign size={18} color="#16a34a" />}
-                  iconBg={tokens.emerald100}
-                  label="Earnings this month"
-                  value={formatCurrency(earnings?.thisMonth ?? 0)}
-                  deltaColor={tokens.emerald700}
-                  deltaBg="#ecfdf5"
-                />
-              </View>
+              {/* Card 2 — Pending payout */}
+              <SummaryCard
+                icon={<Wallet size={18} color={tokens.blue700} />}
+                iconBg={tokens.blue100}
+                label="Pending payout"
+                value={formatCurrency(earnings?.pendingPayout ?? 0)}
+                badge={earnings?.pendingInTransit ? 'In transit' : undefined}
+                badgeVariant="blue"
+                subtext={
+                  nextPayoutFormatted
+                    ? `Paid on ${nextPayoutFormatted}`
+                    : undefined
+                }
+              />
 
-              {/* 2. Pending payout — from earnings.pendingPayout.
-                  nextPayoutDate is not in the schema; showing static label.
-                  TODO: wire nextPayoutDate when /chw/earnings exposes it. */}
-              <View style={styles.statTileWrap}>
-                <StatTile
-                  icon={<Banknote size={18} color="#1d4ed8" />}
-                  iconBg={tokens.blue100}
-                  label="Pending payout"
-                  value={formatCurrency(earnings?.pendingPayout ?? 0)}
-                  delta="in transit"
-                  deltaColor="#1d4ed8"
-                  deltaBg="#eff6ff"
-                />
-              </View>
-
-              {/* 3. Paid out this month — derived from paid claims in current month */}
-              <View style={styles.statTileWrap}>
-                <StatTile
-                  icon={<CheckCircle2 size={18} color="#6d28d9" />}
-                  iconBg={tokens.purple100}
-                  label="Paid out this month"
-                  value={formatCurrency(paidOutThisMonth)}
-                  delta="paid"
-                  deltaColor={tokens.emerald700}
-                  deltaBg="#ecfdf5"
-                />
-              </View>
-
+              {/* Card 3 — Paid out this period */}
+              <SummaryCard
+                icon={<CheckCircle2 size={18} color={tokens.emerald700} />}
+                iconBg={tokens.emerald100}
+                label="Paid out this month"
+                value={formatCurrency(earnings?.paidThisPeriod ?? 0)}
+                badge="Paid"
+                badgeVariant="emerald"
+              />
             </View>
 
-            {/* ── Sessions billed table (full width) ── */}
+            {/* ── Sessions Completed table ─────────────────────────────────── */}
             <Card style={styles.tableCard}>
-              <View style={styles.tableCardHeader}>
-                <SectionHeader
-                  title="Sessions Completed"
-                  right={
-                    <TouchableOpacity
-                      accessibilityRole="button"
-                      accessibilityLabel="View all sessions"
-                    >
-                      <Text style={styles.viewAllLink}>View all sessions →</Text>
-                    </TouchableOpacity>
-                  }
-                  marginBottom={0}
-                />
+              <View style={styles.cardHeaderRow}>
+                <SectionHeader title="Sessions completed" marginBottom={0} />
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  accessibilityLabel="View all sessions"
+                >
+                  <Text style={styles.viewAllLink}>View all sessions →</Text>
+                </TouchableOpacity>
               </View>
 
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                style={styles.tableScroll}
-              >
-                <View style={styles.tableInner}>
-
-                  {/* Table header */}
-                  <View style={[styles.tableRow, styles.tableHeaderRow]}>
-                    {TABLE_COLS.map((col) => (
-                      <Text key={col} style={[styles.th, colWidths[col]]}>
-                        {col}
-                      </Text>
-                    ))}
-                  </View>
-
-                  {/* Data rows */}
-                  {currentMonthClaims.length === 0 ? (
-                    <EmptyState
-                      icon={Wallet}
-                      title="No earnings yet"
-                      body="Complete your first documented session to start earning."
-                      cta={{ label: 'View Members', onPress: () => navigation.navigate('CHWMembers') }}
-                    />
-                  ) : (
-                    currentMonthClaims.map((claim) => {
-                      const pear = pearPill(claim.status);
-                      return (
-                        <View key={claim.id} style={[styles.tableRow, styles.tableDataRow]}>
-                          <Text style={[styles.td, colWidths['Session Date']]}>
-                            {formatClaimDate(claim.serviceDate)}
-                          </Text>
-                          {/* Member name — ChwClaim has no memberName field yet.
-                              TODO: wire memberName when /chw/claims exposes it. */}
-                          <Text style={[styles.td, styles.tdMemberName, colWidths['Member Name']]}>
-                            —
-                          </Text>
-                          <Text style={[styles.td, styles.tdNumeric, colWidths.Units, numerals.tabular]}>
-                            {claim.units ?? '—'}
-                          </Text>
-                          <Text style={[styles.td, styles.tdBold, colWidths['Amount Earned'], numerals.tabular]}>
-                            {formatCurrency(claim.netPayout)}
-                          </Text>
-                          <View style={[colWidths['Payment Status'], styles.tdCenter]}>
-                            <Pill variant={pear.variant} size="sm">
-                              {pear.label}
-                            </Pill>
-                          </View>
-                        </View>
-                      );
-                    })
-                  )}
-
+              {earningSessions.length === 0 ? (
+                <View style={styles.emptyRow}>
+                  <Text style={styles.emptyText}>No sessions yet this period.</Text>
                 </View>
-              </ScrollView>
+              ) : (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                  <View style={styles.tableInner}>
+                    {/* Table header */}
+                    <View style={[styles.tableRow, styles.tableHeaderRow]}>
+                      {SESSION_COLS.map((col) => (
+                        <Text key={col} style={[styles.th, sessionColWidths[col] as TextStyle]}>
+                          {col}
+                        </Text>
+                      ))}
+                    </View>
+                    {/* Data rows */}
+                    {earningSessions.map((s) => {
+                      const pill = sessionStatusPill(s.paymentStatus);
+                      return (
+                        <TouchableOpacity
+                          key={s.sessionId}
+                          style={[styles.tableRow, styles.tableDataRow]}
+                          onPress={() => handleSessionPress(s)}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Session for ${s.memberName}, ${formatCurrency(s.amountEarned)}`}
+                        >
+                          <Text style={[styles.td, sessionColWidths['SESSION DATE'] as TextStyle]}>
+                            {formatLongDate(s.serviceDate)}
+                          </Text>
+                          <Text style={[styles.td, styles.tdBold, sessionColWidths['MEMBER NAME'] as TextStyle]}>
+                            {s.memberName}
+                          </Text>
+                          <Text style={[styles.td, styles.tdNumeric, sessionColWidths.UNITS as TextStyle, numerals.tabular]}>
+                            {s.units.toFixed(2)}
+                          </Text>
+                          <Text style={[styles.td, styles.tdBold, sessionColWidths['AMOUNT EARNED'] as TextStyle, numerals.tabular]}>
+                            {formatCurrency(s.amountEarned)}
+                          </Text>
+                          <View style={[sessionColWidths['PAYMENT STATUS'] as ViewStyle, styles.tdCenter]}>
+                            <Pill variant={pill.variant} size="sm">{pill.label}</Pill>
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </ScrollView>
+              )}
             </Card>
 
-            {/* ── Recent payouts card (full width) ── */}
-            {/* Data is derived from paid claims sorted by paidAt desc (top 3).
-                TODO: replace with a dedicated /chw/payouts hook when it ships,
-                returning aggregate payout transfer records (not per-claim). */}
-            <Card style={styles.payoutsCard}>
-              <View style={styles.payoutsCardHeader}>
-                <SectionHeader
-                  title="Recent Payouts"
-                  right={
-                    <TouchableOpacity
-                      accessibilityRole="button"
-                      accessibilityLabel="View all payouts"
-                    >
-                      <Text style={styles.viewAllLink}>View All Payouts →</Text>
-                    </TouchableOpacity>
-                  }
-                  marginBottom={0}
-                />
+            {/* ── Recent Payouts table ─────────────────────────────────────── */}
+            <Card style={styles.tableCard}>
+              <View style={styles.cardHeaderRow}>
+                <SectionHeader title="Recent payouts" marginBottom={0} />
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  accessibilityLabel="View all payouts"
+                >
+                  <Text style={styles.viewAllLink}>View all payouts →</Text>
+                </TouchableOpacity>
               </View>
 
-              <View style={styles.payoutsList}>
-                {recentPayoutClaims.length === 0 ? (
-                  /* Empty state — shown when no paid claims exist yet */
-                  <EmptyState
-                    icon={Wallet}
-                    title="No payouts yet"
-                    body="Payouts appear here once your submitted claims are approved."
-                  />
-                ) : (
-                  recentPayoutClaims.map((claim, idx) => (
-                    <PressableCard
-                      key={claim.id}
-                      style={[
-                        styles.payoutRow,
-                        idx < recentPayoutClaims.length - 1 && styles.payoutRowDivider,
-                        styles.payoutRowCard,
-                      ]}
-                      accessibilityLabel={`Payout of ${formatCurrency(claim.netPayout)}`}
-                    >
-                      <View style={styles.payoutIconCircle}>
-                        <CheckCircle2 size={18} color="#16a34a" />
-                      </View>
-                      <View style={styles.payoutInfo}>
-                        <Text style={[styles.payoutAmount, numerals.tabular]}>
-                          {formatCurrency(claim.netPayout)}
+              {payouts.length === 0 ? (
+                <View style={styles.emptyRow}>
+                  <Text style={styles.emptyText}>No payouts yet this period.</Text>
+                </View>
+              ) : (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                  <View style={styles.tableInner}>
+                    {/* Table header */}
+                    <View style={[styles.tableRow, styles.tableHeaderRow]}>
+                      {PAYOUT_COLS.map((col) => (
+                        <Text key={col} style={[styles.th, payoutColWidths[col] as TextStyle]}>
+                          {col}
                         </Text>
-                        <Text style={styles.payoutMeta}>
-                          {/* TODO: include ACH descriptor and bank last4 when
-                              /chw/payouts returns payout transfer records */}
-                          Paid {formatClaimDate(claim.paidAt)} · ACH
-                        </Text>
-                      </View>
-                      <Pill variant="emerald" size="sm">Completed</Pill>
-                    </PressableCard>
-                  ))
-                )}
-              </View>
+                      ))}
+                    </View>
+                    {/* Data rows */}
+                    {payouts.map((p, idx) => {
+                      const pill = payoutStatusPill(p.status);
+                      return (
+                        <View key={p.reference ?? idx} style={[styles.tableRow, styles.tableDataRow]}>
+                          <Text style={[styles.td, payoutColWidths.DATE as TextStyle]}>
+                            {formatLongDate(p.date)}
+                          </Text>
+                          <Text style={[styles.td, styles.tdBold, payoutColWidths.AMOUNT as TextStyle, numerals.tabular]}>
+                            {formatCurrency(p.amount)}
+                          </Text>
+                          <View style={[payoutColWidths.STATUS as ViewStyle, styles.tdCenter]}>
+                            <Pill variant={pill.variant} size="sm">{pill.label}</Pill>
+                          </View>
+                          <Text style={[styles.td, payoutColWidths['PAYOUT METHOD'] as TextStyle]}>
+                            {p.method}
+                          </Text>
+                          <Text style={[styles.td, styles.tdMono, payoutColWidths.REFERENCE as TextStyle]}>
+                            {p.reference ?? '—'}
+                          </Text>
+                        </View>
+                      );
+                    })}
+                  </View>
+                </ScrollView>
+              )}
             </Card>
 
           </View>
         </ScrollView>
       </SafeAreaView>
+
+      {/* ── Session detail modal ─────────────────────────────────────────── */}
+      <SessionDetailModal
+        visible={sessionModalVisible}
+        session={selectedSession}
+        onClose={handleSessionModalClose}
+      />
     </AppShell>
   );
 }
 
 // ─── Table column definitions ─────────────────────────────────────────────────
 
-type TableCol = 'Session Date' | 'Member Name' | 'Units' | 'Amount Earned' | 'Payment Status';
+type SessionCol = 'SESSION DATE' | 'MEMBER NAME' | 'UNITS' | 'AMOUNT EARNED' | 'PAYMENT STATUS';
+const SESSION_COLS: SessionCol[] = ['SESSION DATE', 'MEMBER NAME', 'UNITS', 'AMOUNT EARNED', 'PAYMENT STATUS'];
+const sessionColWidths: Record<SessionCol, ViewStyle> = {
+  'SESSION DATE':    { width: 120 },
+  'MEMBER NAME':    { width: 160 },
+  UNITS:            { width: 72 },
+  'AMOUNT EARNED':  { width: 120 },
+  'PAYMENT STATUS': { width: 120 },
+};
 
-const TABLE_COLS: TableCol[] = ['Session Date', 'Member Name', 'Units', 'Amount Earned', 'Payment Status'];
-
-const colWidths: Record<TableCol, ViewStyle> = {
-  'Session Date':   { width: 100 },
-  'Member Name':    { width: 150 },
-  Units:            { width: 60 },
-  'Amount Earned':  { width: 120 },
-  'Payment Status': { width: 120 },
+type PayoutCol = 'DATE' | 'AMOUNT' | 'STATUS' | 'PAYOUT METHOD' | 'REFERENCE';
+const PAYOUT_COLS: PayoutCol[] = ['DATE', 'AMOUNT', 'STATUS', 'PAYOUT METHOD', 'REFERENCE'];
+const payoutColWidths: Record<PayoutCol, ViewStyle> = {
+  DATE:            { width: 120 },
+  AMOUNT:          { width: 100 },
+  STATUS:          { width: 90 },
+  'PAYOUT METHOD': { width: 130 },
+  REFERENCE:       { width: 160 },
 };
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
@@ -475,37 +793,13 @@ const styles = StyleSheet.create({
     paddingBottom: 48,
   } as ViewStyle,
 
-  // ── 3-tile stat grid ────────────────────────────────────────────────────────
-  statGrid: {
+  // ── Header right slot ───────────────────────────────────────────────────────
+  headerRight: {
     flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
     flexWrap: 'wrap',
-    gap: 16,
-    marginBottom: 24,
   } as ViewStyle,
-
-  statTileWrap: {
-    flex: 1,
-    minWidth: 200,
-  } as ViewStyle,
-
-  // ── Sessions billed table ────────────────────────────────────────────────────
-  tableCard: {
-    marginBottom: 24,
-    overflow: 'hidden',
-  } as ViewStyle,
-
-  tableCardHeader: {
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
-  } as ViewStyle,
-
-  viewAllLink: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#16a34a',
-  } as TextStyle,
 
   updateBankBtn: {
     flexDirection: 'row',
@@ -515,20 +809,48 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: tokens.cardBorder ?? '#e5e7eb',
-    backgroundColor: tokens.cardBg ?? '#ffffff',
+    borderColor: tokens.cardBorder,
+    backgroundColor: tokens.cardBg,
   } as ViewStyle,
 
   updateBankBtnText: {
     fontSize: 13,
     fontWeight: '600',
-    color: tokens.textPrimary ?? '#111827',
+    color: tokens.textPrimary,
   } as TextStyle,
 
-  tableScroll: {
-    flex: 1,
+  // ── Summary card row ────────────────────────────────────────────────────────
+  cardRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 16,
+    marginBottom: 24,
   } as ViewStyle,
 
+  // ── Table cards (sessions + payouts) ────────────────────────────────────────
+  tableCard: {
+    marginBottom: 24,
+    overflow: 'hidden',
+    padding: 0,
+  } as ViewStyle,
+
+  cardHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
+  } as ViewStyle,
+
+  viewAllLink: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: tokens.emerald700,
+  } as TextStyle,
+
+  // ── Table layout ────────────────────────────────────────────────────────────
   tableInner: {
     minWidth: '100%',
   } as ViewStyle,
@@ -551,10 +873,10 @@ const styles = StyleSheet.create({
 
   th: {
     fontSize: 11,
-    fontWeight: '600',
+    fontWeight: '700',
     color: '#6b7280',
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    letterSpacing: 0.6,
     paddingVertical: 10,
     paddingHorizontal: 16,
   } as TextStyle,
@@ -566,18 +888,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   } as TextStyle,
 
-  tdMemberName: {
-    fontWeight: '600',
-    color: '#111827',
-  } as TextStyle,
-
   tdBold: {
     fontWeight: '600',
-    color: '#111827',
+    color: tokens.textPrimary,
   } as TextStyle,
 
   tdNumeric: {
-    textAlign: 'center',
+    textAlign: 'right',
+  } as TextStyle,
+
+  tdMono: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    fontSize: 12,
+    color: '#6b7280',
   } as TextStyle,
 
   tdCenter: {
@@ -587,69 +910,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   } as ViewStyle,
 
-  // ── Recent payouts card ──────────────────────────────────────────────────────
-  payoutsCard: {
-    marginBottom: 24,
-    overflow: 'hidden',
-  } as ViewStyle,
-
-  payoutsCardHeader: {
-    paddingVertical: 12,
+  // ── Empty states ────────────────────────────────────────────────────────────
+  emptyRow: {
+    paddingVertical: 32,
     paddingHorizontal: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
-  } as ViewStyle,
-
-  payoutsList: {
-    paddingHorizontal: 8,
-    paddingVertical: 8,
-  } as ViewStyle,
-
-  payoutRow: {
-    flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    borderRadius: 8,
   } as ViewStyle,
 
-  payoutRowDivider: {
-    borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
-  } as ViewStyle,
-
-  payoutRowCard: {
-    borderWidth: 0,
-    backgroundColor: 'transparent',
-    borderRadius: 8,
-    shadowOpacity: 0,
-    elevation: 0,
-  } as ViewStyle,
-
-  payoutIconCircle: {
-    width: 36,
-    height: 36,
-    borderRadius: 8,
-    backgroundColor: '#d1fae5',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  } as ViewStyle,
-
-  payoutInfo: {
-    flex: 1,
-    gap: 2,
-  } as ViewStyle,
-
-  payoutAmount: {
+  emptyText: {
     fontSize: 14,
-    fontWeight: '600',
-    color: '#111827',
-  } as TextStyle,
-
-  payoutMeta: {
-    fontSize: 12,
-    color: '#6b7280',
+    color: '#9ca3af',
   } as TextStyle,
 });
