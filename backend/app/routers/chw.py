@@ -602,11 +602,16 @@ async def list_chw_members(
     for member_user, member_profile in member_rows:
         member_id = member_user.id
 
-        # Age from DOB — MemberProfile currently stores no dob field so we
-        # return null. This is a v1 stub; the field is wired when the
-        # demographics schema extension ships.
-        # TODO(demographics-ext): replace with real DOB from member_profiles.dob
+        # Age + DOB from member_profiles.date_of_birth (Pear signup demographics).
+        dob: date | None = member_profile.date_of_birth
         age: int | None = None
+        if dob is not None:
+            _today = date.today()
+            age = (
+                _today.year
+                - dob.year
+                - ((_today.month, _today.day) < (dob.month, dob.day))
+            )
 
         # masked_id: last 4 chars of decrypted medi_cal_id.
         masked_id: str = "—"
@@ -670,6 +675,7 @@ async def list_chw_members(
                 id=member_id,
                 display_name=member_user.name,
                 age=age,
+                date_of_birth=dob,
                 masked_id=masked_id,
                 avatar_initials=initials,
                 status=status,

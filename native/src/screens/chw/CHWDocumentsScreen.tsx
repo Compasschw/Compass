@@ -156,6 +156,30 @@ function sortMembersByLastName(members: MembersRosterItem[]): MembersRosterItem[
   });
 }
 
+/**
+ * Format an ISO date-of-birth as "May 09, 1990 (34 yrs)" — the canonical
+ * patient-matching identifier shown in member group headers. Parses at UTC
+ * noon to avoid timezone off-by-one-day. Returns '—' when DOB is absent.
+ */
+function formatDob(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const [year, month, day] = iso.split('-').map(Number);
+  const dob = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+  const formatted = dob.toLocaleDateString('en-US', {
+    month: 'short',
+    day: '2-digit',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+  const now = new Date();
+  let age = now.getUTCFullYear() - year;
+  const hadBirthday =
+    now.getUTCMonth() + 1 > month ||
+    (now.getUTCMonth() + 1 === month && now.getUTCDate() >= day);
+  if (!hadBirthday) age -= 1;
+  return `${formatted} (${age} yrs)`;
+}
+
 // ─── DocTypeIcon ──────────────────────────────────────────────────────────────
 
 function DocTypeIcon({
@@ -530,7 +554,13 @@ function MemberDocumentGroup({
   });
 
   const docCount = filtered.length;
-  const ageLabel = member.age != null ? ` · ${member.age} yrs` : '';
+  // Canonical identifier line: full DOB when available, else age fallback,
+  // followed by the masked CIN-last-4 for verbal verification.
+  const dobLabel = member.dateOfBirth
+    ? formatDob(member.dateOfBirth)
+    : member.age != null
+      ? `${member.age} yrs`
+      : 'DOB not on file';
 
   return (
     <View style={styles.memberGroup}>
@@ -552,7 +582,7 @@ function MemberDocumentGroup({
             <View style={styles.memberGroupSubRow}>
               <Calendar size={11} color={colors.textMuted} />
               <Text style={styles.memberGroupMeta}>
-                {member.maskedId}{ageLabel}
+                {dobLabel} · {member.maskedId}
               </Text>
             </View>
           </View>

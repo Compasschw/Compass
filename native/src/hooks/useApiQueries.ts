@@ -383,6 +383,9 @@ export interface MembersRosterItem {
   displayName: string;
   /** Age in whole years from DOB. Null when DOB not recorded (v1). */
   age: number | null;
+  /** Full DOB (ISO "YYYY-MM-DD"). Canonical patient-matching identifier for the
+   *  relationship-gated CHW. Null when not recorded. */
+  dateOfBirth?: string | null;
   /** Last 4 of medi_cal_id formatted '...XXXX'. '—' when absent. */
   maskedId: string;
   /** Up to 2 uppercase initials for the avatar circle. */

@@ -331,13 +331,17 @@ class MembersRosterItem(BaseModel):
 
     HIPAA minimum-necessary (45 CFR §164.514(d)):
     - display_name: decrypted first + last name — required for identification.
-    - age: derived from DOB; not DOB itself (avoids precise birth date disclosure).
+    - age: derived from DOB — quick at-a-glance identifier.
+    - date_of_birth: full DOB — the canonical patient-matching identifier the CHW
+      uses to pull up the right member's records on request. Disclosed only to the
+      relationship-gated CHW for their own caseload; consistent with
+      CHWMemberProfileDetail which already exposes DOB to the same audience.
     - masked_id: last 4 chars of medi_cal_id only — enough for verbal verification.
     - avatar_initials: derived from display_name; no additional PHI.
     - risk: always null in v1 (no clinical model yet).
     - top_need: primary vertical of the most recent active ServiceRequest.
 
-    Excluded: raw medi_cal_id, DOB, phone, insurance_provider, notes, transcripts.
+    Excluded: raw medi_cal_id, phone, insurance_provider, notes, transcripts.
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -351,8 +355,11 @@ class MembersRosterItem(BaseModel):
     age: int | None
     """Age in whole years, derived from DOB. Null when DOB is not recorded."""
 
-    masked_id: str
-    """Last 4 characters of medi_cal_id, formatted '...XXXX'. '—' when absent."""
+    date_of_birth: date | None = None
+    """Member's date of birth (ISO). Exposed to the CHW for their own caseload as
+    the canonical patient-matching identifier when retrieving documents ("confirm
+    your date of birth"). Consistent with CHWMemberProfileDetail, which already
+    discloses full DOB to the relationship-gated CHW. Null when not recorded."""
 
     avatar_initials: str
     """Up to 2 uppercase initials derived from display_name."""
