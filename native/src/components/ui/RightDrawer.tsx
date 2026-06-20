@@ -423,15 +423,19 @@ function DrawerHeader({
 
 const webStyles = StyleSheet.create({
   root: {
+    // Above the AppShell chrome (sidebar + header are zIndex 100). At equal
+    // z-index, DOM order decides stacking, which let later siblings (e.g. a
+    // RightRail) bleed over the backdrop. 1000 puts the overlay above all app
+    // chrome on every screen that uses RightDrawer.
     position: 'fixed' as 'absolute',
     inset:    0,
-    zIndex:   100,
+    zIndex:   1000,
   } as ViewStyle,
 
   backdrop: {
     position:        'absolute' as 'absolute',
     inset:           0,
-    backgroundColor: 'rgba(0,0,0,0.25)',
+    backgroundColor: 'rgba(0,0,0,0.4)',
   } as ViewStyle,
 
   panel: {

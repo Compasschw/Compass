@@ -673,7 +673,13 @@ function MemberDocumentGroup({
  *   2. Pick a member → pick a document type.
  *   3. The file dialog opens and the upload pipeline runs scoped to that member.
  */
-function CHWUploadTrigger(): React.JSX.Element {
+function CHWUploadTrigger({
+  onOpenChange,
+}: {
+  /** Notifies the parent screen when the picker drawer opens/closes so it can
+   *  hide the redundant Quick Tip rail and avoid a stacking collision. */
+  onOpenChange?: (open: boolean) => void;
+}): React.JSX.Element {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [selectedMember, setSelectedMember] = useState<MembersRosterItem | null>(null);
@@ -681,6 +687,11 @@ function CHWUploadTrigger(): React.JSX.Element {
   const [docType, setDocType] = useState<DocumentType>('other');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const selectedMemberName = useRef<string>('');
+
+  // Surface open state to the parent so it can hide the Quick Tip rail.
+  useEffect(() => {
+    onOpenChange?.(pickerOpen);
+  }, [pickerOpen, onOpenChange]);
 
   const membersQuery = useChwMembers();
 
@@ -886,6 +897,9 @@ export function CHWDocumentsScreen(): React.JSX.Element {
   const [query, setQuery] = useState('');
   const [activeType, setActiveType] = useState<FilterType>('all');
   const [resultCounts, setResultCounts] = useState<Record<string, number | null>>({});
+  // True while the "Upload for Member" drawer is open — hides the Quick Tip rail
+  // so it can't stack over the drawer.
+  const [uploadDrawerOpen, setUploadDrawerOpen] = useState(false);
 
   const membersQuery = useChwMembers();
   const rawMembers = useMemo(() => membersQuery.data ?? [], [membersQuery.data]);
@@ -947,7 +961,7 @@ export function CHWDocumentsScreen(): React.JSX.Element {
                 accessibilityLabel="Search members or documents"
               />
             </View>
-            <CHWUploadTrigger />
+            <CHWUploadTrigger onOpenChange={setUploadDrawerOpen} />
           </View>
         }
       />
@@ -1047,7 +1061,7 @@ export function CHWDocumentsScreen(): React.JSX.Element {
           )}
         </View>
 
-        {Platform.OS === 'web' && (
+        {Platform.OS === 'web' && !uploadDrawerOpen && (
           <RightRail>
             <Card style={styles.railCard}>
               <Text style={styles.railTitle}>Quick Tip</Text>
