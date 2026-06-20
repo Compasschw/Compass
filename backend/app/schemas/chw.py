@@ -163,6 +163,10 @@ class CHWMemberProfileDetail(BaseModel):
     state: str | None = None
     ecm_eligible: bool
     primary_categories: list[str]
+    # The member's editable resource needs (signup + CHW-curated): the stored
+    # primary_need followed by additional_needs, in priority order. Drives the
+    # Resource Needs card's edit pencil. Default [] for additive safety.
+    resource_needs: list[str] = []
     billing_units: BillingUnitsView
     session_count: int
     last_session_at: datetime | None
@@ -273,6 +277,37 @@ class MemberDemographicsUpdate(BaseModel):
         if len(v) != 2 or not v.isalpha():
             raise ValueError("state must be a 2-letter USPS code (e.g. CA)")
         return v
+
+
+# Known resource-need verticals (mirrors native/src/data/mock.ts verticalLabels).
+_RESOURCE_NEED_VALUES = {"housing", "rehab", "food", "mental_health", "healthcare"}
+
+
+class ResourceNeedsUpdate(BaseModel):
+    """Request body for PATCH /api/v1/chw/members/{member_id}/resource-needs.
+
+    ``needs`` is an ordered, priority-ranked list of resource categories
+    (highest first). The first becomes primary_need, the rest additional_needs.
+    Duplicates are dropped (order preserved); each must be a known vertical.
+    """
+
+    needs: list[str] = Field(default_factory=list, max_length=10)
+
+    @field_validator("needs")
+    @classmethod
+    def _validate_needs(cls, value: list[str]) -> list[str]:
+        seen: set[str] = set()
+        out: list[str] = []
+        for raw in value:
+            need = raw.strip().lower()
+            if not need:
+                continue
+            if need not in _RESOURCE_NEED_VALUES:
+                raise ValueError(f"unknown resource need: {raw!r}")
+            if need not in seen:
+                seen.add(need)
+                out.append(need)
+        return out
 
 
 # ─── Members Roster ───────────────────────────────────────────────────────────

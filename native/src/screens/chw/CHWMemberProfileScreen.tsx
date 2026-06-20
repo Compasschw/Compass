@@ -111,6 +111,7 @@ import {
   useUpdateMemberBillingStatus,
   useUpdateMemberPreferredName,
   useUpdateMemberDemographics,
+  useUpdateMemberResourceNeeds,
   useFlagNote,
   useCreateFlagNote,
   useDeleteFlagNote,
@@ -192,6 +193,8 @@ interface CHWMemberProfileDetail {
   state: string | null;
   ecmEligible: boolean;
   primaryCategories: string[];
+  /** Member's editable resource needs (priority order). Drives the pencil edit. */
+  resourceNeeds: string[];
   billingUnits: BillingUnitsLegacy;
   sessionCount: number;
   lastSessionAt: string | null;
@@ -1222,6 +1225,421 @@ const editDemoStyles = StyleSheet.create({
     paddingVertical: 14,
     borderTopWidth: 1,
     borderTopColor: '#F3F4F6',
+  } as ViewStyle,
+  cancelBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    alignItems: 'center',
+    backgroundColor: '#FAFAFA',
+  } as ViewStyle,
+  cancelBtnText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 14,
+    color: '#6B7280',
+  } as TextStyle,
+  saveBtn: {
+    flex: 2,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: tokens.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+  saveBtnDisabled: {
+    opacity: 0.6,
+  } as ViewStyle,
+  saveBtnText: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 14,
+    color: '#FFFFFF',
+  } as TextStyle,
+});
+
+// ─── EditResourceNeedsModal ───────────────────────────────────────────────────
+
+/** The 5 selectable resource-need categories (slug → label). */
+const RESOURCE_NEED_OPTIONS: ReadonlyArray<{ slug: string; label: string }> = [
+  { slug: 'housing',       label: 'Housing' },
+  { slug: 'rehab',         label: 'Rehab & Recovery' },
+  { slug: 'food',          label: 'Food Security' },
+  { slug: 'mental_health', label: 'Mental Health' },
+  { slug: 'healthcare',    label: 'Healthcare' },
+];
+
+interface EditResourceNeedsModalProps {
+  visible: boolean;
+  /** Current priority-ordered resource needs — used to pre-fill selection. */
+  currentNeeds: string[];
+  memberId: string;
+  onClose: () => void;
+}
+
+/**
+ * Modal for editing a member's resource needs priority list.
+ *
+ * Each of the 5 resource categories is shown as a toggleable chip row.
+ * Already-selected needs are pre-checked in their existing order; newly tapped
+ * needs are appended to the selection. A priority badge (1, 2, 3…) is shown
+ * next to selected items so the CHW can see the ranking at a glance.
+ *
+ * On "Save", calls useUpdateMemberResourceNeeds which PATCHes the ordered
+ * slug list and invalidates the member-detail query so the card refreshes.
+ * Errors surface inline. An empty selection is allowed (clears all needs).
+ *
+ * Platform:
+ *   Web  — fixed overlay + panel with backdrop dismiss (mirrors
+ *           EditDemographicsModal).
+ *   Native — React Native Modal (form-sheet).
+ */
+function EditResourceNeedsModal({
+  visible,
+  currentNeeds,
+  memberId,
+  onClose,
+}: EditResourceNeedsModalProps): React.JSX.Element {
+  const updateResourceNeeds = useUpdateMemberResourceNeeds(memberId);
+
+  /**
+   * Priority-ordered list of selected slugs.
+   * Initialised from currentNeeds each time the modal opens.
+   */
+  const [selectedSlugs, setSelectedSlugs] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  // Hydrate selection whenever the modal opens.
+  useEffect(() => {
+    if (visible) {
+      setSelectedSlugs([...currentNeeds]);
+      setError(null);
+    }
+  }, [visible, currentNeeds]);
+
+  // Esc key closes on web.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !visible) return;
+    const handler = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [visible, onClose]);
+
+  /**
+   * Toggle a category slug in the selection.
+   *   - If already selected, remove it (deselect).
+   *   - If not selected, append it to the end (becomes the lowest priority).
+   */
+  const toggleSlug = useCallback((slug: string): void => {
+    setSelectedSlugs((prev) => {
+      if (prev.includes(slug)) {
+        return prev.filter((s) => s !== slug);
+      }
+      return [...prev, slug];
+    });
+  }, []);
+
+  const handleSave = useCallback(async (): Promise<void> => {
+    setError(null);
+    try {
+      await updateResourceNeeds.mutateAsync(selectedSlugs);
+      onClose();
+    } catch (err: unknown) {
+      const detail =
+        err != null &&
+        typeof err === 'object' &&
+        'detail' in err &&
+        typeof (err as { detail: unknown }).detail === 'string'
+          ? (err as { detail: string }).detail
+          : 'Could not save resource needs. Please try again.';
+      setError(detail);
+    }
+  }, [selectedSlugs, updateResourceNeeds, onClose]);
+
+  const body = (
+    <View style={editResourceNeedsStyles.container}>
+      {/* Header */}
+      <View style={editResourceNeedsStyles.header}>
+        <Text style={editResourceNeedsStyles.title}>Edit Resource Needs</Text>
+        <TouchableOpacity
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Close"
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <X size={18} color="#6B7280" />
+        </TouchableOpacity>
+      </View>
+
+      {/* Instruction */}
+      <View style={editResourceNeedsStyles.instructionRow}>
+        <Text style={editResourceNeedsStyles.instructionText}>
+          Select the member's resource needs. First selected = highest priority.
+          Priority order is shown as a number badge.
+        </Text>
+      </View>
+
+      {/* Category chips */}
+      <View style={editResourceNeedsStyles.chipList}>
+        {RESOURCE_NEED_OPTIONS.map(({ slug, label }) => {
+          const priorityIndex = selectedSlugs.indexOf(slug);
+          const isSelected = priorityIndex !== -1;
+          const priorityNumber = isSelected ? priorityIndex + 1 : null;
+
+          return (
+            <TouchableOpacity
+              key={slug}
+              style={[
+                editResourceNeedsStyles.chipRow,
+                isSelected && editResourceNeedsStyles.chipRowSelected,
+              ]}
+              onPress={() => toggleSlug(slug)}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: isSelected }}
+              accessibilityLabel={`${label}${isSelected ? `, priority ${priorityNumber ?? ''}` : ''}`}
+            >
+              {/* Priority badge or unchecked circle */}
+              <View
+                style={[
+                  editResourceNeedsStyles.chipBadge,
+                  isSelected && editResourceNeedsStyles.chipBadgeSelected,
+                ]}
+              >
+                {isSelected ? (
+                  <Text style={editResourceNeedsStyles.chipBadgeText}>
+                    {priorityNumber}
+                  </Text>
+                ) : (
+                  <View style={editResourceNeedsStyles.chipBadgeEmpty} />
+                )}
+              </View>
+
+              {/* Label */}
+              <Text
+                style={[
+                  editResourceNeedsStyles.chipLabel,
+                  isSelected && editResourceNeedsStyles.chipLabelSelected,
+                ]}
+              >
+                {label}
+              </Text>
+
+              {/* Check icon when selected */}
+              {isSelected && <Check size={14} color={tokens.primary} />}
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      {/* Inline error */}
+      {error !== null && (
+        <Text style={editResourceNeedsStyles.errorText} accessibilityRole="alert">
+          {error}
+        </Text>
+      )}
+
+      {/* Footer actions */}
+      <View style={editResourceNeedsStyles.footer}>
+        <TouchableOpacity
+          style={editResourceNeedsStyles.cancelBtn}
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Cancel"
+        >
+          <Text style={editResourceNeedsStyles.cancelBtnText}>Cancel</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            editResourceNeedsStyles.saveBtn,
+            updateResourceNeeds.isPending && editResourceNeedsStyles.saveBtnDisabled,
+          ]}
+          onPress={() => { void handleSave(); }}
+          disabled={updateResourceNeeds.isPending}
+          accessibilityRole="button"
+          accessibilityLabel="Save resource needs"
+        >
+          {updateResourceNeeds.isPending ? (
+            <ActivityIndicator size="small" color="#FFFFFF" />
+          ) : (
+            <Text style={editResourceNeedsStyles.saveBtnText}>Save</Text>
+          )}
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
+  if (Platform.OS !== 'web') {
+    return (
+      <Modal
+        visible={visible}
+        animationType="slide"
+        presentationStyle="formSheet"
+        onRequestClose={onClose}
+        accessibilityViewIsModal
+      >
+        <View style={editResourceNeedsStyles.nativeContainer}>{body}</View>
+      </Modal>
+    );
+  }
+
+  if (!visible) return <></>;
+
+  return (
+    <View style={editResourceNeedsStyles.webOverlay}>
+      <Pressable
+        style={editResourceNeedsStyles.webBackdrop}
+        onPress={onClose}
+        accessibilityRole="button"
+        accessibilityLabel="Close modal"
+      />
+      <View style={editResourceNeedsStyles.webPanel}>{body}</View>
+    </View>
+  );
+}
+
+const editResourceNeedsStyles = StyleSheet.create({
+  // Web overlay
+  webOverlay: {
+    position: 'fixed' as 'absolute',
+    inset: 0,
+    zIndex: 200,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+  webBackdrop: {
+    position: 'absolute' as 'absolute',
+    inset: 0,
+    backgroundColor: 'rgba(17,24,39,0.45)',
+  } as ViewStyle,
+  webPanel: {
+    width: '100%',
+    maxWidth: 460,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    overflow: 'hidden',
+    zIndex: 1,
+  } as ViewStyle,
+
+  // Native container
+  nativeContainer: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  } as ViewStyle,
+
+  // Modal body wrapper
+  container: {
+    flexDirection: 'column',
+    backgroundColor: '#FFFFFF',
+  } as ViewStyle,
+
+  // Header
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  } as ViewStyle,
+  title: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 17,
+    color: '#111827',
+  } as TextStyle,
+
+  // Instruction text
+  instructionRow: {
+    paddingHorizontal: 20,
+    paddingTop: 14,
+    paddingBottom: 8,
+  } as ViewStyle,
+  instructionText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: '#6B7280',
+    lineHeight: 19,
+  } as TextStyle,
+
+  // Chip list
+  chipList: {
+    paddingHorizontal: 20,
+    paddingBottom: 8,
+    gap: 8,
+  } as ViewStyle,
+  chipRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#FAFAFA',
+  } as ViewStyle,
+  chipRowSelected: {
+    borderColor: tokens.primary,
+    backgroundColor: `${tokens.primary}0D`,
+  } as ViewStyle,
+
+  // Priority badge circle
+  chipBadge: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#D1D5DB',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  } as ViewStyle,
+  chipBadgeSelected: {
+    backgroundColor: tokens.primary,
+    borderColor: tokens.primary,
+  } as ViewStyle,
+  chipBadgeEmpty: {
+    // Placeholder so the circle is visible but unfilled.
+  } as ViewStyle,
+  chipBadgeText: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 11,
+    color: '#FFFFFF',
+    lineHeight: 13,
+  } as TextStyle,
+
+  chipLabel: {
+    flex: 1,
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 14,
+    color: '#374151',
+  } as TextStyle,
+  chipLabelSelected: {
+    color: '#111827',
+  } as TextStyle,
+
+  // Error
+  errorText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12,
+    color: '#B91C1C',
+    marginTop: 8,
+    marginHorizontal: 20,
+    lineHeight: 18,
+  } as TextStyle,
+
+  // Footer
+  footer: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+    marginTop: 8,
   } as ViewStyle,
   cancelBtn: {
     flex: 1,
@@ -2713,8 +3131,11 @@ const RANK_CHIP_COLOR: Record<number, string> = {
 
 interface ResourceNeedsColumnProps {
   memberId: string;
+  profile: CHWMemberProfileDetail;
   sessionCount: number;
   servicesConsentRefused: boolean;
+  /** Opens the Edit Resource Needs modal — supplied by the parent screen. */
+  onEditResourceNeeds: () => void;
 }
 
 /**
@@ -2732,8 +3153,10 @@ interface ResourceNeedsColumnProps {
  */
 function ResourceNeedsColumn({
   memberId,
+  profile: _profile,
   sessionCount,
   servicesConsentRefused,
+  onEditResourceNeeds,
 }: ResourceNeedsColumnProps): React.JSX.Element {
   const { data: journeys, isLoading: journeysLoading } = useMemberJourneys(memberId);
   const { data: rewardsBalance } = useMemberRewardsBalance(memberId);
@@ -2787,12 +3210,10 @@ function ResourceNeedsColumn({
           <Text style={resourceColStyles.headTitle}>Resource Needs</Text>
           <Text style={resourceColStyles.headSub}>(Priority)</Text>
         </View>
-        {/* Edit pencil — no behavior yet (future edit modal) */}
+        {/* Edit pencil — opens EditResourceNeedsModal */}
         <TouchableOpacity
           style={resourceColStyles.editBtn}
-          onPress={() => {
-            // TODO: opens resource-needs edit modal (future sprint)
-          }}
+          onPress={onEditResourceNeeds}
           accessibilityRole="button"
           accessibilityLabel="Edit resource needs priority"
         >
@@ -4610,6 +5031,7 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
   const [openQuestionsOpen, setOpenQuestionsOpen] = useState(false);
   const [flagModalOpen, setFlagModalOpen] = useState(false);
   const [editDemographicsOpen, setEditDemographicsOpen] = useState(false);
+  const [editResourceNeedsOpen, setEditResourceNeedsOpen] = useState(false);
   const [addJourneyOpen, setAddJourneyOpen] = useState(false);
   const [showScreening, setShowScreening] = useState(false);
 
@@ -4816,8 +5238,10 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                 {/* RIGHT: Resource Needs (Priority) */}
                 <ResourceNeedsColumn
                   memberId={memberId}
+                  profile={profile}
                   sessionCount={profile.sessionCount}
                   servicesConsentRefused={servicesConsentRefused}
+                  onEditResourceNeeds={() => setEditResourceNeedsOpen(true)}
                 />
 
               </View>
@@ -5091,6 +5515,14 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
           memberId={memberId}
           visible={flagModalOpen}
           onClose={() => setFlagModalOpen(false)}
+        />
+
+        {/* ── Edit Resource Needs modal ── */}
+        <EditResourceNeedsModal
+          visible={editResourceNeedsOpen}
+          currentNeeds={profile.resourceNeeds}
+          memberId={memberId}
+          onClose={() => setEditResourceNeedsOpen(false)}
         />
 
         {/* Screening answers modal — the member's latest SDOH/health responses */}

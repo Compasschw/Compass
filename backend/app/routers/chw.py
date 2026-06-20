@@ -22,6 +22,7 @@ from app.schemas.chw import (
     MembersRosterItem,
     PreferredNameResponse,
     PreferredNameUpdate,
+    ResourceNeedsUpdate,
 )
 from app.schemas.user import CHWProfileResponse, CHWProfileUpdate
 
@@ -1459,6 +1460,14 @@ async def get_chw_member_full_profile(
         state=member_profile.state,
         ecm_eligible=False,   # ECM eligibility not yet stored — Phase 2 flag
         primary_categories=primary_categories,
+        resource_needs=(
+            ([member_profile.primary_need] if member_profile.primary_need else [])
+            + [
+                n
+                for n in (member_profile.additional_needs or [])
+                if n and n != member_profile.primary_need
+            ]
+        ),
         billing_units=billing_units,
         session_count=session_count,
         last_session_at=last_session_at,
@@ -1618,6 +1627,60 @@ async def update_member_demographics(
 
     await db.commit()
     return {"member_id": str(member_id), "updated": True}
+
+
+@router.patch("/members/{member_id}/resource-needs")
+async def update_member_resource_needs(
+    member_id: UUID,
+    data: ResourceNeedsUpdate,
+    caller=Depends(_require_chw_or_admin_key),
+    db: AsyncSession = Depends(get_db),
+):
+    """CHW edits a member's resource needs (Resource Needs card pencil).
+
+    ``needs`` is a priority-ordered list of resource categories. The first
+    becomes primary_need; the rest become additional_needs. An empty list clears
+    both. Authorization mirrors the other CHW member-edit endpoints.
+    """
+    from app.models.request import ServiceRequest
+    from app.models.session import Session
+    from app.models.user import MemberProfile
+
+    caller_role: str = caller["role"]
+    caller_user = caller["user"]
+
+    if caller_role != "admin":
+        assert caller_user is not None
+        session_exists = await db.execute(
+            select(func.count())
+            .select_from(Session)
+            .where(Session.chw_id == caller_user.id)
+            .where(Session.member_id == member_id)
+        )
+        if (session_exists.scalar() or 0) == 0:
+            request_exists = await db.execute(
+                select(func.count())
+                .select_from(ServiceRequest)
+                .where(ServiceRequest.matched_chw_id == caller_user.id)
+                .where(ServiceRequest.member_id == member_id)
+            )
+            if (request_exists.scalar() or 0) == 0:
+                raise HTTPException(
+                    status_code=403,
+                    detail="You do not have an active relationship with this member.",
+                )
+
+    profile = (
+        await db.execute(select(MemberProfile).where(MemberProfile.user_id == member_id))
+    ).scalar_one_or_none()
+    if profile is None:
+        raise HTTPException(status_code=404, detail="Member not found.")
+
+    needs = data.needs  # already validated + deduped + lowercased
+    profile.primary_need = needs[0] if needs else None
+    profile.additional_needs = needs[1:]
+    await db.commit()
+    return {"member_id": str(member_id), "resource_needs": needs}
 
 
 # ─── Billable Units aggregation (per-member cap widget) ───────────────────────

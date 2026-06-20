@@ -2154,6 +2154,29 @@ export function useUpdateMemberDemographics(memberId: string) {
 }
 
 /**
+ * Edit a member's resource needs from the CHW Member Profile (Resource Needs
+ * pencil). PATCH /api/v1/chw/members/{member_id}/resource-needs.
+ *
+ * `needs` is a priority-ordered list of resource categories ('housing' | 'rehab'
+ * | 'food' | 'mental_health' | 'healthcare'). The first is the primary need.
+ * Invalidates the member-detail query so the card refreshes.
+ */
+export function useUpdateMemberResourceNeeds(memberId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (needs: string[]): Promise<void> => {
+      await api(`/chw/members/${memberId}/resource-needs`, {
+        method: 'PATCH',
+        body: JSON.stringify({ needs }),
+      });
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['chw', 'members', memberId, 'detail'] });
+    },
+  });
+}
+
+/**
  * Fetch the services-consent status for a given member from the CHW side.
  *
  * Endpoint: GET /api/v1/member/services-consent
