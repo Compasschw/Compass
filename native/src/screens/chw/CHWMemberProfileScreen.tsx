@@ -4517,6 +4517,7 @@ function SessionsTable({
         <Text style={[tableStyles.headerCell, tableStyles.colModality]}>Type</Text>
         <Text style={[tableStyles.headerCell, tableStyles.colStatus]}>Status</Text>
         <Text style={[tableStyles.headerCell, tableStyles.colDuration]}>Duration</Text>
+        <Text style={[tableStyles.headerCell, tableStyles.colUnits]}>Units</Text>
         <Text style={[tableStyles.headerCell, tableStyles.colModality]}>Modality</Text>
         <Text style={[tableStyles.headerCell, tableStyles.colActions]}>Actions</Text>
       </View>
@@ -4553,6 +4554,9 @@ function SessionsTable({
               {session.durationMinutes != null
                 ? `${session.durationMinutes} min`
                 : '—'}
+            </Text>
+            <Text style={[tableStyles.cell, tableStyles.colUnits]}>
+              {session.unitsBilled != null ? session.unitsBilled.toFixed(2) : '—'}
             </Text>
             <Text style={[tableStyles.cell, tableStyles.colModality]}>
               Individual
@@ -4638,6 +4642,7 @@ const tableStyles = StyleSheet.create({
   colStatus: { flex: 2 } as ViewStyle,
   colModality: { flex: 2 } as ViewStyle,
   colDuration: { flex: 1.5 } as ViewStyle,
+  colUnits: { flex: 1 } as ViewStyle,
   colActions: { flex: 2, alignItems: 'flex-end' } as ViewStyle,
   dateText: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
