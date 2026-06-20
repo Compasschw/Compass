@@ -200,7 +200,8 @@ function buildLinkingConfig(): LinkingOptions<RootStackParamList> {
               },
             },
             CHWMembers: 'members',                  // /chw/members  (new roster screen)
-            CHWJourneys: 'journeys',                // /chw/journeys
+            // Hidden 2026-06-20 (revisit later): Journeys.
+            // CHWJourneys: 'journeys',                // /chw/journeys
             // Hidden 2026-06-20 (revisit later): Resources, Reports, Community Partners.
             // CHWResources: 'resources',              // /chw/resources
             CHWDocuments: 'documents',              // /chw/documents

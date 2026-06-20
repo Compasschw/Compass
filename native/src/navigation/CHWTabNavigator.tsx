@@ -24,7 +24,8 @@ import {
   DollarSign,
   Map,
   UserCircle,
-  Route,
+  // Hidden 2026-06-20 (revisit later): Route icon used only by the Journeys page.
+  // Route,
   FolderOpen,
   FileText,
   BarChart3,
@@ -51,7 +52,8 @@ import { CHWReviewsScreen } from '../screens/chw/CHWReviewsScreen';
 import { CHWMapScreen } from '../screens/chw/CHWMapScreen';
 import { CHWProfileScreen } from '../screens/chw/CHWProfileScreen';
 import { PaymentsScreen } from '../screens/chw/PaymentsScreen';
-import { CHWJourneysScreen } from '../screens/chw/CHWJourneysScreen';
+// Hidden 2026-06-20 (revisit later): Journeys.
+// import { CHWJourneysScreen } from '../screens/chw/CHWJourneysScreen';
 // Hidden 2026-06-20 (revisit later): Resources, Reports, Community Partners.
 // import { CHWResourcesScreen } from '../screens/chw/CHWResourcesScreen';
 import { CHWDocumentsScreen } from '../screens/chw/CHWDocumentsScreen';
@@ -73,7 +75,8 @@ export type CHWTabParamList = {
   Map: undefined;
   Profile: undefined;
   // New (Wave 2) sidebar destinations.
-  CHWJourneys: undefined;
+  // Hidden 2026-06-20 (revisit later): Journeys.
+  // CHWJourneys: undefined;
   // Hidden 2026-06-20 (revisit later): Resources, Reports, Community Partners.
   // CHWResources: undefined;
   CHWDocuments: undefined;
@@ -216,7 +219,8 @@ const SCREENS: ScreenSpec[] = [
   { name: 'DashboardStack',       title: 'Dashboard',          component: DashboardStackNavigator,    icon: LayoutDashboard, rootScreen: 'Dashboard' },
   { name: 'CHWMembers',           title: 'Members',            component: CHWMembersScreen,           icon: Users },
   { name: 'Requests',             title: 'Inbox',              component: CHWRequestsScreen,          icon: Inbox },
-  { name: 'CHWJourneys',          title: 'Journeys',           component: CHWJourneysScreen,          icon: Route },
+  // Hidden 2026-06-20 (revisit later): Journeys.
+  // { name: 'CHWJourneys',          title: 'Journeys',           component: CHWJourneysScreen,          icon: Route },
   { name: 'SessionsStack',        title: 'Messages',           component: SessionsStackNavigator,     icon: ClipboardList,   rootScreen: Platform.OS === 'web' ? 'Messages' : 'Sessions' },
   { name: 'Calendar',             title: 'Appointments',       component: CHWCalendarScreen,          icon: CalendarDays },
   // Hidden 2026-06-20 (revisit later): Resources, Reports, Community Partners.
