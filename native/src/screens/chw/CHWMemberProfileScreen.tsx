@@ -60,6 +60,7 @@ import {
   Check,
   CheckCircle,
   Edit2,
+  FileText,
   Flag,
   Heart,
   MessageSquare,
@@ -121,6 +122,9 @@ import {
   useMemberJourneys,
   useMemberRewardsBalance,
   useAwardMemberPoints,
+  useCaseNotes,
+  useCreateCaseNote,
+  useMemberDocuments,
   type CreateMemberJourneyPayload,
   type JourneyTemplateResponse,
   type ServicesConsentValue,
@@ -4949,6 +4953,789 @@ const flagModalStyles = StyleSheet.create({
   } as TextStyle,
 });
 
+// ─── CaseNotesModal ───────────────────────────────────────────────────────────
+
+/**
+ * Format an ISO datetime as "May 26, 2026 · 8:30 PM".
+ * Used for case-note timestamps.
+ */
+function formatNoteTimestamp(iso: string): string {
+  const d = new Date(iso);
+  const datePart = d.toLocaleDateString('en-US', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  });
+  const timePart = d.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+  return `${datePart} · ${timePart}`;
+}
+
+interface CaseNotesModalProps {
+  visible: boolean;
+  memberId: string;
+  onClose: () => void;
+}
+
+/**
+ * Modal listing all CHW case notes for this member (newest first) plus an
+ * "Add a note" composer at the top.
+ *
+ * Notes are immutable once created — no edit affordance is rendered.
+ * Submitting a new note calls useCreateCaseNote() and clears the input on
+ * success (the list auto-refreshes via query invalidation in the hook).
+ *
+ * Platform:
+ *   Web  — fixed overlay + backdrop + Esc key.
+ *   Native — RN Modal (form-sheet).
+ */
+function CaseNotesModal({
+  visible,
+  memberId,
+  onClose,
+}: CaseNotesModalProps): React.JSX.Element {
+  const { data: notesList, isLoading } = useCaseNotes(memberId, { enabled: visible });
+  const createNote = useCreateCaseNote();
+
+  const [draft, setDraft] = useState('');
+
+  // Reset draft whenever the modal opens.
+  useEffect(() => {
+    if (visible) setDraft('');
+  }, [visible]);
+
+  // Esc key closes on web.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !visible) return;
+    const handler = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [visible, onClose]);
+
+  const handleAddNote = useCallback(async (): Promise<void> => {
+    const trimmed = draft.trim();
+    if (!trimmed || createNote.isPending) return;
+    await createNote.mutateAsync({ memberId, body: trimmed });
+    setDraft('');
+  }, [draft, memberId, createNote]);
+
+  // Newest first.
+  const items = useMemo(
+    () => [...(notesList?.items ?? [])].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    ),
+    [notesList],
+  );
+
+  const body = (
+    <View style={caseNotesStyles.container}>
+      {/* Header */}
+      <View style={caseNotesStyles.header}>
+        <Text style={caseNotesStyles.title}>Case Notes</Text>
+        <TouchableOpacity
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Close"
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <X size={18} color="#6B7280" />
+        </TouchableOpacity>
+      </View>
+
+      {/* Composer */}
+      <View style={caseNotesStyles.composer}>
+        <TextInput
+          style={caseNotesStyles.composerInput}
+          value={draft}
+          onChangeText={setDraft}
+          placeholder="Add a note…"
+          placeholderTextColor="#9CA3AF"
+          multiline
+          numberOfLines={3}
+          textAlignVertical="top"
+          accessibilityLabel="New case note"
+          editable={!createNote.isPending}
+        />
+        <TouchableOpacity
+          style={[
+            caseNotesStyles.addBtn,
+            (!draft.trim() || createNote.isPending) && caseNotesStyles.addBtnDisabled,
+          ]}
+          onPress={() => { void handleAddNote(); }}
+          disabled={!draft.trim() || createNote.isPending}
+          accessibilityRole="button"
+          accessibilityLabel="Add note"
+        >
+          {createNote.isPending ? (
+            <ActivityIndicator size="small" color="#FFFFFF" />
+          ) : (
+            <Text style={caseNotesStyles.addBtnText}>Add note</Text>
+          )}
+        </TouchableOpacity>
+      </View>
+
+      <View style={caseNotesStyles.divider} />
+
+      {/* Notes list */}
+      <ScrollView
+        style={caseNotesStyles.list}
+        contentContainerStyle={caseNotesStyles.listContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {isLoading ? (
+          <View style={caseNotesStyles.centerRow}>
+            <ActivityIndicator size="small" color={tokens.textMuted} />
+            <Text style={caseNotesStyles.mutedText}>Loading…</Text>
+          </View>
+        ) : items.length === 0 ? (
+          <Text style={caseNotesStyles.emptyText}>No case notes yet.</Text>
+        ) : (
+          items.map((note) => (
+            <View key={note.id} style={caseNotesStyles.noteRow}>
+              <Text style={caseNotesStyles.noteBody}>{note.body}</Text>
+              <Text style={caseNotesStyles.noteTimestamp}>
+                {formatNoteTimestamp(note.createdAt)}
+              </Text>
+            </View>
+          ))
+        )}
+      </ScrollView>
+    </View>
+  );
+
+  if (Platform.OS !== 'web') {
+    return (
+      <Modal
+        visible={visible}
+        animationType="slide"
+        presentationStyle="formSheet"
+        onRequestClose={onClose}
+        accessibilityViewIsModal
+      >
+        <View style={caseNotesStyles.nativeContainer}>{body}</View>
+      </Modal>
+    );
+  }
+
+  if (!visible) return <></>;
+
+  return (
+    <View style={caseNotesStyles.webOverlay}>
+      <Pressable
+        style={caseNotesStyles.webBackdrop}
+        onPress={onClose}
+        accessibilityRole="button"
+        accessibilityLabel="Close modal"
+      />
+      <View style={caseNotesStyles.webPanel}>{body}</View>
+    </View>
+  );
+}
+
+const caseNotesStyles = StyleSheet.create({
+  webOverlay: {
+    position: 'fixed' as 'absolute',
+    inset: 0,
+    zIndex: 200,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+  webBackdrop: {
+    position: 'absolute' as 'absolute',
+    inset: 0,
+    backgroundColor: 'rgba(17,24,39,0.45)',
+  } as ViewStyle,
+  webPanel: {
+    width: '100%',
+    maxWidth: 520,
+    maxHeight: '85vh' as unknown as number,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    overflow: 'hidden',
+    zIndex: 1,
+  } as ViewStyle,
+  nativeContainer: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  } as ViewStyle,
+  container: {
+    flex: 1,
+    flexDirection: 'column',
+    backgroundColor: '#FFFFFF',
+  } as ViewStyle,
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  } as ViewStyle,
+  title: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 17,
+    color: '#111827',
+  } as TextStyle,
+  composer: {
+    paddingHorizontal: 20,
+    paddingTop: 14,
+    paddingBottom: 10,
+    gap: 8,
+  } as ViewStyle,
+  composerInput: {
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: '#111827',
+    backgroundColor: '#FAFAFA',
+    minHeight: 72,
+  } as TextStyle,
+  addBtn: {
+    alignSelf: 'flex-end',
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    borderRadius: 8,
+    backgroundColor: tokens.primary,
+    minWidth: 90,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+  addBtnDisabled: {
+    opacity: 0.45,
+  } as ViewStyle,
+  addBtnText: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 13,
+    color: '#FFFFFF',
+  } as TextStyle,
+  divider: {
+    height: 1,
+    backgroundColor: '#F3F4F6',
+  } as ViewStyle,
+  list: {
+    flex: 1,
+  } as ViewStyle,
+  listContent: {
+    paddingHorizontal: 20,
+    paddingTop: 14,
+    paddingBottom: 20,
+    gap: 12,
+  } as ViewStyle,
+  centerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 20,
+    justifyContent: 'center',
+  } as ViewStyle,
+  mutedText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: tokens.textMuted,
+  } as TextStyle,
+  emptyText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: '#A0A6AB',
+    fontStyle: 'italic',
+    textAlign: 'center',
+    paddingVertical: 24,
+  } as TextStyle,
+  noteRow: {
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+    gap: 4,
+  } as ViewStyle,
+  noteBody: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: '#111827',
+    lineHeight: 20,
+  } as TextStyle,
+  noteTimestamp: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: '#9CA3AF',
+  } as TextStyle,
+});
+
+// ─── UploadedDocumentsModal ───────────────────────────────────────────────────
+
+/**
+ * Format a file size in bytes to a human-readable string (e.g. "1.2 MB").
+ */
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+interface UploadedDocumentsModalProps {
+  visible: boolean;
+  memberId: string;
+  onClose: () => void;
+}
+
+/**
+ * Read-only modal listing the member's uploaded documents.
+ * Each row shows filename, documentType label, and human-readable size.
+ *
+ * Platform: web fixed-overlay + Esc; native RN Modal.
+ */
+function UploadedDocumentsModal({
+  visible,
+  memberId,
+  onClose,
+}: UploadedDocumentsModalProps): React.JSX.Element {
+  const { data: docsList, isLoading } = useMemberDocuments(memberId, 1, 50);
+
+  // Esc key closes on web.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !visible) return;
+    const handler = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [visible, onClose]);
+
+  const items = docsList?.items ?? [];
+
+  const body = (
+    <View style={docsModalStyles.container}>
+      {/* Header */}
+      <View style={docsModalStyles.header}>
+        <Text style={docsModalStyles.title}>Uploaded Documents</Text>
+        <TouchableOpacity
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Close"
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <X size={18} color="#6B7280" />
+        </TouchableOpacity>
+      </View>
+
+      <ScrollView
+        style={docsModalStyles.list}
+        contentContainerStyle={docsModalStyles.listContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {isLoading ? (
+          <View style={docsModalStyles.centerRow}>
+            <ActivityIndicator size="small" color={tokens.textMuted} />
+            <Text style={docsModalStyles.mutedText}>Loading…</Text>
+          </View>
+        ) : items.length === 0 ? (
+          <Text style={docsModalStyles.emptyText}>No documents uploaded.</Text>
+        ) : (
+          items.map((doc) => (
+            <View key={doc.id} style={docsModalStyles.docRow}>
+              <View style={docsModalStyles.docIcon}>
+                <FileText size={16} color="#64748B" />
+              </View>
+              <View style={docsModalStyles.docInfo}>
+                <Text style={docsModalStyles.docFilename} numberOfLines={1}>
+                  {doc.filename}
+                </Text>
+                <View style={docsModalStyles.docMeta}>
+                  <View style={docsModalStyles.docTypePill}>
+                    <Text style={docsModalStyles.docTypeText}>{doc.documentType}</Text>
+                  </View>
+                  <Text style={docsModalStyles.docSize}>{formatFileSize(doc.sizeBytes)}</Text>
+                </View>
+              </View>
+            </View>
+          ))
+        )}
+      </ScrollView>
+    </View>
+  );
+
+  if (Platform.OS !== 'web') {
+    return (
+      <Modal
+        visible={visible}
+        animationType="slide"
+        presentationStyle="formSheet"
+        onRequestClose={onClose}
+        accessibilityViewIsModal
+      >
+        <View style={docsModalStyles.nativeContainer}>{body}</View>
+      </Modal>
+    );
+  }
+
+  if (!visible) return <></>;
+
+  return (
+    <View style={docsModalStyles.webOverlay}>
+      <Pressable
+        style={docsModalStyles.webBackdrop}
+        onPress={onClose}
+        accessibilityRole="button"
+        accessibilityLabel="Close modal"
+      />
+      <View style={docsModalStyles.webPanel}>{body}</View>
+    </View>
+  );
+}
+
+const docsModalStyles = StyleSheet.create({
+  webOverlay: {
+    position: 'fixed' as 'absolute',
+    inset: 0,
+    zIndex: 200,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+  webBackdrop: {
+    position: 'absolute' as 'absolute',
+    inset: 0,
+    backgroundColor: 'rgba(17,24,39,0.45)',
+  } as ViewStyle,
+  webPanel: {
+    width: '100%',
+    maxWidth: 480,
+    maxHeight: '80vh' as unknown as number,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    overflow: 'hidden',
+    zIndex: 1,
+  } as ViewStyle,
+  nativeContainer: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  } as ViewStyle,
+  container: {
+    flex: 1,
+    flexDirection: 'column',
+    backgroundColor: '#FFFFFF',
+  } as ViewStyle,
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  } as ViewStyle,
+  title: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 17,
+    color: '#111827',
+  } as TextStyle,
+  list: {
+    flex: 1,
+  } as ViewStyle,
+  listContent: {
+    paddingHorizontal: 20,
+    paddingTop: 14,
+    paddingBottom: 20,
+    gap: 8,
+  } as ViewStyle,
+  centerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 20,
+    justifyContent: 'center',
+  } as ViewStyle,
+  mutedText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: tokens.textMuted,
+  } as TextStyle,
+  emptyText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: '#A0A6AB',
+    fontStyle: 'italic',
+    textAlign: 'center',
+    paddingVertical: 24,
+  } as TextStyle,
+  docRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  } as ViewStyle,
+  docIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  } as ViewStyle,
+  docInfo: {
+    flex: 1,
+    gap: 4,
+  } as ViewStyle,
+  docFilename: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 13,
+    color: '#111827',
+  } as TextStyle,
+  docMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  } as ViewStyle,
+  docTypePill: {
+    backgroundColor: '#F1F5F9',
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  } as ViewStyle,
+  docTypeText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 10,
+    color: '#64748B',
+    textTransform: 'uppercase' as const,
+    letterSpacing: 0.4,
+  } as TextStyle,
+  docSize: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: '#9CA3AF',
+  } as TextStyle,
+});
+
+// ─── EligibilityVerificationModal ─────────────────────────────────────────────
+
+interface EligibilityVerificationModalProps {
+  visible: boolean;
+  onClose: () => void;
+}
+
+/**
+ * Informational modal for Eligibility Verification.
+ * No backend yet — displays the current status and an explanation.
+ *
+ * Platform: web fixed-overlay + Esc; native RN Modal.
+ */
+function EligibilityVerificationModal({
+  visible,
+  onClose,
+}: EligibilityVerificationModalProps): React.JSX.Element {
+  // Esc key closes on web.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !visible) return;
+    const handler = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [visible, onClose]);
+
+  const body = (
+    <View style={eligibilityStyles.container}>
+      {/* Header */}
+      <View style={eligibilityStyles.header}>
+        <Text style={eligibilityStyles.title}>Eligibility Verification</Text>
+        <TouchableOpacity
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Close"
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <X size={18} color="#6B7280" />
+        </TouchableOpacity>
+      </View>
+
+      {/* Body */}
+      <View style={eligibilityStyles.body}>
+        {/* Status row */}
+        <View style={eligibilityStyles.statusRow}>
+          <CheckCircle size={16} color="#15803D" />
+          <Text style={eligibilityStyles.statusLabel}>CalFresh:</Text>
+          <View style={eligibilityStyles.statusPill}>
+            <Text style={eligibilityStyles.statusPillText}>Pending</Text>
+          </View>
+        </View>
+
+        <View style={eligibilityStyles.divider} />
+
+        <Text style={eligibilityStyles.bodyText}>
+          Eligibility verification for programs like CalFresh is conducted through the county
+          system and external eligibility partners. Results are tracked here and updated as the
+          member's verification status changes.
+        </Text>
+        <Text style={eligibilityStyles.bodyText}>
+          Full eligibility tracking and status updates will be available in an upcoming update.
+          If you need to verify eligibility now, please check directly with the county portal
+          or contact your supervisor.
+        </Text>
+      </View>
+
+      {/* Footer */}
+      <View style={eligibilityStyles.footer}>
+        <TouchableOpacity
+          style={eligibilityStyles.closeBtn}
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Close"
+        >
+          <Text style={eligibilityStyles.closeBtnText}>Close</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
+  if (Platform.OS !== 'web') {
+    return (
+      <Modal
+        visible={visible}
+        animationType="slide"
+        presentationStyle="formSheet"
+        onRequestClose={onClose}
+        accessibilityViewIsModal
+      >
+        <View style={eligibilityStyles.nativeContainer}>{body}</View>
+      </Modal>
+    );
+  }
+
+  if (!visible) return <></>;
+
+  return (
+    <View style={eligibilityStyles.webOverlay}>
+      <Pressable
+        style={eligibilityStyles.webBackdrop}
+        onPress={onClose}
+        accessibilityRole="button"
+        accessibilityLabel="Close modal"
+      />
+      <View style={eligibilityStyles.webPanel}>{body}</View>
+    </View>
+  );
+}
+
+const eligibilityStyles = StyleSheet.create({
+  webOverlay: {
+    position: 'fixed' as 'absolute',
+    inset: 0,
+    zIndex: 200,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+  webBackdrop: {
+    position: 'absolute' as 'absolute',
+    inset: 0,
+    backgroundColor: 'rgba(17,24,39,0.45)',
+  } as ViewStyle,
+  webPanel: {
+    width: '100%',
+    maxWidth: 440,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    overflow: 'hidden',
+    zIndex: 1,
+  } as ViewStyle,
+  nativeContainer: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  } as ViewStyle,
+  container: {
+    flexDirection: 'column',
+    backgroundColor: '#FFFFFF',
+  } as ViewStyle,
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  } as ViewStyle,
+  title: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 17,
+    color: '#111827',
+  } as TextStyle,
+  body: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 8,
+    gap: 12,
+  } as ViewStyle,
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  } as ViewStyle,
+  statusLabel: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 14,
+    color: '#111827',
+  } as TextStyle,
+  statusPill: {
+    backgroundColor: '#FEF9C3',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderWidth: 1,
+    borderColor: '#FDE047',
+  } as ViewStyle,
+  statusPillText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12,
+    color: '#A16207',
+  } as TextStyle,
+  divider: {
+    height: 1,
+    backgroundColor: '#F3F4F6',
+    marginVertical: 4,
+  } as ViewStyle,
+  bodyText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: '#374151',
+    lineHeight: 20,
+  } as TextStyle,
+  footer: {
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+    alignItems: 'flex-end',
+  } as ViewStyle,
+  closeBtn: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: tokens.primary,
+    alignItems: 'center',
+    minWidth: 80,
+  } as ViewStyle,
+  closeBtnText: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 14,
+    color: '#FFFFFF',
+  } as TextStyle,
+});
+
 // ─── SectionCard wrapper ──────────────────────────────────────────────────────
 
 interface SectionCardProps {
@@ -5034,6 +5821,9 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
   const [editResourceNeedsOpen, setEditResourceNeedsOpen] = useState(false);
   const [addJourneyOpen, setAddJourneyOpen] = useState(false);
   const [showScreening, setShowScreening] = useState(false);
+  const [caseNotesOpen, setCaseNotesOpen] = useState(false);
+  const [documentsOpen, setDocumentsOpen] = useState(false);
+  const [eligibilityOpen, setEligibilityOpen] = useState(false);
 
   // Journeys data used both by ResourceNeedsColumn and AddJourneyModal dedup guard.
   const { data: journeysForModal } = useMemberJourneys(memberId);
@@ -5253,12 +6043,7 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
             <QuickAccessRow
               memberId={memberId}
               displayName={displayName}
-              onAddNote={() =>
-                Alert.alert(
-                  'Case Notes',
-                  'Per-member case notes are scoped to each session today. Open a session card below to view or add notes. A dedicated case-notes timeline ships next sprint.',
-                )
-              }
+              onAddNote={() => setCaseNotesOpen(true)}
               onFlagMember={() => setFlagModalOpen(true)}
               onScheduleSession={() =>
                 Alert.alert(
@@ -5452,12 +6237,7 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                       iconBg="#EFF6FF"
                       label="Case Notes"
                       sublabel="View all notes"
-                      onPress={() =>
-                        Alert.alert(
-                          'Coming soon',
-                          'Per-member case notes are scoped to each session today. A dedicated timeline ships next sprint.',
-                        )
-                      }
+                      onPress={() => setCaseNotesOpen(true)}
                     />
                     <RailAccessItem
                       icon={<CheckSquare size={14} color="#EA580C" />}
@@ -5475,24 +6255,14 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                       iconBg="#F0FDF4"
                       label="Eligibility Verification"
                       sublabel="CalFresh pending"
-                      onPress={() =>
-                        Alert.alert(
-                          'Coming soon',
-                          'Eligibility verification is planned for an upcoming sprint.',
-                        )
-                      }
+                      onPress={() => setEligibilityOpen(true)}
                     />
                     <RailAccessItem
                       icon={<UploadCloud size={14} color="#64748B" />}
                       iconBg="#F8FAFC"
                       label="Uploaded Documents"
                       sublabel="Member uploads"
-                      onPress={() =>
-                        Alert.alert(
-                          'Coming soon',
-                          'CHW-scoped document review ships in an upcoming sprint.',
-                        )
-                      }
+                      onPress={() => setDocumentsOpen(true)}
                     />
                   </Card>
                 </RightRail>
@@ -5578,6 +6348,26 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
             </View>
           </View>
         </Modal>
+
+        {/* ── Case Notes modal ── */}
+        <CaseNotesModal
+          visible={caseNotesOpen}
+          memberId={memberId}
+          onClose={() => setCaseNotesOpen(false)}
+        />
+
+        {/* ── Uploaded Documents modal ── */}
+        <UploadedDocumentsModal
+          visible={documentsOpen}
+          memberId={memberId}
+          onClose={() => setDocumentsOpen(false)}
+        />
+
+        {/* ── Eligibility Verification modal ── */}
+        <EligibilityVerificationModal
+          visible={eligibilityOpen}
+          onClose={() => setEligibilityOpen(false)}
+        />
 
         {/*
           ── Open Questions drawer — overlay mode (narrow viewports / native) ──
