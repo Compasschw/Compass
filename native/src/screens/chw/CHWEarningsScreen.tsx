@@ -455,7 +455,12 @@ export function CHWEarningsScreen(): React.JSX.Element {
     connectOnboarding.mutate(undefined, {
       onSuccess: ({ onboardingUrl }) => {
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          window.open(onboardingUrl, '_blank', 'noopener,noreferrer');
+          // Full-page redirect to Stripe's hosted onboarding. A post-await
+          // `window.open(..., '_blank')` is popup-blocked because it isn't a
+          // direct user gesture — that's why the button "did nothing".
+          // Same-tab navigation is the standard Stripe Connect pattern; Stripe
+          // returns the CHW to /payments/onboarding-complete via the return_url.
+          window.location.assign(onboardingUrl);
         } else {
           void Linking.openURL(onboardingUrl);
         }
