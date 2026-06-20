@@ -23,11 +23,12 @@ export const chwSidebarItems = [
   { key: 'journeys',     label: 'Journeys',           icon: 'route',            route: 'CHWJourneys'           },
   { key: 'messages',     label: 'Messages',           icon: 'message-square',   route: 'SessionsStack',         badgeKey: 'unreadMessages' },
   { key: 'appointments', label: 'Appointments',       icon: 'calendar',         route: 'Calendar'              },
-  { key: 'resources',    label: 'Resources',          icon: 'folder-open',      route: 'CHWResources'          },
+  // Hidden 2026-06-20 (revisit later): Resources, Reports, Community Partners.
+  // { key: 'resources',    label: 'Resources',          icon: 'folder-open',      route: 'CHWResources'          },
   { key: 'documents',    label: 'Documents',          icon: 'file-text',        route: 'CHWDocuments'          },
   { key: 'earnings',     label: 'Earnings',           icon: 'dollar-sign',      route: 'EarningsStack'         },
-  { key: 'reports',      label: 'Reports',            icon: 'bar-chart-3',      route: 'CHWReports'            },
-  { key: 'partners',     label: 'Community Partners', icon: 'building-2',       route: 'CHWCommunityPartners'  },
+  // { key: 'reports',      label: 'Reports',            icon: 'bar-chart-3',      route: 'CHWReports'            },
+  // { key: 'partners',     label: 'Community Partners', icon: 'building-2',       route: 'CHWCommunityPartners'  },
   { key: 'settings',     label: 'Settings',           icon: 'settings',         route: 'Profile'               },
 ] as const;
 

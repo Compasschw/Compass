@@ -52,10 +52,11 @@ import { CHWMapScreen } from '../screens/chw/CHWMapScreen';
 import { CHWProfileScreen } from '../screens/chw/CHWProfileScreen';
 import { PaymentsScreen } from '../screens/chw/PaymentsScreen';
 import { CHWJourneysScreen } from '../screens/chw/CHWJourneysScreen';
-import { CHWResourcesScreen } from '../screens/chw/CHWResourcesScreen';
+// Hidden 2026-06-20 (revisit later): Resources, Reports, Community Partners.
+// import { CHWResourcesScreen } from '../screens/chw/CHWResourcesScreen';
 import { CHWDocumentsScreen } from '../screens/chw/CHWDocumentsScreen';
-import { CHWReportsScreen } from '../screens/chw/CHWReportsScreen';
-import { CHWCommunityPartnersScreen } from '../screens/chw/CHWCommunityPartnersScreen';
+// import { CHWReportsScreen } from '../screens/chw/CHWReportsScreen';
+// import { CHWCommunityPartnersScreen } from '../screens/chw/CHWCommunityPartnersScreen';
 import { CHWMembersScreen } from '../screens/chw/CHWMembersScreen';
 
 // ─── Navigator param lists ────────────────────────────────────────────────────
@@ -73,10 +74,11 @@ export type CHWTabParamList = {
   Profile: undefined;
   // New (Wave 2) sidebar destinations.
   CHWJourneys: undefined;
-  CHWResources: undefined;
+  // Hidden 2026-06-20 (revisit later): Resources, Reports, Community Partners.
+  // CHWResources: undefined;
   CHWDocuments: undefined;
-  CHWReports: undefined;
-  CHWCommunityPartners: undefined;
+  // CHWReports: undefined;
+  // CHWCommunityPartners: undefined;
   // Screens inside nested stacks — exposed here so deep links can address
   // them via the CHWTabParamList type without navigating through the stack
   // manually.
@@ -217,11 +219,12 @@ const SCREENS: ScreenSpec[] = [
   { name: 'CHWJourneys',          title: 'Journeys',           component: CHWJourneysScreen,          icon: Route },
   { name: 'SessionsStack',        title: 'Messages',           component: SessionsStackNavigator,     icon: ClipboardList,   rootScreen: Platform.OS === 'web' ? 'Messages' : 'Sessions' },
   { name: 'Calendar',             title: 'Appointments',       component: CHWCalendarScreen,          icon: CalendarDays },
-  { name: 'CHWResources',         title: 'Resources',          component: CHWResourcesScreen,         icon: FolderOpen },
+  // Hidden 2026-06-20 (revisit later): Resources, Reports, Community Partners.
+  // { name: 'CHWResources',         title: 'Resources',          component: CHWResourcesScreen,         icon: FolderOpen },
   { name: 'CHWDocuments',         title: 'Documents',          component: CHWDocumentsScreen,         icon: FileText },
   { name: 'EarningsStack',        title: 'Earnings',           component: EarningsStackNavigator,     icon: DollarSign,      rootScreen: 'Earnings' },
-  { name: 'CHWReports',           title: 'Reports',            component: CHWReportsScreen,           icon: BarChart3 },
-  { name: 'CHWCommunityPartners', title: 'Community Partners', component: CHWCommunityPartnersScreen, icon: Building2 },
+  // { name: 'CHWReports',           title: 'Reports',            component: CHWReportsScreen,           icon: BarChart3 },
+  // { name: 'CHWCommunityPartners', title: 'Community Partners', component: CHWCommunityPartnersScreen, icon: Building2 },
   { name: 'Map',                  title: 'Map',                component: CHWMapScreen,               icon: Map },
   { name: 'Profile',              title: 'Settings',           component: CHWProfileScreen,           icon: UserCircle },
 ];

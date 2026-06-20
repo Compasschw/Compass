@@ -201,10 +201,11 @@ function buildLinkingConfig(): LinkingOptions<RootStackParamList> {
             },
             CHWMembers: 'members',                  // /chw/members  (new roster screen)
             CHWJourneys: 'journeys',                // /chw/journeys
-            CHWResources: 'resources',              // /chw/resources
+            // Hidden 2026-06-20 (revisit later): Resources, Reports, Community Partners.
+            // CHWResources: 'resources',              // /chw/resources
             CHWDocuments: 'documents',              // /chw/documents
-            CHWReports: 'reports',                  // /chw/reports
-            CHWCommunityPartners: 'partners',       // /chw/partners
+            // CHWReports: 'reports',                  // /chw/reports
+            // CHWCommunityPartners: 'partners',       // /chw/partners
             Map: 'map',                             // /chw/map
             Calendar: 'calendar',               // /chw/calendar
             EarningsStack: {
