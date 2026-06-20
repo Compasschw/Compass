@@ -115,6 +115,7 @@ import {
   useCreateCaseNote,
   useEndSession as useEndSessionHook,
   useStartSession as useStartSessionHook,
+  useScheduleSession as useScheduleSessionHook,
   type SessionData,
   type SessionMessageLocal,
   type SessionMessageData,
@@ -1879,8 +1880,14 @@ const caseNoteModalStyles = StyleSheet.create({
  * the California §632 recording-consent IVR (or it times out) — see
  * app/routers/communication.py.
  */
+/**
+ * Statuses that produce a non-actionable read-only label in the rail.
+ * `completed` is intentionally excluded: a completed session (documentation
+ * submitted) shows an actionable "Begin Session" button to start the next
+ * session with that member. Only truly aborted sessions (cancelled /
+ * cancelled_no_consent) get the read-only label.
+ */
 const TERMINAL_SESSION_STATUSES: readonly string[] = [
-  'completed',
   'cancelled',
   'cancelled_no_consent',
 ];
@@ -1902,6 +1909,8 @@ function terminalSessionLabel(status: string): string {
 interface MemberContextRailProps {
   readonly session: SessionData;
   readonly onEndSessionComplete?: () => void;
+  /** Called after a new session has been created and started from a completed session. */
+  readonly onSessionStarted?: (newSession: SessionData) => void;
 }
 
 /**
@@ -1919,6 +1928,7 @@ interface MemberContextRailProps {
 function MemberContextRail({
   session,
   onEndSessionComplete,
+  onSessionStarted,
 }: MemberContextRailProps): React.JSX.Element {
   const navigation = useNavigation<any>(); // eslint-disable-line @typescript-eslint/no-explicit-any
 
@@ -1930,12 +1940,14 @@ function MemberContextRail({
 
   // Session lifecycle gating for the primary action button:
   //   scheduled              → green "Begin Session" (PATCH /sessions/{id}/start)
+  //   completed              → green "Begin Session" (POST /sessions/schedule then PATCH /start
+  //                            on the new session — cannot re-/start a completed session)
   //   in_progress            → red "Complete Session" (end flow + documentation)
   //   awaiting_documentation → red "Complete Session" (re-opens documentation; /end is idempotent)
-  //   terminal (completed /  → non-actionable status note. These sessions cannot
-  //     cancelled / no-consent)  be ended; showing a Complete button here just
-  //                              produces a confusing 409 (the bug this guards).
+  //   cancelled /            → non-actionable status note. Member declined or aborted;
+  //     cancelled_no_consent   not "start again" states.
   const canBeginSession = session.status === 'scheduled';
+  const canBeginNewSession = session.status === 'completed';
   const isTerminalSession = TERMINAL_SESSION_STATUSES.includes(session.status);
 
   // Slide-up animation for the end-session confirmation panel
@@ -1976,6 +1988,7 @@ function MemberContextRail({
 
   const endSession = useEndSessionHook();
   const startSession = useStartSessionHook();
+  const scheduleSession = useScheduleSessionHook();
 
   // Journey data
   const journeysQuery = useChwJourneys();
@@ -2068,6 +2081,66 @@ function MemberContextRail({
       setBeginSessionPending(false);
     }
   }, [session.id, startSession]);
+
+  /**
+   * Creates a brand-new session for the same member (immediately scheduled + started).
+   * Used when the rail's session is `completed` — you cannot re-/start a completed
+   * session (that 409s), so we POST /sessions/schedule then PATCH /sessions/{id}/start.
+   *
+   * On schedule success but start failure the new session is left in `scheduled` state —
+   * the CHW is informed and can begin it from Calendar. No data is lost.
+   */
+  const handleBeginNewSession = useCallback(async (): Promise<void> => {
+    if (!session.memberId) return;
+    setBeginSessionPending(true);
+    try {
+      const newSession = await scheduleSession.mutateAsync({
+        memberId: session.memberId,
+        scheduledAt: new Date().toISOString(),
+        mode: 'phone',
+        schedulingStatus: 'confirmed',
+      });
+
+      try {
+        await startSession.mutateAsync(newSession.id);
+        // sessions query was already invalidated by useScheduleSession's onSuccess;
+        // useStartSession also invalidates on success — both caches are fresh.
+        // Surface the new session to the parent so liveSelectedSession re-points to it.
+        onSessionStarted?.({ ...newSession, status: 'in_progress' });
+      } catch (startErr) {
+        // Schedule succeeded but start failed — new session exists in `scheduled` state.
+        // Notify the CHW; they can begin it from Calendar.
+        const startMessage =
+          startErr instanceof Error
+            ? startErr.message
+            : 'Could not start the new session. It was created successfully — begin it from Calendar.';
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.alert(
+            `Session created but could not be started\n\n${startMessage}\n\nThe session appears in Calendar where you can begin it.`,
+          );
+        } else {
+          Alert.alert(
+            'Session created but could not be started',
+            `${startMessage}\n\nThe session appears in Calendar where you can begin it.`,
+          );
+        }
+        // Still surface the scheduled session so the rail switches contexts.
+        onSessionStarted?.(newSession);
+      }
+    } catch (scheduleErr) {
+      const message =
+        scheduleErr instanceof Error
+          ? scheduleErr.message
+          : 'Could not create a new session. Try again.';
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.alert(`Failed to begin session\n\n${message}`);
+      } else {
+        Alert.alert('Failed to begin session', message);
+      }
+    } finally {
+      setBeginSessionPending(false);
+    }
+  }, [session.memberId, scheduleSession, startSession, onSessionStarted]);
 
   const handleEndSessionConfirmed = useCallback(async (): Promise<void> => {
     setShowEndConfirm(false);
@@ -2304,14 +2377,19 @@ function MemberContextRail({
           </View>
         </View>
 
-        {/* Primary session action — Begin (scheduled) / Complete (in progress) /
-            read-only status note (terminal: completed / cancelled). */}
+        {/* Primary session action:
+            completed              → green "Begin Session" (creates + starts new session)
+            scheduled              → green "Begin Session" (starts existing scheduled session)
+            in_progress /          → red "Complete Session"
+              awaiting_documentation
+            cancelled /            → read-only status note
+              cancelled_no_consent */}
         <View
           role="region"
           accessibilityLabel={
             isTerminalSession
               ? terminalSessionLabel(session.status)
-              : canBeginSession
+              : canBeginSession || canBeginNewSession
               ? 'Begin Session'
               : 'Complete Session'
           }
@@ -2323,7 +2401,36 @@ function MemberContextRail({
                 {terminalSessionLabel(session.status)}
               </Text>
             </View>
+          ) : canBeginNewSession ? (
+            /* completed → create a new session and immediately start it */
+            <TouchableOpacity
+              style={[
+                styles.beginSessionBtn,
+                (beginSessionPending || servicesRefused) && styles.endSessionBtnDisabled,
+              ]}
+              onPress={() => void handleBeginNewSession()}
+              disabled={beginSessionPending || servicesRefused}
+              accessibilityRole="button"
+              accessibilityLabel={
+                servicesRefused
+                  ? 'Begin session disabled — member has refused services'
+                  : beginSessionPending
+                  ? 'Beginning session...'
+                  : 'Begin session'
+              }
+              accessibilityState={{ disabled: beginSessionPending || servicesRefused }}
+            >
+              {beginSessionPending ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Play size={16} color="#fff" />
+              )}
+              <Text style={styles.endSessionBtnText}>
+                {beginSessionPending ? 'Beginning...' : 'Begin Session'}
+              </Text>
+            </TouchableOpacity>
           ) : canBeginSession ? (
+            /* scheduled → start the existing session */
             <TouchableOpacity
               style={[
                 styles.beginSessionBtn,
@@ -2380,7 +2487,7 @@ function MemberContextRail({
           )}
 
           {/* Inline slide-up confirmation panel — no window.confirm */}
-          {!canBeginSession && !isTerminalSession && showEndConfirm ? (
+          {!canBeginSession && !canBeginNewSession && !isTerminalSession && showEndConfirm ? (
             <Animated.View
               style={[
                 styles.endConfirmPanel,
@@ -2550,6 +2657,12 @@ export function CHWMessagesScreen(): React.JSX.Element {
     }
   }, [selectedSession]);
 
+  // After a new session is created+started from a completed session — re-point the
+  // selected session so liveSelectedSession picks up the new in_progress session.
+  const handleSessionStarted = useCallback((newSession: SessionData): void => {
+    setSelectedSession(newSession);
+  }, []);
+
   const submitDocumentation = useSubmitDocumentation();
 
   const handleDocumentationSubmit = useCallback(
@@ -2689,6 +2802,7 @@ export function CHWMessagesScreen(): React.JSX.Element {
             <MemberContextRail
               session={liveSelectedSession ?? selectedSession}
               onEndSessionComplete={handleEndSessionComplete}
+              onSessionStarted={handleSessionStarted}
             />
           </View>
         ) : null}
