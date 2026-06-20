@@ -3168,17 +3168,25 @@ function ResourceNeedsColumn({
   const [awardOpen, setAwardOpen] = useState(false);
   const [awardPointsStr, setAwardPointsStr] = useState('');
   const [awardReason, setAwardReason] = useState('');
+  // "For" — which resource journey the points correlate to (empty = General).
+  const [awardContext, setAwardContext] = useState('');
+  const [awardContextOpen, setAwardContextOpen] = useState(false);
 
   const handleAward = (): void => {
     const points = parseInt(awardPointsStr, 10);
     if (!points || points < 1) return;
+    // Attribute the award to the chosen journey so the reward correlates to it.
+    const reasonParts = [awardContext, awardReason.trim()].filter(Boolean);
+    const fullReason = reasonParts.join(' — ') || undefined;
     award.mutate(
-      { points, reason: awardReason.trim() || undefined },
+      { points, reason: fullReason },
       {
         onSuccess: () => {
           setAwardOpen(false);
           setAwardPointsStr('');
           setAwardReason('');
+          setAwardContext('');
+          setAwardContextOpen(false);
         },
         onError: () => {
           const msg = 'Could not award points. Please try again.';
@@ -3312,6 +3320,35 @@ function ResourceNeedsColumn({
                 <X size={18} color="#6B7280" />
               </TouchableOpacity>
             </View>
+            <Text style={consentModalStyles.meta}>For (resource journey)</Text>
+            <TouchableOpacity
+              style={resourceColStyles.awardInput}
+              onPress={() => setAwardContextOpen((v) => !v)}
+              accessibilityRole="button"
+              accessibilityLabel={`Award for: ${awardContext || 'General'}`}
+            >
+              <Text style={{ color: awardContext ? '#111827' : '#9CA3AF', fontSize: 13 }}>
+                {awardContext || 'General'}{'  ▾'}
+              </Text>
+            </TouchableOpacity>
+            {awardContextOpen && (
+              <View style={resourceColStyles.awardContextList}>
+                {['General', ...activeJourneys.map((j) => j.template.name)].map((opt) => (
+                  <TouchableOpacity
+                    key={opt}
+                    style={resourceColStyles.awardContextItem}
+                    onPress={() => {
+                      setAwardContext(opt === 'General' ? '' : opt);
+                      setAwardContextOpen(false);
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel={opt}
+                  >
+                    <Text style={{ fontSize: 13, color: '#111827' }}>{opt}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
             <Text style={consentModalStyles.meta}>Points</Text>
             <TextInput
               style={resourceColStyles.awardInput}
@@ -3510,6 +3547,19 @@ const resourceColStyles = StyleSheet.create({
     marginBottom: 4,
     outlineStyle: 'none',
   } as unknown as TextStyle,
+  awardContextList: {
+    borderWidth: 1,
+    borderColor: tokens.cardBorder ?? '#E5E7EB',
+    borderRadius: 8,
+    marginBottom: 4,
+    overflow: 'hidden',
+  } as ViewStyle,
+  awardContextItem: {
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  } as ViewStyle,
   awardActions: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
