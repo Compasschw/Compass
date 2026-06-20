@@ -30,12 +30,10 @@ from uuid import UUID, uuid4
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.journeys import WellnessPointsLedger
 from app.services.journey_seeds import seed_default_journey_templates
 from tests.conftest import auth_header, test_session
-
 
 # ─── Helpers ───────────────────────────────────────────────────────────────────
 
