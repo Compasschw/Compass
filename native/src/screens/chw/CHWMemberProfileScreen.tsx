@@ -7077,8 +7077,13 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
             </Card>
 
             {/* ───────────────────────────────────────────────────────────────
-                QUICK ACCESS ROW — 4 common actions
+                QUICK ACCESS ROW — hidden 2026-06-20 (revisit later).
+                The QuickAccessRow component, its handlers, and the Add Note /
+                Flag Member modals remain defined below so this can be restored
+                by un-commenting. Add Note + Flag Member are reachable from their
+                own modals if re-wired; Schedule/Document were Alert stubs.
             ─────────────────────────────────────────────────────────────── */}
+            {/*
             <QuickAccessRow
               memberId={memberId}
               displayName={displayName}
@@ -7097,6 +7102,7 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                 )
               }
             />
+            */}
 
             {/* Main content + optional sidebar */}
             {/*
