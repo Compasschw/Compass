@@ -751,9 +751,13 @@ export function CHWDashboardScreen(): React.JSX.Element {
                     key={session.id}
                     session={session}
                     onPress={() =>
+                      // Route to the member's Messages thread so the CHW can
+                      // prep (Care Status, Session Focus, journey rail) and
+                      // start the session there when the scheduled time hits.
+                      // No autoCall — prepping shouldn't auto-dial the member.
                       navigation.navigate('SessionsStack', {
-                        screen: 'SessionReview',
-                        params: { sessionId: session.id },
+                        screen: 'Messages',
+                        params: { memberId: session.memberId },
                       } as never)
                     }
                   />
