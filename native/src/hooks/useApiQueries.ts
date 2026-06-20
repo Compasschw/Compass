@@ -3067,6 +3067,79 @@ export function useCreateMemberJourney(memberId: string) {
   });
 }
 
+/**
+ * Create a CHW-authored custom journey (3 blank nodes worth 10/5/5 points).
+ * POST /api/v1/journeys/custom { member_id, title }.
+ */
+export function useCreateCustomJourney(memberId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (title: string): Promise<MemberJourneyResponse> => {
+      const raw = await api<unknown>('/journeys/custom', {
+        method: 'POST',
+        body: JSON.stringify({ member_id: memberId, title }),
+      });
+      return transformKeys<MemberJourneyResponse>(raw);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: memberJourneysKey(memberId) });
+      void qc.invalidateQueries({ queryKey: queryKeys.chwJourneys });
+    },
+  });
+}
+
+/**
+ * Add a node to a custom journey (5 pts; 10 if first).
+ * POST /api/v1/journeys/{journeyId}/nodes { name?, description? }.
+ */
+export function useAddJourneyNode(memberId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (vars: {
+      journeyId: string;
+      name?: string;
+      description?: string;
+    }): Promise<MemberJourneyResponse> => {
+      const raw = await api<unknown>(`/journeys/${vars.journeyId}/nodes`, {
+        method: 'POST',
+        body: JSON.stringify({ name: vars.name ?? null, description: vars.description ?? null }),
+      });
+      return transformKeys<MemberJourneyResponse>(raw);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: memberJourneysKey(memberId) });
+    },
+  });
+}
+
+/**
+ * Edit a custom journey node's name/description.
+ * PATCH /api/v1/journeys/{journeyId}/nodes/{stepId} { name?, description? }.
+ */
+export function useUpdateJourneyNode(memberId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (vars: {
+      journeyId: string;
+      stepId: string;
+      name?: string;
+      description?: string;
+    }): Promise<MemberJourneyResponse> => {
+      const body: Record<string, unknown> = {};
+      if (vars.name !== undefined) body.name = vars.name;
+      if (vars.description !== undefined) body.description = vars.description;
+      const raw = await api<unknown>(`/journeys/${vars.journeyId}/nodes/${vars.stepId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      });
+      return transformKeys<MemberJourneyResponse>(raw);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: memberJourneysKey(memberId) });
+    },
+  });
+}
+
 // ─── Member-facing rewards (new /rewards backend) ────────────────────────────
 
 /**

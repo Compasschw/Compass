@@ -125,10 +125,15 @@ import {
   useCaseNotes,
   useCreateCaseNote,
   useMemberDocuments,
+  useCreateCustomJourney,
+  useAddJourneyNode,
+  useUpdateJourneyNode,
+  useUpdateJourneyStep,
   type CreateMemberJourneyPayload,
   type JourneyTemplateResponse,
   type ServicesConsentValue,
   type MemberJourneyResponse,
+  type MemberJourneyStepResponse,
   type MemberDemographicsUpdate,
 } from '../../hooks/useApiQueries';
 
@@ -3099,6 +3104,711 @@ const addJourneyStyles = StyleSheet.create({
   } as TextStyle,
 });
 
+// ─── CreateCustomJourneyModal ─────────────────────────────────────────────────
+
+/** The 5 resource categories offered as quick-pick chips in the custom journey creator. */
+const JOURNEY_CATEGORY_CHIPS: ReadonlyArray<{ label: string }> = [
+  { label: 'Housing' },
+  { label: 'Rehab & Recovery' },
+  { label: 'Food Security' },
+  { label: 'Mental Health' },
+  { label: 'Healthcare' },
+];
+
+interface CreateCustomJourneyModalProps {
+  memberId: string;
+  memberName: string;
+  visible: boolean;
+  onClose: () => void;
+}
+
+/**
+ * Modal for creating a CHW-authored custom journey.
+ *
+ * The CHW types a free-form title or picks one of the 5 resource-category
+ * quick-pick chips. On submit, calls `useCreateCustomJourney(memberId)` which
+ * provisions the journey + 3 blank starter nodes (10/5/5 pts) and invalidates
+ * the journeys cache so the new journey appears immediately.
+ *
+ * Platform: web fixed-overlay + Esc; native RN Modal.
+ */
+function CreateCustomJourneyModal({
+  memberId,
+  memberName,
+  visible,
+  onClose,
+}: CreateCustomJourneyModalProps): React.JSX.Element {
+  const createCustomJourney = useCreateCustomJourney(memberId);
+
+  const [title, setTitle] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  // Reset state whenever the modal opens.
+  useEffect(() => {
+    if (visible) {
+      setTitle('');
+      setError(null);
+    }
+  }, [visible]);
+
+  // Esc key closes on web.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !visible) return;
+    const handler = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [visible, onClose]);
+
+  const handleSubmit = useCallback(async (): Promise<void> => {
+    const trimmed = title.trim();
+    if (!trimmed) {
+      setError('Please enter a journey title or pick a category below.');
+      return;
+    }
+    setError(null);
+    try {
+      await createCustomJourney.mutateAsync(trimmed);
+      onClose();
+    } catch (err: unknown) {
+      const detail =
+        err != null &&
+        typeof err === 'object' &&
+        'detail' in err &&
+        typeof (err as { detail: unknown }).detail === 'string'
+          ? (err as { detail: string }).detail
+          : 'Could not create journey. Please try again.';
+      setError(detail);
+    }
+  }, [title, createCustomJourney, onClose]);
+
+  const body = (
+    <View style={createCustomJourneyStyles.container}>
+      {/* Header */}
+      <View style={createCustomJourneyStyles.header}>
+        <View style={createCustomJourneyStyles.headerTextBlock}>
+          <Text style={createCustomJourneyStyles.title}>Add a Journey</Text>
+          <Text style={createCustomJourneyStyles.subtitle} numberOfLines={1}>
+            for {memberName}
+          </Text>
+        </View>
+        <TouchableOpacity
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Close"
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <X size={18} color="#6B7280" />
+        </TouchableOpacity>
+      </View>
+
+      {/* Body */}
+      <View style={createCustomJourneyStyles.body}>
+        {/* Free-text title */}
+        <Text style={createCustomJourneyStyles.fieldLabel}>Journey title</Text>
+        <TextInput
+          style={createCustomJourneyStyles.input}
+          value={title}
+          onChangeText={setTitle}
+          placeholder="e.g. Housing Stability"
+          placeholderTextColor="#9CA3AF"
+          autoFocus
+          maxLength={120}
+          returnKeyType="done"
+          onSubmitEditing={() => { void handleSubmit(); }}
+          accessibilityLabel="Journey title"
+          editable={!createCustomJourney.isPending}
+        />
+
+        {/* Quick-pick chips */}
+        <Text style={createCustomJourneyStyles.chipsSectionLabel}>
+          Or pick a resource category
+        </Text>
+        <View style={createCustomJourneyStyles.chipsRow}>
+          {JOURNEY_CATEGORY_CHIPS.map(({ label }) => {
+            const isSelected = title === label;
+            return (
+              <TouchableOpacity
+                key={label}
+                style={[
+                  createCustomJourneyStyles.chip,
+                  isSelected && createCustomJourneyStyles.chipSelected,
+                ]}
+                onPress={() => setTitle(isSelected ? '' : label)}
+                accessibilityRole="radio"
+                accessibilityState={{ checked: isSelected }}
+                accessibilityLabel={label}
+              >
+                <Text
+                  style={[
+                    createCustomJourneyStyles.chipText,
+                    isSelected && createCustomJourneyStyles.chipTextSelected,
+                  ]}
+                >
+                  {label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
+        {/* Hint */}
+        <Text style={createCustomJourneyStyles.hint}>
+          Creates 3 blank starter nodes — you'll write the step text in edit mode.
+        </Text>
+
+        {/* Inline error */}
+        {error !== null && (
+          <Text style={createCustomJourneyStyles.errorText} accessibilityRole="alert">
+            {error}
+          </Text>
+        )}
+      </View>
+
+      {/* Footer */}
+      <View style={createCustomJourneyStyles.footer}>
+        <TouchableOpacity
+          style={createCustomJourneyStyles.cancelBtn}
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Cancel"
+        >
+          <Text style={createCustomJourneyStyles.cancelBtnText}>Cancel</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            createCustomJourneyStyles.submitBtn,
+            (!title.trim() || createCustomJourney.isPending) &&
+              createCustomJourneyStyles.submitBtnDisabled,
+          ]}
+          onPress={() => { void handleSubmit(); }}
+          disabled={!title.trim() || createCustomJourney.isPending}
+          accessibilityRole="button"
+          accessibilityLabel="Create journey"
+          accessibilityState={{ disabled: !title.trim() || createCustomJourney.isPending }}
+        >
+          {createCustomJourney.isPending ? (
+            <ActivityIndicator size="small" color="#FFFFFF" />
+          ) : (
+            <Text style={createCustomJourneyStyles.submitBtnText}>Create Journey</Text>
+          )}
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
+  if (Platform.OS !== 'web') {
+    return (
+      <Modal
+        visible={visible}
+        animationType="slide"
+        presentationStyle="formSheet"
+        onRequestClose={onClose}
+        accessibilityViewIsModal
+      >
+        <View style={createCustomJourneyStyles.nativeContainer}>{body}</View>
+      </Modal>
+    );
+  }
+
+  if (!visible) return <></>;
+
+  return (
+    <View style={createCustomJourneyStyles.webOverlay}>
+      <Pressable
+        style={createCustomJourneyStyles.webBackdrop}
+        onPress={onClose}
+        accessibilityRole="button"
+        accessibilityLabel="Close modal"
+      />
+      <View style={createCustomJourneyStyles.webPanel}>{body}</View>
+    </View>
+  );
+}
+
+const createCustomJourneyStyles = StyleSheet.create({
+  webOverlay: {
+    position: 'fixed' as 'absolute',
+    inset: 0,
+    zIndex: 200,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+  webBackdrop: {
+    position: 'absolute' as 'absolute',
+    inset: 0,
+    backgroundColor: 'rgba(17,24,39,0.45)',
+  } as ViewStyle,
+  webPanel: {
+    width: '100%',
+    maxWidth: 480,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    overflow: 'hidden',
+    zIndex: 1,
+  } as ViewStyle,
+  nativeContainer: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  } as ViewStyle,
+  container: {
+    flexDirection: 'column',
+    backgroundColor: '#FFFFFF',
+  } as ViewStyle,
+  header: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+    gap: 12,
+  } as ViewStyle,
+  headerTextBlock: {
+    flex: 1,
+    gap: 2,
+  } as ViewStyle,
+  title: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 17,
+    color: '#111827',
+  } as TextStyle,
+  subtitle: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: '#6B7280',
+  } as TextStyle,
+  body: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 8,
+    gap: 8,
+  } as ViewStyle,
+  fieldLabel: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 11,
+    color: '#6B7280',
+    textTransform: 'uppercase' as const,
+    letterSpacing: 0.7,
+    marginBottom: 2,
+  } as TextStyle,
+  input: {
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    fontFamily: 'PlusJakartaSans_400Regular',
+    color: '#111827',
+    backgroundColor: '#FAFAFA',
+  } as TextStyle,
+  chipsSectionLabel: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 8,
+    marginBottom: 4,
+  } as TextStyle,
+  chipsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  } as ViewStyle,
+  chip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 100,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#F9FAFB',
+  } as ViewStyle,
+  chipSelected: {
+    backgroundColor: `${tokens.primary}12`,
+    borderColor: tokens.primary,
+  } as ViewStyle,
+  chipText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12,
+    color: '#374151',
+  } as TextStyle,
+  chipTextSelected: {
+    color: tokens.primary,
+  } as TextStyle,
+  hint: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: '#9CA3AF',
+    marginTop: 4,
+    lineHeight: 16,
+  } as TextStyle,
+  errorText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12,
+    color: '#B91C1C',
+    marginTop: 4,
+    lineHeight: 18,
+  } as TextStyle,
+  footer: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+    justifyContent: 'flex-end',
+    marginTop: 4,
+  } as ViewStyle,
+  cancelBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: '#F4F1ED',
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: '#DDD6CC',
+  } as ViewStyle,
+  cancelBtnText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 13,
+    color: '#6B7280',
+  } as TextStyle,
+  submitBtn: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    backgroundColor: tokens.primary,
+    borderRadius: radius.md,
+    minWidth: 130,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+  submitBtnDisabled: {
+    backgroundColor: '#D1D5DB',
+  } as ViewStyle,
+  submitBtnText: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 13,
+    color: '#FFFFFF',
+  } as TextStyle,
+});
+
+// ─── EditJourneyNodeModal ─────────────────────────────────────────────────────
+
+interface EditJourneyNodeModalProps {
+  visible: boolean;
+  memberId: string;
+  journeyId: string;
+  /** The templateStepId of the node being edited (used as the stepId in the PATCH). */
+  stepId: string;
+  /** Current step name (empty string for blank nodes). */
+  initialName: string;
+  /** Current step description. */
+  initialDescription: string;
+  onClose: () => void;
+}
+
+/**
+ * Small modal for editing a custom journey node's name and description.
+ * Calls `useUpdateJourneyNode({ journeyId, stepId: node.templateStepId, name, description })`.
+ *
+ * Platform: web fixed-overlay + Esc; native RN Modal.
+ */
+function EditJourneyNodeModal({
+  visible,
+  memberId,
+  journeyId,
+  stepId,
+  initialName,
+  initialDescription,
+  onClose,
+}: EditJourneyNodeModalProps): React.JSX.Element {
+  const updateNode = useUpdateJourneyNode(memberId);
+
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  // Hydrate from props whenever the modal opens.
+  useEffect(() => {
+    if (visible) {
+      setName(initialName);
+      setDescription(initialDescription);
+      setError(null);
+    }
+  }, [visible, initialName, initialDescription]);
+
+  // Esc key closes on web.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !visible) return;
+    const handler = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [visible, onClose]);
+
+  const handleSave = useCallback(async (): Promise<void> => {
+    setError(null);
+    try {
+      await updateNode.mutateAsync({
+        journeyId,
+        stepId,
+        name: name.trim(),
+        description: description.trim(),
+      });
+      onClose();
+    } catch (err: unknown) {
+      const detail =
+        err != null &&
+        typeof err === 'object' &&
+        'detail' in err &&
+        typeof (err as { detail: unknown }).detail === 'string'
+          ? (err as { detail: string }).detail
+          : 'Could not save. Please try again.';
+      setError(detail);
+    }
+  }, [name, description, journeyId, stepId, updateNode, onClose]);
+
+  const body = (
+    <View style={editNodeStyles.container}>
+      {/* Header */}
+      <View style={editNodeStyles.header}>
+        <Text style={editNodeStyles.title}>Edit Step</Text>
+        <TouchableOpacity
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Close"
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <X size={18} color="#6B7280" />
+        </TouchableOpacity>
+      </View>
+
+      {/* Fields */}
+      <View style={editNodeStyles.body}>
+        <Text style={editNodeStyles.fieldLabel}>Step name</Text>
+        <TextInput
+          style={editNodeStyles.input}
+          value={name}
+          onChangeText={setName}
+          placeholder="e.g. Schedule Housing Appointment"
+          placeholderTextColor="#9CA3AF"
+          autoFocus
+          maxLength={200}
+          returnKeyType="next"
+          accessibilityLabel="Step name"
+          editable={!updateNode.isPending}
+        />
+
+        <Text style={[editNodeStyles.fieldLabel, editNodeStyles.fieldLabelSpaced]}>
+          Description (optional)
+        </Text>
+        <TextInput
+          style={[editNodeStyles.input, editNodeStyles.textArea]}
+          value={description}
+          onChangeText={setDescription}
+          placeholder="What the member should do for this step…"
+          placeholderTextColor="#9CA3AF"
+          multiline
+          numberOfLines={3}
+          textAlignVertical="top"
+          maxLength={1000}
+          accessibilityLabel="Step description"
+          editable={!updateNode.isPending}
+        />
+
+        {error !== null && (
+          <Text style={editNodeStyles.errorText} accessibilityRole="alert">
+            {error}
+          </Text>
+        )}
+      </View>
+
+      {/* Footer */}
+      <View style={editNodeStyles.footer}>
+        <TouchableOpacity
+          style={editNodeStyles.cancelBtn}
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Cancel"
+        >
+          <Text style={editNodeStyles.cancelBtnText}>Cancel</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            editNodeStyles.saveBtn,
+            updateNode.isPending && editNodeStyles.saveBtnDisabled,
+          ]}
+          onPress={() => { void handleSave(); }}
+          disabled={updateNode.isPending}
+          accessibilityRole="button"
+          accessibilityLabel="Save step"
+        >
+          {updateNode.isPending ? (
+            <ActivityIndicator size="small" color="#FFFFFF" />
+          ) : (
+            <Text style={editNodeStyles.saveBtnText}>Save</Text>
+          )}
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
+  if (Platform.OS !== 'web') {
+    return (
+      <Modal
+        visible={visible}
+        animationType="slide"
+        presentationStyle="formSheet"
+        onRequestClose={onClose}
+        accessibilityViewIsModal
+      >
+        <View style={editNodeStyles.nativeContainer}>{body}</View>
+      </Modal>
+    );
+  }
+
+  if (!visible) return <></>;
+
+  return (
+    <View style={editNodeStyles.webOverlay}>
+      <Pressable
+        style={editNodeStyles.webBackdrop}
+        onPress={onClose}
+        accessibilityRole="button"
+        accessibilityLabel="Close modal"
+      />
+      <View style={editNodeStyles.webPanel}>{body}</View>
+    </View>
+  );
+}
+
+const editNodeStyles = StyleSheet.create({
+  webOverlay: {
+    position: 'fixed' as 'absolute',
+    inset: 0,
+    zIndex: 210,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+  webBackdrop: {
+    position: 'absolute' as 'absolute',
+    inset: 0,
+    backgroundColor: 'rgba(17,24,39,0.45)',
+  } as ViewStyle,
+  webPanel: {
+    width: '100%',
+    maxWidth: 440,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    overflow: 'hidden',
+    zIndex: 1,
+  } as ViewStyle,
+  nativeContainer: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  } as ViewStyle,
+  container: {
+    flexDirection: 'column',
+    backgroundColor: '#FFFFFF',
+  } as ViewStyle,
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  } as ViewStyle,
+  title: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 17,
+    color: '#111827',
+  } as TextStyle,
+  body: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 8,
+    gap: 4,
+  } as ViewStyle,
+  fieldLabel: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 11,
+    color: '#6B7280',
+    textTransform: 'uppercase' as const,
+    letterSpacing: 0.7,
+    marginBottom: 4,
+  } as TextStyle,
+  fieldLabelSpaced: {
+    marginTop: 12,
+  } as TextStyle,
+  input: {
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    fontFamily: 'PlusJakartaSans_400Regular',
+    color: '#111827',
+    backgroundColor: '#FAFAFA',
+  } as TextStyle,
+  textArea: {
+    minHeight: 72,
+  } as TextStyle,
+  errorText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12,
+    color: '#B91C1C',
+    marginTop: 8,
+    lineHeight: 18,
+  } as TextStyle,
+  footer: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+    justifyContent: 'flex-end',
+    marginTop: 4,
+  } as ViewStyle,
+  cancelBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: '#F4F1ED',
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: '#DDD6CC',
+  } as ViewStyle,
+  cancelBtnText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 13,
+    color: '#6B7280',
+  } as TextStyle,
+  saveBtn: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    backgroundColor: tokens.primary,
+    borderRadius: radius.md,
+    minWidth: 80,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+  saveBtnDisabled: {
+    opacity: 0.6,
+  } as ViewStyle,
+  saveBtnText: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 13,
+    color: '#FFFFFF',
+  } as TextStyle,
+});
+
 // ─── Severity helpers ─────────────────────────────────────────────────────────
 
 /**
@@ -3886,11 +4596,19 @@ interface SingleJourneyTrackProps {
   journey: MemberJourneyResponse;
   rank: number;
   windowWidth: number;
+  memberId: string;
+  /** When true, CHW edit affordances (add node, edit/complete each node) are visible. */
+  editMode: boolean;
 }
 
 /**
  * A single journey track row: rank chip + name + severity pill in the header,
- * then the 6-step timeline below.
+ * then the step timeline below.
+ *
+ * When editMode is true and the journey is custom (template.slug starts with
+ * "custom-"), each node shows an edit pencil and a "Complete" action on the
+ * current incomplete node. An "Add node" button appears at the bottom of the
+ * track. Non-custom journeys are read-only in all modes.
  *
  * Responsive:
  *   ≥ 1024px — evenly-spaced flex row (wideRow).
@@ -3901,6 +4619,8 @@ const SingleJourneyTrack = React.memo(function SingleJourneyTrack({
   journey,
   rank,
   windowWidth,
+  memberId,
+  editMode,
 }: SingleJourneyTrackProps): React.JSX.Element {
   const steps = useMemo(() => buildRoadmapSteps(journey), [journey]);
   const severity = deriveSeverity(journey.progressPercent);
@@ -3914,6 +4634,40 @@ const SingleJourneyTrack = React.memo(function SingleJourneyTrack({
     severity === 'high' ? 'red' : severity === 'medium' ? 'amber' : ('amber' as const);
   const pillLabel =
     severity === 'high' ? 'High' : severity === 'medium' ? 'Medium' : 'Low';
+
+  /** Whether this journey was built with the custom-journey creator. */
+  const isCustom = journey.template.slug.startsWith('custom-');
+
+  // ── Edit-mode sub-state ──────────────────────────────────────────────────────
+  const [editingStep, setEditingStep] = useState<MemberJourneyStepResponse | null>(null);
+  const addNode = useAddJourneyNode(memberId);
+  const completeStep = useUpdateJourneyStep();
+
+  const handleAddNode = useCallback((): void => {
+    addNode.mutate(
+      { journeyId: journey.id },
+      {
+        onError: () => {
+          const msg = 'Could not add node. Please try again.';
+          if (Platform.OS === 'web' && typeof window !== 'undefined') window.alert(msg);
+          else Alert.alert('Error', msg);
+        },
+      },
+    );
+  }, [addNode, journey.id]);
+
+  const handleCompleteStep = useCallback((step: MemberJourneyStepResponse): void => {
+    completeStep.mutate(
+      { journeyId: journey.id, stepId: step.templateStepId, status: 'completed' },
+      {
+        onError: () => {
+          const msg = 'Could not mark step complete. Please try again.';
+          if (Platform.OS === 'web' && typeof window !== 'undefined') window.alert(msg);
+          else Alert.alert('Error', msg);
+        },
+      },
+    );
+  }, [completeStep, journey.id]);
 
   return (
     <View style={trackStyles.container}>
@@ -3929,10 +4683,114 @@ const SingleJourneyTrack = React.memo(function SingleJourneyTrack({
         <Text style={[trackStyles.progressLabel, numerals.tabular]}>
           {Math.round(journey.progressPercent)}%
         </Text>
+        {editMode && isCustom && (
+          <View style={trackStyles.editModeBadge}>
+            <Text style={trackStyles.editModeBadgeText}>Custom</Text>
+          </View>
+        )}
       </View>
 
       {/* Step layout by viewport */}
-      {isNarrow ? (
+      {editMode && isCustom ? (
+        // Edit mode: always render the vertical list so each node is tappable
+        <View style={trackStyles.editNodeList}>
+          {journey.steps.map((step) => {
+            const isCompleted = step.status === 'completed';
+            const isInProgress = step.status === 'in_progress';
+            const isCurrentIncomplete = (isInProgress || step.status === 'upcoming') && !isCompleted;
+            const hasName = step.stepName.trim().length > 0;
+
+            const dotBg = isCompleted ? '#16A34A' : isInProgress ? '#16A34A' : '#E5E7EB';
+            const dotBorderColor = isInProgress ? '#34D399' : 'transparent';
+
+            return (
+              <View key={step.id} style={trackStyles.editNodeRow}>
+                {/* Step dot */}
+                <View
+                  style={[
+                    trackStyles.editNodeDot,
+                    { backgroundColor: dotBg, borderColor: dotBorderColor, borderWidth: isInProgress ? 2 : 0 },
+                  ]}
+                >
+                  {isCompleted ? (
+                    <Check size={9} color="#FFFFFF" strokeWidth={3} />
+                  ) : null}
+                </View>
+
+                {/* Step text block */}
+                <View style={trackStyles.editNodeTextBlock}>
+                  <Text
+                    style={[
+                      trackStyles.editNodeName,
+                      !hasName && trackStyles.editNodeNamePlaceholder,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {hasName ? step.stepName : 'Untitled step — tap to edit'}
+                  </Text>
+                  {step.stepDescription.trim().length > 0 && (
+                    <Text style={trackStyles.editNodeDesc} numberOfLines={2}>
+                      {step.stepDescription}
+                    </Text>
+                  )}
+                  <Text style={trackStyles.editNodePts}>+{step.pointsOnCompletion} pts</Text>
+                </View>
+
+                {/* Action buttons */}
+                <View style={trackStyles.editNodeActions}>
+                  {/* Edit pencil — opens EditJourneyNodeModal */}
+                  {!isCompleted && (
+                    <TouchableOpacity
+                      style={trackStyles.editNodeActionBtn}
+                      onPress={() => setEditingStep(step)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Edit step: ${step.stepName || 'Untitled step'}`}
+                      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                    >
+                      <Edit2 size={13} color={tokens.textMuted} />
+                    </TouchableOpacity>
+                  )}
+                  {/* Mark complete — only on the current incomplete node */}
+                  {isCurrentIncomplete && (
+                    <TouchableOpacity
+                      style={[trackStyles.editNodeActionBtn, trackStyles.completeNodeBtn]}
+                      onPress={() => handleCompleteStep(step)}
+                      disabled={completeStep.isPending}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Mark "${step.stepName || 'step'}" completed`}
+                      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                    >
+                      {completeStep.isPending ? (
+                        <ActivityIndicator size="small" color={tokens.primary} />
+                      ) : (
+                        <Check size={13} color={tokens.primary} strokeWidth={2.5} />
+                      )}
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+            );
+          })}
+
+          {/* Add node button */}
+          <TouchableOpacity
+            style={trackStyles.addNodeBtn}
+            onPress={handleAddNode}
+            disabled={addNode.isPending}
+            accessibilityRole="button"
+            accessibilityLabel="Add a new step to this journey"
+          >
+            {addNode.isPending ? (
+              <ActivityIndicator size="small" color={tokens.primary} />
+            ) : (
+              <>
+                <Plus size={13} color={tokens.primary} />
+                <Text style={trackStyles.addNodeBtnText}>Add step</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+      ) : isNarrow ? (
         <View style={trackStyles.verticalList}>
           {steps.map((step) => (
             <VerticalStepRow key={step.key} step={step} />
@@ -3962,6 +4820,19 @@ const SingleJourneyTrack = React.memo(function SingleJourneyTrack({
             />
           ))}
         </View>
+      )}
+
+      {/* EditJourneyNodeModal — scoped per track, zIndex above journey list */}
+      {editingStep !== null && (
+        <EditJourneyNodeModal
+          visible={editingStep !== null}
+          memberId={memberId}
+          journeyId={journey.id}
+          stepId={editingStep.templateStepId}
+          initialName={editingStep.stepName}
+          initialDescription={editingStep.stepDescription}
+          onClose={() => setEditingStep(null)}
+        />
       )}
     </View>
   );
@@ -4004,6 +4875,110 @@ const trackStyles = StyleSheet.create({
     color: tokens.textMuted,
   } as TextStyle,
   verticalList: { gap: 0 } as ViewStyle,
+
+  // Edit-mode badge in header
+  editModeBadge: {
+    backgroundColor: `${tokens.primary}14`,
+    borderRadius: 100,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderWidth: 1,
+    borderColor: `${tokens.primary}30`,
+    flexShrink: 0,
+  } as ViewStyle,
+  editModeBadgeText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 10,
+    color: tokens.primary,
+  } as TextStyle,
+
+  // Edit-mode node list
+  editNodeList: {
+    gap: 2,
+  } as ViewStyle,
+  editNodeRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F9FAFB',
+  } as ViewStyle,
+  editNodeDot: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+    marginTop: 1,
+  } as ViewStyle,
+  editNodeTextBlock: {
+    flex: 1,
+    gap: 2,
+  } as ViewStyle,
+  editNodeName: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 13,
+    color: tokens.textPrimary,
+    lineHeight: 18,
+  } as TextStyle,
+  editNodeNamePlaceholder: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    color: '#9CA3AF',
+    fontStyle: 'italic',
+  } as TextStyle,
+  editNodeDesc: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: '#6B7280',
+    lineHeight: 16,
+  } as TextStyle,
+  editNodePts: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 10,
+    color: '#047857',
+    marginTop: 1,
+  } as TextStyle,
+  editNodeActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexShrink: 0,
+  } as ViewStyle,
+  editNodeActionBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 6,
+    backgroundColor: '#F3F4F6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+  completeNodeBtn: {
+    backgroundColor: `${tokens.primary}14`,
+    borderWidth: 1,
+    borderColor: `${tokens.primary}30`,
+  } as ViewStyle,
+
+  // Add node button
+  addNodeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 8,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: `${tokens.primary}40`,
+    backgroundColor: `${tokens.primary}0A`,
+  } as ViewStyle,
+  addNodeBtnText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12,
+    color: tokens.primary,
+  } as TextStyle,
 });
 
 const timelineStyles = StyleSheet.create({
@@ -4124,17 +5099,20 @@ interface MemberJourneyTimelineProps {
   memberId: string;
   onAddJourney: () => void;
   windowWidth: number;
+  /** When true, edit affordances are shown on each journey track. */
+  editMode: boolean;
 }
 
 /**
  * Multi-track Member Journey section body.
  * Shows up to 3 active journeys in severity-rank order (ascending progressPercent).
- * onAddJourney is passed from the section header to preserve the existing modal trigger.
+ * When editMode is true, custom journeys expose add-node / edit-node / complete-node affordances.
  */
 function MemberJourneyTimeline({
   memberId,
   onAddJourney: _onAddJourney,
   windowWidth,
+  editMode,
 }: MemberJourneyTimelineProps): React.JSX.Element {
   const { data: journeys, isLoading } = useMemberJourneys(memberId);
 
@@ -4172,6 +5150,8 @@ function MemberJourneyTimeline({
           journey={journey}
           rank={index + 1}
           windowWidth={windowWidth}
+          memberId={memberId}
+          editMode={editMode}
         />
       ))}
     </View>
@@ -5875,6 +6855,10 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
   const [editDemographicsOpen, setEditDemographicsOpen] = useState(false);
   const [editResourceNeedsOpen, setEditResourceNeedsOpen] = useState(false);
   const [addJourneyOpen, setAddJourneyOpen] = useState(false);
+  /** Controls the new CreateCustomJourneyModal (replaces the "Add Journey" action). */
+  const [createCustomJourneyOpen, setCreateCustomJourneyOpen] = useState(false);
+  /** When true, the Member Journey section reveals per-node edit affordances. */
+  const [journeyEditMode, setJourneyEditMode] = useState(false);
   const [showScreening, setShowScreening] = useState(false);
   const [caseNotesOpen, setCaseNotesOpen] = useState(false);
   const [documentsOpen, setDocumentsOpen] = useState(false);
@@ -6140,23 +7124,30 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                   subtitle="Progress for Top Resource Needs"
                   titleRight={
                     <View style={s.journeyHeaderRight}>
-                      {/* Edit pencil — no-op placeholder for future reorder modal */}
+                      {/* Edit pencil — toggles journeyEditMode to reveal per-node affordances */}
                       <TouchableOpacity
-                        style={s.journeyEditBtn}
-                        onPress={() => {
-                          // TODO: opens journey reorder modal (future sprint)
-                        }}
+                        style={[
+                          s.journeyEditBtn,
+                          journeyEditMode && s.journeyEditBtnActive,
+                        ]}
+                        onPress={() => setJourneyEditMode((prev) => !prev)}
                         accessibilityRole="button"
-                        accessibilityLabel="Edit member journey order"
+                        accessibilityLabel={
+                          journeyEditMode ? 'Exit journey edit mode' : 'Enter journey edit mode'
+                        }
+                        accessibilityState={{ selected: journeyEditMode }}
                       >
-                        <Edit2 size={12} color={tokens.textMuted} />
+                        <Edit2
+                          size={12}
+                          color={journeyEditMode ? tokens.primary : tokens.textMuted}
+                        />
                       </TouchableOpacity>
-                      {/* Add Journey — wired to the existing AddJourneyModal */}
+                      {/* Add Journey — opens CreateCustomJourneyModal */}
                       <TouchableOpacity
                         style={s.addJourneyBtn}
-                        onPress={() => setAddJourneyOpen(true)}
+                        onPress={() => setCreateCustomJourneyOpen(true)}
                         accessibilityRole="button"
-                        accessibilityLabel="Add a new journey for this member"
+                        accessibilityLabel="Add a new custom journey for this member"
                       >
                         <Plus size={12} color={tokens.primary} />
                         <Text style={s.addJourneyBtnText}>Add Journey</Text>
@@ -6164,16 +7155,40 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                     </View>
                   }
                 >
+                  {/* Edit-mode banner */}
+                  {journeyEditMode && (
+                    <View style={s.journeyEditBanner}>
+                      <Text style={s.journeyEditBannerText}>
+                        Edit mode — tap nodes on custom journeys to edit step text, mark complete, or add steps.
+                      </Text>
+                      <TouchableOpacity
+                        onPress={() => setJourneyEditMode(false)}
+                        accessibilityRole="button"
+                        accessibilityLabel="Done editing"
+                        hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                      >
+                        <Text style={s.journeyEditBannerDone}>Done</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
                   <MemberJourneyTimeline
                     memberId={memberId}
-                    onAddJourney={() => setAddJourneyOpen(true)}
+                    onAddJourney={() => setCreateCustomJourneyOpen(true)}
                     windowWidth={windowWidth}
+                    editMode={journeyEditMode}
                   />
                 </SectionCard>
 
-                {/* AddJourneyModal — triggered from both the section header and
-                    the empty-state CTA. Dedup guard uses existingActiveSlugs
-                    computed from the same useMemberJourneys query. */}
+                {/* CreateCustomJourneyModal — "Add Journey" entry point. */}
+                <CreateCustomJourneyModal
+                  memberId={memberId}
+                  memberName={displayName}
+                  visible={createCustomJourneyOpen}
+                  onClose={() => setCreateCustomJourneyOpen(false)}
+                />
+
+                {/* AddJourneyModal (template picker) — kept available for future
+                    template-based journey creation; currently not wired to the header. */}
                 <AddJourneyModal
                   memberId={memberId}
                   memberName={displayName}
@@ -6689,6 +7704,11 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   } as ViewStyle,
+  journeyEditBtnActive: {
+    backgroundColor: `${tokens.primary}18`,
+    borderWidth: 1,
+    borderColor: `${tokens.primary}40`,
+  } as ViewStyle,
   addJourneyBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -6704,6 +7724,34 @@ const s = StyleSheet.create({
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 11,
     color: tokens.primary,
+  } as TextStyle,
+
+  // Journey edit-mode inline banner
+  journeyEditBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: `${tokens.primary}0A`,
+    borderRadius: radius.md,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: `${tokens.primary}25`,
+    marginBottom: 12,
+    gap: 8,
+  } as ViewStyle,
+  journeyEditBannerText: {
+    flex: 1,
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: tokens.primary,
+    lineHeight: 16,
+  } as TextStyle,
+  journeyEditBannerDone: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 12,
+    color: tokens.primary,
+    flexShrink: 0,
   } as TextStyle,
 
   // HIPAA notice

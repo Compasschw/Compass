@@ -42,6 +42,9 @@ class JourneyTemplate(Base):
     # Lucide icon name rendered by the frontend (e.g. "utensils", "home")
     icon: Mapped[str] = mapped_column(String(100), nullable=False, server_default="circle")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    # True for per-member, CHW-authored journeys (private editable template).
+    # Excluded from the shared template picker; the only templates a CHW may edit.
+    is_custom: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

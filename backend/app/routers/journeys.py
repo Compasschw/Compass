@@ -38,7 +38,9 @@ from app.models.journeys import (
 )
 from app.schemas.journeys import (
     CaseloadJourneyItem,
+    CreateCustomJourneyRequest,
     CreateMemberJourneyRequest,
+    JourneyNodeUpsert,
     JourneyStepResponse,
     JourneyTemplateResponse,
     MemberJourneyResponse,
@@ -227,6 +229,7 @@ async def list_journey_templates(
     templates_result = await db.execute(
         select(JourneyTemplate)
         .where(JourneyTemplate.is_active == True)  # noqa: E712
+        .where(JourneyTemplate.is_custom == False)  # noqa: E712 — private per-member templates
         .order_by(JourneyTemplate.name)
     )
     templates = templates_result.scalars().all()
@@ -553,6 +556,219 @@ async def create_member_journey(
     await db.commit()
     await db.refresh(member_journey)
 
+    return await _build_member_journey_response(member_journey, db)
+
+
+# ─── Custom (CHW-authored) journeys ───────────────────────────────────────────
+#
+# A custom journey is a normal MemberJourney backed by a PRIVATE JourneyTemplate
+# (is_custom=true) the CHW fills in node-by-node. Because it reuses the template
+# machinery, the response builder, step-complete flow, Journeys page, and Roadmap
+# all work unchanged — only the template is per-member and editable.
+#
+# Points rule: the first node is worth 10 points, every later node 5.
+
+
+async def _next_node_points(journey_template_id: uuid.UUID, db: AsyncSession) -> int:
+    """10 for the first node on a custom journey, 5 for every node after."""
+    existing = (
+        await db.execute(
+            select(func.count())
+            .select_from(JourneyTemplateStep)
+            .where(JourneyTemplateStep.template_id == journey_template_id)
+        )
+    ).scalar() or 0
+    return 10 if existing == 0 else 5
+
+
+@router.post(
+    "/api/v1/journeys/custom",
+    response_model=MemberJourneyResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a CHW-authored custom journey with 3 blank nodes",
+)
+async def create_custom_journey(
+    body: CreateCustomJourneyRequest,
+    current_user=Depends(require_role("chw")),
+    db: AsyncSession = Depends(get_db),
+) -> MemberJourneyResponse:
+    """Create a custom journey for one of the CHW's members.
+
+    Provisions a private template named ``title`` with 3 blank starter nodes
+    (points 10, 5, 5) and an active MemberJourney positioned at node 1. The CHW
+    then fills in each node's description and may add more nodes (POST .../nodes).
+    """
+    await _assert_chw_member_relationship(current_user.id, body.member_id, db)
+
+    template = JourneyTemplate(
+        id=uuid.uuid4(),
+        slug=f"custom-{uuid.uuid4().hex}",
+        name=body.title.strip(),
+        category=(body.category or body.title).strip().lower()[:100],
+        icon=(body.icon or "circle"),
+        is_active=True,
+        is_custom=True,
+    )
+    db.add(template)
+    await db.flush()
+
+    # 3 blank starter nodes: points 10, 5, 5.
+    steps: list[JourneyTemplateStep] = []
+    for order, points in ((1, 10), (2, 5), (3, 5)):
+        step = JourneyTemplateStep(
+            id=uuid.uuid4(),
+            template_id=template.id,
+            order=order,
+            name="",
+            description="",
+            points_on_completion=points,
+        )
+        db.add(step)
+        steps.append(step)
+    await db.flush()
+
+    now = datetime.now(UTC)
+    member_journey = MemberJourney(
+        id=uuid.uuid4(),
+        member_id=body.member_id,
+        chw_id=current_user.id,
+        template_id=template.id,
+        status="active",
+        current_step_id=steps[0].id,
+        started_at=now,
+    )
+    db.add(member_journey)
+    await db.flush()
+
+    for i, step in enumerate(steps):
+        db.add(
+            MemberJourneyStepState(
+                id=uuid.uuid4(),
+                member_journey_id=member_journey.id,
+                template_step_id=step.id,
+                status="in_progress" if i == 0 else "upcoming",
+                started_at=now if i == 0 else None,
+            )
+        )
+
+    await db.commit()
+    await db.refresh(member_journey)
+    return await _build_member_journey_response(member_journey, db)
+
+
+async def _load_custom_journey_for_chw(
+    member_journey_id: uuid.UUID, current_user, db: AsyncSession
+) -> tuple[MemberJourney, JourneyTemplate]:
+    """Load a member journey + its template, asserting the CHW owns it and the
+    template is custom (editable). Raises 404/403 otherwise."""
+    member_journey = (
+        await db.execute(select(MemberJourney).where(MemberJourney.id == member_journey_id))
+    ).scalar_one_or_none()
+    if member_journey is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Journey not found.")
+    if member_journey.chw_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not the assigned CHW for this journey.",
+        )
+    template = (
+        await db.execute(
+            select(JourneyTemplate).where(JourneyTemplate.id == member_journey.template_id)
+        )
+    ).scalar_one_or_none()
+    if template is None or not template.is_custom:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only custom (CHW-authored) journeys can be edited.",
+        )
+    return member_journey, template
+
+
+@router.post(
+    "/api/v1/journeys/{member_journey_id}/nodes",
+    response_model=MemberJourneyResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Add a node to a custom journey",
+)
+async def add_journey_node(
+    member_journey_id: uuid.UUID,
+    body: JourneyNodeUpsert,
+    current_user=Depends(require_role("chw")),
+    db: AsyncSession = Depends(get_db),
+) -> MemberJourneyResponse:
+    """Append a node to a custom journey (worth 5 points; 10 if it is the first).
+
+    Adds a JourneyTemplateStep to the private template + an 'upcoming'
+    MemberJourneyStepState so the new node renders on the roadmap.
+    """
+    member_journey, template = await _load_custom_journey_for_chw(
+        member_journey_id, current_user, db
+    )
+
+    max_order = (
+        await db.execute(
+            select(func.coalesce(func.max(JourneyTemplateStep.order), 0)).where(
+                JourneyTemplateStep.template_id == template.id
+            )
+        )
+    ).scalar() or 0
+    points = await _next_node_points(template.id, db)
+
+    step = JourneyTemplateStep(
+        id=uuid.uuid4(),
+        template_id=template.id,
+        order=max_order + 1,
+        name=(body.name or "").strip(),
+        description=(body.description or "").strip(),
+        points_on_completion=points,
+    )
+    db.add(step)
+    await db.flush()
+    db.add(
+        MemberJourneyStepState(
+            id=uuid.uuid4(),
+            member_journey_id=member_journey.id,
+            template_step_id=step.id,
+            status="upcoming",
+        )
+    )
+    await db.commit()
+    await db.refresh(member_journey)
+    return await _build_member_journey_response(member_journey, db)
+
+
+@router.patch(
+    "/api/v1/journeys/{member_journey_id}/nodes/{step_id}",
+    response_model=MemberJourneyResponse,
+    summary="Edit a custom journey node's name/description",
+)
+async def update_journey_node(
+    member_journey_id: uuid.UUID,
+    step_id: uuid.UUID,
+    body: JourneyNodeUpsert,
+    current_user=Depends(require_role("chw")),
+    db: AsyncSession = Depends(get_db),
+) -> MemberJourneyResponse:
+    """Edit a custom node's name and/or description (CHW writes the step text)."""
+    member_journey, template = await _load_custom_journey_for_chw(
+        member_journey_id, current_user, db
+    )
+    step = (
+        await db.execute(
+            select(JourneyTemplateStep)
+            .where(JourneyTemplateStep.id == step_id)
+            .where(JourneyTemplateStep.template_id == template.id)
+        )
+    ).scalar_one_or_none()
+    if step is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Node not found.")
+
+    if body.name is not None:
+        step.name = body.name.strip()
+    if body.description is not None:
+        step.description = body.description.strip()
+    await db.commit()
+    await db.refresh(member_journey)
     return await _build_member_journey_response(member_journey, db)
 
 

@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 # ─── Template schemas ──────────────────────────────────────────────────────────
 
@@ -138,6 +138,28 @@ class CreateMemberJourneyRequest(BaseModel):
 
     member_id: uuid.UUID
     template_slug: str
+
+
+class CreateCustomJourneyRequest(BaseModel):
+    """Body for POST /journeys/custom — a CHW-authored journey.
+
+    Creates a private editable template named ``title`` with 3 blank starter
+    nodes (points 10, 5, 5) the CHW fills in. ``icon`` is an optional lucide
+    name; ``category`` defaults to the title for display grouping.
+    """
+
+    member_id: uuid.UUID
+    title: str = Field(min_length=1, max_length=120)
+    icon: str | None = Field(default=None, max_length=100)
+    category: str | None = Field(default=None, max_length=100)
+
+
+class JourneyNodeUpsert(BaseModel):
+    """Body for adding (POST .../nodes) or editing (PATCH .../nodes/{id}) a node
+    on a custom journey. Both fields optional; on add, a blank node is created."""
+
+    name: str | None = Field(default=None, max_length=255)
+    description: str | None = Field(default=None, max_length=2000)
 
 
 class UpdateStepStatusRequest(BaseModel):
