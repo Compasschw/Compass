@@ -216,8 +216,34 @@ export interface ConversationData {
   id: string;
   chwId: string;
   memberId: string;
-  sessionId?: string;
+  sessionId: string | null;
+  /**
+   * Currently in_progress Session for this conversation, if any.
+   * Source-of-truth for End Session / Submit Documentation in the CHW
+   * Messages screen — when null, those buttons should be hidden.
+   */
+  activeSessionId: string | null;
   createdAt: string;
+  /** Display name of the CHW participant. */
+  chwName: string;
+  /** Display name of the member participant. */
+  memberName: string;
+  /** Body-truncated preview of the most recent message. Null when no messages yet. */
+  lastMessagePreview: string | null;
+  /** ISO8601 timestamp of the most recent message. Null when no messages yet. */
+  lastMessageAt: string | null;
+  /** UUID of the user who sent the most recent message. Null when no messages. */
+  lastMessageSenderId: string | null;
+  /** Count of messages the authenticated user has not yet read. */
+  unreadCount: number;
+  /** ISO8601 timestamp when the user pinned this thread. Null = unpinned. */
+  pinnedAt: string | null;
+  /** ISO8601 timestamp when the user archived this thread. Null = active. */
+  archivedAt: string | null;
+  /** ISO8601 soft-delete timestamp. Null = not deleted. */
+  deletedAt: string | null;
+  /** UUID of the user who soft-deleted the thread. Null = not deleted. */
+  deletedByUserId: string | null;
 }
 
 export interface FileAttachmentInline {
@@ -447,6 +473,12 @@ export const queryKeys = {
   memberRewards: ['member', 'rewards'] as const,
   chwBrowse: (vertical?: string) => ['chw', 'browse', vertical ?? 'all'] as const,
   conversations: ['conversations'] as const,
+  /**
+   * Conversation list split on the includeArchived flag so toggling the
+   * "Show archived" filter never returns stale cached data.
+   */
+  conversationList: (includeArchived: boolean) =>
+    ['conversations', { includeArchived }] as const,
   messages: (conversationId: string) => ['conversations', conversationId, 'messages'] as const,
   chwMemberProfile: (memberId: string) => ['chw', 'members', memberId, 'profile'] as const,
   /** Full rich member profile for the CHW Member Profile screen. */
@@ -737,11 +769,23 @@ export function useMemberFacingCHWProfile(chwId: string) {
   });
 }
 
-export function useConversations() {
+/**
+ * Inbox conversation list.
+ *
+ * When `includeArchived` is true the user also sees archived threads in the
+ * same list (powers the "Show archived" toggle in the inbox header).
+ * Soft-deleted threads are NEVER returned — the server excludes them.
+ * The query key splits on the flag so toggling doesn't return stale cached data.
+ *
+ * Sort order is determined server-side: pinned first, then last_message_at desc.
+ */
+export function useConversations(options?: { includeArchived?: boolean }) {
+  const includeArchived = options?.includeArchived ?? false;
   return useQuery({
-    queryKey: queryKeys.conversations,
+    queryKey: queryKeys.conversationList(includeArchived),
     queryFn: async () => {
-      const raw = await api<unknown[]>('/conversations/');
+      const qs = includeArchived ? '?include_archived=true' : '';
+      const raw = await api<unknown[]>(`/conversations/${qs}`);
       return transformKeys<ConversationData[]>(raw);
     },
   });
@@ -1520,6 +1564,363 @@ export function useSendMessage() {
     onSuccess: (_data, variables) => {
       void qc.invalidateQueries({ queryKey: queryKeys.messages(variables.conversationId) });
     },
+  });
+}
+
+/** Shape returned by DELETE /api/v1/conversations/{id} (soft-delete). */
+export interface SoftDeleteConversationResult {
+  id: string;
+  deletedAt: string;
+  deletedByUserId: string;
+}
+
+/**
+ * Soft-delete a conversation thread.
+ *
+ * DELETE /api/v1/conversations/{conversation_id}
+ *
+ * Auth: Bearer JWT — caller must be a participant (CHW or member).
+ * Idempotent: deleting an already-deleted thread returns 200.
+ * Deleted threads are excluded from GET /conversations/ server-side —
+ * no client-side filtering needed after invalidation.
+ *
+ * Optimistic update: removes the conversation from the cached list
+ * immediately, then rolls back if the DELETE fails.
+ *
+ * @param onDeselect - Called on success when the deleted conversation
+ *   was currently selected (caller should reset selected thread state).
+ */
+export function useSoftDeleteConversation(options?: {
+  onDeselect?: (conversationId: string) => void;
+}) {
+  const qc = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (conversationId: string): Promise<SoftDeleteConversationResult> => {
+      const raw = await api<unknown>(`/conversations/${conversationId}`, {
+        method: 'DELETE',
+      });
+      return transformKeys<SoftDeleteConversationResult>(raw);
+    },
+
+    // Optimistic update: yank the row from all active conversation list caches
+    // immediately. We snapshot every active conversationList variant
+    // (includeArchived=false and includeArchived=true) so we can roll them all
+    // back if the DELETE fails.
+    onMutate: async (conversationId: string) => {
+      // Cancel any in-flight fetches so they don't overwrite our optimistic state.
+      await qc.cancelQueries({ queryKey: queryKeys.conversations });
+
+      // Snapshot both possible list variants (archived and non-archived).
+      const previousNormal = qc.getQueryData<ConversationData[]>(
+        queryKeys.conversationList(false),
+      );
+      const previousArchived = qc.getQueryData<ConversationData[]>(
+        queryKeys.conversationList(true),
+      );
+
+      const removeDeleted = (old: ConversationData[] | undefined): ConversationData[] =>
+        (old ?? []).filter((c) => c.id !== conversationId);
+
+      qc.setQueryData<ConversationData[]>(queryKeys.conversationList(false), removeDeleted);
+      qc.setQueryData<ConversationData[]>(queryKeys.conversationList(true), removeDeleted);
+
+      return { previousNormal, previousArchived };
+    },
+
+    onError: (
+      _error: unknown,
+      _conversationId: string,
+      context:
+        | {
+            previousNormal?: ConversationData[];
+            previousArchived?: ConversationData[];
+          }
+        | undefined,
+    ) => {
+      // Roll back both list caches to their pre-mutation snapshots.
+      if (context?.previousNormal !== undefined) {
+        qc.setQueryData(queryKeys.conversationList(false), context.previousNormal);
+      }
+      if (context?.previousArchived !== undefined) {
+        qc.setQueryData(queryKeys.conversationList(true), context.previousArchived);
+      }
+      Alert.alert('Could not delete conversation', 'Please try again.');
+    },
+
+    onSuccess: (_data, conversationId) => {
+      // Refetch to sync with server (catches the idempotent-200 case too).
+      // Prefix-based invalidation covers all conversationList variants.
+      void qc.invalidateQueries({ queryKey: queryKeys.conversations });
+      options?.onDeselect?.(conversationId);
+    },
+  });
+}
+
+// ─── Conversation-scoped messaging (Stage 2 inbox hooks) ─────────────────────
+
+/**
+ * Fetch the full cross-session message history for a conversation.
+ *
+ * Supports optional cursor-based pagination via `beforeTs` (ISO8601 timestamp
+ * or message ID). Polls every 4 seconds while the component is mounted so new
+ * inbound messages appear without a manual pull-to-refresh.
+ *
+ * GET /api/v1/conversations/{id}/messages?before=&limit=
+ *
+ * @param conversationId - Target conversation UUID.
+ * @param beforeTs       - Optional cursor — fetch messages older than this value.
+ */
+export function useConversationMessages(conversationId: string, beforeTs?: string) {
+  return useQuery({
+    queryKey: queryKeys.messages(conversationId),
+    queryFn: async (): Promise<MessageData[]> => {
+      const params = new URLSearchParams();
+      if (beforeTs !== undefined) params.set('before', beforeTs);
+      const qs = params.toString() ? `?${params.toString()}` : '';
+      const raw = await api<unknown[]>(`/conversations/${conversationId}/messages${qs}`);
+      return transformKeys<MessageData[]>(raw);
+    },
+    enabled: !!conversationId,
+    // Match the session-message polling cadence.
+    refetchInterval: 4_000,
+    // Stale immediately so we never serve a cached snapshot to a fresh mount.
+    staleTime: 0,
+  });
+}
+
+/**
+ * Variables accepted by `useConversationSendMessage`.
+ */
+export interface SendConversationMessageVars {
+  conversationId: string;
+  /** Body text. May be empty when an attachment is present. */
+  body: string;
+  /** Optional — attach a file previously uploaded via /upload/presigned-url. */
+  attachment?: {
+    s3Key: string;
+    filename: string;
+    sizeBytes: number;
+    contentType: string;
+  };
+}
+
+/**
+ * Post a new message to a conversation.
+ *
+ * Mirrors `useSessionSendMessage` — same attachment payload shape, same
+ * invalidation pattern. Does NOT perform optimistic updates internally;
+ * the caller manages local state for proper rollback (see SessionChat pattern).
+ *
+ * POST /api/v1/conversations/{id}/messages
+ */
+export function useConversationSendMessage() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (vars: SendConversationMessageVars): Promise<MessageData> => {
+      const payload: Record<string, unknown> = { body: vars.body };
+      if (vars.attachment !== undefined) {
+        payload.attachment_s3_key = vars.attachment.s3Key;
+        payload.attachment_filename = vars.attachment.filename;
+        payload.attachment_size_bytes = vars.attachment.sizeBytes;
+        payload.attachment_content_type = vars.attachment.contentType;
+      }
+      // HIPAA: body content is intentionally not logged anywhere in this call.
+      const raw = await api<unknown>(`/conversations/${vars.conversationId}/messages`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      return transformKeys<MessageData>(raw);
+    },
+    onSuccess: (_data, variables) => {
+      // Invalidate the per-conversation message list so the background poll
+      // picks up the authoritative row from the server.
+      void qc.invalidateQueries({
+        queryKey: queryKeys.messages(variables.conversationId),
+      });
+      // Also invalidate the inbox list so last_message_preview / last_message_at
+      // update without a manual refresh. Prefix-based — covers all variants.
+      void qc.invalidateQueries({ queryKey: queryKeys.conversations });
+    },
+  });
+}
+
+/**
+ * Pin or unpin a conversation thread.
+ *
+ * Optimistic update: flips `pinnedAt` on the cached row immediately, then
+ * rolls back if the PATCH fails. Mirrors `useToggleSessionPin`.
+ *
+ * PATCH /api/v1/conversations/{id}/pin  body: { pinned: boolean }
+ */
+export function useToggleConversationPin() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      conversationId,
+      pinned,
+    }: {
+      conversationId: string;
+      pinned: boolean;
+    }): Promise<void> => {
+      await api(`/conversations/${conversationId}/pin`, {
+        method: 'PATCH',
+        body: JSON.stringify({ pinned }),
+      });
+    },
+
+    onMutate: async ({ conversationId, pinned }) => {
+      await qc.cancelQueries({ queryKey: queryKeys.conversations });
+
+      const previousNormal = qc.getQueryData<ConversationData[]>(
+        queryKeys.conversationList(false),
+      );
+      const previousArchived = qc.getQueryData<ConversationData[]>(
+        queryKeys.conversationList(true),
+      );
+
+      const applyPin = (old: ConversationData[] | undefined): ConversationData[] =>
+        (old ?? []).map((c) =>
+          c.id === conversationId
+            ? { ...c, pinnedAt: pinned ? new Date().toISOString() : null }
+            : c,
+        );
+
+      qc.setQueryData<ConversationData[]>(queryKeys.conversationList(false), applyPin);
+      qc.setQueryData<ConversationData[]>(queryKeys.conversationList(true), applyPin);
+
+      return { previousNormal, previousArchived };
+    },
+
+    onError: (
+      _error: unknown,
+      _variables: { conversationId: string; pinned: boolean },
+      context:
+        | {
+            previousNormal?: ConversationData[];
+            previousArchived?: ConversationData[];
+          }
+        | undefined,
+    ) => {
+      if (context?.previousNormal !== undefined) {
+        qc.setQueryData(queryKeys.conversationList(false), context.previousNormal);
+      }
+      if (context?.previousArchived !== undefined) {
+        qc.setQueryData(queryKeys.conversationList(true), context.previousArchived);
+      }
+      Alert.alert('Could not update pin', 'Please try again.');
+    },
+
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.conversations });
+    },
+  });
+}
+
+/**
+ * Archive or unarchive a conversation thread.
+ *
+ * Optimistic update: flips `archivedAt` on the cached row immediately, then
+ * rolls back if the PATCH fails. Mirrors `useToggleSessionArchive`.
+ *
+ * PATCH /api/v1/conversations/{id}/archive  body: { archived: boolean }
+ */
+export function useToggleConversationArchive() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      conversationId,
+      archived,
+    }: {
+      conversationId: string;
+      archived: boolean;
+    }): Promise<void> => {
+      await api(`/conversations/${conversationId}/archive`, {
+        method: 'PATCH',
+        body: JSON.stringify({ archived }),
+      });
+    },
+
+    onMutate: async ({ conversationId, archived }) => {
+      await qc.cancelQueries({ queryKey: queryKeys.conversations });
+
+      const previousNormal = qc.getQueryData<ConversationData[]>(
+        queryKeys.conversationList(false),
+      );
+      const previousArchived = qc.getQueryData<ConversationData[]>(
+        queryKeys.conversationList(true),
+      );
+
+      const applyArchive = (old: ConversationData[] | undefined): ConversationData[] =>
+        (old ?? []).map((c) =>
+          c.id === conversationId
+            ? { ...c, archivedAt: archived ? new Date().toISOString() : null }
+            : c,
+        );
+
+      qc.setQueryData<ConversationData[]>(queryKeys.conversationList(false), applyArchive);
+      qc.setQueryData<ConversationData[]>(queryKeys.conversationList(true), applyArchive);
+
+      return { previousNormal, previousArchived };
+    },
+
+    onError: (
+      _error: unknown,
+      _variables: { conversationId: string; archived: boolean },
+      context:
+        | {
+            previousNormal?: ConversationData[];
+            previousArchived?: ConversationData[];
+          }
+        | undefined,
+    ) => {
+      if (context?.previousNormal !== undefined) {
+        qc.setQueryData(queryKeys.conversationList(false), context.previousNormal);
+      }
+      if (context?.previousArchived !== undefined) {
+        qc.setQueryData(queryKeys.conversationList(true), context.previousArchived);
+      }
+      Alert.alert('Could not update archive', 'Please try again.');
+    },
+
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.conversations });
+    },
+  });
+}
+
+/**
+ * Mark messages as read up to (and including) the given message ID.
+ *
+ * Fire-and-forget — the UI does not block on this. Silent failure mirrors
+ * `useSessionMarkRead`: read receipts are best-effort side effects.
+ *
+ * On success, the conversations list is invalidated so the `unreadCount`
+ * badge on the inbox row refreshes without a manual pull-to-refresh.
+ *
+ * POST /api/v1/conversations/{id}/messages/read  body: { up_to_message_id: uuid }
+ */
+export function useConversationMarkRead() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      conversationId,
+      upToMessageId,
+    }: {
+      conversationId: string;
+      upToMessageId: string;
+    }): Promise<void> => {
+      await api(`/conversations/${conversationId}/messages/read`, {
+        method: 'POST',
+        body: JSON.stringify({ up_to_message_id: upToMessageId }),
+      });
+    },
+    onSuccess: () => {
+      // Refresh the inbox list so the unread badge reflects the new read position.
+      void qc.invalidateQueries({ queryKey: queryKeys.conversations });
+    },
+    // Silent failure: read receipts are a best-effort side effect.
+    onError: () => undefined,
   });
 }
 

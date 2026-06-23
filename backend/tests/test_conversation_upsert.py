@@ -239,3 +239,129 @@ async def test_http_find_or_create_parallel_produces_single_row(client: AsyncCli
             )
         )
         assert result.scalar_one() == 1, "Conversation row missing after parallel create."
+
+
+@pytest.mark.asyncio
+async def test_sequential_http_find_or_create_reuses_existing_thread(client: AsyncClient):
+    """A second HTTP POST /conversations/find-or-create returns the SAME conversation id.
+
+    Regression test for the duplicate-thread guarantee. Two sequential HTTP calls
+    for the same (chw, member) pair must produce the same conversation id, not
+    two different rows. This exercises the full HTTP stack including the
+    relationship guard, participant validation, and upsert logic.
+    """
+    # Register CHW and member via the API so they exist in the test DB.
+    chw_res = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "dedup_chw@example.com",
+            "password": "testpass123",
+            "name": "Dedup CHW",
+            "role": "chw",
+        },
+    )
+    assert chw_res.status_code == 201, f"CHW register: {chw_res.text}"
+    chw_tokens = chw_res.json()
+
+    member_res = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "dedup_member@example.com",
+            "password": "testpass123",
+            "name": "Dedup Member",
+            "role": "member",
+            "phone": "+13105550300",
+            "date_of_birth": "1988-05-12",
+            "gender": "Female",
+            "insurance_company": "Blue Shield",
+            "medi_cal_id": "11223344B",
+            "address_line1": "3 Dedup Ave",
+            "city": "Los Angeles",
+            "state": "CA",
+            "zip_code": "90003",
+        },
+    )
+    assert member_res.status_code == 201, f"Member register: {member_res.text}"
+    member_tokens = member_res.json()
+
+    # Build the CHW↔member relationship (requires a shared session for the guard).
+    req_res = await client.post(
+        "/api/v1/requests/",
+        json={
+            "vertical": "food",
+            "urgency": "routine",
+            "description": "Dedup test request",
+            "preferred_mode": "phone",
+        },
+        headers=auth_header(member_tokens),
+    )
+    assert req_res.status_code == 201, f"Request: {req_res.text}"
+    request_id = req_res.json()["id"]
+
+    accept_res = await client.patch(
+        f"/api/v1/requests/{request_id}/accept",
+        headers=auth_header(chw_tokens),
+    )
+    assert accept_res.status_code == 200, f"Accept: {accept_res.text}"
+
+    sess_res = await client.post(
+        "/api/v1/sessions/",
+        json={
+            "request_id": request_id,
+            "scheduled_at": "2026-07-05T14:00:00Z",
+            "mode": "phone",
+        },
+        headers=auth_header(chw_tokens),
+    )
+    assert sess_res.status_code == 201, f"Session: {sess_res.text}"
+
+    # Decode CHW id from JWT for the find-or-create body.
+    import base64, json as _json
+    parts = chw_tokens["access_token"].split(".")
+    padded = parts[1] + "=" * (4 - len(parts[1]) % 4)
+    chw_id = _json.loads(base64.urlsafe_b64decode(padded))["sub"]
+
+    # First find-or-create call — creates the conversation.
+    first_res = await client.post(
+        "/api/v1/conversations/find-or-create",
+        json={"peer_id": chw_id},
+        headers=auth_header(member_tokens),
+    )
+    assert first_res.status_code == 200, f"First call: {first_res.text}"
+    first_id = first_res.json()["id"]
+
+    # Second find-or-create call — must return the SAME conversation id.
+    second_res = await client.post(
+        "/api/v1/conversations/find-or-create",
+        json={"peer_id": chw_id},
+        headers=auth_header(member_tokens),
+    )
+    assert second_res.status_code == 200, f"Second call: {second_res.text}"
+    second_id = second_res.json()["id"]
+
+    assert first_id == second_id, (
+        f"Second find-or-create returned a DIFFERENT conversation id ({second_id}) "
+        f"than the first ({first_id}). Duplicate thread created — upsert is broken."
+    )
+
+    # Verify exactly one row in the DB for this pair (no ghost duplicates).
+    import uuid as _uuid
+    chw_uuid = _uuid.UUID(chw_id)
+    first_uuid = _uuid.UUID(first_id)
+
+    async with _test_session_factory() as db:
+        # Count by conversation id — verifies the returned row exists.
+        result = await db.execute(
+            select(func.count()).where(Conversation.id == first_uuid)
+        )
+        assert result.scalar_one() == 1, "Conversation row missing after second find-or-create."
+
+        # Count all conversations for this chw_id to catch any ghost duplicates.
+        chw_result = await db.execute(
+            select(func.count()).where(Conversation.chw_id == chw_uuid)
+        )
+        count = chw_result.scalar_one()
+        assert count == 1, (
+            f"Expected exactly 1 conversation for chw_id={chw_uuid}, found {count}. "
+            "Duplicate row(s) exist — the UNIQUE constraint or upsert is broken."
+        )

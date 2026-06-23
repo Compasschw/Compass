@@ -87,6 +87,8 @@ import {
   Flag,
   BookOpen,
   Activity,
+  MoreVertical,
+  Trash2,
 } from 'lucide-react-native';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { CHWSessionsStackParamList } from '../../navigation/CHWTabNavigator';
@@ -105,9 +107,9 @@ import {
 import type { PillVariant } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
 import {
-  useSessions,
-  useSessionMessages,
-  useSessionSendMessage,
+  useConversations,
+  useConversationMessages,
+  useConversationSendMessage,
   useStartCall,
   useSubmitDocumentation,
   useChwJourneys,
@@ -116,15 +118,22 @@ import {
   useEndSession as useEndSessionHook,
   useStartSession as useStartSessionHook,
   useScheduleSession as useScheduleSessionHook,
+  useSoftDeleteConversation,
+  useToggleConversationPin,
+  useToggleConversationArchive,
+  useSession as useSessionHook,
+  type ConversationData,
+  type MessageData,
+  type SendConversationMessageVars,
   type SessionData,
   type SessionMessageLocal,
-  type SessionMessageData,
   type MemberJourneyResponse,
   type ServicesConsentValue,
 } from '../../hooks/useApiQueries';
 import {
   useEngagementStatus,
 } from '../../hooks/useMessagesInsights';
+import { SwipeableThreadRow } from '../../components/chw/SwipeableThreadRow';
 import {
   useMessageAttachmentUpload,
   type MessageAttachmentUploadResult,
@@ -266,11 +275,46 @@ function formatDaySeparator(iso: string): string {
   return then.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
+// ─── Conversation-scoped message types ───────────────────────────────────────
+
+/**
+ * Attachment shape for conversation messages — extends FileAttachmentInline with
+ * a presigned downloadUrl that the server includes in GET /conversations/{id}/messages.
+ * `FileAttachmentInline` in useApiQueries.ts doesn't declare `downloadUrl` (shared
+ * with upload-only context), but the REST response always includes it. We cast here
+ * to avoid unsafe `any`.
+ */
+interface ConversationMessageAttachment {
+  id: string;
+  filename: string;
+  sizeBytes: number;
+  contentType: string;
+  s3Key: string;
+  downloadUrl: string;
+  /** Present on optimistic messages pointing to local device URI. */
+  localUri?: string;
+}
+
+/**
+ * A conversation message as used in the local UI list.
+ * `status` is client-side only and must NEVER be sent to the API.
+ */
+interface ConversationMessageLocal {
+  id: string;
+  conversationId: string;
+  senderId: string;
+  body: string;
+  type: string;
+  createdAt: string;
+  attachment?: ConversationMessageAttachment | null;
+  status?: 'sending' | 'failed';
+}
+
 /** Groups a flat message list into per-day buckets for day-separator rendering. */
 function groupMessagesByDay(
-  messages: SessionMessageLocal[],
-): Array<{ dateKey: string; messages: SessionMessageLocal[] }> {
-  const buckets = new Map<string, SessionMessageLocal[]>();
+  messages: ConversationMessageLocal[],
+): Array<{ dateKey: string; messages: ConversationMessageLocal[] }> {
+  const buckets = new Map<string, ConversationMessageLocal[]>();
   for (const message of messages) {
     const key = new Date(message.createdAt).toDateString();
     const bucket = buckets.get(key) ?? [];
@@ -435,79 +479,126 @@ function CalendarNavigationButton(): React.JSX.Element {
 // ─── Thread row ───────────────────────────────────────────────────────────────
 
 interface ThreadRowProps {
-  readonly session: SessionData;
+  readonly conversation: ConversationData;
   readonly isActive: boolean;
-  readonly lastMessage: SessionMessageData | null;
-  readonly hasUnread: boolean;
-  readonly onSelect: (session: SessionData) => void;
+  readonly onSelect: (conv: ConversationData) => void;
+  readonly onDelete: (conv: ConversationData) => void;
 }
 
 /**
  * A single row in the thread list pane.
  * Shows: 36px avatar, member name, engagement Pill, last message preview,
- * timestamp (tabular mono), and an unread dot.
- * Uses PressableCard for tactile press feedback.
+ * timestamp (tabular mono), unread dot, and a ⋯ overflow button that
+ * reveals a "Delete conversation" action.
+ *
+ * Engagement pill is derived from conv.unreadCount and conv.lastMessageAt —
+ * no per-row message fetch. This avoids N parallel polls in the thread list.
  */
 function ThreadRow({
-  session,
+  conversation: conv,
   isActive,
-  lastMessage,
-  hasUnread,
   onSelect,
+  onDelete,
 }: ThreadRowProps): React.JSX.Element {
-  const name = session.memberName ?? 'Unknown Member';
+  const [menuOpen, setMenuOpen] = useState(false);
+  const name = conv.memberName ?? 'Unknown Member';
   const initials = getInitials(name);
   const { bg, fg } = avatarColorFor(name);
 
-  // Derive preview: prefer body; fall back to "Attachment: filename" for
-  // attachment-only messages; last resort is notes or "No messages yet".
-  const preview: string = (() => {
-    if (!lastMessage) return session.notes ?? 'No messages yet';
-    if (lastMessage.body.trim()) return lastMessage.body;
-    if (lastMessage.attachment?.filename) {
-      return `Attachment: ${lastMessage.attachment.filename}`;
+  // Derive preview from conversation-level last message fields.
+  const preview: string = conv.lastMessagePreview ?? 'No messages yet';
+
+  const timestamp = formatThreadTimestamp(conv.lastMessageAt ?? undefined);
+
+  // Derive engagement from unreadCount + lastMessageAt without per-row fetch.
+  // unreadCount > 0 → "Highly Engaged" (member recently replied); lastMessageAt
+  // within 24 h → "Engaged"; otherwise → "Quiet".
+  const engagementLabel: string = (() => {
+    if (conv.unreadCount > 0) return 'Highly Engaged';
+    if (conv.lastMessageAt) {
+      const hoursAgo =
+        (Date.now() - Date.parse(conv.lastMessageAt)) / (1000 * 60 * 60);
+      if (hoursAgo < 24) return 'Engaged';
     }
-    return session.notes ?? 'No messages yet';
+    return 'Quiet';
+  })();
+  const engagementPillVariant: PillVariant = (() => {
+    if (engagementLabel === 'Highly Engaged') return 'emerald';
+    if (engagementLabel === 'Engaged') return 'blue';
+    return 'gray';
   })();
 
-  const timestamp = formatThreadTimestamp(
-    lastMessage?.createdAt ?? session.scheduledAt,
-  );
-
-  // Derive engagement per thread — passes empty chwId since thread-level
-  // context doesn't carry the chwId; senderRole is the authoritative signal.
-  const messages: SessionMessageLocal[] = [];
-  const engagement = useEngagementStatus(messages, session.chwId ?? '');
-
   return (
-    <PressableCard
-      onPress={() => onSelect(session)}
-      accessibilityLabel={`Thread with ${name}${hasUnread ? ', unread' : ''}`}
-      style={[styles.threadRow, isActive && styles.threadRowActive]}
-    >
-      <View style={[styles.threadAvatar, { backgroundColor: bg }]}>
-        <Text style={[styles.threadAvatarText, { color: fg }]}>{initials}</Text>
-      </View>
+    <View style={styles.threadRowOuter}>
+      <PressableCard
+        onPress={() => onSelect(conv)}
+        accessibilityLabel={`Thread with ${name}${conv.unreadCount > 0 ? ', unread' : ''}`}
+        style={[styles.threadRow, isActive && styles.threadRowActive]}
+      >
+        <View style={[styles.threadAvatar, { backgroundColor: bg }]}>
+          <Text style={[styles.threadAvatarText, { color: fg }]}>{initials}</Text>
+        </View>
 
-      <View style={styles.threadBody}>
-        <View style={styles.threadTopRow}>
-          <Text style={styles.threadName} numberOfLines={1}>
-            {name}
+        <View style={styles.threadBody}>
+          <View style={styles.threadTopRow}>
+            <Text style={styles.threadName} numberOfLines={1}>
+              {name}
+            </Text>
+            <Text style={[styles.threadTimestamp, numerals.tabular]}>{timestamp}</Text>
+          </View>
+          <View style={styles.threadEngagementRow}>
+            <Pill variant={engagementPillVariant} size="sm" withDot>
+              {engagementLabel}
+            </Pill>
+          </View>
+          <Text style={styles.threadPreview} numberOfLines={1}>
+            {preview}
           </Text>
-          <Text style={[styles.threadTimestamp, numerals.tabular]}>{timestamp}</Text>
         </View>
-        <View style={styles.threadEngagementRow}>
-          <Pill variant={engagement.pillVariant} size="sm" withDot>
-            {engagement.label}
-          </Pill>
-        </View>
-        <Text style={styles.threadPreview} numberOfLines={1}>
-          {preview}
-        </Text>
-      </View>
 
-      {hasUnread ? <View style={styles.unreadIndicator} /> : null}
-    </PressableCard>
+        {conv.unreadCount > 0 ? <View style={styles.unreadIndicator} /> : null}
+
+        {/* Overflow menu trigger */}
+        <TouchableOpacity
+          onPress={(e) => {
+            e.stopPropagation?.();
+            setMenuOpen((v) => !v);
+          }}
+          style={styles.threadOverflowBtn}
+          accessibilityRole="button"
+          accessibilityLabel={`More options for thread with ${name}`}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <MoreVertical size={16} color={tokens.textMuted} />
+        </TouchableOpacity>
+      </PressableCard>
+
+      {/* Inline dropdown — appears below the row, z-index above siblings */}
+      {menuOpen ? (
+        <>
+          {/* Transparent backdrop to dismiss */}
+          <TouchableOpacity
+            style={StyleSheet.absoluteFillObject}
+            onPress={() => setMenuOpen(false)}
+            accessibilityLabel="Close menu"
+          />
+          <View style={styles.threadMenu} accessibilityRole="menu">
+            <TouchableOpacity
+              style={styles.threadMenuItemDanger}
+              onPress={() => {
+                setMenuOpen(false);
+                onDelete(conv);
+              }}
+              accessibilityRole="menuitem"
+              accessibilityLabel="Delete conversation"
+            >
+              <Trash2 size={14} color="#b91c1c" />
+              <Text style={styles.threadMenuItemDangerText}>Delete conversation</Text>
+            </TouchableOpacity>
+          </View>
+        </>
+      ) : null}
+    </View>
   );
 }
 
@@ -516,57 +607,71 @@ function ThreadRow({
 type ThreadFilterTab = 'all' | 'unread' | 'flagged' | 'archived';
 
 interface ThreadListPaneProps {
-  readonly sessions: SessionData[];
-  readonly selectedSessionId: string | null;
-  readonly onSelectSession: (session: SessionData) => void;
+  readonly conversations: ConversationData[];
+  readonly selectedConversationId: string | null;
+  readonly onSelectConversation: (conv: ConversationData) => void;
   readonly onNavigateToMembers: () => void;
+  readonly onDeleteConversation: (conv: ConversationData) => void;
 }
 
 /**
- * Left pane: alphabetical list of member threads with search and 4 filter tabs.
+ * Left pane: one row per member–CHW conversation pair with search and 4 filter tabs.
  *
- * Tabs: All (n) / Unread / Flagged / Archived — rendered as outlined Pill chips.
- * Empty tab state renders the EmptyState primitive.
- * Thread rows wrapped in StaggerList for cascading mount animation.
+ * Sort: pinned conversations first (pinnedAt desc), then by lastMessageAt desc.
+ * Tabs: All (n) / Unread / Flagged / Archived.
+ * Thread rows wrapped in SwipeableThreadRow for swipe-to-pin/archive/delete.
+ * StaggerList for cascading mount animation.
  */
 function ThreadListPane({
-  sessions,
-  selectedSessionId,
-  onSelectSession,
+  conversations,
+  selectedConversationId,
+  onSelectConversation,
   onNavigateToMembers,
+  onDeleteConversation,
 }: ThreadListPaneProps): React.JSX.Element {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<ThreadFilterTab>('all');
 
+  const togglePin = useToggleConversationPin();
+  const toggleArchive = useToggleConversationArchive();
+
   const withMember = useMemo(
-    () => sessions.filter((s) => !!s.memberName),
-    [sessions],
+    () => conversations.filter((c) => !!c.memberName),
+    [conversations],
   );
 
-  const visibleSessions = useMemo(() => {
-    const sorted = [...withMember].sort((a, b) =>
-      (a.memberName ?? '').localeCompare(b.memberName ?? ''),
-    );
+  const visibleConversations = useMemo(() => {
+    // Pinned-first, then most-recent-message-first.
+    const sorted = [...withMember].sort((a, b) => {
+      if (a.pinnedAt && !b.pinnedAt) return -1;
+      if (!a.pinnedAt && b.pinnedAt) return 1;
+      const aTs = a.lastMessageAt ? Date.parse(a.lastMessageAt) : 0;
+      const bTs = b.lastMessageAt ? Date.parse(b.lastMessageAt) : 0;
+      return bTs - aTs;
+    });
 
     let filtered = sorted;
 
     switch (activeFilter) {
       case 'archived':
-        filtered = filtered.filter((s) => !!s.archivedAt);
+        filtered = filtered.filter((c) => !!c.archivedAt);
         break;
       case 'unread':
+        filtered = filtered.filter((c) => c.unreadCount > 0);
+        break;
       case 'flagged':
-        // Presentation-only in v1 — show same list.
+        // Flagged is presentation-only in v1 — show same unarchived list.
+        filtered = filtered.filter((c) => !c.archivedAt);
         break;
       default:
-        filtered = filtered.filter((s) => !s.archivedAt);
+        filtered = filtered.filter((c) => !c.archivedAt);
         break;
     }
 
     const query = searchQuery.trim().toLowerCase();
     if (query) {
-      filtered = filtered.filter((s) =>
-        (s.memberName ?? '').toLowerCase().includes(query),
+      filtered = filtered.filter((c) =>
+        (c.memberName ?? '').toLowerCase().includes(query),
       );
     }
 
@@ -574,7 +679,7 @@ function ThreadListPane({
   }, [withMember, searchQuery, activeFilter]);
 
   const totalCount = useMemo(
-    () => withMember.filter((s) => !s.archivedAt).length,
+    () => withMember.filter((c) => !c.archivedAt).length,
     [withMember],
   );
 
@@ -649,7 +754,7 @@ function ThreadListPane({
         accessibilityRole="list"
         accessibilityLabel="Member threads"
       >
-        {visibleSessions.length === 0 ? (
+        {visibleConversations.length === 0 ? (
           <EmptyState
             icon={MessageSquare}
             title={searchQuery ? 'No threads match your search.' : 'No conversations yet'}
@@ -666,15 +771,32 @@ function ThreadListPane({
           />
         ) : (
           <StaggerList delayMs={40} durationMs={250}>
-            {visibleSessions.map((session) => (
-              <ThreadRow
-                key={session.id}
-                session={session}
-                isActive={selectedSessionId === session.id}
-                lastMessage={null}
-                hasUnread={false}
-                onSelect={onSelectSession}
-              />
+            {visibleConversations.map((conv) => (
+              <SwipeableThreadRow
+                key={conv.id}
+                isPinned={!!conv.pinnedAt}
+                onPress={() => onSelectConversation(conv)}
+                onPin={(nextPinned) =>
+                  void togglePin.mutateAsync({
+                    conversationId: conv.id,
+                    pinned: nextPinned,
+                  })
+                }
+                onArchive={() =>
+                  void toggleArchive.mutateAsync({
+                    conversationId: conv.id,
+                    archived: !conv.archivedAt,
+                  })
+                }
+                onDelete={() => onDeleteConversation(conv)}
+              >
+                <ThreadRow
+                  conversation={conv}
+                  isActive={selectedConversationId === conv.id}
+                  onSelect={onSelectConversation}
+                  onDelete={onDeleteConversation}
+                />
+              </SwipeableThreadRow>
             ))}
           </StaggerList>
         )}
@@ -843,7 +965,7 @@ function FileAttachmentBubble({
 // ─── Message bubble ───────────────────────────────────────────────────────────
 
 interface MessageBubbleProps {
-  readonly message: SessionMessageLocal;
+  readonly message: ConversationMessageLocal;
   readonly isSentByChw: boolean;
 }
 
@@ -921,7 +1043,7 @@ function MessageBubble({ message, isSentByChw }: MessageBubbleProps): React.JSX.
 // ─── Conversation pane ────────────────────────────────────────────────────────
 
 interface ConversationPaneProps {
-  readonly session: SessionData;
+  readonly conversation: ConversationData;
   readonly onBack?: () => void;
   readonly showBackButton: boolean;
   /**
@@ -941,7 +1063,7 @@ interface ConversationPaneProps {
  * the "Complete Session" documentation modal.
  */
 function ConversationPane({
-  session,
+  conversation: conv,
   onBack,
   showBackButton,
   autoCallOnMount,
@@ -949,11 +1071,13 @@ function ConversationPane({
   onRequestOpenDocumentation,
 }: ConversationPaneProps): React.JSX.Element {
   const [draftText, setDraftText] = useState('');
-  const [localMessages, setLocalMessages] = useState<SessionMessageLocal[]>([]);
+  const [localMessages, setLocalMessages] = useState<ConversationMessageLocal[]>([]);
   const [callInitiating, setCallInitiating] = useState(false);
-  // While a session is in progress, placing the call is the next expected step —
-  // surfaced as a green-tinted call button in the header (see Phone button below).
-  const sessionInProgress = session.status === 'in_progress';
+  // A session is in progress when the conversation has an active session.
+  // We cannot know the session status without fetching it; presence of
+  // activeSessionId is used as a proxy — it is set by the backend only while
+  // in_progress. The rail's full status logic uses useSessionHook.
+  const sessionInProgress = conv.activeSessionId !== null;
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [toastIsError, setToastIsError] = useState(false);
   const [documentingSessionId, setDocumentingSessionId] = useState<string | null>(null);
@@ -967,8 +1091,8 @@ function ConversationPane({
   const fileInputDocRef  = useRef<HTMLInputElement | null>(null);
   const fileInputImgRef  = useRef<HTMLInputElement | null>(null);
 
-  const messagesQuery = useSessionMessages(session.id);
-  const sendMessage = useSessionSendMessage();
+  const messagesQuery = useConversationMessages(conv.id);
+  const sendMessage = useConversationSendMessage();
   const startCall = useStartCall();
   const submitDocumentation = useSubmitDocumentation();
 
@@ -983,7 +1107,7 @@ function ConversationPane({
 
   const { uploadAttachment, isUploading: isAttachmentUploading } = useMessageAttachmentUpload({
     // A CHW uploads attachments scoped to the member they're messaging.
-    targetMemberId: session.memberId ?? '',
+    targetMemberId: conv.memberId ?? '',
     onError: (err) => showToast(err.message, true),
   });
 
@@ -991,12 +1115,16 @@ function ConversationPane({
 
   const handleCall = useCallback(async (): Promise<void> => {
     if (callInitiating) return;
-    const memberName = session.memberName ?? 'this member';
+    const memberName = conv.memberName ?? 'this member';
 
     const executeCall = async (): Promise<void> => {
       setCallInitiating(true);
       try {
-        await startCall.mutateAsync(session.id);
+        if (!conv.activeSessionId) {
+          showToast('No active session — begin a session before calling.', true);
+          return;
+        }
+        await startCall.mutateAsync(conv.activeSessionId);
         showToast('Call requested — your phone should ring shortly.', false);
       } catch (err) {
         const detail =
@@ -1023,16 +1151,18 @@ function ConversationPane({
         ],
       );
     }
-  }, [callInitiating, session.id, session.memberName, startCall, showToast]);
+  }, [callInitiating, conv.activeSessionId, conv.memberName, startCall, showToast]);
 
   // ── Auto-call on mount ────────────────────────────────────────────────────
 
   useEffect(() => {
     if (!autoCallOnMount || callInitiating) return;
+    if (!conv.activeSessionId) return; // No active session — skip auto-call.
+    const activeId = conv.activeSessionId;
     setCallInitiating(true);
     void (async () => {
       try {
-        await startCall.mutateAsync(session.id);
+        await startCall.mutateAsync(activeId);
         showToast('Call requested — your phone should ring shortly.', false);
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Call failed.';
@@ -1043,13 +1173,22 @@ function ConversationPane({
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoCallOnMount, session.id]);
+  }, [autoCallOnMount, conv.activeSessionId]);
 
   // ── Merged messages (server + optimistic) ────────────────────────────────
 
-  const mergedMessages = useMemo<SessionMessageLocal[]>(() => {
-    const serverMessages: SessionMessageLocal[] = (messagesQuery.data ?? []).map(
-      (m) => ({ ...m }),
+  const mergedMessages = useMemo<ConversationMessageLocal[]>(() => {
+    // Cast server MessageData to ConversationMessageLocal. The REST response
+    // includes downloadUrl on attachments even though FileAttachmentInline in
+    // the type definition doesn't declare it (shared with upload-only context).
+    const serverMessages: ConversationMessageLocal[] = (messagesQuery.data ?? []).map(
+      (m): ConversationMessageLocal => ({
+        ...m,
+        // Carry over the attachment with the runtime downloadUrl field.
+        attachment: m.attachment
+          ? (m.attachment as unknown as ConversationMessageAttachment)
+          : undefined,
+      }),
     );
     const serverIds = new Set(serverMessages.map((m) => m.id));
     const pendingOptimistic = localMessages.filter((m) => !serverIds.has(m.id));
@@ -1144,10 +1283,11 @@ function ConversationPane({
     const capturedAttachment = pendingAttachment;
 
     const optimisticId = `local-${Date.now()}`;
-    const optimisticMessage: SessionMessageLocal = {
+    const optimisticMessage: ConversationMessageLocal = {
       id: optimisticId,
-      senderUserId: '',
-      senderRole: 'chw',
+      conversationId: conv.id,
+      // Use chwId as senderId so isSentByChw derivation works for the optimistic message.
+      senderId: conv.chwId,
       body: trimmed,
       type: capturedAttachment ? (capturedAttachment.contentType.startsWith('image/') ? 'image' : 'file') : 'text',
       createdAt: new Date().toISOString(),
@@ -1171,7 +1311,7 @@ function ConversationPane({
 
     try {
       await sendMessage.mutateAsync({
-        sessionId: session.id,
+        conversationId: conv.id,
         body: trimmed,
         attachment: capturedAttachment
           ? {
@@ -1190,7 +1330,7 @@ function ConversationPane({
         ),
       );
     }
-  }, [draftText, pendingAttachment, session.id, sendMessage]);
+  }, [draftText, pendingAttachment, conv.id, sendMessage]);
 
   // ── Template chip insertion ───────────────────────────────────────────────
 
@@ -1201,8 +1341,10 @@ function ConversationPane({
   // ── Complete Session ──────────────────────────────────────────────────────
 
   const handleOpenCompleteSession = useCallback((): void => {
-    setDocumentingSessionId(session.id);
-  }, [session.id]);
+    if (conv.activeSessionId) {
+      setDocumentingSessionId(conv.activeSessionId);
+    }
+  }, [conv.activeSessionId]);
 
   const handleDocumentationSubmit = useCallback(
     async (data: SessionDocumentation): Promise<void> => {
@@ -1228,15 +1370,39 @@ function ConversationPane({
     [documentingSessionId, submitDocumentation],
   );
 
-  const memberName = session.memberName ?? 'Unknown Member';
+  const memberName = conv.memberName ?? 'Unknown Member';
   const memberFirstName = getFirstName(memberName);
   const initials = getInitials(memberName);
   const { bg, fg } = avatarColorFor(memberName);
   const grouped = groupMessagesByDay(mergedMessages);
 
-  // Derive engagement status for header pill.
-  // senderRole='chw' is the primary signal; chwId is a secondary guard.
-  const engagement = useEngagementStatus(mergedMessages, session.chwId ?? '');
+  // Derive engagement for the header pill from actual conversation messages.
+  // useEngagementStatus expects SessionMessageLocal[] — map ConversationMessageLocal
+  // to the compatible shape (senderRole derived from senderId vs chwId).
+  const messagesForEngagement = useMemo<SessionMessageLocal[]>(
+    () =>
+      mergedMessages.map((m): SessionMessageLocal => ({
+        id: m.id,
+        senderUserId: m.senderId,
+        senderRole: m.senderId === conv.chwId ? 'chw' : 'member',
+        body: m.body,
+        type: m.type,
+        createdAt: m.createdAt,
+        status: m.status,
+        attachment: m.attachment
+          ? {
+              id: m.attachment.id,
+              filename: m.attachment.filename,
+              sizeBytes: m.attachment.sizeBytes,
+              contentType: m.attachment.contentType,
+              s3Key: m.attachment.s3Key,
+              downloadUrl: m.attachment.downloadUrl,
+            }
+          : undefined,
+      })),
+    [mergedMessages, conv.chwId],
+  );
+  const engagement = useEngagementStatus(messagesForEngagement, conv.chwId);
 
   // ── Quick-reply templates — 4 chips per mockup spec ───────────────────────
 
@@ -1283,9 +1449,9 @@ function ConversationPane({
         ) : null}
 
         <PressableMember
-          memberId={session.memberId ?? ''}
+          memberId={conv.memberId ?? ''}
           displayName={memberName}
-          enabled={!!session.memberId}
+          enabled={!!conv.memberId}
         >
           <View style={[styles.convHeaderAvatar, { backgroundColor: bg }]}>
             <Text style={[styles.convHeaderAvatarText, { color: fg }]}>{initials}</Text>
@@ -1295,9 +1461,9 @@ function ConversationPane({
         <View style={styles.convHeaderInfo}>
           <View style={styles.convHeaderNameRow}>
             <PressableMember
-              memberId={session.memberId ?? ''}
+              memberId={conv.memberId ?? ''}
               displayName={memberName}
-              enabled={!!session.memberId}
+              enabled={!!conv.memberId}
             >
               <Text style={styles.convHeaderName} numberOfLines={1}>
                 {memberName}
@@ -1341,9 +1507,9 @@ function ConversationPane({
 
         {/* Open Member Profile */}
         <PressableMember
-          memberId={session.memberId ?? ''}
+          memberId={conv.memberId ?? ''}
           displayName={memberName}
-          enabled={!!session.memberId}
+          enabled={!!conv.memberId}
           style={styles.openProfileBtn}
         >
           <ArrowRight size={14} color={tokens.gray700} />
@@ -1393,7 +1559,7 @@ function ConversationPane({
                 <MessageBubble
                   key={msg.id}
                   message={msg}
-                  isSentByChw={msg.senderRole === 'chw'}
+                  isSentByChw={msg.senderId === conv.chwId}
                 />
               ))}
             </View>
@@ -1573,7 +1739,7 @@ function ConversationPane({
           visible={documentingSessionId != null}
           onClose={() => setDocumentingSessionId(null)}
           sessionId={documentingSessionId}
-          durationMinutes={session.durationMinutes ?? null}
+          durationMinutes={null}
           onSubmit={handleDocumentationSubmit}
         />
       )}
@@ -1907,10 +2073,19 @@ function terminalSessionLabel(status: string): string {
 }
 
 interface MemberContextRailProps {
-  readonly session: SessionData;
+  readonly conversation: ConversationData;
   readonly onEndSessionComplete?: () => void;
   /** Called after a new session has been created and started from a completed session. */
   readonly onSessionStarted?: (newSession: SessionData) => void;
+  /**
+   * When true, automatically fire the Begin Session flow on mount (once the
+   * session status is known). Set by the parent when route.params.autoBeginSession === true
+   * and this rail's conversation matches the target member.
+   * Mirrors the autoCallOnMount pattern on ConversationPane.
+   */
+  readonly autoBeginSessionOnMount?: boolean;
+  /** Fired after the auto-begin attempt so the parent can clear the one-shot flag. */
+  readonly onAutoBeginSessionConsumed?: () => void;
 }
 
 /**
@@ -1926,9 +2101,11 @@ interface MemberContextRailProps {
  * No nested cards within a single Card region — border-top dividers used instead.
  */
 function MemberContextRail({
-  session,
+  conversation: conv,
   onEndSessionComplete,
   onSessionStarted,
+  autoBeginSessionOnMount,
+  onAutoBeginSessionConsumed,
 }: MemberContextRailProps): React.JSX.Element {
   const navigation = useNavigation<any>(); // eslint-disable-line @typescript-eslint/no-explicit-any
 
@@ -1938,17 +2115,29 @@ function MemberContextRail({
   const [showEndConfirm, setShowEndConfirm] = useState(false);
   const [beginSessionPending, setBeginSessionPending] = useState(false);
 
+  // Fetch live session status for lifecycle gating. When activeSessionId is
+  // null the conversation has no in-progress session — we treat it as needing
+  // a brand-new session (same flow as "completed" in the old model).
+  const liveSessionQuery = useSessionHook(conv.activeSessionId ?? '');
+  const liveSession: SessionData | null = liveSessionQuery.data ?? null;
+
   // Session lifecycle gating for the primary action button:
-  //   scheduled              → green "Begin Session" (PATCH /sessions/{id}/start)
-  //   completed              → green "Begin Session" (POST /sessions/schedule then PATCH /start
-  //                            on the new session — cannot re-/start a completed session)
-  //   in_progress            → red "Complete Session" (end flow + documentation)
-  //   awaiting_documentation → red "Complete Session" (re-opens documentation; /end is idempotent)
-  //   cancelled /            → non-actionable status note. Member declined or aborted;
-  //     cancelled_no_consent   not "start again" states.
-  const canBeginSession = session.status === 'scheduled';
-  const canBeginNewSession = session.status === 'completed';
-  const isTerminalSession = TERMINAL_SESSION_STATUSES.includes(session.status);
+  //   null activeSessionId   → "Begin Session" (POST /sessions/schedule + PATCH /start)
+  //   scheduled              → "Begin Session" (PATCH /sessions/{id}/start)
+  //   completed              → "Begin Session" (POST /sessions/schedule then PATCH /start)
+  //   in_progress            → "Complete Session" (end flow + documentation)
+  //   awaiting_documentation → "Complete Session" (re-opens documentation; /end is idempotent)
+  //   cancelled /            → non-actionable status note.
+  //     cancelled_no_consent
+  const activeStatus = liveSession?.status ?? null;
+  // No activeSessionId → bare conversation; treat as needing a new session.
+  const canBeginSession = activeStatus === 'scheduled';
+  const canBeginNewSession =
+    conv.activeSessionId === null ||
+    activeStatus === 'completed';
+  const isTerminalSession =
+    activeStatus !== null &&
+    TERMINAL_SESSION_STATUSES.includes(activeStatus);
 
   // Slide-up animation for the end-session confirmation panel
   const confirmSlideY = useRef(new Animated.Value(60)).current;
@@ -1995,9 +2184,9 @@ function MemberContextRail({
   const memberJourneys: MemberJourneyResponse[] = useMemo(() => {
     const allJourneys = journeysQuery.data ?? [];
     return allJourneys.filter(
-      (j) => j.memberId === session.memberId && j.status === 'active',
+      (j) => j.memberId === conv.memberId && j.status === 'active',
     );
-  }, [journeysQuery.data, session.memberId]);
+  }, [journeysQuery.data, conv.memberId]);
 
   const activeJourney: MemberJourneyResponse | null = useMemo(
     () =>
@@ -2015,13 +2204,13 @@ function MemberContextRail({
   }, [memberJourneys]);
 
   // Services consent
-  const consentQuery = useMemberServicesConsent(session.memberId ?? '');
+  const consentQuery = useMemberServicesConsent(conv.memberId ?? '');
   const consentValue = consentQuery.data?.value ?? null;
   const servicesRefused = consentValue === 'refuse_services';
 
   // Journey display values
   const journeyPercent = activeJourney?.progressPercent ?? 0;
-  const journeyName = activeJourney?.template.name ?? session.vertical?.replace(/_/g, ' ') ?? 'General';
+  const journeyName = activeJourney?.template.name ?? 'General';
   const journeyCurrentStep = activeJourney?.currentStep?.stepName ?? null;
   const journeyDueDate = activeJourney?.currentStep?.dueDate ?? null;
 
@@ -2061,12 +2250,13 @@ function MemberContextRail({
 
   // ── End Session handler ───────────────────────────────────────────────────
 
-  const memberFirstName = getFirstName(session.memberName);
+  const memberFirstName = getFirstName(conv.memberName);
 
   const handleBeginSession = useCallback(async (): Promise<void> => {
+    if (!conv.activeSessionId) return; // Guard: should not be called when bare
     setBeginSessionPending(true);
     try {
-      await startSession.mutateAsync(session.id);
+      await startSession.mutateAsync(conv.activeSessionId);
       // On success the sessions query invalidates → session.status flips to
       // 'in_progress', turning this button red and the header call icon green.
     } catch (err) {
@@ -2080,7 +2270,7 @@ function MemberContextRail({
     } finally {
       setBeginSessionPending(false);
     }
-  }, [session.id, startSession]);
+  }, [conv.activeSessionId, startSession]);
 
   /**
    * Creates a brand-new session for the same member (immediately scheduled + started).
@@ -2091,11 +2281,11 @@ function MemberContextRail({
    * the CHW is informed and can begin it from Calendar. No data is lost.
    */
   const handleBeginNewSession = useCallback(async (): Promise<void> => {
-    if (!session.memberId) return;
+    if (!conv.memberId) return;
     setBeginSessionPending(true);
     try {
       const newSession = await scheduleSession.mutateAsync({
-        memberId: session.memberId,
+        memberId: conv.memberId,
         scheduledAt: new Date().toISOString(),
         mode: 'phone',
         schedulingStatus: 'confirmed',
@@ -2140,13 +2330,40 @@ function MemberContextRail({
     } finally {
       setBeginSessionPending(false);
     }
-  }, [session.memberId, scheduleSession, startSession, onSessionStarted]);
+  }, [conv.memberId, scheduleSession, startSession, onSessionStarted]);
+
+  // One-shot auto-begin: fire handleBeginNewSession on mount when the caller
+  // requested it (route param autoBeginSession === true) and session status is
+  // known. A ref guards against double-firing across re-renders.
+  const autoBeginFiredRef = useRef(false);
+  useEffect(() => {
+    if (!autoBeginSessionOnMount) return;
+    if (autoBeginFiredRef.current) return;
+    // Wait until the session query has settled (not still loading the live session).
+    if (liveSessionQuery.isLoading) return;
+    // Only fire when the session is in a beginnable state.
+    const canFire = canBeginSession || canBeginNewSession;
+    if (!canFire) return;
+
+    autoBeginFiredRef.current = true;
+    onAutoBeginSessionConsumed?.();
+    void handleBeginNewSession();
+  }, [
+    autoBeginSessionOnMount,
+    liveSessionQuery.isLoading,
+    canBeginSession,
+    canBeginNewSession,
+    handleBeginNewSession,
+    onAutoBeginSessionConsumed,
+  ]);
 
   const handleEndSessionConfirmed = useCallback(async (): Promise<void> => {
+    if (!conv.activeSessionId) return; // Guard: no active session to end
+    const activeId = conv.activeSessionId;
     setShowEndConfirm(false);
     setEndSessionPending(true);
     try {
-      await endSession.mutateAsync(session.id);
+      await endSession.mutateAsync(activeId);
       onEndSessionComplete?.();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Could not end session. Try again.';
@@ -2158,9 +2375,9 @@ function MemberContextRail({
     } finally {
       setEndSessionPending(false);
     }
-  }, [session.id, endSession, onEndSessionComplete]);
+  }, [conv.activeSessionId, endSession, onEndSessionComplete]);
 
-  const memberName = session.memberName ?? 'Unknown Member';
+  const memberName = conv.memberName ?? 'Unknown Member';
   const initials = getInitials(memberName);
 
   // Suggested questions drawer context
@@ -2168,7 +2385,7 @@ function MemberContextRail({
     ? {
         templateName: activeJourney.template.name,
         currentStepName: activeJourney.currentStep?.stepName ?? '',
-        vertical: activeJourney.template.category ?? session.vertical ?? '',
+        vertical: activeJourney.template.category ?? '',
       }
     : undefined;
   const questionsMember = {
@@ -2356,9 +2573,9 @@ function MemberContextRail({
 
             {/* Open Member Profile */}
             <PressableMember
-              memberId={session.memberId ?? ''}
+              memberId={conv.memberId ?? ''}
               displayName={memberName}
-              enabled={!!session.memberId}
+              enabled={!!conv.memberId}
               style={[styles.quickActionBtn, railCardStyles.quickActionPressableMember]}
             >
               <ArrowRight size={16} color={tokens.textSecondary} style={styles.quickActionIcon} />
@@ -2388,7 +2605,7 @@ function MemberContextRail({
           role="region"
           accessibilityLabel={
             isTerminalSession
-              ? terminalSessionLabel(session.status)
+              ? terminalSessionLabel(activeStatus ?? 'cancelled')
               : canBeginSession || canBeginNewSession
               ? 'Begin Session'
               : 'Complete Session'
@@ -2398,7 +2615,7 @@ function MemberContextRail({
           {isTerminalSession ? (
             <View style={styles.sessionStatusNote} accessibilityRole="text">
               <Text style={styles.sessionStatusNoteText}>
-                {terminalSessionLabel(session.status)}
+                {terminalSessionLabel(activeStatus ?? 'cancelled')}
               </Text>
             </View>
           ) : canBeginNewSession ? (
@@ -2545,10 +2762,10 @@ function MemberContextRail({
         journey={questionsJourney}
       />
 
-      {session.memberId ? (
+      {conv.memberId ? (
         <CaseNoteModal
-          memberId={session.memberId}
-          sessionId={session.id}
+          memberId={conv.memberId}
+          sessionId={conv.activeSessionId ?? ''}
           visible={caseNoteModalOpen}
           onClose={() => setCaseNoteModalOpen(false)}
         />
@@ -2571,16 +2788,22 @@ export function CHWMessagesScreen(): React.JSX.Element {
   const { userName } = useAuth();
   const { width } = useWindowDimensions();
 
-  const sessionsQuery = useSessions();
-  const [selectedSession, setSelectedSession] = useState<SessionData | null>(null);
+  const conversationsQuery = useConversations({ includeArchived: true });
+  const [selectedConversation, setSelectedConversation] = useState<ConversationData | null>(null);
   const [showThreadList, setShowThreadList] = useState(true);
   const [documentingSessionId, setDocumentingSessionId] = useState<string | null>(null);
 
-  // Route params — navigate from CHWMemberProfileScreen with memberId + autoCall
+  // Route params — navigate from CHWMemberProfileScreen with memberId + autoCall / autoBeginSession
   const route = useRoute<RouteProp<CHWSessionsStackParamList, 'Messages'>>();
   const targetMemberId = route.params?.memberId;
   const shouldAutoCall = route.params?.autoCall === true;
   const autoCallFiredRef = useRef(false);
+  // autoBeginSession: navigated from CHWMemberProfileScreen "Begin Session" button.
+  // When true, auto-select the member's conversation and fire the Begin Session
+  // flow from MemberContextRail on mount (once only).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const shouldAutoBeginSession = (route.params as any)?.autoBeginSession === true;
+  const autoBeginFiredRef = useRef(false);
 
   const hideRail = width < BP_HIDE_RAIL;
   const hideList = width < BP_HIDE_LIST;
@@ -2603,42 +2826,46 @@ export function CHWMessagesScreen(): React.JSX.Element {
     writeStoredWidth(LS_KEY_CHW_RIGHT, next);
   }, []);
 
-  const allSessions: SessionData[] = sessionsQuery.data ?? [];
+  const allConversations: ConversationData[] = conversationsQuery.data ?? [];
 
-  // selectedSession is a local snapshot frozen at selection time, but mutations
-  // like start/end invalidate the sessions query and refetch fresh rows. Re-resolve
-  // the live row by id so the rail's Begin/Complete button and the call-icon cue
-  // reflect the current status; fall back to the snapshot if it hasn't loaded yet.
-  const liveSelectedSession = useMemo<SessionData | null>(() => {
-    if (!selectedSession) return null;
-    return allSessions.find((s) => s.id === selectedSession.id) ?? selectedSession;
-  }, [allSessions, selectedSession]);
+  // selectedConversation is a local snapshot frozen at selection time, but mutations
+  // invalidate the conversations query and refetch fresh rows. Re-resolve the live
+  // row by id so the rail's Begin/Complete button and the call-icon cue reflect the
+  // current activeSessionId; fall back to the snapshot if it hasn't loaded yet.
+  const liveSelectedConversation = useMemo<ConversationData | null>(() => {
+    if (!selectedConversation) return null;
+    return (
+      allConversations.find((c) => c.id === selectedConversation.id) ??
+      selectedConversation
+    );
+  }, [allConversations, selectedConversation]);
 
   const navigation = useNavigation<any>(); // eslint-disable-line @typescript-eslint/no-explicit-any
 
-  // Auto-select target member's thread or first thread alphabetically
+  // Auto-select target member's thread or first unarchived thread alphabetically
   useEffect(() => {
-    if (allSessions.length === 0) return;
+    if (allConversations.length === 0) return;
 
     if (targetMemberId) {
-      const match = allSessions.find((s) => s.memberId === targetMemberId);
-      if (match && selectedSession?.id !== match.id) {
-        setSelectedSession(match);
+      // Auto-select is now unambiguous: one conversation per member.
+      const match = allConversations.find((c) => c.memberId === targetMemberId);
+      if (match && selectedConversation?.id !== match.id) {
+        setSelectedConversation(match);
         return;
       }
     }
 
-    if (!selectedSession) {
-      const firstAlpha = [...allSessions]
-        .filter((s) => !!s.memberName)
+    if (!selectedConversation) {
+      const firstAlpha = [...allConversations]
+        .filter((c) => !!c.memberName && !c.archivedAt)
         .sort((a, b) => (a.memberName ?? '').localeCompare(b.memberName ?? ''))[0];
-      setSelectedSession(firstAlpha ?? null);
+      setSelectedConversation(firstAlpha ?? null);
     }
-  }, [allSessions, selectedSession, targetMemberId]);
+  }, [allConversations, selectedConversation, targetMemberId]);
 
-  const handleSelectSession = useCallback(
-    (session: SessionData): void => {
-      setSelectedSession(session);
+  const handleSelectConversation = useCallback(
+    (conv: ConversationData): void => {
+      setSelectedConversation(conv);
       if (hideList) {
         setShowThreadList(false);
       }
@@ -2652,16 +2879,69 @@ export function CHWMessagesScreen(): React.JSX.Element {
 
   // After End Session completes — open DocumentationModal automatically
   const handleEndSessionComplete = useCallback((): void => {
-    if (selectedSession) {
-      setDocumentingSessionId(selectedSession.id);
+    if (selectedConversation?.activeSessionId) {
+      setDocumentingSessionId(selectedConversation.activeSessionId);
     }
-  }, [selectedSession]);
+  }, [selectedConversation]);
 
-  // After a new session is created+started from a completed session — re-point the
-  // selected session so liveSelectedSession picks up the new in_progress session.
-  const handleSessionStarted = useCallback((newSession: SessionData): void => {
-    setSelectedSession(newSession);
+  // After a new session is created+started from a bare/completed conversation —
+  // the conversation query will refetch and update activeSessionId automatically.
+  // We keep this callback for future use / onSessionStarted forward compatibility.
+  const handleSessionStarted = useCallback((_newSession: SessionData): void => {
+    // No-op: conversations query invalidation (in useStartSession onSuccess)
+    // will refresh liveSelectedConversation.activeSessionId automatically.
   }, []);
+
+  // ── Delete conversation ────────────────────────────────────────────────────
+  // Uses soft-delete via useSoftDeleteConversation (DELETE /conversations/{id}).
+  // The onDeselect callback clears selection when the deleted thread is open.
+
+  const softDeleteConversation = useSoftDeleteConversation({
+    onDeselect: (conversationId) => {
+      setSelectedConversation((prev) =>
+        prev?.id === conversationId ? null : prev,
+      );
+    },
+  });
+
+  const handleDeleteConversation = useCallback(
+    (conv: ConversationData): void => {
+      const memberName = conv.memberName ?? 'this member';
+
+      const doDelete = async (): Promise<void> => {
+        try {
+          await softDeleteConversation.mutateAsync(conv.id);
+          // onDeselect in useSoftDeleteConversation handles clearing selection.
+        } catch {
+          // useSoftDeleteConversation's onError already shows the Alert.
+        }
+      };
+
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        if (
+          window.confirm(
+            `Delete this conversation with ${memberName}? You can restore it by sending a new message.`,
+          )
+        ) {
+          void doDelete();
+        }
+      } else {
+        Alert.alert(
+          'Delete conversation?',
+          `This will hide the conversation with ${memberName}. You can restore it by sending a new message.`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Delete',
+              style: 'destructive',
+              onPress: () => void doDelete(),
+            },
+          ],
+        );
+      }
+    },
+    [softDeleteConversation],
+  );
 
   const submitDocumentation = useSubmitDocumentation();
 
@@ -2700,7 +2980,7 @@ export function CHWMessagesScreen(): React.JSX.Element {
     role: 'CHW' as const,
   };
 
-  if (sessionsQuery.isLoading) {
+  if (conversationsQuery.isLoading) {
     return (
       <AppShell role="chw" activeKey="messages" userBlock={shellUserBlock} disableMainScroll>
         <View style={styles.loadingWrap}>
@@ -2710,12 +2990,12 @@ export function CHWMessagesScreen(): React.JSX.Element {
     );
   }
 
-  if (sessionsQuery.error) {
+  if (conversationsQuery.error) {
     return (
       <AppShell role="chw" activeKey="messages" userBlock={shellUserBlock} disableMainScroll>
         <ErrorState
           message="Could not load messages. Please try again."
-          onRetry={() => void sessionsQuery.refetch()}
+          onRetry={() => void conversationsQuery.refetch()}
         />
       </AppShell>
     );
@@ -2736,10 +3016,11 @@ export function CHWMessagesScreen(): React.JSX.Element {
         {shouldShowList ? (
           <View style={[styles.threadListWrap, { width: !hideRail ? leftWidth : THREAD_LIST_WIDTH }]}>
             <ThreadListPane
-              sessions={allSessions}
-              selectedSessionId={selectedSession?.id ?? null}
-              onSelectSession={handleSelectSession}
+              conversations={allConversations}
+              selectedConversationId={selectedConversation?.id ?? null}
+              onSelectConversation={handleSelectConversation}
               onNavigateToMembers={() => navigation.navigate('Members')}
+              onDeleteConversation={handleDeleteConversation}
             />
           </View>
         ) : null}
@@ -2755,23 +3036,25 @@ export function CHWMessagesScreen(): React.JSX.Element {
         ) : null}
 
         {/* Center: conversation */}
-        {shouldShowConv && selectedSession ? (
+        {shouldShowConv && selectedConversation ? (
           <View style={styles.convPaneWrap}>
             <ConversationPane
-              key={selectedSession.id}
-              session={liveSelectedSession ?? selectedSession}
+              key={selectedConversation.id}
+              conversation={liveSelectedConversation ?? selectedConversation}
               onBack={handleBack}
               showBackButton={hideList}
               autoCallOnMount={
                 shouldAutoCall &&
                 !autoCallFiredRef.current &&
-                selectedSession.memberId === targetMemberId
+                selectedConversation.memberId === targetMemberId
               }
               onAutoCallConsumed={() => {
                 autoCallFiredRef.current = true;
               }}
               onRequestOpenDocumentation={() => {
-                setDocumentingSessionId(selectedSession.id);
+                if (selectedConversation.activeSessionId) {
+                  setDocumentingSessionId(selectedConversation.activeSessionId);
+                }
               }}
             />
           </View>
@@ -2786,7 +3069,7 @@ export function CHWMessagesScreen(): React.JSX.Element {
         ) : null}
 
         {/* Divider between center and right */}
-        {!hideRail && selectedSession ? (
+        {!hideRail && selectedConversation ? (
           <ResizableDivider
             width={rightWidth}
             onChange={handleRightWidthChange}
@@ -2797,12 +3080,20 @@ export function CHWMessagesScreen(): React.JSX.Element {
         ) : null}
 
         {/* Right: member context rail */}
-        {!hideRail && selectedSession ? (
+        {!hideRail && selectedConversation ? (
           <View style={[styles.railWrap, { width: rightWidth }]}>
             <MemberContextRail
-              session={liveSelectedSession ?? selectedSession}
+              conversation={liveSelectedConversation ?? selectedConversation}
               onEndSessionComplete={handleEndSessionComplete}
               onSessionStarted={handleSessionStarted}
+              autoBeginSessionOnMount={
+                shouldAutoBeginSession &&
+                !autoBeginFiredRef.current &&
+                selectedConversation.memberId === targetMemberId
+              }
+              onAutoBeginSessionConsumed={() => {
+                autoBeginFiredRef.current = true;
+              }}
             />
           </View>
         ) : null}
@@ -2814,7 +3105,7 @@ export function CHWMessagesScreen(): React.JSX.Element {
           visible={documentingSessionId != null}
           onClose={() => setDocumentingSessionId(null)}
           sessionId={documentingSessionId}
-          durationMinutes={selectedSession?.durationMinutes ?? null}
+          durationMinutes={null}
           onSubmit={handleDocumentationSubmit}
         />
       )}
@@ -3085,6 +3376,13 @@ const styles = StyleSheet.create({
   } as ViewStyle,
 
   // ── Thread row ────────────────────────────────────────────────────────────────
+
+  /** Outer wrapper enables the z-indexed dropdown menu to overlay siblings. */
+  threadRowOuter: {
+    position: 'relative',
+    zIndex: 1,
+  } as ViewStyle,
+
   threadRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -3161,6 +3459,41 @@ const styles = StyleSheet.create({
     backgroundColor: tokens.primary,
     flexShrink: 0,
   } as ViewStyle,
+
+  threadOverflowBtn: {
+    padding: 4,
+    borderRadius: radius.sm,
+    flexShrink: 0,
+  } as ViewStyle,
+
+  /** Dropdown menu that appears below the thread row. */
+  threadMenu: {
+    position: 'absolute',
+    top: '100%',
+    right: spacing.sm,
+    backgroundColor: tokens.cardBg,
+    borderWidth: 1,
+    borderColor: tokens.cardBorder,
+    borderRadius: radius.lg,
+    minWidth: 200,
+    overflow: 'hidden',
+    zIndex: 100,
+    ...(shadows.elevated as object),
+  } as ViewStyle,
+
+  threadMenuItemDanger: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 11,
+  } as ViewStyle,
+
+  threadMenuItemDangerText: {
+    fontSize: 13,
+    color: '#b91c1c',
+    fontWeight: '500',
+  } as TextStyle,
 
   // ── Conversation pane ─────────────────────────────────────────────────────────
   convPaneWrap: {

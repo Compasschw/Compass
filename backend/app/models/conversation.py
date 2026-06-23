@@ -47,6 +47,28 @@ class Conversation(Base):
     chw_read_up_to: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("messages.id"), nullable=True)
     member_read_up_to: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("messages.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # ── Soft-delete fields (HIPAA: never hard-delete PHI) ────────────────────
+    # NULL means the thread is active. A non-NULL value means the thread has
+    # been soft-deleted by a participant. The inbox list endpoint filters
+    # deleted_at IS NULL; the by-id fetch still returns the row for audit access.
+    # Sending a new message to a soft-deleted thread auto-restores it (clears
+    # both fields) — mirrors the archive-on-engagement pattern from Session.
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    deleted_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    # ── Inbox swipe-action state (CHW perspective) ───────────────────────────
+    # Mirror of Session.pinned_at / Session.archived_at, but at the
+    # conversation level so a single row answers the inbox sort.
+    # Backfilled from sessions in migration v6w7x8y9z0a1.
+    pinned_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    archived_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 class Message(Base):
     __tablename__ = "messages"

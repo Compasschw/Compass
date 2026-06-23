@@ -90,6 +90,7 @@ import {
   Globe,
   Clock,
   MoreVertical,
+  Trash2,
   Check,
   ChevronRight,
   Navigation,
@@ -114,9 +115,10 @@ import {
 import { colors, spacing, radius, numerals, shadows } from '../../theme/tokens';
 import { useAuth } from '../../context/AuthContext';
 import {
-  useSessions,
-  useSessionMessages,
-  useSessionSendMessage,
+  useConversations,
+  useConversationMessages,
+  useConversationSendMessage,
+  useSoftDeleteConversation,
   useStartCall,
   usePendingConsents,
   useApproveConsentRequest,
@@ -124,7 +126,8 @@ import {
   useMemberProfile,
   useMemberJourneys,
   useOwnServicesConsent,
-  type SessionData,
+  type ConversationData,
+  type MessageData,
   type SessionMessageLocal,
   type ConsentRequestData,
 } from '../../hooks/useApiQueries';
@@ -325,6 +328,59 @@ function journeyProgressPercent(
 ): number {
   if (totalSteps === 0) return 0;
   return Math.round((completedSteps / totalSteps) * 100);
+}
+
+// ─── MessageData → SessionMessageLocal adapter ────────────────────────────────
+
+/**
+ * Adapts a `MessageData` (conversation-scoped) row into the `SessionMessageLocal`
+ * shape that `MessageBubble`, `groupByDay`, and `useEngagementStatus` expect.
+ *
+ * Key differences:
+ *  - `MessageData.senderId` (UUID) vs `SessionMessageData.senderUserId` + `senderRole`
+ *  - `MessageData.attachment` is `FileAttachmentInline` (no presigned `downloadUrl`)
+ *    vs `SessionMessageAttachment` which includes a presigned URL.
+ *
+ * `memberId` is the authenticated member's User.id — any message whose `senderId`
+ * does NOT match it is treated as a CHW message for bubble-alignment purposes.
+ *
+ * Attachment `downloadUrl` is derived by pointing at the presigned-URL endpoint
+ * pattern used elsewhere; for conversation messages the server must include a
+ * presigned URL in the response. When `downloadUrl` is absent from the payload
+ * we fall back to an empty string so `ImageAttachmentBubble` won't crash.
+ */
+function messageDataToLocal(
+  msg: MessageData,
+  memberId: string,
+): SessionMessageLocal {
+  const senderRole: 'member' | 'chw' =
+    msg.senderId === memberId ? 'member' : 'chw';
+
+  const att = msg.attachment;
+  const adaptedAttachment: SessionMessageLocal['attachment'] = att != null
+    ? {
+        id: att.id,
+        filename: att.filename,
+        sizeBytes: att.sizeBytes,
+        contentType: att.contentType,
+        s3Key: att.s3Key,
+        // ConversationMessages endpoint must include a presigned download URL.
+        // Fall back gracefully if the server response does not include one yet.
+        downloadUrl: (att as SessionMessageLocal['attachment'] & { downloadUrl?: string })?.downloadUrl ?? '',
+      }
+    : undefined;
+
+  return {
+    id: msg.id,
+    senderUserId: msg.senderId,
+    senderRole,
+    body: msg.body,
+    type: msg.type,
+    createdAt: msg.createdAt,
+    attachment: adaptedAttachment,
+    // No optimistic status — these come from the server.
+    status: undefined,
+  };
 }
 
 // ─── Attachment bubble helpers ────────────────────────────────────────────────
@@ -788,84 +844,186 @@ const consentStyles = StyleSheet.create({
 // ─── Inbox thread row ─────────────────────────────────────────────────────────
 
 interface InboxThreadRowProps {
-  session: SessionData;
+  conversation: ConversationData;
   isActive: boolean;
-  unreadCount: number;
-  onSelect: (session: SessionData, type: InboxItemType) => void;
+  onSelect: (conversation: ConversationData, type: InboxItemType) => void;
+  onDelete: (conversation: ConversationData) => void;
+  /** The authenticated member's User.id — used to derive engagement pill. */
+  memberId: string;
 }
 
 function InboxThreadRow({
-  session,
+  conversation,
   isActive,
-  unreadCount,
   onSelect,
+  onDelete,
+  memberId,
 }: InboxThreadRowProps): React.JSX.Element {
-  const name = session.chwName ?? 'Your CHW';
+  const [menuOpen, setMenuOpen] = useState(false);
+  const name = conversation.chwName;
   const initials = getInitials(name);
   const { bg, text } = avatarColors(name);
-  const ts = formatThreadTime(session.createdAt);
+  const ts = formatThreadTime(conversation.lastMessageAt ?? conversation.createdAt);
+  const unreadCount = conversation.unreadCount;
 
-  // Fetch messages to derive real preview text and engagement status.
-  const messagesQuery = useSessionMessages(session.id);
-  const messages = messagesQuery.data ?? [];
-  const engagement = useEngagementStatus(messages, session.chwId);
-  const hasMessages = messages.length > 0;
+  // Derive preview text from the conversation's server-side last-message fields.
+  // No per-row messages fetch required — the inbox list already carries this data.
+  const previewText: string = conversation.lastMessagePreview?.trim()
+    ? conversation.lastMessagePreview.slice(0, 60)
+    : 'No messages yet';
 
-  // Thread preview: last confirmed message body or attachment fallback.
-  const lastMessage = messages[messages.length - 1];
-  const previewText: string = (() => {
-    if (lastMessage == null) return 'No messages yet';
-    if (lastMessage.body.trim()) return lastMessage.body.slice(0, 60);
-    if (lastMessage.attachment?.filename) {
-      return `Attachment: ${lastMessage.attachment.filename}`;
-    }
-    return 'No messages yet';
-  })();
+  // Derive engagement pill from the last-message timestamp and unread count.
+  // We synthesise a minimal SessionMessageLocal stub so useEngagementStatus can
+  // work without a per-row messages fetch.
+  const stubMessages = useMemo<SessionMessageLocal[]>(() => {
+    if (conversation.lastMessageAt == null) return [];
+    const senderRole: 'chw' | 'member' =
+      conversation.lastMessageSenderId !== null &&
+      conversation.lastMessageSenderId === memberId
+        ? 'member'
+        : 'chw';
+    return [
+      {
+        id: 'stub',
+        senderUserId: conversation.lastMessageSenderId ?? '',
+        senderRole,
+        body: conversation.lastMessagePreview ?? '',
+        createdAt: conversation.lastMessageAt,
+      },
+    ];
+  }, [
+    conversation.lastMessageAt,
+    conversation.lastMessageSenderId,
+    conversation.lastMessagePreview,
+    memberId,
+  ]);
+
+  const engagement = useEngagementStatus(stubMessages, conversation.chwId);
+  const hasMessages = conversation.lastMessageAt !== null;
 
   return (
-    <PressableCard
-      onPress={() => onSelect(session, 'chw')}
-      style={[styles.threadRow, isActive && styles.threadRowActive]}
-      accessibilityLabel={`Thread with ${name}${unreadCount > 0 ? `, ${unreadCount} unread` : ''}`}
-    >
-      {/* Active left-border indicator */}
-      {isActive && <View style={styles.threadActiveBar} />}
+    <View style={memberInboxStyles.threadRowOuter}>
+      <PressableCard
+        onPress={() => onSelect(conversation, 'chw')}
+        style={[styles.threadRow, isActive && styles.threadRowActive]}
+        accessibilityLabel={`Thread with ${name}${unreadCount > 0 ? `, ${unreadCount} unread` : ''}`}
+      >
+        {/* Active left-border indicator */}
+        {isActive && <View style={styles.threadActiveBar} />}
 
-      {/* CHW avatar */}
-      <View style={[styles.threadAvatar, { backgroundColor: bg }]}>
-        <Text style={[styles.threadAvatarText, { color: text }]}>{initials}</Text>
-      </View>
+        {/* CHW avatar */}
+        <View style={[styles.threadAvatar, { backgroundColor: bg }]}>
+          <Text style={[styles.threadAvatarText, { color: text }]}>{initials}</Text>
+        </View>
 
-      {/* Thread info */}
-      <View style={styles.threadBody}>
-        <View style={styles.threadTopRow}>
-          <Text
-            style={[styles.threadSender, unreadCount > 0 && styles.threadSenderUnread]}
-            numberOfLines={1}
-          >
-            {name}
+        {/* Thread info */}
+        <View style={styles.threadBody}>
+          <View style={styles.threadTopRow}>
+            <Text
+              style={[styles.threadSender, unreadCount > 0 && styles.threadSenderUnread]}
+              numberOfLines={1}
+            >
+              {name}
+            </Text>
+            <Text style={[styles.threadTime, numerals.tabular]}>{ts}</Text>
+          </View>
+          <Text style={styles.threadPreview} numberOfLines={1}>
+            {previewText}
           </Text>
-          <Text style={[styles.threadTime, numerals.tabular]}>{ts}</Text>
+          <View style={styles.threadPillRow}>
+            {hasMessages && (
+              <Pill variant={engagement.pillVariant} size="sm">{engagement.label}</Pill>
+            )}
+            {unreadCount > 0 && (
+              <View style={styles.unreadBadge}>
+                <Text style={[styles.unreadBadgeText, numerals.tabular]}>
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </Text>
+              </View>
+            )}
+          </View>
         </View>
-        <Text style={styles.threadPreview} numberOfLines={1}>
-          {previewText}
-        </Text>
-        <View style={styles.threadPillRow}>
-          {hasMessages && (
-            <Pill variant={engagement.pillVariant} size="sm">{engagement.label}</Pill>
-          )}
-          {unreadCount > 0 && (
-            <View style={styles.unreadBadge}>
-              <Text style={[styles.unreadBadgeText, numerals.tabular]}>
-                {unreadCount > 9 ? '9+' : unreadCount}
-              </Text>
-            </View>
-          )}
-        </View>
-      </View>
-    </PressableCard>
+
+        {/* Overflow menu trigger */}
+        <TouchableOpacity
+          onPress={(e) => {
+            e.stopPropagation?.();
+            setMenuOpen((v) => !v);
+          }}
+          style={memberInboxStyles.overflowBtn}
+          accessibilityRole="button"
+          accessibilityLabel={`More options for thread with ${name}`}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <MoreVertical size={16} color={colors.textMuted} />
+        </TouchableOpacity>
+      </PressableCard>
+
+      {/* Dropdown menu */}
+      {menuOpen ? (
+        <>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFillObject}
+            onPress={() => setMenuOpen(false)}
+            accessibilityLabel="Close menu"
+          />
+          <View style={memberInboxStyles.threadMenu} accessibilityRole="menu">
+            <TouchableOpacity
+              style={memberInboxStyles.threadMenuItemDanger}
+              onPress={() => {
+                setMenuOpen(false);
+                onDelete(conversation);
+              }}
+              accessibilityRole="menuitem"
+              accessibilityLabel="Delete conversation"
+            >
+              <Trash2 size={14} color="#b91c1c" />
+              <Text style={memberInboxStyles.threadMenuItemDangerText}>Delete conversation</Text>
+            </TouchableOpacity>
+          </View>
+        </>
+      ) : null}
+    </View>
   );
 }
+
+/** Styles scoped to the inbox thread row — avoid polluting the large styles block. */
+const memberInboxStyles = StyleSheet.create({
+  threadRowOuter: {
+    position: 'relative',
+    zIndex: 1,
+  } as ViewStyle,
+  overflowBtn: {
+    padding: 4,
+    borderRadius: radius.sm,
+    flexShrink: 0,
+  } as ViewStyle,
+  threadMenu: {
+    position: 'absolute',
+    top: '100%',
+    right: spacing.sm,
+    backgroundColor: colors.cardBg,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    borderRadius: radius.lg,
+    minWidth: 200,
+    overflow: 'hidden',
+    zIndex: 100,
+    ...(shadows.elevated as object),
+  } as ViewStyle,
+  threadMenuItemDanger: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 11,
+  } as ViewStyle,
+  threadMenuItemDangerText: {
+    fontSize: 13,
+    color: '#b91c1c',
+    fontWeight: '500',
+  } as TextStyle,
+});
 
 // ─── Synthetic (non-CHW) inbox items ─────────────────────────────────────────
 
@@ -1257,7 +1415,9 @@ const moreMenuStyles = StyleSheet.create({
 // ─── Conversation pane (center) ───────────────────────────────────────────────
 
 interface ConversationPaneProps {
-  session: SessionData;
+  conversation: ConversationData;
+  /** The authenticated member's User.id — used to distinguish isMe bubbles. */
+  memberId: string;
   memberFirstName: string;
   onBack?: () => void;
   showBackButton: boolean;
@@ -1270,7 +1430,8 @@ interface ConversationPaneProps {
 }
 
 function ConversationPane({
-  session,
+  conversation,
+  memberId,
   memberFirstName,
   onBack,
   showBackButton,
@@ -1320,18 +1481,21 @@ function ConversationPane({
     }
   }, [showWelcome]);
 
-  const chwName = session.chwName ?? 'Your CHW';
+  const chwName = conversation.chwName;
   const chwInitials = getInitials(chwName);
   const { bg, text } = avatarColors(chwName);
 
-  const messagesQuery     = useSessionMessages(session.id);
-  const sendMessage       = useSessionSendMessage();
-  const startCall         = useStartCall();
-  const approveConsent    = useApproveConsentRequest();
-  const denyConsent       = useDenyConsentRequest();
+  // ── Conversation-scoped messaging hooks ───────────────────────────────────────
+  const messagesQuery  = useConversationMessages(conversation.id);
+  const sendMessage    = useConversationSendMessage();
+  const startCall      = useStartCall();
+  const approveConsent = useApproveConsentRequest();
+  const denyConsent    = useDenyConsentRequest();
 
-  const pendingConsentsQuery = usePendingConsents(session.id, {
-    enabled: session.status === 'in_progress' && session.id.length > 0,
+  // Recording consent polling — only when an active session exists.
+  const activeSessionId = conversation.activeSessionId ?? '';
+  const pendingConsentsQuery = usePendingConsents(activeSessionId, {
+    enabled: activeSessionId.length > 0,
   });
   const pendingConsent: ConsentRequestData | null =
     (pendingConsentsQuery.data ?? [])[0] ?? null;
@@ -1345,8 +1509,8 @@ function ConversationPane({
   }, []);
 
   const { uploadAttachment, isUploading: isAttachmentUploading } = useMessageAttachmentUpload({
-    // A member uploads attachments scoped to themselves (session.memberId).
-    targetMemberId: session.memberId ?? '',
+    // A member uploads attachments scoped to themselves (conversation.memberId).
+    targetMemberId: memberId,
     onError: (err) => showToast(err.message, true),
   });
 
@@ -1408,15 +1572,20 @@ function ConversationPane({
     }
   }, [uploadAttachment, showToast]);
 
-  // ── Call handler ──────────────────────────────────────────────────────────────
+  // ── Call handler — uses conversation.activeSessionId as the call target ────────
   const handleCall = useCallback(async () => {
-    if (callInitiating || !session.id) return;
+    if (callInitiating) return;
+    if (!conversation.activeSessionId) {
+      showToast('No active session — ask your CHW to start a session first.', true);
+      return;
+    }
+    const callSessionId = conversation.activeSessionId;
     const chwFirstName = chwName.split(' ')[0] ?? 'your CHW';
 
     const doCall = async (): Promise<void> => {
       setCallInitiating(true);
       try {
-        await startCall.mutateAsync(session.id);
+        await startCall.mutateAsync(callSessionId);
         showToast('Call requested — your phone should ring shortly.', false);
       } catch (err) {
         const detail =
@@ -1442,16 +1611,18 @@ function ConversationPane({
         ],
       );
     }
-  }, [callInitiating, session.id, chwName, startCall, showToast]);
+  }, [callInitiating, conversation.activeSessionId, chwName, startCall, showToast]);
 
   // ── Auto-call on mount (route.params.autoCall = true) ─────────────────────────
   useEffect(() => {
     if (!autoCallOnMount) return;
     if (callInitiating) return;
+    if (!conversation.activeSessionId) return;
+    const callSessionId = conversation.activeSessionId;
     setCallInitiating(true);
     void (async () => {
       try {
-        await startCall.mutateAsync(session.id);
+        await startCall.mutateAsync(callSessionId);
         showToast('Call requested — your phone should ring shortly.', false);
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Call failed.';
@@ -1462,7 +1633,7 @@ function ConversationPane({
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoCallOnMount, session.id]);
+  }, [autoCallOnMount, conversation.activeSessionId]);
 
   // ── Recording consent handlers ────────────────────────────────────────────────
   const handleApproveConsent = useCallback(async () => {
@@ -1488,15 +1659,20 @@ function ConversationPane({
     }
   }, [pendingConsent, denyConsent, showToast]);
 
+  // ── Adapt MessageData[] → SessionMessageLocal[] for bubbles ─────────────────
+  const serverMessages = useMemo<SessionMessageLocal[]>(
+    () => (messagesQuery.data ?? []).map((m) => messageDataToLocal(m, memberId)),
+    [messagesQuery.data, memberId],
+  );
+
   // Merge server + optimistic messages, sorted chronologically.
   const mergedMessages = useMemo<SessionMessageLocal[]>(() => {
-    const server: SessionMessageLocal[] = (messagesQuery.data ?? []).map((m) => ({ ...m }));
-    const serverIds = new Set(server.map((m) => m.id));
+    const serverIds = new Set(serverMessages.map((m) => m.id));
     const pendingLocal = localMessages.filter((m) => !serverIds.has(m.id));
-    return [...server, ...pendingLocal].sort(
+    return [...serverMessages, ...pendingLocal].sort(
       (a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt),
     );
-  }, [messagesQuery.data, localMessages]);
+  }, [serverMessages, localMessages]);
 
   // Auto-scroll to bottom when messages update.
   useEffect(() => {
@@ -1506,14 +1682,14 @@ function ConversationPane({
   const handleSend = useCallback(async () => {
     const trimmed = draftText.trim();
     // Valid if text OR an attachment is present; attachment-only is allowed.
-    if ((!trimmed && !pendingAttachment) || !session.id) return;
+    if (!trimmed && !pendingAttachment) return;
 
     const capturedAttachment = pendingAttachment;
 
     const optimisticId = `local-${Date.now()}`;
     const optimistic: SessionMessageLocal = {
       id: optimisticId,
-      senderUserId: '',
+      senderUserId: memberId,
       senderRole: 'member',
       body: trimmed,
       type: capturedAttachment
@@ -1538,7 +1714,7 @@ function ConversationPane({
 
     try {
       await sendMessage.mutateAsync({
-        sessionId: session.id,
+        conversationId: conversation.id,
         body: trimmed,
         attachment: capturedAttachment
           ? {
@@ -1557,7 +1733,7 @@ function ConversationPane({
         ),
       );
     }
-  }, [draftText, pendingAttachment, session.id, sendMessage]);
+  }, [draftText, pendingAttachment, conversation.id, memberId, sendMessage]);
 
   const handleQuickReaction = useCallback((text: string) => {
     setDraftText(text);
@@ -1906,7 +2082,7 @@ function ConversationPane({
 // ─── Care context rail (right pane) ───────────────────────────────────────────
 
 interface CareContextRailProps {
-  session: SessionData;
+  conversation: ConversationData;
   memberId: string;
   memberFirstName: string;
   onSchedule: () => void;
@@ -1921,7 +2097,7 @@ interface CareContextRailProps {
  * No nested cards inside the main Card container.
  */
 function CareContextRail({
-  session,
+  conversation,
   memberId,
   memberFirstName,
   onSchedule,
@@ -1930,7 +2106,7 @@ function CareContextRail({
   onGoToRewards,
   style: widthOverride,
 }: CareContextRailProps): React.JSX.Element {
-  const chwName      = session.chwName ?? 'Your CHW';
+  const chwName      = conversation.chwName;
   const chwInitials  = getInitials(chwName);
   const { bg, text } = avatarColors(chwName);
 
@@ -2213,14 +2389,14 @@ export function MemberMessagesScreen(): React.JSX.Element {
   }, []);
 
   // ── Inbox state ───────────────────────────────────────────────────────────────
-  const [showInbox, setShowInbox]         = useState(true);
-  const [selectedSession, setSelectedSession] = useState<SessionData | null>(null);
+  const [showInbox, setShowInbox]               = useState(true);
+  const [selectedConversation, setSelectedConversation] = useState<ConversationData | null>(null);
   /** null = CHW thread, string = synthetic item id */
   const [selectedSyntheticId, setSelectedSyntheticId] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery]     = useState('');
+  const [searchQuery, setSearchQuery]           = useState('');
 
   // ── Data ──────────────────────────────────────────────────────────────────────
-  const sessionsQuery      = useSessions();
+  const conversationsQuery = useConversations();
   const memberProfileQuery = useMemberProfile();
   const ownConsentQuery    = useOwnServicesConsent();
 
@@ -2245,34 +2421,19 @@ export function MemberMessagesScreen(): React.JSX.Element {
     role: 'Member' as const,
   };
 
-  // ── Session list (filtered by search) ────────────────────────────────────────
-  const allSessions: SessionData[] = sessionsQuery.data ?? [];
+  // ── Conversation list (filtered by search) ────────────────────────────────────
+  // Conversations are already one-per-CHW — no deduplication required.
+  const allConversations: ConversationData[] = conversationsQuery.data ?? [];
 
-  /**
-   * Deduplicate sessions by chwId — keep the most-recently-created row per CHW.
-   * The UNIQUE constraint (commit ce70623) prevents future duplicates, but existing
-   * prod data may have multiple rows for the same (chwId, memberId) pair.
-   */
-  const deduplicatedSessions = useMemo<SessionData[]>(() => {
-    const map = new Map<string, SessionData>();
-    for (const session of allSessions) {
-      const existing = map.get(session.chwId);
-      if (!existing || session.createdAt > existing.createdAt) {
-        map.set(session.chwId, session);
-      }
-    }
-    return Array.from(map.values()).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  }, [allSessions]);
-
-  const filteredSessions = useMemo<SessionData[]>(() => {
+  const filteredConversations = useMemo<ConversationData[]>(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return deduplicatedSessions;
-    return deduplicatedSessions.filter(
-      (s) =>
-        (s.chwName ?? '').toLowerCase().includes(q) ||
-        (s.notes ?? '').toLowerCase().includes(q),
+    if (!q) return allConversations;
+    return allConversations.filter(
+      (c) =>
+        c.chwName.toLowerCase().includes(q) ||
+        (c.lastMessagePreview ?? '').toLowerCase().includes(q),
     );
-  }, [deduplicatedSessions, searchQuery]);
+  }, [allConversations, searchQuery]);
 
   // ── Synthetic items filtered by search only (no tab filtering) ───────────────
   const filteredSynthetic = useMemo<SyntheticItem[]>(() => {
@@ -2285,30 +2446,30 @@ export function MemberMessagesScreen(): React.JSX.Element {
     );
   }, [searchQuery]);
 
-  const hasAnyItems = filteredSessions.length > 0 || filteredSynthetic.length > 0;
+  const hasAnyItems = filteredConversations.length > 0 || filteredSynthetic.length > 0;
 
   // ── Auto-select thread on load or when chwId route param is present ───────────
   useEffect(() => {
-    if (filteredSessions.length === 0) return;
+    if (filteredConversations.length === 0) return;
 
     if (targetCHWId) {
-      const match = filteredSessions.find((s) => s.chwId === targetCHWId);
-      if (match != null && selectedSession?.id !== match.id) {
-        setSelectedSession(match);
+      const match = filteredConversations.find((c) => c.chwId === targetCHWId);
+      if (match != null && selectedConversation?.id !== match.id) {
+        setSelectedConversation(match);
         setSelectedSyntheticId(null);
         return;
       }
     }
 
-    if (selectedSession == null) {
-      setSelectedSession(filteredSessions[0] ?? null);
+    if (selectedConversation == null) {
+      setSelectedConversation(filteredConversations[0] ?? null);
       setSelectedSyntheticId(null);
     }
-  }, [filteredSessions, selectedSession, targetCHWId]);
+  }, [filteredConversations, selectedConversation, targetCHWId]);
 
-  const handleSelectSession = useCallback(
-    (session: SessionData) => {
-      setSelectedSession(session);
+  const handleSelectConversation = useCallback(
+    (conversation: ConversationData) => {
+      setSelectedConversation(conversation);
       setSelectedSyntheticId(null);
       if (hideInbox) setShowInbox(false);
     },
@@ -2318,7 +2479,7 @@ export function MemberMessagesScreen(): React.JSX.Element {
   const handleSelectSynthetic = useCallback(
     (id: string, _type: InboxItemType) => {
       setSelectedSyntheticId(id);
-      setSelectedSession(null);
+      setSelectedConversation(null);
       if (hideInbox) setShowInbox(false);
     },
     [hideInbox],
@@ -2335,8 +2496,60 @@ export function MemberMessagesScreen(): React.JSX.Element {
   const handleGoToRewards      = useCallback(() => navigation.navigate('Rewards'),   [navigation]);
   const handleViewCHWProfile   = useCallback(() => navigation.navigate('FindCHW'),   [navigation]);
 
+  // ── Delete conversation — uses soft-delete hook (DELETE /conversations/{id}) ──
+  // On success: the optimistic update in useSoftDeleteConversation removes the row
+  // from the cache, and the onDeselect callback clears the selected thread when
+  // the currently-open conversation is deleted.
+
+  const softDeleteConversation = useSoftDeleteConversation({
+    onDeselect: (conversationId: string) => {
+      setSelectedConversation((prev) =>
+        prev?.id === conversationId ? null : prev,
+      );
+    },
+  });
+
+  const handleDeleteConversation = useCallback(
+    (conversation: ConversationData): void => {
+      const name = conversation.chwName;
+
+      const doDelete = async (): Promise<void> => {
+        try {
+          await softDeleteConversation.mutateAsync(conversation.id);
+        } catch {
+          // useSoftDeleteConversation already shows an Alert on error and
+          // rolls back optimistic state — no additional handling needed here.
+        }
+      };
+
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        if (
+          window.confirm(
+            `Delete this conversation with ${name}? You can restore it by sending a new message.`,
+          )
+        ) {
+          void doDelete();
+        }
+      } else {
+        Alert.alert(
+          'Delete conversation?',
+          `This will hide the conversation with ${name}. You can restore it by sending a new message.`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Delete',
+              style: 'destructive',
+              onPress: () => void doDelete(),
+            },
+          ],
+        );
+      }
+    },
+    [softDeleteConversation],
+  );
+
   // ── Loading state ─────────────────────────────────────────────────────────────
-  if (sessionsQuery.isLoading) {
+  if (conversationsQuery.isLoading) {
     return (
       <AppShell role="member" activeKey="messages" userBlock={shellUserBlock} disableMainScroll>
         <PageWrap style={styles.loadingWrap}>
@@ -2347,13 +2560,13 @@ export function MemberMessagesScreen(): React.JSX.Element {
     );
   }
 
-  if (sessionsQuery.error) {
+  if (conversationsQuery.error) {
     return (
       <AppShell role="member" activeKey="messages" userBlock={shellUserBlock}>
         <PageWrap>
           <ErrorState
             message="Could not load your messages. Please try again."
-            onRetry={() => void sessionsQuery.refetch()}
+            onRetry={() => void conversationsQuery.refetch()}
           />
         </PageWrap>
       </AppShell>
@@ -2361,7 +2574,8 @@ export function MemberMessagesScreen(): React.JSX.Element {
   }
 
   // ── No CHW state ──────────────────────────────────────────────────────────────
-  if (allSessions.length === 0) {
+  // When the member has no conversations, guide them to find a CHW.
+  if (allConversations.length === 0) {
     return <NoCHWState onFindCHW={handleFindCHW} userBlock={shellUserBlock} />;
   }
 
@@ -2369,7 +2583,8 @@ export function MemberMessagesScreen(): React.JSX.Element {
   const shouldShowConv  = !hideInbox || !showInbox;
 
   // Determine the CHW name for alt pane header
-  const activeCHWName = selectedSession?.chwName ?? (allSessions[0]?.chwName ?? 'Your CHW');
+  const activeCHWName =
+    selectedConversation?.chwName ?? (allConversations[0]?.chwName ?? 'Your CHW');
 
   return (
     <AppShell role="member" activeKey="messages" userBlock={shellUserBlock} disableMainScroll>
@@ -2414,14 +2629,15 @@ export function MemberMessagesScreen(): React.JSX.Element {
             <ScrollView style={styles.inboxList} showsVerticalScrollIndicator={false}>
               {hasAnyItems ? (
                 <StaggerList delayMs={50} durationMs={240}>
-                  {/* CHW sessions */}
-                  {filteredSessions.map((session) => (
+                  {/* CHW conversations — one row per CHW */}
+                  {filteredConversations.map((conversation) => (
                     <InboxThreadRow
-                      key={session.id}
-                      session={session}
-                      isActive={selectedSession?.id === session.id && selectedSyntheticId === null}
-                      unreadCount={0}
-                      onSelect={handleSelectSession}
+                      key={conversation.id}
+                      conversation={conversation}
+                      isActive={selectedConversation?.id === conversation.id && selectedSyntheticId === null}
+                      onSelect={handleSelectConversation}
+                      onDelete={handleDeleteConversation}
+                      memberId={memberId}
                     />
                   ))}
                   {/* Synthetic items */}
@@ -2457,17 +2673,18 @@ export function MemberMessagesScreen(): React.JSX.Element {
 
         {/* ── Center pane: conversation or alt detail ── */}
         {shouldShowConv ? (
-          selectedSession != null ? (
+          selectedConversation != null ? (
             <ConversationPane
-              key={selectedSession.id}
-              session={selectedSession}
+              key={selectedConversation.id}
+              conversation={selectedConversation}
+              memberId={memberId}
               memberFirstName={memberFirstName}
               onBack={handleBack}
               showBackButton={hideInbox}
               autoCallOnMount={
                 shouldAutoCall &&
                 !autoCallFiredRef.current &&
-                selectedSession.chwId === targetCHWId
+                selectedConversation.chwId === targetCHWId
               }
               onAutoCallConsumed={() => { autoCallFiredRef.current = true; }}
               servicesRefused={servicesRefused}
@@ -2518,7 +2735,7 @@ export function MemberMessagesScreen(): React.JSX.Element {
         ) : null}
 
         {/* ── Divider: conversation ↔ rail ── */}
-        {!hideRail && (selectedSession != null || selectedSyntheticId !== null) ? (
+        {!hideRail && (selectedConversation != null || selectedSyntheticId !== null) ? (
           <ResizableDivider
             width={rightWidth}
             onChange={handleRightWidthChange}
@@ -2531,7 +2748,7 @@ export function MemberMessagesScreen(): React.JSX.Element {
         {/* ── Right pane: care context rail ── */}
         {!hideRail ? (
           <CareContextRail
-            session={selectedSession ?? allSessions[0]!}
+            conversation={selectedConversation ?? allConversations[0]!}
             memberId={memberId}
             memberFirstName={memberFirstName}
             onSchedule={handleGoToCalendar}

@@ -51,6 +51,66 @@ class ConversationResponse(BaseModel):
     # app.services.session_lookup.get_active_session_for_conversation.
     active_session_id: UUID | None = None
     created_at: datetime
+    # Soft-delete fields. None = active thread.
+    deleted_at: datetime | None = None
+    deleted_by_user_id: UUID | None = None
+    # ── Inbox enrichment fields (computed server-side) ─────────────────────
+    # Names resolved via JOIN to users table — avoid extra round-trips.
+    member_name: str | None = None
+    chw_name: str | None = None
+    # Last message preview (truncated to 60 chars, HIPAA minimum-necessary).
+    last_message_preview: str | None = None
+    last_message_at: datetime | None = None
+    last_message_sender_id: UUID | None = None
+    # Unread count for the calling party. 0 when all messages have been read
+    # or there are no messages.
+    unread_count: int = 0
+    # CHW-perspective swipe-action state. Members receive these as informational
+    # only — the FE must not let members call PATCH /pin or /archive.
+    pinned_at: datetime | None = None
+    archived_at: datetime | None = None
+
+
+class ConversationDeleteResponse(BaseModel):
+    """Response body for DELETE /conversations/{id}.
+
+    Returns the conversation's new soft-deleted state so the client
+    can optimistically remove it from the inbox without a follow-up GET.
+    """
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    deleted_at: datetime
+    deleted_by_user_id: UUID
+
+
+class ConversationPinUpdate(BaseModel):
+    """Body for PATCH /conversations/{id}/pin.
+
+    ``pinned=true`` stamps pinned_at; ``pinned=false`` clears it.
+    CHW or admin only — members receive pin state as read-only.
+    """
+
+    pinned: bool
+
+
+class ConversationArchiveUpdate(BaseModel):
+    """Body for PATCH /conversations/{id}/archive.
+
+    Archived conversations are hidden from the default inbox but reappear
+    with ``?include_archived=true``.  CHW or admin only.
+    """
+
+    archived: bool
+
+
+class ConversationMarkReadRequest(BaseModel):
+    """Body for POST /conversations/{id}/messages/read.
+
+    Advances the caller's read cursor to ``up_to_message_id``.  The cursor
+    is monotonic: sending an older message id is a no-op.
+    """
+
+    up_to_message_id: UUID
 
 
 class FileAttachmentResponse(BaseModel):
