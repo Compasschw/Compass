@@ -86,6 +86,10 @@ import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 import { DeleteAccountModal } from '../../components/profile/DeleteAccountModal';
 import { confirmAsync } from '../../utils/confirm';
+import {
+  INSURANCE_OPTIONS,
+  validateCinForCarrier,
+} from '../../constants/insurance';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -96,25 +100,6 @@ import { confirmAsync } from '../../utils/confirm';
  */
 const SERVICES_CONSENT_DISCLAIMER =
   'CHW services are provided to you at no cost by your health plan, do you consent to receive services?';
-
-/**
- * CIN validation pattern: 8 digits + 1 uppercase letter.
- * Matches the backend's CIN_PATTERN (T07) and RegisterScreen.tsx:67.
- */
-const CIN_PATTERN = /^\d{8}[A-Z]$/;
-
-/**
- * Curated 6-carrier insurance list used at signup (RegisterScreen.tsx:105).
- * Reused here so the Insurance edit dropdown is consistent.
- */
-const INSURANCE_OPTIONS: readonly string[] = [
-  'Anthem Blue Cross Blue Shield',
-  'Blue Shield of California - Promise Plan',
-  'Health Net',
-  'Independent Living Systems (Kaiser)',
-  'LA Care Health Plan',
-  'Molina Healthcare California',
-];
 
 const NOT_PROVIDED = 'Not provided';
 
@@ -262,15 +247,6 @@ function buildDraft(name: string, profile: ProfileSource): ProfileDraft {
   };
 }
 
-/**
- * Normalizes a raw CIN string to uppercase and validates against CIN_PATTERN.
- * Returns { normalized, valid } so callers can display feedback inline.
- */
-function normalizeCin(raw: string): { normalized: string; valid: boolean } {
-  const normalized = raw.trim().toUpperCase();
-  return { normalized, valid: CIN_PATTERN.test(normalized) };
-}
-
 // ─── EditProfileModal ──────────────────────────────────────────────────────────
 
 const SEX_OPTIONS = ['Male', 'Female', 'Other'] as const;
@@ -390,12 +366,15 @@ function EditProfileModal({
     if (insurance.trim()) payload.insuranceCompany = insurance.trim();
 
     if (cin.trim()) {
-      const { normalized, valid } = normalizeCin(cin);
-      if (!valid) {
-        setError('CIN must be 8 digits followed by 1 letter (e.g. 12345678A).');
-        return;
+      const result = validateCinForCarrier(cin, insurance);
+      // Confirmed carriers: show error but DO NOT block submission (lenient-warn policy).
+      // Pending carriers: always accept non-empty normalized value.
+      if (!result.valid && result.status === 'confirmed') {
+        setError(result.hint);
+        // Intentionally do NOT return — lenient policy: show hint, allow save.
+        // The backend will also accept and normalize plausible values.
       }
-      payload.mediCalId = normalized;
+      payload.mediCalId = result.normalized;
     }
 
     try {
@@ -613,9 +592,9 @@ function EditProfileModal({
             placeholderTextColor={tokens.textMuted}
             autoCapitalize="characters"
             autoCorrect={false}
-            maxLength={9}
+            maxLength={14}
             accessibilityLabel="Medi-Cal CIN"
-            accessibilityHint="8 digits followed by 1 letter"
+            accessibilityHint="8 digits followed by 1 letter, or 14-char BIC"
           />
           <Text style={cinModalStyles.cinHint}>Format: 8 digits + 1 letter, e.g. 12345678A</Text>
 

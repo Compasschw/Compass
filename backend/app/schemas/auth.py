@@ -5,15 +5,15 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
+from app.schemas.cin_config import (
+    CARRIER_CIN_CONFIG,
+    normalise_carrier_key,
+    validate_cin_for_carrier,
+)
+
 # Sex values accepted by Pear Suite's CreateMember endpoint. Mirrors the
 # member-signup dropdown options.
 SexEnum = Literal["Male", "Female", "Other"]
-
-
-# Medi-Cal CIN format: 8 digits followed by 1 letter (e.g. "12345678A").
-# Pear Suite's parser is case-insensitive but we normalize to uppercase
-# in the validator for storage consistency.
-_CIN_PATTERN = re.compile(r"^\d{8}[A-Z]$")
 
 
 class RegisterRequest(BaseModel):
@@ -82,15 +82,39 @@ class RegisterRequest(BaseModel):
         if not self.insurance_company or not self.insurance_company.strip():
             raise ValueError("Insurance is required for members")
 
-        # CIN format: 8 digits + 1 letter (Medi-Cal standard).
-        cin = (self.medi_cal_id or "").strip().upper()
-        if not cin:
+        # CIN format: carrier-aware validation.
+        #
+        # Policy:
+        #   - Empty / whitespace-only → always 422 (required for all members).
+        #   - 14-char BIC → extract leading 9-char CIN, accept.
+        #   - Confirmed carriers (anthem, health_net) + unknown/default:
+        #     validate against ^\d{8}[A-Z]$ after normalization; 422 on clear
+        #     garbage (not matching) so the Pear billing pipeline never gets
+        #     a bad CIN. A BIC counts as a match after extraction.
+        #   - Pending carriers (blue_shield, la_care, molina, kaiser): accept
+        #     any non-empty normalized value — format not yet confirmed, so
+        #     we must not block a real member. Log a warning for ops.
+        #
+        # See app/schemas/cin_config.py for the carrier→format map.
+        raw_cin = (self.medi_cal_id or "").strip()
+        if not raw_cin:
             raise ValueError("CIN (Medi-Cal ID) is required for members")
-        if not _CIN_PATTERN.match(cin):
+
+        normalized_cin, cin_valid = validate_cin_for_carrier(
+            raw_cin, self.insurance_company
+        )
+
+        carrier_key = normalise_carrier_key(self.insurance_company)
+        carrier_cfg = CARRIER_CIN_CONFIG.get(carrier_key or "")
+        carrier_status = carrier_cfg["status"] if carrier_cfg else "confirmed"
+
+        if carrier_status == "confirmed" and not cin_valid:
             raise ValueError(
                 "CIN must be 8 digits followed by 1 letter (e.g. 12345678A)"
             )
-        self.medi_cal_id = cin  # normalize to uppercase for storage
+        # Pending carriers: accept non-empty normalized value without format 422.
+
+        self.medi_cal_id = normalized_cin  # store normalized CIN
 
         # Address fields are OPTIONAL — can be completed via
         # PUT /member/profile before the first Pear sync.

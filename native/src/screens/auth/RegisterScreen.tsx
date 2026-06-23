@@ -44,6 +44,11 @@ import { colors } from '../../theme/colors';
 import { fonts } from '../../theme/typography';
 import { radii, spacing } from '../../theme/spacing';
 import type { AuthStackParamList } from '../../navigation/AppNavigator';
+import {
+  INSURANCE_OPTIONS,
+  validateCinForCarrier,
+  type CinValidationResult,
+} from '../../constants/insurance';
 
 type RegisterNavProp = NativeStackNavigationProp<AuthStackParamList>;
 
@@ -60,11 +65,6 @@ interface FieldRefs {
 }
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-// Medi-Cal CIN format: 8 digits followed by 1 letter (case-insensitive at
-// input — normalized to uppercase before submit). Backend enforces the
-// same pattern in app.schemas.auth.RegisterRequest.
-const CIN_PATTERN = /^\d{8}[A-Z]$/;
 
 // DOB input format: MM/DD/YYYY entered, ISO YYYY-MM-DD sent to backend.
 // Inline format because adding a native date-picker library risks the
@@ -98,19 +98,6 @@ function formatDobInput(raw: string): string {
   return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
 }
 
-// Curated insurance dropdown — matches the 6 contracted carriers + the
-// backend's carrier→costId map in app.services.billing.pear_cost_ids.
-// Order here is alphabetical by display name; first entry is shown as
-// the default placeholder hint.
-const INSURANCE_OPTIONS: readonly string[] = [
-  'Anthem Blue Cross Blue Shield',
-  'Blue Shield of California - Promise Plan',
-  'Health Net',
-  'Independent Living Systems (Kaiser)',
-  'LA Care Health Plan',
-  'Molina Healthcare California',
-] as const;
-
 const SEX_OPTIONS: readonly Sex[] = ['Male', 'Female', 'Other'] as const;
 
 export function RegisterScreen(): React.JSX.Element {
@@ -138,6 +125,9 @@ export function RegisterScreen(): React.JSX.Element {
   const [sex, setSex] = useState<Sex | null>(null);
   const [insuranceCompany, setInsuranceCompany] = useState('');
   const [primaryCin, setPrimaryCin] = useState('');
+  // Carrier-aware CIN validation result — updated in the cinIsValid useMemo.
+  // Separated so the hint text is accessible to the JSX without re-computing.
+  const [cinValidation, setCinValidation] = useState<CinValidationResult | null>(null);
   const [addressLine1, setAddressLine1] = useState('');
   const [addressLine2, setAddressLine2] = useState('');
   const [city, setCity] = useState('');
@@ -187,10 +177,18 @@ export function RegisterScreen(): React.JSX.Element {
     EMAIL_PATTERN.test(email.trim()) &&
     password.length >= 8 &&
     !isSubmitting;
-  const cinIsValid = useMemo(
-    () => CIN_PATTERN.test(primaryCin.trim().toUpperCase()),
-    [primaryCin],
-  );
+  const cinIsValid = useMemo(() => {
+    if (!primaryCin.trim()) {
+      setCinValidation(null);
+      return false;
+    }
+    const result = validateCinForCarrier(primaryCin, insuranceCompany);
+    setCinValidation(result);
+    // For confirmed carriers + default: gate submit on valid.
+    // For pending carriers: always allow submit (advisory hint only).
+    if (result.status === 'pending') return true;
+    return result.valid;
+  }, [primaryCin, insuranceCompany]);
   const memberProfileOk =
     role !== 'member' ||
     (
@@ -489,10 +487,13 @@ export function RegisterScreen(): React.JSX.Element {
                     placeholderTextColor={colors.mutedForeground}
                     autoCapitalize="characters"
                     autoCorrect={false}
-                    maxLength={9}
+                    maxLength={14}
                     style={s.input}
                   />
                 </FormField>
+                {cinValidation !== null && !cinValidation.valid && (
+                  <Text style={s.cinHint}>{cinValidation.hint}</Text>
+                )}
 
                 <SectionDivider label="Address" />
 
@@ -904,6 +905,14 @@ const s = StyleSheet.create({
     fontSize: 13,
     fontFamily: fonts.bodySemibold,
     color: colors.primary,
+  },
+
+  // Soft amber hint below the CIN field — advisory, never blocks submit.
+  cinHint: {
+    fontSize: 12,
+    color: '#D97706', // amber-600
+    marginTop: 4,
+    fontFamily: fonts.body,
   },
 
   // ── Expanded member signup additions ───────────────────────────────────
