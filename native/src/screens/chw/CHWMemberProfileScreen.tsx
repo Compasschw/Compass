@@ -5794,26 +5794,333 @@ const billingWidgetStyles = StyleSheet.create({
   } as TextStyle,
 });
 
+// ─── SessionNotesModal ────────────────────────────────────────────────────────
+
+interface SessionNotesModalProps {
+  /** The session whose notes to display. Null when the modal is closed. */
+  session: RecentSessionItem | null;
+  memberId: string;
+  onClose: () => void;
+}
+
+/**
+ * Compact centered modal that displays case notes linked to a specific session.
+ *
+ * Data source: `useCaseNotes(memberId)` — fetches the member's case-note list
+ * (already imported and used elsewhere on this screen) and filters client-side
+ * by `note.sessionId === session.id`. Case notes carry a nullable `sessionId`
+ * field set at creation time when the note is linked to a session.
+ *
+ * Follows the same web-overlay / native-Modal pattern used by
+ * EditDemographicsModal and EditResourceNeedsModal.
+ *
+ * HIPAA: notes are already gated by the CHW↔member relationship enforced by the
+ * backend. They are rendered but never logged.
+ */
+function SessionNotesModal({
+  session,
+  memberId,
+  onClose,
+}: SessionNotesModalProps): React.JSX.Element {
+  const visible = session !== null;
+
+  // Fetch all case notes for this member; filter to the selected session client-side.
+  // `enabled` is false while no session is selected to avoid a gratuitous network call.
+  const { data: noteList, isLoading, isError } = useCaseNotes(memberId, {
+    enabled: visible,
+    limit: 200,
+  });
+
+  const sessionNotes = useMemo(() => {
+    if (!session || !noteList) return [];
+    return noteList.items.filter((n) => n.sessionId === session.id);
+  }, [session, noteList]);
+
+  // Esc key closes on web.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !visible) return;
+    const handler = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [visible, onClose]);
+
+  const sessionDateLabel = session
+    ? formatDateTime(session.scheduledAt ?? session.startedAt)
+    : '';
+
+  const body = (
+    <View style={sessionNotesModalStyles.container}>
+      {/* Header */}
+      <View style={sessionNotesModalStyles.header}>
+        <View style={sessionNotesModalStyles.headerTextBlock}>
+          <Text style={sessionNotesModalStyles.title}>Session Notes</Text>
+          {sessionDateLabel ? (
+            <Text style={sessionNotesModalStyles.subtitle}>{sessionDateLabel}</Text>
+          ) : null}
+        </View>
+        <TouchableOpacity
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Close session notes"
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <X size={18} color="#6B7280" />
+        </TouchableOpacity>
+      </View>
+
+      {/* Body */}
+      <ScrollView
+        style={sessionNotesModalStyles.scroll}
+        contentContainerStyle={sessionNotesModalStyles.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {isLoading ? (
+          <View style={sessionNotesModalStyles.centerRow}>
+            <ActivityIndicator size="small" color={tokens.primary} />
+            <Text style={sessionNotesModalStyles.loadingText}>Loading notes…</Text>
+          </View>
+        ) : isError ? (
+          <Text style={sessionNotesModalStyles.errorText}>
+            Could not load notes. Please close and try again.
+          </Text>
+        ) : sessionNotes.length === 0 ? (
+          <Text style={sessionNotesModalStyles.emptyText}>
+            No notes recorded for this session.
+          </Text>
+        ) : (
+          sessionNotes.map((note) => (
+            <View key={note.id} style={sessionNotesModalStyles.noteCard}>
+              <Text style={sessionNotesModalStyles.noteBody}>{note.body}</Text>
+              <Text style={sessionNotesModalStyles.noteMeta}>
+                {formatDateTime(note.createdAt)}
+                {note.isPinned ? ' · Pinned' : ''}
+              </Text>
+            </View>
+          ))
+        )}
+      </ScrollView>
+
+      {/* Footer */}
+      <View style={sessionNotesModalStyles.footer}>
+        <TouchableOpacity
+          style={sessionNotesModalStyles.closeBtn}
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Close"
+        >
+          <Text style={sessionNotesModalStyles.closeBtnText}>Done</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
+  if (Platform.OS !== 'web') {
+    return (
+      <Modal
+        visible={visible}
+        animationType="slide"
+        presentationStyle="formSheet"
+        onRequestClose={onClose}
+        accessibilityViewIsModal
+      >
+        <View style={sessionNotesModalStyles.nativeContainer}>{body}</View>
+      </Modal>
+    );
+  }
+
+  if (!visible) return <></>;
+
+  return (
+    <View style={sessionNotesModalStyles.webOverlay}>
+      <Pressable
+        style={sessionNotesModalStyles.webBackdrop}
+        onPress={onClose}
+        accessibilityRole="button"
+        accessibilityLabel="Close modal"
+      />
+      <View style={sessionNotesModalStyles.webPanel}>{body}</View>
+    </View>
+  );
+}
+
+const sessionNotesModalStyles = StyleSheet.create({
+  // Web overlay
+  webOverlay: {
+    position: 'fixed' as 'absolute',
+    inset: 0,
+    zIndex: 200,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+  webBackdrop: {
+    position: 'absolute' as 'absolute',
+    inset: 0,
+    backgroundColor: 'rgba(17,24,39,0.45)',
+  } as ViewStyle,
+  webPanel: {
+    width: '100%',
+    maxWidth: 520,
+    maxHeight: '80vh' as unknown as number,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    overflow: 'hidden',
+    zIndex: 1,
+  } as ViewStyle,
+
+  // Native container
+  nativeContainer: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  } as ViewStyle,
+
+  // Modal body wrapper
+  container: {
+    flex: 1,
+    flexDirection: 'column',
+    backgroundColor: '#FFFFFF',
+  } as ViewStyle,
+
+  // Header
+  header: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+    gap: 12,
+  } as ViewStyle,
+  headerTextBlock: {
+    flex: 1,
+    gap: 2,
+  } as ViewStyle,
+  title: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 17,
+    color: '#111827',
+    lineHeight: 24,
+  } as TextStyle,
+  subtitle: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: '#6B7280',
+  } as TextStyle,
+
+  // Scroll
+  scroll: {
+    flex: 1,
+  } as ViewStyle,
+  scrollContent: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 20,
+    gap: 12,
+  } as ViewStyle,
+
+  // Loading / empty / error
+  centerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 24,
+    justifyContent: 'center',
+  } as ViewStyle,
+  loadingText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: '#6B7280',
+  } as TextStyle,
+  emptyText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: '#A0A6AB',
+    fontStyle: 'italic',
+    textAlign: 'center',
+    paddingVertical: 24,
+  } as TextStyle,
+  errorText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 13,
+    color: '#B91C1C',
+    paddingVertical: 24,
+    textAlign: 'center',
+  } as TextStyle,
+
+  // Note card
+  noteCard: {
+    backgroundColor: '#F9FAFB',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    padding: 14,
+    gap: 6,
+  } as ViewStyle,
+  noteBody: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 14,
+    color: '#111827',
+    lineHeight: 21,
+  } as TextStyle,
+  noteMeta: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: '#9CA3AF',
+  } as TextStyle,
+
+  // Footer
+  footer: {
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+    alignItems: 'flex-end',
+  } as ViewStyle,
+  closeBtn: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: tokens.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 80,
+  } as ViewStyle,
+  closeBtnText: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 14,
+    color: '#FFFFFF',
+  } as TextStyle,
+});
+
 // ─── SessionsTable ────────────────────────────────────────────────────────────
 
 interface SessionsTableProps {
   sessions: RecentSessionItem[];
   totalCount: number;
-  onViewSession: (sessionId: string) => void;
+  memberId: string;
 }
 
 /**
  * Paginated sessions table.
- * Columns: Date & Time / Type / Status / Duration / Modality / Actions (View notes).
- * 20 rows per page with previous/next pagination controls.
+ * Columns: Date & Time / Type / Status / Duration / Units / Actions (View notes).
+ * 10 rows per page with previous/next pagination controls.
+ *
+ * "View notes" opens an in-page SessionNotesModal that fetches case notes for
+ * the selected session via useCaseNotes filtered by sessionId.
  */
 function SessionsTable({
   sessions,
   totalCount,
-  onViewSession,
+  memberId,
 }: SessionsTableProps): React.JSX.Element {
   const [currentPage, setCurrentPage] = useState(1);
   const totalPages = Math.max(1, Math.ceil(sessions.length / SESSIONS_PAGE_SIZE));
+
+  // Notes modal state: null = closed, set to a session = open for that session.
+  const [notesSession, setNotesSession] = useState<RecentSessionItem | null>(null);
 
   const pageSlice = useMemo(() => {
     const startIndex = (currentPage - 1) * SESSIONS_PAGE_SIZE;
@@ -5828,6 +6135,10 @@ function SessionsTable({
     setCurrentPage((prev) => Math.min(totalPages, prev + 1));
   }, [totalPages]);
 
+  const handleCloseNotes = useCallback((): void => {
+    setNotesSession(null);
+  }, []);
+
   if (sessions.length === 0) {
     return <EmptySectionState message="No sessions with this member yet." />;
   }
@@ -5837,11 +6148,10 @@ function SessionsTable({
       {/* Table header */}
       <View style={tableStyles.header}>
         <Text style={[tableStyles.headerCell, tableStyles.colDate]}>Date & Time</Text>
-        <Text style={[tableStyles.headerCell, tableStyles.colModality]}>Type</Text>
+        <Text style={[tableStyles.headerCell, tableStyles.colType]}>Type</Text>
         <Text style={[tableStyles.headerCell, tableStyles.colStatus]}>Status</Text>
         <Text style={[tableStyles.headerCell, tableStyles.colDuration]}>Duration</Text>
         <Text style={[tableStyles.headerCell, tableStyles.colUnits]}>Units</Text>
-        <Text style={[tableStyles.headerCell, tableStyles.colModality]}>Modality</Text>
         <Text style={[tableStyles.headerCell, tableStyles.colActions]}>Actions</Text>
       </View>
 
@@ -5863,7 +6173,7 @@ function SessionsTable({
             <Text style={[tableStyles.cell, tableStyles.colDate, tableStyles.dateText]}>
               {formatDateTime(session.scheduledAt ?? session.startedAt)}
             </Text>
-            <Text style={[tableStyles.cell, tableStyles.colModality]}>
+            <Text style={[tableStyles.cell, tableStyles.colType]}>
               {modeLabel}
             </Text>
             <View style={tableStyles.colStatus}>
@@ -5881,13 +6191,10 @@ function SessionsTable({
             <Text style={[tableStyles.cell, tableStyles.colUnits]}>
               {session.unitsBilled != null ? session.unitsBilled.toFixed(2) : '—'}
             </Text>
-            <Text style={[tableStyles.cell, tableStyles.colModality]}>
-              Individual
-            </Text>
             <View style={tableStyles.colActions}>
               <TouchableOpacity
                 style={tableStyles.viewBtn}
-                onPress={() => onViewSession(session.id)}
+                onPress={() => setNotesSession(session)}
                 accessibilityRole="button"
                 accessibilityLabel={`View notes for session on ${formatDateTime(session.scheduledAt)}`}
               >
@@ -5928,6 +6235,13 @@ function SessionsTable({
           </TouchableOpacity>
         </View>
       </View>
+
+      {/* Session notes modal — rendered inside the table so it stays scoped */}
+      <SessionNotesModal
+        session={notesSession}
+        memberId={memberId}
+        onClose={handleCloseNotes}
+      />
     </View>
   );
 }
@@ -5960,12 +6274,12 @@ const tableStyles = StyleSheet.create({
     fontSize: 13,
     color: '#374151',
   } as TextStyle,
-  // Column width distribution
-  colDate: { flex: 3 } as ViewStyle,
+  // Column width distribution (Modality removed; freed flex redistributed to Date, Type, Units)
+  colDate: { flex: 4 } as ViewStyle,
+  colType: { flex: 2.5 } as ViewStyle,
   colStatus: { flex: 2 } as ViewStyle,
-  colModality: { flex: 2 } as ViewStyle,
   colDuration: { flex: 1.5 } as ViewStyle,
-  colUnits: { flex: 1 } as ViewStyle,
+  colUnits: { flex: 1.5 } as ViewStyle,
   colActions: { flex: 2, alignItems: 'flex-end' } as ViewStyle,
   dateText: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
@@ -7171,19 +7485,6 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
 
   // ── Navigation helpers ───────────────────────────────────────────────────────
 
-  const handleViewSession = useCallback(
-    (sessionId: string): void => {
-      navigation.navigate('SessionReview', {
-        sessionId,
-        memberName: profile
-          ? `${profile.firstName} ${profile.lastName}`
-          : 'Member',
-        memberId,
-      });
-    },
-    [navigation, profile, memberId],
-  );
-
   const handleNavigateToConversation = useCallback(
     (_conversationId: string): void => {
       navigation.navigate('Messages', { memberId });
@@ -7555,7 +7856,7 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                   <SessionsTable
                     sessions={profile.recentSessions}
                     totalCount={profile.sessionCount}
-                    onViewSession={handleViewSession}
+                    memberId={memberId}
                   />
                 </SectionCard>
 
