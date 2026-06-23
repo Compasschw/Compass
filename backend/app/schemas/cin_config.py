@@ -19,7 +19,6 @@ from __future__ import annotations
 import re
 from typing import Literal, TypedDict
 
-
 # Statewide DHCS CIN: 8 digits + 1 uppercase letter.
 _CIN_RE = re.compile(r"^\d{8}[A-Z]$")
 

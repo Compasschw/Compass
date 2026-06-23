@@ -230,6 +230,7 @@ async def list_conversations(
     - archived_at IS NULL applied unless include_archived=true.
     """
     from datetime import datetime
+
     from sqlalchemy import desc, nulls_last
     from sqlalchemy.orm import aliased
 
