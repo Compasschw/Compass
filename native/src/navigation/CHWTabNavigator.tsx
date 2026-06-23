@@ -79,7 +79,8 @@ export type CHWTabParamList = {
   // CHWJourneys: undefined;
   // Hidden 2026-06-20 (revisit later): Resources, Reports, Community Partners.
   // CHWResources: undefined;
-  CHWDocuments: undefined;
+  /** Optional deep-link param — when present, auto-expands and scrolls to that member's section. */
+  CHWDocuments: { memberId?: string } | undefined;
   // CHWReports: undefined;
   // CHWCommunityPartners: undefined;
   // Screens inside nested stacks — exposed here so deep links can address

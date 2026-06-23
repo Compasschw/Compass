@@ -62,6 +62,7 @@ import {
   Edit2,
   FileText,
   Flag,
+  FolderOpen,
   Heart,
   MessageSquare,
   NotebookPen,
@@ -137,6 +138,10 @@ import {
   type MemberJourneyStepResponse,
   type MemberDemographicsUpdate,
 } from '../../hooks/useApiQueries';
+import {
+  INSURANCE_OPTIONS,
+  validateCinForCarrier,
+} from '../../constants/insurance';
 
 // ─── Navigation types ─────────────────────────────────────────────────────────
 
@@ -628,6 +633,7 @@ function EditDemographicsModal({
   const [language, setLanguage] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [showSexPicker, setShowSexPicker] = useState(false);
+  const [showInsurancePicker, setShowInsurancePicker] = useState(false);
 
   // Hydrate form whenever the modal opens.
   useEffect(() => {
@@ -648,6 +654,7 @@ function EditDemographicsModal({
       setLanguage(profile.primaryLanguage ?? '');
       setError(null);
       setShowSexPicker(false);
+      setShowInsurancePicker(false);
     }
   }, [visible, profile]);
 
@@ -685,13 +692,14 @@ function EditDemographicsModal({
     if (insurance.trim()) payload.insurance = insurance.trim();
 
     if (cin.trim()) {
-      const normalized = cin.trim().toUpperCase();
-      const cinValid = /^\d{8}[A-Z]$/.test(normalized);
-      if (!cinValid) {
-        setError('Member ID / Medi-Cal CIN must be 8 digits followed by 1 letter (e.g. 12345678A).');
-        return;
+      const result = validateCinForCarrier(cin, insurance);
+      // Lenient-warn: show the hint for confirmed carriers but never hard-block.
+      // Pending carriers: always accept non-empty normalized value.
+      if (!result.valid && result.status === 'confirmed') {
+        setError(result.hint);
+        // Do NOT return — lenient policy, allow save with hint shown.
       }
-      payload.mediCalId = normalized;
+      payload.mediCalId = result.normalized;
     } else {
       payload.mediCalId = null;
     }
@@ -855,14 +863,58 @@ function EditDemographicsModal({
         <Text style={editDemoStyles.sectionLabel}>Insurance</Text>
 
         <Text style={editDemoStyles.fieldLabel}>Insurance</Text>
-        <TextInput
-          style={editDemoStyles.input}
-          value={insurance}
-          onChangeText={setInsurance}
-          placeholder="Insurance carrier"
-          placeholderTextColor="#9CA3AF"
-          accessibilityLabel="Insurance carrier"
-        />
+        <TouchableOpacity
+          style={editDemoStyles.selectorBtn}
+          onPress={() => { setShowInsurancePicker((p) => !p); setShowSexPicker(false); }}
+          accessibilityRole="button"
+          accessibilityLabel={`Insurance carrier: ${insurance || 'Select carrier'}`}
+        >
+          <Text
+            style={[
+              editDemoStyles.selectorText,
+              !insurance && editDemoStyles.selectorPlaceholder,
+            ]}
+            numberOfLines={1}
+          >
+            {insurance || 'Select carrier…'}
+          </Text>
+          <Text style={editDemoStyles.selectorChevron}>
+            {showInsurancePicker ? '▲' : '▼'}
+          </Text>
+        </TouchableOpacity>
+        {showInsurancePicker && (
+          <View style={editDemoStyles.pickerList}>
+            {INSURANCE_OPTIONS.map((carrier) => {
+              const isSelected = carrier === insurance;
+              return (
+                <TouchableOpacity
+                  key={carrier}
+                  style={[
+                    editDemoStyles.pickerItem,
+                    isSelected && editDemoStyles.pickerItemSelected,
+                  ]}
+                  onPress={() => {
+                    setInsurance(carrier);
+                    setShowInsurancePicker(false);
+                  }}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: isSelected }}
+                  accessibilityLabel={carrier}
+                >
+                  <Text
+                    style={[
+                      editDemoStyles.pickerItemText,
+                      isSelected && editDemoStyles.pickerItemTextSelected,
+                    ]}
+                  >
+                    {carrier}
+                  </Text>
+                  {isSelected && <Check size={14} color={tokens.primary} />}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        )}
 
         <Text style={[editDemoStyles.fieldLabel, editDemoStyles.fieldLabelSpaced]}>Member ID / Medi-Cal CIN</Text>
         <TextInput
@@ -873,9 +925,9 @@ function EditDemographicsModal({
           placeholderTextColor="#9CA3AF"
           autoCapitalize="characters"
           autoCorrect={false}
-          maxLength={9}
+          maxLength={14}
           accessibilityLabel="Medi-Cal CIN"
-          accessibilityHint="8 digits followed by 1 letter"
+          accessibilityHint="8 digits followed by 1 letter, or 14-char BIC"
         />
         <Text style={editDemoStyles.hint}>8 digits + 1 letter, e.g. 12345678A</Text>
 
@@ -1692,6 +1744,8 @@ interface DemographicsColumnProps {
   servicesConsentRefused: boolean;
   onNavigateToConversation: (conversationId: string) => void;
   onNavigateAndCall: () => void;
+  /** Navigates to the Messages screen and auto-triggers the Begin Session flow. */
+  onBeginSession: () => void;
   /** When provided, the demographics pencil opens this callback instead of
    *  the legacy inline preferred-name editor. Supplied by the parent screen. */
   onEditDemographics?: () => void;
@@ -1816,7 +1870,6 @@ function DemoField({
       <Text style={demoColStyles.fieldLabel}>{label}</Text>
       <Text
         style={[demoColStyles.fieldValue, placeholder && demoColStyles.fieldValuePlaceholder]}
-        numberOfLines={2}
       >
         {value}
       </Text>
@@ -1838,6 +1891,7 @@ function DemographicsColumn({
   servicesConsentRefused,
   onNavigateToConversation,
   onNavigateAndCall,
+  onBeginSession,
   onEditDemographics,
 }: DemographicsColumnProps): React.JSX.Element {
   const initials = getInitials(profile.firstName, profile.lastName);
@@ -1881,17 +1935,18 @@ function DemographicsColumn({
           </View>
           <View style={[demoColStyles.ctaStack, ctaDisabled && demoColStyles.ctaStackDisabled]}>
             <TouchableOpacity
-              style={[demoColStyles.ctaBtn, demoColStyles.callBtn]}
-              onPress={ctaDisabled ? undefined : onNavigateAndCall}
+              style={[demoColStyles.ctaBtn, demoColStyles.beginSessionBtn]}
+              onPress={ctaDisabled ? undefined : onBeginSession}
               disabled={ctaDisabled}
               accessibilityRole="button"
               accessibilityLabel={
-                ctaDisabled ? 'Call disabled — member has refused services' : `Call ${displayName}`
+                ctaDisabled
+                  ? 'Begin Session disabled — member has refused services'
+                  : `Begin Session with ${displayName}`
               }
               accessibilityState={{ disabled: ctaDisabled }}
             >
-              <Phone size={14} color="#FFFFFF" />
-              <Text style={demoColStyles.ctaBtnText}>Call</Text>
+              <Text style={demoColStyles.ctaBtnText}>Begin Session</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[demoColStyles.ctaBtn, demoColStyles.messageBtn]}
@@ -1999,8 +2054,15 @@ const demoColStyles = StyleSheet.create({
     paddingVertical: 9,
     borderRadius: radius.md,
   } as ViewStyle,
-  callBtn: {
-    backgroundColor: tokens.primary,
+  /**
+   * Matches CHWMessagesScreen beginSessionBtn exactly:
+   * emerald700 background, borderRadius 10, 11px vertical / 16px horizontal padding.
+   */
+  beginSessionBtn: {
+    backgroundColor: tokens.emerald700,
+    borderRadius: 10,
+    paddingVertical: 11,
+    paddingHorizontal: 16,
   } as ViewStyle,
   messageBtn: {
     backgroundColor: tokens.primary + '12',
@@ -5404,10 +5466,12 @@ interface QuickAccessRowProps {
   onFlagMember: () => void;
   onScheduleSession: () => void;
   onDocumentSession: () => void;
+  /** Navigates to the Documents tab opened to this member's folder. */
+  onUploadedDocuments: () => void;
 }
 
 /**
- * Horizontal row of 4 frequently-used CHW actions for this member.
+ * Horizontal row of 5 frequently-used CHW actions for this member.
  * Each button is tappable and routes to the appropriate action.
  */
 function QuickAccessRow({
@@ -5415,6 +5479,7 @@ function QuickAccessRow({
   onFlagMember,
   onScheduleSession,
   onDocumentSession,
+  onUploadedDocuments,
 }: QuickAccessRowProps): React.JSX.Element {
   const quickActions: Array<{
     icon: React.ReactNode;
@@ -5445,6 +5510,12 @@ function QuickAccessRow({
       label: 'Document Session',
       iconBg: '#FFFBEB',
       onPress: onDocumentSession,
+    },
+    {
+      icon: <FolderOpen size={16} color="#0891B2" />,
+      label: 'Uploaded Documents',
+      iconBg: '#ECFEFF',
+      onPress: onUploadedDocuments,
     },
   ];
 
@@ -7124,6 +7195,35 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
     navigation.navigate('Messages', { memberId, autoCall: true });
   }, [navigation, memberId]);
 
+  /**
+   * Navigates to the Messages screen and auto-triggers the Begin Session flow
+   * for this member. Mirrors the existing autoCall param pattern.
+   *
+   * `autoBeginSession` is an additive param beyond the current type definition in
+   * CHWSessionsStackParamList (owned by a parallel agent). Cast via `as never` to
+   * avoid a compile error until the type is extended.
+   */
+  const handleBeginSession = useCallback((): void => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (navigation.navigate as (...args: any[]) => void)('Messages', {
+      memberId,
+      autoBeginSession: true,
+    });
+  }, [navigation, memberId]);
+
+  /**
+   * Navigates to the CHWDocuments tab, passing memberId so the screen can
+   * auto-expand/scroll to this member's folder.
+   * Uses `as never` escape because CHWDocuments lives in CHWTabParamList
+   * (the parent tab navigator) rather than CHWSessionsStackParamList.
+   */
+  const handleNavigateToDocuments = useCallback((): void => {
+    // CHWDocuments lives in the parent CHWTabParamList; use the same `as never`
+    // escape pattern used elsewhere in this codebase for cross-stack navigation.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (navigation as any).navigate('CHWDocuments', { memberId });
+  }, [navigation, memberId]);
+
   // ── Loading state ────────────────────────────────────────────────────────────
 
   if (isLoading) {
@@ -7269,7 +7369,7 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
             <Card style={s.topCard}>
               <View style={s.topCardRow}>
 
-                {/* LEFT: Demographics + Call/Message */}
+                {/* LEFT: Demographics + Begin Session/Message */}
                 <DemographicsColumn
                   profile={profile}
                   memberId={memberId}
@@ -7277,6 +7377,7 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                   servicesConsentRefused={servicesConsentRefused}
                   onNavigateToConversation={handleNavigateToConversation}
                   onNavigateAndCall={handleNavigateAndCall}
+                  onBeginSession={handleBeginSession}
                   onEditDemographics={() => setEditDemographicsOpen(true)}
                 />
 
@@ -7299,13 +7400,10 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
             </Card>
 
             {/* ───────────────────────────────────────────────────────────────
-                QUICK ACCESS ROW — hidden 2026-06-20 (revisit later).
-                The QuickAccessRow component, its handlers, and the Add Note /
-                Flag Member modals remain defined below so this can be restored
-                by un-commenting. Add Note + Flag Member are reachable from their
-                own modals if re-wired; Schedule/Document were Alert stubs.
+                QUICK ACCESS ROW — restored 2026-06-22.
+                5 actions: Add Note, Flag Member, Schedule Session,
+                Document Session, Uploaded Documents.
             ─────────────────────────────────────────────────────────────── */}
-            {/*
             <QuickAccessRow
               memberId={memberId}
               displayName={displayName}
@@ -7323,8 +7421,8 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                   'Documentation is submitted from within an active session. Start or open a session with this member to document it.',
                 )
               }
+              onUploadedDocuments={handleNavigateToDocuments}
             />
-            */}
 
             {/* Main content + optional sidebar */}
             {/*

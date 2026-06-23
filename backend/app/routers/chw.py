@@ -1459,7 +1459,11 @@ async def get_chw_member_full_profile(
             else member_profile.city
         ),
         zip_code=member_profile.zip_code,
-        mco=member_profile.insurance_provider,  # MCO = insurance plan in Medi-Cal context
+        # MCO = insurance plan in Medi-Cal context.
+        # New signups write to insurance_company (curated dropdown); legacy/CHW-edited
+        # records write to insurance_provider. Coalesce both so the CHW profile always
+        # shows a value for members regardless of which intake path they used.
+        mco=member_profile.insurance_company or member_profile.insurance_provider,
         address_line1=member_profile.address_line1,
         address_line2=member_profile.address_line2,
         city_name=member_profile.city,

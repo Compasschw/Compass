@@ -28,6 +28,8 @@ import React, {
   useEffect,
   useRef,
 } from 'react';
+import { useRoute, type RouteProp } from '@react-navigation/native';
+import type { CHWTabParamList } from '../../navigation/CHWTabNavigator';
 import {
   ActivityIndicator,
   Alert,
@@ -89,6 +91,8 @@ import {
 import { useFileUpload, type DocumentType } from '../../hooks/useFileUpload';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+
+type DocumentsRouteProp = RouteProp<CHWTabParamList, 'CHWDocuments'>;
 
 type FilterType = 'all' | DocumentType;
 
@@ -498,6 +502,17 @@ interface MemberDocumentGroupProps {
   activeType: FilterType;
   defaultExpanded: boolean;
   onResult: (memberId: string, count: number | null) => void;
+  /**
+   * When truthy, force-expands this member's section once (deep-link entry).
+   * The component only acts on a rising edge from false → true, then the
+   * parent clears the flag so subsequent user interactions are unaffected.
+   */
+  forceExpanded?: boolean;
+  /**
+   * Called with the measured y-offset of this group's root View so the parent
+   * screen can scroll to the right position after the roster renders.
+   */
+  onGroupLayout?: (memberId: string, y: number) => void;
 }
 
 function MemberDocumentGroup({
@@ -506,9 +521,22 @@ function MemberDocumentGroup({
   activeType,
   defaultExpanded,
   onResult,
+  forceExpanded = false,
+  onGroupLayout,
 }: MemberDocumentGroupProps): React.JSX.Element | null {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const docsQuery = useMemberDocuments(member.id);
+
+  // Honour the one-shot deep-link expansion signal from the parent screen.
+  // React on a rising edge only — the parent clears forceExpanded after firing
+  // so this doesn't fight manual collapse by the user on subsequent renders.
+  const prevForceExpanded = useRef(false);
+  useEffect(() => {
+    if (forceExpanded && !prevForceExpanded.current) {
+      setExpanded(true);
+    }
+    prevForceExpanded.current = forceExpanded;
+  }, [forceExpanded]);
   const docs = docsQuery.data?.items ?? [];
 
   // Filter by search query and active type filter.
@@ -563,7 +591,10 @@ function MemberDocumentGroup({
       : 'DOB not on file';
 
   return (
-    <View style={styles.memberGroup}>
+    <View
+      style={styles.memberGroup}
+      onLayout={(e) => onGroupLayout?.(member.id, e.nativeEvent.layout.y)}
+    >
       {/* Collapsible header */}
       <PressableCard
         onPress={() => setExpanded((prev) => !prev)}
@@ -901,6 +932,31 @@ export function CHWDocumentsScreen(): React.JSX.Element {
   // so it can't stack over the drawer.
   const [uploadDrawerOpen, setUploadDrawerOpen] = useState(false);
 
+  // ─── Deep-link: optional memberId route param ─────────────────────────────
+  // useRoute is safe here: CHWDocumentsScreen is always mounted inside the
+  // CHWTabNavigator, so a route is always present. The param may be undefined
+  // when navigating from the plain Documents tab (no deep-link).
+  const route = useRoute<DocumentsRouteProp>();
+  const deepLinkMemberId = route.params?.memberId;
+
+  // Track which member to force-expand. We use a ref to detect "applied once"
+  // so re-renders after scroll don't re-trigger the expand or scroll jump.
+  const [targetMemberId, setTargetMemberId] = useState<string | undefined>(
+    deepLinkMemberId,
+  );
+  // Set to true once the scroll has been attempted so we don't loop.
+  const deepLinkApplied = useRef(false);
+
+  // Ref to the outer native ScrollView for scrollTo calls.
+  const scrollViewRef = useRef<ScrollView>(null);
+
+  // Per-member y-offsets measured via onLayout. Keyed by memberId.
+  const memberYOffsets = useRef<Record<string, number>>({});
+
+  const handleGroupLayout = useCallback((memberId: string, y: number) => {
+    memberYOffsets.current[memberId] = y;
+  }, []);
+
   const membersQuery = useChwMembers();
   const rawMembers = useMemo(() => membersQuery.data ?? [], [membersQuery.data]);
 
@@ -916,6 +972,64 @@ export function CHWDocumentsScreen(): React.JSX.Element {
       prev[memberId] === count ? prev : { ...prev, [memberId]: count },
     );
   }, []);
+
+  // ─── Deep-link effect: apply expand + scroll once roster is loaded ─────────
+  // Keyed on members array and targetMemberId. Fires once the roster is
+  // populated (members.length > 0) and a targetMemberId is set. After applying,
+  // clears targetMemberId so this is a one-shot operation — manual interaction
+  // within the screen is never overridden.
+  useEffect(() => {
+    if (!targetMemberId || deepLinkApplied.current || membersQuery.isLoading) {
+      return;
+    }
+    const memberExists = members.some((m) => m.id === targetMemberId);
+    if (!memberExists) return;
+
+    deepLinkApplied.current = true;
+
+    // Pre-fill the search filter as a fallback so the member is visible even
+    // if the scroll measurement hasn't fired yet (web or first layout pass).
+    const match = members.find((m) => m.id === targetMemberId);
+    if (match) {
+      // Only pre-fill if there's no existing search so we don't clobber CHW's
+      // active search state when navigating back to the screen with a param.
+      setQuery((prev) => (prev.trim() === '' ? match.displayName : prev));
+    }
+
+    // Schedule scroll after a short layout pass so onLayout measurements are
+    // available. requestAnimationFrame is sufficient on native; on web, a
+    // double-RAF ensures paint has completed.
+    const doScroll = (): void => {
+      const yOffset = memberYOffsets.current[targetMemberId];
+      if (yOffset !== undefined && scrollViewRef.current) {
+        scrollViewRef.current.scrollTo({ y: yOffset, animated: true });
+      }
+      // Clear target so re-navigation to the same screen without params
+      // doesn't re-trigger (React Navigation keeps the component mounted).
+      setTargetMemberId(undefined);
+    };
+
+    if (Platform.OS === 'web') {
+      requestAnimationFrame(() => requestAnimationFrame(doScroll));
+    } else {
+      // On native, a single rAF is enough — layout events fire synchronously
+      // before paint on the JS thread.
+      requestAnimationFrame(doScroll);
+    }
+  }, [targetMemberId, members, membersQuery.isLoading]);
+
+  // When the route params change (the CHW navigates to Documents again with a
+  // new memberId without the screen unmounting), reset and re-arm the effect.
+  useEffect(() => {
+    if (deepLinkMemberId && deepLinkMemberId !== targetMemberId) {
+      deepLinkApplied.current = false;
+      memberYOffsets.current = {};
+      setTargetMemberId(deepLinkMemberId);
+      // Clear any stale search pre-fill so we start fresh for the new target.
+      setQuery('');
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deepLinkMemberId]);
 
   const allSettled =
     members.length > 0 &&
@@ -1027,6 +1141,8 @@ export function CHWDocumentsScreen(): React.JSX.Element {
               activeType={activeType}
               defaultExpanded={defaultExpanded}
               onResult={handleResult}
+              forceExpanded={targetMemberId === m.id}
+              onGroupLayout={handleGroupLayout}
             />
           ))}
 
@@ -1083,6 +1199,7 @@ export function CHWDocumentsScreen(): React.JSX.Element {
     return (
       <SafeAreaView style={styles.safeArea} edges={['top']}>
         <ScrollView
+          ref={scrollViewRef}
           contentContainerStyle={styles.nativeScroll}
           showsVerticalScrollIndicator={false}
         >
