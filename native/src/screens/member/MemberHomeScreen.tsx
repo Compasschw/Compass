@@ -30,7 +30,7 @@
  *   - Card, StatTile, PageHeader, Pill from `components/ui`.
  */
 
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import {
   Platform,
   Pressable,
@@ -44,8 +44,6 @@ import {
   ArrowRight,
   CalendarCheck,
   CheckCircle2,
-  ChevronDown,
-  ChevronUp,
   ClipboardList,
   Gift,
   Hand,
@@ -56,8 +54,6 @@ import {
   Phone,
   Route,
   ShoppingBasket,
-  Square,
-  CheckSquare,
   Stethoscope,
   Target,
 } from 'lucide-react-native';
@@ -242,35 +238,6 @@ function resolveJourneySubtitle(journey: MemberJourneyResponse): string {
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-/**
- * Mocked per-session action items (JT Figma feedback: "Session Notes / To Do
- * list for each session / Selectable"). Stable per session id so the same
- * session shows the same list. Replace with backend-driven items when a
- * `/sessions/:id/action_items` endpoint ships.
- *
- * TODO(backend): expose session.action_items as
- *   { id: string; label: string; completed: boolean }[]
- */
-function mockActionItems(sessionId: string): string[] {
-  const pool = [
-    'Bring photo ID and proof of address',
-    'Have your Medi-Cal card or BIC number ready',
-    'Write down 2-3 questions you want answered',
-    'List medications you currently take',
-    'Note any recent provider visits',
-    'Share insurance plan details if you have them',
-    'Have a pen and paper nearby for notes',
-  ];
-  const charSum = sessionId.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
-  // Deterministic 3-item pick from the pool based on session id hash.
-  const start = charSum % pool.length;
-  return [
-    pool[start],
-    pool[(start + 2) % pool.length],
-    pool[(start + 4) % pool.length],
-  ];
-}
-
 // ─── VerticalIcon map — lucide icons replacing emoji ──────────────────────────
 
 /**
@@ -301,26 +268,15 @@ interface UpcomingSessionRowProps {
 }
 
 /**
- * Single upcoming-session row with a collapsible prep-checklist panel.
- * The "Scheduled" badge now uses the shared Pill primitive (blue variant).
+ * Single upcoming-session row.
+ *
+ * The prep-checklist panel previously shown here used `mockActionItems()` —
+ * a fake hash-based generator. There is no `/sessions/:id/action_items`
+ * backend endpoint yet, so the panel is replaced with a clean empty state
+ * that tells the member their CHW will add items. Remove this note and wire
+ * real data once the endpoint ships.
  */
 function UpcomingSessionRow({ session }: UpcomingSessionRowProps): React.JSX.Element {
-  const [expanded, setExpanded] = useState(false);
-  const [checkedItems, setCheckedItems] = useState<Set<number>>(new Set());
-
-  const items = useMemo(() => mockActionItems(session.id), [session.id]);
-  const completedCount = checkedItems.size;
-  const totalCount = items.length;
-
-  const toggleItem = useCallback((idx: number) => {
-    setCheckedItems((prev) => {
-      const next = new Set(prev);
-      if (next.has(idx)) next.delete(idx);
-      else next.add(idx);
-      return next;
-    });
-  }, []);
-
   return (
     <View>
       {/* Session info row */}
@@ -337,56 +293,16 @@ function UpcomingSessionRow({ session }: UpcomingSessionRowProps): React.JSX.Ele
         <Pill variant="blue" size="sm">Scheduled</Pill>
       </View>
 
-      {/* Prep-checklist toggle */}
-      <Pressable
-        onPress={() => setExpanded((p) => !p)}
-        style={({ pressed }) => [styles.todoToggle, pressed && { opacity: 0.7 }]}
-        accessibilityRole="button"
-        accessibilityLabel={
-          expanded
-            ? `Hide action items (${completedCount} of ${totalCount} done)`
-            : `Show action items (${completedCount} of ${totalCount} done)`
-        }
-        accessibilityState={{ expanded }}
+      {/* Prep-checklist empty state — no action_items endpoint yet */}
+      <View
+        style={styles.todoEmpty}
+        accessibilityLabel="No prep items yet"
       >
-        <ListChecks size={14} color={tokens.primary} />
-        <Text style={styles.todoToggleText}>
-          Prep checklist · {completedCount}/{totalCount}
+        <ListChecks size={14} color={tokens.textMuted} />
+        <Text style={styles.todoEmptyText}>
+          Your CHW will add prep items before your session.
         </Text>
-        {expanded
-          ? <ChevronUp size={14} color={tokens.textMuted} />
-          : <ChevronDown size={14} color={tokens.textMuted} />}
-      </Pressable>
-
-      {expanded && (
-        <View style={styles.todoList}>
-          {items.map((label, idx) => {
-            const checked = checkedItems.has(idx);
-            return (
-              <Pressable
-                key={idx}
-                onPress={() => toggleItem(idx)}
-                style={({ pressed }) => [styles.todoItem, pressed && { opacity: 0.7 }]}
-                accessibilityRole="checkbox"
-                accessibilityState={{ checked }}
-                accessibilityLabel={label}
-              >
-                {checked
-                  ? <CheckSquare size={16} color={tokens.primary} />
-                  : <Square size={16} color={tokens.textMuted} />}
-                <Text
-                  style={[
-                    styles.todoItemText,
-                    checked && styles.todoItemTextDone,
-                  ]}
-                >
-                  {label}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-      )}
+      </View>
     </View>
   );
 }
@@ -419,6 +335,17 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
   const profile      = profileQuery.data;
   const roadmap      = roadmapQuery.data ?? [];
   const allRequests  = requestsQuery.data ?? [];
+
+  // ── Assigned CHW — derived from sessions (most-recent session with a chwName).
+  // Sessions carry `chwName` and `chwId` joined server-side. A member with no
+  // sessions yet has no assigned CHW; we render a placeholder in that case.
+  const assignedCHW = useMemo<{ name: string; chwId: string } | null>(() => {
+    const sessionWithCHW = [...allSessions]
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .find((s) => !!s.chwName && !!s.chwId);
+    if (!sessionWithCHW) return null;
+    return { name: sessionWithCHW.chwName!, chwId: sessionWithCHW.chwId };
+  }, [allSessions]);
 
   const firstName      = (userName ?? profile?.userId ?? 'there').split(' ')[0];
   const rewardsBalance = profile?.rewardsBalance ?? 0;
@@ -627,58 +554,96 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
           />
 
           {/* ── Your CHW hero card ───────────────────────────────────────
-           *  Member-specific content: photo/initials, name, availability
-           *  message, and primary Call / Message CTAs.
+           *  Member-specific content: CHW initials derived from real session
+           *  data, CHW name, and primary Message / Schedule CTAs.
+           *  No fabricated availability or response-time text — only what the
+           *  backend provides.
+           *  When no CHW is assigned yet a sensible placeholder is shown.
            */}
-          <Card style={styles.heroCard}>
-            <View style={styles.heroRow}>
-              {/* Avatar + online indicator */}
-              <View style={styles.heroAvatarWrap}>
-                <View style={styles.heroAvatar}>
-                  <Text style={styles.heroAvatarText}>MS</Text>
+          {assignedCHW !== null ? (
+            <Card style={styles.heroCard}>
+              <View style={styles.heroRow}>
+                {/* Avatar — initials from real CHW name */}
+                <View style={styles.heroAvatarWrap}>
+                  <View style={styles.heroAvatar}>
+                    <Text style={styles.heroAvatarText}>
+                      {assignedCHW.name
+                        .split(' ')
+                        .slice(0, 2)
+                        .map((p) => p[0] ?? '')
+                        .join('')
+                        .toUpperCase()}
+                    </Text>
+                  </View>
                 </View>
-                <View style={styles.heroOnlineDot} />
+
+                {/* CHW identity — name only; no fabricated availability text */}
+                <View style={styles.heroInfo}>
+                  <Text style={styles.heroChwLabel}>Your CHW</Text>
+                  <Text style={styles.heroChwTitle}>{assignedCHW.name}</Text>
+                </View>
               </View>
 
-              {/* CHW identity */}
-              <View style={styles.heroInfo}>
-                <Text style={styles.heroChwLabel}>Your CHW</Text>
-                <Text style={styles.heroChwTitle}>Maria is available now</Text>
-                <Text style={styles.heroChwSub}>
-                  Usually responds in under 2 hours · English &amp; Spanish
-                </Text>
+              {/* Action buttons */}
+              <View style={styles.heroActions}>
+                <Pressable
+                  onPress={handleOpenSessions}
+                  style={({ pressed }) => [
+                    styles.heroPrimaryBtn,
+                    pressed && { opacity: 0.85 },
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Send a message to ${assignedCHW.name}`}
+                >
+                  <MessageSquare size={16} color="#FFFFFF" />
+                  <Text style={styles.heroPrimaryBtnText}>Send a message</Text>
+                </Pressable>
+
+                <Pressable
+                  onPress={handleOpenSessions}
+                  style={({ pressed }) => [
+                    styles.heroSecondaryBtn,
+                    pressed && { opacity: 0.85 },
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Schedule a call with ${assignedCHW.name}`}
+                >
+                  <Phone size={16} color={tokens.primary} />
+                  <Text style={styles.heroSecondaryBtnText}>Schedule a call</Text>
+                </Pressable>
               </View>
-            </View>
-
-            {/* Action buttons */}
-            <View style={styles.heroActions}>
-              <Pressable
-                onPress={handleOpenSessions}
-                style={({ pressed }) => [
-                  styles.heroPrimaryBtn,
-                  pressed && { opacity: 0.85 },
-                ]}
-                accessibilityRole="button"
-                accessibilityLabel="Send a message to your CHW"
-              >
-                <MessageSquare size={16} color="#FFFFFF" />
-                <Text style={styles.heroPrimaryBtnText}>Send a message</Text>
-              </Pressable>
-
-              <Pressable
-                onPress={handleOpenSessions}
-                style={({ pressed }) => [
-                  styles.heroSecondaryBtn,
-                  pressed && { opacity: 0.85 },
-                ]}
-                accessibilityRole="button"
-                accessibilityLabel="Schedule a call with your CHW"
-              >
-                <Phone size={16} color={tokens.primary} />
-                <Text style={styles.heroSecondaryBtnText}>Schedule a call</Text>
-              </Pressable>
-            </View>
-          </Card>
+            </Card>
+          ) : (
+            <Card style={styles.heroCard}>
+              <View style={styles.heroRow}>
+                <View style={styles.heroAvatarWrap}>
+                  <View style={[styles.heroAvatar, { backgroundColor: tokens.gray100 }]}>
+                    <MessageSquare size={22} color={tokens.textSecondary} />
+                  </View>
+                </View>
+                <View style={styles.heroInfo}>
+                  <Text style={styles.heroChwLabel}>Your CHW</Text>
+                  <Text style={[styles.heroChwTitle, { color: tokens.textSecondary }]}>
+                    You haven't been matched with a CHW yet
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.heroActions}>
+                <Pressable
+                  onPress={handleFindCHW}
+                  style={({ pressed }) => [
+                    styles.heroPrimaryBtn,
+                    pressed && { opacity: 0.85 },
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Find a Community Health Worker"
+                >
+                  <MessageSquare size={16} color="#FFFFFF" />
+                  <Text style={styles.heroPrimaryBtnText}>Find a CHW</Text>
+                </Pressable>
+              </View>
+            </Card>
+          )}
 
           {/* ── KPI stat grid (2×2) ─────────────────────────────────────
            *  Mirror of CHWDashboard's KPI row — same tile pattern, member
@@ -1323,9 +1288,9 @@ const styles = StyleSheet.create({
     marginHorizontal: spacing.lg,
   } as import('react-native').ViewStyle,
 
-  // ── Prep-checklist toggle ──────────────────────────────────────────────────
+  // ── Prep-checklist empty state ────────────────────────────────────────────
 
-  todoToggle: {
+  todoEmpty: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
@@ -1334,48 +1299,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     borderRadius: radius.md,
-    backgroundColor: `${tokens.primary}10`,
-    borderWidth: 1,
-    borderColor: `${tokens.primary}30`,
-  } as import('react-native').ViewStyle,
-
-  todoToggleText: {
-    flex: 1,
-    fontFamily: fonts.bodySemibold,
-    fontSize: 12,
-    color: tokens.primary,
-  } as import('react-native').TextStyle,
-
-  todoList: {
-    marginHorizontal: spacing.xl,
-    marginBottom: spacing.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm + 2,
-    borderRadius: radius.md,
-    backgroundColor: tokens.cardBg,
     borderWidth: 1,
     borderColor: tokens.cardBorder,
-    gap: spacing.sm,
+    backgroundColor: tokens.cardBg,
   } as import('react-native').ViewStyle,
 
-  todoItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm + 2,
-    paddingVertical: 4,
-  } as import('react-native').ViewStyle,
-
-  todoItemText: {
+  todoEmptyText: {
     flex: 1,
     fontFamily: fonts.body,
-    fontSize: 13,
-    color: tokens.textPrimary,
-    lineHeight: 18,
-  } as import('react-native').TextStyle,
-
-  todoItemTextDone: {
+    fontSize: 12,
     color: tokens.textMuted,
-    textDecorationLine: 'line-through',
+    lineHeight: 16,
   } as import('react-native').TextStyle,
 
   // ── Bottom padding ─────────────────────────────────────────────────────────

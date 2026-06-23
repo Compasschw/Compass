@@ -42,6 +42,7 @@ import {
 } from 'lucide-react-native';
 
 import { formatCurrency } from '../../data/mock';
+import { useAuth } from '../../context/AuthContext';
 import {
   useChwEarnings,
   useChwEarningSessions,
@@ -440,6 +441,25 @@ const detailModalStyles = StyleSheet.create({
  *   4. Have I actually been paid?
  */
 export function CHWEarningsScreen(): React.JSX.Element {
+  const { userName } = useAuth();
+
+  /**
+   * Derives up to 2 uppercase initials from the authenticated user's display
+   * name. Mirrors the pattern used in CHWDashboardScreen and CHWProfileScreen.
+   */
+  const chwInitials = (userName ?? 'C')
+    .split(' ')
+    .map((n) => n[0] ?? '')
+    .join('')
+    .toUpperCase()
+    .slice(0, 2);
+
+  const chwUserBlock = {
+    initials: chwInitials,
+    name: userName ?? 'CHW',
+    role: 'CHW' as const,
+  };
+
   const [period, setPeriod] = useState<EarningsPeriod>('this_month');
   const [selectedSession, setSelectedSession] = useState<SessionEarningItem | null>(null);
   const [sessionModalVisible, setSessionModalVisible] = useState(false);
@@ -523,7 +543,7 @@ export function CHWEarningsScreen(): React.JSX.Element {
       <AppShell
         role="chw"
         activeKey="earnings"
-        userBlock={{ initials: '...', name: '...', role: 'CHW' }}
+        userBlock={chwUserBlock}
       >
         <SafeAreaView style={styles.safe} edges={['top']}>
           <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
@@ -547,7 +567,7 @@ export function CHWEarningsScreen(): React.JSX.Element {
       <AppShell
         role="chw"
         activeKey="earnings"
-        userBlock={{ initials: '...', name: '...', role: 'CHW' }}
+        userBlock={chwUserBlock}
       >
         <SafeAreaView style={styles.safe} edges={['top']}>
           <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
@@ -569,7 +589,7 @@ export function CHWEarningsScreen(): React.JSX.Element {
     <AppShell
       role="chw"
       activeKey="earnings"
-      userBlock={{ initials: 'MS', name: 'Maria Sanchez', role: 'CHW' }}
+      userBlock={chwUserBlock}
     >
       <SafeAreaView style={styles.safe} edges={['top']}>
         <ScrollView

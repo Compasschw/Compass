@@ -1,17 +1,14 @@
 /**
  * MemberResourcesScreen — member-facing recommended resources hub.
  *
- * Shows "Recommended for you" highlighted cards at the top (derived from the
- * member's primaryNeed vertical), then a filter-chip bar, then a grid of all
- * available resource cards.
- *
- * Data source: uses existing useResources hook when available, otherwise falls
- * back to inline mock data annotated with the same shape. The hook can be
- * swapped with a real endpoint when the backend ships a member-scoped resources
- * query.
+ * Renders an empty state until a member-scoped `/resources` backend endpoint
+ * ships. The CHW-side `useChwResources` hook is CHW-role-gated and cannot be
+ * reused here. When the backend delivers a member resources query, wire it in
+ * place of the empty state — the `Resource` type and category infrastructure
+ * below is preserved and ready to receive real data.
  */
 
-import React, { useMemo, useState } from 'react';
+import React from 'react';
 import {
   Pressable,
   ScrollView,
@@ -34,7 +31,6 @@ import {
 } from 'lucide-react-native';
 
 import { useAuth } from '../../context/AuthContext';
-import { useMemberProfile } from '../../hooks/useApiQueries';
 import { AppShell, PageHeader, Card, Pill } from '../../components/ui';
 import { colors as tokens } from '../../theme/tokens';
 
@@ -57,67 +53,6 @@ interface Resource {
   /** Whether this resource is specifically highlighted for the member's need. */
   recommended: boolean;
 }
-
-// ─── Mock data (replace with useResources hook when endpoint ships) ───────────
-
-const MOCK_RESOURCES: Resource[] = [
-  {
-    id: 'r1',
-    title: 'California Housing Resource Guide',
-    description: 'Find emergency shelter, rental assistance, and housing programs near you.',
-    category: 'housing',
-    recommended: true,
-  },
-  {
-    id: 'r2',
-    title: 'Medi-Cal Enrollment Help',
-    description: 'Step-by-step guide to enrolling in Medi-Cal health coverage.',
-    category: 'healthcare',
-    recommended: true,
-  },
-  {
-    id: 'r3',
-    title: 'Community Mental Health Centers',
-    description: 'Free and low-cost mental health services in your area.',
-    category: 'mental_health',
-    recommended: false,
-  },
-  {
-    id: 'r4',
-    title: 'CalFresh Food Assistance',
-    description: 'Apply for food stamps and find local food banks and pantries.',
-    category: 'food',
-    recommended: true,
-  },
-  {
-    id: 'r5',
-    title: 'Substance Use Recovery Programs',
-    description: 'Outpatient and residential recovery support options statewide.',
-    category: 'rehab',
-    recommended: false,
-  },
-  {
-    id: 'r6',
-    title: 'Urgent Care Finder',
-    description: 'Locate urgent care clinics accepting walk-ins near your ZIP code.',
-    category: 'healthcare',
-    recommended: false,
-  },
-  {
-    id: 'r7',
-    title: 'Mental Health First Aid',
-    description: 'Learn to recognize and respond to mental health crises.',
-    category: 'mental_health',
-    recommended: false,
-  },
-  {
-    id: 'r8',
-    title: 'Section 8 Housing Waitlist',
-    description: 'How to apply for federal Housing Choice Voucher assistance.',
-    category: 'housing',
-    recommended: false,
-  },
-];
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -340,9 +275,21 @@ const fc = StyleSheet.create({
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
+/**
+ * MemberResourcesScreen renders a clean empty state until a member-scoped
+ * resources endpoint ships from the backend.
+ *
+ * When `/member/resources` (or equivalent) becomes available, replace the
+ * empty state with real data by:
+ *   1. Adding a `useMemberResources` hook in useApiQueries.ts.
+ *   2. Wiring the hook here and passing data to `ResourceCard`.
+ *   3. Re-enabling the `FilterChip` bar and "Recommended for you" section.
+ *
+ * The `ResourceCard`, `FilterChip`, `Resource` type, and category constants
+ * below are preserved and ready to receive real data.
+ */
 export function MemberResourcesScreen(): React.JSX.Element {
   const { userName } = useAuth();
-  const profileQuery = useMemberProfile();
 
   const memberInitials = (userName ?? 'M')
     .split(' ')
@@ -351,42 +298,11 @@ export function MemberResourcesScreen(): React.JSX.Element {
     .join('')
     .toUpperCase();
 
-  const [activeCategory, setActiveCategory] = useState<ResourceCategory>('all');
-
-  const primaryNeed = profileQuery.data?.primaryNeed ?? 'all';
-
-  const recommended = useMemo(
-    () =>
-      MOCK_RESOURCES.filter(
-        (r) =>
-          r.recommended &&
-          (primaryNeed === 'all' || r.category === primaryNeed || r.recommended),
-      ).slice(0, 2),
-    [primaryNeed],
-  );
-
-  const filtered = useMemo(
-    () =>
-      MOCK_RESOURCES.filter(
-        (r) => activeCategory === 'all' || r.category === activeCategory,
-      ),
-    [activeCategory],
-  );
-
   const shellUserBlock = {
     initials: memberInitials,
     name: userName ?? 'Member',
     role: 'Member' as const,
   };
-
-  const categories: ResourceCategory[] = [
-    'all',
-    'housing',
-    'healthcare',
-    'mental_health',
-    'food',
-    'rehab',
-  ];
 
   return (
     <AppShell role="member" activeKey="resources" userBlock={shellUserBlock}>
@@ -402,52 +318,14 @@ export function MemberResourcesScreen(): React.JSX.Element {
             subtitle="Curated resources matched to your needs"
           />
 
-          {/* Recommended section */}
-          {recommended.length > 0 && (
-            <View style={styles.section}>
-              <Text style={styles.sectionLabel}>RECOMMENDED FOR YOU</Text>
-              {recommended.map((r) => (
-                <ResourceCard key={r.id} resource={r} highlighted />
-              ))}
-            </View>
-          )}
-
-          {/* Filter chips */}
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.filterRow}
-          >
-            {categories.map((cat) => (
-              <FilterChip
-                key={cat}
-                category={cat}
-                isActive={activeCategory === cat}
-                onPress={() => setActiveCategory(cat)}
-              />
-            ))}
-          </ScrollView>
-
-          {/* Resource grid */}
-          <View style={styles.section}>
-            <Text style={styles.sectionLabel}>
-              {activeCategory === 'all'
-                ? 'ALL RESOURCES'
-                : `${CATEGORY_LABELS[activeCategory].toUpperCase()} RESOURCES`}
+          {/* Empty state — no member-scoped resources endpoint yet */}
+          <Card style={styles.emptyCard}>
+            <BookOpen size={28} color={tokens.textMuted} />
+            <Text style={styles.emptyTitle}>No resources available yet</Text>
+            <Text style={styles.emptySub}>
+              Your CHW will share relevant resources here during your care journey.
             </Text>
-            {filtered.map((r) => (
-              <ResourceCard key={r.id} resource={r} />
-            ))}
-            {filtered.length === 0 && (
-              <Card style={styles.emptyCard}>
-                <BookOpen size={28} color={tokens.textMuted} />
-                <Text style={styles.emptyTitle}>No resources found</Text>
-                <Text style={styles.emptySub}>
-                  Try selecting a different category above.
-                </Text>
-              </Card>
-            )}
-          </View>
+          </Card>
         </View>
       </ScrollView>
     </AppShell>
