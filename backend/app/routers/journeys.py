@@ -6,7 +6,10 @@ Endpoint summary:
   GET    /api/v1/journeys/{member_journey_id}
   GET    /api/v1/members/{member_id}/journeys
   POST   /api/v1/members/{member_id}/journeys
+  POST   /api/v1/journeys/{member_journey_id}/nodes
+  PATCH  /api/v1/journeys/{member_journey_id}/nodes/{step_id}
   PATCH  /api/v1/journeys/{member_journey_id}/steps/{step_id}
+  DELETE /api/v1/journeys/{member_journey_id}/nodes/{step_id}
   GET    /api/v1/members/{member_id}/wellness-points
 
 Authorization:
@@ -1066,6 +1069,154 @@ async def update_step_status(
     await db.commit()
     await db.refresh(member_journey)
 
+    return await _build_member_journey_response(member_journey, db)
+
+
+# ─── DELETE /api/v1/journeys/{member_journey_id}/nodes/{step_id} ─────────────
+
+
+@router.delete(
+    "/api/v1/journeys/{member_journey_id}/nodes/{step_id}",
+    response_model=MemberJourneyResponse,
+    summary="Remove a node from a custom journey",
+)
+async def delete_journey_node(
+    member_journey_id: uuid.UUID,
+    step_id: uuid.UUID,
+    current_user=Depends(require_role("chw")),
+    db: AsyncSession = Depends(get_db),
+) -> MemberJourneyResponse:
+    """Remove a node (step) from a custom (CHW-authored) journey.
+
+    Behavior:
+      1. Auth gate: same as POST/PATCH nodes — only the assigned CHW (or admin)
+         may delete; otherwise 403. Custom-journey-only guard raises 409 for
+         standard templates.
+      2. Step must exist on this journey; otherwise 404.
+      3. Last-step guard: if the step is the ONLY remaining step in the journey
+         the delete is rejected with 400. An empty journey has no meaningful
+         current_step_id and would be permanently stuck. The CHW must first add
+         a replacement step before removing the last one.
+      4. Points reversal: if the deleted step was ``completed`` and had awarded
+         points, a negative WellnessPointsLedger entry (reason='correction') is
+         written — identical to the un-complete path in update_step_status.
+         ``step_state.points_awarded`` is used so the reversal matches exactly
+         what was recorded, not the template value.
+      5. The MemberJourneyStepState row is deleted. The underlying
+         JourneyTemplateStep row is also deleted (custom journeys own their
+         template exclusively).
+      6. Reorder: all remaining steps on the same template with order >
+         deleted_step.order have their order decremented by 1, keeping the
+         sequence contiguous (mirror of the +1 shift in add_journey_node).
+      7. If the deleted step was the journey's current_step_id, current_step_id
+         is advanced to the next step in order (or set to None if none remain,
+         which cannot happen because the last-step guard prevents deleting the
+         final step).
+
+    Returns the updated MemberJourneyResponse (200) so the frontend can refetch
+    the same shape as POST/PATCH nodes.
+    """
+    member_journey, template = await _load_custom_journey_for_chw(
+        member_journey_id, current_user, db
+    )
+
+    # ── Locate the template step ────────────────────────────────────────────────
+    tpl_step_result = await db.execute(
+        select(JourneyTemplateStep)
+        .where(JourneyTemplateStep.id == step_id)
+        .where(JourneyTemplateStep.template_id == template.id)
+    )
+    tpl_step = tpl_step_result.scalar_one_or_none()
+    if tpl_step is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Node not found on this journey.",
+        )
+
+    # ── Locate the step state ───────────────────────────────────────────────────
+    step_state_result = await db.execute(
+        select(MemberJourneyStepState)
+        .where(MemberJourneyStepState.member_journey_id == member_journey_id)
+        .where(MemberJourneyStepState.template_step_id == step_id)
+    )
+    step_state = step_state_result.scalar_one_or_none()
+    if step_state is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Step state not found on this journey.",
+        )
+
+    # ── Last-step guard ─────────────────────────────────────────────────────────
+    # Count remaining steps on the template so we can block deletion of the last.
+    step_count_result = await db.execute(
+        select(func.count()).where(JourneyTemplateStep.template_id == template.id)
+    )
+    step_count = step_count_result.scalar() or 0
+    if step_count <= 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Cannot delete the last remaining step. "
+                "Add a replacement step before removing this one."
+            ),
+        )
+
+    # ── Points reversal (mirror of update_step_status reversal branch) ──────────
+    if step_state.status == "completed" and step_state.points_awarded != 0:
+        reversal_entry = WellnessPointsLedger(
+            id=uuid.uuid4(),
+            member_id=member_journey.member_id,
+            points=-step_state.points_awarded,
+            reason="correction",
+            related_id=step_state.id,
+        )
+        db.add(reversal_entry)
+
+    # ── Advance current_step_id if deleting the current step ───────────────────
+    # Find the next step (by order) before we delete so we can point to it.
+    if member_journey.current_step_id == step_id:
+        next_step_result = await db.execute(
+            select(JourneyTemplateStep)
+            .where(JourneyTemplateStep.template_id == template.id)
+            .where(JourneyTemplateStep.order > tpl_step.order)
+            .order_by(JourneyTemplateStep.order)
+            .limit(1)
+        )
+        next_step = next_step_result.scalar_one_or_none()
+        if next_step is not None:
+            member_journey.current_step_id = next_step.id
+        else:
+            # No later step — point to the highest-order remaining step instead
+            # (this case is blocked by last-step guard when count==1, but can
+            # occur when deleting the last step when count==2 and it's current).
+            prev_step_result = await db.execute(
+                select(JourneyTemplateStep)
+                .where(JourneyTemplateStep.template_id == template.id)
+                .where(JourneyTemplateStep.order < tpl_step.order)
+                .order_by(JourneyTemplateStep.order.desc())
+                .limit(1)
+            )
+            prev_step = prev_step_result.scalar_one_or_none()
+            member_journey.current_step_id = prev_step.id if prev_step else None
+
+    deleted_order: int = tpl_step.order
+
+    # ── Delete step state and template step ────────────────────────────────────
+    await db.delete(step_state)
+    await db.flush()
+    await db.delete(tpl_step)
+    await db.flush()
+
+    # ── Reorder: decrement order for all steps after the deleted position ───────
+    await db.execute(
+        update(JourneyTemplateStep)
+        .where(JourneyTemplateStep.template_id == template.id)
+        .where(JourneyTemplateStep.order > deleted_order)
+        .values(order=JourneyTemplateStep.order - 1)
+    )
+
+    await db.commit()
+    await db.refresh(member_journey)
     return await _build_member_journey_response(member_journey, db)
 
 

@@ -531,3 +531,227 @@ async def test_unrelated_chw_returns_403(
     assert node_res.status_code == 403, (
         f"Expected 403 for unrelated CHW POST nodes, got {node_res.status_code}: {node_res.text}"
     )
+
+
+# ─── DELETE /nodes/{step_id} tests ────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_delete_middle_node_resequences_order(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    """Delete the middle (order=2) step of a 3-step custom journey.
+
+    After deletion:
+      - The journey has 2 steps.
+      - The former step-3 now has order=2 (gap closed).
+      - The deleted step is no longer present.
+    """
+    member_id = await _relate(client, member_tokens, chw_tokens)
+    journey = await _create_custom_journey(client, chw_tokens, member_id, "Delete Middle")
+    journey_id = journey["id"]
+
+    steps = sorted(journey["steps"], key=lambda s: s["step_order"])
+    assert len(steps) == 3, f"Expected 3 starter steps, got {len(steps)}"
+
+    step1_id = steps[0]["template_step_id"]
+    step2_id = steps[1]["template_step_id"]
+    step3_id = steps[2]["template_step_id"]
+
+    # Delete step 2 (middle).
+    del_res = await client.delete(
+        f"/api/v1/journeys/{journey_id}/nodes/{step2_id}",
+        headers=auth_header(chw_tokens),
+    )
+    assert del_res.status_code == 200, del_res.text
+
+    remaining_steps = sorted(del_res.json()["steps"], key=lambda s: s["step_order"])
+    assert len(remaining_steps) == 2, (
+        f"Expected 2 steps after delete, got {len(remaining_steps)}"
+    )
+
+    step_ids_remaining = [s["template_step_id"] for s in remaining_steps]
+    assert step2_id not in step_ids_remaining, "Deleted step should not appear in response"
+    assert step1_id in step_ids_remaining, "Step 1 should still be present"
+    assert step3_id in step_ids_remaining, "Former step 3 should still be present"
+
+    # Former step 3 must now have order=2.
+    former_step3 = next(s for s in remaining_steps if s["template_step_id"] == step3_id)
+    assert former_step3["step_order"] == 2, (
+        f"Former step 3 should now have order 2, got {former_step3['step_order']}"
+    )
+
+    # Orders must be contiguous [1, 2].
+    orders = sorted(s["step_order"] for s in remaining_steps)
+    assert orders == [1, 2], f"Expected contiguous orders [1, 2], got {orders}"
+
+
+@pytest.mark.asyncio
+async def test_delete_completed_node_reverses_points(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    """Delete a step that was previously completed → its points are reversed.
+
+    Setup: 3-step custom journey. Complete step 1 (awards points). Then delete
+    step 1 and assert the ledger has a matching negative 'correction' entry
+    and the net balance is zero.
+    """
+    await _seed_templates()
+    member_id = await _relate(client, member_tokens, chw_tokens)
+    journey = await _create_custom_journey(client, chw_tokens, member_id, "Delete Completed")
+    journey_id = journey["id"]
+
+    steps = sorted(journey["steps"], key=lambda s: s["step_order"])
+    step1_id = steps[0]["template_step_id"]
+    step1_state_id = steps[0]["id"]
+
+    # Complete step 1 to award points.
+    complete_res = await client.patch(
+        f"/api/v1/journeys/{journey_id}/steps/{step1_id}",
+        json={"status": "completed"},
+        headers=auth_header(chw_tokens),
+    )
+    assert complete_res.status_code == 200, complete_res.text
+    awarded_points = complete_res.json()["steps"][0]["points_awarded"]
+    assert awarded_points > 0, "Step 1 should have awarded points after completion"
+
+    # Verify balance is non-zero before deletion.
+    pts_before = await client.get(
+        f"/api/v1/members/{member_id}/wellness-points",
+        headers=auth_header(chw_tokens),
+    )
+    assert pts_before.json()["total_points"] == awarded_points
+
+    # Delete the completed step.
+    del_res = await client.delete(
+        f"/api/v1/journeys/{journey_id}/nodes/{step1_id}",
+        headers=auth_header(chw_tokens),
+    )
+    assert del_res.status_code == 200, del_res.text
+
+    # Net balance must be zero.
+    pts_after = await client.get(
+        f"/api/v1/members/{member_id}/wellness-points",
+        headers=auth_header(chw_tokens),
+    )
+    assert pts_after.status_code == 200, pts_after.text
+    after_data = pts_after.json()
+    assert after_data["total_points"] == 0, (
+        f"Expected net balance 0 after deleting completed step, got {after_data['total_points']}"
+    )
+
+    # Ledger must include a negative 'correction' entry referencing the deleted step state.
+    correction_entries = [
+        e for e in after_data["ledger"] if e["reason"] == "correction" and e["points"] < 0
+    ]
+    assert len(correction_entries) >= 1, (
+        f"Expected at least 1 negative correction entry, got: {after_data['ledger']}"
+    )
+    assert any(e["points"] == -awarded_points for e in correction_entries), (
+        f"Expected a correction of -{awarded_points}, got: {correction_entries}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_delete_node_unrelated_chw_returns_403(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    """A CHW with no relationship to the member receives 403 on DELETE nodes.
+
+    This is a relationship gate (chw_id check on MemberJourney), NOT a role
+    gate — a valid CHW with a different member gets 403, not 401/404.
+    """
+    member_id = await _relate(client, member_tokens, chw_tokens)
+    journey = await _create_custom_journey(client, chw_tokens, member_id, "Auth Guard Delete")
+    journey_id = journey["id"]
+    steps = sorted(journey["steps"], key=lambda s: s["step_order"])
+    step2_id = steps[1]["template_step_id"]
+
+    # Register a second CHW with NO relationship to the member.
+    reg_res = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "otherchw_delete@example.com",
+            "password": "pass12345",
+            "name": "Other CHW Delete",
+            "role": "chw",
+        },
+    )
+    assert reg_res.status_code == 201, reg_res.text
+    other_chw_tokens = reg_res.json()
+
+    del_res = await client.delete(
+        f"/api/v1/journeys/{journey_id}/nodes/{step2_id}",
+        headers=auth_header(other_chw_tokens),
+    )
+    assert del_res.status_code == 403, (
+        f"Expected 403 for unrelated CHW DELETE, got {del_res.status_code}: {del_res.text}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_delete_nonexistent_node_returns_404(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    """DELETE with a step_id that does not exist on the journey returns 404, not 500."""
+    member_id = await _relate(client, member_tokens, chw_tokens)
+    journey = await _create_custom_journey(client, chw_tokens, member_id, "Nonexistent Node")
+    journey_id = journey["id"]
+    fake_step_id = str(uuid4())
+
+    del_res = await client.delete(
+        f"/api/v1/journeys/{journey_id}/nodes/{fake_step_id}",
+        headers=auth_header(chw_tokens),
+    )
+    assert del_res.status_code == 404, (
+        f"Expected 404 for nonexistent step_id, got {del_res.status_code}: {del_res.text}"
+    )
+    assert del_res.status_code != 500, "Must never return 500 for a missing step"
+
+
+@pytest.mark.asyncio
+async def test_delete_last_node_returns_400(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    """Deleting the last remaining step of a journey returns 400.
+
+    A custom journey starts with 3 nodes. We delete 2 of them to leave 1,
+    then attempt to delete the final step. That must be rejected with 400.
+    The journey must be unchanged — the remaining step must still be present.
+    """
+    member_id = await _relate(client, member_tokens, chw_tokens)
+    journey = await _create_custom_journey(client, chw_tokens, member_id, "Last Step Guard")
+    journey_id = journey["id"]
+
+    steps = sorted(journey["steps"], key=lambda s: s["step_order"])
+    assert len(steps) == 3
+
+    # Delete step 3 (last), then step 2.
+    for step in reversed(steps[1:]):  # steps[2] then steps[1]
+        del_res = await client.delete(
+            f"/api/v1/journeys/{journey_id}/nodes/{step['template_step_id']}",
+            headers=auth_header(chw_tokens),
+        )
+        assert del_res.status_code == 200, (
+            f"Expected 200 deleting step, got {del_res.status_code}: {del_res.text}"
+        )
+
+    # Now only 1 step remains. Attempt to delete it.
+    last_step_id = steps[0]["template_step_id"]
+    guard_res = await client.delete(
+        f"/api/v1/journeys/{journey_id}/nodes/{last_step_id}",
+        headers=auth_header(chw_tokens),
+    )
+    assert guard_res.status_code == 400, (
+        f"Expected 400 when deleting last step, got {guard_res.status_code}: {guard_res.text}"
+    )
+
+    # The journey must still have 1 step — no orphaning occurred.
+    get_res = await client.get(
+        f"/api/v1/journeys/{journey_id}",
+        headers=auth_header(chw_tokens),
+    )
+    assert get_res.status_code == 200, get_res.text
+    assert len(get_res.json()["steps"]) == 1, (
+        "Journey should still have exactly 1 step after rejected delete"
+    )
