@@ -18,7 +18,6 @@
 import React, { useCallback, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Image,
   Keyboard,
   KeyboardAvoidingView,
@@ -39,6 +38,7 @@ import Svg, { Path } from 'react-native-svg';
 import { Mail, Lock, Eye, EyeOff, ArrowRight } from 'lucide-react-native';
 
 import { useAuth } from '../../context/AuthContext';
+import { isAppleConfigured, isGoogleConfigured, OAuthError } from '../../services/oauth';
 import { colors } from '../../theme/colors';
 import { fonts } from '../../theme/typography';
 import { shadows } from '../../theme/shadows';
@@ -151,7 +151,7 @@ function ContentWrapper({
  *   - Right: auth form card (max-width 450)
  */
 export function LoginScreen(): React.JSX.Element {
-  const { login } = useAuth();
+  const { login, signInWithGoogle, signInWithApple } = useAuth();
   const navigation = useNavigation<LoginNavProp>();
   const { width } = useWindowDimensions();
   const isDesktop = width >= DESKTOP_BREAKPOINT;
@@ -160,12 +160,15 @@ export function LoginScreen(): React.JSX.Element {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isSocialLoading, setIsSocialLoading] = useState<'google' | 'apple' | null>(null);
   const [error, setError] = useState<string | null>(null);
-  /** Set when the user taps a social-login button. Renders an inline notice
-   *  directing them to the email/password form below. Cleared on next field
-   *  edit so it doesn't linger. */
-  const [socialNotice, setSocialNotice] = useState<'Google' | 'Apple' | null>(null);
   const emailInputRef = useRef<TextInput>(null);
+
+  // Derive button visibility from configured env vars (hides buttons when
+  // EXPO_PUBLIC_GOOGLE_CLIENT_ID / EXPO_PUBLIC_APPLE_SERVICE_ID are not set).
+  const googleEnabled = Platform.OS === 'web' && isGoogleConfigured();
+  const appleEnabled = Platform.OS === 'web' && isAppleConfigured();
+  const showSocialSection = googleEnabled || appleEnabled;
 
   // ── Submit handler ───────────────────────────────────────────────────────
 
@@ -190,24 +193,50 @@ export function LoginScreen(): React.JSX.Element {
     }
   }, [email, password, login]);
 
-  // ── Social login ─────────────────────────────────────────────────────────
+  // ── Social login (web-only) ───────────────────────────────────────────────
   //
-  // TODO(oauth): wire up real Google + Apple OAuth.
-  //   - Google: expo-auth-session + Google Cloud OAuth client ID. Redirect
-  //     URL must include https://joincompasschw.com/auth/callback (web)
-  //     and the iOS/Android URL schemes.
-  //   - Apple: expo-apple-authentication on iOS. Web requires Sign in with
-  //     Apple JS + a configured Service ID.
-  //   - Backend: /auth/oauth/{provider} endpoint that verifies the ID token
-  //     and exchanges it for our JWT pair via signInWithTokens.
-  //
-  // Until the credentials are provisioned, focus the email input and surface
-  // an inline notice — no broken Alert dialogs.
-  const handleSocialLogin = useCallback((provider: 'Google' | 'Apple'): void => {
-    setSocialNotice(provider);
+  // Buttons are only rendered when `googleEnabled` / `appleEnabled` is true
+  // (i.e. the EXPO_PUBLIC_* env vars are set at build time).  On native the
+  // entire social section is hidden.  These handlers call the AuthContext
+  // methods which load the vendor JS SDK → trigger the provider popup → call
+  // the backend → persist the JWT pair and any needsOnboarding flag.
+
+  const handleGoogleSignIn = useCallback(async (): Promise<void> => {
     setError(null);
-    setTimeout(() => emailInputRef.current?.focus(), 50);
-  }, []);
+    setIsSocialLoading('google');
+    try {
+      await signInWithGoogle();
+      // AppNavigator re-renders to the correct stack automatically via
+      // isAuthenticated + needsOnboarding state change in AuthContext.
+    } catch (err) {
+      if (err instanceof OAuthError && err.code === 'user_cancelled') {
+        // Silent cancel — don't surface an error banner.
+        return;
+      }
+      const message =
+        err instanceof Error ? err.message : 'Google sign-in failed.';
+      setError(message);
+    } finally {
+      setIsSocialLoading(null);
+    }
+  }, [signInWithGoogle]);
+
+  const handleAppleSignIn = useCallback(async (): Promise<void> => {
+    setError(null);
+    setIsSocialLoading('apple');
+    try {
+      await signInWithApple();
+    } catch (err) {
+      if (err instanceof OAuthError && err.code === 'user_cancelled') {
+        return;
+      }
+      const message =
+        err instanceof Error ? err.message : 'Apple sign-in failed.';
+      setError(message);
+    } finally {
+      setIsSocialLoading(null);
+    }
+  }, [signInWithApple]);
 
   // ── Navigate to waitlist (replaces the old "Sign up" toggle) ────────────
 
@@ -410,7 +439,6 @@ export function LoginScreen(): React.JSX.Element {
                           value={email}
                           onChangeText={(v) => {
                             setEmail(v);
-                            if (socialNotice) setSocialNotice(null);
                           }}
                           autoCapitalize="none"
                           autoComplete="email"
@@ -481,47 +509,63 @@ export function LoginScreen(): React.JSX.Element {
                       )}
                     </TouchableOpacity>
 
-                    {/* OR divider — separates the working email path (above)
-                        from the not-yet-live social options (below). */}
-                    <View style={s.dividerRow}>
-                      <View style={s.dividerLine} />
-                      <Text style={s.dividerLabel}>OR</Text>
-                      <View style={s.dividerLine} />
-                    </View>
+                    {/* OR divider + social buttons — only when at least one
+                        provider is configured (env var is set at build time).
+                        On native and when no credentials are provisioned,
+                        the entire block is hidden so there are no broken
+                        buttons in production. */}
+                    {showSocialSection && (
+                      <>
+                        <View style={s.dividerRow}>
+                          <View style={s.dividerLine} />
+                          <Text style={s.dividerLabel}>OR</Text>
+                          <View style={s.dividerLine} />
+                        </View>
 
-                    {/* Social login buttons — secondary, below the working path.
-                        OAuth isn't wired yet; tapping surfaces an inline notice. */}
-                    <View style={s.socialButtonsContainer}>
-                      <TouchableOpacity
-                        style={s.socialButton}
-                        onPress={() => handleSocialLogin('Google')}
-                        activeOpacity={0.7}
-                        accessibilityLabel="Continue with Google"
-                        accessibilityRole="button"
-                      >
-                        <GoogleIcon />
-                        <Text style={s.socialButtonText}>Continue with Google</Text>
-                      </TouchableOpacity>
+                        <View style={s.socialButtonsContainer}>
+                          {googleEnabled && (
+                            <TouchableOpacity
+                              style={[
+                                s.socialButton,
+                                isSocialLoading === 'google' && s.socialButtonLoading,
+                              ]}
+                              onPress={handleGoogleSignIn}
+                              disabled={isSocialLoading !== null || isLoading}
+                              activeOpacity={0.7}
+                              accessibilityLabel="Continue with Google"
+                              accessibilityRole="button"
+                            >
+                              {isSocialLoading === 'google' ? (
+                                <ActivityIndicator size="small" color={colors.mutedForeground} />
+                              ) : (
+                                <GoogleIcon />
+                              )}
+                              <Text style={s.socialButtonText}>Continue with Google</Text>
+                            </TouchableOpacity>
+                          )}
 
-                      <TouchableOpacity
-                        style={s.socialButton}
-                        onPress={() => handleSocialLogin('Apple')}
-                        activeOpacity={0.7}
-                        accessibilityLabel="Continue with Apple"
-                        accessibilityRole="button"
-                      >
-                        <AppleIcon />
-                        <Text style={s.socialButtonText}>Continue with Apple</Text>
-                      </TouchableOpacity>
-                    </View>
-
-                    {/* Inline OAuth-coming-soon notice */}
-                    {socialNotice !== null && (
-                      <View style={s.socialNotice} accessibilityRole="alert" accessibilityLiveRegion="polite">
-                        <Text style={s.socialNoticeText}>
-                          {socialNotice} sign-in is coming soon. Use your email above.
-                        </Text>
-                      </View>
+                          {appleEnabled && (
+                            <TouchableOpacity
+                              style={[
+                                s.socialButton,
+                                isSocialLoading === 'apple' && s.socialButtonLoading,
+                              ]}
+                              onPress={handleAppleSignIn}
+                              disabled={isSocialLoading !== null || isLoading}
+                              activeOpacity={0.7}
+                              accessibilityLabel="Continue with Apple"
+                              accessibilityRole="button"
+                            >
+                              {isSocialLoading === 'apple' ? (
+                                <ActivityIndicator size="small" color={colors.mutedForeground} />
+                              ) : (
+                                <AppleIcon />
+                              )}
+                              <Text style={s.socialButtonText}>Continue with Apple</Text>
+                            </TouchableOpacity>
+                          )}
+                        </View>
+                      </>
                     )}
 
                     {/* Self-service signup is the primary path post-launch.
@@ -805,23 +849,8 @@ const s = StyleSheet.create({
     fontSize: 14,
     color: colors.foreground,
   },
-
-  // ── OAuth-coming-soon notice ──────────────────────────────────────────────
-  socialNotice: {
-    backgroundColor: `${colors.primary}10`,
-    borderWidth: 1,
-    borderColor: `${colors.primary}30`,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginTop: 4,
-  },
-  socialNoticeText: {
-    fontFamily: fonts.body,
-    fontSize: 12,
-    color: colors.primary,
-    lineHeight: 16,
-    textAlign: 'center',
+  socialButtonLoading: {
+    opacity: 0.6,
   },
 
   // ── OR divider ────────────────────────────────────────────────────────────

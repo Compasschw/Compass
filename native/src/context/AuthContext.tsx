@@ -16,7 +16,8 @@ import React, {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useQueryClient } from '@tanstack/react-query';
 import { clearTokens, getTokens, setTokens, setSessionExpiredHandler } from '../api/client';
-import { loginUser, logoutUser, registerUser } from '../api/auth';
+import { loginUser, logoutUser, oauthApple, oauthGoogle, registerUser } from '../api/auth';
+import { getAppleIdToken, getGoogleIdToken } from '../services/oauth';
 import type { UserRole } from '../data/mock';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -25,6 +26,15 @@ interface AuthState {
   isAuthenticated: boolean;
   userRole: UserRole | null;
   userName: string | null;
+  /**
+   * True for brand-new member accounts created via OAuth (Google or Apple)
+   * whose Pear Suite-required profile fields (DOB, gender, insurance, CIN,
+   * ZIP) are still absent.  The navigator gates on this flag to render
+   * CompleteProfileScreen instead of MemberTabNavigator until the member
+   * finishes onboarding.  Persisted in AsyncStorage alongside the rest of
+   * auth state so it survives app reloads.
+   */
+  needsOnboarding: boolean;
 }
 
 interface SignInPayload {
@@ -54,6 +64,32 @@ interface AuthContextValue extends AuthState {
   ) => Promise<void>;
   /** Sign in directly from a JWT pair — used by magic-link verify. */
   signInWithTokens: (payload: SignInPayload) => Promise<void>;
+  /**
+   * Trigger the Google Identity Services popup (web only), exchange the ID
+   * token for a Compass JWT pair, and persist the session.  Sets
+   * `needsOnboarding` if the account is brand-new and the member profile
+   * fields are absent.
+   *
+   * On native (iOS/Android) this is a no-op — guard with `Platform.OS`.
+   *
+   * @throws {OAuthError | ApiError} so the UI can surface provider-specific
+   *   messages (cancel vs. network vs. server error).
+   */
+  signInWithGoogle: () => Promise<void>;
+  /**
+   * Trigger the Sign in with Apple JS popup (web only), exchange the ID
+   * token for a Compass JWT pair, and persist the session.  Same semantics
+   * as `signInWithGoogle`.
+   *
+   * @throws {OAuthError | ApiError}
+   */
+  signInWithApple: () => Promise<void>;
+  /**
+   * Called by CompleteProfileScreen after the member finishes entering their
+   * Pear-required fields.  Clears `needsOnboarding` in-memory and in storage
+   * so the navigator stops gating on the onboarding screen.
+   */
+  clearNeedsOnboarding: () => Promise<void>;
   logout: () => Promise<void>;
   /**
    * Clear auth state after the user deletes their own account.
@@ -82,6 +118,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
     isAuthenticated: false,
     userRole: null,
     userName: null,
+    needsOnboarding: false,
   });
   const [isLoading, setIsLoading] = useState(true);
   const [hasJustSignedOut, setHasJustSignedOut] = useState(false);
@@ -102,6 +139,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
         isAuthenticated: true,
         userRole: role,
         userName: role === 'chw' ? 'Maria Sanchez (Demo)' : 'Ana Garcia (Demo)',
+        needsOnboarding: false,
       });
       setIsLoading(false);
       return () => { cancelled = true; };
@@ -155,7 +193,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       // This fires from inside the API client's async refresh path. It runs
       // outside React's batch, so each setter schedules its own render — that
       // is fine; both converge synchronously before the next paint.
-      setAuthState({ isAuthenticated: false, userRole: null, userName: null });
+      setAuthState({ isAuthenticated: false, userRole: null, userName: null, needsOnboarding: false });
       setHasJustSignedOut(true);
 
       // Drop all cached PHI immediately — same as the full logout path.
@@ -188,6 +226,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       isAuthenticated: true,
       userRole: response.role as UserRole,
       userName: response.name,
+      // Email/password login never triggers onboarding — that path is
+      // OAuth-only for brand-new social sign-ups.
+      needsOnboarding: false,
     };
 
     await persistAuthState(newState);
@@ -211,6 +252,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
         isAuthenticated: true,
         userRole: response.role as UserRole,
         userName: response.name,
+        // Self-service registration collects all required Pear fields inline
+        // on RegisterScreen, so onboarding is always complete here.
+        needsOnboarding: false,
       };
 
       await persistAuthState(newState);
@@ -228,6 +272,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
         isAuthenticated: true,
         userRole: payload.role,
         userName: payload.name,
+        // Magic-link callers don't surface needsOnboarding — they go through
+        // a different path and accounts are always pre-provisioned.
+        needsOnboarding: false,
       };
       await persistAuthState(newState);
       setAuthState(newState);
@@ -235,6 +282,56 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
     },
     [persistAuthState],
   );
+
+  // ── signInWithGoogle ───────────────────────────────────────────────────────
+  const signInWithGoogle = useCallback(async (): Promise<void> => {
+    // getGoogleIdToken throws OAuthError on cancel/failure — let it propagate
+    // to the UI so the caller can show the right message.
+    const idToken = await getGoogleIdToken();
+    const response = await oauthGoogle(idToken);
+
+    await setTokens(response.access_token, response.refresh_token);
+
+    const newState: AuthState = {
+      isAuthenticated: true,
+      userRole: response.role as UserRole,
+      userName: response.name,
+      needsOnboarding: response.needs_onboarding,
+    };
+
+    await persistAuthState(newState);
+    setAuthState(newState);
+    setHasJustSignedOut(false);
+  }, [persistAuthState]);
+
+  // ── signInWithApple ────────────────────────────────────────────────────────
+  const signInWithApple = useCallback(async (): Promise<void> => {
+    // getAppleIdToken throws OAuthError on cancel/failure — let it propagate.
+    const idToken = await getAppleIdToken();
+    const response = await oauthApple(idToken);
+
+    await setTokens(response.access_token, response.refresh_token);
+
+    const newState: AuthState = {
+      isAuthenticated: true,
+      userRole: response.role as UserRole,
+      userName: response.name,
+      needsOnboarding: response.needs_onboarding,
+    };
+
+    await persistAuthState(newState);
+    setAuthState(newState);
+    setHasJustSignedOut(false);
+  }, [persistAuthState]);
+
+  // ── clearNeedsOnboarding ───────────────────────────────────────────────────
+  // Called by CompleteProfileScreen after a successful completeMemberOnboarding
+  // API call.  Only flips the flag — does not affect tokens or other state.
+  const clearNeedsOnboarding = useCallback(async (): Promise<void> => {
+    const newState: AuthState = { ...authState, needsOnboarding: false };
+    await persistAuthState(newState);
+    setAuthState(newState);
+  }, [authState, persistAuthState]);
 
   // ── logout ─────────────────────────────────────────────────────────────────
   // Sign-out is intentionally bullet-proof: the user-visible auth flip happens
@@ -245,7 +342,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
     // 1. Flip the user-visible state immediately. AppNavigator re-renders to
     //    the AuthStack; AuthNavigator picks Login as initial route because of
     //    the hasJustSignedOut flag.
-    setAuthState({ isAuthenticated: false, userRole: null, userName: null });
+    setAuthState({ isAuthenticated: false, userRole: null, userName: null, needsOnboarding: false });
     setHasJustSignedOut(true);
 
     // 2. Purge ALL React Query cache entries for the departing user.
@@ -285,7 +382,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
   // surfacing the Login screen would be confusing — Landing makes it clear
   // the session is over.
   const clearAfterDeletion = useCallback(async (): Promise<void> => {
-    setAuthState({ isAuthenticated: false, userRole: null, userName: null });
+    setAuthState({ isAuthenticated: false, userRole: null, userName: null, needsOnboarding: false });
     setHasJustSignedOut(false);
     queryClient.clear();
     try {
@@ -302,8 +399,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
 
   // ── Context value ──────────────────────────────────────────────────────────
   const value = useMemo<AuthContextValue>(
-    () => ({ ...authState, isLoading, hasJustSignedOut, login, register, signInWithTokens, logout, clearAfterDeletion }),
-    [authState, isLoading, hasJustSignedOut, login, register, signInWithTokens, logout, clearAfterDeletion],
+    () => ({
+      ...authState,
+      isLoading,
+      hasJustSignedOut,
+      login,
+      register,
+      signInWithTokens,
+      signInWithGoogle,
+      signInWithApple,
+      clearNeedsOnboarding,
+      logout,
+      clearAfterDeletion,
+    }),
+    [
+      authState,
+      isLoading,
+      hasJustSignedOut,
+      login,
+      register,
+      signInWithTokens,
+      signInWithGoogle,
+      signInWithApple,
+      clearNeedsOnboarding,
+      logout,
+      clearAfterDeletion,
+    ],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

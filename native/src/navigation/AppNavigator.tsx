@@ -29,6 +29,7 @@ import { LoginScreen } from '../screens/auth/LoginScreen';
 import { MagicLinkScreen } from '../screens/auth/MagicLinkScreen';
 import { RegisterScreen } from '../screens/auth/RegisterScreen';
 import { WaitlistScreen } from '../screens/auth/WaitlistScreen';
+import { CompleteProfileScreen } from '../screens/auth/CompleteProfileScreen';
 import { CHWIntakeScreen } from '../screens/chw/CHWIntakeScreen';
 import { LegalScreen, type LegalPage } from '../screens/LegalScreen';
 import { AdminHomeScreen } from '../screens/admin/AdminHomeScreen';
@@ -64,6 +65,13 @@ export type RootStackParamList = {
   CHW: undefined;
   Admin: undefined;
   Member: undefined;
+  /**
+   * Post-OAuth onboarding gate — shown when an authenticated member has
+   * `needsOnboarding === true` (brand-new social sign-up).  Sits between
+   * the Auth stack and the Member tabs; CHWs and already-onboarded members
+   * never see it.
+   */
+  CompleteProfile: undefined;
 };
 
 const AuthStack = createNativeStackNavigator<AuthStackParamList>();
@@ -274,7 +282,7 @@ function LoadingScreen(): React.JSX.Element {
 // ─── Root navigator ───────────────────────────────────────────────────────────
 
 export function AppNavigator(): React.JSX.Element {
-  const { isLoading, isAuthenticated, userRole, hasJustSignedOut } = useAuth();
+  const { isLoading, isAuthenticated, userRole, hasJustSignedOut, needsOnboarding } = useAuth();
   const navigationRef = useRef<NavigationContainerRef<RootStackParamList>>(null);
 
   // Register this device for push notifications once authenticated.
@@ -326,6 +334,14 @@ export function AppNavigator(): React.JSX.Element {
           <RootStack.Screen name="CHW" component={CHWNavigator} />
         ) : userRole === 'admin' ? (
           <RootStack.Screen name="Admin" component={AdminNavigator} />
+        ) : needsOnboarding ? (
+          // Onboarding gate: authenticated member account created via OAuth
+          // that has not yet completed the Pear Suite-required profile fields.
+          // CHWs and already-onboarded members are never routed here.
+          <RootStack.Screen
+            name="CompleteProfile"
+            component={withErrorBoundary(CompleteProfileScreen)}
+          />
         ) : (
           <RootStack.Screen name="Member" component={MemberNavigator} />
         )}
