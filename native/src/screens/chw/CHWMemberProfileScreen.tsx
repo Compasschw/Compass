@@ -130,6 +130,7 @@ import {
   useCreateCustomJourney,
   useAddJourneyNode,
   useUpdateJourneyNode,
+  useDeleteJourneyNode,
   useUpdateJourneyStep,
   useUpdateJourneyStepStatus,
   type CreateMemberJourneyPayload,
@@ -3641,10 +3642,12 @@ function EditJourneyNodeModal({
 }: EditJourneyNodeModalProps): React.JSX.Element {
   const updateNode = useUpdateJourneyNode(memberId);
   const updateStepStatus = useUpdateJourneyStepStatus(memberId);
+  const deleteNode = useDeleteJourneyNode(memberId);
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   // Local optimistic status state — initialized to a safe default; hydrated by the
   // useEffect below whenever the modal opens. Do not compute from props here: if the
   // modal is ever switched to a visibility-prop pattern (no unmount), the useState
@@ -3657,6 +3660,7 @@ function EditJourneyNodeModal({
       setName(initialName);
       setDescription(initialDescription);
       setError(null);
+      setDeleteError(null);
       setSelectedStatus(
         stepStatus === 'completed' ? 'completed' : stepStatus === 'in_progress' ? 'in_progress' : 'upcoming',
       );
@@ -3694,6 +3698,45 @@ function EditJourneyNodeModal({
       setError(detail);
     }
   }, [name, description, journeyId, stepId, updateNode, onClose]);
+
+  /**
+   * Prompt the CHW with a native Alert before permanently removing the step.
+   * On confirmation, calls DELETE /journeys/{journeyId}/nodes/{stepId} and
+   * closes the modal on success. Shows an inline error on failure.
+   */
+  const handleRemove = useCallback((): void => {
+    Alert.alert(
+      'Remove Step',
+      "Remove this step from the journey? This can't be undone.",
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: () => {
+            setDeleteError(null);
+            deleteNode.mutate(
+              { journeyId, stepId },
+              {
+                onSuccess: () => { onClose(); },
+                onError: (err: unknown) => {
+                  const detail =
+                    err != null &&
+                    typeof err === 'object' &&
+                    'detail' in err &&
+                    typeof (err as { detail: unknown }).detail === 'string'
+                      ? (err as { detail: string }).detail
+                      : 'Could not remove step. Please try again.';
+                  setDeleteError(detail);
+                },
+              },
+            );
+          },
+        },
+      ],
+      { cancelable: true },
+    );
+  }, [journeyId, stepId, deleteNode, onClose]);
 
   // Segmented status control handler — optimistic update with rollback.
   const handleStatusChange = useCallback(
@@ -3824,6 +3867,12 @@ function EditJourneyNodeModal({
           </Text>
         )}
 
+        {deleteError !== null && (
+          <Text style={editNodeStyles.errorText} accessibilityRole="alert">
+            {deleteError}
+          </Text>
+        )}
+
         {/* Section 3 — Add Left / Add Right (custom journeys only) */}
         {isCustomJourney && (
           <View style={editNodeStyles.addNodeRow}>
@@ -3849,24 +3898,32 @@ function EditJourneyNodeModal({
         )}
       </View>
 
-      {/* Footer — only shown for custom journeys (name save) */}
+      {/* Footer — custom journeys: Remove (destructive) + Save */}
       {isCustomJourney && (
         <View style={editNodeStyles.footer}>
           <TouchableOpacity
-            style={editNodeStyles.cancelBtn}
-            onPress={onClose}
+            style={[
+              editNodeStyles.removeBtn,
+              (deleteNode.isPending || updateNode.isPending) && editNodeStyles.saveBtnDisabled,
+            ]}
+            onPress={handleRemove}
+            disabled={deleteNode.isPending || updateNode.isPending}
             accessibilityRole="button"
-            accessibilityLabel="Cancel"
+            accessibilityLabel="Remove this step from the journey"
           >
-            <Text style={editNodeStyles.cancelBtnText}>Cancel</Text>
+            {deleteNode.isPending ? (
+              <ActivityIndicator size="small" color={tokens.red700} />
+            ) : (
+              <Text style={editNodeStyles.removeBtnText}>Remove</Text>
+            )}
           </TouchableOpacity>
           <TouchableOpacity
             style={[
               editNodeStyles.saveBtn,
-              updateNode.isPending && editNodeStyles.saveBtnDisabled,
+              (updateNode.isPending || deleteNode.isPending) && editNodeStyles.saveBtnDisabled,
             ]}
             onPress={() => { void handleSave(); }}
-            disabled={updateNode.isPending}
+            disabled={updateNode.isPending || deleteNode.isPending}
             accessibilityRole="button"
             accessibilityLabel="Save step"
           >
@@ -4026,6 +4083,23 @@ const editNodeStyles = StyleSheet.create({
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 13,
     color: '#6B7280',
+  } as TextStyle,
+  /** Destructive "Remove" button — mirrors flagModal's removeBtn pattern. */
+  removeBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: tokens.red100,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    minWidth: 80,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+  removeBtnText: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 13,
+    color: tokens.red700,
   } as TextStyle,
   saveBtn: {
     paddingHorizontal: 20,

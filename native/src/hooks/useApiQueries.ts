@@ -3623,6 +3623,48 @@ export function useUpdateJourneyNode(memberId: string) {
   });
 }
 
+/** Input shape for DELETE /api/v1/journeys/{member_journey_id}/nodes/{step_id}. */
+export interface DeleteJourneyNodePayload {
+  /** The member journey to remove the node from. */
+  journeyId: string;
+  /** The templateStepId of the node being removed. */
+  stepId: string;
+}
+
+/**
+ * Remove a custom journey node (step).
+ *
+ * DELETE /api/v1/journeys/{member_journey_id}/nodes/{step_id}
+ *
+ * Backend reorders remaining nodes and reverses any points awarded when the
+ * step was completed. Returns the refreshed MemberJourneyResponse (or 204).
+ *
+ * On success invalidates:
+ *   - chwJourneyDetailKey  — journey-detail cache slice
+ *   - memberJourneysKey    — member journeys list / roadmap
+ *   - memberRewardsBalanceKey — points balance (may have reversed)
+ *
+ * @param memberId — Scopes cache invalidation to this member.
+ */
+export function useDeleteJourneyNode(memberId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: DeleteJourneyNodePayload): Promise<void> => {
+      await api<unknown>(`/journeys/${payload.journeyId}/nodes/${payload.stepId}`, {
+        method: 'DELETE',
+      });
+    },
+    onSuccess: (_data, payload) => {
+      void qc.invalidateQueries({ queryKey: chwJourneyDetailKey(payload.journeyId) });
+      void qc.invalidateQueries({ queryKey: memberJourneysKey(memberId) });
+      void qc.invalidateQueries({ queryKey: memberRewardsBalanceKey(memberId) });
+    },
+    onError: (_error: unknown) => {
+      // Callers handle errors inline — no silent failures.
+    },
+  });
+}
+
 // ─── Member-facing rewards (new /rewards backend) ────────────────────────────
 
 /**
