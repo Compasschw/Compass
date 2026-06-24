@@ -7779,7 +7779,12 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                       iconBg="#F8FAFC"
                       label="Uploaded Documents"
                       sublabel="Member uploads"
-                      onPress={() => setDocumentsOpen(true)}
+                      onPress={() =>
+                        (navigation.navigate as (...args: any[]) => void)(
+                          'CHWDocuments',
+                          { memberId },
+                        )
+                      }
                     />
                   </Card>
                 </RightRail>
