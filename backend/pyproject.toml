@@ -29,6 +29,9 @@ dependencies = [
     "reportlab>=4.2.0",
     # TOTP 2FA for the admin dashboard (RFC 6238)
     "pyotp>=2.9.0",
+    # Social OAuth token verification
+    "google-auth>=2.28.0",
+    "PyJWT>=2.8.0",
 ]
 
 [project.optional-dependencies]

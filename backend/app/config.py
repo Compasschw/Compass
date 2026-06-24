@@ -214,6 +214,35 @@ class Settings(BaseSettings):
     # Generate: python -c "import secrets; print(secrets.token_urlsafe(48))"
     admin_2fa_secret: str = ""
 
+    # ── Social OAuth (Google + Apple) — feature-inert when empty ─────────────
+    # Set GOOGLE_OAUTH_CLIENT_ID in .env to enable Google sign-in.
+    # Obtain from: console.cloud.google.com → APIs & Services → Credentials.
+    # Use the Web application OAuth 2.0 Client ID (not iOS/Android).
+    google_oauth_client_id: str = ""
+
+    # Apple Service ID (e.g. com.joincompasschw.web). Register at:
+    # developer.apple.com → Certificates, IDs & Profiles → Identifiers → Service IDs
+    apple_oauth_client_id: str = ""
+    # Apple Developer Team ID — 10-char alphanumeric from developer.apple.com.
+    apple_oauth_team_id: str = ""
+    # Key ID of the Sign in with Apple private key (.p8 file).
+    apple_oauth_key_id: str = ""
+    # PEM contents of the .p8 private key file — paste the full file contents
+    # including -----BEGIN PRIVATE KEY----- and -----END PRIVATE KEY----- lines.
+    # Newlines within the key should be literal \n (env var format). The
+    # verification service handles both styles.
+    apple_oauth_private_key: str = ""
+
+    @property
+    def oauth_google_enabled(self) -> bool:
+        """True when Google OAuth client ID is configured."""
+        return bool(self.google_oauth_client_id and self.google_oauth_client_id.strip())
+
+    @property
+    def oauth_apple_enabled(self) -> bool:
+        """True when Apple OAuth Service ID is configured."""
+        return bool(self.apple_oauth_client_id and self.apple_oauth_client_id.strip())
+
     class Config:
         env_file = ".env"
 

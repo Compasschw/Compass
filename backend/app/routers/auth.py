@@ -228,6 +228,283 @@ async def refresh(data: RefreshRequest, db: Annotated[AsyncSession, Depends(get_
     return TokenResponse(access_token=access, refresh_token=new_refresh, role=user.role, name=user.name)
 
 
+# ─── Social OAuth (Google + Apple) ───────────────────────────────────────────
+
+from app.config import settings as _settings  # noqa: E402 (deferred to avoid circular at module top)
+from app.schemas.auth import CompleteOnboardingRequest, OAuthRequest, OAuthTokenResponse  # noqa: E402
+from app.services.oauth_verification import OAuthIdentity, verify_apple_id_token, verify_google_id_token  # noqa: E402
+
+
+async def _handle_oauth_signin(
+    identity: OAuthIdentity,
+    db: AsyncSession,
+    background_tasks: BackgroundTasks,
+) -> OAuthTokenResponse:
+    """Shared sign-in / sign-up logic for all OAuth providers.
+
+    Sign-in path (email exists): fetch user, mint tokens.
+    Sign-up path (new email): create MEMBER account with password_hash=NULL,
+      MemberProfile with onboarding_complete=False, schedule background tasks.
+
+    Args:
+        identity: Verified OAuthIdentity from the provider verifier.
+        db: Async DB session (request-scoped).
+        background_tasks: FastAPI BackgroundTasks for post-response tasks.
+
+    Returns:
+        OAuthTokenResponse with access/refresh tokens + needs_onboarding flag.
+    """
+    from sqlalchemy import select
+
+    from app.models.user import MemberProfile, User
+
+    # Case-insensitive email lookup, excluding soft-deleted accounts.
+    result = await db.execute(
+        select(User).where(
+            User.email == identity.email.lower(),
+            User.deleted_at.is_(None),
+        )
+    )
+    user = result.scalar_one_or_none()
+
+    needs_onboarding = False
+
+    if user is None:
+        # New user — create a MEMBER account. CHW accounts are never auto-created
+        # via social sign-in (CHWs are vetted and must register through the
+        # normal flow with background check / credentialing).
+        name = identity.name or identity.email.split("@")[0]
+        user = User(
+            email=identity.email.lower(),
+            password_hash=None,  # social users have no password
+            name=name,
+            role="member",
+        )
+        db.add(user)
+        await db.flush()  # populate user.id without ending transaction
+
+        # Create a minimal MemberProfile flagged as incomplete.
+        profile = MemberProfile(
+            user_id=user.id,
+            onboarding_complete=False,  # must complete onboarding before Pear sync
+        )
+        db.add(profile)
+        await db.commit()
+        await db.refresh(user)
+
+        needs_onboarding = True
+
+        # Schedule background tasks — fire-and-forget, same as /auth/register.
+        # They will short-circuit cleanly because is_pear_complete() returns False
+        # for a profile with no DOB/gender/insurance, so no Pear row is written
+        # until /auth/complete-member-onboarding supplies those fields.
+        background_tasks.add_task(_sync_new_member_to_pear, user.id)
+        background_tasks.add_task(_append_new_member_to_csv, user.id)
+    else:
+        # Existing user — check if they still need onboarding (OAuth-created members
+        # that haven't completed the form yet).
+        if user.role == "member":
+            existing_profile_result = await db.execute(
+                select(MemberProfile).where(MemberProfile.user_id == user.id)
+            )
+            existing_profile: MemberProfile | None = existing_profile_result.scalar_one_or_none()
+            if existing_profile is not None and not existing_profile.onboarding_complete:
+                needs_onboarding = True
+
+    access, refresh = create_tokens(user)
+    await store_refresh_token(db, user.id, refresh)
+    return OAuthTokenResponse(
+        access_token=access,
+        refresh_token=refresh,
+        role=user.role,
+        name=user.name,
+        needs_onboarding=needs_onboarding,
+    )
+
+
+@router.post(
+    "/oauth/google",
+    response_model=OAuthTokenResponse,
+    summary="Sign in or sign up with a Google id_token",
+)
+async def oauth_google(
+    data: OAuthRequest,
+    background_tasks: BackgroundTasks,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> OAuthTokenResponse:
+    """Exchange a Google id_token for Compass JWT access + refresh tokens.
+
+    The frontend (Google Identity Services JS SDK) completes the OAuth handshake
+    and sends only the id_token here. The backend verifies it cryptographically
+    against Google's public keys before taking any action.
+
+    - Provider not configured (GOOGLE_OAUTH_CLIENT_ID unset) → 503
+    - Invalid / expired / tampered token → 401
+    - Unverified email (email_verified=False) → 401
+    - Known email → sign in (any role); needs_onboarding=False
+    - New email → create MEMBER account; needs_onboarding=True
+    """
+    if not _settings.oauth_google_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Google OAuth is not configured on this server",
+        )
+
+    identity = await verify_google_id_token(data.id_token)
+    if identity is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired Google token")
+
+    if not identity.email_verified:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Google account email is not verified",
+        )
+
+    return await _handle_oauth_signin(identity, db, background_tasks)
+
+
+@router.post(
+    "/oauth/apple",
+    response_model=OAuthTokenResponse,
+    summary="Sign in or sign up with an Apple id_token",
+)
+async def oauth_apple(
+    data: OAuthRequest,
+    background_tasks: BackgroundTasks,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> OAuthTokenResponse:
+    """Exchange a Sign in with Apple id_token for Compass JWT access + refresh tokens.
+
+    The frontend (Sign in with Apple JS SDK) completes the OAuth handshake and
+    sends only the id_token here. The backend verifies it against Apple's JWKS.
+
+    Apple specifics:
+    - email may be a private-relay address (stored as-is)
+    - name is only present on first consent — handled gracefully
+    - email_verified may be the string "true" (coerced in verifier)
+
+    - Provider not configured (APPLE_OAUTH_CLIENT_ID unset) → 503
+    - Invalid / expired / tampered token → 401
+    - Known email → sign in (any role); needs_onboarding=False
+    - New email → create MEMBER account; needs_onboarding=True
+    """
+    if not _settings.oauth_apple_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Apple OAuth is not configured on this server",
+        )
+
+    identity = await verify_apple_id_token(data.id_token)
+    if identity is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired Apple token")
+
+    if not identity.email_verified:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Apple account email is not verified",
+        )
+
+    return await _handle_oauth_signin(identity, db, background_tasks)
+
+
+@router.post(
+    "/complete-member-onboarding",
+    response_model=None,
+    summary="Complete required profile fields for OAuth-registered members",
+)
+async def complete_member_onboarding(
+    data: CompleteOnboardingRequest,
+    background_tasks: BackgroundTasks,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """Supply the Pear-required fields for an OAuth-created member account.
+
+    OAuth-registered members skip the normal signup form (which requires DOB,
+    sex, insurance, CIN, ZIP). This endpoint accepts those fields, writes them
+    to the MemberProfile, flips onboarding_complete=True, and fires the same
+    post-signup background tasks (/auth/register fires) so the member appears
+    in Pear Suite and the member CSV after completing onboarding.
+
+    Authorization:
+    - Requires Bearer JWT (any valid user).
+    - Role must be "member" — CHWs get 403.
+    - Idempotent: calling twice overwrites fields and returns 200 both times.
+
+    Returns:
+    - 200 with MemberProfileResponse (the updated profile).
+    - 403 if caller is a CHW or admin.
+    - 422 if required fields are invalid (CIN validation applies).
+    """
+    from sqlalchemy import select
+
+    from app.models.user import MemberProfile
+    from app.schemas.user import MemberProfileResponse
+
+    if current_user.role != "member":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only members can complete onboarding",
+        )
+
+    result = await db.execute(
+        select(MemberProfile).where(MemberProfile.user_id == current_user.id)
+    )
+    profile = result.scalar_one_or_none()
+    if profile is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member profile not found")
+
+    # Write the Pear-required fields. Mirrors the allow-list in auth_service.register_user.
+    profile.date_of_birth = data.date_of_birth
+    profile.gender = data.gender
+    profile.insurance_company = data.insurance_company
+    profile.medi_cal_id = data.medi_cal_id  # already carrier-validated by CompleteOnboardingRequest
+    profile.zip_code = data.zip_code
+
+    # Optional address fields — write when supplied.
+    if data.address_line1 is not None:
+        profile.address_line1 = data.address_line1
+    if data.address_line2 is not None:
+        profile.address_line2 = data.address_line2
+    if data.city is not None:
+        profile.city = data.city
+    if data.state is not None:
+        profile.state = data.state
+
+    profile.onboarding_complete = True
+    await db.commit()
+    await db.refresh(profile)
+
+    # Fire the same post-signup background tasks as /auth/register — now that the
+    # profile is complete, Pear sync and CSV export will succeed where they
+    # previously short-circuited on the incomplete profile.
+    background_tasks.add_task(_sync_new_member_to_pear, current_user.id)
+    background_tasks.add_task(_append_new_member_to_csv, current_user.id)
+
+    return MemberProfileResponse(
+        id=profile.id,
+        user_id=profile.user_id,
+        zip_code=profile.zip_code,
+        primary_language=profile.primary_language,
+        primary_need=profile.primary_need,
+        rewards_balance=profile.rewards_balance,
+        insurance_provider=profile.insurance_provider,
+        insurance_company=profile.insurance_company,
+        name=current_user.name,
+        phone=current_user.phone,
+        email=current_user.email,
+        profile_picture_url=current_user.profile_picture_url,
+        preferred_name=profile.preferred_name,
+        date_of_birth=profile.date_of_birth,
+        gender=profile.gender,
+        address_line1=profile.address_line1,
+        address_line2=profile.address_line2,
+        city=profile.city,
+        state=profile.state,
+        medi_cal_id=profile.medi_cal_id,
+    )
+
+
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout(data: RefreshRequest, db: Annotated[AsyncSession, Depends(get_db)], current_user=Depends(get_current_user)):
     await revoke_refresh_token(db, data.refresh_token)
@@ -297,7 +574,8 @@ async def delete_account(
     # verify it.  Web clients on the Yes/No flow send no password and rely
     # on the JWT alone.
     if data.password is not None and data.password != "":
-        if not verify_password(data.password, current_user.password_hash):
+        # OAuth-registered users have no password — treat supplied password as incorrect.
+        if current_user.password_hash is None or not verify_password(data.password, current_user.password_hash):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Incorrect password",

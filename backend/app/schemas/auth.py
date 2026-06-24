@@ -149,3 +149,81 @@ class UserResponse(BaseModel):
     role: str
     is_onboarded: bool
     created_at: datetime
+
+
+# ─── Social OAuth schemas ─────────────────────────────────────────────────────
+
+class OAuthRequest(BaseModel):
+    """Request body for POST /auth/oauth/google and /auth/oauth/apple.
+
+    The client (Google Identity Services JS SDK or Sign in with Apple JS)
+    obtains the id_token after completing the OAuth handshake. Only the
+    id_token is sent here — the backend verifies it and issues our own JWTs.
+    """
+
+    id_token: str = Field(..., min_length=1, description="JWT id_token from the OAuth provider")
+
+
+class OAuthTokenResponse(BaseModel):
+    """Response for POST /auth/oauth/{google,apple}.
+
+    Mirrors TokenResponse (access_token, refresh_token, token_type, role, name)
+    and adds needs_onboarding so the FE can gate route navigation without an
+    extra /member/profile call. When True, the app must direct the user to the
+    onboarding completion screen before accessing the main app.
+    """
+
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+    role: str
+    name: str
+    needs_onboarding: bool = False
+
+
+class CompleteOnboardingRequest(BaseModel):
+    """Request body for POST /auth/complete-member-onboarding.
+
+    Validates the same fields as the member RegisterRequest (DOB, sex,
+    insurance, CIN, ZIP) but does NOT require a password — the member
+    authenticated via OAuth and has no password. The CIN is carrier-aware
+    validated using the same logic as RegisterRequest.
+
+    All address fields (address_line1, city, state) are OPTIONAL — they
+    can be filled later via PUT /member/profile before the first Pear sync.
+    """
+
+    date_of_birth: date
+    gender: SexEnum
+    insurance_company: str = Field(..., min_length=1)
+    medi_cal_id: str = Field(..., min_length=1)
+    zip_code: str = Field(..., min_length=1, max_length=10)
+
+    # Optional extras — same as RegisterRequest
+    address_line1: str | None = None
+    address_line2: str | None = None
+    city: str | None = None
+    state: str | None = Field(default=None, max_length=2)
+
+    @model_validator(mode="after")
+    def _validate_cin_and_fields(self) -> "CompleteOnboardingRequest":
+        """Carrier-aware CIN validation, mirroring RegisterRequest logic."""
+        raw_cin = (self.medi_cal_id or "").strip()
+        if not raw_cin:
+            raise ValueError("CIN (Medi-Cal ID) is required")
+
+        normalized_cin, cin_valid = validate_cin_for_carrier(raw_cin, self.insurance_company)
+        if not cin_valid:
+            raise ValueError(
+                "Double-check the member ID — Medi-Cal CINs look like 91234567A2, "
+                "or enter the full commercial/Medicare ID."
+            )
+        self.medi_cal_id = normalized_cin
+
+        if self.state is not None and self.state.strip():
+            normalized_state = self.state.strip().upper()
+            if len(normalized_state) != 2 or not normalized_state.isalpha():
+                raise ValueError("State must be a 2-letter USPS code (e.g. CA)")
+            self.state = normalized_state
+
+        return self

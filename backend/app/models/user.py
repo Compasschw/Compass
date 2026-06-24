@@ -13,7 +13,7 @@ class User(Base):
     __tablename__ = "users"
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
-    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     role: Mapped[str] = mapped_column(String(20), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     phone: Mapped[str | None] = mapped_column(String(20))
@@ -193,3 +193,15 @@ class MemberProfile(Base):
     preferred_mode: Mapped[str | None] = mapped_column(String(20))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    # ── Social sign-in onboarding gate ──────────────────────────────────────────
+    # True for all normal (password/magic-link) signups — those users supply
+    # every Pear-required field at registration.
+    # Set to False for OAuth-created members who bypassed the Pear-required
+    # signup form. POST /auth/complete-member-onboarding flips it to True once
+    # DOB/sex/insurance/CIN/ZIP are supplied.
+    # Exposed as ``needs_onboarding`` in the OAuth response and on the
+    # /member/profile endpoint so the FE can gate route navigation.
+    onboarding_complete: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="true"
+    )
