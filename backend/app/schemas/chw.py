@@ -15,12 +15,13 @@ HIPAA minimum-necessary enforcement (45 CFR §164.514(d)):
 - MapResourcePin: precise coordinates from the resource record (not PHI).
 """
 
-import re
 from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.schemas.cin_config import validate_cin_for_carrier as _validate_chw_cin
 
 
 class CHWMemberProfileView(BaseModel):
@@ -211,9 +212,6 @@ class PreferredNameResponse(BaseModel):
     preferred_name: str | None = None
 
 
-# CIN format: 8 digits + 1 letter (e.g. 12345678A). Mirrors the signup +
-# member-self-edit validators so CHW edits enforce the same billable format.
-_DEMO_CIN_PATTERN = re.compile(r"^\d{8}[A-Z]$")
 _DEMO_GENDER_VALUES = {"Male", "Female", "Other"}
 
 
@@ -245,14 +243,23 @@ class MemberDemographicsUpdate(BaseModel):
     @field_validator("medi_cal_id")
     @classmethod
     def _normalize_cin(cls, value: str | None) -> str | None:
+        """Normalize and validate the demo-seeding CIN when one is supplied.
+
+        Accepts Medi-Cal CINs, 14-char BICs, and commercial/Medicare IDs.
+        None / empty returns None (field is optional for demo seeds).
+        Cross-reference: validate_cin_for_carrier() in app/schemas/cin_config.py.
+        """
         if value is None:
             return None
-        cin = value.strip().upper()
-        if not cin:
+        stripped = value.strip()
+        if not stripped:
             return None
-        if not _DEMO_CIN_PATTERN.match(cin):
-            raise ValueError("CIN must be 8 digits followed by 1 letter (e.g. 12345678A)")
-        return cin
+        normalized, is_valid = _validate_chw_cin(stripped, None)
+        if not is_valid:
+            raise ValueError(
+                "Double-check the member ID — Medi-Cal CINs look like 91234567A2."
+            )
+        return normalized
 
     @field_validator("gender")
     @classmethod

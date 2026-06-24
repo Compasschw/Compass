@@ -177,17 +177,19 @@ export function RegisterScreen(): React.JSX.Element {
     EMAIL_PATTERN.test(email.trim()) &&
     password.length >= 8 &&
     !isSubmitting;
-  const cinIsValid = useMemo(() => {
+  // Signup CIN validation — WARN only, never blocks submit.
+  // Re-runs when either the CIN or the insurance selection changes so a
+  // carrier switch that invalidates the current CIN immediately shows the hint.
+  const cinIsPresent = useMemo(() => {
     if (!primaryCin.trim()) {
       setCinValidation(null);
       return false;
     }
     const result = validateCinForCarrier(primaryCin, insuranceCompany);
     setCinValidation(result);
-    // For confirmed carriers + default: gate submit on valid.
-    // For pending carriers: always allow submit (advisory hint only).
-    if (result.status === 'pending') return true;
-    return result.valid;
+    // Always return true when a non-empty CIN is entered — we never block
+    // submit at signup regardless of format (lenient-warn policy).
+    return true;
   }, [primaryCin, insuranceCompany]);
   const memberProfileOk =
     role !== 'member' ||
@@ -195,7 +197,7 @@ export function RegisterScreen(): React.JSX.Element {
       dobIso !== null &&
       sex !== null &&
       insuranceCompany.trim().length > 0 &&
-      cinIsValid &&
+      cinIsPresent &&
       zip.trim().length > 0
     );
   const canSubmit = accountBasicsOk && memberProfileOk;
@@ -483,16 +485,24 @@ export function RegisterScreen(): React.JSX.Element {
                   <TextInput
                     value={primaryCin}
                     onChangeText={(v) => setPrimaryCin(v.toUpperCase())}
-                    placeholder="8 digits + 1 letter (e.g. 12345678A)"
+                    placeholder="e.g. 91234567A2"
                     placeholderTextColor={colors.mutedForeground}
                     autoCapitalize="characters"
                     autoCorrect={false}
                     maxLength={14}
-                    style={s.input}
+                    style={[s.input, cinValidation !== null && !cinValidation.valid && s.inputWarning]}
                   />
                 </FormField>
                 {cinValidation !== null && !cinValidation.valid && (
-                  <Text style={s.cinHint}>{cinValidation.hint}</Text>
+                  <View style={s.cinWarningBanner}>
+                    <Text style={s.cinWarningText}>
+                      {cinValidation.hint}
+                      {'\n'}
+                      <Text style={s.cinWarningSubtext}>
+                        You can still register — verify the ID and update it in your profile if needed.
+                      </Text>
+                    </Text>
+                  </View>
                 )}
 
                 <SectionDivider label="Address" />
@@ -907,12 +917,32 @@ const s = StyleSheet.create({
     color: colors.primary,
   },
 
-  // Soft amber hint below the CIN field — advisory, never blocks submit.
-  cinHint: {
+  // Warning border on the CIN input when the format looks incorrect.
+  inputWarning: {
+    borderColor: '#D97706', // amber-600
+  },
+  // Visible warning banner below the CIN field — more prominent than the old
+  // soft amber hint. Never blocks submit (lenient-warn policy at signup).
+  cinWarningBanner: {
+    backgroundColor: '#FFFBEB', // amber-50
+    borderColor: '#F59E0B',     // amber-400
+    borderWidth: 1,
+    borderRadius: radii.md,
+    padding: 10,
+    marginTop: 6,
+    marginBottom: 2,
+  },
+  cinWarningText: {
+    fontSize: 13,
+    color: '#92400E', // amber-800
+    fontFamily: fonts.bodySemibold,
+    lineHeight: 18,
+  },
+  cinWarningSubtext: {
     fontSize: 12,
-    color: '#D97706', // amber-600
-    marginTop: 4,
+    color: '#78350F', // amber-900
     fontFamily: fonts.body,
+    fontWeight: '400',
   },
 
   // ── Expanded member signup additions ───────────────────────────────────

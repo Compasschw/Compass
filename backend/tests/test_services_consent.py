@@ -18,7 +18,6 @@ from httpx import AsyncClient
 
 from tests.conftest import auth_header, complete_member_signup_payload
 
-
 # ─── Schema-level unit tests (no DB, always run) ──────────────────────────────
 
 class TestServicesConsentSchema:
@@ -54,28 +53,35 @@ class TestServicesConsentSchema:
         assert obj.medi_cal_id == "99999999Z"
 
     def test_cin_too_short_raises(self):
+        # Lenient dual-pattern rules: input must be >= 6 chars to match the
+        # commercial pattern; anything shorter fails both patterns.
         from pydantic import ValidationError
 
         from app.schemas.member import InsuranceCINUpdate
 
         with pytest.raises(ValidationError):
-            InsuranceCINUpdate(insurance_company="Health Net", medi_cal_id="1234567A")
+            InsuranceCINUpdate(insurance_company="Health Net", medi_cal_id="12A")
 
-    def test_cin_missing_letter_raises(self):
+    def test_cin_numeric_accepted_as_commercial(self):
+        # A 9-digit numeric ID is no longer rejected — it matches the
+        # commercial/Medicare pattern (^[A-Z0-9]{6,15}$) and is accepted.
+        from app.schemas.member import InsuranceCINUpdate
+
+        obj = InsuranceCINUpdate(
+            insurance_company="Health Net", medi_cal_id="123456789"
+        )
+        assert obj.medi_cal_id == "123456789"
+
+    def test_cin_too_long_raises(self):
+        # 16+ chars fails both the Medi-Cal CIN and the 6-15 commercial pattern.
         from pydantic import ValidationError
 
         from app.schemas.member import InsuranceCINUpdate
 
         with pytest.raises(ValidationError):
-            InsuranceCINUpdate(insurance_company="Health Net", medi_cal_id="123456789")
-
-    def test_cin_too_many_letters_raises(self):
-        from pydantic import ValidationError
-
-        from app.schemas.member import InsuranceCINUpdate
-
-        with pytest.raises(ValidationError):
-            InsuranceCINUpdate(insurance_company="Health Net", medi_cal_id="1234567AB")
+            InsuranceCINUpdate(
+                insurance_company="Health Net", medi_cal_id="1234567890123456A"
+            )
 
 
 # ─── Guard helper unit test ────────────────────────────────────────────────────
@@ -570,10 +576,10 @@ class TestInsuranceCINEndpoint:
     async def test_invalid_cin_format_returns_422(
         self, client: AsyncClient, member_tokens: dict
     ):
-        """A CIN that doesn't match ^\\d{8}[A-Z]$ returns 422."""
+        """A CIN matching neither the Medi-Cal nor commercial pattern returns 422."""
         res = await client.patch(
             "/api/v1/member/profile/insurance-cin",
-            json={"insurance_company": "Health Net", "medi_cal_id": "ABCDEFGH1"},
+            json={"insurance_company": "Health Net", "medi_cal_id": "AB12"},
             headers=auth_header(member_tokens),
         )
         assert res.status_code == 422, res.text
@@ -581,10 +587,10 @@ class TestInsuranceCINEndpoint:
     async def test_cin_too_short_returns_422(
         self, client: AsyncClient, member_tokens: dict
     ):
-        """CIN with only 7 digits + 1 letter returns 422."""
+        """A CIN shorter than 6 chars matches neither pattern and returns 422."""
         res = await client.patch(
             "/api/v1/member/profile/insurance-cin",
-            json={"insurance_company": "Health Net", "medi_cal_id": "1234567A"},
+            json={"insurance_company": "Health Net", "medi_cal_id": "12A"},
             headers=auth_header(member_tokens),
         )
         assert res.status_code == 422, res.text

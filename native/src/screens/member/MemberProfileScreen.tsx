@@ -87,6 +87,8 @@ import { ErrorState } from '../../components/shared/ErrorState';
 import { DeleteAccountModal } from '../../components/profile/DeleteAccountModal';
 import { confirmAsync } from '../../utils/confirm';
 import {
+  CARRIER_CIN_CONFIG,
+  DISPLAY_LABEL_TO_KEY,
   INSURANCE_OPTIONS,
   validateCinForCarrier,
 } from '../../constants/insurance';
@@ -333,6 +335,24 @@ function EditProfileModal({
     }
   }, [visible, profile]);
 
+  /**
+   * Live CIN format error — re-computes whenever `cin` or `insurance` changes.
+   * Null when CIN is empty (optional field) or when it matches the carrier format.
+   * Non-null string is an error message that blocks the Save button.
+   *
+   * Carrier-aware: switching the Insurance dropdown re-validates the current
+   * CIN against the new carrier's format, so a mismatch caused by switching
+   * insurance also triggers the error + block immediately.
+   */
+  const cinFormatError = useMemo((): string | null => {
+    if (!cin.trim()) return null; // CIN field is empty — no error (optional on edit)
+    const result = validateCinForCarrier(cin, insurance);
+    if (result.valid) return null;
+    const carrierKey = DISPLAY_LABEL_TO_KEY[insurance] ?? '';
+    const example = CARRIER_CIN_CONFIG[carrierKey]?.example ?? '91234567A2';
+    return `${result.hint} Expected format: a Medi-Cal CIN like ${example} or a commercial/Medicare ID.`;
+  }, [cin, insurance]);
+
   const handleSubmit = useCallback(async () => {
     setError(null);
 
@@ -366,14 +386,14 @@ function EditProfileModal({
     if (insurance.trim()) payload.insuranceCompany = insurance.trim();
 
     if (cin.trim()) {
-      const result = validateCinForCarrier(cin, insurance);
-      // Confirmed carriers: show error but DO NOT block submission (lenient-warn policy).
-      // Pending carriers: always accept non-empty normalized value.
-      if (!result.valid && result.status === 'confirmed') {
-        setError(result.hint);
-        // Intentionally do NOT return — lenient policy: show hint, allow save.
-        // The backend will also accept and normalize plausible values.
+      // Profile edit: BLOCK save when the CIN doesn't match the selected
+      // insurance carrier's expected format. cinFormatError is the live
+      // validation computed from the current cin + insurance values.
+      if (cinFormatError) {
+        setError(cinFormatError);
+        return; // BLOCK the save — do not call the API until CIN is corrected
       }
+      const result = validateCinForCarrier(cin, insurance);
       payload.mediCalId = result.normalized;
     }
 
@@ -391,7 +411,7 @@ function EditProfileModal({
     }
   }, [
     fullName, preferredName, dob, sex, addr1, addr2, city, stateCode, zip,
-    language, insurance, cin, updateProfile, onSaved, onClose,
+    language, insurance, cin, cinFormatError, updateProfile, onSaved, onClose,
   ]);
 
   return (
@@ -588,17 +608,28 @@ function EditProfileModal({
             style={cinModalStyles.cinInput}
             value={cin}
             onChangeText={(t) => setCin(t.toUpperCase())}
-            placeholder="12345678A"
+            placeholder="e.g. 91234567A2"
             placeholderTextColor={tokens.textMuted}
             autoCapitalize="characters"
             autoCorrect={false}
             maxLength={14}
             accessibilityLabel="Medi-Cal CIN"
-            accessibilityHint="8 digits followed by 1 letter, or 14-char BIC"
+            accessibilityHint="Medi-Cal CIN (91234567A2), 14-char BIC, or commercial/Medicare ID"
           />
-          <Text style={cinModalStyles.cinHint}>Format: 8 digits + 1 letter, e.g. 12345678A</Text>
+          {/* Live CIN format error — shown as soon as the format looks wrong.
+              Blocks Save until the user corrects the CIN or insurance. */}
+          {cinFormatError !== null ? (
+            <Text style={cinModalStyles.errorText} accessibilityRole="alert">
+              {cinFormatError}
+            </Text>
+          ) : (
+            <Text style={cinModalStyles.cinHint}>
+              Medi-Cal CIN: 9 + 7 digits + letter + check digit (e.g. 91234567A2)
+            </Text>
+          )}
 
-          {error !== null && (
+          {/* General form error (DOB format, state format, etc.) */}
+          {error !== null && cinFormatError === null && (
             <Text style={cinModalStyles.errorText} accessibilityRole="alert">{error}</Text>
           )}
         </ScrollView>
@@ -613,9 +644,12 @@ function EditProfileModal({
             <Text style={cinModalStyles.cancelBtnText}>Cancel</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[cinModalStyles.saveBtn, updateProfile.isPending && cinModalStyles.saveBtnDisabled]}
+            style={[
+              cinModalStyles.saveBtn,
+              (updateProfile.isPending || cinFormatError !== null) && cinModalStyles.saveBtnDisabled,
+            ]}
             onPress={() => void handleSubmit()}
-            disabled={updateProfile.isPending}
+            disabled={updateProfile.isPending || cinFormatError !== null}
             accessibilityRole="button"
             accessibilityLabel="Save profile"
           >

@@ -1,13 +1,10 @@
-import re
 from datetime import date
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
-# Medi-Cal CIN: 8 digits + 1 letter (e.g. "12345678A"). Mirrors the signup
-# validator in app/schemas/auth.py so member self-service edits enforce the
-# same format the billing claim requires.
-_CIN_PATTERN = re.compile(r"^\d{8}[A-Z]$")
+from app.schemas.cin_config import validate_cin_for_carrier as _validate_cin
+
 # Pear Suite "sex" enum values accepted for the member's gender field.
 _GENDER_VALUES = {"Male", "Female", "Other"}
 
@@ -129,19 +126,24 @@ class MemberProfileUpdate(BaseModel):
     @field_validator("medi_cal_id")
     @classmethod
     def _normalize_cin(cls, value: str | None) -> str | None:
-        """Validate + uppercase-normalize the CIN when one is supplied.
+        """Normalize and validate the CIN when one is supplied on edit.
 
-        Mirrors the signup validator: 8 digits + 1 letter (e.g. 12345678A).
-        ``None`` / empty is left untouched (the field is optional on edit).
+        None / empty is left untouched (field is optional on PUT /member/profile).
+        Accepts Medi-Cal CINs (^9\\d{7}[A-Z]\\d?$), 14-char BICs (extracted to
+        10-char CIN), and commercial/Medicare IDs (^[A-Z0-9]{6,15}$).
+        Cross-reference: normalize_cin() in app/schemas/cin_config.py.
         """
         if value is None:
             return None
-        cin = value.strip().upper()
-        if not cin:
+        stripped = value.strip()
+        if not stripped:
             return None
-        if not _CIN_PATTERN.match(cin):
-            raise ValueError("CIN must be 8 digits followed by 1 letter (e.g. 12345678A)")
-        return cin
+        normalized, is_valid = _validate_cin(stripped, None)
+        if not is_valid:
+            raise ValueError(
+                "Double-check the member ID — Medi-Cal CINs look like 91234567A2."
+            )
+        return normalized
 
     @field_validator("gender")
     @classmethod

@@ -119,7 +119,7 @@ async def test_register_member_auto_creates_member_profile(client: AsyncClient):
             "date_of_birth": "1991-07-22",
             "gender": "Female",
             "insurance_company": "Health Net",
-            "medi_cal_id": "12345678A",
+            "medi_cal_id": "91234567A2",
             "zip_code": "90001",
         },
     )
@@ -237,7 +237,7 @@ def _complete_member_payload(email: str) -> dict:
         "date_of_birth": "1993-01-05",
         "gender": "Female",
         "insurance_company": "Health Net",
-        "medi_cal_id": "12345678A",
+        "medi_cal_id": "91234567A2",
         "address_line1": "1 Main St",
         "city": "Los Angeles",
         "state": "CA",
@@ -285,9 +285,13 @@ async def test_register_member_rejects_missing_pear_required_field(
 
 @pytest.mark.asyncio
 async def test_register_member_rejects_invalid_cin_format(client: AsyncClient):
-    """CIN must be 8 digits + 1 letter — invalid format is 422. (#14)"""
+    """CIN must match a valid Medi-Cal or commercial format — garbage is 422. (#14)
+
+    'BAD' (3 chars) matches neither the Medi-Cal CIN pattern (9+7digits+letter+check)
+    nor the commercial/Medicare fallback (min 6 chars) — hard 422.
+    """
     payload = _complete_member_payload(f"bad-cin-{uuid.uuid4()}@example.com")
-    payload["medi_cal_id"] = "ABCDEFGHI"  # all letters, no digits
+    payload["medi_cal_id"] = "BAD"  # 3 chars — too short for commercial, not a CIN
     res = await client.post("/api/v1/auth/register", json=payload)
     assert res.status_code == 422
 
@@ -296,7 +300,7 @@ async def test_register_member_rejects_invalid_cin_format(client: AsyncClient):
 async def test_register_member_normalizes_cin_to_uppercase(client: AsyncClient):
     """Lowercase CIN trailing letter is normalized before storage. (#14)"""
     payload = _complete_member_payload(f"lower-cin-{uuid.uuid4()}@example.com")
-    payload["medi_cal_id"] = "12345678a"  # lowercase trailing
+    payload["medi_cal_id"] = "91234567a2"  # lowercase — must be uppercased and accepted
     res = await client.post("/api/v1/auth/register", json=payload)
     assert res.status_code == 201, res.text
 
@@ -345,7 +349,7 @@ async def test_register_member_succeeds_with_only_minimum_fields(client: AsyncCl
             "date_of_birth": "1993-01-05",
             "gender": "Female",
             "insurance_company": "Health Net",
-            "medi_cal_id": "12345678A",
+            "medi_cal_id": "91234567A2",
             "zip_code": "90001",
             # Intentionally omitted: phone, address_line1, city, state
         },
@@ -379,7 +383,7 @@ async def test_register_member_still_rejects_missing_dob_sex_insurance_cin_zip(
         "date_of_birth": "1993-01-05",
         "gender": "Female",
         "insurance_company": "Health Net",
-        "medi_cal_id": "12345678A",
+        "medi_cal_id": "91234567A2",
         "zip_code": "90001",
     }
     payload[missing_field] = None
@@ -406,7 +410,7 @@ async def test_register_member_invalid_state_format_rejected_if_provided(
             "date_of_birth": "1993-01-05",
             "gender": "Female",
             "insurance_company": "Health Net",
-            "medi_cal_id": "12345678A",
+            "medi_cal_id": "91234567A2",
             "zip_code": "90001",
             "state": "CALIF",  # 5 chars — must still 422
         },
@@ -427,7 +431,7 @@ async def test_register_member_null_state_accepted(client: AsyncClient):
             "date_of_birth": "1993-01-05",
             "gender": "Female",
             "insurance_company": "Health Net",
-            "medi_cal_id": "12345678A",
+            "medi_cal_id": "91234567A2",
             "zip_code": "90001",
             # state omitted
         },
@@ -443,62 +447,130 @@ async def test_member_profile_put_creates_row_if_missing(client: AsyncClient, me
     res = await client.put(
         "/api/v1/member/profile",
         headers=auth_header(member_tokens),
-        # Valid CIN (8 digits + 1 letter) — the PUT now validates medi_cal_id
-        # format, so the prior junk placeholder ("9TEST12345") no longer passes.
-        json={"zip_code": "90210", "medi_cal_id": "12345678A"},
+        # Valid Medi-Cal CIN — the PUT now validates medi_cal_id format,
+        # so the prior junk placeholder ("9TEST12345") no longer passes.
+        json={"zip_code": "90210", "medi_cal_id": "91234567A2"},
     )
     assert res.status_code == 200
     assert res.json()["zip_code"] == "90210"
 
 
 # ── Carrier-aware CIN validation ─────────────────────────────────────────────
+#
+# Patterns (cross-reference: native/src/constants/insurance.ts):
+#   Medi-Cal CIN: ^9\d{7}[A-Z]\d?$  (9-char or 10-char)
+#   Commercial/Medicare: ^[A-Z0-9]{6,15}$
+#   BIC (14-char): 10-char CIN + 4-digit Julian date → extract leading 10 chars
+#
+# Policy: a value is valid if it matches EITHER pattern after normalization
+# (trim, uppercase, strip spaces+hyphens, extract BIC).
+# Hard-422 only when the input matches neither pattern.
 
 
 @pytest.mark.asyncio
-async def test_cin_confirmed_carrier_valid_cin_accepted(client: AsyncClient):
-    """A confirmed carrier (Health Net) with a correctly formatted CIN passes.
-    Regression: carrier-aware validator must not regress the happy path.
+async def test_cin_confirmed_carrier_valid_medi_cal_cin_accepted(
+    client: AsyncClient,
+) -> None:
+    """A confirmed carrier (Health Net) with a 10-char Medi-Cal CIN passes.
+
+    Regression: carrier-aware validator must not reject valid Medi-Cal CINs.
     """
-    payload = _complete_member_payload(f"cin-confirmed-ok-{uuid.uuid4()}@example.com")
-    # Health Net is a confirmed carrier; 12345678A is a valid CIN.
+    payload = _complete_member_payload(
+        f"cin-confirmed-ok-{uuid.uuid4()}@example.com"
+    )
     payload["insurance_company"] = "Health Net"
-    payload["medi_cal_id"] = "12345678A"
+    payload["medi_cal_id"] = "91234567A2"
     res = await client.post("/api/v1/auth/register", json=payload)
     assert res.status_code == 201, res.text
 
 
 @pytest.mark.asyncio
-async def test_cin_confirmed_carrier_invalid_cin_rejected(client: AsyncClient):
-    """A confirmed carrier (Anthem) with a clearly malformed CIN is 422'd.
-    'ABCDEFGHI' is all letters — not plausibly a CIN or BIC.
+async def test_cin_medi_cal_9char_no_check_digit_accepted(
+    client: AsyncClient,
+) -> None:
+    """A 9-char Medi-Cal CIN (no trailing check digit) is also accepted.
+
+    The DHCS CIN pattern allows both the 9-char card form (9+7digits+letter)
+    and the 10-char full form (9+7digits+letter+check digit).
     """
-    payload = _complete_member_payload(f"cin-confirmed-bad-{uuid.uuid4()}@example.com")
+    payload = _complete_member_payload(
+        f"cin-9char-{uuid.uuid4()}@example.com"
+    )
+    payload["insurance_company"] = "Health Net"
+    payload["medi_cal_id"] = "91234567A"  # 9-char, no check digit
+    res = await client.post("/api/v1/auth/register", json=payload)
+    assert res.status_code == 201, (
+        f"9-char Medi-Cal CIN (no check digit) must be accepted: {res.text}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_cin_medicare_mbi_style_accepted(client: AsyncClient) -> None:
+    """A Medicare MBI-style alphanumeric ID passes under the lenient policy.
+
+    MBIs are 11-char alphanumeric (e.g. '1EG4TE5MK72' after stripping hyphens).
+    The commercial/Medicare fallback pattern ^[A-Z0-9]{6,15}$ accepts these.
+    A numeric-only pattern would wrongly warn on letter-prefixed Medicare IDs.
+    """
+    payload = _complete_member_payload(
+        f"cin-mbi-{uuid.uuid4()}@example.com"
+    )
     payload["insurance_company"] = "Anthem Blue Cross Blue Shield"
-    payload["medi_cal_id"] = "ABCDEFGHI"
+    payload["medi_cal_id"] = "1EG4TE5MK72"  # 11-char MBI (hyphens pre-stripped)
+    res = await client.post("/api/v1/auth/register", json=payload)
+    assert res.status_code == 201, (
+        f"Medicare MBI-style ID must be accepted (no hard-422): {res.text}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_cin_confirmed_carrier_garbage_cin_rejected(
+    client: AsyncClient,
+) -> None:
+    """A confirmed carrier (Anthem) with a clearly garbage CIN is 422'd.
+
+    'BAD' is 3 chars — too short for the commercial pattern (min 6 chars) and
+    does not match the Medi-Cal CIN pattern. Matches neither → hard 422.
+    """
+    payload = _complete_member_payload(
+        f"cin-confirmed-bad-{uuid.uuid4()}@example.com"
+    )
+    payload["insurance_company"] = "Anthem Blue Cross Blue Shield"
+    payload["medi_cal_id"] = "BAD"  # 3 chars — too short for commercial, not a CIN
     res = await client.post("/api/v1/auth/register", json=payload)
     assert res.status_code == 422, res.text
 
 
 @pytest.mark.asyncio
-async def test_cin_pending_carrier_malformed_cin_accepted(client: AsyncClient):
-    """A pending carrier (Molina) with a non-empty but malformed CIN is ACCEPTED.
-    We must not block a real member over an unknown carrier format.
+async def test_cin_pending_carrier_malformed_cin_accepted(
+    client: AsyncClient,
+) -> None:
+    """Any non-empty plausible-length CIN is accepted under lenient policy.
+
+    All carriers are now 'confirmed', but the lenient-warn policy means a
+    value matching either pattern is valid. 'ABCDEFGHI' (9 uppercase letters)
+    matches the commercial/Medicare pattern ^[A-Z0-9]{6,15}$ so it passes.
+    This test ensures we don't over-restrict real members.
     """
-    payload = _complete_member_payload(f"cin-pending-bad-{uuid.uuid4()}@example.com")
+    payload = _complete_member_payload(
+        f"cin-lenient-{uuid.uuid4()}@example.com"
+    )
     payload["insurance_company"] = "Molina Healthcare California"
-    payload["medi_cal_id"] = "BADFORMAT"  # malformed but non-empty
+    payload["medi_cal_id"] = "ABCDEFGHI"  # 9 uppercase letters — commercial pattern matches
     res = await client.post("/api/v1/auth/register", json=payload)
     assert res.status_code == 201, (
-        f"Pending carrier should accept non-empty CIN regardless of format: {res.text}"
+        f"Plausible-length ID matching commercial pattern must be accepted: {res.text}"
     )
 
 
 @pytest.mark.asyncio
-async def test_cin_pending_carrier_empty_cin_still_rejected(client: AsyncClient):
-    """Even for pending carriers, an empty CIN is still 422 — CIN is required
-    for all members regardless of carrier status.
-    """
-    payload = _complete_member_payload(f"cin-pending-empty-{uuid.uuid4()}@example.com")
+async def test_cin_empty_cin_rejected_for_all_carriers(
+    client: AsyncClient,
+) -> None:
+    """An empty CIN is always 422 — CIN is required for all members."""
+    payload = _complete_member_payload(
+        f"cin-empty-{uuid.uuid4()}@example.com"
+    )
     payload["insurance_company"] = "Molina Healthcare California"
     payload["medi_cal_id"] = None
     res = await client.post("/api/v1/auth/register", json=payload)
@@ -506,48 +578,65 @@ async def test_cin_pending_carrier_empty_cin_still_rejected(client: AsyncClient)
 
 
 @pytest.mark.asyncio
-async def test_cin_bic_14_char_accepted_and_normalized(client: AsyncClient):
-    """A 14-char BIC is accepted; the stored CIN is the leading 9 chars.
+async def test_cin_bic_14_char_accepted_and_normalized(
+    client: AsyncClient,
+) -> None:
+    """A 14-char BIC is accepted; the stored CIN is the leading 10 chars.
 
-    BIC format: 9-char CIN + 1 check digit + 4-digit Julian date.
-    Input: "12345678A11164" (14 chars).
-    Expected stored CIN: "12345678A" (9 chars, the leading CIN portion).
-    This test verifies the normalization round-trip by checking the 201 response;
-    the stored value is confirmed via the member profile endpoint.
+    BIC format: 10-char CIN (9+7digits+letter+check) + 4-digit Julian date.
+    Input:  "91234567A21164"  (14 chars).
+    Stored: "91234567A2"     (10-char CIN, leading portion).
     """
     email = f"cin-bic-{uuid.uuid4()}@example.com"
     payload = _complete_member_payload(email)
-    payload["medi_cal_id"] = "12345678A11164"  # 14-char BIC
+    payload["medi_cal_id"] = "91234567A21164"  # 14-char BIC
     res = await client.post("/api/v1/auth/register", json=payload)
     assert res.status_code == 201, f"14-char BIC must be accepted: {res.text}"
 
-    # Confirm the stored CIN is the 9-char extracted form, not the raw BIC.
     token = res.json()["access_token"]
-    profile_res = await client.get(
-        "/api/v1/member/profile",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert profile_res.status_code == 200
-    # medi_cal_id is PHI-minimized in the profile response; confirm via PUT
-    # round-trip that the stored value is the 9-char CIN (PUT accepts it as-is).
+    # Confirm stored value is the 10-char CIN via PUT round-trip.
     put_res = await client.put(
         "/api/v1/member/profile",
         headers={"Authorization": f"Bearer {token}"},
-        json={"medi_cal_id": "12345678A"},  # valid CIN — must be accepted
+        json={"medi_cal_id": "91234567A2"},  # extracted 10-char CIN — must be accepted
     )
     assert put_res.status_code == 200, put_res.text
 
 
 @pytest.mark.asyncio
-async def test_cin_unknown_carrier_uses_default_strict_validation(client: AsyncClient):
-    """An unrecognized carrier name falls back to the default (confirmed) CIN
-    format: 8 digits + 1 letter. A malformed CIN with an unknown carrier is
-    therefore rejected.
+async def test_cin_bic_hyphens_and_spaces_stripped(
+    client: AsyncClient,
+) -> None:
+    """Hyphens and spaces in a CIN or MBI are stripped before matching.
+
+    MBIs are often written with hyphens (e.g. '1EG4-TE5-MK72'). We normalize
+    by stripping hyphens and spaces so the raw user input is accepted.
     """
-    payload = _complete_member_payload(f"cin-unknown-{uuid.uuid4()}@example.com")
+    payload = _complete_member_payload(
+        f"cin-hyphens-{uuid.uuid4()}@example.com"
+    )
+    payload["medi_cal_id"] = "9-1234567-A2"  # hyphens — normalizes to 91234567A2
+    res = await client.post("/api/v1/auth/register", json=payload)
+    assert res.status_code == 201, (
+        f"CIN with hyphens must be accepted after stripping: {res.text}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_cin_unknown_carrier_garbage_still_422(
+    client: AsyncClient,
+) -> None:
+    """An unrecognized carrier falls back to the default dual-pattern validation.
+
+    'BAD' (3 chars) matches neither the Medi-Cal pattern nor the commercial
+    pattern (min 6 chars) — so it is 422'd even for an unknown carrier.
+    """
+    payload = _complete_member_payload(
+        f"cin-unknown-{uuid.uuid4()}@example.com"
+    )
     payload["insurance_company"] = "Some Unknown HMO"
-    payload["medi_cal_id"] = "BADFORMAT"
+    payload["medi_cal_id"] = "BAD"  # 3 chars — too short for commercial, not a CIN
     res = await client.post("/api/v1/auth/register", json=payload)
     assert res.status_code == 422, (
-        f"Unknown carrier should use strict default validation: {res.text}"
+        f"Unknown carrier + garbage CIN must still 422: {res.text}"
     )

@@ -14,11 +14,12 @@ Fields deliberately excluded:
 - Any PHI from the CHW's own member caseload
 """
 
-import re
 from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.schemas.cin_config import validate_cin_for_carrier as _validate_cin_for_carrier
 
 
 class CHWMemberFacingProfile(BaseModel):
@@ -92,8 +93,6 @@ class CHWMemberFacingProfile(BaseModel):
 # ── Services Consent schemas (T03) ────────────────────────────────────────────
 
 _VALID_CONSENT_STATUSES = frozenset({"consent_to_services", "refuse_services"})
-
-_CIN_PATTERN = re.compile(r"^\d{8}[A-Za-z]$")
 
 
 class ServicesConsentResponse(BaseModel):
@@ -198,12 +197,17 @@ class InsuranceCINUpdate(BaseModel):
     @field_validator("medi_cal_id")
     @classmethod
     def validate_and_normalize_cin(cls, value: str) -> str:
-        """Validate CIN format and normalize to uppercase."""
-        normalized = value.strip().upper()
-        if not _CIN_PATTERN.match(normalized):
+        """Normalize and validate the CIN on insurance-CIN PATCH.
+
+        Accepts Medi-Cal CINs (^9\\d{7}[A-Z]\\d?$), 14-char BICs (extracted
+        to 10-char CIN), and commercial/Medicare IDs (^[A-Z0-9]{6,15}$).
+        Cross-reference: validate_cin_for_carrier() in app/schemas/cin_config.py.
+        """
+        normalized, is_valid = _validate_cin_for_carrier(value, None)
+        if not is_valid:
             raise ValueError(
-                "medi_cal_id must match pattern ^\\d{8}[A-Z]$ "
-                f"(8 digits followed by one letter). Got: {value!r}"
+                f"Double-check the member ID — Medi-Cal CINs look like 91234567A2. "
+                f"Got: {value!r}"
             )
         return normalized
 

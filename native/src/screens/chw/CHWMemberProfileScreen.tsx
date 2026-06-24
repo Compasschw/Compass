@@ -140,6 +140,8 @@ import {
   type MemberDemographicsUpdate,
 } from '../../hooks/useApiQueries';
 import {
+  CARRIER_CIN_CONFIG,
+  DISPLAY_LABEL_TO_KEY,
   INSURANCE_OPTIONS,
   validateCinForCarrier,
 } from '../../constants/insurance';
@@ -659,6 +661,23 @@ function EditDemographicsModal({
     }
   }, [visible, profile]);
 
+  /**
+   * Live CIN format error — re-computes whenever `cin` or `insurance` changes.
+   * Null when CIN is empty (optional for CHW edits) or when it matches the
+   * carrier format. Non-null string blocks the Save button.
+   *
+   * Carrier-aware: switching the Insurance dropdown re-validates the current
+   * CIN against the new carrier's format immediately.
+   */
+  const cinFormatError = useMemo((): string | null => {
+    if (!cin.trim()) return null;
+    const result = validateCinForCarrier(cin, insurance);
+    if (result.valid) return null;
+    const carrierKey = DISPLAY_LABEL_TO_KEY[insurance] ?? '';
+    const example = CARRIER_CIN_CONFIG[carrierKey]?.example ?? '91234567A2';
+    return `${result.hint} Expected format: a Medi-Cal CIN like ${example} or a commercial/Medicare ID.`;
+  }, [cin, insurance]);
+
   // Esc key closes on web.
   useEffect(() => {
     if (Platform.OS !== 'web' || !visible) return;
@@ -693,13 +712,15 @@ function EditDemographicsModal({
     if (insurance.trim()) payload.insurance = insurance.trim();
 
     if (cin.trim()) {
-      const result = validateCinForCarrier(cin, insurance);
-      // Lenient-warn: show the hint for confirmed carriers but never hard-block.
-      // Pending carriers: always accept non-empty normalized value.
-      if (!result.valid && result.status === 'confirmed') {
-        setError(result.hint);
-        // Do NOT return — lenient policy, allow save with hint shown.
+      // Profile edit: BLOCK save when the CIN doesn't match the selected
+      // insurance carrier's expected format. cinFormatError is the live
+      // validation computed from the current cin + insurance values.
+      // Re-validates when either the CIN or insurance dropdown changes.
+      if (cinFormatError) {
+        setError(cinFormatError);
+        return; // BLOCK the save — do not call the API until CIN is corrected
       }
+      const result = validateCinForCarrier(cin, insurance);
       payload.mediCalId = result.normalized;
     } else {
       payload.mediCalId = null;
@@ -733,7 +754,7 @@ function EditDemographicsModal({
     }
   }, [
     firstName, lastName, preferredName, dob, sex, insurance, cin,
-    addr1, addr2, city, stateCode, zip, phone, language,
+    cinFormatError, addr1, addr2, city, stateCode, zip, phone, language,
     updateDemographics, onClose,
   ]);
 
@@ -919,18 +940,28 @@ function EditDemographicsModal({
 
         <Text style={[editDemoStyles.fieldLabel, editDemoStyles.fieldLabelSpaced]}>Member ID / Medi-Cal CIN</Text>
         <TextInput
-          style={editDemoStyles.input}
+          style={[editDemoStyles.input, cinFormatError !== null && editDemoStyles.inputError]}
           value={cin}
           onChangeText={(t) => setCin(t.toUpperCase())}
-          placeholder="12345678A"
+          placeholder="e.g. 91234567A2"
           placeholderTextColor="#9CA3AF"
           autoCapitalize="characters"
           autoCorrect={false}
           maxLength={14}
           accessibilityLabel="Medi-Cal CIN"
-          accessibilityHint="8 digits followed by 1 letter, or 14-char BIC"
+          accessibilityHint="Medi-Cal CIN (91234567A2), 14-char BIC, or commercial/Medicare ID"
         />
-        <Text style={editDemoStyles.hint}>8 digits + 1 letter, e.g. 12345678A</Text>
+        {/* Live CIN format error — shown as soon as the format looks wrong.
+            Blocks Save until the user corrects the CIN or insurance selection. */}
+        {cinFormatError !== null ? (
+          <Text style={editDemoStyles.cinError} accessibilityRole="alert">
+            {cinFormatError}
+          </Text>
+        ) : (
+          <Text style={editDemoStyles.hint}>
+            Medi-Cal CIN: 9 + 7 digits + letter + check digit (e.g. 91234567A2)
+          </Text>
+        )}
 
         <View style={editDemoStyles.divider} />
         <Text style={editDemoStyles.sectionLabel}>Address</Text>
@@ -1041,10 +1072,10 @@ function EditDemographicsModal({
         <TouchableOpacity
           style={[
             editDemoStyles.saveBtn,
-            updateDemographics.isPending && editDemoStyles.saveBtnDisabled,
+            (updateDemographics.isPending || cinFormatError !== null) && editDemoStyles.saveBtnDisabled,
           ]}
           onPress={() => { void handleSave(); }}
-          disabled={updateDemographics.isPending}
+          disabled={updateDemographics.isPending || cinFormatError !== null}
           accessibilityRole="button"
           accessibilityLabel="Save demographics"
         >
@@ -1189,12 +1220,26 @@ const editDemoStyles = StyleSheet.create({
     backgroundColor: '#FAFAFA',
   } as TextStyle,
 
-  // Hint text (below CIN input)
+  // Hint text (below CIN input — shown when CIN is valid or empty)
   hint: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 11,
     color: '#9CA3AF',
     marginTop: 4,
+  } as TextStyle,
+
+  // Red border on the CIN input when the format looks incorrect
+  inputError: {
+    borderColor: '#DC2626',
+  } as ViewStyle,
+
+  // Live CIN format error message — blocks Save until corrected
+  cinError: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12,
+    color: '#DC2626',
+    marginTop: 4,
+    lineHeight: 18,
   } as TextStyle,
 
   // Sex dropdown
