@@ -184,6 +184,34 @@ export interface CinValidationResult {
 }
 
 /**
+ * Returns a carrier-aware sentence describing the expected member ID format for
+ * the given insurance company label.
+ *
+ * When a known carrier is selected the message names the carrier and its
+ * expected example, e.g.:
+ *   "For LA Care Health Plan, the member ID should look like 91234567A2 (Medi-Cal CIN)."
+ *
+ * When no carrier is selected or the label is unknown, falls back to a generic
+ * message:
+ *   "Member IDs look like 91234567A2 (Medi-Cal CIN)."
+ *
+ * All format/example text is sourced from CARRIER_CIN_CONFIG — no patterns are
+ * hardcoded here, so per-carrier divergence will automatically flow through.
+ *
+ * @param insuranceDisplayLabel - The display label selected in the insurance
+ *   dropdown (e.g. "Health Net"). Empty string / unknown label triggers fallback.
+ */
+export function expectedFormatMessage(insuranceDisplayLabel: string): string {
+  const canonicalKey = DISPLAY_LABEL_TO_KEY[insuranceDisplayLabel];
+  const config = canonicalKey ? CARRIER_CIN_CONFIG[canonicalKey] : undefined;
+  const example = config?.example ?? '91234567A2';
+  if (!insuranceDisplayLabel.trim() || !config) {
+    return `Member IDs look like ${example} (Medi-Cal CIN).`;
+  }
+  return `For ${insuranceDisplayLabel}, the member ID should look like ${example} (Medi-Cal CIN).`;
+}
+
+/**
  * Normalize a CIN and validate it against the carrier's expected formats.
  *
  * A value is considered valid (no warning shown) if, after normalization,

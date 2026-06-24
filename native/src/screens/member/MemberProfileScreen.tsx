@@ -87,10 +87,9 @@ import { ErrorState } from '../../components/shared/ErrorState';
 import { DeleteAccountModal } from '../../components/profile/DeleteAccountModal';
 import { confirmAsync } from '../../utils/confirm';
 import {
-  CARRIER_CIN_CONFIG,
-  DISPLAY_LABEL_TO_KEY,
   INSURANCE_OPTIONS,
   validateCinForCarrier,
+  expectedFormatMessage,
 } from '../../constants/insurance';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -348,9 +347,7 @@ function EditProfileModal({
     if (!cin.trim()) return null; // CIN field is empty — no error (optional on edit)
     const result = validateCinForCarrier(cin, insurance);
     if (result.valid) return null;
-    const carrierKey = DISPLAY_LABEL_TO_KEY[insurance] ?? '';
-    const example = CARRIER_CIN_CONFIG[carrierKey]?.example ?? '91234567A2';
-    return `${result.hint} Expected format: a Medi-Cal CIN like ${example} or a commercial/Medicare ID.`;
+    return `${expectedFormatMessage(insurance)} Also accepted: commercial/Medicare IDs.`;
   }, [cin, insurance]);
 
   const handleSubmit = useCallback(async () => {

@@ -47,6 +47,7 @@ import type { AuthStackParamList } from '../../navigation/AppNavigator';
 import {
   INSURANCE_OPTIONS,
   validateCinForCarrier,
+  expectedFormatMessage,
   type CinValidationResult,
 } from '../../constants/insurance';
 
@@ -448,7 +449,7 @@ export function RegisterScreen(): React.JSX.Element {
                 {/* Sex — modal-picker dropdown */}
                 <FormField label="Sex" icon={<Users size={18} color={colors.mutedForeground} />}>
                   <Pressable
-                    style={s.input}
+                    style={[s.input, s.pickerTrigger]}
                     onPress={() => setSexPickerOpen(true)}
                     accessibilityRole="button"
                     accessibilityLabel="Select sex"
@@ -465,7 +466,7 @@ export function RegisterScreen(): React.JSX.Element {
                 {/* Primary Insurance Company — modal-picker dropdown */}
                 <FormField label="Primary insurance company" icon={<Building2 size={18} color={colors.mutedForeground} />}>
                   <Pressable
-                    style={s.input}
+                    style={[s.input, s.pickerTrigger]}
                     onPress={() => setInsurancePickerOpen(true)}
                     accessibilityRole="button"
                     accessibilityLabel="Select primary insurance company"
@@ -496,7 +497,7 @@ export function RegisterScreen(): React.JSX.Element {
                 {cinValidation !== null && !cinValidation.valid && (
                   <View style={s.cinWarningBanner}>
                     <Text style={s.cinWarningText}>
-                      {cinValidation.hint}
+                      {expectedFormatMessage(insuranceCompany)}
                       {'\n'}
                       <Text style={s.cinWarningSubtext}>
                         You can still register — verify the ID and update it in your profile if needed.
@@ -972,10 +973,14 @@ const s = StyleSheet.create({
     fontSize: 14,
     fontFamily: fonts.body,
     color: colors.foreground,
-    alignSelf: 'center',
+    textAlign: 'center',
   },
   pickerPlaceholder: {
     color: colors.mutedForeground,
+  },
+  pickerTrigger: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   pickerChevron: {
     position: 'absolute',

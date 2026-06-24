@@ -140,10 +140,9 @@ import {
   type MemberDemographicsUpdate,
 } from '../../hooks/useApiQueries';
 import {
-  CARRIER_CIN_CONFIG,
-  DISPLAY_LABEL_TO_KEY,
   INSURANCE_OPTIONS,
   validateCinForCarrier,
+  expectedFormatMessage,
 } from '../../constants/insurance';
 
 // ─── Navigation types ─────────────────────────────────────────────────────────
@@ -673,9 +672,7 @@ function EditDemographicsModal({
     if (!cin.trim()) return null;
     const result = validateCinForCarrier(cin, insurance);
     if (result.valid) return null;
-    const carrierKey = DISPLAY_LABEL_TO_KEY[insurance] ?? '';
-    const example = CARRIER_CIN_CONFIG[carrierKey]?.example ?? '91234567A2';
-    return `${result.hint} Expected format: a Medi-Cal CIN like ${example} or a commercial/Medicare ID.`;
+    return `${expectedFormatMessage(insurance)} Also accepted: commercial/Medicare IDs.`;
   }, [cin, insurance]);
 
   // Esc key closes on web.
