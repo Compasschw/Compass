@@ -75,9 +75,6 @@ import {
   ShieldX,
   Star,
   User,
-  CheckSquare,
-  UploadCloud,
-  ChevronRight,
   ClipboardList,
   X,
 } from 'lucide-react-native';
@@ -98,7 +95,6 @@ import {
   Pill,
   PressableCard,
   RightDrawer,
-  RightRail,
   SectionHeader,
   StaggerList,
 } from '../../components/ui';
@@ -7731,14 +7727,13 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
               ─────────────────────────────────────────────────────
               On viewports >= 1024px (isOpenQuestionsInline = true):
                 contentRow is a flex-row. When the drawer is open, it renders
-                as a flex sibling of mainCol — the Quick Access rail is hidden
-                to avoid crowding three columns. The drawer occupies
+                as a flex sibling of mainCol. The drawer occupies
                 OPEN_QUESTIONS_INLINE_WIDTH px on the right, mainCol takes the
                 remaining flex:1 space.
 
               On narrower viewports / native:
                 The drawer renders as a fixed overlay outside the ScrollView
-                (see below). The Quick Access rail is always shown.
+                (see below). mainCol is full-width.
             */}
             <View style={s.contentRow}>
               <View style={s.mainCol}>
@@ -7860,17 +7855,6 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                   />
                 </SectionCard>
 
-                {/* ─────────────────────────────────────────────────────────
-                    HIPAA notice
-                ─────────────────────────────────────────────────────── */}
-                <View style={s.hipaaNotice}>
-                  <Text style={s.hipaaNoticeText}>
-                    This view shows only the information needed for care delivery.
-                    Member identifiers, raw insurance details, notes from other CHWs,
-                    and session transcripts are not displayed
-                    (HIPAA minimum necessary — 45 CFR §164.514(d)).
-                  </Text>
-                </View>
 
               </View>
 
@@ -7923,47 +7907,6 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                 />
               )}
 
-              {/* ── Web right rail: Quick Access (hidden when inline drawer is open) ── */}
-              {Platform.OS === 'web' && !(isOpenQuestionsInline && openQuestionsOpen) && (
-                <RightRail width={240}>
-                  {/* Open Questions card */}
-                  <Card style={s.railCard}>
-                    <Text style={s.railCardTitle}>Quick Access</Text>
-                    <RailAccessItem
-                      icon={<NotebookPen size={14} color="#2563EB" />}
-                      iconBg="#EFF6FF"
-                      label="Case Notes"
-                      sublabel="View all notes"
-                      onPress={() => setCaseNotesOpen(true)}
-                    />
-                    <RailAccessItem
-                      icon={<CheckSquare size={14} color="#EA580C" />}
-                      iconBg="#FFF7ED"
-                      label="Screening Results"
-                      sublabel={
-                        assessmentLatest?.responses?.length
-                          ? `${assessmentLatest.responses.length} answers`
-                          : 'View answers'
-                      }
-                      onPress={() => setShowScreening(true)}
-                    />
-                    <RailAccessItem
-                      icon={<CheckCircle size={14} color="#16A34A" />}
-                      iconBg="#F0FDF4"
-                      label="Eligibility Verification"
-                      sublabel="CalFresh pending"
-                      onPress={() => setEligibilityOpen(true)}
-                    />
-                    <RailAccessItem
-                      icon={<UploadCloud size={14} color="#64748B" />}
-                      iconBg="#F8FAFC"
-                      label="Uploaded Documents"
-                      sublabel="Member uploads"
-                      onPress={() => setDocumentsOpen(true)}
-                    />
-                  </Card>
-                </RightRail>
-              )}
             </View>
 
           </View>
@@ -8138,73 +8081,6 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
   );
 }
 
-// ─── RailAccessItem (web right-rail only) ────────────────────────────────────
-
-interface RailAccessItemProps {
-  icon: React.ReactNode;
-  label: string;
-  sublabel?: string;
-  iconBg?: string;
-  onPress: () => void;
-}
-
-function RailAccessItem({
-  icon,
-  label,
-  sublabel,
-  iconBg = '#EFF6FF',
-  onPress,
-}: RailAccessItemProps): React.JSX.Element {
-  return (
-    <TouchableOpacity
-      style={railItemStyles.item}
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-    >
-      <View style={[railItemStyles.iconWrap, { backgroundColor: iconBg }]}>{icon}</View>
-      <View style={railItemStyles.labelWrap}>
-        <Text style={railItemStyles.label}>{label}</Text>
-        {sublabel ? <Text style={railItemStyles.sublabel}>{sublabel}</Text> : null}
-      </View>
-      <ChevronRight size={12} color="#D1D5DB" />
-    </TouchableOpacity>
-  );
-}
-
-const railItemStyles = StyleSheet.create({
-  item: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 9,
-    paddingHorizontal: 4,
-    borderRadius: radius.md,
-  } as ViewStyle,
-  iconWrap: {
-    width: 30,
-    height: 30,
-    borderRadius: radius.sm,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  } as ViewStyle,
-  labelWrap: {
-    flex: 1,
-    gap: 1,
-  } as ViewStyle,
-  label: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 12,
-    color: '#111827',
-  } as TextStyle,
-  sublabel: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 10,
-    color: '#6B7280',
-  } as TextStyle,
-});
-
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const s = StyleSheet.create({
@@ -8292,18 +8168,6 @@ const s = StyleSheet.create({
   } as ViewStyle,
   mainCol: { flex: 1 } as ViewStyle,
 
-  // Web right rail card
-  railCard: {
-    padding: 16,
-    gap: 2,
-  } as ViewStyle,
-  railCardTitle: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 13,
-    color: '#111827',
-    marginBottom: 10,
-  } as TextStyle,
-
   // Count badge (sessions header)
   countBadge: {
     backgroundColor: tokens.primary + '15',
@@ -8379,24 +8243,6 @@ const s = StyleSheet.create({
     fontSize: 12,
     color: tokens.primary,
     flexShrink: 0,
-  } as TextStyle,
-
-  // HIPAA notice
-  hipaaNotice: {
-    backgroundColor: '#F4F1ED',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#DDD6CC',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    marginBottom: 8,
-  } as ViewStyle,
-  hipaaNoticeText: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 11,
-    color: '#6B7280',
-    lineHeight: 17,
-    textAlign: 'center',
   } as TextStyle,
 
   // Error / 403 state
