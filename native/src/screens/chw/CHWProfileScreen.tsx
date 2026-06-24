@@ -1417,9 +1417,14 @@ const pageStyles = StyleSheet.create({
   scroll: { flex: 1 } as ViewStyle,
   scrollContent: { flexGrow: 1 } as ViewStyle,
   pageWrap: {
-    padding:   32,
-    width:     '100%',
-    alignSelf: 'stretch',
+    // paddingTop intentionally omitted: AppShell's mainContent ScrollView
+    // already applies 32px of top padding via contentContainerStyle. Adding
+    // it here doubles the gap above "Settings" vs. screens that pass content
+    // directly into AppShell without a nested ScrollView (e.g. CHWMembersScreen).
+    paddingHorizontal: 32,
+    paddingBottom:     32,
+    width:             '100%',
+    alignSelf:         'stretch',
   } as ViewStyle,
 
   // Main settings card

@@ -814,7 +814,11 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 1600,
     alignSelf: 'center',
-    padding: 32,
+    // paddingTop intentionally omitted: AppShell's mainContent already
+    // provides 32px of top padding via its ScrollView contentContainerStyle.
+    // Adding top padding here doubled the gap above "Earnings" vs. screens
+    // that don't own a nested ScrollView (e.g. CHWMembersScreen).
+    paddingHorizontal: 32,
     paddingBottom: 48,
   } as ViewStyle,
 

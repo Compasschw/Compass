@@ -880,10 +880,15 @@ const styles = StyleSheet.create({
   // dashboard's natural size; on a 2400+ px display the cap was leaving a
   // dead band on the right. Removing maxWidth makes the dashboard expand
   // edge-to-edge inside AppShell, matching what the user sees in the mock.
+  //
+  // paddingTop is intentionally omitted: AppShell's mainContent already
+  // provides 32px of top padding. Adding it here doubled the gap above the
+  // greeting title vs. other screens (Members etc.) that don't own a nested
+  // ScrollView. Horizontal padding and paddingBottom are kept as-is.
   pageWrapWeb: {
     width: '100%',
     alignSelf: 'stretch',
-    padding: spacing.xxxl,
+    paddingHorizontal: spacing.xxxl,
     paddingBottom: 48,
   } as ViewStyle,
 
