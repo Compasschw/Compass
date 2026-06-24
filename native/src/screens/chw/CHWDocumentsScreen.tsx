@@ -37,6 +37,7 @@ import {
   Linking,
   Modal,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -693,6 +694,90 @@ function MemberDocumentGroup({
   );
 }
 
+// ─── Picker row sub-components ────────────────────────────────────────────────
+
+/**
+ * PickerMemberRow — a single selectable member row in the upload-picker drawer.
+ *
+ * Uses `Pressable` instead of `TouchableOpacity` so we can attach `onHoverIn`/
+ * `onHoverOut` for the web cursor and hover-tint affordance. `TouchableOpacity`
+ * does not expose those handlers on react-native-web, and was also unreliable
+ * inside a `RightDrawer` scroll region on web before the backdrop zIndex fix.
+ *
+ * Each row owns its own `hovered` state to avoid O(n) re-renders of siblings.
+ */
+function PickerMemberRow({
+  member,
+  onSelect,
+}: {
+  member: MembersRosterItem;
+  onSelect: (member: MembersRosterItem) => void;
+}): React.JSX.Element {
+  const [hovered, setHovered] = useState(false);
+
+  return (
+    <Pressable
+      onPress={() => onSelect(member)}
+      onHoverIn={() => setHovered(true)}
+      onHoverOut={() => setHovered(false)}
+      accessible
+      accessibilityRole="button"
+      accessibilityLabel={`Select ${member.displayName}`}
+      style={[
+        styles.pickerMemberRow,
+        hovered && styles.pickerMemberRowHover,
+      ]}
+    >
+      <View style={styles.memberAvatar}>
+        <Text style={styles.memberAvatarText}>{member.avatarInitials}</Text>
+      </View>
+      <View style={styles.pickerMemberRowText}>
+        <Text style={styles.pickerMemberName} numberOfLines={1}>
+          {member.displayName}
+        </Text>
+        <Text style={styles.pickerMemberMeta} numberOfLines={1}>
+          {member.maskedId}
+          {member.age != null ? ` · ${member.age} yrs` : ''}
+        </Text>
+      </View>
+    </Pressable>
+  );
+}
+
+/**
+ * PickerDocTypeRow — a single selectable document-type row in the upload-picker
+ * drawer. Uses the same `Pressable` + hover-state pattern as `PickerMemberRow`
+ * for consistency and reliable web click handling.
+ */
+function PickerDocTypeRow({
+  docType,
+  onSelect,
+}: {
+  docType: DocumentType;
+  onSelect: (docType: DocumentType) => void;
+}): React.JSX.Element {
+  const [hovered, setHovered] = useState(false);
+
+  return (
+    <Pressable
+      onPress={() => onSelect(docType)}
+      onHoverIn={() => setHovered(true)}
+      onHoverOut={() => setHovered(false)}
+      accessible
+      accessibilityRole="button"
+      accessibilityLabel={`Upload ${DOC_TYPE_LABELS[docType]}`}
+      style={[
+        styles.docTypeRow,
+        hovered && styles.docTypeRowHover,
+      ]}
+    >
+      <DocTypeIcon docType={docType} size={18} />
+      <Text style={styles.docTypeLabel}>{DOC_TYPE_LABELS[docType]}</Text>
+      <Plus size={14} color={colors.textSecondary} />
+    </Pressable>
+  );
+}
+
 // ─── CHWUploadTrigger ─────────────────────────────────────────────────────────
 
 /**
@@ -851,29 +936,11 @@ function CHWUploadTrigger({
                 keyboardShouldPersistTaps="handled"
               >
                 {filteredMembers.map((m) => (
-                  <TouchableOpacity
+                  <PickerMemberRow
                     key={m.id}
-                    style={styles.pickerMemberRow}
-                    onPress={() => setSelectedMember(m)}
-                    accessible
-                    accessibilityRole="button"
-                    accessibilityLabel={`Select ${m.displayName}`}
-                  >
-                    <View style={styles.memberAvatar}>
-                      <Text style={styles.memberAvatarText}>
-                        {m.avatarInitials}
-                      </Text>
-                    </View>
-                    <View style={styles.pickerMemberRowText}>
-                      <Text style={styles.pickerMemberName} numberOfLines={1}>
-                        {m.displayName}
-                      </Text>
-                      <Text style={styles.pickerMemberMeta} numberOfLines={1}>
-                        {m.maskedId}
-                        {m.age != null ? ` · ${m.age} yrs` : ''}
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
+                    member={m}
+                    onSelect={setSelectedMember}
+                  />
                 ))}
               </ScrollView>
             )}
@@ -890,18 +957,11 @@ function CHWUploadTrigger({
               <Text style={styles.backText}>Back to members</Text>
             </TouchableOpacity>
             {DOC_TYPE_OPTIONS.map((dt) => (
-              <TouchableOpacity
+              <PickerDocTypeRow
                 key={dt}
-                style={styles.docTypeRow}
-                onPress={() => handleSelectDocType(dt)}
-                accessible
-                accessibilityRole="button"
-                accessibilityLabel={`Upload ${DOC_TYPE_LABELS[dt]}`}
-              >
-                <DocTypeIcon docType={dt} size={18} />
-                <Text style={styles.docTypeLabel}>{DOC_TYPE_LABELS[dt]}</Text>
-                <Plus size={14} color={colors.textSecondary} />
-              </TouchableOpacity>
+                docType={dt}
+                onSelect={handleSelectDocType}
+              />
             ))}
           </View>
         )}
@@ -1683,6 +1743,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xs,
     borderBottomWidth: 1,
     borderBottomColor: '#f3f4f6',
+    // Web: pointer cursor so the row is obviously selectable.
+    cursor: 'pointer' as unknown as undefined,
+    borderRadius: radius.sm,
+  } as ViewStyle,
+
+  pickerMemberRowHover: {
+    backgroundColor: colors.gray100,
+    // Web: subtle elevation shadow matching the codebase's card hover pattern.
+    ...(Platform.OS === 'web'
+      ? { boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }
+      : {}),
   } as ViewStyle,
 
   pickerMemberRowText: {
@@ -1722,6 +1793,17 @@ const styles = StyleSheet.create({
     borderColor: colors.cardBorder,
     borderRadius: radius.md,
     backgroundColor: colors.cardBg,
+    // Web: pointer cursor so the row is obviously selectable.
+    cursor: 'pointer' as unknown as undefined,
+  } as ViewStyle,
+
+  docTypeRowHover: {
+    backgroundColor: colors.gray100,
+    borderColor: colors.primary,
+    // Web: subtle elevation shadow on hover.
+    ...(Platform.OS === 'web'
+      ? { boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }
+      : {}),
   } as ViewStyle,
 
   docTypeLabel: {

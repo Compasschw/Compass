@@ -448,6 +448,11 @@ const webStyles = StyleSheet.create({
     borderLeftWidth: 1,
     borderLeftColor: colors.cardBorder,
     flexDirection:   'column',
+    // Must be above the backdrop Pressable (which has no zIndex, so defaults to
+    // stacking order = DOM position). Without this, the backdrop — rendered first
+    // in the tree — intercepts all pointer events over the panel area on web,
+    // making every interactive element inside the drawer unclickable.
+    zIndex:          1,
   } as ViewStyle,
 
   body: {
