@@ -29,11 +29,17 @@ from uuid import UUID, uuid4
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import func, select
 
-from app.models.journeys import WellnessPointsLedger
+from app.models.journeys import (
+    JourneyTemplate,
+    JourneyTemplateStep,
+    MemberJourney,
+    MemberJourneyStepState,
+    WellnessPointsLedger,
+)
 from app.services.journey_seeds import seed_default_journey_templates
-from tests.conftest import auth_header, test_session
+from tests.conftest import auth_header, complete_member_signup_payload, test_session
 
 # ─── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -102,6 +108,27 @@ async def _create_custom_journey(
         json={"member_id": member_id, "title": title},
         headers=auth_header(chw_tokens),
     )
+    assert res.status_code == 201, res.text
+    return res.json()
+
+
+async def _register_user(
+    client: AsyncClient,
+    email: str,
+    role: str,
+    name: str,
+) -> dict:
+    """Register a new user and return the token dict.
+
+    Members require all Pear-required fields (date_of_birth, gender, etc.) —
+    uses ``complete_member_signup_payload`` for that role. CHWs only need the
+    basic fields.
+    """
+    if role == "member":
+        payload = complete_member_signup_payload(email=email, name=name)
+    else:
+        payload = {"email": email, "password": "pass12345", "name": name, "role": role}
+    res = await client.post("/api/v1/auth/register", json=payload)
     assert res.status_code == 201, res.text
     return res.json()
 
@@ -415,15 +442,19 @@ async def test_insert_after_resequences_order(
     )
 
 
-# ─── Test 7: insert on standard journey returns 403/409 ───────────────────────
+# ─── Test 7: insert on standard journey transparently forks ───────────────────
 
 
 @pytest.mark.asyncio
 async def test_insert_on_standard_journey_returns_403(
     client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
 ):
-    """POST /journeys/{id}/nodes on a standard (non-custom) journey returns 403 or 409.
-    The custom-only gate in _load_custom_journey_for_chw raises 409 CONFLICT."""
+    """POST /journeys/{id}/nodes on a standard (non-custom) journey now transparently
+    forks the template to a private per-member copy and succeeds with 201.
+
+    The endpoint no longer raises 409; structural edits on built-in journeys are
+    permitted — the fork happens atomically before the insert.
+    """
     await _seed_templates()
     member_id = await _relate(client, member_tokens, chw_tokens)
 
@@ -432,13 +463,23 @@ async def test_insert_on_standard_journey_returns_403(
 
     insert_res = await client.post(
         f"/api/v1/journeys/{journey_id}/nodes",
-        json={"name": "Should Not Work", "description": "This should fail"},
+        json={"name": "New Custom Step", "description": "Fork-on-insert test"},
         headers=auth_header(chw_tokens),
     )
-    assert insert_res.status_code in (403, 409), (
-        f"Expected 403 or 409 for insert on standard journey, got {insert_res.status_code}: "
+    assert insert_res.status_code == 201, (
+        f"Expected 201 (transparent fork+insert), got {insert_res.status_code}: "
         f"{insert_res.text}"
     )
+
+    # The journey must now be backed by a custom template.
+    async with test_session() as db:
+        mj = (await db.execute(
+            select(MemberJourney).where(MemberJourney.id == UUID(journey_id))
+        )).scalar_one()
+        new_tmpl = (await db.execute(
+            select(JourneyTemplate).where(JourneyTemplate.id == mj.template_id)
+        )).scalar_one()
+    assert new_tmpl.is_custom is True, "Template must be custom after fork-on-insert"
 
 
 # ─── Test 8: insert with nonexistent relative_to_step_id returns 400 ──────────
@@ -754,4 +795,386 @@ async def test_delete_last_node_returns_400(
     assert get_res.status_code == 200, get_res.text
     assert len(get_res.json()["steps"]) == 1, (
         "Journey should still have exactly 1 step after rejected delete"
+    )
+
+
+# ─── Fork-to-member tests ─────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_fork_on_delete_node_makes_template_custom(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    """Deleting a node on a BUILT-IN journey forks the template to a private custom
+    copy: template.is_custom becomes True and steps are cloned."""
+    await _seed_templates()
+    member_id = await _relate(client, member_tokens, chw_tokens)
+    journey = await _create_standard_journey(client, chw_tokens, member_id)
+    journey_id = journey["id"]
+    steps = sorted(journey["steps"], key=lambda s: s["step_order"])
+
+    # Capture the original template id before the fork.
+    async with test_session() as db:
+        mj = (await db.execute(
+            select(MemberJourney).where(MemberJourney.id == UUID(journey_id))
+        )).scalar_one()
+        original_template_id = mj.template_id
+
+    # The original template must be non-custom (built-in).
+    async with test_session() as db:
+        original_template = (await db.execute(
+            select(JourneyTemplate).where(JourneyTemplate.id == original_template_id)
+        )).scalar_one()
+    assert not original_template.is_custom, "Pre-condition: must start with built-in template"
+    assert len(steps) >= 2, "Pre-condition: need at least 2 steps to delete one"
+
+    # Delete the FIRST step — this is a structural edit on a built-in journey.
+    first_step_id = steps[0]["template_step_id"]
+    del_res = await client.delete(
+        f"/api/v1/journeys/{journey_id}/nodes/{first_step_id}",
+        headers=auth_header(chw_tokens),
+    )
+    assert del_res.status_code == 200, del_res.text
+
+    # After the delete: MemberJourney must point to a NEW custom template.
+    async with test_session() as db:
+        mj_after = (await db.execute(
+            select(MemberJourney).where(MemberJourney.id == UUID(journey_id))
+        )).scalar_one()
+        new_template_id = mj_after.template_id
+
+    assert new_template_id != original_template_id, "template_id must change after fork"
+
+    async with test_session() as db:
+        new_template = (await db.execute(
+            select(JourneyTemplate).where(JourneyTemplate.id == new_template_id)
+        )).scalar_one()
+    assert new_template.is_custom is True, "forked template must be is_custom=True"
+    assert new_template.slug == f"custom-{journey_id}", (
+        "slug must follow custom-<journey_id> scheme"
+    )
+
+
+@pytest.mark.asyncio
+async def test_fork_on_add_node_makes_template_custom(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    """Adding a node on a BUILT-IN journey forks the template to a private custom copy."""
+    await _seed_templates()
+    member_id = await _relate(client, member_tokens, chw_tokens)
+    journey = await _create_standard_journey(client, chw_tokens, member_id)
+    journey_id = journey["id"]
+
+    async with test_session() as db:
+        mj = (await db.execute(
+            select(MemberJourney).where(MemberJourney.id == UUID(journey_id))
+        )).scalar_one()
+        original_template_id = mj.template_id
+
+    add_res = await client.post(
+        f"/api/v1/journeys/{journey_id}/nodes",
+        json={"name": "Extra Step", "description": "Added by CHW"},
+        headers=auth_header(chw_tokens),
+    )
+    assert add_res.status_code == 201, add_res.text
+
+    async with test_session() as db:
+        mj_after = (await db.execute(
+            select(MemberJourney).where(MemberJourney.id == UUID(journey_id))
+        )).scalar_one()
+        new_template = (await db.execute(
+            select(JourneyTemplate).where(JourneyTemplate.id == mj_after.template_id)
+        )).scalar_one()
+
+    assert mj_after.template_id != original_template_id
+    assert new_template.is_custom is True
+    # Response should include the new extra node (one more than the original steps).
+    assert len(add_res.json()["steps"]) == len(journey["steps"]) + 1
+
+
+@pytest.mark.asyncio
+async def test_fork_preserves_member_step_progress(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    """After a fork, the member's prior step completion (status, points) is preserved
+    on the cloned step states."""
+    await _seed_templates()
+    member_id = await _relate(client, member_tokens, chw_tokens)
+    journey = await _create_standard_journey(client, chw_tokens, member_id)
+    journey_id = journey["id"]
+    steps = sorted(journey["steps"], key=lambda s: s["step_order"])
+
+    # Complete step 1 (awards points).
+    step1_id = steps[0]["template_step_id"]
+    complete_res = await client.patch(
+        f"/api/v1/journeys/{journey_id}/steps/{step1_id}",
+        json={"status": "completed"},
+        headers=auth_header(chw_tokens),
+    )
+    assert complete_res.status_code == 200, complete_res.text
+    step1_points = steps[0]["points_on_completion"]
+
+    # Trigger fork by deleting step 2 (not step 1, so step 1's completed state is tested).
+    step2_id = steps[1]["template_step_id"]
+    del_res = await client.delete(
+        f"/api/v1/journeys/{journey_id}/nodes/{step2_id}",
+        headers=auth_header(chw_tokens),
+    )
+    assert del_res.status_code == 200, del_res.text
+
+    # After fork+delete, step 1's completion must still be in the response.
+    updated_steps = sorted(del_res.json()["steps"], key=lambda s: s["step_order"])
+    # Step 1 should still be completed with awarded points.
+    assert updated_steps[0]["status"] == "completed", (
+        "step 1 completion must survive the fork"
+    )
+    assert updated_steps[0]["points_awarded"] == step1_points, (
+        "points_awarded must survive the fork"
+    )
+
+    # Wellness points ledger must still reflect the original award.
+    pts_res = await client.get(
+        f"/api/v1/members/{member_id}/wellness-points",
+        headers=auth_header(chw_tokens),
+    )
+    assert pts_res.status_code == 200, pts_res.text
+    pts = pts_res.json()
+    # One positive award entry for step 1 completion.
+    positive_entries = [e for e in pts["ledger"] if e["reason"] == "journey_step_completed"]
+    assert len(positive_entries) == 1, (
+        f"Expected 1 completion ledger entry, got: {pts['ledger']}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_fork_does_not_affect_other_members(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    """A second member on the same built-in template still points to the ORIGINAL
+    shared template with ALL original steps after member-1 forks."""
+    await _seed_templates()
+
+    # Member 1: related to CHW and given a built-in journey.
+    member1_id = await _relate(client, member_tokens, chw_tokens)
+    journey1 = await _create_standard_journey(client, chw_tokens, member1_id)
+    journey1_id = journey1["id"]
+    original_step_count = len(journey1["steps"])
+
+    # Member 2: separate user, also related to the SAME CHW with the SAME template.
+    member2_tokens = await _register_user(
+        client, "member2fork@example.com", "member", "Member Two Fork"
+    )
+    member2_id = await _relate(client, member2_tokens, chw_tokens)
+    journey2 = await _create_standard_journey(client, chw_tokens, member2_id)
+    journey2_id = journey2["id"]
+
+    # Capture member2's original template_id — must equal member1's original.
+    async with test_session() as db:
+        mj1_before = (await db.execute(
+            select(MemberJourney).where(MemberJourney.id == UUID(journey1_id))
+        )).scalar_one()
+        mj2_before = (await db.execute(
+            select(MemberJourney).where(MemberJourney.id == UUID(journey2_id))
+        )).scalar_one()
+    shared_template_id = mj1_before.template_id
+    assert mj2_before.template_id == shared_template_id, (
+        "Both members must start on same template"
+    )
+
+    # Member 1's CHW deletes a node — triggers fork for member 1.
+    steps1 = sorted(journey1["steps"], key=lambda s: s["step_order"])
+    del_res = await client.delete(
+        f"/api/v1/journeys/{journey1_id}/nodes/{steps1[0]['template_step_id']}",
+        headers=auth_header(chw_tokens),
+    )
+    assert del_res.status_code == 200, del_res.text
+
+    # Member 1 now has a custom template.
+    async with test_session() as db:
+        mj1_after = (await db.execute(
+            select(MemberJourney).where(MemberJourney.id == UUID(journey1_id))
+        )).scalar_one()
+    assert mj1_after.template_id != shared_template_id, (
+        "Member 1 must be on forked template"
+    )
+
+    # Member 2 is still on the ORIGINAL shared template.
+    async with test_session() as db:
+        mj2_after = (await db.execute(
+            select(MemberJourney).where(MemberJourney.id == UUID(journey2_id))
+        )).scalar_one()
+    assert mj2_after.template_id == shared_template_id, (
+        "Member 2 must still be on shared template"
+    )
+
+    # Member 2's journey still has ALL original steps.
+    async with test_session() as db:
+        m2_steps = (await db.execute(
+            select(JourneyTemplateStep)
+            .where(JourneyTemplateStep.template_id == shared_template_id)
+            .order_by(JourneyTemplateStep.order)
+        )).scalars().all()
+    assert len(list(m2_steps)) == original_step_count, (
+        f"Original template must still have {original_step_count} steps, "
+        f"got {len(list(m2_steps))}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_fork_is_idempotent_on_second_structural_edit(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    """A second structural edit after the first fork does NOT create another fork
+    (the template_id stays the same custom template)."""
+    await _seed_templates()
+    member_id = await _relate(client, member_tokens, chw_tokens)
+    journey = await _create_standard_journey(client, chw_tokens, member_id)
+    journey_id = journey["id"]
+
+    # First structural edit: add a node → triggers fork.
+    add_res1 = await client.post(
+        f"/api/v1/journeys/{journey_id}/nodes",
+        json={"name": "Added Step 1", "description": "First add"},
+        headers=auth_header(chw_tokens),
+    )
+    assert add_res1.status_code == 201, add_res1.text
+
+    async with test_session() as db:
+        mj_after_first = (await db.execute(
+            select(MemberJourney).where(MemberJourney.id == UUID(journey_id))
+        )).scalar_one()
+    template_id_after_first_fork = mj_after_first.template_id
+
+    # Second structural edit: add another node → must NOT re-fork.
+    add_res2 = await client.post(
+        f"/api/v1/journeys/{journey_id}/nodes",
+        json={"name": "Added Step 2", "description": "Second add"},
+        headers=auth_header(chw_tokens),
+    )
+    assert add_res2.status_code == 201, add_res2.text
+
+    async with test_session() as db:
+        mj_after_second = (await db.execute(
+            select(MemberJourney).where(MemberJourney.id == UUID(journey_id))
+        )).scalar_one()
+
+    assert mj_after_second.template_id == template_id_after_first_fork, (
+        "template_id must not change on second structural edit (idempotent fork)"
+    )
+
+    # Confirm only ONE custom template with this journey's slug exists.
+    async with test_session() as db:
+        custom_template_count = (await db.execute(
+            select(func.count()).select_from(JourneyTemplate).where(
+                JourneyTemplate.slug == f"custom-{journey_id}"
+            )
+        )).scalar()
+    assert custom_template_count == 1, (
+        "Exactly one custom template should exist for this journey"
+    )
+
+
+@pytest.mark.asyncio
+async def test_post_fork_delete_reorders_and_reverses_points(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    """After a fork, delete still reorders remaining steps and reverses points for
+    completed steps (standard delete behavior works on the forked template)."""
+    await _seed_templates()
+    member_id = await _relate(client, member_tokens, chw_tokens)
+    journey = await _create_standard_journey(client, chw_tokens, member_id)
+    journey_id = journey["id"]
+    steps = sorted(journey["steps"], key=lambda s: s["step_order"])
+    assert len(steps) >= 3, "Need at least 3 steps"
+
+    # Complete step 1 to give it points.
+    step1_id = steps[0]["template_step_id"]
+    step1_points = steps[0]["points_on_completion"]
+    await client.patch(
+        f"/api/v1/journeys/{journey_id}/steps/{step1_id}",
+        json={"status": "completed"},
+        headers=auth_header(chw_tokens),
+    )
+
+    # Delete step 1 — this forks AND deletes (completed step → points reversal).
+    del_res = await client.delete(
+        f"/api/v1/journeys/{journey_id}/nodes/{step1_id}",
+        headers=auth_header(chw_tokens),
+    )
+    assert del_res.status_code == 200, del_res.text
+    body = del_res.json()
+
+    # After deletion of original step 1, remaining steps should start at order 1.
+    remaining = sorted(body["steps"], key=lambda s: s["step_order"])
+    assert remaining[0]["step_order"] == 1, "Steps should be reordered starting at 1"
+
+    # Points reversal: net balance should be 0 (awarded then reversed).
+    pts_res = await client.get(
+        f"/api/v1/members/{member_id}/wellness-points",
+        headers=auth_header(chw_tokens),
+    )
+    assert pts_res.status_code == 200, pts_res.text
+    pts = pts_res.json()
+    assert pts["total_points"] == 0, (
+        f"Expected net 0 points after delete-with-reversal, got {pts['total_points']}"
+    )
+    reasons = [e["reason"] for e in pts["ledger"]]
+    assert "correction" in reasons, "Must have a correction ledger entry"
+
+
+@pytest.mark.asyncio
+async def test_unrelated_chw_cannot_edit_builtin_journey(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    """A CHW who is NOT assigned to the journey gets 403 on structural edits,
+    even if the journey is on a built-in template (fork gate must not change auth)."""
+    await _seed_templates()
+    member_id = await _relate(client, member_tokens, chw_tokens)
+    journey = await _create_standard_journey(client, chw_tokens, member_id)
+    journey_id = journey["id"]
+    steps = sorted(journey["steps"], key=lambda s: s["step_order"])
+
+    # Register a second CHW with NO relationship to this member.
+    chw2_tokens = await _register_user(
+        client, "chw2unrelated@example.com", "chw", "CHW Two Unrelated"
+    )
+
+    # Unrelated CHW tries to delete a node.
+    del_res = await client.delete(
+        f"/api/v1/journeys/{journey_id}/nodes/{steps[0]['template_step_id']}",
+        headers=auth_header(chw2_tokens),
+    )
+    assert del_res.status_code == 403, (
+        f"Expected 403, got {del_res.status_code}: {del_res.text}"
+    )
+
+    # Unrelated CHW tries to add a node.
+    add_res = await client.post(
+        f"/api/v1/journeys/{journey_id}/nodes",
+        json={"name": "Unauthorized Step"},
+        headers=auth_header(chw2_tokens),
+    )
+    assert add_res.status_code == 403, (
+        f"Expected 403, got {add_res.status_code}: {add_res.text}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_delete_nonexistent_node_after_fork_returns_404(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    """Deleting a non-existent step_id (random UUID) on a built-in journey returns 404
+    even after the fork would have occurred."""
+    await _seed_templates()
+    member_id = await _relate(client, member_tokens, chw_tokens)
+    journey = await _create_standard_journey(client, chw_tokens, member_id)
+    journey_id = journey["id"]
+
+    fake_step_id = str(uuid4())
+    del_res = await client.delete(
+        f"/api/v1/journeys/{journey_id}/nodes/{fake_step_id}",
+        headers=auth_header(chw_tokens),
+    )
+    assert del_res.status_code == 404, (
+        f"Expected 404 for nonexistent step, got {del_res.status_code}: {del_res.text}"
     )

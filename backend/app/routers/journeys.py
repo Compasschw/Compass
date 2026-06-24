@@ -687,6 +687,159 @@ async def _load_custom_journey_for_chw(
     return member_journey, template
 
 
+async def fork_member_journey_to_private(
+    db: AsyncSession,
+    member_journey: MemberJourney,
+    template: JourneyTemplate,
+) -> tuple[MemberJourney, JourneyTemplate, dict[uuid.UUID, uuid.UUID]]:
+    """Fork a shared JourneyTemplate to a private per-member copy.
+
+    If the template is already custom (is_custom=True) this is a no-op and the
+    same objects are returned unchanged with an empty map — idempotent; never
+    double-forks.
+
+    When forking:
+      1. A new JourneyTemplate is created (is_custom=True, unique slug
+         ``custom-{member_journey.id}``).
+      2. Every JourneyTemplateStep of the original is cloned into the new
+         template in order. An old_step_id → new_step_id map is built.
+      3. MemberJourney.template_id is re-pointed to the new template.
+         MemberJourney.current_step_id is re-mapped via the id map.
+      4. Every MemberJourneyStepState for this member_journey is re-pointed
+         from the old step id to the new cloned step id, preserving all
+         progress fields.
+
+    The original shared template and its steps are left completely untouched.
+
+    Returns:
+        A 3-tuple of (member_journey, new_template, old_step_id→new_step_id map).
+        The map is empty when the template was already custom (no-op path).
+    """
+    if template.is_custom:
+        # Already a private copy — nothing to do.
+        return member_journey, template, {}
+
+    # ── 1. Clone the JourneyTemplate ────────────────────────────────────────────
+    new_template = JourneyTemplate(
+        id=uuid.uuid4(),
+        slug=f"custom-{member_journey.id}",
+        name=template.name,
+        category=template.category,
+        icon=template.icon,
+        is_active=template.is_active,
+        is_custom=True,
+    )
+    db.add(new_template)
+    await db.flush()  # populate new_template.id before FK references below
+
+    # ── 2. Clone all steps; build old_step_id → new_step_id map ─────────────────
+    original_steps_result = await db.execute(
+        select(JourneyTemplateStep)
+        .where(JourneyTemplateStep.template_id == template.id)
+        .order_by(JourneyTemplateStep.order)
+    )
+    original_steps: list[JourneyTemplateStep] = list(
+        original_steps_result.scalars().all()
+    )
+
+    # Map: old_step_id → new_step_id (used to re-map MemberJourneyStepState rows
+    # and to remap URL step_id params that reference the old template's steps).
+    old_to_new_step_id: dict[uuid.UUID, uuid.UUID] = {}
+
+    for orig_step in original_steps:
+        new_step_id = uuid.uuid4()
+        cloned_step = JourneyTemplateStep(
+            id=new_step_id,
+            template_id=new_template.id,
+            order=orig_step.order,
+            name=orig_step.name,
+            description=orig_step.description,
+            points_on_completion=orig_step.points_on_completion,
+            required_documents=orig_step.required_documents,
+        )
+        db.add(cloned_step)
+        old_to_new_step_id[orig_step.id] = new_step_id
+
+    await db.flush()  # ensure all new step rows exist before FK updates below
+
+    # ── 3. Re-point MemberJourney to the new custom template ────────────────────
+    member_journey.template_id = new_template.id
+
+    if member_journey.current_step_id is not None:
+        # Re-map current_step_id to the cloned counterpart.
+        mapped_current = old_to_new_step_id.get(member_journey.current_step_id)
+        if mapped_current is not None:
+            member_journey.current_step_id = mapped_current
+        # If current_step_id had no matching old step (data anomaly), leave as-is;
+        # the subsequent endpoint logic will handle any resulting 404.
+
+    # ── 4. Re-map every MemberJourneyStepState for this member_journey ──────────
+    step_states_result = await db.execute(
+        select(MemberJourneyStepState).where(
+            MemberJourneyStepState.member_journey_id == member_journey.id
+        )
+    )
+    step_states: list[MemberJourneyStepState] = list(
+        step_states_result.scalars().all()
+    )
+
+    for state in step_states:
+        new_template_step_id = old_to_new_step_id.get(state.template_step_id)
+        if new_template_step_id is not None:
+            state.template_step_id = new_template_step_id
+        # Orphan states (pointing to steps not on this template) are left alone;
+        # the FK constraint will catch truly invalid rows.
+
+    await db.flush()
+    return member_journey, new_template, old_to_new_step_id
+
+
+async def _load_journey_for_chw(
+    member_journey_id: uuid.UUID,
+    current_user: object,
+    db: AsyncSession,
+) -> tuple[MemberJourney, JourneyTemplate]:
+    """Load a member journey + its template, asserting the CHW is assigned to it.
+
+    Unlike ``_load_custom_journey_for_chw``, this does NOT raise 409 for
+    non-custom templates. It is used by structural-edit endpoints that call
+    ``fork_member_journey_to_private`` themselves to transparently convert a
+    shared template to a private per-member copy on the first structural edit.
+
+    Raises:
+        404 if the member journey does not exist.
+        403 if the requesting user is not the assigned CHW.
+        404 if the template row is missing (data integrity failure).
+    """
+    member_journey = (
+        await db.execute(
+            select(MemberJourney).where(MemberJourney.id == member_journey_id)
+        )
+    ).scalar_one_or_none()
+    if member_journey is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Journey not found."
+        )
+    if member_journey.chw_id != current_user.id:  # type: ignore[attr-defined]
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not the assigned CHW for this journey.",
+        )
+    template = (
+        await db.execute(
+            select(JourneyTemplate).where(
+                JourneyTemplate.id == member_journey.template_id
+            )
+        )
+    ).scalar_one_or_none()
+    if template is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Journey template not found.",
+        )
+    return member_journey, template
+
+
 @router.post(
     "/api/v1/journeys/{member_journey_id}/nodes",
     response_model=MemberJourneyResponse,
@@ -714,8 +867,11 @@ async def add_journey_node(
     Both ``position`` and ``relative_to_step_id`` must be supplied together;
     providing only one raises HTTP 400.
     """
-    member_journey, template = await _load_custom_journey_for_chw(
+    member_journey, template = await _load_journey_for_chw(
         member_journey_id, current_user, db
+    )
+    member_journey, template, _step_id_map = await fork_member_journey_to_private(
+        db, member_journey, template
     )
 
     # ── Validate positional-insert field pairing ────────────────────────────────
@@ -831,10 +987,22 @@ async def update_journey_node(
     current_user=Depends(require_role("chw")),
     db: AsyncSession = Depends(get_db),
 ) -> MemberJourneyResponse:
-    """Edit a custom node's name and/or description (CHW writes the step text)."""
-    member_journey, template = await _load_custom_journey_for_chw(
+    """Edit a node's name and/or description (CHW writes the step text).
+
+    If the journey is on a shared built-in template, the template is first
+    forked to a private per-member copy before the update is applied, so other
+    members using the same template are not affected.
+    """
+    member_journey, template = await _load_journey_for_chw(
         member_journey_id, current_user, db
     )
+    member_journey, template, step_id_map = await fork_member_journey_to_private(
+        db, member_journey, template
+    )
+    # If a fork just happened, remap the URL step_id to the cloned step.
+    if step_id_map:
+        step_id = step_id_map.get(step_id, step_id)
+
     step = (
         await db.execute(
             select(JourneyTemplateStep)
@@ -1116,9 +1284,17 @@ async def delete_journey_node(
     Returns the updated MemberJourneyResponse (200) so the frontend can refetch
     the same shape as POST/PATCH nodes.
     """
-    member_journey, template = await _load_custom_journey_for_chw(
+    member_journey, template = await _load_journey_for_chw(
         member_journey_id, current_user, db
     )
+    member_journey, template, step_id_map = await fork_member_journey_to_private(
+        db, member_journey, template
+    )
+    # If a fork just happened, the caller's step_id refers to the OLD template's
+    # step. Remap it to the newly cloned step so the rest of the delete logic
+    # resolves correctly against the new template.
+    if step_id_map:
+        step_id = step_id_map.get(step_id, step_id)
 
     # ── Locate the template step ────────────────────────────────────────────────
     tpl_step_result = await db.execute(
