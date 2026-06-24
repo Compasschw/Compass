@@ -13,7 +13,8 @@
  *                Call/Message CTAs and rewards balance.
  *   - Member Journey section: multi-track horizontal timeline (top 3 active
  *     journeys in rank order, 6 steps each, with per-step state + points).
- *   - Quick Access row — Add Note, Flag Member, Schedule Session, Document Session.
+ *   - Quick Access rail card (web, right rail) — Case Notes, Screening Results,
+ *                Eligibility Verification, Uploaded Documents.
  *   - Billable Units widget (today vs daily cap; this year vs yearly cap).
  *   - Sessions table — paginated (10 rows/page).
  *
@@ -75,6 +76,9 @@ import {
   ShieldX,
   Star,
   User,
+  CheckSquare,
+  UploadCloud,
+  ChevronRight,
   ClipboardList,
   X,
 } from 'lucide-react-native';
@@ -95,6 +99,7 @@ import {
   Pill,
   PressableCard,
   RightDrawer,
+  RightRail,
   SectionHeader,
   StaggerList,
 } from '../../components/ui';
@@ -5453,136 +5458,6 @@ const mjStyles = StyleSheet.create({
   } as TextStyle,
 });
 
-// ─── QuickAccessRow ───────────────────────────────────────────────────────────
-
-interface QuickAccessRowProps {
-  memberId: string;
-  displayName: string;
-  onAddNote: () => void;
-  onFlagMember: () => void;
-  onScheduleSession: () => void;
-  onDocumentSession: () => void;
-  /** Navigates to the Documents tab opened to this member's folder. */
-  onUploadedDocuments: () => void;
-}
-
-/**
- * Horizontal row of 5 frequently-used CHW actions for this member.
- * Each button is tappable and routes to the appropriate action.
- */
-function QuickAccessRow({
-  onAddNote,
-  onFlagMember,
-  onScheduleSession,
-  onDocumentSession,
-  onUploadedDocuments,
-}: QuickAccessRowProps): React.JSX.Element {
-  const quickActions: Array<{
-    icon: React.ReactNode;
-    label: string;
-    iconBg: string;
-    onPress: () => void;
-  }> = [
-    {
-      icon: <NotebookPen size={16} color="#2563EB" />,
-      label: 'Add Note',
-      iconBg: '#EFF6FF',
-      onPress: onAddNote,
-    },
-    {
-      icon: <Flag size={16} color="#DC2626" />,
-      label: 'Flag Member',
-      iconBg: '#FEF2F2',
-      onPress: onFlagMember,
-    },
-    {
-      icon: <Calendar size={16} color="#7C3AED" />,
-      label: 'Schedule Session',
-      iconBg: '#F5F3FF',
-      onPress: onScheduleSession,
-    },
-    {
-      icon: <ClipboardList size={16} color="#D97706" />,
-      label: 'Document Session',
-      iconBg: '#FFFBEB',
-      onPress: onDocumentSession,
-    },
-    {
-      icon: <FolderOpen size={16} color="#0891B2" />,
-      label: 'Uploaded Documents',
-      iconBg: '#ECFEFF',
-      onPress: onUploadedDocuments,
-    },
-  ];
-
-  return (
-    <Card style={quickRowStyles.card}>
-      <View style={quickRowStyles.row}>
-        {quickActions.map((action, index) => (
-          <PressableCard
-            key={action.label}
-            onPress={action.onPress}
-            style={[
-              quickRowStyles.actionBtn,
-              quickRowStyles.actionBtnFlat,
-              index < quickActions.length - 1 && quickRowStyles.actionBtnBorder,
-            ]}
-            accessibilityLabel={action.label}
-          >
-            <View style={[quickRowStyles.iconCircle, { backgroundColor: action.iconBg }]}>
-              {action.icon}
-            </View>
-            <Text style={quickRowStyles.actionLabel}>{action.label}</Text>
-          </PressableCard>
-        ))}
-      </View>
-    </Card>
-  );
-}
-
-const quickRowStyles = StyleSheet.create({
-  card: {
-    marginBottom: 20,
-    overflow: 'hidden',
-  } as ViewStyle,
-  row: {
-    flexDirection: 'row',
-    alignItems: 'stretch',
-  } as ViewStyle,
-  actionBtn: {
-    flex: 1,
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 16,
-    paddingHorizontal: 8,
-  } as ViewStyle,
-  actionBtnBorder: {
-    borderRightWidth: 1,
-    borderRightColor: '#F3F4F6',
-  } as ViewStyle,
-  /** Suppresses PressableCard's default card surface — buttons live inside a Card already. */
-  actionBtnFlat: {
-    borderWidth: 0,
-    backgroundColor: 'transparent',
-    shadowOpacity: 0,
-    elevation: 0,
-    borderRadius: 0,
-  } as ViewStyle,
-  iconCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  } as ViewStyle,
-  actionLabel: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 11,
-    color: '#374151',
-    textAlign: 'center',
-  } as TextStyle,
-});
-
 // ─── BillableUnitsWidget ──────────────────────────────────────────────────────
 
 interface BillableUnitsWidgetProps {
@@ -7508,19 +7383,6 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
     });
   }, [navigation, memberId]);
 
-  /**
-   * Navigates to the CHWDocuments tab, passing memberId so the screen can
-   * auto-expand/scroll to this member's folder.
-   * Uses `as never` escape because CHWDocuments lives in CHWTabParamList
-   * (the parent tab navigator) rather than CHWSessionsStackParamList.
-   */
-  const handleNavigateToDocuments = useCallback((): void => {
-    // CHWDocuments lives in the parent CHWTabParamList; use the same `as never`
-    // escape pattern used elsewhere in this codebase for cross-stack navigation.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (navigation as any).navigate('CHWDocuments', { memberId });
-  }, [navigation, memberId]);
-
   // ── Loading state ────────────────────────────────────────────────────────────
 
   if (isLoading) {
@@ -7695,31 +7557,6 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
 
               </View>
             </Card>
-
-            {/* ───────────────────────────────────────────────────────────────
-                QUICK ACCESS ROW — restored 2026-06-22.
-                5 actions: Add Note, Flag Member, Schedule Session,
-                Document Session, Uploaded Documents.
-            ─────────────────────────────────────────────────────────────── */}
-            <QuickAccessRow
-              memberId={memberId}
-              displayName={displayName}
-              onAddNote={() => setCaseNotesOpen(true)}
-              onFlagMember={() => setFlagModalOpen(true)}
-              onScheduleSession={() =>
-                Alert.alert(
-                  'Schedule Session',
-                  'Use the Calendar tab to schedule a new session with this member.',
-                )
-              }
-              onDocumentSession={() =>
-                Alert.alert(
-                  'Document Session',
-                  'Documentation is submitted from within an active session. Start or open a session with this member to document it.',
-                )
-              }
-              onUploadedDocuments={handleNavigateToDocuments}
-            />
 
             {/* Main content + optional sidebar */}
             {/*
@@ -7907,6 +7744,47 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                 />
               )}
 
+              {/* ── Web right rail: Quick Access (hidden when inline drawer is open) ── */}
+              {Platform.OS === 'web' && !(isOpenQuestionsInline && openQuestionsOpen) && (
+                <RightRail width={240}>
+                  <Card style={s.railCard}>
+                    <Text style={s.railCardTitle}>Quick Access</Text>
+                    <RailAccessItem
+                      icon={<NotebookPen size={14} color="#2563EB" />}
+                      iconBg="#EFF6FF"
+                      label="Case Notes"
+                      sublabel="View all notes"
+                      onPress={() => setCaseNotesOpen(true)}
+                    />
+                    <RailAccessItem
+                      icon={<CheckSquare size={14} color="#EA580C" />}
+                      iconBg="#FFF7ED"
+                      label="Screening Results"
+                      sublabel={
+                        assessmentLatest?.responses?.length
+                          ? `${assessmentLatest.responses.length} answers`
+                          : 'View answers'
+                      }
+                      onPress={() => setShowScreening(true)}
+                    />
+                    <RailAccessItem
+                      icon={<CheckCircle size={14} color="#16A34A" />}
+                      iconBg="#F0FDF4"
+                      label="Eligibility Verification"
+                      sublabel="CalFresh pending"
+                      onPress={() => setEligibilityOpen(true)}
+                    />
+                    <RailAccessItem
+                      icon={<UploadCloud size={14} color="#64748B" />}
+                      iconBg="#F8FAFC"
+                      label="Uploaded Documents"
+                      sublabel="Member uploads"
+                      onPress={() => setDocumentsOpen(true)}
+                    />
+                  </Card>
+                </RightRail>
+              )}
+
             </View>
 
           </View>
@@ -8081,6 +7959,77 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
   );
 }
 
+// ─── RailAccessItem (web right-rail only) ────────────────────────────────────
+
+interface RailAccessItemProps {
+  icon: React.ReactNode;
+  label: string;
+  sublabel?: string;
+  iconBg?: string;
+  onPress: () => void;
+}
+
+/**
+ * Single tappable row inside the Quick Access rail card.
+ * Displays an icon badge, label, optional sublabel, and a chevron.
+ */
+function RailAccessItem({
+  icon,
+  label,
+  sublabel,
+  iconBg = '#EFF6FF',
+  onPress,
+}: RailAccessItemProps): React.JSX.Element {
+  return (
+    <TouchableOpacity
+      style={railItemStyles.item}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+    >
+      <View style={[railItemStyles.iconWrap, { backgroundColor: iconBg }]}>{icon}</View>
+      <View style={railItemStyles.labelWrap}>
+        <Text style={railItemStyles.label}>{label}</Text>
+        {sublabel ? <Text style={railItemStyles.sublabel}>{sublabel}</Text> : null}
+      </View>
+      <ChevronRight size={12} color="#D1D5DB" />
+    </TouchableOpacity>
+  );
+}
+
+const railItemStyles = StyleSheet.create({
+  item: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 9,
+    paddingHorizontal: 4,
+    borderRadius: radius.md,
+  } as ViewStyle,
+  iconWrap: {
+    width: 30,
+    height: 30,
+    borderRadius: radius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  } as ViewStyle,
+  labelWrap: {
+    flex: 1,
+    gap: 1,
+  } as ViewStyle,
+  label: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 12,
+    color: '#111827',
+  } as TextStyle,
+  sublabel: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 10,
+    color: '#6B7280',
+  } as TextStyle,
+});
+
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const s = StyleSheet.create({
@@ -8167,6 +8116,18 @@ const s = StyleSheet.create({
     alignItems: 'flex-start',
   } as ViewStyle,
   mainCol: { flex: 1 } as ViewStyle,
+
+  // Web right rail card
+  railCard: {
+    padding: 16,
+    gap: 2,
+  } as ViewStyle,
+  railCardTitle: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 13,
+    color: '#111827',
+    marginBottom: 10,
+  } as TextStyle,
 
   // Count badge (sessions header)
   countBadge: {
