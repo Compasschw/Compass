@@ -3615,8 +3615,6 @@ interface EditJourneyNodeModalProps {
   initialDescription: string;
   /** Current step status — drives the tri-state segmented control. */
   stepStatus: string;
-  /** Called when the CHW taps Add Left or Add Right. */
-  onAddNode: (position: 'before' | 'after') => void;
   onClose: () => void;
 }
 
@@ -3636,7 +3634,6 @@ function EditJourneyNodeModal({
   initialName,
   initialDescription,
   stepStatus,
-  onAddNode,
   onClose,
 }: EditJourneyNodeModalProps): React.JSX.Element {
   const updateNode = useUpdateJourneyNode(memberId);
@@ -3704,37 +3701,40 @@ function EditJourneyNodeModal({
    * closes the modal on success. Shows an inline error on failure.
    */
   const handleRemove = useCallback((): void => {
-    Alert.alert(
-      'Remove Step',
-      "Remove this step from the journey? This can't be undone.",
-      [
-        { text: 'Cancel', style: 'cancel' },
+    const onConfirmed = (): void => {
+      setDeleteError(null);
+      deleteNode.mutate(
+        { journeyId, stepId },
         {
-          text: 'Remove',
-          style: 'destructive',
-          onPress: () => {
-            setDeleteError(null);
-            deleteNode.mutate(
-              { journeyId, stepId },
-              {
-                onSuccess: () => { onClose(); },
-                onError: (err: unknown) => {
-                  const detail =
-                    err != null &&
-                    typeof err === 'object' &&
-                    'detail' in err &&
-                    typeof (err as { detail: unknown }).detail === 'string'
-                      ? (err as { detail: string }).detail
-                      : 'Could not remove step. Please try again.';
-                  setDeleteError(detail);
-                },
-              },
-            );
+          onSuccess: () => { onClose(); },
+          onError: (err: unknown) => {
+            const detail =
+              err != null &&
+              typeof err === 'object' &&
+              'detail' in err &&
+              typeof (err as { detail: unknown }).detail === 'string'
+                ? (err as { detail: string }).detail
+                : 'Could not remove step. Please try again.';
+            setDeleteError(detail);
           },
         },
-      ],
-      { cancelable: true },
-    );
+      );
+    };
+
+    if (Platform.OS === 'web') {
+      if (!window.confirm("Remove this step from the journey? This can't be undone.")) return;
+      onConfirmed();
+    } else {
+      Alert.alert(
+        'Remove Step',
+        "Remove this step from the journey? This can't be undone.",
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Remove', style: 'destructive', onPress: onConfirmed },
+        ],
+        { cancelable: true },
+      );
+    }
   }, [journeyId, stepId, deleteNode, onClose]);
 
   // Segmented status control handler — optimistic update with rollback.
@@ -3866,27 +3866,6 @@ function EditJourneyNodeModal({
           </Text>
         )}
 
-        {/* Section 3 — Add Left / Add Right */}
-        <View style={editNodeStyles.addNodeRow}>
-          <TouchableOpacity
-            style={editNodeStyles.addNodeSideBtn}
-            onPress={() => { onAddNode('before'); onClose(); }}
-            accessibilityRole="button"
-            accessibilityLabel="Add step before this step"
-          >
-            <ArrowLeft size={14} color={tokens.primary} />
-            <Text style={editNodeStyles.addNodeSideBtnText}>Add Left</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={editNodeStyles.addNodeSideBtn}
-            onPress={() => { onAddNode('after'); onClose(); }}
-            accessibilityRole="button"
-            accessibilityLabel="Add step after this step"
-          >
-            <Text style={editNodeStyles.addNodeSideBtnText}>Add Right</Text>
-            <ArrowRight size={14} color={tokens.primary} />
-          </TouchableOpacity>
-        </View>
       </View>
 
       {/* Footer — Remove (destructive) + Save for all journeys */}
@@ -4123,29 +4102,6 @@ const editNodeStyles = StyleSheet.create({
     color: tokens.textSecondary,
     marginBottom: 12,
     fontStyle: 'italic',
-  } as TextStyle,
-  // Add Left / Add Right buttons
-  addNodeRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 8,
-  } as ViewStyle,
-  addNodeSideBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-    paddingVertical: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: tokens.primary,
-    minHeight: 44,
-  } as ViewStyle,
-  addNodeSideBtnText: {
-    fontFamily: 'DMSans_500Medium',
-    fontSize: 13,
-    color: tokens.primary,
   } as TextStyle,
   // Missed step chip
   missedChip: {
@@ -5070,7 +5026,7 @@ const SingleJourneyTrack = React.memo(function SingleJourneyTrack({
       {editMode ? (
         // Edit mode: always render the vertical list so each node is tappable (custom and standard)
         <View style={trackStyles.editNodeList}>
-          {journey.steps.map((step) => {
+          {journey.steps.map((step, index) => {
             const isCompleted = step.status === 'completed';
             const isInProgress = step.status === 'in_progress';
             const hasName = step.stepName.trim().length > 0;
@@ -5080,66 +5036,67 @@ const SingleJourneyTrack = React.memo(function SingleJourneyTrack({
             const dotBorderColor = isInProgress ? '#34D399' : 'transparent';
 
             return (
-              <Pressable
-                key={step.id}
-                style={[
-                  trackStyles.editNodeRow,
-                  isPressed && {
-                    transform: [{ scale: 0.97 }],
-                    borderWidth: 2,
-                    borderColor: tokens.primary,
-                    borderRadius: 8,
-                  },
-                ]}
-                onPress={() => setEditingStep(step)}
-                onPressIn={() => setPressedStepId(step.id)}
-                onPressOut={() => setPressedStepId(null)}
-                accessibilityRole="button"
-                accessibilityLabel={`Edit step: ${step.stepName || 'Untitled step'}`}
-              >
-                {/* Step dot */}
-                <View
+              <React.Fragment key={step.id}>
+                <Pressable
                   style={[
-                    trackStyles.editNodeDot,
-                    { backgroundColor: dotBg, borderColor: dotBorderColor, borderWidth: isInProgress ? 2 : 0 },
+                    trackStyles.editNodeRow,
+                    isPressed && {
+                      transform: [{ scale: 0.97 }],
+                      borderWidth: 2,
+                      borderColor: tokens.primary,
+                      borderRadius: 8,
+                    },
                   ]}
+                  onPress={() => setEditingStep(step)}
+                  onPressIn={() => setPressedStepId(step.id)}
+                  onPressOut={() => setPressedStepId(null)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Edit step: ${step.stepName || 'Untitled step'}`}
                 >
-                  {isCompleted ? (
-                    <Check size={9} color="#FFFFFF" strokeWidth={3} />
-                  ) : null}
-                </View>
-
-                {/* Step text block */}
-                <View style={trackStyles.editNodeTextBlock}>
-                  <Text
-                    style={[
-                      trackStyles.editNodeName,
-                      !hasName && trackStyles.editNodeNamePlaceholder,
-                    ]}
-                    numberOfLines={1}
-                  >
-                    {hasName ? step.stepName : 'Untitled step — tap to edit'}
-                  </Text>
-                  {step.stepDescription.trim().length > 0 && (
-                    <Text style={trackStyles.editNodeDesc} numberOfLines={2}>
-                      {step.stepDescription}
-                    </Text>
-                  )}
-                  <Text style={trackStyles.editNodePts}>+{step.pointsOnCompletion} pts</Text>
-                </View>
-
-                {/* Status indicator dot (right side) */}
-                <View style={trackStyles.editNodeActions}>
+                  {/* Step dot */}
                   <View
                     style={[
-                      trackStyles.editNodeActionBtn,
-                      { backgroundColor: '#F9FAFB' },
+                      trackStyles.editNodeDot,
+                      { backgroundColor: dotBg, borderColor: dotBorderColor, borderWidth: isInProgress ? 2 : 0 },
                     ]}
                   >
-                    <Edit2 size={13} color={tokens.textMuted} />
+                    {isCompleted ? (
+                      <Check size={9} color="#FFFFFF" strokeWidth={3} />
+                    ) : null}
                   </View>
-                </View>
-              </Pressable>
+
+                  {/* Step text block */}
+                  <View style={trackStyles.editNodeTextBlock}>
+                    <Text
+                      style={[
+                        trackStyles.editNodeName,
+                        !hasName && trackStyles.editNodeNamePlaceholder,
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {hasName ? step.stepName : 'Untitled step — tap to edit'}
+                    </Text>
+                    {step.stepDescription.trim().length > 0 && (
+                      <Text style={trackStyles.editNodeDesc} numberOfLines={2}>
+                        {step.stepDescription}
+                      </Text>
+                    )}
+                    <Text style={trackStyles.editNodePts}>+{step.pointsOnCompletion} pts</Text>
+                  </View>
+
+                  {/* Status indicator dot (right side) */}
+                  <View style={trackStyles.editNodeActions}>
+                    <View
+                      style={[
+                        trackStyles.editNodeActionBtn,
+                        { backgroundColor: '#F9FAFB' },
+                      ]}
+                    >
+                      <Edit2 size={13} color={tokens.textMuted} />
+                    </View>
+                  </View>
+                </Pressable>
+              </React.Fragment>
             );
           })}
 
@@ -5203,16 +5160,74 @@ const SingleJourneyTrack = React.memo(function SingleJourneyTrack({
           initialName={editingStep.stepName}
           initialDescription={editingStep.stepDescription}
           stepStatus={editingStep.status}
-          onAddNode={(position) => {
-            handleAddNodePositional(position, editingStep);
-            setEditingStep(null);
-          }}
           onClose={() => setEditingStep(null)}
         />
       )}
     </View>
   );
 });
+
+// ─── JourneyInserter ─────────────────────────────────────────────────────────
+
+/**
+ * Renders a hoverable "+" affordance centered ON the grey horizontal divider
+ * that separates consecutive journey blocks in the main display view.
+ *
+ * Placement: sits directly above the divider border of the next journey block
+ * using a negative marginBottom so the button's center aligns with the 1 px
+ * borderBottomColor line of the track above it.
+ *
+ * Resting state (web): fully transparent — blends into the `#F3F4F6` divider.
+ * Hover state (web): reveals a white circular button with `tokens.primary`
+ * border and a Plus icon. On native (no hover), always renders at low opacity
+ * so the affordance remains tappable.
+ */
+function JourneyInserter({
+  onInsert,
+  disabled,
+}: {
+  onInsert: () => void;
+  disabled?: boolean;
+}): React.JSX.Element {
+  const [hover, setHover] = useState(false);
+
+  // On web: reveal on hover. On native: always show at low opacity.
+  const isWeb = Platform.OS === 'web';
+  const showContent = isWeb ? hover : true;
+
+  return (
+    <Pressable
+      onPress={disabled ? undefined : onInsert}
+      onHoverIn={() => { if (isWeb) setHover(true); }}
+      onHoverOut={() => { if (isWeb) setHover(false); }}
+      accessibilityRole="button"
+      accessibilityLabel="Add a step to this journey"
+      style={trackStyles.inserterZone}
+    >
+      <View
+        style={[
+          trackStyles.inserterLine,
+          { opacity: showContent ? 1 : 0 },
+        ]}
+      />
+      <View
+        style={[
+          trackStyles.inserterBtnWrap,
+          { opacity: showContent ? 1 : 0 },
+        ]}
+      >
+        <View
+          style={[
+            trackStyles.inserterBtn,
+            hover && isWeb && trackStyles.inserterBtnHover,
+          ]}
+        >
+          <Plus size={12} color={tokens.primary} />
+        </View>
+      </View>
+    </Pressable>
+  );
+}
 
 const trackStyles = StyleSheet.create({
   container: {
@@ -5356,6 +5371,44 @@ const trackStyles = StyleSheet.create({
     fontSize: 12,
     color: tokens.primary,
   } as TextStyle,
+  // Journey inserter — the "+" affordance centered on the grey inter-journey
+  // divider line (#F3F4F6). Resting state: invisible on web; faint on native.
+  // The zone sits between two journey tracks; negative marginBottom pulls it
+  // up so the circular button straddles the 1 px borderBottomColor line above.
+  inserterZone: {
+    width: '100%',
+    height: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+    marginBottom: -9,
+    zIndex: 1,
+  } as ViewStyle,
+  inserterLine: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    height: 1,
+    // Match the inter-journey divider exactly so it blends at rest.
+    backgroundColor: '#F3F4F6',
+  } as ViewStyle,
+  inserterBtnWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+  inserterBtn: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#F3F4F6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+  inserterBtnHover: {
+    borderColor: tokens.primary,
+  } as ViewStyle,
 });
 
 const timelineStyles = StyleSheet.create({
@@ -5494,6 +5547,13 @@ function MemberJourneyTimeline({
   const { data: journeys, isLoading } = useMemberJourneys(memberId);
 
   /**
+   * Shared add-step mutation for inter-journey inserter buttons.
+   * Each inserter calls `addStep.mutate({ journeyId: journey.id })` for the
+   * journey immediately ABOVE the divider line (index `i` in `top3Active`).
+   */
+  const addStep = useAddJourneyNode(memberId);
+
+  /**
    * Top-3 active journeys sorted ascending by progressPercent.
    * Lowest progress = highest priority = rank 1.
    */
@@ -5522,14 +5582,33 @@ function MemberJourneyTimeline({
   return (
     <View style={mjStyles.container}>
       {top3Active.map((journey, index) => (
-        <SingleJourneyTrack
-          key={journey.id}
-          journey={journey}
-          rank={index + 1}
-          windowWidth={windowWidth}
-          memberId={memberId}
-          editMode={editMode}
-        />
+        <React.Fragment key={journey.id}>
+          <SingleJourneyTrack
+            journey={journey}
+            rank={index + 1}
+            windowWidth={windowWidth}
+            memberId={memberId}
+            editMode={editMode}
+          />
+          {index < top3Active.length - 1 && (
+            <JourneyInserter
+              onInsert={() =>
+                addStep.mutate(
+                  { journeyId: journey.id },
+                  {
+                    onError: () => {
+                      const msg = 'Could not add step. Please try again.';
+                      if (Platform.OS === 'web' && typeof window !== 'undefined')
+                        window.alert(msg);
+                      else Alert.alert('Error', msg);
+                    },
+                  },
+                )
+              }
+              disabled={addStep.isPending}
+            />
+          )}
+        </React.Fragment>
       ))}
     </View>
   );
@@ -7125,222 +7204,6 @@ const docsModalStyles = StyleSheet.create({
   } as TextStyle,
 });
 
-// ─── EligibilityVerificationModal ─────────────────────────────────────────────
-
-interface EligibilityVerificationModalProps {
-  visible: boolean;
-  onClose: () => void;
-}
-
-/**
- * Informational modal for Eligibility Verification.
- * No backend yet — displays the current status and an explanation.
- *
- * Platform: web fixed-overlay + Esc; native RN Modal.
- */
-function EligibilityVerificationModal({
-  visible,
-  onClose,
-}: EligibilityVerificationModalProps): React.JSX.Element {
-  // Esc key closes on web.
-  useEffect(() => {
-    if (Platform.OS !== 'web' || !visible) return;
-    const handler = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [visible, onClose]);
-
-  const body = (
-    <View style={eligibilityStyles.container}>
-      {/* Header */}
-      <View style={eligibilityStyles.header}>
-        <Text style={eligibilityStyles.title}>Eligibility Verification</Text>
-        <TouchableOpacity
-          onPress={onClose}
-          accessibilityRole="button"
-          accessibilityLabel="Close"
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        >
-          <X size={18} color="#6B7280" />
-        </TouchableOpacity>
-      </View>
-
-      {/* Body */}
-      <View style={eligibilityStyles.body}>
-        {/* Status row */}
-        <View style={eligibilityStyles.statusRow}>
-          <CheckCircle size={16} color="#15803D" />
-          <Text style={eligibilityStyles.statusLabel}>CalFresh:</Text>
-          <View style={eligibilityStyles.statusPill}>
-            <Text style={eligibilityStyles.statusPillText}>Pending</Text>
-          </View>
-        </View>
-
-        <View style={eligibilityStyles.divider} />
-
-        <Text style={eligibilityStyles.bodyText}>
-          Eligibility verification for programs like CalFresh is conducted through the county
-          system and external eligibility partners. Results are tracked here and updated as the
-          member's verification status changes.
-        </Text>
-        <Text style={eligibilityStyles.bodyText}>
-          Full eligibility tracking and status updates will be available in an upcoming update.
-          If you need to verify eligibility now, please check directly with the county portal
-          or contact your supervisor.
-        </Text>
-      </View>
-
-      {/* Footer */}
-      <View style={eligibilityStyles.footer}>
-        <TouchableOpacity
-          style={eligibilityStyles.closeBtn}
-          onPress={onClose}
-          accessibilityRole="button"
-          accessibilityLabel="Close"
-        >
-          <Text style={eligibilityStyles.closeBtnText}>Close</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-
-  if (Platform.OS !== 'web') {
-    return (
-      <Modal
-        visible={visible}
-        animationType="slide"
-        presentationStyle="formSheet"
-        onRequestClose={onClose}
-        accessibilityViewIsModal
-      >
-        <View style={eligibilityStyles.nativeContainer}>{body}</View>
-      </Modal>
-    );
-  }
-
-  if (!visible) return <></>;
-
-  return (
-    <View style={eligibilityStyles.webOverlay}>
-      <Pressable
-        style={eligibilityStyles.webBackdrop}
-        onPress={onClose}
-        accessibilityRole="button"
-        accessibilityLabel="Close modal"
-      />
-      <View style={eligibilityStyles.webPanel}>{body}</View>
-    </View>
-  );
-}
-
-const eligibilityStyles = StyleSheet.create({
-  webOverlay: {
-    position: 'fixed' as 'absolute',
-    inset: 0,
-    zIndex: 200,
-    alignItems: 'center',
-    justifyContent: 'center',
-  } as ViewStyle,
-  webBackdrop: {
-    position: 'absolute' as 'absolute',
-    inset: 0,
-    backgroundColor: 'rgba(17,24,39,0.45)',
-  } as ViewStyle,
-  webPanel: {
-    width: '100%',
-    maxWidth: 440,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    overflow: 'hidden',
-    zIndex: 1,
-  } as ViewStyle,
-  nativeContainer: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-  } as ViewStyle,
-  container: {
-    flexDirection: 'column',
-    backgroundColor: '#FFFFFF',
-  } as ViewStyle,
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
-  } as ViewStyle,
-  title: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 17,
-    color: '#111827',
-  } as TextStyle,
-  body: {
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 8,
-    gap: 12,
-  } as ViewStyle,
-  statusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  } as ViewStyle,
-  statusLabel: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 14,
-    color: '#111827',
-  } as TextStyle,
-  statusPill: {
-    backgroundColor: '#FEF9C3',
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderWidth: 1,
-    borderColor: '#FDE047',
-  } as ViewStyle,
-  statusPillText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 12,
-    color: '#A16207',
-  } as TextStyle,
-  divider: {
-    height: 1,
-    backgroundColor: '#F3F4F6',
-    marginVertical: 4,
-  } as ViewStyle,
-  bodyText: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 13,
-    color: '#374151',
-    lineHeight: 20,
-  } as TextStyle,
-  footer: {
-    paddingHorizontal: 20,
-    paddingVertical: 14,
-    borderTopWidth: 1,
-    borderTopColor: '#F3F4F6',
-    alignItems: 'flex-end',
-  } as ViewStyle,
-  closeBtn: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 8,
-    backgroundColor: tokens.primary,
-    alignItems: 'center',
-    minWidth: 80,
-  } as ViewStyle,
-  closeBtnText: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 14,
-    color: '#FFFFFF',
-  } as TextStyle,
-});
-
 // ─── SectionCard wrapper ──────────────────────────────────────────────────────
 
 interface SectionCardProps {
@@ -7432,7 +7295,6 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
   const [showScreening, setShowScreening] = useState(false);
   const [caseNotesOpen, setCaseNotesOpen] = useState(false);
   const [documentsOpen, setDocumentsOpen] = useState(false);
-  const [eligibilityOpen, setEligibilityOpen] = useState(false);
 
   // Journeys data used both by ResourceNeedsColumn and AddJourneyModal dedup guard.
   const { data: journeysForModal } = useMemberJourneys(memberId);
@@ -7860,13 +7722,6 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                       onPress={() => setShowScreening(true)}
                     />
                     <RailAccessItem
-                      icon={<CheckCircle size={14} color="#16A34A" />}
-                      iconBg="#F0FDF4"
-                      label="Eligibility Verification"
-                      sublabel="CalFresh pending"
-                      onPress={() => setEligibilityOpen(true)}
-                    />
-                    <RailAccessItem
                       icon={<UploadCloud size={14} color="#64748B" />}
                       iconBg="#F8FAFC"
                       label="Uploaded Documents"
@@ -7976,12 +7831,6 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
           visible={documentsOpen}
           memberId={memberId}
           onClose={() => setDocumentsOpen(false)}
-        />
-
-        {/* ── Eligibility Verification modal ── */}
-        <EligibilityVerificationModal
-          visible={eligibilityOpen}
-          onClose={() => setEligibilityOpen(false)}
         />
 
         {/*
@@ -8185,7 +8034,11 @@ const s = StyleSheet.create({
     width: '100%',
     maxWidth: 1280,
     alignSelf: 'center',
-    padding: 24,
+    // paddingTop intentionally omitted: AppShell's mainContent already applies
+    // 32px of top padding via its ScrollView contentContainerStyle. Adding top
+    // padding here doubled the gap above the "John Thomas II / Member Profile"
+    // header vs. screens that don't own a nested ScrollView (e.g. CHWMembersScreen).
+    paddingHorizontal: 24,
     paddingBottom: 100,
   } as ViewStyle,
   pageWrapLoading: {
