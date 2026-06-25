@@ -5083,19 +5083,13 @@ const SingleJourneyTrack = React.memo(function SingleJourneyTrack({
                     )}
                     <Text style={trackStyles.editNodePts}>+{step.pointsOnCompletion} pts</Text>
                   </View>
-
-                  {/* Status indicator dot (right side) */}
-                  <View style={trackStyles.editNodeActions}>
-                    <View
-                      style={[
-                        trackStyles.editNodeActionBtn,
-                        { backgroundColor: '#F9FAFB' },
-                      ]}
-                    >
-                      <Edit2 size={13} color={tokens.textMuted} />
-                    </View>
-                  </View>
                 </Pressable>
+                {index < journey.steps.length - 1 && (
+                  <StepInserter
+                    onInsert={() => handleAddNodePositional('after', step)}
+                    disabled={addNode.isPending}
+                  />
+                )}
               </React.Fragment>
             );
           })}
@@ -5167,22 +5161,22 @@ const SingleJourneyTrack = React.memo(function SingleJourneyTrack({
   );
 });
 
-// ─── JourneyInserter ─────────────────────────────────────────────────────────
+// ─── StepInserter ────────────────────────────────────────────────────────────
 
 /**
  * Renders a hoverable "+" affordance centered ON the grey horizontal divider
- * that separates consecutive journey blocks in the main display view.
+ * that sits between consecutive step rows in the edit-mode step list.
  *
- * Placement: sits directly above the divider border of the next journey block
- * using a negative marginBottom so the button's center aligns with the 1 px
- * borderBottomColor line of the track above it.
+ * Placement: the zone height is 18 px with a negative marginBottom of -9 so the
+ * circular button straddles the 1 px `borderBottomColor: '#F9FAFB'` line that
+ * separates adjacent `editNodeRow` entries.
  *
- * Resting state (web): fully transparent — blends into the `#F3F4F6` divider.
+ * Resting state (web): fully transparent — blends into the `#F9FAFB` divider.
  * Hover state (web): reveals a white circular button with `tokens.primary`
  * border and a Plus icon. On native (no hover), always renders at low opacity
  * so the affordance remains tappable.
  */
-function JourneyInserter({
+function StepInserter({
   onInsert,
   disabled,
 }: {
@@ -5201,7 +5195,7 @@ function JourneyInserter({
       onHoverIn={() => { if (isWeb) setHover(true); }}
       onHoverOut={() => { if (isWeb) setHover(false); }}
       accessibilityRole="button"
-      accessibilityLabel="Add a step to this journey"
+      accessibilityLabel="Insert a step here"
       style={trackStyles.inserterZone}
     >
       <View
@@ -5332,20 +5326,6 @@ const trackStyles = StyleSheet.create({
     color: '#047857',
     marginTop: 1,
   } as TextStyle,
-  editNodeActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    flexShrink: 0,
-  } as ViewStyle,
-  editNodeActionBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 6,
-    backgroundColor: '#F3F4F6',
-    alignItems: 'center',
-    justifyContent: 'center',
-  } as ViewStyle,
   completeNodeBtn: {
     backgroundColor: `${tokens.primary}14`,
     borderWidth: 1,
@@ -5371,9 +5351,9 @@ const trackStyles = StyleSheet.create({
     fontSize: 12,
     color: tokens.primary,
   } as TextStyle,
-  // Journey inserter — the "+" affordance centered on the grey inter-journey
-  // divider line (#F3F4F6). Resting state: invisible on web; faint on native.
-  // The zone sits between two journey tracks; negative marginBottom pulls it
+  // Step inserter — the "+" affordance centered on the grey inter-step
+  // divider line (#F9FAFB = editNodeRow borderBottomColor). Resting state:
+  // invisible on web; faint on native. Negative marginBottom pulls the zone
   // up so the circular button straddles the 1 px borderBottomColor line above.
   inserterZone: {
     width: '100%',
@@ -5389,8 +5369,8 @@ const trackStyles = StyleSheet.create({
     left: 0,
     right: 0,
     height: 1,
-    // Match the inter-journey divider exactly so it blends at rest.
-    backgroundColor: '#F3F4F6',
+    // Match the editNodeRow borderBottomColor exactly so it blends at rest.
+    backgroundColor: '#F9FAFB',
   } as ViewStyle,
   inserterBtnWrap: {
     alignItems: 'center',
@@ -5402,7 +5382,7 @@ const trackStyles = StyleSheet.create({
     borderRadius: 10,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#F3F4F6',
+    borderColor: '#F9FAFB',
     alignItems: 'center',
     justifyContent: 'center',
   } as ViewStyle,
@@ -5547,13 +5527,6 @@ function MemberJourneyTimeline({
   const { data: journeys, isLoading } = useMemberJourneys(memberId);
 
   /**
-   * Shared add-step mutation for inter-journey inserter buttons.
-   * Each inserter calls `addStep.mutate({ journeyId: journey.id })` for the
-   * journey immediately ABOVE the divider line (index `i` in `top3Active`).
-   */
-  const addStep = useAddJourneyNode(memberId);
-
-  /**
    * Top-3 active journeys sorted ascending by progressPercent.
    * Lowest progress = highest priority = rank 1.
    */
@@ -5582,33 +5555,14 @@ function MemberJourneyTimeline({
   return (
     <View style={mjStyles.container}>
       {top3Active.map((journey, index) => (
-        <React.Fragment key={journey.id}>
-          <SingleJourneyTrack
-            journey={journey}
-            rank={index + 1}
-            windowWidth={windowWidth}
-            memberId={memberId}
-            editMode={editMode}
-          />
-          {index < top3Active.length - 1 && (
-            <JourneyInserter
-              onInsert={() =>
-                addStep.mutate(
-                  { journeyId: journey.id },
-                  {
-                    onError: () => {
-                      const msg = 'Could not add step. Please try again.';
-                      if (Platform.OS === 'web' && typeof window !== 'undefined')
-                        window.alert(msg);
-                      else Alert.alert('Error', msg);
-                    },
-                  },
-                )
-              }
-              disabled={addStep.isPending}
-            />
-          )}
-        </React.Fragment>
+        <SingleJourneyTrack
+          key={journey.id}
+          journey={journey}
+          rank={index + 1}
+          windowWidth={windowWidth}
+          memberId={memberId}
+          editMode={editMode}
+        />
       ))}
     </View>
   );
