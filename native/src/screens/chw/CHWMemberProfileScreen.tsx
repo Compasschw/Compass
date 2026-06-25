@@ -5198,12 +5198,9 @@ function StepInserter({
       accessibilityLabel="Insert a step here"
       style={trackStyles.inserterZone}
     >
-      <View
-        style={[
-          trackStyles.inserterLine,
-          { opacity: showContent ? 1 : 0 },
-        ]}
-      />
+      {/* Divider line is always visible — it is the separator between rows. */}
+      <View style={trackStyles.inserterLine} />
+      {/* Only the "+" button disappears at rest and reveals on hover. */}
       <View
         style={[
           trackStyles.inserterBtnWrap,
@@ -5287,8 +5284,8 @@ const trackStyles = StyleSheet.create({
     gap: 10,
     paddingVertical: 8,
     minHeight: 44,  // WCAG 44×44 minimum touch target
-    borderBottomWidth: 1,
-    borderBottomColor: '#F9FAFB',
+    // No borderBottom: the StepInserter between rows owns the divider line so
+    // its hover band coincides exactly with the visible divider.
   } as ViewStyle,
   editNodeDot: {
     width: 22,
@@ -5355,22 +5352,26 @@ const trackStyles = StyleSheet.create({
   // divider line (#F9FAFB = editNodeRow borderBottomColor). Resting state:
   // invisible on web; faint on native. Negative marginBottom pulls the zone
   // up so the circular button straddles the 1 px borderBottomColor line above.
+  // A clean, non-overlapping hover band that sits in normal flow between two
+  // step rows. It OWNS the divider line (rows no longer draw their own), so the
+  // band the user hovers coincides exactly with the visible divider — the prior
+  // -9 marginBottom overlapped the rows, so the cursor landed on a row Pressable
+  // and onHoverIn never fired.
   inserterZone: {
     width: '100%',
-    height: 18,
+    height: 22,
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
-    marginBottom: -9,
-    zIndex: 1,
   } as ViewStyle,
   inserterLine: {
     position: 'absolute',
     left: 0,
     right: 0,
+    top: '50%',
     height: 1,
-    // Match the editNodeRow borderBottomColor exactly so it blends at rest.
-    backgroundColor: '#F9FAFB',
+    // The visible divider between step rows (rows no longer have a borderBottom).
+    backgroundColor: '#F3F4F6',
   } as ViewStyle,
   inserterBtnWrap: {
     alignItems: 'center',
