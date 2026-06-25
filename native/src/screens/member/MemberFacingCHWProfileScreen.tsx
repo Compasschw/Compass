@@ -1062,7 +1062,11 @@ const s = StyleSheet.create({
   } as ViewStyle,
 
   pageWrapPadding: {
-    padding: Platform.OS === 'web' ? spacing.xxxl : spacing.xl,
+    // paddingTop intentionally omitted: AppShell's mainContent already applies
+    // 32px of top padding via its ScrollView contentContainerStyle. Adding top
+    // padding here doubled the gap above the CHW profile header vs. screens that
+    // don't own a nested ScrollView (e.g. CHWMembersScreen).
+    paddingHorizontal: Platform.OS === 'web' ? spacing.xxxl : spacing.xl,
     paddingBottom: 48,
   } as ViewStyle,
 
