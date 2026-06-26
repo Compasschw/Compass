@@ -84,6 +84,16 @@ import {
 } from 'lucide-react-native';
 import { useQuery } from '@tanstack/react-query';
 
+// Web-only: createPortal lets fixed overlays escape any transformed ancestor.
+// Metro replaces Platform.OS with the literal platform string at build time, so
+// native bundles never execute this require and react-dom is not bundled for native.
+let _webCreatePortal: ((children: React.ReactNode, container: Element) => React.ReactPortal) | null =
+  null;
+if (Platform.OS === 'web') {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  _webCreatePortal = (require('react-dom') as typeof import('react-dom')).createPortal;
+}
+
 import { fonts } from '../../theme/typography';
 import { colors as tokens, numerals, radius } from '../../theme/tokens';
 import { api } from '../../api/client';
@@ -3614,6 +3624,12 @@ interface EditJourneyNodeModalProps {
   initialDescription: string;
   /** Current step status — drives the tri-state segmented control. */
   stepStatus: string;
+  /**
+   * True when this is the only step in the journey. When true the Remove button
+   * is disabled with a caption — the backend would reject the deletion anyway,
+   * but we prevent the round-trip and surface a friendlier explanation.
+   */
+  isOnlyStep: boolean;
   onClose: () => void;
 }
 
@@ -3633,6 +3649,7 @@ function EditJourneyNodeModal({
   initialName,
   initialDescription,
   stepStatus,
+  isOnlyStep,
   onClose,
 }: EditJourneyNodeModalProps): React.JSX.Element {
   const updateNode = useUpdateJourneyNode(memberId);
@@ -3700,6 +3717,8 @@ function EditJourneyNodeModal({
    * closes the modal on success. Shows an inline error on failure.
    */
   const handleRemove = useCallback((): void => {
+    // Defensive guard — the button is disabled when isOnlyStep, but guard here too.
+    if (isOnlyStep) return;
     const onConfirmed = (): void => {
       setDeleteError(null);
       deleteNode.mutate(
@@ -3734,7 +3753,7 @@ function EditJourneyNodeModal({
         { cancelable: true },
       );
     }
-  }, [journeyId, stepId, deleteNode, onClose]);
+  }, [isOnlyStep, journeyId, stepId, deleteNode, onClose]);
 
   // Segmented status control handler — optimistic update with rollback.
   const handleStatusChange = useCallback(
@@ -3865,6 +3884,12 @@ function EditJourneyNodeModal({
           </Text>
         )}
 
+        {isOnlyStep && (
+          <Text style={editNodeStyles.onlyStepCaption}>
+            Cannot delete the last remaining step. Add a replacement step before removing this one.
+          </Text>
+        )}
+
       </View>
 
       {/* Footer — Remove (destructive) + Save for all journeys */}
@@ -3872,12 +3897,16 @@ function EditJourneyNodeModal({
         <TouchableOpacity
           style={[
             editNodeStyles.removeBtn,
-            (deleteNode.isPending || updateNode.isPending) && editNodeStyles.saveBtnDisabled,
+            (isOnlyStep || deleteNode.isPending || updateNode.isPending) && editNodeStyles.saveBtnDisabled,
           ]}
           onPress={handleRemove}
-          disabled={deleteNode.isPending || updateNode.isPending}
+          disabled={isOnlyStep || deleteNode.isPending || updateNode.isPending}
           accessibilityRole="button"
-          accessibilityLabel="Remove this step from the journey"
+          accessibilityLabel={
+            isOnlyStep
+              ? 'Cannot remove the last remaining step'
+              : 'Remove this step from the journey'
+          }
         >
           {deleteNode.isPending ? (
             <ActivityIndicator size="small" color={tokens.red700} />
@@ -3921,7 +3950,10 @@ function EditJourneyNodeModal({
 
   if (!visible) return <></>;
 
-  return (
+  // Build the overlay tree once; then portal it to document.body so it escapes
+  // any CSS-transform ancestor (animated containers make `position: fixed`
+  // ancestor-relative, which causes the modal to scroll out of view).
+  const webOverlay = (
     <View style={editNodeStyles.webOverlay}>
       <Pressable
         style={editNodeStyles.webBackdrop}
@@ -3932,6 +3964,14 @@ function EditJourneyNodeModal({
       <View style={editNodeStyles.webPanel}>{body}</View>
     </View>
   );
+
+  // _webCreatePortal is non-null on web (assigned at module level).
+  // Casting as JSX.Element is safe — ReactPortal satisfies ReactElement.
+  if (_webCreatePortal !== null && typeof document !== 'undefined') {
+    return _webCreatePortal(webOverlay, document.body) as unknown as React.JSX.Element;
+  }
+  // Fallback: render inline (should not normally be reached on web).
+  return webOverlay;
 }
 
 const editNodeStyles = StyleSheet.create({
@@ -3945,7 +3985,8 @@ const editNodeStyles = StyleSheet.create({
   webBackdrop: {
     position: 'absolute' as 'absolute',
     inset: 0,
-    backgroundColor: 'rgba(17,24,39,0.45)',
+    // Transparent — no dim. Kept as a full-screen press target for click-outside dismiss.
+    backgroundColor: 'transparent',
   } as ViewStyle,
   webPanel: {
     width: '100%',
@@ -3954,6 +3995,10 @@ const editNodeStyles = StyleSheet.create({
     borderRadius: 16,
     overflow: 'hidden',
     zIndex: 1,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    // Pronounced shadow so the card reads as floating without a backdrop dim.
+    boxShadow: '0 12px 40px rgba(17,24,39,0.18), 0 2px 8px rgba(17,24,39,0.10)',
   } as ViewStyle,
   nativeContainer: {
     flex: 1,
@@ -4013,6 +4058,14 @@ const editNodeStyles = StyleSheet.create({
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 12,
     color: '#B91C1C',
+    marginTop: 8,
+    lineHeight: 18,
+  } as TextStyle,
+  /** Muted helper shown when the step is the last one and cannot be removed. */
+  onlyStepCaption: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 12,
+    color: '#9CA3AF',
     marginTop: 8,
     lineHeight: 18,
   } as TextStyle,
@@ -4957,6 +5010,7 @@ const SingleJourneyTrack = React.memo(function SingleJourneyTrack({
           initialName={editingStep.stepName}
           initialDescription={editingStep.stepDescription}
           stepStatus={editingStep.status}
+          isOnlyStep={journey.steps.length <= 1}
           onClose={() => setEditingStep(null)}
         />
       )}
