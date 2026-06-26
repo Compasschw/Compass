@@ -123,7 +123,6 @@ import {
   useJourneyTemplates,
   useMemberJourneys,
   useMemberRewardsBalance,
-  useAwardMemberPoints,
   useCaseNotes,
   useCreateCaseNote,
   useMemberDocuments,
@@ -4184,38 +4183,6 @@ function ResourceNeedsColumn({
 }: ResourceNeedsColumnProps): React.JSX.Element {
   const { data: journeys, isLoading: journeysLoading } = useMemberJourneys(memberId);
   const { data: rewardsBalance } = useMemberRewardsBalance(memberId);
-  const award = useAwardMemberPoints(memberId);
-  const [awardOpen, setAwardOpen] = useState(false);
-  const [awardPointsStr, setAwardPointsStr] = useState('');
-  const [awardReason, setAwardReason] = useState('');
-  // "For" — which resource journey the points correlate to (empty = General).
-  const [awardContext, setAwardContext] = useState('');
-  const [awardContextOpen, setAwardContextOpen] = useState(false);
-
-  const handleAward = (): void => {
-    const points = parseInt(awardPointsStr, 10);
-    if (!points || points < 1) return;
-    // Attribute the award to the chosen journey so the reward correlates to it.
-    const reasonParts = [awardContext, awardReason.trim()].filter(Boolean);
-    const fullReason = reasonParts.join(' — ') || undefined;
-    award.mutate(
-      { points, reason: fullReason },
-      {
-        onSuccess: () => {
-          setAwardOpen(false);
-          setAwardPointsStr('');
-          setAwardReason('');
-          setAwardContext('');
-          setAwardContextOpen(false);
-        },
-        onError: () => {
-          const msg = 'Could not award points. Please try again.';
-          if (Platform.OS === 'web' && typeof window !== 'undefined') window.alert(msg);
-          else Alert.alert('Error', msg);
-        },
-      },
-    );
-  };
 
   const activeJourneys = useMemo(
     () => journeys?.filter((j) => j.status === 'active') ?? [],
@@ -4301,124 +4268,19 @@ function ResourceNeedsColumn({
         </View>
       )}
 
-      {/* Rewards balance + Award Points */}
+      {/* Wellness points stat — read-only, promoted from the old pill */}
       {rewardsBalance !== undefined && (
-        <View style={resourceColStyles.rewardsBadge}>
-          <Star size={12} color="#D97706" />
+        <View
+          style={resourceColStyles.rewardsBadge}
+          accessibilityRole="text"
+          accessibilityLabel={`${rewardsBalance.currentBalance.toLocaleString()} wellness points`}
+        >
+          <Star size={16} color="#D97706" />
           <Text style={[resourceColStyles.rewardsText, numerals.tabular]}>
             {rewardsBalance.currentBalance.toLocaleString()} wellness pts
           </Text>
         </View>
       )}
-      <TouchableOpacity
-        style={resourceColStyles.awardBtn}
-        onPress={() => setAwardOpen(true)}
-        accessibilityRole="button"
-        accessibilityLabel="Award wellness points to this member"
-      >
-        <Star size={12} color={tokens.primary} />
-        <Text style={resourceColStyles.awardBtnText}>Award Points</Text>
-      </TouchableOpacity>
-
-      <Modal
-        visible={awardOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setAwardOpen(false)}
-        accessibilityViewIsModal
-      >
-        <View style={consentModalStyles.overlay}>
-          <View style={[consentModalStyles.sheet, { maxWidth: 420 }]}>
-            <View style={consentModalStyles.headerRow}>
-              <Text style={consentModalStyles.title}>Award Wellness Points</Text>
-              <TouchableOpacity
-                onPress={() => setAwardOpen(false)}
-                accessibilityRole="button"
-                accessibilityLabel="Close"
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              >
-                <X size={18} color="#6B7280" />
-              </TouchableOpacity>
-            </View>
-            <Text style={consentModalStyles.meta}>For (resource journey)</Text>
-            <TouchableOpacity
-              style={resourceColStyles.awardInput}
-              onPress={() => setAwardContextOpen((v) => !v)}
-              accessibilityRole="button"
-              accessibilityLabel={`Award for: ${awardContext || 'General'}`}
-            >
-              <Text style={{ color: awardContext ? '#111827' : '#9CA3AF', fontSize: 13 }}>
-                {awardContext || 'General'}{'  ▾'}
-              </Text>
-            </TouchableOpacity>
-            {awardContextOpen && (
-              <View style={resourceColStyles.awardContextList}>
-                {['General', ...activeJourneys.map((j) => j.template.name)].map((opt) => (
-                  <TouchableOpacity
-                    key={opt}
-                    style={resourceColStyles.awardContextItem}
-                    onPress={() => {
-                      setAwardContext(opt === 'General' ? '' : opt);
-                      setAwardContextOpen(false);
-                    }}
-                    accessibilityRole="button"
-                    accessibilityLabel={opt}
-                  >
-                    <Text style={{ fontSize: 13, color: '#111827' }}>{opt}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
-            <Text style={consentModalStyles.meta}>Points</Text>
-            <TextInput
-              style={resourceColStyles.awardInput}
-              value={awardPointsStr}
-              onChangeText={(t) => setAwardPointsStr(t.replace(/[^0-9]/g, ''))}
-              keyboardType="number-pad"
-              placeholder="e.g. 25"
-              placeholderTextColor="#9CA3AF"
-              maxLength={4}
-              accessibilityLabel="Points to award"
-            />
-            <Text style={consentModalStyles.meta}>Reason (optional)</Text>
-            <TextInput
-              style={resourceColStyles.awardInput}
-              value={awardReason}
-              onChangeText={setAwardReason}
-              placeholder="e.g. Completed onboarding"
-              placeholderTextColor="#9CA3AF"
-              maxLength={120}
-              accessibilityLabel="Reason for award"
-            />
-            <View style={resourceColStyles.awardActions}>
-              <TouchableOpacity
-                onPress={() => setAwardOpen(false)}
-                accessibilityRole="button"
-                accessibilityLabel="Cancel"
-                style={resourceColStyles.awardCancel}
-              >
-                <Text style={resourceColStyles.awardCancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  consentModalStyles.closeBtn,
-                  (!awardPointsStr || award.isPending) && { opacity: 0.5 },
-                ]}
-                onPress={handleAward}
-                disabled={!awardPointsStr || award.isPending}
-                accessibilityRole="button"
-                accessibilityLabel="Award points"
-              >
-                {award.isPending ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <Text style={consentModalStyles.closeBtnText}>Award</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
 
       {/* Services refused caption */}
       {servicesConsentRefused && (
@@ -4523,78 +4385,19 @@ const resourceColStyles = StyleSheet.create({
   rewardsBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
-    backgroundColor: '#FFFBEB',
-    borderRadius: radius.pill,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    alignSelf: 'flex-start',
-    borderWidth: 1,
-    borderColor: '#FDE68A',
-  } as ViewStyle,
-  rewardsText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 11,
-    color: '#D97706',
-  } as TextStyle,
-  awardBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
     marginTop: 8,
-    paddingVertical: 8,
+    paddingVertical: 10,
     borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: tokens.primary + '40',
-    backgroundColor: tokens.primary + '0D',
+    borderColor: '#FDE68A',
+    backgroundColor: '#FFFBEB',
   } as ViewStyle,
-  awardBtnText: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 12,
-    color: tokens.primary,
-  } as TextStyle,
-  awardInput: {
-    borderWidth: 1,
-    borderColor: tokens.cardBorder ?? '#E5E7EB',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 13,
-    color: tokens.textPrimary ?? '#111827',
-    marginTop: 2,
-    marginBottom: 4,
-    outlineStyle: 'none',
-  } as unknown as TextStyle,
-  awardContextList: {
-    borderWidth: 1,
-    borderColor: tokens.cardBorder ?? '#E5E7EB',
-    borderRadius: 8,
-    marginBottom: 4,
-    overflow: 'hidden',
-  } as ViewStyle,
-  awardContextItem: {
-    paddingHorizontal: 10,
-    paddingVertical: 9,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
-  } as ViewStyle,
-  awardActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    alignItems: 'center',
-    gap: 8,
-    marginTop: 6,
-  } as ViewStyle,
-  awardCancel: {
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-  } as ViewStyle,
-  awardCancelText: {
+  rewardsText: {
     fontFamily: 'DMSans_700Bold',
     fontSize: 13,
-    color: '#6B7280',
+    color: '#D97706',
   } as TextStyle,
   refusedCaption: {
     flexDirection: 'row',
