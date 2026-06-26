@@ -38,6 +38,7 @@ from app.models.journeys import (
     MemberJourneyStepState,
     WellnessPointsLedger,
 )
+from app.models.user import MemberProfile
 from app.services.journey_seeds import seed_default_journey_templates
 from tests.conftest import auth_header, complete_member_signup_payload, test_session
 
@@ -1177,4 +1178,243 @@ async def test_delete_nonexistent_node_after_fork_returns_404(
     )
     assert del_res.status_code == 404, (
         f"Expected 404 for nonexistent step, got {del_res.status_code}: {del_res.text}"
+    )
+
+
+# ─── Regression: split-brain rewards_balance bug ─────────────────────────────
+#
+# Before the fix, completing a journey step wrote only a WellnessPointsLedger
+# row and never updated MemberProfile.rewards_balance. The balance endpoint
+# (GET /members/{id}/rewards/balance) reads rewards_balance as its source of
+# truth, so journey points never appeared there. The tests below FAIL on the
+# pre-fix code and pass after.
+
+
+@pytest.mark.asyncio
+async def test_completing_step_credits_rewards_balance(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    """Completing a journey step must increment MemberProfile.rewards_balance.
+
+    Regression for: update_step_status wrote only the WellnessPointsLedger and
+    never updated rewards_balance — so GET /rewards/balance showed 0 after a
+    step completion.
+
+    Asserts:
+      - rewards_balance in DB increases by points_on_completion.
+      - GET /members/{id}/rewards/balance returns the new current_balance.
+    """
+    await _seed_templates()
+    member_id = await _relate(client, member_tokens, chw_tokens)
+    member_uuid = UUID(member_id)
+
+    journey = await _create_standard_journey(client, chw_tokens, member_id)
+    journey_id = journey["id"]
+    steps = sorted(journey["steps"], key=lambda s: s["step_order"])
+    step1_id = steps[0]["template_step_id"]
+    step1_points = steps[0]["points_on_completion"]
+    assert step1_points > 0, "Template step 1 must have points_on_completion > 0"
+
+    # Confirm baseline balance is zero before completion.
+    async with test_session() as db:
+        profile_before = (
+            await db.execute(
+                select(MemberProfile).where(MemberProfile.user_id == member_uuid)
+            )
+        ).scalar_one()
+    assert profile_before.rewards_balance == 0, (
+        f"Expected 0 balance before completion, got {profile_before.rewards_balance}"
+    )
+
+    # Complete step 1.
+    patch_res = await client.patch(
+        f"/api/v1/journeys/{journey_id}/steps/{step1_id}",
+        json={"status": "completed"},
+        headers=auth_header(chw_tokens),
+    )
+    assert patch_res.status_code == 200, patch_res.text
+
+    # DB-level assertion: rewards_balance must have been incremented.
+    async with test_session() as db:
+        profile_after = (
+            await db.execute(
+                select(MemberProfile).where(MemberProfile.user_id == member_uuid)
+            )
+        ).scalar_one()
+    assert profile_after.rewards_balance == step1_points, (
+        f"Expected rewards_balance == {step1_points} after completion, "
+        f"got {profile_after.rewards_balance} — balance was never updated (split-brain bug)"
+    )
+
+    # API-level assertion: GET /rewards/balance must reflect the new total.
+    balance_res = await client.get(
+        f"/api/v1/members/{member_id}/rewards/balance",
+        headers=auth_header(member_tokens),
+    )
+    assert balance_res.status_code == 200, balance_res.text
+    assert balance_res.json()["current_balance"] == step1_points, (
+        f"rewards/balance endpoint returned {balance_res.json()['current_balance']}, "
+        f"expected {step1_points}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_reversing_step_claws_back_rewards_balance(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    """Reversing a completed step (complete → in_progress) must decrement
+    MemberProfile.rewards_balance back to its pre-completion value.
+
+    Regression: before the fix, reversal wrote a negative WellnessPointsLedger
+    entry but never touched rewards_balance, so the balance remained inflated.
+    """
+    await _seed_templates()
+    member_id = await _relate(client, member_tokens, chw_tokens)
+    member_uuid = UUID(member_id)
+
+    journey = await _create_standard_journey(client, chw_tokens, member_id)
+    journey_id = journey["id"]
+    steps = sorted(journey["steps"], key=lambda s: s["step_order"])
+    step1_id = steps[0]["template_step_id"]
+    step1_points = steps[0]["points_on_completion"]
+
+    # Complete step 1.
+    patch_res = await client.patch(
+        f"/api/v1/journeys/{journey_id}/steps/{step1_id}",
+        json={"status": "completed"},
+        headers=auth_header(chw_tokens),
+    )
+    assert patch_res.status_code == 200, patch_res.text
+
+    # Reverse step 1 back to in_progress.
+    revert_res = await client.patch(
+        f"/api/v1/journeys/{journey_id}/steps/{step1_id}",
+        json={"status": "in_progress"},
+        headers=auth_header(chw_tokens),
+    )
+    assert revert_res.status_code == 200, revert_res.text
+
+    # DB: rewards_balance must be back to 0 (clamped, never negative).
+    async with test_session() as db:
+        profile = (
+            await db.execute(
+                select(MemberProfile).where(MemberProfile.user_id == member_uuid)
+            )
+        ).scalar_one()
+    assert profile.rewards_balance == 0, (
+        f"Expected rewards_balance == 0 after reversal, got {profile.rewards_balance} "
+        f"— claw-back was not applied (split-brain bug)"
+    )
+
+    # API: GET /rewards/balance must show 0.
+    balance_res = await client.get(
+        f"/api/v1/members/{member_id}/rewards/balance",
+        headers=auth_header(member_tokens),
+    )
+    assert balance_res.status_code == 200, balance_res.text
+    assert balance_res.json()["current_balance"] == 0, (
+        f"rewards/balance endpoint returned {balance_res.json()['current_balance']}, expected 0"
+    )
+
+
+@pytest.mark.asyncio
+async def test_idempotent_completion_does_not_double_credit_balance(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    """Completing an already-completed step twice must NOT double the balance.
+
+    The idempotent no-op branch (completed → completed) must leave rewards_balance
+    unchanged on the second call.
+    """
+    await _seed_templates()
+    member_id = await _relate(client, member_tokens, chw_tokens)
+    member_uuid = UUID(member_id)
+
+    journey = await _create_standard_journey(client, chw_tokens, member_id)
+    journey_id = journey["id"]
+    steps = sorted(journey["steps"], key=lambda s: s["step_order"])
+    step1_id = steps[0]["template_step_id"]
+    step1_points = steps[0]["points_on_completion"]
+
+    # First completion — valid credit.
+    res1 = await client.patch(
+        f"/api/v1/journeys/{journey_id}/steps/{step1_id}",
+        json={"status": "completed"},
+        headers=auth_header(chw_tokens),
+    )
+    assert res1.status_code == 200, res1.text
+
+    # Second completion — must be a no-op.
+    res2 = await client.patch(
+        f"/api/v1/journeys/{journey_id}/steps/{step1_id}",
+        json={"status": "completed"},
+        headers=auth_header(chw_tokens),
+    )
+    assert res2.status_code == 200, res2.text
+
+    async with test_session() as db:
+        profile = (
+            await db.execute(
+                select(MemberProfile).where(MemberProfile.user_id == member_uuid)
+            )
+        ).scalar_one()
+    assert profile.rewards_balance == step1_points, (
+        f"Expected rewards_balance == {step1_points} (single credit), "
+        f"got {profile.rewards_balance} — double-credit detected"
+    )
+
+
+@pytest.mark.asyncio
+async def test_rewards_balance_never_goes_negative(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    """Reversing a step when rewards_balance is already 0 must clamp at 0.
+
+    Edge case: if the balance was manually zeroed (or was already 0 for another
+    reason), a reversal must not push it below 0.
+    """
+    await _seed_templates()
+    member_id = await _relate(client, member_tokens, chw_tokens)
+    member_uuid = UUID(member_id)
+
+    journey = await _create_standard_journey(client, chw_tokens, member_id)
+    journey_id = journey["id"]
+    steps = sorted(journey["steps"], key=lambda s: s["step_order"])
+    step1_id = steps[0]["template_step_id"]
+
+    # Complete step 1 to establish points_awarded on the step state.
+    patch_res = await client.patch(
+        f"/api/v1/journeys/{journey_id}/steps/{step1_id}",
+        json={"status": "completed"},
+        headers=auth_header(chw_tokens),
+    )
+    assert patch_res.status_code == 200, patch_res.text
+
+    # Manually zero the balance (simulates an external adjustment or manual
+    # redemption that drained the balance before the reversal arrives).
+    async with test_session() as db:
+        profile = (
+            await db.execute(
+                select(MemberProfile).where(MemberProfile.user_id == member_uuid)
+            )
+        ).scalar_one()
+        profile.rewards_balance = 0
+        await db.commit()
+
+    # Reverse step 1 — balance is already 0; clamp must prevent going negative.
+    revert_res = await client.patch(
+        f"/api/v1/journeys/{journey_id}/steps/{step1_id}",
+        json={"status": "in_progress"},
+        headers=auth_header(chw_tokens),
+    )
+    assert revert_res.status_code == 200, revert_res.text
+
+    async with test_session() as db:
+        profile = (
+            await db.execute(
+                select(MemberProfile).where(MemberProfile.user_id == member_uuid)
+            )
+        ).scalar_one()
+    assert profile.rewards_balance >= 0, (
+        f"rewards_balance went negative ({profile.rewards_balance}) — clamp not applied"
     )

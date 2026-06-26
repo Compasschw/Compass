@@ -39,6 +39,7 @@ from app.models.journeys import (
     MemberJourneyStepState,
     WellnessPointsLedger,
 )
+from app.models.user import MemberProfile
 from app.schemas.journeys import (
     CaseloadJourneyItem,
     CreateCustomJourneyRequest,
@@ -1143,6 +1144,19 @@ async def update_step_status(
             )
             db.add(reversal_entry)
 
+            # Claw back the awarded points from the member's rewards_balance.
+            # Clamp at 0 to avoid a negative balance in unexpected edge cases.
+            profile_result = await db.execute(
+                select(MemberProfile).where(
+                    MemberProfile.user_id == member_journey.member_id
+                )
+            )
+            profile = profile_result.scalar_one_or_none()
+            if profile is not None:
+                profile.rewards_balance = max(
+                    0, profile.rewards_balance - step_state.points_awarded
+                )
+
         step_state.points_awarded = 0
 
         # Reopen the journey if it was marked completed.
@@ -1182,6 +1196,18 @@ async def update_step_status(
             related_id=step_state.id,
         )
         db.add(ledger_entry)
+
+        # Credit the member's rewards_balance so the balance endpoint reflects
+        # this award. The ledger is append-only; rewards_balance is the live total.
+        if tpl_step.points_on_completion != 0:
+            award_profile_result = await db.execute(
+                select(MemberProfile).where(
+                    MemberProfile.user_id == member_journey.member_id
+                )
+            )
+            award_profile = award_profile_result.scalar_one_or_none()
+            if award_profile is not None:
+                award_profile.rewards_balance += tpl_step.points_on_completion
 
         # Advance current_step_id to the next step in template order.
         all_states_result = await db.execute(
