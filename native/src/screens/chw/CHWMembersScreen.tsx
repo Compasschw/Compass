@@ -4,7 +4,7 @@
  * Layout (web, matching native/_mockups/members.html):
  *   - AppShell with role="chw" / activeKey="members"
  *   - Header: "My Members" + subtitle (active count · inactive count · refreshed N mins ago)
- *     Right side: search input (288px, magnifying-glass leading icon) + "Add Member" button
+ *     Right side: search input (magnifying-glass leading icon)
  *   - Filter chips row: All / Active / High Risk / Overdue follow-up / In a journey / Inactive
  *     Right-aligned: filter icon + "Sort: Last contact ↓"
  *   - Table card (rounded-16, white, bordered):
@@ -40,7 +40,6 @@ import {
   Check,
   Filter,
   Search,
-  UserPlus,
   Users,
   X,
 } from 'lucide-react-native';
@@ -871,7 +870,7 @@ export function CHWMembersScreen(): React.JSX.Element {
           </Text>
         </View>
 
-        {/* Search + Add Member */}
+        {/* Search */}
         <View style={styles.headerActions}>
           <View style={styles.searchWrap}>
             <Search size={16} color="#9CA3AF" style={styles.searchIcon as any} />
@@ -885,15 +884,6 @@ export function CHWMembersScreen(): React.JSX.Element {
               accessibilityLabel="Search members"
             />
           </View>
-          <TouchableOpacity
-            style={styles.addButton}
-            accessible
-            accessibilityRole="button"
-            accessibilityLabel="Add member"
-          >
-            <UserPlus size={16} color="#fff" />
-            <Text style={styles.addButtonText}>Add Member</Text>
-          </TouchableOpacity>
         </View>
       </View>
 
@@ -1141,23 +1131,6 @@ const styles = StyleSheet.create({
     // `unknown` round-trip (same pattern as CHWResourcesScreen.searchInput).
     outlineStyle: 'none',
   } as unknown as TextStyle,
-
-  addButton: {
-    flexDirection:   'row',
-    alignItems:      'center',
-    gap:             spacing.xs,
-    backgroundColor: '#10B981', // emerald-500 (#10B981) per mock
-    borderRadius:    radius.lg,
-    paddingHorizontal: 16,
-    paddingVertical:   8,
-    flexShrink:      0,
-  } as ViewStyle,
-
-  addButtonText: {
-    fontSize:   14,
-    fontWeight: '600',
-    color:      '#fff',
-  } as TextStyle,
 
   // ── Filter chips row ─────────────────────────────────────────────────────────
 
