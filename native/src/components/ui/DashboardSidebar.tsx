@@ -253,7 +253,25 @@ function SidebarContent({
               route={item.route}
               isActive={isActive}
               badgeValue={badgeValue}
-              onPress={() => navigation.navigate(item.route)}
+              onPress={() => {
+                // For nested-stack routes, navigate to the stack's root screen
+                // so we pop back to it even when already deep inside that stack
+                // (e.g. tapping Messages while on a MemberProfile pushed inside
+                // SessionsStack). Plain navigate(tab) is a no-op for the tab you
+                // are already on, which is why those pages felt unreachable.
+                const rootScreen =
+                  'rootScreen' in item
+                    ? (item as { rootScreen?: string }).rootScreen
+                    : undefined;
+                if (rootScreen !== undefined) {
+                  (navigation as { navigate: (name: string, params?: object) => void }).navigate(
+                    item.route,
+                    { screen: rootScreen },
+                  );
+                } else {
+                  navigation.navigate(item.route);
+                }
+              }}
             />
           );
         })}
