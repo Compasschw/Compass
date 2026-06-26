@@ -155,6 +155,7 @@ import {
   type MemberJourneyResponse,
   type MemberJourneyStepResponse,
   type MemberDemographicsUpdate,
+  type ResourceNeedLevel,
 } from '../../hooks/useApiQueries';
 import {
   INSURANCE_OPTIONS,
@@ -227,8 +228,10 @@ interface CHWMemberProfileDetail {
   state: string | null;
   ecmEligible: boolean;
   primaryCategories: string[];
-  /** Member's editable resource needs (priority order). Drives the pencil edit. */
+  /** Member's editable resource needs (selection order). Drives the pencil edit. */
   resourceNeeds: string[];
+  /** CHW-assigned priority level per resource need slug (camelCase-transformed from snake_case backend field). */
+  resourceNeedLevels: Record<string, ResourceNeedLevel>;
   billingUnits: BillingUnitsLegacy;
   sessionCount: number;
   lastSessionAt: string | null;
@@ -1393,22 +1396,26 @@ const RESOURCE_NEED_OPTIONS: ReadonlyArray<{ slug: string; label: string }> = [
 
 interface EditResourceNeedsModalProps {
   visible: boolean;
-  /** Current priority-ordered resource needs — used to pre-fill selection. */
+  /** Current selection-ordered resource needs — used to pre-fill selection. */
   currentNeeds: string[];
+  /** Current CHW-assigned level per slug — used to pre-fill the level controls. */
+  currentLevels: Record<string, ResourceNeedLevel>;
   memberId: string;
   onClose: () => void;
 }
 
 /**
- * Modal for editing a member's resource needs priority list.
+ * Modal for editing a member's resource needs and their CHW-assigned priority
+ * levels (Low / Medium / High).
  *
  * Each of the 5 resource categories is shown as a toggleable chip row.
- * Already-selected needs are pre-checked in their existing order; newly tapped
- * needs are appended to the selection. A priority badge (1, 2, 3…) is shown
- * next to selected items so the CHW can see the ranking at a glance.
+ * Already-selected needs are pre-checked with their existing levels. Newly
+ * tapped needs are appended to the selection and default to "High". A Low /
+ * Medium / High segmented control appears on each selected row so the CHW can
+ * adjust the level without re-ordering.
  *
- * On "Save", calls useUpdateMemberResourceNeeds which PATCHes the ordered
- * slug list and invalidates the member-detail query so the card refreshes.
+ * On "Save", calls useUpdateMemberResourceNeeds which PATCHes { needs, levels }
+ * and invalidates the member-detail query so the card refreshes.
  * Errors surface inline. An empty selection is allowed (clears all needs).
  *
  * Platform:
@@ -1419,25 +1426,29 @@ interface EditResourceNeedsModalProps {
 function EditResourceNeedsModal({
   visible,
   currentNeeds,
+  currentLevels,
   memberId,
   onClose,
 }: EditResourceNeedsModalProps): React.JSX.Element {
   const updateResourceNeeds = useUpdateMemberResourceNeeds(memberId);
 
   /**
-   * Priority-ordered list of selected slugs.
-   * Initialised from currentNeeds each time the modal opens.
+   * Selection-ordered list of selected slugs — preserved for the `needs`
+   * payload so the backend can maintain a stable display order.
    */
   const [selectedSlugs, setSelectedSlugs] = useState<string[]>([]);
+  /** CHW-assigned priority level per selected slug. */
+  const [levels, setLevels] = useState<Record<string, ResourceNeedLevel>>({});
   const [error, setError] = useState<string | null>(null);
 
-  // Hydrate selection whenever the modal opens.
+  // Hydrate selection and levels whenever the modal opens.
   useEffect(() => {
     if (visible) {
       setSelectedSlugs([...currentNeeds]);
+      setLevels({ ...currentLevels });
       setError(null);
     }
-  }, [visible, currentNeeds]);
+  }, [visible, currentNeeds, currentLevels]);
 
   // Esc key closes on web.
   useEffect(() => {
@@ -1451,22 +1462,33 @@ function EditResourceNeedsModal({
 
   /**
    * Toggle a category slug in the selection.
-   *   - If already selected, remove it (deselect).
-   *   - If not selected, append it to the end (becomes the lowest priority).
+   *   - If already selected, remove it and clear its level.
+   *   - If not selected, append it to the end and default its level to 'high'.
    */
   const toggleSlug = useCallback((slug: string): void => {
     setSelectedSlugs((prev) => {
       if (prev.includes(slug)) {
+        setLevels((lvls) => {
+          const next = { ...lvls };
+          delete next[slug];
+          return next;
+        });
         return prev.filter((s) => s !== slug);
       }
+      setLevels((lvls) => ({ ...lvls, [slug]: 'high' }));
       return [...prev, slug];
     });
+  }, []);
+
+  /** Set the CHW-assigned level for a specific slug. */
+  const setLevel = useCallback((slug: string, level: ResourceNeedLevel): void => {
+    setLevels((prev) => ({ ...prev, [slug]: level }));
   }, []);
 
   const handleSave = useCallback(async (): Promise<void> => {
     setError(null);
     try {
-      await updateResourceNeeds.mutateAsync(selectedSlugs);
+      await updateResourceNeeds.mutateAsync({ needs: selectedSlugs, levels });
       onClose();
     } catch (err: unknown) {
       const detail =
@@ -1478,7 +1500,7 @@ function EditResourceNeedsModal({
           : 'Could not save resource needs. Please try again.';
       setError(detail);
     }
-  }, [selectedSlugs, updateResourceNeeds, onClose]);
+  }, [selectedSlugs, levels, updateResourceNeeds, onClose]);
 
   const body = (
     <View style={editResourceNeedsStyles.container}>
@@ -1498,59 +1520,100 @@ function EditResourceNeedsModal({
       {/* Instruction */}
       <View style={editResourceNeedsStyles.instructionRow}>
         <Text style={editResourceNeedsStyles.instructionText}>
-          Select the member's resource needs. First selected = highest priority.
-          Priority order is shown as a number badge.
+          Select the member's resource needs and set each one's priority level.
         </Text>
       </View>
 
       {/* Category chips */}
       <View style={editResourceNeedsStyles.chipList}>
         {RESOURCE_NEED_OPTIONS.map(({ slug, label }) => {
-          const priorityIndex = selectedSlugs.indexOf(slug);
-          const isSelected = priorityIndex !== -1;
-          const priorityNumber = isSelected ? priorityIndex + 1 : null;
+          const isSelected = selectedSlugs.includes(slug);
+          const currentLevel = levels[slug] ?? 'high';
 
           return (
-            <TouchableOpacity
+            <View
               key={slug}
               style={[
                 editResourceNeedsStyles.chipRow,
                 isSelected && editResourceNeedsStyles.chipRowSelected,
               ]}
-              onPress={() => toggleSlug(slug)}
-              accessibilityRole="checkbox"
-              accessibilityState={{ checked: isSelected }}
-              accessibilityLabel={`${label}${isSelected ? `, priority ${priorityNumber ?? ''}` : ''}`}
             >
-              {/* Priority badge or unchecked circle */}
-              <View
-                style={[
-                  editResourceNeedsStyles.chipBadge,
-                  isSelected && editResourceNeedsStyles.chipBadgeSelected,
-                ]}
+              {/* Toggle area: badge + label + check icon */}
+              <TouchableOpacity
+                style={editResourceNeedsStyles.chipRowToggle}
+                onPress={() => toggleSlug(slug)}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: isSelected }}
+                accessibilityLabel={`${label}${isSelected ? `, ${currentLevel} priority, selected` : ''}`}
               >
-                {isSelected ? (
-                  <Text style={editResourceNeedsStyles.chipBadgeText}>
-                    {priorityNumber}
-                  </Text>
-                ) : (
-                  <View style={editResourceNeedsStyles.chipBadgeEmpty} />
-                )}
-              </View>
+                {/* Check circle or unchecked circle */}
+                <View
+                  style={[
+                    editResourceNeedsStyles.chipBadge,
+                    isSelected && editResourceNeedsStyles.chipBadgeSelected,
+                  ]}
+                >
+                  {isSelected && <Check size={12} color="#FFFFFF" />}
+                </View>
 
-              {/* Label */}
-              <Text
-                style={[
-                  editResourceNeedsStyles.chipLabel,
-                  isSelected && editResourceNeedsStyles.chipLabelSelected,
-                ]}
-              >
-                {label}
-              </Text>
+                {/* Label */}
+                <Text
+                  style={[
+                    editResourceNeedsStyles.chipLabel,
+                    isSelected && editResourceNeedsStyles.chipLabelSelected,
+                  ]}
+                  numberOfLines={1}
+                >
+                  {label}
+                </Text>
 
-              {/* Check icon when selected */}
-              {isSelected && <Check size={14} color={tokens.primary} />}
-            </TouchableOpacity>
+                {/* Check icon when selected */}
+                {isSelected && <Check size={14} color={tokens.primary} />}
+              </TouchableOpacity>
+
+              {/* Low / Medium / High segmented control (selected only) */}
+              {isSelected && (
+                <View style={editResourceNeedsStyles.levelSegRow}>
+                  {(['low', 'medium', 'high'] as const).map((lvl) => {
+                    const isActive = currentLevel === lvl;
+                    return (
+                      <TouchableOpacity
+                        key={lvl}
+                        style={[
+                          editResourceNeedsStyles.levelPill,
+                          isActive && (
+                            lvl === 'high'
+                              ? editResourceNeedsStyles.levelPillHighActive
+                              : lvl === 'medium'
+                              ? editResourceNeedsStyles.levelPillMedActive
+                              : editResourceNeedsStyles.levelPillLowActive
+                          ),
+                        ]}
+                        onPress={() => setLevel(slug, lvl)}
+                        accessibilityRole="button"
+                        accessibilityLabel={lvl === 'low' ? 'Low' : lvl === 'medium' ? 'Medium' : 'High'}
+                        accessibilityState={{ selected: isActive }}
+                      >
+                        <Text
+                          style={[
+                            editResourceNeedsStyles.levelPillText,
+                            isActive && (
+                              lvl === 'high'
+                                ? editResourceNeedsStyles.levelPillTextHigh
+                                : lvl === 'medium'
+                                ? editResourceNeedsStyles.levelPillTextMed
+                                : editResourceNeedsStyles.levelPillTextLow
+                            ),
+                          ]}
+                        >
+                          {lvl === 'low' ? 'Low' : lvl === 'medium' ? 'Med' : 'High'}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              )}
+            </View>
           );
         })}
       </View>
@@ -1695,8 +1758,8 @@ const editResourceNeedsStyles = StyleSheet.create({
   chipRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    paddingVertical: 12,
+    gap: 8,
+    paddingVertical: 10,
     paddingHorizontal: 14,
     borderRadius: 10,
     borderWidth: 1,
@@ -1707,8 +1770,15 @@ const editResourceNeedsStyles = StyleSheet.create({
     borderColor: tokens.primary,
     backgroundColor: `${tokens.primary}0D`,
   } as ViewStyle,
+  /** Left portion of the chip row — check circle + label + check icon. */
+  chipRowToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flex: 1,
+  } as ViewStyle,
 
-  // Priority badge circle
+  // Check-circle badge
   chipBadge: {
     width: 24,
     height: 24,
@@ -1723,15 +1793,6 @@ const editResourceNeedsStyles = StyleSheet.create({
     backgroundColor: tokens.primary,
     borderColor: tokens.primary,
   } as ViewStyle,
-  chipBadgeEmpty: {
-    // Placeholder so the circle is visible but unfilled.
-  } as ViewStyle,
-  chipBadgeText: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 11,
-    color: '#FFFFFF',
-    lineHeight: 13,
-  } as TextStyle,
 
   chipLabel: {
     flex: 1,
@@ -1741,6 +1802,48 @@ const editResourceNeedsStyles = StyleSheet.create({
   } as TextStyle,
   chipLabelSelected: {
     color: '#111827',
+  } as TextStyle,
+
+  // Low / Medium / High segmented control
+  levelSegRow: {
+    flexDirection: 'row',
+    gap: 4,
+    alignItems: 'center',
+    flexShrink: 0,
+  } as ViewStyle,
+  levelPill: {
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#F9FAFB',
+  } as ViewStyle,
+  levelPillHighActive: {
+    backgroundColor: tokens.red100,
+    borderColor: tokens.red700,
+  } as ViewStyle,
+  levelPillMedActive: {
+    backgroundColor: tokens.amber100,
+    borderColor: tokens.amber700,
+  } as ViewStyle,
+  levelPillLowActive: {
+    backgroundColor: tokens.emerald100,
+    borderColor: tokens.emerald700,
+  } as ViewStyle,
+  levelPillText: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 10,
+    color: '#9CA3AF',
+  } as TextStyle,
+  levelPillTextHigh: {
+    color: tokens.red700,
+  } as TextStyle,
+  levelPillTextMed: {
+    color: tokens.amber700,
+  } as TextStyle,
+  levelPillTextLow: {
+    color: tokens.emerald700,
   } as TextStyle,
 
   // Error
@@ -4196,18 +4299,11 @@ function deriveSeverity(progressPercent: number): JourneySeverity {
   return 'low';
 }
 
-/** Chip background for each priority rank (1 = most urgent). */
-const RANK_CHIP_BG: Record<number, string> = {
-  1: tokens.red100,
-  2: tokens.amber100,
-  3: '#FEF9C3', // yellow-100 — not in tokens but consistent with palette
-};
-
-/** Chip text color per rank. */
-const RANK_CHIP_COLOR: Record<number, string> = {
-  1: tokens.red700,
-  2: tokens.amber700,
-  3: '#A16207', // yellow-800
+/** Stable sort order for CHW-assigned resource need levels. */
+const LEVEL_SORT_ORDER: Record<ResourceNeedLevel, number> = {
+  high: 0,
+  medium: 1,
+  low: 2,
 };
 
 // ─── ResourceNeedsColumn ─────────────────────────────────────────────────────
@@ -4225,40 +4321,37 @@ interface ResourceNeedsColumnProps {
  * Right column of the 3-column top card.
  *
  * Shows:
- *   - "Resource Needs (Priority)" card — top-3 active journeys ranked by
- *     severity (low progressPercent = highest priority).
+ *   - "Resource Needs (Level)" card — the member's selected resource needs
+ *     sorted high→medium→low by CHW-assigned level, each showing a level Pill.
  *   - Rewards balance badge.
  *   - Call / Message CTAs (dimmed when services refused).
  *   - Session count chip.
- *
- * Adds Journey modal state lives here so AddJourneyModal is available to the
- * Member Journey section header via a passed-down trigger callback.
  */
 function ResourceNeedsColumn({
   memberId,
-  profile: _profile,
+  profile,
   sessionCount,
   servicesConsentRefused,
   onEditResourceNeeds,
 }: ResourceNeedsColumnProps): React.JSX.Element {
-  const { data: journeys, isLoading: journeysLoading } = useMemberJourneys(memberId);
   const { data: rewardsBalance } = useMemberRewardsBalance(memberId);
 
-  const activeJourneys = useMemo(
-    () => journeys?.filter((j) => j.status === 'active') ?? [],
-    [journeys],
-  );
-
   /**
-   * Top-3 active journeys sorted by severity — lowest progressPercent first
-   * (most urgent need at rank 1).
+   * Resource needs sorted high→medium→low (stable: preserves selection order
+   * within the same level).
    */
-  const top3 = useMemo(
+  const orderedNeeds = useMemo(
     () =>
-      [...activeJourneys]
-        .sort((a, b) => a.progressPercent - b.progressPercent)
-        .slice(0, 3),
-    [activeJourneys],
+      profile.resourceNeeds
+        .map((slug, i) => ({ slug, i }))
+        .sort((a, b) => {
+          const la = profile.resourceNeedLevels[a.slug] ?? 'low';
+          const lb = profile.resourceNeedLevels[b.slug] ?? 'low';
+          const diff = LEVEL_SORT_ORDER[la] - LEVEL_SORT_ORDER[lb];
+          return diff !== 0 ? diff : a.i - b.i;
+        })
+        .map(({ slug }) => slug),
+    [profile.resourceNeeds, profile.resourceNeedLevels],
   );
 
   return (
@@ -4267,59 +4360,40 @@ function ResourceNeedsColumn({
       <View style={resourceColStyles.headRow}>
         <View>
           <Text style={resourceColStyles.headTitle}>Resource Needs</Text>
-          <Text style={resourceColStyles.headSub}>(Priority)</Text>
+          <Text style={resourceColStyles.headSub}>(Level)</Text>
         </View>
         {/* Edit pencil — opens EditResourceNeedsModal */}
         <TouchableOpacity
           style={resourceColStyles.editBtn}
           onPress={onEditResourceNeeds}
           accessibilityRole="button"
-          accessibilityLabel="Edit resource needs priority"
+          accessibilityLabel="Edit resource needs levels"
         >
           <Edit2 size={12} color={tokens.textMuted} />
         </TouchableOpacity>
       </View>
 
-      {/* Priority items */}
-      {journeysLoading ? (
-        <View style={resourceColStyles.loadingRow}>
-          <ActivityIndicator size="small" color={tokens.textMuted} />
-          <Text style={resourceColStyles.loadingText}>Loading…</Text>
-        </View>
-      ) : top3.length === 0 ? (
-        <Text style={resourceColStyles.emptyText}>No active journeys.</Text>
+      {/* Needs list */}
+      {orderedNeeds.length === 0 ? (
+        <Text style={resourceColStyles.emptyText}>No resource needs selected.</Text>
       ) : (
         <View style={resourceColStyles.priorityList}>
           <StaggerList delayMs={50} durationMs={240}>
-            {top3.map((journey, index) => {
-              const rank = index + 1;
-              const severity = deriveSeverity(journey.progressPercent);
-              const chipBg = RANK_CHIP_BG[rank] ?? '#F3F4F6';
-              const chipColor = RANK_CHIP_COLOR[rank] ?? tokens.textMuted;
-              const pillVariant =
-                severity === 'high'
-                  ? 'red'
-                  : severity === 'medium'
-                  ? 'amber'
-                  : ('amber' as const);
-              const pillLabel =
-                severity === 'high' ? 'High' : severity === 'medium' ? 'Medium' : 'Low';
+            {orderedNeeds.map((slug) => {
+              const option = RESOURCE_NEED_OPTIONS.find((o) => o.slug === slug);
+              const level = profile.resourceNeedLevels[slug] ?? 'low';
+              const pillVariant: 'red' | 'amber' | 'emerald' =
+                level === 'high' ? 'red' : level === 'medium' ? 'amber' : 'emerald';
+              const pillLabel = level === 'high' ? 'High' : level === 'medium' ? 'Medium' : 'Low';
 
               return (
-                <View key={journey.id} style={resourceColStyles.priorityItem}>
-                  {/* Rank chip */}
-                  <View style={[resourceColStyles.rankChip, { backgroundColor: chipBg }]}>
-                    <Text style={[resourceColStyles.rankText, { color: chipColor }, numerals.tabular]}>
-                      {rank}
-                    </Text>
-                  </View>
-
-                  {/* Journey name */}
+                <View key={slug} style={resourceColStyles.priorityItem}>
+                  {/* Need label */}
                   <Text style={resourceColStyles.journeyName} numberOfLines={2}>
-                    {journey.template.name}
+                    {option?.label ?? slug}
                   </Text>
 
-                  {/* Severity pill */}
+                  {/* Level pill */}
                   <Pill variant={pillVariant} size="sm">{pillLabel}</Pill>
                 </View>
               );
@@ -4767,16 +4841,24 @@ const verticalStepStyles = StyleSheet.create({
 
 interface SingleJourneyTrackProps {
   journey: MemberJourneyResponse;
+  /** Retained for keyed list rendering; no longer shown as a numeric badge. */
   rank: number;
   windowWidth: number;
   memberId: string;
   /** When true, CHW edit affordances (add node, edit/complete each node) are visible. */
   editMode: boolean;
+  /** CHW-assigned priority levels keyed by resource need slug. */
+  resourceNeedLevels: Record<string, ResourceNeedLevel>;
 }
 
 /**
- * A single journey track row: rank chip + name + severity pill in the header,
+ * A single journey track row: level pill + name + progress % in the header,
  * then the step timeline below.
+ *
+ * The severity pill reflects the CHW-assigned level from `resourceNeedLevels`
+ * when the journey's template name matches a known resource need option.
+ * Falls back to progress-derived severity (deriveSeverity) for journeys that
+ * don't correspond to a named resource need category (e.g. custom journeys).
  *
  * When editMode is true and the journey is custom (template.slug starts with
  * "custom-"), each node shows an edit pencil and a "Complete" action on the
@@ -4790,23 +4872,30 @@ interface SingleJourneyTrackProps {
  */
 const SingleJourneyTrack = React.memo(function SingleJourneyTrack({
   journey,
-  rank,
+  rank: _rank,
   windowWidth,
   memberId,
   editMode,
+  resourceNeedLevels,
 }: SingleJourneyTrackProps): React.JSX.Element {
   const steps = useMemo(() => buildRoadmapSteps(journey), [journey]);
-  const severity = deriveSeverity(journey.progressPercent);
-  const chipBg = RANK_CHIP_BG[rank] ?? '#F3F4F6';
-  const chipColor = RANK_CHIP_COLOR[rank] ?? tokens.textMuted;
+
+  // Map journey template name → resource need slug, then look up the CHW level.
+  // Fallback: derive severity from progressPercent for unmatched journeys.
+  const matchedSlug = RESOURCE_NEED_OPTIONS.find(
+    (opt) => opt.label === journey.template.name,
+  )?.slug;
+  const level: JourneySeverity =
+    matchedSlug !== undefined && matchedSlug in resourceNeedLevels
+      ? resourceNeedLevels[matchedSlug]
+      : deriveSeverity(journey.progressPercent);
 
   const isNarrow = windowWidth < TIMELINE_MID_BP;
   const isMid = windowWidth >= TIMELINE_MID_BP && windowWidth < TIMELINE_WIDE_BP;
 
-  const pillVariant =
-    severity === 'high' ? 'red' : severity === 'medium' ? 'amber' : ('amber' as const);
-  const pillLabel =
-    severity === 'high' ? 'High' : severity === 'medium' ? 'Medium' : 'Low';
+  const pillVariant: 'red' | 'amber' | 'emerald' =
+    level === 'high' ? 'red' : level === 'medium' ? 'amber' : 'emerald';
+  const pillLabel = level === 'high' ? 'High' : level === 'medium' ? 'Medium' : 'Low';
 
   /** Whether this journey was built with the custom-journey creator. */
   const isCustom = journey.template.slug.startsWith('custom-');
@@ -4866,9 +4955,6 @@ const SingleJourneyTrack = React.memo(function SingleJourneyTrack({
     <View style={trackStyles.container}>
       {/* Header row */}
       <View style={trackStyles.header}>
-        <View style={[trackStyles.rankChip, { backgroundColor: chipBg }]}>
-          <Text style={[trackStyles.rankText, { color: chipColor }, numerals.tabular]}>{rank}</Text>
-        </View>
         <Text style={trackStyles.journeyName} numberOfLines={1}>
           {journey.template.name}
         </Text>
@@ -5376,11 +5462,15 @@ interface MemberJourneyTimelineProps {
   windowWidth: number;
   /** When true, edit affordances are shown on each journey track. */
   editMode: boolean;
+  /** CHW-assigned priority levels keyed by resource need slug. */
+  resourceNeedLevels: Record<string, ResourceNeedLevel>;
 }
 
 /**
  * Multi-track Member Journey section body.
- * Shows up to 3 active journeys in severity-rank order (ascending progressPercent).
+ * Shows up to 3 active journeys sorted by CHW-assigned level (high→medium→low).
+ * Journeys whose template name matches a known resource need are ranked by the
+ * CHW-assigned level; unmatched journeys fall back to progress-derived severity.
  * When editMode is true, custom journeys expose add-node / edit-node / complete-node affordances.
  */
 function MemberJourneyTimeline({
@@ -5388,19 +5478,33 @@ function MemberJourneyTimeline({
   onAddJourney: _onAddJourney,
   windowWidth,
   editMode,
+  resourceNeedLevels,
 }: MemberJourneyTimelineProps): React.JSX.Element {
   const { data: journeys, isLoading } = useMemberJourneys(memberId);
 
   /**
-   * Top-3 active journeys sorted ascending by progressPercent.
-   * Lowest progress = highest priority = rank 1.
+   * Top-3 active journeys sorted by CHW-assigned level (high→medium→low, stable).
+   * The matching uses journey.template.name → RESOURCE_NEED_OPTIONS label → slug.
+   * Journeys with no matching resource need fall back to deriveSeverity.
    */
   const top3Active = useMemo(() => {
     const active = journeys?.filter((j) => j.status === 'active') ?? [];
-    return [...active]
-      .sort((a, b) => a.progressPercent - b.progressPercent)
-      .slice(0, 3);
-  }, [journeys]);
+    return active
+      .map((journey, i) => {
+        const slug = RESOURCE_NEED_OPTIONS.find((o) => o.label === journey.template.name)?.slug;
+        const level: JourneySeverity =
+          slug !== undefined && slug in resourceNeedLevels
+            ? resourceNeedLevels[slug]
+            : deriveSeverity(journey.progressPercent);
+        return { journey, level, i };
+      })
+      .sort((a, b) => {
+        const diff = LEVEL_SORT_ORDER[a.level] - LEVEL_SORT_ORDER[b.level];
+        return diff !== 0 ? diff : a.i - b.i;
+      })
+      .slice(0, 3)
+      .map(({ journey }) => journey);
+  }, [journeys, resourceNeedLevels]);
 
   if (isLoading) {
     return (
@@ -5427,6 +5531,7 @@ function MemberJourneyTimeline({
           windowWidth={windowWidth}
           memberId={memberId}
           editMode={editMode}
+          resourceNeedLevels={resourceNeedLevels}
         />
       ))}
     </View>
@@ -7416,6 +7521,7 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                     onAddJourney={() => setCreateCustomJourneyOpen(true)}
                     windowWidth={windowWidth}
                     editMode={journeyEditMode}
+                    resourceNeedLevels={profile.resourceNeedLevels ?? {}}
                   />
                 </SectionCard>
 
@@ -7588,6 +7694,7 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
         <EditResourceNeedsModal
           visible={editResourceNeedsOpen}
           currentNeeds={profile.resourceNeeds}
+          currentLevels={profile.resourceNeedLevels ?? {}}
           memberId={memberId}
           onClose={() => setEditResourceNeedsOpen(false)}
         />

@@ -501,6 +501,9 @@ export const queryKeys = {
 /** Re-export so callers don't need a second import from api/sessions. */
 export type { AISummaryResponse };
 
+/** CHW-assigned priority level for a resource need category. */
+export type ResourceNeedLevel = 'low' | 'medium' | 'high';
+
 /**
  * Per-claim row returned by GET /chw/claims. Exposes the lifecycle status
  * (pending / submitted / paid / rejected) so the Earnings screen can show
@@ -2561,17 +2564,24 @@ export function useUpdateMemberDemographics(memberId: string) {
  * Edit a member's resource needs from the CHW Member Profile (Resource Needs
  * pencil). PATCH /api/v1/chw/members/{member_id}/resource-needs.
  *
- * `needs` is a priority-ordered list of resource categories ('housing' | 'rehab'
- * | 'food' | 'mental_health' | 'healthcare'). The first is the primary need.
+ * `needs` is a selection-ordered list of resource categories ('housing' | 'rehab'
+ * | 'food' | 'mental_health' | 'healthcare'). `levels` maps each slug to the
+ * CHW-assigned priority level ('low' | 'medium' | 'high').
  * Invalidates the member-detail query so the card refreshes.
  */
 export function useUpdateMemberResourceNeeds(memberId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (needs: string[]): Promise<void> => {
+    mutationFn: async ({
+      needs,
+      levels,
+    }: {
+      needs: string[];
+      levels: Record<string, ResourceNeedLevel>;
+    }): Promise<void> => {
       await api(`/chw/members/${memberId}/resource-needs`, {
         method: 'PATCH',
-        body: JSON.stringify({ needs }),
+        body: JSON.stringify({ needs, levels }),
       });
     },
     onSuccess: () => {
