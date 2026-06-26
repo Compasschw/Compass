@@ -23,6 +23,38 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from app.schemas.cin_config import validate_cin_for_carrier as _validate_chw_cin
 
+# Valid CHW-assigned priority levels for a resource need.
+_VALID_LEVELS = {"low", "medium", "high"}
+
+
+class ResourceNeedLevelItem(BaseModel):
+    """A single resource need with its CHW-assigned priority level.
+
+    Using a list of items (instead of a keyed dict) keeps the slug as a string
+    VALUE — immune to key-transform camelCasing by the mobile app's response
+    interceptor (mental_health → mentalHealth mangling). Single-word slugs like
+    "housing" happened to survive the transform; multi-word slugs like
+    "mental_health" did not, causing PATCH round-trip failures.
+    """
+
+    slug: str
+    level: str
+
+    @field_validator("slug")
+    @classmethod
+    def _normalize_slug(cls, v: str) -> str:
+        return v.strip().lower()
+
+    @field_validator("level")
+    @classmethod
+    def _validate_level(cls, v: str) -> str:
+        normalized = v.strip().lower()
+        if normalized not in _VALID_LEVELS:
+            raise ValueError(
+                f"level must be one of {sorted(_VALID_LEVELS)}, got {v!r}"
+            )
+        return normalized
+
 
 class CHWMemberProfileView(BaseModel):
     """HIPAA-scoped member profile returned to a CHW who has an active relationship.
@@ -168,9 +200,11 @@ class CHWMemberProfileDetail(BaseModel):
     # primary_need followed by additional_needs, in priority order. Drives the
     # Resource Needs card's edit pencil. Default [] for additive safety.
     resource_needs: list[str] = []
-    # CHW-assigned priority levels per resource need slug.
-    # Values ∈ {"low","medium","high"}.  Default {} (no levels set yet).
-    resource_need_levels: dict[str, str] = Field(default_factory=dict)
+    # CHW-assigned priority levels per resource need, as an ordered list of
+    # {slug, level} items.  Default [] (no levels set yet).
+    # List shape keeps the slug as a string value — immune to camelCase
+    # key transforms in the mobile app's response interceptor.
+    resource_need_levels: list[ResourceNeedLevelItem] = Field(default_factory=list)
     billing_units: BillingUnitsView
     session_count: int
     last_session_at: datetime | None
@@ -292,25 +326,23 @@ class MemberDemographicsUpdate(BaseModel):
 # Known resource-need verticals (mirrors native/src/data/mock.ts verticalLabels).
 _RESOURCE_NEED_VALUES = {"housing", "rehab", "food", "food_security", "mental_health", "healthcare"}
 
-_VALID_LEVELS = {"low", "medium", "high"}
-
 
 class ResourceNeedsUpdate(BaseModel):
     """Request body for PATCH /api/v1/chw/members/{member_id}/resource-needs.
 
     ``needs`` is a caller-ordered list of resource categories (de-duped,
-    lowercased).  ``levels`` maps each slug to a CHW-assigned priority level
-    ("low" | "medium" | "high").  Any slug absent from ``levels`` defaults to
-    "medium" in the endpoint.
+    lowercased).  ``levels`` is a list of {slug, level} items — one per need.
+    Any slug absent from ``levels`` defaults to "medium" in the endpoint.
 
     Validation rules:
     - Each ``needs`` entry must be a known vertical slug.
-    - Each ``levels`` value must be one of {"low", "medium", "high"}.
-    - Every key in ``levels`` must also appear in ``needs``; extra keys → 422.
+    - Each ``levels`` item's level must be one of {"low", "medium", "high"}.
+    - Every slug in ``levels`` must also appear in ``needs``; extra slugs → 422.
+    - Duplicate slugs in ``levels`` are silently deduplicated (last entry wins).
     """
 
     needs: list[str] = Field(default_factory=list, max_length=10)
-    levels: dict[str, str] = Field(default_factory=dict)
+    levels: list[ResourceNeedLevelItem] = Field(default_factory=list)
 
     @field_validator("needs")
     @classmethod
@@ -328,28 +360,22 @@ class ResourceNeedsUpdate(BaseModel):
                 out.append(need)
         return out
 
-    @field_validator("levels")
-    @classmethod
-    def _validate_level_values(cls, value: dict[str, str]) -> dict[str, str]:
-        """Normalize level values and reject anything outside {low, medium, high}."""
-        result: dict[str, str] = {}
-        for k, v in value.items():
-            k_norm = k.strip().lower()
-            v_norm = v.strip().lower()
-            if v_norm not in _VALID_LEVELS:
-                raise ValueError(
-                    f"invalid level {v!r} for key {k!r}; must be one of {sorted(_VALID_LEVELS)}"
-                )
-            result[k_norm] = v_norm
-        return result
-
     @model_validator(mode="after")
-    def _levels_keys_must_be_subset_of_needs(self) -> "ResourceNeedsUpdate":
-        """Reject any levels key that is not present in the validated needs list."""
-        extra_keys = set(self.levels.keys()) - set(self.needs)
-        if extra_keys:
+    def _levels_slugs_must_be_subset_of_needs(self) -> "ResourceNeedsUpdate":
+        """Deduplicate levels (last wins) and reject any slug not in needs."""
+        # Deduplicate: iterate reversed so last occurrence survives.
+        seen_slugs: set[str] = set()
+        deduped: list[ResourceNeedLevelItem] = []
+        for item in reversed(self.levels):
+            if item.slug not in seen_slugs:
+                seen_slugs.add(item.slug)
+                deduped.append(item)
+        self.levels = list(reversed(deduped))
+
+        extra = {item.slug for item in self.levels} - set(self.needs)
+        if extra:
             raise ValueError(
-                f"levels keys not in needs: {sorted(extra_keys)}"
+                f"levels keys not in needs: {sorted(extra)}"
             )
         return self
 

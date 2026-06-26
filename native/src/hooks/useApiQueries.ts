@@ -2565,8 +2565,9 @@ export function useUpdateMemberDemographics(memberId: string) {
  * pencil). PATCH /api/v1/chw/members/{member_id}/resource-needs.
  *
  * `needs` is a selection-ordered list of resource categories ('housing' | 'rehab'
- * | 'food' | 'mental_health' | 'healthcare'). `levels` maps each slug to the
- * CHW-assigned priority level ('low' | 'medium' | 'high').
+ * | 'food' | 'mental_health' | 'healthcare'). `levels` is a list of
+ * `{ slug, level }` pairs — slugs are string values (immune to key-casing
+ * transforms), matching the new API contract.
  * Invalidates the member-detail query so the card refreshes.
  */
 export function useUpdateMemberResourceNeeds(memberId: string) {
@@ -2577,7 +2578,7 @@ export function useUpdateMemberResourceNeeds(memberId: string) {
       levels,
     }: {
       needs: string[];
-      levels: Record<string, ResourceNeedLevel>;
+      levels: Array<{ slug: string; level: ResourceNeedLevel }>;
     }): Promise<void> => {
       await api(`/chw/members/${memberId}/resource-needs`, {
         method: 'PATCH',

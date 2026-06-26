@@ -22,6 +22,7 @@ from app.schemas.chw import (
     MembersRosterItem,
     PreferredNameResponse,
     PreferredNameUpdate,
+    ResourceNeedLevelItem,
     ResourceNeedsUpdate,
 )
 from app.schemas.user import CHWProfileResponse, CHWProfileUpdate
@@ -1444,6 +1445,33 @@ async def get_chw_member_full_profile(
             _audit_exc,
         )
 
+    # ── Build resource_needs + resource_need_levels ───────────────────────────
+    # resource_needs: primary_need first, then additional_needs (de-duped).
+    resource_needs_ordered: list[str] = (
+        ([member_profile.primary_need] if member_profile.primary_need else [])
+        + [
+            n
+            for n in (member_profile.additional_needs or [])
+            if n and n != member_profile.primary_need
+        ]
+    )
+
+    # Convert stored JSONB dict → list[ResourceNeedLevelItem] in priority order.
+    # Slugs present in resource_needs come first (high→med→low priority order);
+    # any orphaned entries (in the dict but not in resource_needs) follow.
+    stored_levels: dict[str, str] = member_profile.resource_need_levels or {}
+    _seen_level_slugs: set[str] = set()
+    resource_need_levels_list: list[ResourceNeedLevelItem] = []
+    for slug in resource_needs_ordered:
+        if slug in stored_levels:
+            resource_need_levels_list.append(
+                ResourceNeedLevelItem(slug=slug, level=stored_levels[slug])
+            )
+            _seen_level_slugs.add(slug)
+    for slug, level in stored_levels.items():
+        if slug not in _seen_level_slugs:
+            resource_need_levels_list.append(ResourceNeedLevelItem(slug=slug, level=level))
+
     return CHWMemberProfileDetail(
         id=member_user.id,
         first_name=first_name,
@@ -1476,15 +1504,8 @@ async def get_chw_member_full_profile(
         state=member_profile.state,
         ecm_eligible=False,   # ECM eligibility not yet stored — Phase 2 flag
         primary_categories=primary_categories,
-        resource_needs=(
-            ([member_profile.primary_need] if member_profile.primary_need else [])
-            + [
-                n
-                for n in (member_profile.additional_needs or [])
-                if n and n != member_profile.primary_need
-            ]
-        ),
-        resource_need_levels=member_profile.resource_need_levels or {},
+        resource_needs=resource_needs_ordered,
+        resource_need_levels=resource_need_levels_list,
         billing_units=billing_units,
         session_count=session_count,
         last_session_at=last_session_at,
@@ -1694,11 +1715,14 @@ async def update_member_resource_needs(
         raise HTTPException(status_code=404, detail="Member not found.")
 
     needs = data.needs  # already validated + deduped + lowercased
-    raw_levels = data.levels  # validated: values ∈ {low,medium,high}, keys ⊆ needs
+    levels_list = data.levels  # list[ResourceNeedLevelItem]; deduplicated + validated
+
+    # Build a dict from the incoming list for internal use.
+    raw_levels_dict: dict[str, str] = {item.slug: item.level for item in levels_list}
 
     # Normalise: every slug in ``needs`` gets a level; any omitted → "medium".
     normalized_levels: dict[str, str] = {
-        slug: raw_levels.get(slug, "medium") for slug in needs
+        slug: raw_levels_dict.get(slug, "medium") for slug in needs
     }
 
     # Stable sort by level rank (high=0, medium=1, low=2).
@@ -1709,12 +1733,17 @@ async def update_member_resource_needs(
 
     profile.primary_need = ordered[0] if ordered else None
     profile.additional_needs = ordered[1:]
+    # Store as a dict (no migration needed — JSONB column unchanged).
     profile.resource_need_levels = normalized_levels
     await db.commit()
+    # Return levels as a list of {slug, level} objects in resource_needs order.
+    # Slug stays a string value — immune to camelCase key transforms on mobile.
     return {
         "member_id": str(member_id),
         "resource_needs": ordered,
-        "resource_need_levels": normalized_levels,
+        "resource_need_levels": [
+            {"slug": slug, "level": normalized_levels[slug]} for slug in ordered
+        ],
     }
 
 

@@ -1,19 +1,25 @@
 """Tests for resource-need level (Low/Medium/High) priority feature.
 
-Covers PATCH /api/v1/chw/members/{member_id}/resource-needs with the new
-``levels`` field and the GET /api/v1/chw/members/{member_id} response field
-``resource_need_levels``.
+Covers PATCH /api/v1/chw/members/{member_id}/resource-needs with the
+``levels`` field (list of {slug, level} items) and the GET
+/api/v1/chw/members/{member_id} response field ``resource_need_levels``
+(also a list of {slug, level} items).
+
+Wire-format note: levels is a LIST not an object to keep slugs as string
+VALUES — immune to the mobile app's recursive camelCase key transform that
+mangles object keys (mental_health → mentalHealth).
 
 TDD checklist (backend/TESTING.md):
 1. Negative auth — CHW with no relationship → 403 (inherited from existing tests).
 2. Happy path — level-sort persists and detail GET reflects levels.
 3. Invariant-violation — invalid level value → 422.
-4. Invariant-violation — levels key not in needs → 422.
+4. Invariant-violation — levels slug not in needs → 422.
 5. Default — missing level defaults to "medium".
 6. Backfill logic — unit test of the pure-Python helper in the migration.
+7. Regression — multi-word slug (mental_health) round-trips unchanged.
 
-Every test in this file FAILS on the pre-fix code (before the ``levels`` field
-and level-sort logic are added) and PASSES after the fix.
+Every async test in this file FAILS on the pre-fix code (before the list-shape
+change) and PASSES after the fix.
 """
 
 from __future__ import annotations
@@ -24,7 +30,7 @@ from httpx import AsyncClient
 from tests.conftest import auth_header
 
 
-# ─── Shared helpers (mirrored from test_chw_member_profile.py) ────────────────
+# ─── Shared helpers ────────────────────────────────────────────────────────────
 
 
 async def _register_user(client: AsyncClient, email: str, role: str, name: str) -> dict:
@@ -79,6 +85,11 @@ def _get_member_id(tokens: dict) -> str:
     return json.loads(base64.urlsafe_b64decode(padded))["sub"]
 
 
+def _levels_dict(levels_list: list[dict]) -> dict[str, str]:
+    """Convert a response levels list [{slug, level}, ...] → {slug: level} for assertions."""
+    return {item["slug"]: item["level"] for item in levels_list}
+
+
 # ─── Fixtures ─────────────────────────────────────────────────────────────────
 
 
@@ -109,12 +120,12 @@ async def test_level_sort_makes_high_need_primary_even_when_sent_second(
 ) -> None:
     """Sending the HIGH-priority need SECOND in the list still makes it primary_need.
 
-    This tests that the endpoint ignores caller order for primary_need derivation
-    and instead promotes the highest-level need to primary_need.
+    Tests that the endpoint ignores caller order for primary_need derivation and
+    instead promotes the highest-level need to primary_need.
 
-    Fails on pre-fix code because: (a) ``levels`` is silently ignored, (b) the
-    endpoint would set primary_need = "mental_health" (first in list) instead of
-    "food_security" (the high one).
+    Fails on pre-fix code because: (a) ``levels`` is rejected as an invalid type
+    or silently ignored, (b) the endpoint would set primary_need = "mental_health"
+    (first in list) instead of "food_security" (the high one).
     """
     chw_tokens, _, member_id = established_pair
 
@@ -123,7 +134,10 @@ async def test_level_sort_makes_high_need_primary_even_when_sent_second(
         f"/api/v1/chw/members/{member_id}/resource-needs",
         json={
             "needs": ["mental_health", "food_security"],
-            "levels": {"food_security": "high", "mental_health": "low"},
+            "levels": [
+                {"slug": "food_security", "level": "high"},
+                {"slug": "mental_health", "level": "low"},
+            ],
         },
         headers=auth_header(chw_tokens),
     )
@@ -134,10 +148,10 @@ async def test_level_sort_makes_high_need_primary_even_when_sent_second(
     assert body["resource_needs"] == ["food_security", "mental_health"], (
         "food_security (high) must precede mental_health (low) in sorted order"
     )
-    assert body["resource_need_levels"] == {
-        "food_security": "high",
-        "mental_health": "low",
-    }
+
+    # resource_need_levels is a list of {slug, level} objects.
+    levels = _levels_dict(body["resource_need_levels"])
+    assert levels == {"food_security": "high", "mental_health": "low"}
 
     # Verify persistence via the detail GET.
     detail_res = await client.get(
@@ -146,10 +160,9 @@ async def test_level_sort_makes_high_need_primary_even_when_sent_second(
     )
     assert detail_res.status_code == 200, detail_res.text
     detail = detail_res.json()
-    assert detail["resource_need_levels"] == {
-        "food_security": "high",
-        "mental_health": "low",
-    }
+
+    detail_levels = _levels_dict(detail["resource_need_levels"])
+    assert detail_levels == {"food_security": "high", "mental_health": "low"}
     assert detail["resource_needs"][0] == "food_security", (
         "primary_need (first of resource_needs) must be the high-level need"
     )
@@ -162,8 +175,8 @@ async def test_missing_level_defaults_to_medium(
 ) -> None:
     """A need slug absent from ``levels`` defaults to 'medium' in the persisted map.
 
-    Fails on pre-fix code because the ``levels`` field does not exist and the
-    response has no ``resource_need_levels`` key.
+    Fails on pre-fix code because the ``levels`` field doesn't exist or uses the
+    wrong wire format, so ``resource_need_levels`` is absent from the response.
     """
     chw_tokens, _, member_id = established_pair
 
@@ -172,7 +185,7 @@ async def test_missing_level_defaults_to_medium(
         f"/api/v1/chw/members/{member_id}/resource-needs",
         json={
             "needs": ["housing", "healthcare"],
-            "levels": {"housing": "low"},
+            "levels": [{"slug": "housing", "level": "low"}],
             # healthcare intentionally absent
         },
         headers=auth_header(chw_tokens),
@@ -180,11 +193,12 @@ async def test_missing_level_defaults_to_medium(
     assert res.status_code == 200, res.text
     body = res.json()
 
+    levels = _levels_dict(body["resource_need_levels"])
     # healthcare defaults to "medium" → sorts before "low" housing.
-    assert body["resource_need_levels"]["healthcare"] == "medium"
-    assert body["resource_need_levels"]["housing"] == "low"
+    assert levels["healthcare"] == "medium"
+    assert levels["housing"] == "low"
 
-    # medium < low in rank so healthcare comes first in ordered list.
+    # medium ranks before low → healthcare comes first in ordered list.
     assert body["resource_needs"] == ["healthcare", "housing"]
 
 
@@ -195,8 +209,8 @@ async def test_invalid_level_value_returns_422(
 ) -> None:
     """A level value outside {low, medium, high} must be rejected with 422.
 
-    Fails on pre-fix code because the ``levels`` field is ignored (Pydantic treats
-    it as an extra field) and the endpoint returns 200.
+    Fails on pre-fix code because the ``levels`` field is unrecognised (Pydantic
+    treats it as an extra field) and the endpoint returns 200.
     """
     chw_tokens, _, member_id = established_pair
 
@@ -204,7 +218,7 @@ async def test_invalid_level_value_returns_422(
         f"/api/v1/chw/members/{member_id}/resource-needs",
         json={
             "needs": ["housing"],
-            "levels": {"housing": "critical"},  # "critical" is not valid
+            "levels": [{"slug": "housing", "level": "critical"}],  # "critical" is not valid
         },
         headers=auth_header(chw_tokens),
     )
@@ -216,7 +230,7 @@ async def test_levels_key_not_in_needs_returns_422(
     client: AsyncClient,
     established_pair: tuple[dict, dict, str],
 ) -> None:
-    """A levels key that is not in the needs list must be rejected with 422.
+    """A levels slug that is not in the needs list must be rejected with 422.
 
     Fails on pre-fix code because ``levels`` is ignored (extra field) and the
     endpoint returns 200.
@@ -227,10 +241,10 @@ async def test_levels_key_not_in_needs_returns_422(
         f"/api/v1/chw/members/{member_id}/resource-needs",
         json={
             "needs": ["housing"],
-            "levels": {
-                "housing": "high",
-                "mental_health": "low",  # not in needs → 422
-            },
+            "levels": [
+                {"slug": "housing", "level": "high"},
+                {"slug": "mental_health", "level": "low"},  # not in needs → 422
+            ],
         },
         headers=auth_header(chw_tokens),
     )
@@ -242,9 +256,10 @@ async def test_get_member_profile_returns_resource_need_levels(
     client: AsyncClient,
     established_pair: tuple[dict, dict, str],
 ) -> None:
-    """GET /chw/members/{id} returns resource_need_levels in the response body.
+    """GET /chw/members/{id} returns resource_need_levels as a list in the response body.
 
-    Fails on pre-fix code because the field is absent from CHWMemberProfileDetail.
+    Fails on pre-fix code because the field is absent from CHWMemberProfileDetail
+    or uses the wrong shape.
     """
     chw_tokens, _, member_id = established_pair
 
@@ -253,13 +268,16 @@ async def test_get_member_profile_returns_resource_need_levels(
         f"/api/v1/chw/members/{member_id}/resource-needs",
         json={
             "needs": ["rehab", "food_security"],
-            "levels": {"rehab": "medium", "food_security": "high"},
+            "levels": [
+                {"slug": "rehab", "level": "medium"},
+                {"slug": "food_security", "level": "high"},
+            ],
         },
         headers=auth_header(chw_tokens),
     )
     assert patch_res.status_code == 200, patch_res.text
 
-    # Then fetch the detail and assert the field is present.
+    # Then fetch the detail and assert the field is present as a list.
     detail_res = await client.get(
         f"/api/v1/chw/members/{member_id}",
         headers=auth_header(chw_tokens),
@@ -270,10 +288,11 @@ async def test_get_member_profile_returns_resource_need_levels(
     assert "resource_need_levels" in detail, (
         "resource_need_levels must be a top-level key in the member profile detail"
     )
-    assert detail["resource_need_levels"] == {
-        "rehab": "medium",
-        "food_security": "high",
-    }
+    assert isinstance(detail["resource_need_levels"], list), (
+        "resource_need_levels must be a list, not a dict"
+    )
+    levels = _levels_dict(detail["resource_need_levels"])
+    assert levels == {"rehab": "medium", "food_security": "high"}
 
 
 @pytest.mark.asyncio
@@ -281,29 +300,92 @@ async def test_empty_needs_clears_levels(
     client: AsyncClient,
     established_pair: tuple[dict, dict, str],
 ) -> None:
-    """Sending an empty needs list clears resource_need_levels to {} as well."""
+    """Sending an empty needs list clears resource_need_levels to [] as well."""
     chw_tokens, _, member_id = established_pair
 
     # Seed some levels first.
     await client.patch(
         f"/api/v1/chw/members/{member_id}/resource-needs",
-        json={"needs": ["housing"], "levels": {"housing": "high"}},
+        json={"needs": ["housing"], "levels": [{"slug": "housing", "level": "high"}]},
         headers=auth_header(chw_tokens),
     )
 
     # Now clear.
     res = await client.patch(
         f"/api/v1/chw/members/{member_id}/resource-needs",
-        json={"needs": [], "levels": {}},
+        json={"needs": [], "levels": []},
         headers=auth_header(chw_tokens),
     )
     assert res.status_code == 200, res.text
     body = res.json()
     assert body["resource_needs"] == []
-    assert body["resource_need_levels"] == {}
+    assert body["resource_need_levels"] == []
 
 
-# ─── Backfill logic unit test ─────────────────────────────────────────────────
+# ─── Regression: multi-word slug round-trip ───────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_multi_word_slug_round_trips_without_camel_casing(
+    client: AsyncClient,
+    established_pair: tuple[dict, dict, str],
+) -> None:
+    """Multi-word slugs (mental_health) survive the API round-trip unchanged.
+
+    Regression: when levels was a JSON object keyed by slug, the mobile app's
+    recursive camelCase key transformer mangled mental_health→mentalHealth on
+    the response, then echoed that back on PATCH, causing the validator to
+    reject the request ("levels keys not in needs: ['mentalhealth']").
+    Single-word slugs (housing) happened to survive; mental_health did not.
+
+    Fix: levels is now a list of {slug, level} items so the slug is a STRING
+    VALUE — immune to key transforms.  This test fails on the pre-fix dict
+    shape and passes on the list shape.
+    """
+    chw_tokens, _, member_id = established_pair
+
+    res = await client.patch(
+        f"/api/v1/chw/members/{member_id}/resource-needs",
+        json={
+            "needs": ["mental_health", "housing"],
+            "levels": [
+                {"slug": "mental_health", "level": "high"},
+                {"slug": "housing", "level": "low"},
+            ],
+        },
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+
+    # PATCH response: slug must be the exact string "mental_health", not camelCased.
+    patch_levels = _levels_dict(body["resource_need_levels"])
+    assert "mental_health" in patch_levels, (
+        f"Expected slug 'mental_health' in PATCH response, got: {list(patch_levels.keys())!r}"
+    )
+    assert patch_levels["mental_health"] == "high"
+    assert patch_levels.get("housing") == "low"
+
+    # mental_health is HIGH → must sort first in resource_needs.
+    assert body["resource_needs"][0] == "mental_health"
+
+    # GET detail: verify the stored slug is also 'mental_health' (not mangled).
+    detail_res = await client.get(
+        f"/api/v1/chw/members/{member_id}",
+        headers=auth_header(chw_tokens),
+    )
+    assert detail_res.status_code == 200, detail_res.text
+    detail = detail_res.json()
+
+    detail_levels = _levels_dict(detail["resource_need_levels"])
+    assert "mental_health" in detail_levels, (
+        f"GET returned slugs {list(detail_levels.keys())!r} — expected 'mental_health' (not camelCased)"
+    )
+    assert detail_levels["mental_health"] == "high"
+    assert detail_levels.get("housing") == "low"
+
+
+# ─── Backfill logic unit tests ─────────────────────────────────────────────────
 
 
 def _backfill_levels(

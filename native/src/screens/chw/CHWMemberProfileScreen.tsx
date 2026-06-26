@@ -230,8 +230,8 @@ interface CHWMemberProfileDetail {
   primaryCategories: string[];
   /** Member's editable resource needs (selection order). Drives the pencil edit. */
   resourceNeeds: string[];
-  /** CHW-assigned priority level per resource need slug (camelCase-transformed from snake_case backend field). */
-  resourceNeedLevels: Record<string, ResourceNeedLevel>;
+  /** CHW-assigned priority level per resource need slug. List of {slug, level} pairs — slugs are intact snake_case values from the API. */
+  resourceNeedLevels: Array<{ slug: string; level: ResourceNeedLevel }>;
   billingUnits: BillingUnitsLegacy;
   sessionCount: number;
   lastSessionAt: string | null;
@@ -1488,7 +1488,12 @@ function EditResourceNeedsModal({
   const handleSave = useCallback(async (): Promise<void> => {
     setError(null);
     try {
-      await updateResourceNeeds.mutateAsync({ needs: selectedSlugs, levels });
+      // Convert the working Record<slug, level> to the list-of-{slug,level} shape
+      // the API now expects, filtered to only the currently selected slugs.
+      const levelsArray = Object.entries(levels)
+        .filter(([slug]) => selectedSlugs.includes(slug))
+        .map(([slug, level]) => ({ slug, level }));
+      await updateResourceNeeds.mutateAsync({ needs: selectedSlugs, levels: levelsArray });
       onClose();
     } catch (err: unknown) {
       const detail =
@@ -4336,6 +4341,15 @@ function ResourceNeedsColumn({
 }: ResourceNeedsColumnProps): React.JSX.Element {
   const { data: rewardsBalance } = useMemberRewardsBalance(memberId);
 
+  /** Flat slug→level lookup built once from the array — used for O(1) reads below. */
+  const slugLevelLookup = useMemo(
+    () =>
+      Object.fromEntries(
+        profile.resourceNeedLevels.map((x) => [x.slug, x.level]),
+      ) as Record<string, ResourceNeedLevel>,
+    [profile.resourceNeedLevels],
+  );
+
   /**
    * Resource needs sorted high→medium→low (stable: preserves selection order
    * within the same level).
@@ -4345,13 +4359,13 @@ function ResourceNeedsColumn({
       profile.resourceNeeds
         .map((slug, i) => ({ slug, i }))
         .sort((a, b) => {
-          const la = profile.resourceNeedLevels[a.slug] ?? 'low';
-          const lb = profile.resourceNeedLevels[b.slug] ?? 'low';
+          const la = slugLevelLookup[a.slug] ?? 'low';
+          const lb = slugLevelLookup[b.slug] ?? 'low';
           const diff = LEVEL_SORT_ORDER[la] - LEVEL_SORT_ORDER[lb];
           return diff !== 0 ? diff : a.i - b.i;
         })
         .map(({ slug }) => slug),
-    [profile.resourceNeeds, profile.resourceNeedLevels],
+    [profile.resourceNeeds, slugLevelLookup],
   );
 
   return (
@@ -4381,7 +4395,7 @@ function ResourceNeedsColumn({
           <StaggerList delayMs={50} durationMs={240}>
             {orderedNeeds.map((slug) => {
               const option = RESOURCE_NEED_OPTIONS.find((o) => o.slug === slug);
-              const level = profile.resourceNeedLevels[slug] ?? 'low';
+              const level = slugLevelLookup[slug] ?? 'low';
               const pillVariant: 'red' | 'amber' | 'emerald' =
                 level === 'high' ? 'red' : level === 'medium' ? 'amber' : 'emerald';
               const pillLabel = level === 'high' ? 'High' : level === 'medium' ? 'Medium' : 'Low';
@@ -7521,7 +7535,9 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                     onAddJourney={() => setCreateCustomJourneyOpen(true)}
                     windowWidth={windowWidth}
                     editMode={journeyEditMode}
-                    resourceNeedLevels={profile.resourceNeedLevels ?? {}}
+                    resourceNeedLevels={Object.fromEntries(
+                      profile.resourceNeedLevels.map((x) => [x.slug, x.level]),
+                    ) as Record<string, ResourceNeedLevel>}
                   />
                 </SectionCard>
 
@@ -7694,7 +7710,9 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
         <EditResourceNeedsModal
           visible={editResourceNeedsOpen}
           currentNeeds={profile.resourceNeeds}
-          currentLevels={profile.resourceNeedLevels ?? {}}
+          currentLevels={Object.fromEntries(
+            profile.resourceNeedLevels.map((x) => [x.slug, x.level]),
+          ) as Record<string, ResourceNeedLevel>}
           memberId={memberId}
           onClose={() => setEditResourceNeedsOpen(false)}
         />
