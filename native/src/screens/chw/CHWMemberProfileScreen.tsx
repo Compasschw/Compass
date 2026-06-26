@@ -90,8 +90,15 @@ import { useQuery } from '@tanstack/react-query';
 let _webCreatePortal: ((children: React.ReactNode, container: Element) => React.ReactPortal) | null =
   null;
 if (Platform.OS === 'web') {
+  // Typed inline (not via `typeof import('react-dom')`) so we don't need a
+  // direct @types/react-dom dev dep — that package's peer pins @types/react
+  // ^19.2.0 which conflicts with our ~19.1.0 and broke Vercel's npm install.
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  _webCreatePortal = (require('react-dom') as typeof import('react-dom')).createPortal;
+  _webCreatePortal = (
+    require('react-dom') as {
+      createPortal: (children: React.ReactNode, container: Element) => React.ReactPortal;
+    }
+  ).createPortal;
 }
 
 import { fonts } from '../../theme/typography';
