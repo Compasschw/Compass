@@ -7217,7 +7217,15 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
               <View style={s.webHeader}>
                 <TouchableOpacity
                   style={s.backLinkWeb}
-                  onPress={() => navigation.goBack()}
+                  // MemberProfile is pushed inside SessionsStack, so goBack()
+                  // lands on Messages. "Back to Members" must navigate to the
+                  // CHWMembers tab explicitly (navigate bubbles up to the parent
+                  // tab navigator that owns it).
+                  onPress={() =>
+                    (navigation as unknown as { navigate: (name: string) => void }).navigate(
+                      'CHWMembers',
+                    )
+                  }
                   accessibilityRole="button"
                   accessibilityLabel="Back to members"
                 >
