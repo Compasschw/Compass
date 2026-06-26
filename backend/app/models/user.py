@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import ARRAY, Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import ARRAY, Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -107,6 +107,14 @@ class MemberProfile(Base):
     primary_language: Mapped[str] = mapped_column(String(50), default="English")
     primary_need: Mapped[str | None] = mapped_column(String(50))
     additional_needs: Mapped[list | None] = mapped_column(ARRAY(String))
+    # CHW-assigned priority levels per resource need slug.
+    # Values ∈ {"low","medium","high"}.  Default {} (no levels set).
+    # Full replacement on every PATCH — no in-place mutation — so standard
+    # JSONB without MutableDict tracking is sufficient (matches the pattern
+    # used by CHWProfile.availability_windows in this file).
+    resource_need_levels: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'")
+    )
     insurance_provider: Mapped[str | None] = mapped_column(String(255))
     # Encrypted at rest (AES-256-GCM). PHI per HIPAA 45 CFR §164.312(a)(2)(iv).
     medi_cal_id: Mapped[str | None] = mapped_column(EncryptedString)

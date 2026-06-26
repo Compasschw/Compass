@@ -30,6 +30,12 @@ _bearer_scheme = HTTPBearer()
 
 router = APIRouter(prefix="/api/v1/chw", tags=["chw"])
 
+# ── Resource need level sorting ───────────────────────────────────────────────
+# Maps a level label to a sort key: lower number = higher priority (sorted asc).
+# "high" needs float to the top; ties are resolved by caller's original order
+# (Python's sorted() is stable).
+_LEVEL_RANK: dict[str, int] = {"high": 0, "medium": 1, "low": 2}
+
 def _serialize_chw_profile(profile, current_user) -> "CHWProfileResponse":
     """Build the CHWProfileResponse with the User row's name/email/phone joined in.
 
@@ -1478,6 +1484,7 @@ async def get_chw_member_full_profile(
                 if n and n != member_profile.primary_need
             ]
         ),
+        resource_need_levels=member_profile.resource_need_levels or {},
         billing_units=billing_units,
         session_count=session_count,
         last_session_at=last_session_at,
@@ -1687,10 +1694,28 @@ async def update_member_resource_needs(
         raise HTTPException(status_code=404, detail="Member not found.")
 
     needs = data.needs  # already validated + deduped + lowercased
-    profile.primary_need = needs[0] if needs else None
-    profile.additional_needs = needs[1:]
+    raw_levels = data.levels  # validated: values ∈ {low,medium,high}, keys ⊆ needs
+
+    # Normalise: every slug in ``needs`` gets a level; any omitted → "medium".
+    normalized_levels: dict[str, str] = {
+        slug: raw_levels.get(slug, "medium") for slug in needs
+    }
+
+    # Stable sort by level rank (high=0, medium=1, low=2).
+    # Python's sorted() is stable: ties preserve the caller's original order.
+    ordered: list[str] = sorted(
+        needs, key=lambda slug: _LEVEL_RANK[normalized_levels[slug]]
+    )
+
+    profile.primary_need = ordered[0] if ordered else None
+    profile.additional_needs = ordered[1:]
+    profile.resource_need_levels = normalized_levels
     await db.commit()
-    return {"member_id": str(member_id), "resource_needs": needs}
+    return {
+        "member_id": str(member_id),
+        "resource_needs": ordered,
+        "resource_need_levels": normalized_levels,
+    }
 
 
 # ─── Billable Units aggregation (per-member cap widget) ───────────────────────

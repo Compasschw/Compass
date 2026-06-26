@@ -19,7 +19,7 @@ from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.cin_config import validate_cin_for_carrier as _validate_chw_cin
 
@@ -168,6 +168,9 @@ class CHWMemberProfileDetail(BaseModel):
     # primary_need followed by additional_needs, in priority order. Drives the
     # Resource Needs card's edit pencil. Default [] for additive safety.
     resource_needs: list[str] = []
+    # CHW-assigned priority levels per resource need slug.
+    # Values ∈ {"low","medium","high"}.  Default {} (no levels set yet).
+    resource_need_levels: dict[str, str] = Field(default_factory=dict)
     billing_units: BillingUnitsView
     session_count: int
     last_session_at: datetime | None
@@ -287,18 +290,27 @@ class MemberDemographicsUpdate(BaseModel):
 
 
 # Known resource-need verticals (mirrors native/src/data/mock.ts verticalLabels).
-_RESOURCE_NEED_VALUES = {"housing", "rehab", "food", "mental_health", "healthcare"}
+_RESOURCE_NEED_VALUES = {"housing", "rehab", "food", "food_security", "mental_health", "healthcare"}
+
+_VALID_LEVELS = {"low", "medium", "high"}
 
 
 class ResourceNeedsUpdate(BaseModel):
     """Request body for PATCH /api/v1/chw/members/{member_id}/resource-needs.
 
-    ``needs`` is an ordered, priority-ranked list of resource categories
-    (highest first). The first becomes primary_need, the rest additional_needs.
-    Duplicates are dropped (order preserved); each must be a known vertical.
+    ``needs`` is a caller-ordered list of resource categories (de-duped,
+    lowercased).  ``levels`` maps each slug to a CHW-assigned priority level
+    ("low" | "medium" | "high").  Any slug absent from ``levels`` defaults to
+    "medium" in the endpoint.
+
+    Validation rules:
+    - Each ``needs`` entry must be a known vertical slug.
+    - Each ``levels`` value must be one of {"low", "medium", "high"}.
+    - Every key in ``levels`` must also appear in ``needs``; extra keys → 422.
     """
 
     needs: list[str] = Field(default_factory=list, max_length=10)
+    levels: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("needs")
     @classmethod
@@ -315,6 +327,31 @@ class ResourceNeedsUpdate(BaseModel):
                 seen.add(need)
                 out.append(need)
         return out
+
+    @field_validator("levels")
+    @classmethod
+    def _validate_level_values(cls, value: dict[str, str]) -> dict[str, str]:
+        """Normalize level values and reject anything outside {low, medium, high}."""
+        result: dict[str, str] = {}
+        for k, v in value.items():
+            k_norm = k.strip().lower()
+            v_norm = v.strip().lower()
+            if v_norm not in _VALID_LEVELS:
+                raise ValueError(
+                    f"invalid level {v!r} for key {k!r}; must be one of {sorted(_VALID_LEVELS)}"
+                )
+            result[k_norm] = v_norm
+        return result
+
+    @model_validator(mode="after")
+    def _levels_keys_must_be_subset_of_needs(self) -> "ResourceNeedsUpdate":
+        """Reject any levels key that is not present in the validated needs list."""
+        extra_keys = set(self.levels.keys()) - set(self.needs)
+        if extra_keys:
+            raise ValueError(
+                f"levels keys not in needs: {sorted(extra_keys)}"
+            )
+        return self
 
 
 # ─── Members Roster ───────────────────────────────────────────────────────────
