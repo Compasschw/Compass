@@ -61,3 +61,5 @@ export type { EmptyStateProps, EmptyStateCTAProps } from './EmptyState';
 // the single ui/ barrel without needing to know the journey/ path.
 export { JourneyStepSpring } from '../journey/JourneyStepSpring';
 export type { JourneyStepSpringProps } from '../journey/JourneyStepSpring';
+
+export { UpdateAvailableBanner } from './UpdateAvailableBanner';

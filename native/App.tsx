@@ -45,6 +45,7 @@ const SAFE_AREA_INITIAL_METRICS =
 import { AuthProvider } from './src/context/AuthContext';
 import { AppNavigator } from './src/navigation/AppNavigator';
 import { ErrorBoundary } from './src/components/shared/ErrorBoundary';
+import { UpdateAvailableBanner } from './src/components/ui/UpdateAvailableBanner';
 import { crash } from './src/services/crash';
 import { colors } from './src/theme/colors';
 
@@ -96,6 +97,10 @@ export default function App(): React.JSX.Element {
         <QueryClientProvider client={queryClient}>
           <AuthProvider>
             <AppNavigator />
+            {/* Web-only; self-gates with Platform.OS !== 'web'. Mounted here
+                so the update check runs across every authenticated and
+                unauthenticated screen without needing per-screen wiring. */}
+            <UpdateAvailableBanner />
           </AuthProvider>
         </QueryClientProvider>
       </ErrorBoundary>
