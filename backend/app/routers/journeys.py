@@ -516,46 +516,18 @@ async def create_member_journey(
             detail="Member already has an active journey for this template.",
         )
 
-    # Load the ordered template steps.
-    steps_result = await db.execute(
-        select(JourneyTemplateStep)
-        .where(JourneyTemplateStep.template_id == template.id)
-        .order_by(JourneyTemplateStep.order)
-    )
-    template_steps = steps_result.scalars().all()
-    if not template_steps:
+    # Delegate core creation to the shared helper (used by the reconciler too).
+    from app.services.journey_reconciler import create_journey_for_template
+
+    try:
+        member_journey = await create_journey_for_template(
+            db, member_id, current_user.id, template
+        )
+    except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Journey template has no steps configured.",
-        )
-
-    first_step = template_steps[0]
-    now = datetime.now(UTC)
-
-    # Create the MemberJourney row.
-    member_journey = MemberJourney(
-        id=uuid.uuid4(),
-        member_id=member_id,
-        template_id=template.id,
-        chw_id=current_user.id,
-        status="active",
-        started_at=now,
-        current_step_id=first_step.id,
-    )
-    db.add(member_journey)
-    await db.flush()
-
-    # Initialize step states: step 1 = in_progress, rest = upcoming.
-    for i, tpl_step in enumerate(template_steps):
-        step_status = "in_progress" if i == 0 else "upcoming"
-        step_state = MemberJourneyStepState(
-            id=uuid.uuid4(),
-            member_journey_id=member_journey.id,
-            template_step_id=tpl_step.id,
-            status=step_status,
-            started_at=now if i == 0 else None,
-        )
-        db.add(step_state)
+            detail=str(exc),
+        ) from exc
 
     await db.commit()
     await db.refresh(member_journey)

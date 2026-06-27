@@ -1735,6 +1735,15 @@ async def update_member_resource_needs(
     profile.additional_needs = ordered[1:]
     # Store as a dict (no migration needed — JSONB column unchanged).
     profile.resource_need_levels = normalized_levels
+
+    # Reconcile member's active journeys to the new needs in the same transaction.
+    from app.services.journey_reconciler import reconcile_member_journeys_to_needs
+
+    reconcile_chw_id = caller_user.id if caller_role == "chw" else None
+    await reconcile_member_journeys_to_needs(
+        db, member_id, ordered, chw_id=reconcile_chw_id
+    )
+
     await db.commit()
     # Return levels as a list of {slug, level} objects in resource_needs order.
     # Slug stays a string value — immune to camelCase key transforms on mobile.
