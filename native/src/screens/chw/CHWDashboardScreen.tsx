@@ -689,7 +689,9 @@ export function CHWDashboardScreen(): React.JSX.Element {
               deltaColor={tokens.amber700}
               deltaBg="#fffbeb"
               style={styles.kpiTile}
-              onPress={() => navigation.navigate('Requests' as never)}
+              // Overdue follow-ups → the current Members page (CHWMembersScreen).
+              // 'Requests' is the superseded "old Members" screen (CHWRequestsScreen).
+              onPress={() => navigation.navigate('CHWMembers' as never)}
             />
 
             {/* 3. Messages awaiting reply
@@ -704,7 +706,7 @@ export function CHWDashboardScreen(): React.JSX.Element {
               deltaColor={tokens.blue700}
               deltaBg="#eff6ff"
               style={styles.kpiTile}
-              onPress={() => navigation.navigate('SessionsStack' as never)}
+              onPress={() => navigation.navigate('SessionsStack' as never, { screen: 'Messages' } as never)}
             />
 
             {/* 4. Earnings this week */}
@@ -808,7 +810,7 @@ export function CHWDashboardScreen(): React.JSX.Element {
             <View style={styles.cardHeaderRow}>
               <Text style={styles.cardTitle}>Recent activity</Text>
               <TouchableOpacity
-                onPress={() => navigation.navigate('SessionsStack' as never)}
+                onPress={() => navigation.navigate('SessionsStack' as never, { screen: 'Messages' } as never)}
                 accessibilityRole="link"
                 accessibilityLabel="Open full activity feed"
               >
