@@ -4390,30 +4390,62 @@ function ResourceNeedsColumn({
       {/* Needs list */}
       {orderedNeeds.length === 0 ? (
         <Text style={resourceColStyles.emptyText}>No resource needs selected.</Text>
-      ) : (
-        <View style={resourceColStyles.priorityList}>
-          <StaggerList delayMs={50} durationMs={240}>
-            {orderedNeeds.map((slug) => {
-              const option = RESOURCE_NEED_OPTIONS.find((o) => o.slug === slug);
-              const level = slugLevelLookup[slug] ?? 'low';
-              const pillVariant: 'red' | 'amber' | 'emerald' =
-                level === 'high' ? 'red' : level === 'medium' ? 'amber' : 'emerald';
-              const pillLabel = level === 'high' ? 'High' : level === 'medium' ? 'Medium' : 'Low';
+      ) : Platform.OS === 'web' ? (
+        <View style={resourceColStyles.needsScrollWeb}>
+          <View style={resourceColStyles.priorityList}>
+            <StaggerList delayMs={50} durationMs={240}>
+              {orderedNeeds.map((slug) => {
+                const option = RESOURCE_NEED_OPTIONS.find((o) => o.slug === slug);
+                const level = slugLevelLookup[slug] ?? 'low';
+                const pillVariant: 'red' | 'amber' | 'emerald' =
+                  level === 'high' ? 'red' : level === 'medium' ? 'amber' : 'emerald';
+                const pillLabel = level === 'high' ? 'High' : level === 'medium' ? 'Medium' : 'Low';
 
-              return (
-                <View key={slug} style={resourceColStyles.priorityItem}>
-                  {/* Need label */}
-                  <Text style={resourceColStyles.journeyName} numberOfLines={2}>
-                    {option?.label ?? slug}
-                  </Text>
+                return (
+                  <View key={slug} style={resourceColStyles.priorityItem}>
+                    {/* Need label */}
+                    <Text style={resourceColStyles.journeyName} numberOfLines={2}>
+                      {option?.label ?? slug}
+                    </Text>
 
-                  {/* Level pill */}
-                  <Pill variant={pillVariant} size="sm">{pillLabel}</Pill>
-                </View>
-              );
-            })}
-          </StaggerList>
+                    {/* Level pill */}
+                    <Pill variant={pillVariant} size="sm">{pillLabel}</Pill>
+                  </View>
+                );
+              })}
+            </StaggerList>
+          </View>
         </View>
+      ) : (
+        <ScrollView
+          style={resourceColStyles.needsScrollNative}
+          nestedScrollEnabled
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={resourceColStyles.priorityList}>
+            <StaggerList delayMs={50} durationMs={240}>
+              {orderedNeeds.map((slug) => {
+                const option = RESOURCE_NEED_OPTIONS.find((o) => o.slug === slug);
+                const level = slugLevelLookup[slug] ?? 'low';
+                const pillVariant: 'red' | 'amber' | 'emerald' =
+                  level === 'high' ? 'red' : level === 'medium' ? 'amber' : 'emerald';
+                const pillLabel = level === 'high' ? 'High' : level === 'medium' ? 'Medium' : 'Low';
+
+                return (
+                  <View key={slug} style={resourceColStyles.priorityItem}>
+                    {/* Need label */}
+                    <Text style={resourceColStyles.journeyName} numberOfLines={2}>
+                      {option?.label ?? slug}
+                    </Text>
+
+                    {/* Level pill */}
+                    <Pill variant={pillVariant} size="sm">{pillLabel}</Pill>
+                  </View>
+                );
+              })}
+            </StaggerList>
+          </View>
+        </ScrollView>
       )}
 
       {/* Wellness points stat — read-only, promoted from the old pill */}
@@ -4502,6 +4534,13 @@ const resourceColStyles = StyleSheet.create({
     color: '#A0A6AB',
     fontStyle: 'italic',
   } as TextStyle,
+  needsScrollWeb: {
+    maxHeight: Platform.OS === 'web' ? (260 as unknown as number) : undefined,
+    overflowY: Platform.OS === 'web' ? ('auto' as unknown as 'scroll') : undefined,
+  } as ViewStyle,
+  needsScrollNative: {
+    maxHeight: 260,
+  } as ViewStyle,
   priorityList: {
     gap: 6,
   } as ViewStyle,
@@ -5497,11 +5536,11 @@ function MemberJourneyTimeline({
   const { data: journeys, isLoading } = useMemberJourneys(memberId);
 
   /**
-   * Top-3 active journeys sorted by CHW-assigned level (high→medium→low, stable).
+   * All active journeys sorted by CHW-assigned level (high→medium→low, stable).
    * The matching uses journey.template.name → RESOURCE_NEED_OPTIONS label → slug.
    * Journeys with no matching resource need fall back to deriveSeverity.
    */
-  const top3Active = useMemo(() => {
+  const activeJourneysSorted = useMemo(() => {
     const active = journeys?.filter((j) => j.status === 'active') ?? [];
     return active
       .map((journey, i) => {
@@ -5516,7 +5555,6 @@ function MemberJourneyTimeline({
         const diff = LEVEL_SORT_ORDER[a.level] - LEVEL_SORT_ORDER[b.level];
         return diff !== 0 ? diff : a.i - b.i;
       })
-      .slice(0, 3)
       .map(({ journey }) => journey);
   }, [journeys, resourceNeedLevels]);
 
@@ -5529,31 +5567,51 @@ function MemberJourneyTimeline({
     );
   }
 
-  if (top3Active.length === 0) {
+  if (activeJourneysSorted.length === 0) {
     return (
       <EmptySectionState message="No active journeys. Use 'Add Journey' to start one." />
     );
   }
 
-  return (
-    <View style={mjStyles.container}>
-      {top3Active.map((journey, index) => (
-        <SingleJourneyTrack
-          key={journey.id}
-          journey={journey}
-          rank={index + 1}
-          windowWidth={windowWidth}
-          memberId={memberId}
-          editMode={editMode}
-          resourceNeedLevels={resourceNeedLevels}
-        />
-      ))}
+  const journeyList = activeJourneysSorted.map((journey, index) => (
+    <SingleJourneyTrack
+      key={journey.id}
+      journey={journey}
+      rank={index + 1}
+      windowWidth={windowWidth}
+      memberId={memberId}
+      editMode={editMode}
+      resourceNeedLevels={resourceNeedLevels}
+    />
+  ));
+
+  return Platform.OS === 'web' ? (
+    <View
+      style={mjStyles.scrollContainer}
+      accessibilityRole="list"
+    >
+      {journeyList}
     </View>
+  ) : (
+    <ScrollView
+      style={mjStyles.scrollContainerNative}
+      nestedScrollEnabled
+      showsVerticalScrollIndicator={false}
+    >
+      {journeyList}
+    </ScrollView>
   );
 }
 
 const mjStyles = StyleSheet.create({
   container: { gap: 0 } as ViewStyle,
+  scrollContainer: {
+    maxHeight: Platform.OS === 'web' ? (560 as unknown as number) : undefined,
+    overflowY: Platform.OS === 'web' ? ('auto' as unknown as 'scroll') : undefined,
+  } as ViewStyle,
+  scrollContainerNative: {
+    maxHeight: 560,
+  } as ViewStyle,
   loadingRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -7480,7 +7538,7 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                 ─────────────────────────────────────────────────────── */}
                 <SectionCard
                   title="Member Journey"
-                  subtitle="Progress for Top Resource Needs"
+                  subtitle="Progress for Resource Needs"
                   titleRight={
                     <View style={s.journeyHeaderRight}>
                       {/* Edit pencil — toggles journeyEditMode to reveal per-node affordances */}
