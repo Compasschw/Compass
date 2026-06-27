@@ -18,6 +18,7 @@ from app.services.auth_service import (
     revoke_refresh_token,
     store_refresh_token,
 )
+from app.services.storage.avatar_urls import presigned_avatar_url
 from app.utils.security import decode_token
 
 logger = logging.getLogger("compass.auth")
@@ -493,7 +494,7 @@ async def complete_member_onboarding(
         name=current_user.name,
         phone=current_user.phone,
         email=current_user.email,
-        profile_picture_url=current_user.profile_picture_url,
+        profile_picture_url=presigned_avatar_url(current_user.profile_picture_url),
         preferred_name=profile.preferred_name,
         date_of_birth=profile.date_of_birth,
         gender=profile.gender,

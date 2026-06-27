@@ -20,6 +20,7 @@ from app.schemas.member import (
     ServicesConsentUpdate,
 )
 from app.schemas.user import MemberProfileResponse, MemberProfileUpdate
+from app.services.storage.avatar_urls import presigned_avatar_url
 
 logger = logging.getLogger("compass.member")
 
@@ -44,7 +45,7 @@ def _build_member_profile_response(profile, user) -> MemberProfileResponse:
         name=user.name,
         phone=user.phone,
         email=user.email,
-        profile_picture_url=user.profile_picture_url,
+        profile_picture_url=presigned_avatar_url(user.profile_picture_url),
         preferred_name=profile.preferred_name,
         date_of_birth=profile.date_of_birth,
         gender=profile.gender,

@@ -26,6 +26,7 @@ from app.schemas.chw import (
     ResourceNeedsUpdate,
 )
 from app.schemas.user import CHWProfileResponse, CHWProfileUpdate
+from app.services.storage.avatar_urls import presigned_avatar_url
 
 _bearer_scheme = HTTPBearer()
 
@@ -59,7 +60,7 @@ def _serialize_chw_profile(profile, current_user) -> "CHWProfileResponse":
         name=current_user.name,
         email=current_user.email,
         phone=current_user.phone,
-        profile_picture_url=current_user.profile_picture_url,
+        profile_picture_url=presigned_avatar_url(current_user.profile_picture_url),
         hipaa_training_completed=profile.hipaa_training_completed,
         chw_certification=profile.chw_certification,
         background_check_status=profile.background_check_status,
