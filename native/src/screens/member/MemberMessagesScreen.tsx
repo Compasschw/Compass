@@ -2334,7 +2334,7 @@ export function MemberMessagesScreen(): React.JSX.Element {
                 <EmptyState
                   icon={MessageSquare}
                   title="Your inbox is quiet for now"
-                  body="Messages from your CHW and Compass appear here"
+                  body="Messages from your CHW appear here"
                 />
               )}
             </ScrollView>

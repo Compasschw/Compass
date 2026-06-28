@@ -2535,6 +2535,11 @@ export function MemberProfileScreen(): React.JSX.Element {
             </Text>
             {rewardsCatalogQuery.isLoading ? (
               <LoadingSkeleton variant="rows" rows={3} />
+            ) : rewardsCatalogQuery.isError ? (
+              <ErrorState
+                message="Could not load rewards catalog. Please try again."
+                onRetry={() => void rewardsCatalogQuery.refetch()}
+              />
             ) : activeRewardItems.length === 0 ? (
               <Text style={screenStyles.catalogEmptyText}>No rewards available yet.</Text>
             ) : (

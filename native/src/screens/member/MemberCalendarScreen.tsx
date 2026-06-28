@@ -1441,26 +1441,28 @@ export function MemberCalendarScreen(): React.JSX.Element {
 
   const calendarContent = (
     <View style={mainStyles.calendarOuter}>
-      {/* Week/Month nav bar */}
-      <View style={mainStyles.navBar}>
-        <TouchableOpacity
-          style={mainStyles.navBtn}
-          onPress={handlePrev}
-          accessibilityRole="button"
-          accessibilityLabel={viewMode === 'week' ? 'Previous week' : 'Previous month'}
-        >
-          <ChevronLeft size={18} color="#374151" />
-        </TouchableOpacity>
-        <Text style={mainStyles.navTitle}>{navTitle}</Text>
-        <TouchableOpacity
-          style={mainStyles.navBtn}
-          onPress={handleNext}
-          accessibilityRole="button"
-          accessibilityLabel={viewMode === 'week' ? 'Next week' : 'Next month'}
-        >
-          <ChevronRight size={18} color="#374151" />
-        </TouchableOpacity>
-      </View>
+      {/* Week/Month nav bar — hidden in day view (day is pinned to today, no navigation needed) */}
+      {viewMode !== 'day' && (
+        <View style={mainStyles.navBar}>
+          <TouchableOpacity
+            style={mainStyles.navBtn}
+            onPress={handlePrev}
+            accessibilityRole="button"
+            accessibilityLabel={viewMode === 'week' ? 'Previous week' : 'Previous month'}
+          >
+            <ChevronLeft size={18} color="#374151" />
+          </TouchableOpacity>
+          <Text style={mainStyles.navTitle}>{navTitle}</Text>
+          <TouchableOpacity
+            style={mainStyles.navBtn}
+            onPress={handleNext}
+            accessibilityRole="button"
+            accessibilityLabel={viewMode === 'week' ? 'Next week' : 'Next month'}
+          >
+            <ChevronRight size={18} color="#374151" />
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Grid */}
       {viewMode === 'week' ? (
