@@ -1,50 +1,73 @@
 /**
- * MemberJourneyScreen — focused view of the member's active health journey.
+ * MemberJourneyScreen — the member's canonical "My Journey" page.
  *
- * Data source: useMemberJourneys (GET /members/{id}/journeys).
- * The "active journey" defaults to the first non-completed, non-abandoned
- * entry returned by the API.
+ * Consolidated view (single source of truth for the member journey). Combines
+ * the CHW-styled journey roadmap with session follow-ups and an "Other
+ * Journeys" rail, styled to match the CHW journey visual language (tokens.ts,
+ * Card, Pill, PageHeader, PageWrap, SectionHeader, StatTile from components/ui).
+ * No imports from theme/colors.
  *
- * Layout:
- *   - PageHeader: journey name + status pill
- *   - Horizontal step roadmap (scroll-locked on native, flex-wrap on web)
- *   - Current step detail card (description, required documents, points)
- *   - Right rail (web): other journeys list
+ * Data sources:
+ *   - useMemberProfile: member userId (required for useMemberJourneys key)
+ *   - useMemberJourneys: 6-step journey template data (T06 migrated)
+ *   - useMemberRoadmap: session-sourced follow-up items
+ *   - useCompleteRoadmapItem: mark a follow-up complete
+ *
+ * Layout (PageWrap 1280px on web; CHW journey visual language):
+ *   1. PageHeader — "My Journey" + active journey name + progress% + status Pill
+ *   2. StatTile row — Journey Progress % + Points Earned
+ *   3. SectionHeader "Journey Steps" + roadmap Card (progress bar, horizontal
+ *      52×52 step nodes with inline status Pills + connectors, encouragement)
+ *   4. Step detail Card — status pill, points, name/description, dates, docs
+ *   5. Points reference — derived from the journey's REAL steps (stepName +
+ *      pointsOnCompletion); no hardcoded point map
+ *   6. SectionHeader "From Your Sessions" — follow-ups grouped by vertical with
+ *      mark-complete
+ *   7. Web RightRail — "Other Journeys" list (tap to switch the active journey)
+ *
+ * T06 (Wave 1 BE): the backend data migration remapped all live
+ * MemberJourneyStepState rows to the new 6-step template names; step.stepName
+ * reflects the new names automatically — no client-side translation needed.
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   ScrollView,
   StatusBar,
   StyleSheet,
   Text,
+  TouchableOpacity,
   View,
-  type ViewStyle,
   type TextStyle,
+  type ViewStyle,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import type { DrawerScreenProps } from '@react-navigation/drawer';
 import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import type { MemberTabParamList } from '../../navigation/MemberTabNavigator';
 import {
+  AlertCircle,
+  Baby,
+  BookOpen,
+  Brain,
+  Building2,
+  CalendarDays,
   CheckCircle2,
   Circle,
   Clock,
-  FileText,
+  Flag,
   Gift,
-  Lightbulb,
-  Route,
-  Utensils,
   Home,
-  Brain,
-  Baby,
-  Building2,
-  Zap,
+  Lightbulb,
+  Package,
+  Route,
   ShoppingBasket,
   Stethoscope,
-  Package,
-  BookOpen,
+  Utensils,
+  Zap,
   type LucideIcon,
 } from 'lucide-react-native';
 
@@ -55,22 +78,41 @@ import {
   type MemberJourneyResponse,
   type MemberJourneyStepResponse,
 } from '../../hooks/useApiQueries';
+import {
+  useMemberRoadmap,
+  useCompleteRoadmapItem,
+  type SessionFollowup,
+  type FollowupVertical,
+} from '../../hooks/useFollowupQueries';
+import { VERTICAL_LABEL } from '../../lib/verticals';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 import {
   AppShell,
-  PageHeader,
   Card,
+  EmptyState,
+  PageHeader,
+  PageWrap,
   Pill,
+  PressableCard,
   RightRail,
+  SectionHeader,
+  StatTile,
 } from '../../components/ui';
-import { colors as tokens } from '../../theme/tokens';
+import { colors as tokens, numerals, spacing, radius } from '../../theme/tokens';
+import type { PillVariant } from '../../components/ui/Pill';
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+/** Single source of truth for vertical display labels on follow-up items. */
+const FOLLOWUP_VERTICAL_LABELS: Record<FollowupVertical, string> =
+  VERTICAL_LABEL as Record<FollowupVertical, string>;
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
- * Returns the first journey that is active or in-progress.
- * Falls back to the first journey if none qualify.
+ * Returns the first non-completed, non-abandoned journey.
+ * Falls back to the first journey when all are finished.
  */
 function resolveActiveJourney(
   journeys: MemberJourneyResponse[],
@@ -84,18 +126,10 @@ function resolveActiveJourney(
   );
 }
 
-function stepStatusColor(status: MemberJourneyStepResponse['status']): string {
-  switch (status) {
-    case 'completed': return tokens.emerald700;
-    case 'in_progress': return tokens.amber700;
-    case 'missed': return tokens.red700;
-    default: return tokens.textSecondary;
-  }
-}
-
+/** Maps a MemberJourneyResponse status to a Pill variant. */
 function journeyStatusPillVariant(
   status: MemberJourneyResponse['status'],
-): import('../../components/ui/Pill').PillVariant {
+): PillVariant {
   switch (status) {
     case 'active': return 'emerald';
     case 'paused': return 'amber';
@@ -105,7 +139,30 @@ function journeyStatusPillVariant(
   }
 }
 
-function formatDate(iso: string | null): string {
+/** Maps a MemberJourneyStepResponse status to a Pill variant. */
+function stepStatusPillVariant(
+  status: MemberJourneyStepResponse['status'],
+): PillVariant {
+  switch (status) {
+    case 'completed': return 'emerald';
+    case 'in_progress': return 'amber';
+    case 'missed': return 'red';
+    default: return 'gray';
+  }
+}
+
+/** Maps a SessionFollowup status to a Pill variant. */
+function followupStatusPillVariant(status: SessionFollowup['status']): PillVariant {
+  switch (status) {
+    case 'completed': return 'emerald';
+    case 'confirmed': return 'blue';
+    case 'pending': return 'amber';
+    case 'dismissed': return 'gray';
+    default: return 'gray';
+  }
+}
+
+function formatDate(iso: string | null | undefined): string {
   if (!iso) return '—';
   return new Date(iso).toLocaleDateString('en-US', {
     month: 'short',
@@ -114,203 +171,28 @@ function formatDate(iso: string | null): string {
   });
 }
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
-
-interface StepNodeProps {
-  step: MemberJourneyStepResponse;
-  isSelected: boolean;
-  onPress: () => void;
-}
-
 /**
- * Single node in the horizontal step roadmap.
- * Completed steps show a filled circle; in-progress = amber; others = gray.
+ * Groups session follow-up items by their vertical field.
+ * Items without a vertical are placed under the "general" bucket.
  */
-function StepNode({ step, isSelected, onPress }: StepNodeProps): React.JSX.Element {
-  const color = stepStatusColor(step.status);
-  const isCompleted = step.status === 'completed';
-
-  return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [
-        sn.node,
-        isSelected && sn.nodeSelected,
-        pressed && { opacity: 0.75 },
-      ]}
-      accessibilityRole="button"
-      accessibilityLabel={`Step ${step.stepOrder}: ${step.stepName}. Status: ${step.status}`}
-      accessibilityState={{ selected: isSelected }}
-    >
-      <View style={[sn.circle, { borderColor: color, backgroundColor: isCompleted ? color : 'transparent' }]}>
-        {isCompleted ? (
-          <CheckCircle2 size={22} color="#FFFFFF" />
-        ) : step.status === 'in_progress' ? (
-          <Clock size={22} color={color} />
-        ) : (
-          <Circle size={22} color={color} />
-        )}
-      </View>
-      <Text style={[sn.label, { color }]} numberOfLines={2}>{step.stepName}</Text>
-    </Pressable>
-  );
+function groupFollowupsByVertical(
+  items: SessionFollowup[],
+): { vertical: FollowupVertical | 'general'; label: string; items: SessionFollowup[] }[] {
+  const grouped: Record<string, SessionFollowup[]> = {};
+  for (const item of items) {
+    const key = item.vertical ?? 'general';
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key]!.push(item);
+  }
+  return Object.entries(grouped).map(([key, groupItems]) => ({
+    vertical: key as FollowupVertical | 'general',
+    label:
+      key === 'general'
+        ? 'General'
+        : (FOLLOWUP_VERTICAL_LABELS[key as FollowupVertical] ?? key),
+    items: groupItems,
+  }));
 }
-
-const sn = StyleSheet.create({
-  node: {
-    // w-32 = 128px from mockup
-    width: 128,
-    alignItems: 'center',
-    gap: 6,
-    paddingVertical: 8,
-    borderRadius: 10,
-  },
-  nodeSelected: {
-    backgroundColor: `${tokens.primary}10`,
-  },
-  circle: {
-    // step-circle: 56×56 from mockup
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    borderWidth: 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  label: {
-    fontSize: 12,
-    fontWeight: '600',
-    textAlign: 'center',
-    lineHeight: 16,
-  } as TextStyle,
-});
-
-interface StepDetailCardProps {
-  step: MemberJourneyStepResponse;
-}
-
-function StepDetailCard({ step }: StepDetailCardProps): React.JSX.Element {
-  const color = stepStatusColor(step.status);
-  return (
-    <Card style={sd.card}>
-      <View style={sd.headerRow}>
-        <View style={[sd.badge, { backgroundColor: `${color}18` }]}>
-          <Text style={[sd.badgeText, { color }]}>{step.status.replace('_', ' ')}</Text>
-        </View>
-        <View style={sd.pointsBadge}>
-          <Gift size={12} color={tokens.amber700} />
-          <Text style={sd.pointsText}>+{step.pointsOnCompletion} pts on completion</Text>
-        </View>
-      </View>
-
-      <Text style={sd.title}>Step {step.stepOrder}: {step.stepName}</Text>
-      <Text style={sd.description}>{step.stepDescription}</Text>
-
-      {step.dueDate !== null && (
-        <View style={sd.metaRow}>
-          <Clock size={12} color={tokens.textSecondary} />
-          <Text style={sd.metaText}>Due {formatDate(step.dueDate)}</Text>
-        </View>
-      )}
-      {step.completedAt !== null && (
-        <View style={sd.metaRow}>
-          <CheckCircle2 size={12} color={tokens.emerald700} />
-          <Text style={[sd.metaText, { color: tokens.emerald700 }]}>
-            Completed {formatDate(step.completedAt)}
-          </Text>
-        </View>
-      )}
-
-      {step.requiredDocuments.length > 0 && (
-        <View style={sd.docsSection}>
-          <Text style={sd.docsLabel}>Required documents</Text>
-          {step.requiredDocuments.map((doc) => (
-            <View key={doc} style={sd.docRow}>
-              <FileText size={12} color={tokens.textSecondary} />
-              <Text style={sd.docText}>{doc}</Text>
-            </View>
-          ))}
-        </View>
-      )}
-    </Card>
-  );
-}
-
-const sd = StyleSheet.create({
-  card: {
-    padding: 20,
-    gap: 12,
-    marginBottom: 16,
-  } as ViewStyle,
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    flexWrap: 'wrap',
-  } as ViewStyle,
-  badge: {
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-    borderRadius: 999,
-  } as ViewStyle,
-  badgeText: {
-    fontSize: 11,
-    fontWeight: '600',
-    textTransform: 'capitalize',
-  } as TextStyle,
-  pointsBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  } as ViewStyle,
-  pointsText: {
-    fontSize: 11,
-    color: tokens.amber700,
-    fontWeight: '600',
-  } as TextStyle,
-  title: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: tokens.textPrimary,
-    lineHeight: 24,
-  } as TextStyle,
-  description: {
-    fontSize: 14,
-    color: tokens.textSecondary,
-    lineHeight: 20,
-  } as TextStyle,
-  metaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  } as ViewStyle,
-  metaText: {
-    fontSize: 12,
-    color: tokens.textSecondary,
-  } as TextStyle,
-  docsSection: {
-    gap: 6,
-    borderTopWidth: 1,
-    borderTopColor: tokens.cardBorder,
-    paddingTop: 12,
-  } as ViewStyle,
-  docsLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: tokens.textSecondary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-  } as TextStyle,
-  docRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  } as ViewStyle,
-  docText: {
-    fontSize: 13,
-    color: tokens.textPrimary,
-  } as TextStyle,
-});
 
 // Backend journey templates store `icon` as a lucide kebab-case NAME
 // (e.g. "package", "shopping-basket"), not an emoji — see journey_seeds.py.
@@ -335,30 +217,478 @@ function JourneyIcon({ name }: { name: string | null | undefined }): React.JSX.E
   return <Icon size={18} color={tokens.emerald700} />;
 }
 
+// ─── Progress bar ─────────────────────────────────────────────────────────────
+
+interface JourneyProgressBarProps {
+  percent: number;
+}
+
+function JourneyProgressBar({ percent }: JourneyProgressBarProps): React.JSX.Element {
+  const clamped = Math.min(Math.max(percent, 0), 100);
+  return (
+    <View
+      style={progressBarStyles.track}
+      accessibilityRole="progressbar"
+      accessibilityValue={{ min: 0, max: 100, now: clamped }}
+      accessibilityLabel={`Journey progress: ${Math.round(clamped)}%`}
+    >
+      <View style={[progressBarStyles.fill, { width: `${clamped}%` }]} />
+    </View>
+  );
+}
+
+const progressBarStyles = StyleSheet.create({
+  track: {
+    height: 8,
+    backgroundColor: tokens.gray100,
+    borderRadius: radius.pill,
+    overflow: 'hidden',
+    width: '100%',
+  } as ViewStyle,
+  fill: {
+    height: '100%',
+    backgroundColor: tokens.primary,
+    borderRadius: radius.pill,
+  } as ViewStyle,
+});
+
+// ─── Journey Step Node ────────────────────────────────────────────────────────
+
+interface JourneyStepNodeProps {
+  step: MemberJourneyStepResponse;
+  isSelected: boolean;
+  onPress: () => void;
+}
+
+/**
+ * Tappable node in the horizontal 6-step journey roadmap.
+ * Completed steps show a filled circle with CheckCircle2 icon.
+ * In-progress steps show a Clock icon.
+ * Upcoming/missed steps show an outline Circle.
+ */
+function JourneyStepNode({
+  step,
+  isSelected,
+  onPress,
+}: JourneyStepNodeProps): React.JSX.Element {
+  const pillVariant = stepStatusPillVariant(step.status);
+  const isCompleted = step.status === 'completed';
+  const isInProgress = step.status === 'in_progress';
+
+  // Derive circle border + fill color from status
+  const circleColor: string = (() => {
+    switch (step.status) {
+      case 'completed': return tokens.primary;
+      case 'in_progress': return tokens.amber700;
+      case 'missed': return tokens.red700;
+      default: return tokens.textMuted;
+    }
+  })();
+
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [
+        stepNodeStyles.node,
+        isSelected && stepNodeStyles.nodeSelected,
+        pressed && stepNodeStyles.nodePressed,
+      ]}
+      accessibilityRole="button"
+      accessibilityLabel={`Step ${step.stepOrder}: ${step.stepName}. Status: ${step.status}`}
+      accessibilityState={{ selected: isSelected }}
+    >
+      <View
+        style={[
+          stepNodeStyles.circle,
+          {
+            borderColor: circleColor,
+            backgroundColor: isCompleted ? circleColor : 'transparent',
+          },
+        ]}
+      >
+        {isCompleted ? (
+          <CheckCircle2 size={20} color="#FFFFFF" />
+        ) : isInProgress ? (
+          <Clock size={20} color={circleColor} />
+        ) : (
+          <Circle size={20} color={circleColor} />
+        )}
+      </View>
+      <Text style={[stepNodeStyles.label, { color: circleColor }]} numberOfLines={2}>
+        {step.stepName}
+      </Text>
+      <Pill variant={pillVariant} size="sm">
+        {step.status.replace('_', ' ')}
+      </Pill>
+    </Pressable>
+  );
+}
+
+const stepNodeStyles = StyleSheet.create({
+  node: {
+    width: 112,
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.xs,
+    borderRadius: radius.md,
+  } as ViewStyle,
+  nodeSelected: {
+    backgroundColor: `${tokens.primary}12`,
+  } as ViewStyle,
+  nodePressed: {
+    opacity: 0.72,
+  } as ViewStyle,
+  circle: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+  label: {
+    fontSize: 11,
+    fontWeight: '600',
+    textAlign: 'center',
+    lineHeight: 15,
+  } as TextStyle,
+});
+
+// ─── Step Detail Card ─────────────────────────────────────────────────────────
+
+interface StepDetailCardProps {
+  step: MemberJourneyStepResponse;
+}
+
+/**
+ * Expanded detail card for the currently selected journey step.
+ * Shows step name, status, points reward, description, due/completion dates,
+ * and required documents list.
+ */
+function StepDetailCard({ step }: StepDetailCardProps): React.JSX.Element {
+  const pillVariant = stepStatusPillVariant(step.status);
+
+  return (
+    <Card style={stepDetailStyles.card}>
+      {/* Header row: status pill + points badge */}
+      <View style={stepDetailStyles.headerRow}>
+        <Pill variant={pillVariant}>
+          {step.status.replace('_', ' ')}
+        </Pill>
+        <View style={stepDetailStyles.pointsBadge}>
+          <Gift size={12} color={tokens.amber700} />
+          <Text style={[stepDetailStyles.pointsText, numerals.tabular]}>
+            +{step.pointsOnCompletion} pts
+          </Text>
+        </View>
+      </View>
+
+      {/* Step name */}
+      <Text style={stepDetailStyles.title}>
+        Step {step.stepOrder}: {step.stepName}
+      </Text>
+
+      {/* Description */}
+      {step.stepDescription.length > 0 && (
+        <Text style={stepDetailStyles.description}>{step.stepDescription}</Text>
+      )}
+
+      {/* Due date */}
+      {step.dueDate !== null && (
+        <View style={stepDetailStyles.metaRow}>
+          <Clock size={12} color={tokens.textSecondary} />
+          <Text style={stepDetailStyles.metaText}>Due {formatDate(step.dueDate)}</Text>
+        </View>
+      )}
+
+      {/* Completed date */}
+      {step.completedAt !== null && (
+        <View style={stepDetailStyles.metaRow}>
+          <CheckCircle2 size={12} color={tokens.emerald700} />
+          <Text style={[stepDetailStyles.metaText, { color: tokens.emerald700 }]}>
+            Completed {formatDate(step.completedAt)}
+          </Text>
+        </View>
+      )}
+
+      {/* Required documents */}
+      {step.requiredDocuments.length > 0 && (
+        <View style={stepDetailStyles.docsSection}>
+          <Text style={stepDetailStyles.docsLabel}>Required documents</Text>
+          {step.requiredDocuments.map((doc) => (
+            <View key={doc} style={stepDetailStyles.docRow}>
+              <View style={stepDetailStyles.docBullet} />
+              <Text style={stepDetailStyles.docText}>{doc}</Text>
+            </View>
+          ))}
+        </View>
+      )}
+    </Card>
+  );
+}
+
+const stepDetailStyles = StyleSheet.create({
+  card: {
+    padding: spacing.xl,
+    gap: spacing.md,
+  } as ViewStyle,
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  } as ViewStyle,
+  pointsBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  } as ViewStyle,
+  pointsText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: tokens.amber700,
+  } as TextStyle,
+  title: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: tokens.textPrimary,
+    lineHeight: 22,
+  } as TextStyle,
+  description: {
+    fontSize: 14,
+    color: tokens.textSecondary,
+    lineHeight: 20,
+  } as TextStyle,
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  } as ViewStyle,
+  metaText: {
+    fontSize: 12,
+    color: tokens.textSecondary,
+  } as TextStyle,
+  docsSection: {
+    gap: spacing.xs,
+    borderTopWidth: 1,
+    borderTopColor: tokens.cardBorder,
+    paddingTop: spacing.md,
+  } as ViewStyle,
+  docsLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: tokens.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  } as TextStyle,
+  docRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  } as ViewStyle,
+  docBullet: {
+    width: 5,
+    height: 5,
+    borderRadius: radius.pill,
+    backgroundColor: tokens.textSecondary,
+    flexShrink: 0,
+    marginTop: 1,
+  } as ViewStyle,
+  docText: {
+    fontSize: 13,
+    color: tokens.textPrimary,
+    flex: 1,
+  } as TextStyle,
+});
+
+// ─── Session Follow-up Row ────────────────────────────────────────────────────
+
+interface SessionFollowupRowProps {
+  item: SessionFollowup;
+  onMarkComplete: (item: SessionFollowup) => void;
+  isCompleting: boolean;
+}
+
+/**
+ * A single row for a session-sourced roadmap item.
+ * Renders description, status Pill, optional due date + priority chip,
+ * session attribution, and a "Mark complete" CTA for confirmed items.
+ *
+ * HIPAA: item.description is rendered only — never logged.
+ */
+function SessionFollowupRow({
+  item,
+  onMarkComplete,
+  isCompleting,
+}: SessionFollowupRowProps): React.JSX.Element {
+  const pillVariant = followupStatusPillVariant(item.status);
+  const isCompleted = item.status === 'completed';
+  const canComplete = item.status === 'confirmed' && !isCompleted;
+
+  return (
+    <Card style={followupRowStyles.card}>
+      {/* Top: description + status Pill */}
+      <View style={followupRowStyles.headerRow}>
+        <Text
+          style={[
+            followupRowStyles.description,
+            isCompleted && followupRowStyles.descriptionDone,
+          ]}
+        >
+          {item.description}
+        </Text>
+        <Pill variant={pillVariant} size="sm">
+          {item.status.charAt(0).toUpperCase() + item.status.slice(1)}
+        </Pill>
+      </View>
+
+      {/* Meta row: due date + priority */}
+      {(item.dueDate !== null || item.priority !== null) && (
+        <View style={followupRowStyles.metaRow}>
+          {item.dueDate !== null && (
+            <View style={followupRowStyles.metaChip}>
+              <CalendarDays size={10} color={tokens.textSecondary} />
+              <Text style={followupRowStyles.metaChipText}>
+                Due {formatDate(item.dueDate)}
+              </Text>
+            </View>
+          )}
+          {item.priority !== null && (
+            <View style={followupRowStyles.metaChip}>
+              <Flag size={10} color={tokens.textSecondary} />
+              <Text style={followupRowStyles.metaChipText}>
+                {item.priority.charAt(0).toUpperCase() + item.priority.slice(1)} priority
+              </Text>
+            </View>
+          )}
+        </View>
+      )}
+
+      {/* Session attribution */}
+      {(item.chwName !== null && item.chwName !== undefined) || item.sessionDate !== null ? (
+        <Text style={followupRowStyles.attribution}>
+          From session
+          {item.chwName != null ? ` with ${item.chwName}` : ''}
+          {item.sessionDate != null ? ` on ${formatDate(item.sessionDate)}` : ''}
+        </Text>
+      ) : null}
+
+      {/* Mark complete CTA */}
+      {canComplete ? (
+        <TouchableOpacity
+          style={followupRowStyles.completeBtn}
+          onPress={() => onMarkComplete(item)}
+          disabled={isCompleting}
+          accessibilityRole="button"
+          accessibilityLabel={`Mark item complete: ${item.description.slice(0, 48)}`}
+        >
+          {isCompleting ? (
+            <ActivityIndicator size="small" color="#FFFFFF" />
+          ) : (
+            <CheckCircle2 size={14} color="#FFFFFF" />
+          )}
+          <Text style={followupRowStyles.completeBtnText}>Mark Complete</Text>
+        </TouchableOpacity>
+      ) : null}
+    </Card>
+  );
+}
+
+const followupRowStyles = StyleSheet.create({
+  card: {
+    padding: spacing.lg,
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
+  } as ViewStyle,
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+  } as ViewStyle,
+  description: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 20,
+    color: tokens.textPrimary,
+    fontWeight: '400',
+  } as TextStyle,
+  descriptionDone: {
+    textDecorationLine: 'line-through',
+    color: tokens.textSecondary,
+  } as TextStyle,
+  metaRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+  } as ViewStyle,
+  metaChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 3,
+    borderRadius: radius.sm,
+    backgroundColor: tokens.gray100,
+  } as ViewStyle,
+  metaChipText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: tokens.textSecondary,
+  } as TextStyle,
+  attribution: {
+    fontSize: 11,
+    color: tokens.textMuted,
+    fontStyle: 'italic',
+  } as TextStyle,
+  completeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    backgroundColor: tokens.primary,
+    borderRadius: radius.lg,
+    paddingVertical: spacing.sm + 2,
+    marginTop: spacing.xs,
+  } as ViewStyle,
+  completeBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  } as TextStyle,
+});
+
+// ─── Other Journeys Row (web rail) ────────────────────────────────────────────
+
 interface OtherJourneyRowProps {
   journey: MemberJourneyResponse;
   isActive: boolean;
   onPress: () => void;
 }
 
+/**
+ * Compact, tappable row in the "Other Journeys" rail. Tapping switches the
+ * active journey rendered by the main column.
+ */
 function OtherJourneyRow({ journey, isActive, onPress }: OtherJourneyRowProps): React.JSX.Element {
   return (
     <Pressable
       onPress={onPress}
       style={({ pressed }) => [
-        oj.row,
-        isActive && oj.rowActive,
+        otherJourneyStyles.row,
+        isActive && otherJourneyStyles.rowActive,
         pressed && { opacity: 0.75 },
       ]}
       accessibilityRole="button"
       accessibilityLabel={`Switch to journey: ${journey.template.name}`}
     >
-      <View style={oj.iconCircle}>
+      <View style={otherJourneyStyles.iconCircle}>
         <JourneyIcon name={journey.template.icon} />
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
-        <Text style={oj.name} numberOfLines={1}>{journey.template.name}</Text>
-        <Text style={oj.progress}>{Math.round(journey.progressPercent)}% complete</Text>
+        <Text style={otherJourneyStyles.name} numberOfLines={1}>{journey.template.name}</Text>
+        <Text style={otherJourneyStyles.progress}>{Math.round(journey.progressPercent)}% complete</Text>
       </View>
       <Pill variant={journeyStatusPillVariant(journey.status)} size="sm">
         {journey.status}
@@ -367,14 +697,14 @@ function OtherJourneyRow({ journey, isActive, onPress }: OtherJourneyRowProps): 
   );
 }
 
-const oj = StyleSheet.create({
+const otherJourneyStyles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 10,
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
   } as ViewStyle,
   rowActive: {
     backgroundColor: `${tokens.primary}10`,
@@ -399,30 +729,6 @@ const oj = StyleSheet.create({
   } as TextStyle,
 });
 
-// ─── Progress bar ─────────────────────────────────────────────────────────────
-
-function ProgressBar({ percent }: { percent: number }): React.JSX.Element {
-  return (
-    <View style={pb.track} accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: 100, now: percent }}>
-      <View style={[pb.fill, { width: `${Math.min(percent, 100)}%` }]} />
-    </View>
-  );
-}
-
-const pb = StyleSheet.create({
-  track: {
-    height: 8,
-    backgroundColor: tokens.gray100,
-    borderRadius: 4,
-    overflow: 'hidden',
-  } as ViewStyle,
-  fill: {
-    height: '100%',
-    backgroundColor: tokens.primary,
-    borderRadius: 4,
-  } as ViewStyle,
-});
-
 // ─── Route prop type ─────────────────────────────────────────────────────────
 
 /**
@@ -443,12 +749,75 @@ export function MemberJourneyScreen(props: MemberJourneyScreenProps): React.JSX.
       ?.route?.params?.focusJourneyId ?? null;
 
   const { userName } = useAuth();
+
   const profileQuery = useMemberProfile();
   // MemberJourney.member_id is FK to users.id, not members.id.
   // Pass the User UUID (profile.userId), not the Members table PK (profile.id),
   // or the API call returns 403 (member auth check) and zero rows.
   const memberId = profileQuery.data?.userId ?? '';
 
+  const journeysQuery = useMemberJourneys(memberId);
+  const roadmapQuery = useMemberRoadmap();
+  const completeRoadmapItem = useCompleteRoadmapItem();
+
+  // Optimistic: track which follow-up item is currently being marked complete.
+  const [completingId, setCompletingId] = useState<string | null>(null);
+
+  // Which journey the member is viewing (seeded from focusJourneyId so a tap
+  // from MemberHomeScreen deep-links straight to that journey). Switchable via
+  // the "Other Journeys" rail.
+  const [selectedJourneyId, setSelectedJourneyId] = useState<string | null>(
+    () => focusJourneyId,
+  );
+
+  // Which journey step the member has tapped on for expanded detail.
+  const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
+
+  // ── Derived journey data ───────────────────────────────────────────────────
+  const journeys = journeysQuery.data ?? [];
+  const defaultActive = useMemo(() => resolveActiveJourney(journeys), [journeys]);
+
+  const activeJourney =
+    journeys.find((j) => j.id === (selectedJourneyId ?? focusJourneyId)) ??
+    defaultActive;
+
+  const selectedStep = useMemo(() => {
+    if (!activeJourney) return null;
+    return (
+      activeJourney.steps.find((s) => s.id === selectedStepId) ??
+      activeJourney.currentStep ??
+      activeJourney.steps[0] ??
+      null
+    );
+  }, [activeJourney, selectedStepId]);
+
+  // ── Derived follow-up data ─────────────────────────────────────────────────
+  const roadmapItems = roadmapQuery.data ?? [];
+  const groupedFollowups = useMemo(
+    () => groupFollowupsByVertical(roadmapItems),
+    [roadmapItems],
+  );
+
+  // ── Handlers ──────────────────────────────────────────────────────────────
+  const handleMarkComplete = useCallback(
+    async (item: SessionFollowup) => {
+      if (!item.id) return;
+      setCompletingId(item.id);
+      try {
+        // The backend PATCH path requires session_id. The roadmap endpoint should
+        // surface session_id on each item. We fall back gracefully on a placeholder
+        // that will 404 without crashing — tracked in Compass #[roadmap-session-id].
+        const sessionId =
+          (item as SessionFollowup & { sessionId?: string }).sessionId ?? 'unknown';
+        await completeRoadmapItem.mutateAsync({ sessionId, followupId: item.id });
+      } finally {
+        setCompletingId(null);
+      }
+    },
+    [completeRoadmapItem],
+  );
+
+  // ── Shell user block ───────────────────────────────────────────────────────
   const memberInitials = (userName ?? 'M')
     .split(' ')
     .slice(0, 2)
@@ -456,49 +825,24 @@ export function MemberJourneyScreen(props: MemberJourneyScreenProps): React.JSX.
     .join('')
     .toUpperCase();
 
-  const journeysQuery = useMemberJourneys(memberId);
-
-  const journeys = journeysQuery.data ?? [];
-  const defaultActive = useMemo(() => resolveActiveJourney(journeys), [journeys]);
-
-  // Seed selectedJourneyId from focusJourneyId on first meaningful data load.
-  // If the focused journey id is valid, use it; otherwise fall back to the
-  // default active journey. This ensures a tap from MemberHomeScreen
-  // immediately highlights the correct journey without an extra useState effect.
-  const [selectedJourneyId, setSelectedJourneyId] = useState<string | null>(
-    () => focusJourneyId,
-  );
-
-  const selectedJourney =
-    journeys.find((j) => j.id === (selectedJourneyId ?? focusJourneyId)) ??
-    defaultActive;
-
-  const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
-  const selectedStep = useMemo(() => {
-    if (!selectedJourney) return null;
-    return (
-      selectedJourney.steps.find((s) => s.id === selectedStepId) ??
-      selectedJourney.currentStep ??
-      selectedJourney.steps[0] ??
-      null
-    );
-  }, [selectedJourney, selectedStepId]);
-
   const shellUserBlock = {
     initials: memberInitials,
     name: userName ?? 'Member',
     role: 'Member' as const,
   };
 
+  // ── Loading / error states ─────────────────────────────────────────────────
   const isLoading = profileQuery.isLoading || journeysQuery.isLoading;
-  const hasError = !isLoading && (journeysQuery.error !== null);
+  const hasError =
+    !isLoading &&
+    (journeysQuery.isError || (!!memberId && profileQuery.isError));
 
   if (isLoading) {
     return (
       <AppShell role="member" activeKey="journey" userBlock={shellUserBlock}>
         <StatusBar barStyle="dark-content" backgroundColor={tokens.pageBg} />
         <LoadingSkeleton variant="card" />
-        <LoadingSkeleton variant="rows" rows={4} />
+        <LoadingSkeleton variant="rows" rows={6} />
       </AppShell>
     );
   }
@@ -508,142 +852,273 @@ export function MemberJourneyScreen(props: MemberJourneyScreenProps): React.JSX.
       <AppShell role="member" activeKey="journey" userBlock={shellUserBlock}>
         <StatusBar barStyle="dark-content" backgroundColor={tokens.pageBg} />
         <ErrorState
-          message="Could not load your journeys. Please try again."
+          message="Could not load your journey. Please try again."
           onRetry={() => void journeysQuery.refetch()}
         />
       </AppShell>
     );
   }
 
-  if (journeys.length === 0 || !selectedJourney) {
-    return (
-      <AppShell role="member" activeKey="journey" userBlock={shellUserBlock}>
-        <StatusBar barStyle="dark-content" backgroundColor={tokens.pageBg} />
-        <PageHeader title="My Journey" subtitle="Track your health milestones" />
-        <Card style={styles.emptyCard}>
-          <Route size={32} color={tokens.textMuted} />
-          <Text style={styles.emptyTitle}>No journey yet</Text>
-          <Text style={styles.emptySub}>
-            Your CHW will assign a journey when your sessions begin. Check back after your
-            first session.
-          </Text>
-        </Card>
-      </AppShell>
-    );
-  }
+  // ── Compute summary stats ──────────────────────────────────────────────────
+  const journeyProgressPercent = activeJourney
+    ? Math.round(activeJourney.progressPercent)
+    : 0;
+  const totalPointsEarned = activeJourney?.wellnessPointsEarned ?? 0;
 
-  const otherJourneys = journeys.filter((j) => j.id !== selectedJourney.id);
+  // ── Page header subtitle ───────────────────────────────────────────────────
+  const pageSubtitle = activeJourney
+    ? `${activeJourney.template.name} · ${journeyProgressPercent}% complete`
+    : 'Track your health milestones';
+
+  // ── Other journeys (rail) ──────────────────────────────────────────────────
+  const otherJourneys = activeJourney
+    ? journeys.filter((j) => j.id !== activeJourney.id)
+    : [];
+  const showRail = Platform.OS === 'web' && otherJourneys.length > 0;
 
   return (
     <AppShell role="member" activeKey="journey" userBlock={shellUserBlock}>
       <StatusBar barStyle="dark-content" backgroundColor={tokens.pageBg} />
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.pageWrap}>
-          <PageHeader
-            title={selectedJourney.template.name}
-            subtitle={`${Math.round(selectedJourney.progressPercent)}% complete · ${selectedJourney.wellnessPointsEarned} pts earned`}
-            right={
-              <Pill variant={journeyStatusPillVariant(selectedJourney.status)}>
-                {selectedJourney.status}
-              </Pill>
-            }
-          />
+      <SafeAreaView style={styles.safeArea} edges={['bottom']}>
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          <PageWrap style={styles.pageWrapInner}>
+            {/* ── Page header ─────────────────────────────────────────────── */}
+            <PageHeader
+              title="My Journey"
+              subtitle={pageSubtitle}
+              right={
+                activeJourney ? (
+                  <Pill variant={journeyStatusPillVariant(activeJourney.status)}>
+                    {activeJourney.status}
+                  </Pill>
+                ) : undefined
+              }
+            />
 
-          <View style={styles.body}>
-            {/* Main column */}
-            <View style={styles.mainCol}>
-              {/* Progress bar */}
-              <Card style={styles.progressCard}>
-                <View style={styles.progressHeader}>
-                  <Text style={styles.progressLabel}>Overall Progress</Text>
-                  <Text style={styles.progressPct}>{Math.round(selectedJourney.progressPercent)}%</Text>
+            <View style={[styles.body, showRail && styles.bodyRow]}>
+              {/* ── Main column (sections 1–6) ──────────────────────────── */}
+              <View style={[styles.mainCol, showRail && styles.mainColRow]}>
+                {/* ── Progress + Points stat row ──────────────────────────── */}
+                {activeJourney !== null && (
+                  <View style={styles.statRow}>
+                    <StatTile
+                      icon={
+                        <CheckCircle2
+                          size={18}
+                          color={tokens.emerald700}
+                          accessibilityLabel=""
+                        />
+                      }
+                      iconBg={tokens.emerald100}
+                      label="Journey Progress"
+                      value={`${journeyProgressPercent}%`}
+                      style={styles.statTile}
+                      accessibilityLabel={`Journey progress: ${journeyProgressPercent}%`}
+                    />
+                    <StatTile
+                      icon={
+                        <Gift
+                          size={18}
+                          color={tokens.amber700}
+                          accessibilityLabel=""
+                        />
+                      }
+                      iconBg={tokens.amber100}
+                      label="Points Earned"
+                      value={totalPointsEarned}
+                      style={styles.statTile}
+                      accessibilityLabel={`Total wellness points earned: ${totalPointsEarned}`}
+                    />
+                  </View>
+                )}
+
+                {/* ── Journey Steps section ────────────────────────────────── */}
+                {activeJourney === null ? (
+                  <EmptyState
+                    icon={Lightbulb}
+                    title="No active journey"
+                    body="Your CHW will assign a journey after your first session. Check back soon."
+                  />
+                ) : (
+                  <>
+                    <SectionHeader
+                      title="Journey Steps"
+                      subtitle={`${activeJourney.template.name}`}
+                      marginBottom={spacing.md}
+                    />
+
+                    {/* Progress bar inside roadmap card */}
+                    <PressableCard style={styles.roadmapCard}>
+                      <View style={styles.progressHeader}>
+                        <Text style={styles.progressLabel}>Overall progress</Text>
+                        <Text style={[styles.progressPct, numerals.tabular]}>{journeyProgressPercent}%</Text>
+                      </View>
+                      <JourneyProgressBar percent={activeJourney.progressPercent} />
+                      <Text style={styles.progressMeta}>
+                        Started {formatDate(activeJourney.startedAt)}
+                        {activeJourney.completedAt !== null
+                          ? `  ·  Completed ${formatDate(activeJourney.completedAt)}`
+                          : ''}
+                      </Text>
+
+                      {/* 6-step horizontal roadmap */}
+                      <View style={styles.stepsScrollWrapper}>
+                        <ScrollView
+                          horizontal
+                          showsHorizontalScrollIndicator={false}
+                          contentContainerStyle={styles.stepsScrollContent}
+                          accessibilityLabel="Journey steps"
+                          accessibilityRole="list"
+                        >
+                          {activeJourney.steps.map((step, index) => (
+                            <React.Fragment key={step.id}>
+                              <JourneyStepNode
+                                step={step}
+                                isSelected={selectedStep?.id === step.id}
+                                onPress={() =>
+                                  setSelectedStepId(
+                                    selectedStep?.id === step.id ? null : step.id,
+                                  )
+                                }
+                              />
+                              {index < activeJourney.steps.length - 1 && (
+                                <View
+                                  style={[
+                                    styles.stepConnector,
+                                    step.status === 'completed' &&
+                                      styles.stepConnectorDone,
+                                  ]}
+                                />
+                              )}
+                            </React.Fragment>
+                          ))}
+                        </ScrollView>
+                      </View>
+
+                      {/* Encouragement banner */}
+                      <View style={styles.encouragementBanner}>
+                        <Lightbulb
+                          size={15}
+                          color="#D97706"
+                          accessibilityLabel=""
+                        />
+                        <Text style={styles.encouragementText}>
+                          <Text style={{ fontWeight: '700' }}>
+                            You're making real progress!
+                          </Text>
+                          {' '}Completing each step unlocks wellness points toward
+                          rewards.
+                        </Text>
+                      </View>
+                    </PressableCard>
+
+                    {/* Expanded step detail card */}
+                    {selectedStep !== null && (
+                      <StepDetailCard step={selectedStep} />
+                    )}
+
+                    {/* Points reference — derived from the journey's real steps */}
+                    {activeJourney.steps.length > 0 && (
+                      <Card style={styles.pointsLegendCard}>
+                        <SectionHeader
+                          title="Points per step"
+                          marginBottom={spacing.md}
+                        />
+                        <View style={styles.pointsLegendGrid}>
+                          {activeJourney.steps.map((step) => (
+                            <View key={step.id} style={styles.pointsLegendRow}>
+                              <Text style={styles.pointsLegendName} numberOfLines={1}>
+                                {step.stepName}
+                              </Text>
+                              <View style={styles.pointsLegendBadge}>
+                                <Gift size={10} color={tokens.amber700} accessibilityLabel="" />
+                                <Text style={[styles.pointsLegendPts, numerals.tabular]}>
+                                  +{step.pointsOnCompletion}
+                                </Text>
+                              </View>
+                            </View>
+                          ))}
+                        </View>
+                      </Card>
+                    )}
+                  </>
+                )}
+
+                {/* ── Session Follow-ups section ───────────────────────────── */}
+                <View style={styles.followupSection}>
+                  <SectionHeader
+                    title="From Your Sessions"
+                    subtitle="Action items and tasks from your CHW sessions"
+                    marginBottom={spacing.md}
+                  />
+
+                  {roadmapQuery.isLoading ? (
+                    <View style={styles.followupLoading}>
+                      <ActivityIndicator color={tokens.primary} />
+                    </View>
+                  ) : roadmapQuery.isError ? (
+                    <Card style={styles.followupErrorCard}>
+                      <AlertCircle size={18} color={tokens.red700} accessibilityLabel="" />
+                      <Text style={styles.followupErrorText}>
+                        Could not load session items. Pull to refresh.
+                      </Text>
+                    </Card>
+                  ) : roadmapItems.length === 0 ? (
+                    <Card style={styles.followupEmptyCard}>
+                      <Text style={styles.followupEmptyText}>
+                        Session action items will appear here after your CHW reviews
+                        your sessions.
+                      </Text>
+                    </Card>
+                  ) : (
+                    groupedFollowups.map((group) => (
+                      <View key={group.vertical} style={styles.followupGroup}>
+                        <Text style={styles.followupGroupLabel}>{group.label}</Text>
+                        {group.items.map((item) => (
+                          <SessionFollowupRow
+                            key={item.id}
+                            item={item}
+                            onMarkComplete={(i) => {
+                              void handleMarkComplete(i);
+                            }}
+                            isCompleting={completingId === item.id}
+                          />
+                        ))}
+                      </View>
+                    ))
+                  )}
                 </View>
-                <ProgressBar percent={selectedJourney.progressPercent} />
-                <Text style={styles.progressMeta}>
-                  Started {formatDate(selectedJourney.startedAt)}
-                  {selectedJourney.completedAt !== null
-                    ? `  ·  Completed ${formatDate(selectedJourney.completedAt)}`
-                    : ''}
-                </Text>
-              </Card>
+              </View>
 
-              {/* Horizontal step roadmap */}
-              <Card style={styles.roadmapCard}>
-                <Text style={styles.sectionLabel}>ROADMAP</Text>
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.roadmapScroll}
-                >
-                  {selectedJourney.steps.map((step, index) => (
-                    <React.Fragment key={step.id}>
-                      <StepNode
-                        step={step}
-                        isSelected={selectedStep?.id === step.id}
-                        onPress={() => setSelectedStepId(step.id)}
+              {/* ── Other Journeys rail (web) ───────────────────────────── */}
+              {showRail && (
+                <RightRail width={280}>
+                  <Card style={styles.railCard}>
+                    <Text style={styles.railLabel}>OTHER JOURNEYS</Text>
+                    {otherJourneys.map((j) => (
+                      <OtherJourneyRow
+                        key={j.id}
+                        journey={j}
+                        isActive={false}
+                        onPress={() => {
+                          setSelectedJourneyId(j.id);
+                          setSelectedStepId(null);
+                        }}
                       />
-                      {index < selectedJourney.steps.length - 1 && (
-                        <View style={styles.connectorLine} />
-                      )}
-                    </React.Fragment>
-                  ))}
-                </ScrollView>
-
-                {/* Encouragement banner */}
-                <View style={styles.encouragementBanner}>
-                  <Lightbulb size={16} color="#D97706" />
-                  <Text style={styles.encouragementText}>
-                    <Text style={{ fontWeight: '700' }}>You're making real progress!</Text>
-                    {' '}Keep going — your next step unlocks more wellness points.
-                  </Text>
-                </View>
-              </Card>
-
-              {/* Current step detail */}
-              {selectedStep !== null && (
-                <StepDetailCard step={selectedStep} />
+                    ))}
+                  </Card>
+                </RightRail>
               )}
             </View>
 
-            {/* Right rail — other journeys + journey rewards */}
-            <RightRail width={260}>
-              {otherJourneys.length > 0 && (
-                <Card style={styles.railCard}>
-                  <Text style={styles.sectionLabel}>OTHER JOURNEYS</Text>
-                  {otherJourneys.map((j) => (
-                    <OtherJourneyRow
-                      key={j.id}
-                      journey={j}
-                      isActive={selectedJourney.id === j.id}
-                      onPress={() => {
-                        setSelectedJourneyId(j.id);
-                        setSelectedStepId(null);
-                      }}
-                    />
-                  ))}
-                </Card>
-              )}
-
-              {/* Journey Rewards */}
-              <Card style={styles.rewardsRailCard}>
-                <View style={styles.rewardsRailHeader}>
-                  <Gift size={16} color={tokens.emerald700} />
-                  <Text style={styles.rewardsRailTitle}>Journey rewards</Text>
-                </View>
-                <Text style={styles.rewardsRailBody}>
-                  Finish this journey to unlock{' '}
-                  <Text style={{ fontWeight: '700' }}>+50 wellness points</Text>
-                  {' '}→ $25 grocery gift card.
-                </Text>
-              </Card>
-            </RightRail>
-          </View>
-        </View>
-      </ScrollView>
+            <View style={styles.bottomSpacer} />
+          </PageWrap>
+        </ScrollView>
+      </SafeAreaView>
     </AppShell>
   );
 }
@@ -651,30 +1126,59 @@ export function MemberJourneyScreen(props: MemberJourneyScreenProps): React.JSX.
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  scroll: { flex: 1 },
-  scrollContent: { flexGrow: 1 },
-  pageWrap: {
-    // p-8 = 32px from mockup
-    paddingHorizontal: 32,
-    paddingTop: 24,
-    paddingBottom: 32,
-    maxWidth: 1100,
-    width: '100%',
-    alignSelf: 'center',
+  safeArea: {
+    flex: 1,
+    backgroundColor: tokens.pageBg,
   } as ViewStyle,
+  scroll: {
+    flex: 1,
+  } as ViewStyle,
+  scrollContent: {
+    flexGrow: 1,
+  } as ViewStyle,
+  pageWrapInner: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.xl,
+    paddingBottom: spacing.xxxl,
+    ...(Platform.OS === 'web'
+      ? { paddingHorizontal: spacing.xxl }
+      : {}),
+  } as ViewStyle,
+
+  // ── Two-column body (web rail) ────────────────────────────────────────────
   body: {
+    width: '100%',
+  } as ViewStyle,
+  bodyRow: {
     flexDirection: 'row',
-    gap: 20,
     alignItems: 'flex-start',
+    gap: spacing.xl,
   } as ViewStyle,
   mainCol: {
+    width: '100%',
+  } as ViewStyle,
+  mainColRow: {
+    flex: 1,
+    minWidth: 0,
+    width: 'auto',
+  } as ViewStyle,
+
+  // ── Stat tiles ────────────────────────────────────────────────────────────
+  statRow: {
+    flexDirection: 'row',
+    gap: spacing.lg,
+    marginBottom: spacing.xxl,
+  } as ViewStyle,
+  statTile: {
     flex: 1,
     minWidth: 0,
   } as ViewStyle,
-  progressCard: {
-    padding: 16,
-    gap: 8,
-    marginBottom: 16,
+
+  // ── Roadmap card ──────────────────────────────────────────────────────────
+  roadmapCard: {
+    padding: spacing.xl,
+    gap: spacing.md,
+    marginBottom: spacing.lg,
   } as ViewStyle,
   progressHeader: {
     flexDirection: 'row',
@@ -682,109 +1186,158 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   } as ViewStyle,
   progressLabel: {
-    fontSize: 12,
-    fontWeight: '600',
+    fontSize: 11,
+    fontWeight: '700',
     color: tokens.textSecondary,
     textTransform: 'uppercase',
     letterSpacing: 0.8,
   } as TextStyle,
   progressPct: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
     color: tokens.primary,
   } as TextStyle,
   progressMeta: {
     fontSize: 11,
     color: tokens.textMuted,
+    marginTop: spacing.xs,
   } as TextStyle,
-  roadmapCard: {
-    padding: 16,
-    marginBottom: 16,
+
+  // ── Step nodes ────────────────────────────────────────────────────────────
+  stepsScrollWrapper: {
+    marginTop: spacing.md,
+    marginHorizontal: -spacing.lg,
   } as ViewStyle,
-  sectionLabel: {
+  stepsScrollContent: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.sm,
+  } as ViewStyle,
+  stepConnector: {
+    flex: 1,
+    height: 2,
+    backgroundColor: tokens.cardBorder,
+    alignSelf: 'flex-start',
+    // Vertically center with the 52px circle (52/2 - 2/2 = 25)
+    marginTop: 25,
+    minWidth: 10,
+  } as ViewStyle,
+  stepConnectorDone: {
+    backgroundColor: tokens.primary,
+  } as ViewStyle,
+
+  // ── Encouragement banner ──────────────────────────────────────────────────
+  encouragementBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+    backgroundColor: '#FFFBEB',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    borderRadius: radius.md,
+    paddingVertical: spacing.sm + 2,
+    paddingHorizontal: spacing.md,
+  } as ViewStyle,
+  encouragementText: {
+    fontSize: 12,
+    color: '#78350F',
+    flex: 1,
+    lineHeight: 18,
+  } as TextStyle,
+
+  // ── Points legend card ────────────────────────────────────────────────────
+  pointsLegendCard: {
+    padding: spacing.xl,
+    marginBottom: spacing.xxl,
+  } as ViewStyle,
+  pointsLegendGrid: {
+    gap: spacing.sm,
+  } as ViewStyle,
+  pointsLegendRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+  } as ViewStyle,
+  pointsLegendName: {
+    fontSize: 13,
+    color: tokens.textPrimary,
+    fontWeight: '400',
+    flex: 1,
+  } as TextStyle,
+  pointsLegendBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    backgroundColor: tokens.amber100,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 3,
+    borderRadius: radius.pill,
+    flexShrink: 0,
+  } as ViewStyle,
+  pointsLegendPts: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: tokens.amber700,
+  } as TextStyle,
+
+  // ── Session follow-ups ────────────────────────────────────────────────────
+  followupSection: {
+    marginTop: spacing.md,
+  } as ViewStyle,
+  followupLoading: {
+    alignItems: 'center',
+    paddingVertical: spacing.xl,
+  } as ViewStyle,
+  followupErrorCard: {
+    padding: spacing.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  } as ViewStyle,
+  followupErrorText: {
+    fontSize: 13,
+    color: tokens.red700,
+    flex: 1,
+    lineHeight: 18,
+  } as TextStyle,
+  followupEmptyCard: {
+    padding: spacing.xl,
+    alignItems: 'center',
+  } as ViewStyle,
+  followupEmptyText: {
+    fontSize: 14,
+    color: tokens.textSecondary,
+    textAlign: 'center',
+    lineHeight: 20,
+  } as TextStyle,
+  followupGroup: {
+    marginBottom: spacing.md,
+  } as ViewStyle,
+  followupGroupLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: tokens.emerald700,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginBottom: spacing.sm,
+  } as TextStyle,
+
+  // ── Other Journeys rail ───────────────────────────────────────────────────
+  railCard: {
+    padding: spacing.lg,
+  } as ViewStyle,
+  railLabel: {
     fontSize: 11,
     fontWeight: '700',
     color: tokens.textSecondary,
     textTransform: 'uppercase',
     letterSpacing: 0.8,
-    marginBottom: 12,
-  } as TextStyle,
-  roadmapScroll: {
-    flexDirection: 'row',
-    // keep top-aligned so the connector line aligns with circle centers
-    alignItems: 'flex-start',
-    paddingBottom: 8,
-    paddingTop: 4,
-  } as ViewStyle,
-  connectorLine: {
-    // flex: 1 fills the space between nodes, matching mock's step-line flex:1
-    flex: 1,
-    height: 3,
-    backgroundColor: tokens.cardBorder,
-    alignSelf: 'flex-start',
-    // center vertically in the 56px circle: 56/2 - 3/2 ≈ 26px from top of node
-    marginTop: 26,
-    minWidth: 16,
-  } as ViewStyle,
-  railCard: {
-    padding: 16,
-    marginBottom: 12,
-  } as ViewStyle,
-
-  rewardsRailCard: {
-    padding: 16,
-    backgroundColor: '#F0FDF4',
-    gap: 8,
-  } as ViewStyle,
-  rewardsRailHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 7,
-  } as ViewStyle,
-  rewardsRailTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: tokens.textPrimary,
-  } as TextStyle,
-  rewardsRailBody: {
-    fontSize: 13,
-    color: tokens.textSecondary,
-    lineHeight: 18,
+    marginBottom: spacing.sm,
   } as TextStyle,
 
-  encouragementBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginTop: 12,
-    backgroundColor: '#FFFBEB',
-    borderWidth: 1,
-    borderColor: '#FDE68A',
-    borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
+  bottomSpacer: {
+    height: spacing.xl,
   } as ViewStyle,
-  encouragementText: {
-    fontSize: 13,
-    color: '#78350F',
-    flex: 1,
-    lineHeight: 18,
-  } as TextStyle,
-  emptyCard: {
-    padding: 32,
-    alignItems: 'center',
-    gap: 12,
-  } as ViewStyle,
-  emptyTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: tokens.textPrimary,
-  } as TextStyle,
-  emptySub: {
-    fontSize: 14,
-    color: tokens.textSecondary,
-    textAlign: 'center',
-    lineHeight: 20,
-    maxWidth: 320,
-  } as TextStyle,
 });

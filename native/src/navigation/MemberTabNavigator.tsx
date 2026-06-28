@@ -21,7 +21,6 @@ import {
   Search,
   ClipboardList,
   CalendarDays,
-  Map,
   UserCircle,
   Route,
   FileText,
@@ -42,7 +41,6 @@ import { MemberFacingCHWProfileScreen } from '../screens/member/MemberFacingCHWP
 import { MemberSessionsScreen } from '../screens/member/MemberSessionsScreen';
 import { MemberMessagesScreen } from '../screens/member/MemberMessagesScreen';
 import { MemberCalendarScreen } from '../screens/member/MemberCalendarScreen';
-import { MemberRoadmapScreen } from '../screens/member/MemberRoadmapScreen';
 import { MemberProfileScreen } from '../screens/member/MemberProfileScreen';
 import { MemberRewardsScreen } from '../screens/member/MemberRewardsScreen';
 import { MemberJourneyScreen } from '../screens/member/MemberJourneyScreen';
@@ -91,7 +89,6 @@ export type MemberTabParamList = {
    */
   Sessions: { chwId?: string; autoCall?: boolean } | undefined;
   Calendar: undefined;
-  Roadmap: undefined;
   Profile: undefined;
   // New (Wave 2) sidebar destinations.
   /**
@@ -176,7 +173,6 @@ const SCREENS: ScreenSpec[] = [
   { name: 'Calendar',        title: 'Appointments', component: MemberCalendarScreen,  icon: CalendarDays },
   { name: 'MemberRewards',   title: 'Rewards',      component: MemberRewardsScreen,   icon: Gift },
   { name: 'MemberDocuments', title: 'My Documents', component: MemberDocumentsScreen, icon: FileText },
-  { name: 'Roadmap',         title: 'Roadmap',      component: MemberRoadmapScreen,   icon: Map },
   { name: 'Profile',         title: 'Profile',      component: MemberProfileScreen,   icon: UserCircle },
   { name: 'MemberSettings',  title: 'Settings',     component: MemberSettingsScreen,  icon: SettingsIcon },
 ];

@@ -258,7 +258,6 @@ function buildLinkingConfig(): LinkingOptions<RootStackParamList> {
             Calendar:        'appointments',    // /member/appointments
             MemberRewards:   'rewards',         // /member/rewards
             MemberDocuments: 'documents',       // /member/documents
-            Roadmap:         'roadmap',         // /member/roadmap
             Profile:         'profile',         // /member/profile
             MemberSettings:  'settings',        // /member/settings
           },
