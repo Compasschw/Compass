@@ -30,9 +30,15 @@ from datetime import UTC, datetime
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import func, select
 
-from app.models.journeys import JourneyTemplate, MemberJourney, MemberJourneyStepState
+from app.models.journeys import (
+    JourneyTemplate,
+    JourneyTemplateStep,
+    MemberJourney,
+    MemberJourneyStepState,
+)
+from app.services.journey_seeds import STANDARD_STEPS
 from tests.conftest import auth_header, test_session
 
 
@@ -486,3 +492,132 @@ async def test_resource_needs_update_is_idempotent(
     assert len(all_journeys) == 2, (
         f"Expected total of 2 journey rows; got {len(all_journeys)}"
     )
+
+
+# ── Regression: resource-needs save must survive messy template data ──────────
+# Reported bug: saving Resource Needs failed with "Could not save resource needs.
+# Please try again." The reconcile step raised an UNHANDLED exception which, on
+# web, the browser only saw as "Failed to fetch" (500 generated outside
+# CORSMiddleware → no CORS header). Two prod-realistic data states trigger it.
+
+
+@pytest.mark.asyncio
+async def test_save_succeeds_with_duplicate_active_templates(
+    client: AsyncClient,
+    reconcile_pair: tuple[dict, dict, str],
+) -> None:
+    """Two active templates sharing a name must NOT 500 the resource-needs save.
+
+    get_or_create_canonical_template used scalar_one_or_none(), which raised
+    MultipleResultsFound on duplicate-named active templates (backend/TESTING.md
+    rule #2). Fails on pre-fix code (500); passes after (.scalars().first()).
+    """
+    chw_tokens, _, member_id = reconcile_pair
+
+    async with test_session() as db:
+        for slug in ("housing", "housing_dup"):
+            t = JourneyTemplate(
+                id=uuid.uuid4(), slug=slug, name="Housing", category="housing",
+                icon="home", is_custom=False, is_active=True,
+            )
+            db.add(t)
+            await db.flush()
+            for s in STANDARD_STEPS:
+                db.add(JourneyTemplateStep(
+                    id=uuid.uuid4(), template_id=t.id, order=s["order"],
+                    name=s["name"], description=s["description"],
+                    points_on_completion=s["points_on_completion"],
+                    required_documents=s["required_documents"],
+                ))
+        await db.commit()
+
+    # _patch_resource_needs asserts 200 — i.e. no MultipleResultsFound 500.
+    await _patch_resource_needs(
+        client, member_id, chw_tokens,
+        needs=["housing"], levels=[{"slug": "housing", "level": "high"}],
+    )
+
+    active = await _get_active_journeys(member_id)
+    assert len(active) == 1, f"Expected exactly 1 housing journey, got {len(active)}"
+
+
+@pytest.mark.asyncio
+async def test_save_succeeds_and_heals_stepless_template(
+    client: AsyncClient,
+    reconcile_pair: tuple[dict, dict, str],
+) -> None:
+    """An active canonical template with NO steps must be healed, not 500.
+
+    create_journey_for_template raised ValueError('...has no steps...') for a
+    stepless template → unhandled 500. Fails pre-fix (500); passes after
+    (_ensure_template_has_steps backfills STANDARD_STEPS).
+    """
+    chw_tokens, _, member_id = reconcile_pair
+
+    async with test_session() as db:
+        db.add(JourneyTemplate(
+            id=uuid.uuid4(), slug="housing", name="Housing", category="housing",
+            icon="home", is_custom=False, is_active=True,
+        ))
+        await db.commit()
+
+    await _patch_resource_needs(
+        client, member_id, chw_tokens,
+        needs=["housing"], levels=[{"slug": "housing", "level": "high"}],
+    )
+
+    active = await _get_active_journeys(member_id)
+    assert len(active) == 1, f"Expected 1 housing journey, got {len(active)}"
+
+    async with test_session() as db:
+        count = await db.scalar(
+            select(func.count())
+            .select_from(JourneyTemplateStep)
+            .where(JourneyTemplateStep.template_id == active[0].template_id)
+        )
+    assert count == len(STANDARD_STEPS), (
+        f"Expected {len(STANDARD_STEPS)} backfilled steps, got {count}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_needs_persist_even_if_reconcile_raises(
+    client: AsyncClient,
+    reconcile_pair: tuple[dict, dict, str],
+    monkeypatch,
+) -> None:
+    """If journey reconciliation raises, the needs must STILL save and the
+    endpoint must return 200 — never a 500 (the invisible "Failed to fetch" on
+    web). backend/TESTING.md rule #3: force an internal failure, assert a clean
+    response and correct post-failure DB state.
+    """
+    chw_tokens, _, member_id = reconcile_pair
+
+    async def _boom(*_args, **_kwargs):
+        raise RuntimeError("simulated reconcile failure")
+
+    # The endpoint imports the symbol from the module at call time, so patching
+    # the module attribute is picked up by the next request.
+    monkeypatch.setattr(
+        "app.services.journey_reconciler.reconcile_member_journeys_to_needs", _boom
+    )
+
+    await _patch_resource_needs(
+        client, member_id, chw_tokens,
+        needs=["housing"], levels=[{"slug": "housing", "level": "high"}],
+    )
+
+    # Needs persisted on the member profile despite the reconcile failure.
+    async with test_session() as db:
+        from app.models.user import MemberProfile
+
+        prof = (
+            await db.execute(
+                select(MemberProfile).where(
+                    MemberProfile.user_id == uuid.UUID(member_id)
+                )
+            )
+        ).scalar_one()
+        assert prof.primary_need == "housing", (
+            f"needs must persist even when reconcile fails; got {prof.primary_need!r}"
+        )
