@@ -119,21 +119,35 @@ Remove:
 selects and opens its thread; no mock items; empty-inbox state still renders when there are
 no conversations; `tsc` clean.
 
-### 4. Journeys → restyle/polish to CHW cohesion (no data changes)
+### 4. Journeys → consolidate into one canonical screen, styled like CHW
 
-Both member journey screens already render real CHW-authored journey data. Polish their
-UI to sit cohesively next to the CHW journey views — no data-flow changes.
+Both member journey screens render the same real CHW-authored journey data
+(`useMemberJourneys`) but present it twice with overlapping content. Consolidate them into
+a single canonical member journey page, styled to match the CHW journey visual language —
+no overlap, no data-flow changes.
 
-- `MemberJourneyScreen` (sidebar "My Journey") — primary. Align step nodes, progress,
-  cards, pills, and colors to the CHW journey visual language (`theme/tokens`, shared
-  `ui/` primitives, `components/journey/` where reusable).
-- `MemberRoadmapScreen` (reached from Home + `/member/roadmap`) — secondary. Same polish
-  pass for visual consistency.
-- Keep both screens (user chose polish over consolidation). Note any genuine duplication
-  for a future consolidation ticket; do not merge them now.
+- **Canonical screen:** keep `MemberJourneyScreen` as the single "My Journey" page (it is
+  the sidebar entry). Fold in the useful pieces from `MemberRoadmapScreen` so nothing of
+  value is lost — the progress `StatTile` grid (% complete + wellness points), the stepped
+  roadmap with node/connector visuals, and the session follow-ups grouped by vertical —
+  arranged to match CHW journey views (step nodes, status pills, progress, cards) using
+  `theme/tokens`, shared `ui/` primitives, and `components/journey/` where reusable.
+- **Delete `MemberRoadmapScreen`** and remove its route + all references:
+  - `src/navigation/MemberTabNavigator.tsx` — import (line 46) and `SCREENS` entry
+    (line 183); remove `Roadmap` from `MemberTabParamList`.
+  - `src/navigation/AppNavigator.tsx:262` — delete the `Roadmap: 'roadmap'` deep link.
+  - `src/screens/member/MemberHomeScreen.tsx:444` — repoint `navigation.navigate('Roadmap')`
+    to `'MemberJourney'`.
+  - Grep-verify no other references to `Roadmap` / `MemberRoadmapScreen` remain.
+- Reconcile the two data hooks: `MemberJourneyScreen` uses `useMemberJourneys`;
+  `MemberRoadmapScreen` additionally used `useMemberRoadmap()` for session follow-ups. Pull
+  whichever hooks the folded-in sections need into the canonical screen; keep data behavior
+  identical.
 
-**Acceptance:** both journey screens use only `theme/tokens` + shared primitives, visually
-consistent with CHW journey views; data behavior unchanged; `tsc` clean.
+**Acceptance:** exactly one member journey screen remains; "My Journey" (sidebar), the Home
+CTA, and any deep link all resolve to it; no `Roadmap` route or `MemberRoadmapScreen` file
+remains; the page is visually consistent with CHW journey views; data behavior unchanged;
+`tsc` clean.
 
 ### 5. Mock-data cleanup
 
@@ -152,7 +166,6 @@ catalog endpoint; `tsc` clean.
 - Backend changes (none needed).
 - A real notifications feed to replace the deleted synthetic items (separate effort if
   desired later).
-- Consolidating the two journey screens.
 - CHW-side functional changes (CHW calendar may be touched only for the optional shared
   extraction, and must remain visually/behaviorally identical).
 
