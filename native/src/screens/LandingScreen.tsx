@@ -189,9 +189,9 @@ const CHW_SERVICE_CARDS: ServiceCard[] = [
     description: 'Help members find rental assistance, shelter, and housing stability resources.',
   },
   {
-    icon: Pill,
-    title: 'Rehab & Recovery',
-    description: 'Connect members to substance use recovery, sober living, and peer support.',
+    icon: Briefcase,
+    title: 'Employment',
+    description: 'Connect members to job placement, resume help, and workforce training programs.',
   },
   {
     icon: Apple,
@@ -222,9 +222,9 @@ const MEMBER_SERVICE_CARDS: ServiceCard[] = [
     description: 'Get help finding rental assistance, emergency shelter, or stable housing in your area.',
   },
   {
-    icon: Pill,
-    title: 'Rehab & Recovery',
-    description: 'Find recovery programs, sober living options, and peer support near you.',
+    icon: Briefcase,
+    title: 'Employment',
+    description: 'Find job openings, resume and interview help, and workforce training near you.',
   },
   {
     icon: Apple,

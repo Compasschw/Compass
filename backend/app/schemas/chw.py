@@ -332,7 +332,7 @@ class MemberDemographicsUpdate(BaseModel):
 
 
 # Known resource-need verticals (mirrors native/src/data/mock.ts verticalLabels).
-_RESOURCE_NEED_VALUES = {"housing", "rehab", "food", "food_security", "mental_health", "healthcare"}
+_RESOURCE_NEED_VALUES = {"housing", "transportation", "food", "food_security", "mental_health", "healthcare", "employment"}
 
 
 class ResourceNeedsUpdate(BaseModel):

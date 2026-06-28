@@ -371,7 +371,7 @@ export interface MapMemberPin {
 export interface MapResourcePin {
   id: string;
   name: string;
-  /** One of: housing | food | mental_health | rehab | healthcare */
+  /** One of: housing | food | mental_health | transportation | healthcare | employment */
   category: string;
   latitude: number;
   longitude: number;
@@ -2566,7 +2566,7 @@ export function useUpdateMemberDemographics(memberId: string) {
  * Edit a member's resource needs from the CHW Member Profile (Resource Needs
  * pencil). PATCH /api/v1/chw/members/{member_id}/resource-needs.
  *
- * `needs` is a selection-ordered list of resource categories ('housing' | 'rehab'
+ * `needs` is a selection-ordered list of resource categories ('housing' | 'transportation'
  * | 'food' | 'mental_health' | 'healthcare'). `levels` is a list of
  * `{ slug, level }` pairs — slugs are string values (immune to key-casing
  * transforms), matching the new API contract.

@@ -32,11 +32,12 @@ interface BadgeTokens {
 }
 
 const verticalTokens: Record<Vertical, BadgeTokens> = {
-  housing:      { bg: '#FEF3C7', text: '#92400E' }, // amber-100 / amber-800
-  rehab:        { bg: '#F3E8FF', text: '#6B21A8' }, // purple-100 / purple-800
-  food:         { bg: '#FFEDD5', text: '#9A3412' }, // orange-100 / orange-800
-  mental_health:{ bg: '#FCE7F3', text: '#9D174D' }, // pink-100 / pink-800
-  healthcare:   { bg: '#DBEAFE', text: '#1E40AF' }, // blue-100 / blue-800
+  housing:       { bg: '#FEF3C7', text: '#92400E' }, // amber-100 / amber-800
+  transportation:{ bg: '#CCFBF1', text: '#115E59' }, // teal-100 / teal-800
+  food:          { bg: '#FFEDD5', text: '#9A3412' }, // orange-100 / orange-800
+  mental_health: { bg: '#FCE7F3', text: '#9D174D' }, // pink-100 / pink-800
+  healthcare:    { bg: '#DBEAFE', text: '#1E40AF' }, // blue-100 / blue-800
+  employment:    { bg: '#E0E7FF', text: '#3730A3' }, // indigo-100 / indigo-800
 };
 
 const urgencyTokens: Record<Urgency, BadgeTokens> = {
@@ -68,11 +69,12 @@ const billingStatusTokens: Record<string, BadgeTokens> = {
 // ─── Label maps ───────────────────────────────────────────────────────────────
 
 const verticalLabels: Record<Vertical, string> = {
-  housing:       'Housing',
-  rehab:         'Rehab',
-  food:          'Food Security',
-  mental_health: 'Mental Health',
-  healthcare:    'Healthcare',
+  housing:        'Housing',
+  transportation: 'Transportation',
+  food:           'Food Security',
+  mental_health:  'Mental Health',
+  healthcare:     'Healthcare',
+  employment:     'Employment',
 };
 
 const urgencyLabels: Record<Urgency, string> = {

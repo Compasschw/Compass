@@ -118,8 +118,9 @@ const SPECIALIZATION_LABELS: Record<string, string> = {
   housing: 'Housing',
   food: 'Food Security',
   mental_health: 'Mental Health',
-  rehab: 'Rehab',
+  transportation: 'Transportation',
   healthcare: 'Healthcare',
+  employment: 'Employment',
 } as const;
 
 /** Avatar background + text colour palette — deterministic by initial char code. */

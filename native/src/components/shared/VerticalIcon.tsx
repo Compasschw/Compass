@@ -9,10 +9,11 @@
 import React from 'react';
 import {
   Home,
-  RefreshCw,
+  Bus,
   ShoppingBasket,
   Brain,
   Stethoscope,
+  Briefcase,
 } from 'lucide-react-native';
 import type { Vertical } from '../../data/mock';
 import { VERTICAL_COLOR } from '../../lib/verticals';
@@ -32,11 +33,12 @@ export interface VerticalIconProps {
 type LucideRNComponent = React.ComponentType<{ size?: number; color?: string }>;
 
 const iconMap: Record<Vertical, LucideRNComponent> = {
-  housing:       Home,
-  rehab:         RefreshCw,
-  food:          ShoppingBasket,
-  mental_health: Brain,
-  healthcare:    Stethoscope,
+  housing:        Home,
+  transportation: Bus,
+  food:           ShoppingBasket,
+  mental_health:  Brain,
+  healthcare:     Stethoscope,
+  employment:     Briefcase,
 };
 
 /**

@@ -39,28 +39,31 @@ from app.services.journey_seeds import STANDARD_STEPS
 
 RESOURCE_NEED_LABELS: dict[str, str] = {
     "housing": "Housing",
-    "rehab": "Rehab & Recovery",
+    "transportation": "Transportation",
     "food": "Food Security",
     "mental_health": "Mental Health",
     "healthcare": "Healthcare",
+    "employment": "Employment",
 }
 
 # Pre-computed slug and (category, icon) for each canonical label so we avoid
 # re-deriving them at runtime.  Unknown labels fall back to _slugify + defaults.
 _LABEL_TO_SLUG: dict[str, str] = {
     "Housing": "housing",
-    "Rehab & Recovery": "rehab_recovery",
+    "Transportation": "transportation",
     "Food Security": "food_security",
     "Mental Health": "mental_health",
     "Healthcare": "healthcare",
+    "Employment": "employment",
 }
 
 _LABEL_TO_CATEGORY_ICON: dict[str, tuple[str, str]] = {
     "Housing": ("housing", "home"),
-    "Rehab & Recovery": ("rehab", "heart-pulse"),
+    "Transportation": ("transportation", "bus"),
     "Food Security": ("food", "utensils"),
     "Mental Health": ("mental_health", "brain"),
     "Healthcare": ("health", "stethoscope"),
+    "Employment": ("employment", "briefcase"),
 }
 
 
@@ -97,7 +100,7 @@ async def get_or_create_canonical_template(
 
     Args:
         db: An active async database session.
-        label: Exact template name to look up or create (e.g. "Rehab & Recovery").
+        label: Exact template name to look up or create (e.g. "Transportation").
 
     Returns:
         A JourneyTemplate (existing or newly flushed) whose name matches label.
@@ -299,7 +302,7 @@ async def reconcile_member_journeys_to_needs(
     Args:
         db: An active async database session.
         member_id: UUID of the member whose journeys to reconcile.
-        need_slugs: Ordered list of resource-need slugs (e.g. ["rehab", "housing"]).
+        need_slugs: Ordered list of resource-need slugs (e.g. ["transportation", "housing"]).
         chw_id: UUID of the CHW to assign to newly created journeys.  If None,
             the member's most recent CHW is looked up from their Session /
             ServiceRequest history.  If no CHW is found, new-journey creation
@@ -322,9 +325,13 @@ async def reconcile_member_journeys_to_needs(
     )
     active_rows = active_result.all()
 
-    # Group active journeys by template name.
+    # Group active journeys by template name. CHW-authored custom journeys
+    # (is_custom=True) are intentionally excluded — they are never auto-created,
+    # deduped, or abandoned by needs reconciliation; the CHW owns their lifecycle.
     active_by_label: dict[str, list[MemberJourney]] = {}
     for journey, template in active_rows:
+        if template.is_custom:
+            continue
         active_by_label.setdefault(template.name, []).append(journey)
 
     # Resolve CHW once; used only when we need to create a new journey.
@@ -358,7 +365,11 @@ async def reconcile_member_journeys_to_needs(
     # Abandon every remaining active journey not in the target label set (orphans).
     # Journeys already abandoned in the inner loop have template.name IN the target
     # set, so this outer loop leaves them alone (condition is mutually exclusive).
+    # Custom journeys are skipped entirely — a CHW-created custom journey must
+    # survive any subsequent resource-needs save.
     for journey, template in active_rows:
+        if template.is_custom:
+            continue
         if template.name not in target_label_set and journey.id not in kept_ids:
             journey.status = "abandoned"
 

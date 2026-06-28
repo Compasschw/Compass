@@ -35,7 +35,8 @@ import {
   Play,
   CheckCircle,
   Home,
-  RefreshCw,
+  Bus,
+  Briefcase,
   Utensils,
   Brain,
   Stethoscope,
@@ -251,14 +252,16 @@ function VerticalIconComponent({
   switch (vertical) {
     case 'housing':
       return <Home size={size} color={iconColor} />;
-    case 'rehab':
-      return <RefreshCw size={size} color={iconColor} />;
+    case 'transportation':
+      return <Bus size={size} color={iconColor} />;
     case 'food':
       return <Utensils size={size} color={iconColor} />;
     case 'mental_health':
       return <Brain size={size} color={iconColor} />;
     case 'healthcare':
       return <Stethoscope size={size} color={iconColor} />;
+    case 'employment':
+      return <Briefcase size={size} color={iconColor} />;
   }
 }
 
