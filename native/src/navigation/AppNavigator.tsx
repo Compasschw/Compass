@@ -256,7 +256,6 @@ function buildLinkingConfig(): LinkingOptions<RootStackParamList> {
             Sessions:        'messages',        // /member/messages (single-thread w/ assigned CHW on web)
             MemberJourney:   'journey',         // /member/journey
             Calendar:        'appointments',    // /member/appointments
-            MemberResources: 'resources',       // /member/resources
             MemberRewards:   'rewards',         // /member/rewards
             MemberDocuments: 'documents',       // /member/documents
             Roadmap:         'roadmap',         // /member/roadmap
