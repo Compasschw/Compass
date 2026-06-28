@@ -89,6 +89,12 @@ class CHWMemberFacingProfile(BaseModel):
     shared_session_count: int
     """Sessions this calling member has had with this CHW (any status)."""
 
+    profile_picture_url: str | None = None
+    """CHW's self-uploaded avatar, so the member sees the same photo the CHW set.
+    Stored on the User row; returned as a short-lived presigned GET URL (or the
+    raw value for external/data URLs). Null when no photo is set — the UI falls
+    back to initials."""
+
 
 # ── Services Consent schemas (T03) ────────────────────────────────────────────
 
