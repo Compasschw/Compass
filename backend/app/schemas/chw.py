@@ -213,6 +213,14 @@ class CHWMemberProfileDetail(BaseModel):
     consent_status: ConsentStatusView
     recent_sessions: list[SessionSummaryItem]
 
+    # Member's self-uploaded avatar, surfaced to the related CHW so the CHW
+    # Member Profile screen shows the same photo the member set in Settings.
+    # Stored on the User row; returned as a short-lived presigned GET URL (or
+    # the raw value for external/data URLs). Null when no photo is set — the
+    # UI falls back to initials. Access is already relationship-gated by
+    # assert_chw_member_relationship in the route handler.
+    profile_picture_url: str | None = None
+
     # ── PHI Demographics (minimum-necessary for care delivery) ────────────────
     date_of_birth: date | None = None
     """Date of birth. Used for age-appropriate referrals and eligibility verification."""

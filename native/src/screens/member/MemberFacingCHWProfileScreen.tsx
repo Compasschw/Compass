@@ -23,6 +23,7 @@
 
 import React, { useCallback, useMemo } from 'react';
 import {
+  Image,
   Platform,
   Pressable,
   ScrollView,
@@ -32,6 +33,7 @@ import {
   View,
   type ViewStyle,
   type TextStyle,
+  type ImageStyle,
 } from 'react-native';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -347,6 +349,8 @@ const actionButtonStyles = StyleSheet.create({
 interface IdentityCardProps {
   initials: string;
   displayName: string;
+  /** CHW's self-uploaded avatar (presigned). Null → fall back to initials. */
+  photoUrl?: string | null;
   specializations: string[];
   languages: string[];
   serviceAreaZips: string[];
@@ -357,6 +361,7 @@ interface IdentityCardProps {
 function IdentityCard({
   initials,
   displayName,
+  photoUrl,
   specializations,
   languages,
   serviceAreaZips,
@@ -370,11 +375,19 @@ function IdentityCard({
     <Card style={[cardStyles.base, cardStyles.left]}>
       {/* Avatar + identity */}
       <View style={cardStyles.avatarRow}>
-        <View style={[cardStyles.avatar, { backgroundColor: avatarBg }]}>
-          <Text style={[cardStyles.avatarText, { color: avatarText }]}>
-            {initials}
-          </Text>
-        </View>
+        {photoUrl ? (
+          <Image
+            source={{ uri: photoUrl }}
+            style={cardStyles.avatarImage}
+            accessibilityLabel={`${displayName} profile photo`}
+          />
+        ) : (
+          <View style={[cardStyles.avatar, { backgroundColor: avatarBg }]}>
+            <Text style={[cardStyles.avatarText, { color: avatarText }]}>
+              {initials}
+            </Text>
+          </View>
+        )}
         <View style={cardStyles.onlineDot} />
       </View>
 
@@ -668,6 +681,15 @@ const cardStyles = StyleSheet.create({
     borderColor: tokens.cardBg,
     ...(shadows.card as ViewStyle),
   } as ViewStyle,
+  // Same dimensions + ring as the initials avatar, typed for <Image>.
+  avatarImage: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    borderWidth: 3,
+    borderColor: tokens.cardBg,
+    ...(shadows.card as object),
+  } as ImageStyle,
   avatarText: {
     fontFamily: fonts.display,
     fontSize: 28,
@@ -1015,6 +1037,7 @@ export function MemberFacingCHWProfileScreen(
             <IdentityCard
               initials={initials}
               displayName={displayName}
+              photoUrl={profile.profilePictureUrl}
               specializations={specializations}
               languages={allLanguages}
               serviceAreaZips={profile.serviceAreaZips}

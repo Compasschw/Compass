@@ -82,7 +82,6 @@ import {
   ArrowLeft,
   Search,
   AlertCircle,
-  Settings,
   FileText,
   Gift,
   MapPin,
@@ -1024,291 +1023,6 @@ const memberInboxStyles = StyleSheet.create({
     fontWeight: '500',
   } as TextStyle,
 });
-
-// ─── Synthetic (non-CHW) inbox items ─────────────────────────────────────────
-
-type SyntheticItem = {
-  id: string;
-  type: Exclude<InboxItemType, 'chw'>;
-  sender: string;
-  preview: string;
-  time: string;
-};
-
-/** Static synthetic items shown below CHW threads in the inbox. */
-const SYNTHETIC_ITEMS: SyntheticItem[] = [
-  {
-    id: 'system-1',
-    type: 'system',
-    sender: 'Compass System',
-    preview: 'Your CalFresh application status updated',
-    time: '2h',
-  },
-  {
-    id: 'appointment-1',
-    type: 'appointment',
-    sender: 'Appointment Reminder',
-    preview: 'Thursday 2 PM with your CHW at the Vermont office',
-    time: '1d',
-  },
-  {
-    id: 'document-1',
-    type: 'document',
-    sender: 'Document Request',
-    preview: 'Your CHW asked you to upload a proof of income',
-    time: '2d',
-  },
-  {
-    id: 'reward-1',
-    type: 'reward',
-    sender: 'You earned 25 points!',
-    preview: 'Journey step completed: Upload Documents',
-    time: '3d',
-  },
-];
-
-interface SyntheticItemRowProps {
-  item: SyntheticItem;
-  isActive: boolean;
-  onSelect: (id: string, type: InboxItemType) => void;
-}
-
-function SyntheticItemRow({
-  item,
-  isActive,
-  onSelect,
-}: SyntheticItemRowProps): React.JSX.Element {
-  const getAvatar = (): React.ReactNode => {
-    switch (item.type) {
-      case 'system':
-        return (
-          <View style={[styles.threadAvatar, styles.threadAvatarSystem]}>
-            <Settings size={18} color={colors.textSecondary} />
-          </View>
-        );
-      case 'appointment':
-        return (
-          <View style={[styles.threadAvatar, styles.threadAvatarAppointment]}>
-            <Calendar size={18} color={colors.emerald700} />
-          </View>
-        );
-      case 'document':
-        return (
-          <View style={[styles.threadAvatar, styles.threadAvatarDocument]}>
-            <FileText size={18} color={colors.amber700} />
-          </View>
-        );
-      case 'reward':
-        return (
-          <View style={[styles.threadAvatar, styles.threadAvatarReward]}>
-            <Gift size={18} color="#92400e" />
-          </View>
-        );
-    }
-  };
-
-  const getPill = (): React.ReactNode => {
-    switch (item.type) {
-      case 'system':      return <Pill variant="gray" size="sm">System</Pill>;
-      case 'appointment': return <Pill variant="blue" size="sm">Appointment</Pill>;
-      case 'document':    return <Pill variant="amber" size="sm">Action needed</Pill>;
-      case 'reward':
-        return (
-          <View style={styles.marigoldPill}>
-            <Text style={styles.marigoldPillText}>Reward</Text>
-          </View>
-        );
-    }
-  };
-
-  return (
-    <PressableCard
-      onPress={() => onSelect(item.id, item.type)}
-      style={[styles.threadRow, isActive && styles.threadRowActive]}
-      accessibilityLabel={`${item.sender}: ${item.preview}`}
-    >
-      {isActive && <View style={styles.threadActiveBar} />}
-      {getAvatar()}
-      <View style={styles.threadBody}>
-        <View style={styles.threadTopRow}>
-          <Text style={styles.threadSender} numberOfLines={1}>{item.sender}</Text>
-          <Text style={[styles.threadTime, numerals.tabular]}>{item.time}</Text>
-        </View>
-        <Text style={styles.threadPreview} numberOfLines={1}>{item.preview}</Text>
-        <View style={styles.threadPillRow}>{getPill()}</View>
-      </View>
-    </PressableCard>
-  );
-}
-
-// ─── Alt detail pane (non-CHW inbox items) ────────────────────────────────────
-
-interface AltPaneProps {
-  selectedSyntheticId: string | null;
-  chwName: string;
-  onSchedule: () => void;
-  onGoToDocuments: () => void;
-  onGoToRewards: () => void;
-}
-
-/**
- * Shows structured detail cards when a non-CHW inbox item is selected.
- */
-function AltPane({
-  selectedSyntheticId,
-  chwName,
-  onSchedule,
-  onGoToDocuments,
-  onGoToRewards,
-}: AltPaneProps): React.JSX.Element {
-  const chwFirstName = chwName.split(' ')[0] ?? 'your CHW';
-
-  if (selectedSyntheticId === 'system-1') {
-    return (
-      <ScrollView
-        style={styles.altScroll}
-        contentContainerStyle={styles.altContent}
-        showsVerticalScrollIndicator={false}
-      >
-        <Card style={styles.altCard}>
-          <Text style={styles.altCardTitle}>CalFresh Status Update</Text>
-          <Text style={styles.altCardSub}>Compass System · 2 hours ago</Text>
-          {[
-            { label: 'Application',    value: '#CF-2026-44821' },
-            { label: 'Monthly benefit', value: '$291.00' },
-            { label: 'EBT card',       value: 'Mailing to address on file' },
-            { label: 'Next review',    value: 'November 2026' },
-          ].map(({ label, value }) => (
-            <View key={label} style={styles.altRow}>
-              <Text style={styles.altRowLabel}>{label}</Text>
-              <Text style={[styles.altRowValue, numerals.tabular]}>{value}</Text>
-            </View>
-          ))}
-          <View style={styles.altRowStatus}>
-            <Text style={styles.altRowLabel}>Status</Text>
-            <Pill variant="emerald" size="sm">Active</Pill>
-          </View>
-        </Card>
-      </ScrollView>
-    );
-  }
-
-  if (selectedSyntheticId === 'appointment-1') {
-    return (
-      <ScrollView
-        style={styles.altScroll}
-        contentContainerStyle={styles.altContent}
-        showsVerticalScrollIndicator={false}
-      >
-        <Card style={styles.altCard}>
-          <Text style={styles.altCardTitle}>Appointment Confirmed</Text>
-          <Text style={styles.altCardSub}>With {chwName}, your CHW</Text>
-          {[
-            { label: 'Date & time', value: 'Thursday, June 12 · 2:00 PM' },
-            { label: 'Location',    value: 'Vermont DPSS Office, Los Angeles' },
-            { label: 'Type',        value: 'In-person visit' },
-            { label: 'Reminder',    value: '1 day before via SMS' },
-          ].map(({ label, value }) => (
-            <View key={label} style={styles.altRow}>
-              <Text style={styles.altRowLabel}>{label}</Text>
-              <Text style={[styles.altRowValue, numerals.tabular]}>{value}</Text>
-            </View>
-          ))}
-          <View style={styles.altBtns}>
-            <TouchableOpacity
-              style={styles.altBtnOutlined}
-              onPress={onSchedule}
-              accessibilityRole="button"
-              accessibilityLabel="Reschedule appointment"
-            >
-              <Text style={styles.altBtnOutlinedText}>Reschedule</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.altBtnGhost}
-              accessibilityRole="button"
-              accessibilityLabel="Get directions"
-            >
-              <Navigation size={14} color={colors.primary} />
-              <Text style={styles.altBtnGhostText}>Get directions</Text>
-            </TouchableOpacity>
-          </View>
-        </Card>
-      </ScrollView>
-    );
-  }
-
-  if (selectedSyntheticId === 'document-1') {
-    return (
-      <ScrollView
-        style={styles.altScroll}
-        contentContainerStyle={styles.altContent}
-        showsVerticalScrollIndicator={false}
-      >
-        <Card style={styles.altCard}>
-          <Text style={styles.altCardTitle}>Document Request</Text>
-          <Text style={styles.altCardSub}>{chwFirstName} asked you to upload one document</Text>
-          {[
-            { label: 'Document',         value: 'Proof of income' },
-            { label: 'Needed for',       value: 'CalFresh eligibility review' },
-            { label: 'Requested',        value: '2 days ago' },
-            { label: 'Accepted formats', value: 'PDF, JPG, PNG' },
-          ].map(({ label, value }) => (
-            <View key={label} style={styles.altRow}>
-              <Text style={styles.altRowLabel}>{label}</Text>
-              <Text style={[styles.altRowValue, numerals.tabular]}>{value}</Text>
-            </View>
-          ))}
-          <TouchableOpacity
-            style={styles.altUploadArea}
-            onPress={onGoToDocuments}
-            accessibilityRole="button"
-            accessibilityLabel="Upload document"
-          >
-            <FileText size={24} color={colors.textSecondary} />
-            <Text style={styles.altUploadText}>Tap to select a file</Text>
-          </TouchableOpacity>
-        </Card>
-      </ScrollView>
-    );
-  }
-
-  if (selectedSyntheticId === 'reward-1') {
-    return (
-      <ScrollView
-        style={styles.altScroll}
-        contentContainerStyle={styles.altContent}
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.rewardAltCard}>
-          <View style={styles.rewardAltIconCircle}>
-            <Gift size={28} color="#fff" />
-          </View>
-          <Text style={styles.rewardAltTitle}>You earned 25 points!</Text>
-          <Text style={styles.rewardAltSub}>Journey step completed: Upload Documents</Text>
-          <Text style={[styles.rewardAltTotal, numerals.tabular]}>
-            You now have <Text style={styles.rewardAltBold}>60 total points</Text>.
-            Keep going — 3 more steps to your next reward.
-          </Text>
-          <TouchableOpacity
-            style={styles.rewardAltBtn}
-            onPress={onGoToRewards}
-            accessibilityRole="button"
-            accessibilityLabel="View my rewards"
-          >
-            <Text style={styles.rewardAltBtnText}>View my rewards</Text>
-          </TouchableOpacity>
-        </View>
-      </ScrollView>
-    );
-  }
-
-  return (
-    <View style={styles.noSelectionWrap}>
-      <MessageSquare size={32} color={colors.textMuted} />
-      <Text style={styles.noSelectionText}>Select an item to view details</Text>
-    </View>
-  );
-}
 
 // ─── More menu ────────────────────────────────────────────────────────────────
 
@@ -2391,8 +2105,6 @@ export function MemberMessagesScreen(): React.JSX.Element {
   // ── Inbox state ───────────────────────────────────────────────────────────────
   const [showInbox, setShowInbox]               = useState(true);
   const [selectedConversation, setSelectedConversation] = useState<ConversationData | null>(null);
-  /** null = CHW thread, string = synthetic item id */
-  const [selectedSyntheticId, setSelectedSyntheticId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery]           = useState('');
 
   // ── Data ──────────────────────────────────────────────────────────────────────
@@ -2435,18 +2147,7 @@ export function MemberMessagesScreen(): React.JSX.Element {
     );
   }, [allConversations, searchQuery]);
 
-  // ── Synthetic items filtered by search only (no tab filtering) ───────────────
-  const filteredSynthetic = useMemo<SyntheticItem[]>(() => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return SYNTHETIC_ITEMS;
-    return SYNTHETIC_ITEMS.filter(
-      (item) =>
-        item.sender.toLowerCase().includes(q) ||
-        item.preview.toLowerCase().includes(q),
-    );
-  }, [searchQuery]);
-
-  const hasAnyItems = filteredConversations.length > 0 || filteredSynthetic.length > 0;
+  const hasAnyItems = filteredConversations.length > 0;
 
   // ── Auto-select thread on load or when chwId route param is present ───────────
   useEffect(() => {
@@ -2456,30 +2157,18 @@ export function MemberMessagesScreen(): React.JSX.Element {
       const match = filteredConversations.find((c) => c.chwId === targetCHWId);
       if (match != null && selectedConversation?.id !== match.id) {
         setSelectedConversation(match);
-        setSelectedSyntheticId(null);
         return;
       }
     }
 
     if (selectedConversation == null) {
       setSelectedConversation(filteredConversations[0] ?? null);
-      setSelectedSyntheticId(null);
     }
   }, [filteredConversations, selectedConversation, targetCHWId]);
 
   const handleSelectConversation = useCallback(
     (conversation: ConversationData) => {
       setSelectedConversation(conversation);
-      setSelectedSyntheticId(null);
-      if (hideInbox) setShowInbox(false);
-    },
-    [hideInbox],
-  );
-
-  const handleSelectSynthetic = useCallback(
-    (id: string, _type: InboxItemType) => {
-      setSelectedSyntheticId(id);
-      setSelectedConversation(null);
       if (hideInbox) setShowInbox(false);
     },
     [hideInbox],
@@ -2634,19 +2323,10 @@ export function MemberMessagesScreen(): React.JSX.Element {
                     <InboxThreadRow
                       key={conversation.id}
                       conversation={conversation}
-                      isActive={selectedConversation?.id === conversation.id && selectedSyntheticId === null}
+                      isActive={selectedConversation?.id === conversation.id}
                       onSelect={handleSelectConversation}
                       onDelete={handleDeleteConversation}
                       memberId={memberId}
-                    />
-                  ))}
-                  {/* Synthetic items */}
-                  {filteredSynthetic.map((item) => (
-                    <SyntheticItemRow
-                      key={item.id}
-                      item={item}
-                      isActive={selectedSyntheticId === item.id}
-                      onSelect={handleSelectSynthetic}
                     />
                   ))}
                 </StaggerList>
@@ -2654,7 +2334,7 @@ export function MemberMessagesScreen(): React.JSX.Element {
                 <EmptyState
                   icon={MessageSquare}
                   title="Your inbox is quiet for now"
-                  body="Messages from your CHW and Compass appear here"
+                  body="Messages from your CHW appear here"
                 />
               )}
             </ScrollView>
@@ -2692,40 +2372,6 @@ export function MemberMessagesScreen(): React.JSX.Element {
               onGoToCalendar={handleGoToCalendar}
               onViewCHWProfile={handleViewCHWProfile}
             />
-          ) : selectedSyntheticId !== null ? (
-            <View style={styles.convPane}>
-              {/* Alt pane shares the conversation header style */}
-              <View style={styles.convHeader} role="banner">
-                {hideInbox ? (
-                  <TouchableOpacity
-                    onPress={handleBack}
-                    style={styles.backBtn}
-                    accessibilityRole="button"
-                    accessibilityLabel="Back to inbox"
-                  >
-                    <ArrowLeft size={20} color={colors.textSecondary} />
-                  </TouchableOpacity>
-                ) : null}
-                <View style={styles.convHeaderInfo}>
-                  <Text style={styles.convHeaderName}>
-                    {SYNTHETIC_ITEMS.find((i) => i.id === selectedSyntheticId)?.sender ?? 'Compass'}
-                  </Text>
-                  <Text style={styles.convHeaderStatus}>
-                    {selectedSyntheticId === 'appointment-1' ? 'Thursday, June 12 · 2 PM'
-                      : selectedSyntheticId === 'document-1' ? 'Action required'
-                      : selectedSyntheticId === 'reward-1'   ? '25 points earned'
-                      : 'Automated notification'}
-                  </Text>
-                </View>
-              </View>
-              <AltPane
-                selectedSyntheticId={selectedSyntheticId}
-                chwName={activeCHWName}
-                onSchedule={handleGoToCalendar}
-                onGoToDocuments={handleGoToDocuments}
-                onGoToRewards={handleGoToRewards}
-              />
-            </View>
           ) : (
             <View style={styles.noSelectionWrap}>
               <MessageSquare size={32} color={colors.textMuted} />
@@ -2735,7 +2381,7 @@ export function MemberMessagesScreen(): React.JSX.Element {
         ) : null}
 
         {/* ── Divider: conversation ↔ rail ── */}
-        {!hideRail && (selectedConversation != null || selectedSyntheticId !== null) ? (
+        {!hideRail && selectedConversation != null ? (
           <ResizableDivider
             width={rightWidth}
             onChange={handleRightWidthChange}
@@ -2856,7 +2502,7 @@ const styles = StyleSheet.create({
     flex: 1,
   } as ViewStyle,
 
-  // Thread row (shared by CHW + synthetic)
+  // Thread row
   threadRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -2897,19 +2543,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
   } as TextStyle,
-  threadAvatarSystem: {
-    backgroundColor: colors.gray100,
-  } as ViewStyle,
-  threadAvatarAppointment: {
-    backgroundColor: colors.emerald100,
-  } as ViewStyle,
-  threadAvatarDocument: {
-    backgroundColor: colors.amber100,
-  } as ViewStyle,
-  threadAvatarReward: {
-    backgroundColor: MARIGOLD_BG,
-  } as ViewStyle,
-
   // Thread body
   threadBody: {
     flex: 1,
@@ -2948,20 +2581,6 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
     marginTop: 4,
   } as ViewStyle,
-
-  // Marigold pill (not in 6-hue Pill component — rendered as plain View)
-  marigoldPill: {
-    alignSelf: 'flex-start',
-    borderRadius: radius.pill,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    backgroundColor: MARIGOLD_BG,
-  } as ViewStyle,
-  marigoldPillText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#92400e',
-  } as TextStyle,
 
   // Unread badge
   unreadBadge: {
@@ -3429,157 +3048,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: colors.textMuted,
     flexShrink: 0,
-  } as TextStyle,
-
-  // Alt pane (non-CHW detail view)
-  altScroll: {
-    flex: 1,
-    backgroundColor: colors.pageBg,
-  } as ViewStyle,
-  altContent: {
-    padding: spacing.xl,
-    alignItems: 'center',
-  } as ViewStyle,
-  altCard: {
-    padding: spacing.xxl,
-    width: '100%',
-    maxWidth: 480,
-  } as ViewStyle,
-  altCardTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: colors.textPrimary,
-    marginBottom: 4,
-  } as TextStyle,
-  altCardSub: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    marginBottom: spacing.lg,
-  } as TextStyle,
-  altRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    paddingVertical: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.cardBorder,
-  } as ViewStyle,
-  altRowStatus: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    paddingVertical: spacing.sm,
-  } as ViewStyle,
-  altRowLabel: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: colors.textPrimary,
-    width: 130,
-    flexShrink: 0,
-  } as TextStyle,
-  altRowValue: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    flex: 1,
-  } as TextStyle,
-  altBtns: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    marginTop: spacing.lg,
-  } as ViewStyle,
-  altBtnOutlined: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: 6,
-    borderRadius: radius.sm,
-    borderWidth: 1.5,
-    borderColor: colors.cardBorder,
-    backgroundColor: colors.cardBg,
-  } as ViewStyle,
-  altBtnOutlinedText: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: colors.textPrimary,
-  } as TextStyle,
-  altBtnGhost: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 6,
-  } as ViewStyle,
-  altBtnGhostText: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: colors.primary,
-  } as TextStyle,
-  altUploadArea: {
-    marginTop: spacing.lg,
-    padding: spacing.lg,
-    borderRadius: radius.md,
-    borderWidth: 2,
-    borderStyle: 'dashed',
-    borderColor: colors.cardBorder,
-    backgroundColor: colors.pageBg,
-    alignItems: 'center',
-    gap: spacing.sm,
-  } as ViewStyle,
-  altUploadText: {
-    fontSize: 13,
-    color: colors.textSecondary,
-  } as TextStyle,
-
-  // Reward alt pane
-  rewardAltCard: {
-    width: '100%',
-    maxWidth: 480,
-    backgroundColor: MARIGOLD_BG,
-    borderRadius: radius.xl,
-    borderWidth: 1,
-    borderColor: '#fcd34d',
-    padding: spacing.xxxl,
-    alignItems: 'center',
-    gap: spacing.md,
-  } as ViewStyle,
-  rewardAltIconCircle: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: MARIGOLD,
-    alignItems: 'center',
-    justifyContent: 'center',
-  } as ViewStyle,
-  rewardAltTitle: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: '#78350f',
-    textAlign: 'center',
-  } as TextStyle,
-  rewardAltSub: {
-    fontSize: 14,
-    color: '#78350f',
-    textAlign: 'center',
-  } as TextStyle,
-  rewardAltTotal: {
-    fontSize: 13,
-    color: '#92400e',
-    textAlign: 'center',
-    lineHeight: 20,
-  } as TextStyle,
-  rewardAltBold: {
-    fontWeight: '700',
-  } as TextStyle,
-  rewardAltBtn: {
-    marginTop: spacing.sm,
-    paddingHorizontal: spacing.xl,
-    paddingVertical: 10,
-    borderRadius: radius.md,
-    backgroundColor: MARIGOLD,
-    alignItems: 'center',
-  } as ViewStyle,
-  rewardAltBtnText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#78350f',
   } as TextStyle,
 
   // No selection

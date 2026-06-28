@@ -50,7 +50,7 @@ import {
   useDeleteAccount,
 } from '../../hooks/useApiQueries';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
-import { AppShell, PageHeader, Card } from '../../components/ui';
+import { AppShell, PageHeader, Card, ProfilePictureEditor } from '../../components/ui';
 import { colors as tokens } from '../../theme/tokens';
 
 // ─── Types & constants ────────────────────────────────────────────────────────
@@ -568,24 +568,21 @@ export function MemberSettingsScreen(): React.JSX.Element {
             <View style={pageStyles.tabContent}>
               {activeTab === 'profile' && (
                 <View style={profileStyles.grid}>
-                  {/* Avatar column */}
+                  {/* Avatar column — real photo upload (pick → crop → S3 → save).
+                      The same ProfilePictureEditor the CHW profile uses, so both
+                      sides share one upload/crop/remove flow. */}
                   <View style={profileStyles.avatarCol}>
-                    <View style={profileStyles.avatar}>
-                      <Text style={profileStyles.avatarInitials}>{memberInitials}</Text>
-                    </View>
-                    <Pressable
-                      onPress={() =>
-                        Alert.alert(
-                          'Coming soon',
-                          'Profile photos ship in v1.1. We\'ll email you when it goes live.',
-                        )
-                      }
-                      accessibilityRole="button"
-                      accessibilityLabel="Change profile photo"
-                      style={profileStyles.changePhotoBtn}
-                    >
-                      <Text style={profileStyles.changePhotoText}>Change photo</Text>
-                    </Pressable>
+                    <ProfilePictureEditor
+                      currentUrl={profile?.profilePictureUrl ?? null}
+                      role="member"
+                      size={128}
+                      initials={memberInitials}
+                      initialsBackground="#94A3B8"
+                      onChange={() => {
+                        // The upload/remove hook invalidates the memberProfile
+                        // query; useMemberProfile refetches and re-renders here.
+                      }}
+                    />
                     <Text style={profileStyles.photoHint}>JPEG/PNG, max 5MB</Text>
                   </View>
 
@@ -903,35 +900,6 @@ const profileStyles = StyleSheet.create({
     width:      192,
     alignItems: 'center',
   } as ViewStyle,
-  avatar: {
-    width:           128,
-    height:          128,
-    borderRadius:    64,
-    backgroundColor: '#94A3B8',
-    alignItems:      'center',
-    justifyContent:  'center',
-  } as ViewStyle,
-  avatarInitials: {
-    fontSize:   36,
-    fontWeight: '800',
-    color:      '#FFFFFF',
-  } as TextStyle,
-  changePhotoBtn: {
-    marginTop:         12,
-    paddingHorizontal: 16,
-    paddingVertical:   8,
-    borderRadius:      8,
-    borderWidth:       1,
-    borderColor:       '#E5E7EB',
-    backgroundColor:   '#FFFFFF',
-    width:             '100%',
-    alignItems:        'center',
-  } as ViewStyle,
-  changePhotoText: {
-    fontSize:   13,
-    fontWeight: '600',
-    color:      '#374151',
-  } as TextStyle,
   photoHint: {
     marginTop:  8,
     fontSize:   11,

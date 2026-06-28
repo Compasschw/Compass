@@ -432,6 +432,9 @@ async def get_chw_member_facing_profile(
         service_area_zips=service_area_zips,
         available_days=available_days,
         shared_session_count=shared_session_count,
+        # CHW's avatar lives on the User row; presign for the member client so
+        # the member-facing CHW profile shows the photo the CHW set.
+        profile_picture_url=presigned_avatar_url(chw_user.profile_picture_url),
     )
 
 

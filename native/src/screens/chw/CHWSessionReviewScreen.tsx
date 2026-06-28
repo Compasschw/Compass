@@ -8,7 +8,7 @@
  *   - Changes owner (CHW / Member / Both)
  *
  * Confirmed items with owner == "member" | "both" that have showOnRoadmap==true
- * automatically appear on the MemberRoadmapScreen for the member to track.
+ * automatically appear on the member's My Journey screen for the member to track.
  *
  * Navigation param: { sessionId: string; memberName: string; memberId?: string }
  *

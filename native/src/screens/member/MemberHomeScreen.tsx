@@ -441,7 +441,7 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
   }, [navigation]);
 
   const handleOpenRoadmap = useCallback(() => {
-    navigation.navigate('Roadmap');
+    navigation.navigate('MemberJourney');
   }, [navigation]);
 
   const handleOpenJourney = useCallback(

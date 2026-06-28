@@ -58,9 +58,7 @@ import { colors as legacyColors } from '../../theme/colors';
 import { colors as tokens, spacing, radius, shadows } from '../../theme/tokens';
 import { typography } from '../../theme/typography';
 import {
-  redemptionCatalog,
   verticalLabels,
-  type RedemptionItem,
   type Vertical,
 } from '../../data/mock';
 import {
@@ -71,10 +69,12 @@ import {
   useOwnServicesConsent,
   useUpdateServicesConsent,
   useMemberJourneys,
+  useRewardsCatalog,
   type MemberProfile,
   type RewardTransaction,
   type ServicesConsentValue,
   type MemberJourneyResponse,
+  type RewardCatalogItem,
 } from '../../hooks/useApiQueries';
 import { Card } from '../../components/ui/Card';
 import { PageWrap } from '../../components/ui/PageWrap';
@@ -1882,29 +1882,29 @@ const rewardRowStyles = StyleSheet.create({
 });
 
 interface RedemptionCardProps {
-  item: RedemptionItem;
-  onRedeem: (item: RedemptionItem) => void;
+  item: RewardCatalogItem;
+  onRedeem: (item: RewardCatalogItem) => void;
   balance: number;
 }
 
 function RedemptionCard({ item, onRedeem, balance }: RedemptionCardProps): React.JSX.Element {
-  const canAfford = balance >= item.pointsCost;
+  const canAfford = balance >= item.costPoints;
   return (
     <View style={redemptionCardStyles.card}>
-      <Text style={redemptionCardStyles.emoji}>{item.emoji}</Text>
+      <Text style={redemptionCardStyles.emoji}>{item.imageEmoji}</Text>
       <View style={redemptionCardStyles.info}>
         <Text style={redemptionCardStyles.name}>{item.name}</Text>
         <Text style={redemptionCardStyles.description} numberOfLines={2}>
           {item.description}
         </Text>
-        <Text style={redemptionCardStyles.cost}>{item.pointsCost} pts</Text>
+        <Text style={redemptionCardStyles.cost}>{item.costPoints} pts</Text>
       </View>
       <TouchableOpacity
         style={[redemptionCardStyles.redeemBtn, !canAfford && redemptionCardStyles.redeemBtnDisabled]}
         onPress={() => onRedeem(item)}
         disabled={!canAfford}
         accessibilityRole="button"
-        accessibilityLabel={`Redeem ${item.name} for ${item.pointsCost} points`}
+        accessibilityLabel={`Redeem ${item.name} for ${item.costPoints} points`}
         accessibilityState={{ disabled: !canAfford }}
       >
         <Text style={[redemptionCardStyles.redeemBtnText, !canAfford && redemptionCardStyles.redeemBtnTextDisabled]}>
@@ -1983,6 +1983,7 @@ export function MemberProfileScreen(): React.JSX.Element {
 
   const profileQuery = useMemberProfile();
   const rewardsQuery = useMemberRewards();
+  const rewardsCatalogQuery = useRewardsCatalog();
   const consentQuery = useOwnServicesConsent();
   const updateConsent = useUpdateServicesConsent();
   const updateProfile = useUpdateMemberProfile();
@@ -2141,23 +2142,23 @@ export function MemberProfileScreen(): React.JSX.Element {
   );
 
   const handleRedeem = useCallback(
-    (item: RedemptionItem) => {
-      if (effectiveBalance < item.pointsCost) {
+    (item: RewardCatalogItem) => {
+      if (effectiveBalance < item.costPoints) {
         Alert.alert(
           'Insufficient Points',
-          `You need ${item.pointsCost - effectiveBalance} more points to redeem ${item.name}.`,
+          `You need ${item.costPoints - effectiveBalance} more points to redeem ${item.name}.`,
         );
         return;
       }
       Alert.alert(
         `Redeem ${item.name}?`,
-        `This will use ${item.pointsCost} points.\n\nCurrent balance: ${effectiveBalance} pts`,
+        `This will use ${item.costPoints} points.\n\nCurrent balance: ${effectiveBalance} pts`,
         [
           { text: 'Cancel', style: 'cancel' },
           {
             text: 'Confirm',
             onPress: () => {
-              setRewardsBalance((prev) => (prev ?? effectiveBalance) - item.pointsCost);
+              setRewardsBalance((prev) => (prev ?? effectiveBalance) - item.costPoints);
               Alert.alert('Redemption Submitted', `Your ${item.name} request has been submitted.`);
             },
           },
@@ -2229,6 +2230,8 @@ export function MemberProfileScreen(): React.JSX.Element {
   }
 
   // ── Render ──
+
+  const activeRewardItems = (rewardsCatalogQuery.data ?? []).filter((i) => i.isActive);
 
   return (
     <SafeAreaView style={screenStyles.safeArea} edges={['top']}>
@@ -2530,14 +2533,25 @@ export function MemberProfileScreen(): React.JSX.Element {
               Your balance:{' '}
               <Text style={screenStyles.catalogBalanceBold}>{effectiveBalance} pts</Text>
             </Text>
-            {redemptionCatalog.map((item) => (
-              <RedemptionCard
-                key={item.id}
-                item={item}
-                onRedeem={handleRedeem}
-                balance={effectiveBalance}
+            {rewardsCatalogQuery.isLoading ? (
+              <LoadingSkeleton variant="rows" rows={3} />
+            ) : rewardsCatalogQuery.isError ? (
+              <ErrorState
+                message="Could not load rewards catalog. Please try again."
+                onRetry={() => void rewardsCatalogQuery.refetch()}
               />
-            ))}
+            ) : activeRewardItems.length === 0 ? (
+              <Text style={screenStyles.catalogEmptyText}>No rewards available yet.</Text>
+            ) : (
+              activeRewardItems.map((item) => (
+                <RedemptionCard
+                  key={item.id}
+                  item={item}
+                  onRedeem={handleRedeem}
+                  balance={effectiveBalance}
+                />
+              ))
+            )}
           </View>
 
           {/* ── Account ── */}
@@ -2850,6 +2864,12 @@ const screenStyles = StyleSheet.create({
   catalogBalanceBold: {
     fontWeight: '700',
     color: tokens.amber700,
+  } as TextStyle,
+  catalogEmptyText: {
+    fontSize: 13,
+    color: tokens.textSecondary,
+    textAlign: 'center',
+    paddingVertical: spacing.lg,
   } as TextStyle,
 
   // Account

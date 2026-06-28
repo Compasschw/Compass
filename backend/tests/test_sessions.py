@@ -252,3 +252,78 @@ async def test_end_session_relationship_gate(client: AsyncClient, chw_tokens, me
         headers=auth_header(other_chw_tokens),
     )
     assert res.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_roadmap_item_includes_session_id_and_mark_complete_succeeds(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict
+) -> None:
+    """Regression: GET /member/roadmap must include session_id on each item so
+    the member-side 'mark complete' PATCH /sessions/{id}/followups/{id} can
+    resolve the correct session row.  Without session_id the client falls back
+    to 'unknown' and the PATCH 404s.
+
+    This test FAILS on the pre-fix frontend type (SessionFollowup lacked
+    sessionId) and would FAIL on a backend that stopped returning session_id.
+    """
+    import base64
+    import json as _json
+    import uuid as _uuid
+
+    from app.models.followup import SessionFollowup as SessionFollowupModel
+    from tests.conftest import test_session
+
+    # ── Setup: request → accept → session ────────────────────────────────────
+    request_id = await create_request_and_match(client, member_tokens, chw_tokens)
+
+    res = await client.post(
+        "/api/v1/sessions/",
+        json={"request_id": request_id, "scheduled_at": "2026-04-10T10:00:00Z", "mode": "in_person"},
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 201, res.text
+    session_id = res.json()["id"]
+
+    def _decode_sub(tokens: dict) -> str:
+        seg = tokens["access_token"].split(".")[1]
+        padded = seg + "=" * (4 - len(seg) % 4)
+        return _json.loads(base64.urlsafe_b64decode(padded))["sub"]
+
+    member_id = _decode_sub(member_tokens)
+    chw_id = _decode_sub(chw_tokens)
+
+    # ── Seed a roadmap followup row (no HTTP endpoint creates followups) ──────
+    followup_id = _uuid.uuid4()
+    async with test_session() as db:
+        followup = SessionFollowupModel(
+            id=followup_id,
+            session_id=_uuid.UUID(session_id),
+            chw_id=_uuid.UUID(chw_id),
+            member_id=_uuid.UUID(member_id),
+            kind="action_item",
+            description="Schedule a housing intake appointment",
+            show_on_roadmap=True,
+            status="pending",
+        )
+        db.add(followup)
+        await db.commit()
+
+    # ── Assert: GET /member/roadmap returns session_id ────────────────────────
+    res = await client.get("/api/v1/member/roadmap", headers=auth_header(member_tokens))
+    assert res.status_code == 200, res.text
+    items = res.json()
+    assert len(items) == 1, f"Expected 1 roadmap item, got {len(items)}"
+    item = items[0]
+    assert str(item["session_id"]) == session_id, (
+        "roadmap item missing session_id — mark-complete PATCH would 404 with 'unknown'"
+    )
+    assert str(item["id"]) == str(followup_id)
+
+    # ── Assert: PATCH mark-complete as member succeeds ────────────────────────
+    res = await client.patch(
+        f"/api/v1/sessions/{session_id}/followups/{followup_id}",
+        json={"status": "completed"},
+        headers=auth_header(member_tokens),
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["status"] == "completed"

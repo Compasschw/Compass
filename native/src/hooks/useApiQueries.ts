@@ -304,6 +304,8 @@ export interface MemberFacingCHWProfile {
   availableDays: string[];
   /** Count of sessions the calling member has had with this CHW (any status). */
   sharedSessionCount: number;
+  /** CHW's self-uploaded avatar (presigned). Null → fall back to initials. */
+  profilePictureUrl?: string | null;
 }
 
 // ─── CHW Member Profile (HIPAA-gated) ────────────────────────────────────────

@@ -21,10 +21,8 @@ import {
   Search,
   ClipboardList,
   CalendarDays,
-  Map,
   UserCircle,
   Route,
-  FolderOpen,
   FileText,
   Gift,
   Settings as SettingsIcon,
@@ -43,11 +41,9 @@ import { MemberFacingCHWProfileScreen } from '../screens/member/MemberFacingCHWP
 import { MemberSessionsScreen } from '../screens/member/MemberSessionsScreen';
 import { MemberMessagesScreen } from '../screens/member/MemberMessagesScreen';
 import { MemberCalendarScreen } from '../screens/member/MemberCalendarScreen';
-import { MemberRoadmapScreen } from '../screens/member/MemberRoadmapScreen';
 import { MemberProfileScreen } from '../screens/member/MemberProfileScreen';
 import { MemberRewardsScreen } from '../screens/member/MemberRewardsScreen';
 import { MemberJourneyScreen } from '../screens/member/MemberJourneyScreen';
-import { MemberResourcesScreen } from '../screens/member/MemberResourcesScreen';
 import { MemberDocumentsScreen } from '../screens/member/MemberDocumentsScreen';
 import { MemberSettingsScreen } from '../screens/member/MemberSettingsScreen';
 
@@ -93,7 +89,6 @@ export type MemberTabParamList = {
    */
   Sessions: { chwId?: string; autoCall?: boolean } | undefined;
   Calendar: undefined;
-  Roadmap: undefined;
   Profile: undefined;
   // New (Wave 2) sidebar destinations.
   /**
@@ -102,7 +97,6 @@ export type MemberTabParamList = {
    * journey cards so tapping a card deep-links directly to that journey.
    */
   MemberJourney: { focusJourneyId?: string } | undefined;
-  MemberResources: undefined;
   MemberRewards: undefined;
   MemberDocuments: undefined;
   MemberSettings: undefined;
@@ -177,10 +171,8 @@ const SCREENS: ScreenSpec[] = [
     icon: ClipboardList,
   },
   { name: 'Calendar',        title: 'Appointments', component: MemberCalendarScreen,  icon: CalendarDays },
-  { name: 'MemberResources', title: 'Resources',    component: MemberResourcesScreen, icon: FolderOpen },
   { name: 'MemberRewards',   title: 'Rewards',      component: MemberRewardsScreen,   icon: Gift },
   { name: 'MemberDocuments', title: 'My Documents', component: MemberDocumentsScreen, icon: FileText },
-  { name: 'Roadmap',         title: 'Roadmap',      component: MemberRoadmapScreen,   icon: Map },
   { name: 'Profile',         title: 'Profile',      component: MemberProfileScreen,   icon: UserCircle },
   { name: 'MemberSettings',  title: 'Settings',     component: MemberSettingsScreen,  icon: SettingsIcon },
 ];

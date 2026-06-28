@@ -36,6 +36,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Modal,
   Platform,
   Pressable,
@@ -50,6 +51,7 @@ import {
   useWindowDimensions,
   type ViewStyle,
   type TextStyle,
+  type ImageStyle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
@@ -210,6 +212,8 @@ interface CHWMemberProfileDetail {
   id: string;
   firstName: string;
   lastName: string;
+  /** Member's self-uploaded avatar (presigned). Null → fall back to initials. */
+  profilePictureUrl?: string | null;
   /** Member's chosen name; null falls back to firstName in the UI. */
   preferredName: string | null;
   phoneE164: string | null;
@@ -2095,7 +2099,15 @@ function DemographicsColumn({
         {/* Left sub-column */}
         <View style={demoColStyles.leftCol}>
           <View style={demoColStyles.avatar}>
-            <Text style={demoColStyles.avatarText}>{initials}</Text>
+            {profile.profilePictureUrl ? (
+              <Image
+                source={{ uri: profile.profilePictureUrl }}
+                style={demoColStyles.avatarImage}
+                accessibilityLabel={`${displayName} profile photo`}
+              />
+            ) : (
+              <Text style={demoColStyles.avatarText}>{initials}</Text>
+            )}
           </View>
           <View style={demoColStyles.badgesRow}>
             <Pill variant="emerald" size="sm">Active</Pill>
@@ -2199,6 +2211,11 @@ const demoColStyles = StyleSheet.create({
     fontSize: 22,
     color: '#FFFFFF',
   } as TextStyle,
+  avatarImage: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+  } as ImageStyle,
   badgesRow: {
     flexDirection: 'row',
     alignItems: 'center',

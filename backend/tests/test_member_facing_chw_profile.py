@@ -267,3 +267,56 @@ async def test_member_user_id_as_chw_id_returns_404(
         headers=auth_header(member_tokens),
     )
     assert res.status_code == 404, res.text
+
+
+@pytest.mark.asyncio
+async def test_chw_profile_picture_url_null_by_default(
+    client: AsyncClient,
+    member_tokens: dict,
+    chw_tokens: dict,
+) -> None:
+    """A CHW with no uploaded photo exposes profile_picture_url == None.
+
+    Cross-view cohesion: the member-facing CHW profile renders the CHW's
+    avatar from this field, falling back to initials when it is null.
+    """
+    chw_id = _user_id_from_tokens(chw_tokens)
+    res = await client.get(
+        f"/api/v1/member/chws/{chw_id}",
+        headers=auth_header(member_tokens),
+    )
+    assert res.status_code == 200, res.text
+    data = res.json()
+    assert "profile_picture_url" in data
+    assert data["profile_picture_url"] is None
+
+
+@pytest.mark.asyncio
+async def test_chw_profile_picture_url_returned_when_set(
+    client: AsyncClient,
+    member_tokens: dict,
+    chw_tokens: dict,
+) -> None:
+    """A CHW's uploaded photo is surfaced on the member-facing profile.
+
+    The CHW sets profile_picture_url via PUT /chw/profile (an external URL
+    passes through presigned_avatar_url unchanged); the member fetching that
+    CHW's profile must receive the same URL — so the member sees the same
+    photo the CHW set in their profile.
+    """
+    photo_url = "https://cdn.example.com/avatars/chw-xyz.png"
+
+    put_res = await client.put(
+        "/api/v1/chw/profile",
+        json={"profile_picture_url": photo_url},
+        headers=auth_header(chw_tokens),
+    )
+    assert put_res.status_code == 200, put_res.text
+
+    chw_id = _user_id_from_tokens(chw_tokens)
+    res = await client.get(
+        f"/api/v1/member/chws/{chw_id}",
+        headers=auth_header(member_tokens),
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["profile_picture_url"] == photo_url

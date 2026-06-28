@@ -575,3 +575,62 @@ async def test_phi_read_audit_log_written_on_member_profile_fetch() -> None:
     assert "gender" in row.details.get("fields", [])
     assert "medi_cal_id" in row.details.get("fields", [])
     assert row.details.get("actor_role") == "chw"
+
+
+@pytest.mark.asyncio
+async def test_member_profile_picture_url_null_by_default(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_tokens: dict,
+) -> None:
+    """A member with no uploaded photo exposes profile_picture_url == None to their CHW.
+
+    Cross-view cohesion: the CHW Member Profile screen renders the member's
+    avatar from this field, falling back to initials when it is null.
+    """
+    request_id = await _create_and_accept_request(client, member_tokens, chw_tokens)
+    await _create_session(client, chw_tokens, request_id)
+
+    member_id = _get_member_id(member_tokens)
+    res = await client.get(
+        f"/api/v1/chw/members/{member_id}",
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 200, res.text
+    data = res.json()
+    assert "profile_picture_url" in data
+    assert data["profile_picture_url"] is None
+
+
+@pytest.mark.asyncio
+async def test_member_profile_picture_url_returned_to_related_chw(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_tokens: dict,
+) -> None:
+    """A member's uploaded photo is surfaced to their care-related CHW.
+
+    The member sets profile_picture_url via PUT /member/profile (an external
+    URL passes through presigned_avatar_url unchanged), then the related CHW
+    fetching the member profile must receive that same URL — so the CHW sees
+    the same photo the member set in their Settings.
+    """
+    photo_url = "https://cdn.example.com/avatars/member-abc.jpg"
+
+    put_res = await client.put(
+        "/api/v1/member/profile",
+        json={"profile_picture_url": photo_url},
+        headers=auth_header(member_tokens),
+    )
+    assert put_res.status_code == 200, put_res.text
+
+    request_id = await _create_and_accept_request(client, member_tokens, chw_tokens)
+    await _create_session(client, chw_tokens, request_id)
+
+    member_id = _get_member_id(member_tokens)
+    res = await client.get(
+        f"/api/v1/chw/members/{member_id}",
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["profile_picture_url"] == photo_url

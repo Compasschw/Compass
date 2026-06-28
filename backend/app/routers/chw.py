@@ -1514,6 +1514,9 @@ async def get_chw_member_full_profile(
         open_followups=open_followups,
         consent_status=consent_status,
         recent_sessions=recent_sessions,
+        # Member's avatar lives on the User row; presign for the CHW client so
+        # the CHW Member Profile screen shows the photo the member set.
+        profile_picture_url=presigned_avatar_url(member_user.profile_picture_url),
         # PHI demographics — decrypted / read from MemberProfile
         date_of_birth=member_profile.date_of_birth,
         gender=member_profile.gender,
