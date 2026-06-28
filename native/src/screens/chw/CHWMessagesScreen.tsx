@@ -82,6 +82,7 @@ import {
   Home,
   ShoppingCart,
   Truck,
+  Briefcase,
   HeartPulse,
   MessageSquare,
   Flag,
@@ -347,9 +348,9 @@ function journeyCategoryIcon(category: string | undefined): React.ComponentType<
     case 'housing': return Home;
     case 'food': return ShoppingCart;
     case 'transportation': return Truck;
+    case 'employment': return Briefcase;
     case 'healthcare':
-    case 'mental_health':
-    case 'rehab': return HeartPulse;
+    case 'mental_health': return HeartPulse;
     default: return BookOpen;
   }
 }

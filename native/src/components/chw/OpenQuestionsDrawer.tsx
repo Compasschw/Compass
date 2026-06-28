@@ -68,7 +68,7 @@ export interface OpenQuestionsJourney {
   currentStepName: string;
   /**
    * Determines which question bank to load.
-   * Recognised values: food | housing | mental_health | healthcare | rehab.
+   * Recognised values: food | housing | mental_health | healthcare | transportation | employment.
    * Unknown values fall back to _default.
    */
   vertical: string;
@@ -224,33 +224,64 @@ const QUESTIONS_BY_VERTICAL: Record<string, QuestionSection[]> = {
     },
   ],
 
-  rehab: [
+  transportation: [
     {
       section: '1 · Confirm Current Situation',
       questions: [
-        'How has your recovery been going since we last spoke?',
-        'Have you connected with your sponsor or support group this week?',
+        'How have you been getting to your appointments since we last spoke?',
+        'Do you have any upcoming appointments you need a ride to?',
       ],
     },
     {
       section: '2 · Document Support',
       questions: [
-        'Do you have the required paperwork for your treatment program enrollment?',
-        'Would you like help finding a local community support center?',
+        'Would you like help setting up non-emergency medical transportation (NEMT) through your plan?',
+        'Do you have a bus pass or transit card, or would you like help getting one?',
       ],
     },
     {
       section: '3 · Barriers',
       questions: [
-        'Are there any triggers or stressors we should add to your safety plan?',
-        'Is housing stability impacting your ability to attend your program?',
+        'Has a lack of transportation caused you to miss any appointments recently?',
+        'Are cost, distance, or mobility making it hard to get where you need to go?',
       ],
     },
     {
       section: '4 · Close the Call',
       questions: [
-        'Can we schedule a check-in before your next program date?',
-        'Is there someone I can loop in to support you between our calls?',
+        'Can we confirm your ride for your next appointment before we end the call?',
+        'Would you like me to text you the transit or NEMT details?',
+      ],
+    },
+  ],
+
+  employment: [
+    {
+      section: '1 · Confirm Current Situation',
+      questions: [
+        'How has your job search been going since we last spoke?',
+        'Are you currently working, actively looking, or getting ready to apply?',
+      ],
+    },
+    {
+      section: '2 · Document Support',
+      questions: [
+        'Do you have an up-to-date resume, or would you like help building one?',
+        'Would you like help gathering what you need to apply (ID, references, certifications)?',
+      ],
+    },
+    {
+      section: '3 · Barriers',
+      questions: [
+        'Is anything getting in the way of working right now — childcare, transportation, or scheduling?',
+        'Would training or a certification help you reach the kind of job you want?',
+      ],
+    },
+    {
+      section: '4 · Close the Call',
+      questions: [
+        'Can we set a goal for the next step in your job search before we end the call?',
+        'Would you like me to text you a few local job or training leads?',
       ],
     },
   ],

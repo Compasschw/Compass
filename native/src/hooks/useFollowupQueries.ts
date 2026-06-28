@@ -33,8 +33,9 @@ export type FollowupVertical =
   | 'housing'
   | 'food'
   | 'mental_health'
-  | 'rehab'
-  | 'healthcare';
+  | 'transportation'
+  | 'healthcare'
+  | 'employment';
 
 export interface SessionFollowup {
   id: string;

@@ -116,11 +116,12 @@ const OWNER_LABELS: Record<FollowupOwner, string> = {
 };
 
 const VERTICAL_LABELS: Record<FollowupVertical, string> = {
-  housing:       'Housing',
-  food:          'Food Security',
-  mental_health: 'Mental Health',
-  rehab:         'Rehab',
-  healthcare:    'Healthcare',
+  housing:        'Housing',
+  food:           'Food Security',
+  mental_health:  'Mental Health',
+  transportation: 'Transportation',
+  healthcare:     'Healthcare',
+  employment:     'Employment',
 };
 
 const PRIORITY_LABELS: Record<FollowupPriority, string> = {

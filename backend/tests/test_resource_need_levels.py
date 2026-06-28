@@ -267,9 +267,9 @@ async def test_get_member_profile_returns_resource_need_levels(
     patch_res = await client.patch(
         f"/api/v1/chw/members/{member_id}/resource-needs",
         json={
-            "needs": ["rehab", "food_security"],
+            "needs": ["transportation", "food_security"],
             "levels": [
-                {"slug": "rehab", "level": "medium"},
+                {"slug": "transportation", "level": "medium"},
                 {"slug": "food_security", "level": "high"},
             ],
         },
@@ -292,7 +292,7 @@ async def test_get_member_profile_returns_resource_need_levels(
         "resource_need_levels must be a list, not a dict"
     )
     levels = _levels_dict(detail["resource_need_levels"])
-    assert levels == {"rehab": "medium", "food_security": "high"}
+    assert levels == {"transportation": "medium", "food_security": "high"}
 
 
 @pytest.mark.asyncio

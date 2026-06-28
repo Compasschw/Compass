@@ -117,10 +117,11 @@ const ALL_LANGUAGES: string[] = [
 
 const ALL_VERTICALS: Vertical[] = [
   'housing',
-  'rehab',
+  'transportation',
   'food',
   'mental_health',
   'healthcare',
+  'employment',
 ];
 
 const GENDER_OPTIONS: { key: GenderPreference; label: string }[] = [

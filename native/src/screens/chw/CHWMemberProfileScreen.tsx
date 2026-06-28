@@ -347,8 +347,9 @@ const CATEGORY_LABELS: Record<string, string> = {
   housing: 'Housing',
   food: 'Food Security',
   mental_health: 'Mental Health',
-  rehab: 'Rehab',
+  transportation: 'Transportation',
   healthcare: 'Healthcare',
+  employment: 'Employment',
 };
 
 /** Points awarded per step in the 6-step journey roadmap. */
@@ -1389,13 +1390,14 @@ const editDemoStyles = StyleSheet.create({
 
 // ─── EditResourceNeedsModal ───────────────────────────────────────────────────
 
-/** The 5 selectable resource-need categories (slug → label). */
+/** The selectable resource-need categories (slug → label). */
 const RESOURCE_NEED_OPTIONS: ReadonlyArray<{ slug: string; label: string }> = [
-  { slug: 'housing',       label: 'Housing' },
-  { slug: 'rehab',         label: 'Rehab & Recovery' },
-  { slug: 'food',          label: 'Food Security' },
-  { slug: 'mental_health', label: 'Mental Health' },
-  { slug: 'healthcare',    label: 'Healthcare' },
+  { slug: 'housing',        label: 'Housing' },
+  { slug: 'transportation', label: 'Transportation' },
+  { slug: 'food',           label: 'Food Security' },
+  { slug: 'mental_health',  label: 'Mental Health' },
+  { slug: 'healthcare',     label: 'Healthcare' },
+  { slug: 'employment',     label: 'Employment' },
 ];
 
 interface EditResourceNeedsModalProps {
@@ -3354,13 +3356,14 @@ const addJourneyStyles = StyleSheet.create({
 
 // ─── CreateCustomJourneyModal ─────────────────────────────────────────────────
 
-/** The 5 resource categories offered as quick-pick chips in the custom journey creator. */
+/** Resource categories offered as quick-pick chips in the custom journey creator. */
 const JOURNEY_CATEGORY_CHIPS: ReadonlyArray<{ label: string }> = [
   { label: 'Housing' },
-  { label: 'Rehab & Recovery' },
+  { label: 'Transportation' },
   { label: 'Food Security' },
   { label: 'Mental Health' },
   { label: 'Healthcare' },
+  { label: 'Employment' },
 ];
 
 interface CreateCustomJourneyModalProps {
@@ -5545,7 +5548,7 @@ interface MemberJourneyTimelineProps {
  */
 function MemberJourneyTimeline({
   memberId,
-  onAddJourney: _onAddJourney,
+  onAddJourney,
   windowWidth,
   editMode,
   resourceNeedLevels,
@@ -5584,9 +5587,27 @@ function MemberJourneyTimeline({
     );
   }
 
+  // "Create a custom journey" entry — always rendered at the BOTTOM of the list
+  // (and below the empty state) so a CHW can author a free-text journey for
+  // needs that aren't covered by the canonical resource needs.
+  const addJourneyRow = (
+    <TouchableOpacity
+      style={mjStyles.addJourneyRow}
+      onPress={onAddJourney}
+      accessibilityRole="button"
+      accessibilityLabel="Create a custom journey for this member"
+    >
+      <Plus size={15} color={tokens.primary} />
+      <Text style={mjStyles.addJourneyRowText}>Create a custom journey</Text>
+    </TouchableOpacity>
+  );
+
   if (activeJourneysSorted.length === 0) {
     return (
-      <EmptySectionState message="No active journeys. Use 'Add Journey' to start one." />
+      <View style={mjStyles.emptyWrap}>
+        <EmptySectionState message="No active journeys yet." />
+        {addJourneyRow}
+      </View>
     );
   }
 
@@ -5608,6 +5629,7 @@ function MemberJourneyTimeline({
       accessibilityRole="list"
     >
       {journeyList}
+      {addJourneyRow}
     </View>
   ) : (
     <ScrollView
@@ -5616,12 +5638,32 @@ function MemberJourneyTimeline({
       showsVerticalScrollIndicator={false}
     >
       {journeyList}
+      {addJourneyRow}
     </ScrollView>
   );
 }
 
 const mjStyles = StyleSheet.create({
   container: { gap: 0 } as ViewStyle,
+  emptyWrap: { gap: 12 } as ViewStyle,
+  addJourneyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 10,
+    paddingVertical: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: tokens.cardBorder,
+    backgroundColor: tokens.cardBg,
+  } as ViewStyle,
+  addJourneyRowText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: tokens.primary,
+  } as TextStyle,
   scrollContainer: {
     maxHeight: Platform.OS === 'web' ? (560 as unknown as number) : undefined,
     overflowY: Platform.OS === 'web' ? ('auto' as unknown as 'scroll') : undefined,

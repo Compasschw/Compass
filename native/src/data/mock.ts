@@ -5,7 +5,7 @@
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type UserRole = 'chw' | 'member' | 'admin';
-export type Vertical = 'housing' | 'rehab' | 'food' | 'mental_health' | 'healthcare';
+export type Vertical = 'housing' | 'transportation' | 'food' | 'mental_health' | 'healthcare' | 'employment';
 export type SessionStatus = 'scheduled' | 'in_progress' | 'completed' | 'cancelled';
 export type RequestStatus = 'open' | 'matched' | 'completed' | 'cancelled';
 export type Urgency = 'routine' | 'soon' | 'urgent';
@@ -238,7 +238,7 @@ export const chwProfiles: CHWProfile[] = [
     id: 'chw-002',
     name: 'Darnell Washington',
     avatar: 'DW',
-    specializations: ['rehab', 'healthcare', 'mental_health'],
+    specializations: ['transportation', 'healthcare', 'mental_health'],
     languages: ['English'],
     rating: 4.8,
     yearsExperience: 4,
@@ -278,7 +278,7 @@ export const memberProfiles: MemberProfile[] = [
     name: 'Marcus Johnson',
     zipCode: '90059',
     primaryLanguage: 'English',
-    primaryNeed: 'rehab',
+    primaryNeed: 'transportation',
     rewardsBalance: 45,
   },
   {
@@ -309,7 +309,7 @@ export const serviceRequests: ServiceRequest[] = [
   {
     id: 'req-002',
     memberName: 'Marcus Johnson',
-    vertical: 'rehab',
+    vertical: 'transportation',
     urgency: 'soon',
     description:
       'Seeking referral to an outpatient substance use treatment program covered by Medi-Cal. Has 60-day sobriety milestone and wants to maintain momentum.',
@@ -376,7 +376,7 @@ export const sessions: Session[] = [
     id: 'sess-002',
     chwName: 'Darnell Washington',
     memberName: 'Marcus Johnson',
-    vertical: 'rehab',
+    vertical: 'transportation',
     status: 'completed',
     mode: 'virtual',
     scheduledAt: '2026-03-31T14:00:00Z',
@@ -439,7 +439,7 @@ export const goals: Goal[] = [
     id: 'goal-002',
     title: 'Maintain Recovery Milestones',
     emoji: '💪',
-    category: 'rehab',
+    category: 'transportation',
     progress: 60,
     sessionsCompleted: 3,
     nextSession: '2026-04-07T14:00:00Z',
@@ -479,10 +479,11 @@ export const earningsSummary: EarningsSummary = {
  */
 export const verticalLabels: Record<Vertical, string> = {
   housing: 'Housing',
-  rehab: 'Rehab & Recovery',
+  transportation: 'Transportation',
   food: 'Food Security',
   mental_health: 'Mental Health',
   healthcare: 'Healthcare',
+  employment: 'Employment',
 };
 
 export const urgencyLabels: Record<Urgency, string> = {
@@ -555,13 +556,13 @@ export const mockCredentials: Credential[] = [
 
 export const mockCalendarEvents: CalendarEvent[] = [
   { id: 'cal-001', title: 'Session: Rosa Delgado', date: '2026-04-03', startTime: '10:00', endTime: '11:00', vertical: 'housing', type: 'session', memberName: 'Rosa Delgado', chwName: 'Maria Guadalupe Reyes' },
-  { id: 'cal-002', title: 'Session: Marcus Johnson', date: '2026-04-07', startTime: '14:00', endTime: '15:00', vertical: 'rehab', type: 'session', memberName: 'Marcus Johnson', chwName: 'Darnell Washington' },
+  { id: 'cal-002', title: 'Session: Marcus Johnson', date: '2026-04-07', startTime: '14:00', endTime: '15:00', vertical: 'transportation', type: 'session', memberName: 'Marcus Johnson', chwName: 'Darnell Washington' },
   { id: 'cal-003', title: 'Session: Fatima Al-Hassan', date: '2026-04-10', startTime: '11:00', endTime: '12:00', vertical: 'mental_health', type: 'session', memberName: 'Fatima Al-Hassan', chwName: 'Maria Guadalupe Reyes' },
   { id: 'cal-004', title: 'Session: James Okonkwo', date: '2026-04-14', startTime: '09:00', endTime: '10:00', vertical: 'food', type: 'session', memberName: 'James Okonkwo', chwName: 'Maria Guadalupe Reyes' },
   { id: 'cal-005', title: 'CE Training Workshop', date: '2026-04-18', startTime: '13:00', endTime: '16:00', type: 'goal_milestone', chwName: 'Maria Guadalupe Reyes' },
   { id: 'cal-006', title: 'Session: Rosa Delgado (Follow-up)', date: '2026-04-21', startTime: '10:00', endTime: '11:00', vertical: 'housing', type: 'session', memberName: 'Rosa Delgado', chwName: 'Maria Guadalupe Reyes' },
   { id: 'cal-007', title: 'Goal: Housing application deadline', date: '2026-04-15', startTime: '09:00', endTime: '09:00', vertical: 'housing', type: 'goal_milestone', memberName: 'Rosa Delgado' },
-  { id: 'cal-008', title: 'Goal: Recovery 90-day milestone', date: '2026-04-25', startTime: '09:00', endTime: '09:00', vertical: 'rehab', type: 'goal_milestone', memberName: 'Marcus Johnson' },
+  { id: 'cal-008', title: 'Goal: Recovery 90-day milestone', date: '2026-04-25', startTime: '09:00', endTime: '09:00', vertical: 'transportation', type: 'goal_milestone', memberName: 'Marcus Johnson' },
 ];
 
 // ─── Rewards ──────────────────────────────────────────────────────────────────

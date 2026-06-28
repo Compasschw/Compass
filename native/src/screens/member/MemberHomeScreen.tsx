@@ -48,6 +48,8 @@ import {
   Gift,
   Hand,
   HeartPulse,
+  Bus,
+  Briefcase,
   Home,
   ListChecks,
   MessageSquare,
@@ -248,14 +250,16 @@ function VerticalIcon({ vertical }: { vertical: Vertical }): React.JSX.Element {
   switch (vertical) {
     case 'housing':
       return <Home size={20} color={tokens.primary} strokeWidth={2} accessibilityLabel="Housing vertical" />;
-    case 'rehab':
-      return <HeartPulse size={20} color={tokens.purple700} strokeWidth={2} accessibilityLabel="Rehab vertical" />;
+    case 'transportation':
+      return <Bus size={20} color={tokens.primary} strokeWidth={2} accessibilityLabel="Transportation vertical" />;
     case 'food':
       return <ShoppingBasket size={20} color={tokens.orange700} strokeWidth={2} accessibilityLabel="Food vertical" />;
     case 'mental_health':
       return <HeartPulse size={20} color={tokens.purple700} strokeWidth={2} accessibilityLabel="Mental health vertical" />;
     case 'healthcare':
       return <ClipboardList size={20} color={tokens.primary} strokeWidth={2} accessibilityLabel="Healthcare vertical" />;
+    case 'employment':
+      return <Briefcase size={20} color={tokens.primary} strokeWidth={2} accessibilityLabel="Employment vertical" />;
     default:
       return <ClipboardList size={20} color={tokens.primary} strokeWidth={2} />;
   }

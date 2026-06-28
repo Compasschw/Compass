@@ -4,12 +4,11 @@
  * Canonical enum values are taken directly from the backend Python enum:
  *   backend/app/models/enums.py :: class Vertical(str, enum.Enum)
  *
- * Values: housing | rehab | food | mental_health | healthcare
+ * Values: housing | transportation | food | mental_health | healthcare | employment
  *
  * All frontend code should import labels, colours, and icons from here instead
  * of defining them inline. This eliminates the label-mismatch bug where the CHW
- * side showed "Food" / "Rehab" and the member side showed "Food Security" /
- * "Rehab & Recovery" for the same enum value.
+ * side and member side showed different strings for the same enum value.
  *
  * Icon names reference lucide-react-native components. Screens that need icons
  * should import them from lucide-react-native and use VERTICAL_ICON_NAME to
@@ -20,10 +19,11 @@
 
 export const VERTICAL_ENUM = [
   'housing',
-  'rehab',
+  'transportation',
   'food',
   'mental_health',
   'healthcare',
+  'employment',
 ] as const;
 
 export type Vertical = typeof VERTICAL_ENUM[number];
@@ -39,10 +39,11 @@ export type Vertical = typeof VERTICAL_ENUM[number];
  */
 export const VERTICAL_LABEL: Record<Vertical, string> = {
   housing: 'Housing',
-  rehab: 'Rehab & Recovery',
+  transportation: 'Transportation',
   food: 'Food Security',
   mental_health: 'Mental Health',
   healthcare: 'Healthcare',
+  employment: 'Employment',
 };
 
 /**
@@ -66,21 +67,23 @@ export function verticalLabel(v: string): string {
  * indicators. Chosen for WCAG AA contrast on both #FFFFFF and #F4F1ED.
  */
 export const VERTICAL_COLOR: Record<Vertical, string> = {
-  housing: '#3B82F6',       // blue-500
-  rehab: '#EF4444',         // red-500
-  food: '#F59E0B',          // amber-500
-  mental_health: '#8B5CF6', // violet-500
-  healthcare: '#06B6D4',    // cyan-500
+  housing: '#3B82F6',        // blue-500
+  transportation: '#14B8A6', // teal-500
+  food: '#F59E0B',           // amber-500
+  mental_health: '#8B5CF6',  // violet-500
+  healthcare: '#06B6D4',     // cyan-500
+  employment: '#6366F1',     // indigo-500
 };
 
 // ─── Emoji (lightweight icon for contexts where lucide isn't available) ───────
 
 export const VERTICAL_EMOJI: Record<Vertical, string> = {
   housing: '🏠',
-  rehab: '💪',
+  transportation: '🚌',
   food: '🛒',
   mental_health: '🧠',
   healthcare: '🏥',
+  employment: '💼',
 };
 
 // ─── Filter chip options (used by both CHW and member filter bars) ────────────

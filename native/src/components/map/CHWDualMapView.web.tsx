@@ -6,7 +6,7 @@
  *     display name is first initial only ("J."). Tapping opens the member
  *     bottom sheet → CHWMemberProfileScreen.
  *  2. Resource layer — precise-location pins coloured by category (housing=blue,
- *     food=amber, mental_health=violet, rehab=red, healthcare=cyan). Tapping
+ *     food=amber, mental_health=violet, transportation=teal, healthcare=cyan, employment=indigo). Tapping
  *     opens the resource bottom sheet → "Get Directions" deep-link.
  *
  * The `layerFilter` prop (driven by the segmented control in CHWMapScreen)

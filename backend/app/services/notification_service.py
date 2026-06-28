@@ -165,10 +165,11 @@ async def notify_match_proposed(
     # Map raw vertical slugs to human-friendly labels
     vertical_label_map: dict[str, str] = {
         "housing": "housing",
-        "rehab": "recovery support",
+        "transportation": "transportation",
         "food": "food access",
         "mental_health": "mental health",
         "healthcare": "healthcare navigation",
+        "employment": "employment",
     }
     label = vertical_label_map.get(vertical.lower(), vertical.replace("_", " "))
 

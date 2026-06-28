@@ -174,12 +174,12 @@ async def test_new_needs_with_no_existing_journeys_creates_matching_journeys(
     client: AsyncClient,
     reconcile_pair: tuple[dict, dict, str],
 ) -> None:
-    """Saving [rehab(high), housing(med)] with no pre-existing journeys creates
-    exactly 2 active journeys named 'Rehab & Recovery' and 'Housing'.
+    """Saving [transportation(high), housing(med)] with no pre-existing journeys
+    creates exactly 2 active journeys named 'Transportation' and 'Housing'.
 
     Verifies:
       - Both journeys are active.
-      - The 'Rehab & Recovery' template is auto-created (not seeded).
+      - The 'Transportation' template is auto-created (not seeded).
       - The 'Housing' template is found or created correctly.
     """
     chw_tokens, _, member_id = reconcile_pair
@@ -188,9 +188,9 @@ async def test_new_needs_with_no_existing_journeys_creates_matching_journeys(
         client,
         member_id,
         chw_tokens,
-        needs=["rehab", "housing"],
+        needs=["transportation", "housing"],
         levels=[
-            {"slug": "rehab", "level": "high"},
+            {"slug": "transportation", "level": "high"},
             {"slug": "housing", "level": "medium"},
         ],
     )
@@ -206,21 +206,21 @@ async def test_new_needs_with_no_existing_journeys_creates_matching_journeys(
         )
         names = {t.name for t in templates_result.scalars().all()}
 
-    assert names == {"Rehab & Recovery", "Housing"}, (
-        f"Expected exactly 'Rehab & Recovery' and 'Housing'; got {names}"
+    assert names == {"Transportation", "Housing"}, (
+        f"Expected exactly 'Transportation' and 'Housing'; got {names}"
     )
 
-    # 'Rehab & Recovery' was created by the reconciler (not in seeds).
+    # 'Transportation' was created by the reconciler (not in seeds).
     async with test_session() as db:
         tmpl_result = await db.execute(
-            select(JourneyTemplate).where(JourneyTemplate.name == "Rehab & Recovery")
+            select(JourneyTemplate).where(JourneyTemplate.name == "Transportation")
         )
         tmpl = tmpl_result.scalar_one_or_none()
 
-    assert tmpl is not None, "'Rehab & Recovery' template was not created"
+    assert tmpl is not None, "'Transportation' template was not created"
     assert tmpl.is_active is True
     assert tmpl.is_custom is False
-    assert tmpl.slug == "rehab_recovery"
+    assert tmpl.slug == "transportation"
 
 
 # ── Test 2: Pre-existing journey with progress is preserved ───────────────────
@@ -231,8 +231,8 @@ async def test_existing_journey_with_progress_preserved_when_need_saved(
     client: AsyncClient,
     reconcile_pair: tuple[dict, dict, str],
 ) -> None:
-    """A pre-existing 'Rehab & Recovery' journey with 2 completed steps is KEPT
-    (same id, progress intact) when rehab is saved as a need again.
+    """A pre-existing 'Transportation' journey with 2 completed steps is KEPT
+    (same id, progress intact) when transportation is saved as a need again.
 
     Verifies:
       - Reconcile does not recreate the journey if one already exists.
@@ -240,13 +240,13 @@ async def test_existing_journey_with_progress_preserved_when_need_saved(
     """
     chw_tokens, _, member_id = reconcile_pair
 
-    # First call: create the Rehab journey.
+    # First call: create the Transportation journey.
     await _patch_resource_needs(
         client,
         member_id,
         chw_tokens,
-        needs=["rehab"],
-        levels=[{"slug": "rehab", "level": "high"}],
+        needs=["transportation"],
+        levels=[{"slug": "transportation", "level": "high"}],
     )
 
     active_before = await _get_active_journeys(member_id)
@@ -281,13 +281,13 @@ async def test_existing_journey_with_progress_preserved_when_need_saved(
     )
     assert res.status_code == 200, res.text
 
-    # Second call: same need (rehab) — reconciler should keep the same journey.
+    # Second call: same need (transportation) — reconciler keeps the same journey.
     await _patch_resource_needs(
         client,
         member_id,
         chw_tokens,
-        needs=["rehab"],
-        levels=[{"slug": "rehab", "level": "high"}],
+        needs=["transportation"],
+        levels=[{"slug": "transportation", "level": "high"}],
     )
 
     active_after = await _get_active_journeys(member_id)
@@ -462,9 +462,9 @@ async def test_resource_needs_update_is_idempotent(
     """
     chw_tokens, _, member_id = reconcile_pair
 
-    needs = ["rehab", "housing"]
+    needs = ["transportation", "housing"]
     levels = [
-        {"slug": "rehab", "level": "high"},
+        {"slug": "transportation", "level": "high"},
         {"slug": "housing", "level": "medium"},
     ]
 
@@ -621,3 +621,97 @@ async def test_needs_persist_even_if_reconcile_raises(
         assert prof.primary_need == "housing", (
             f"needs must persist even when reconcile fails; got {prof.primary_need!r}"
         )
+
+
+# ── Vertical taxonomy: rehab→transportation rename + employment added ─────────
+
+
+@pytest.mark.asyncio
+async def test_transportation_and_employment_create_journeys(
+    client: AsyncClient,
+    reconcile_pair: tuple[dict, dict, str],
+) -> None:
+    """The renamed 'transportation' and new 'employment' needs are valid and
+    each auto-provisions its canonical journey."""
+    chw_tokens, _, member_id = reconcile_pair
+
+    await _patch_resource_needs(
+        client,
+        member_id,
+        chw_tokens,
+        needs=["transportation", "employment"],
+        levels=[
+            {"slug": "transportation", "level": "high"},
+            {"slug": "employment", "level": "medium"},
+        ],
+    )
+
+    active = await _get_active_journeys(member_id)
+    assert len(active) == 2, f"Expected 2 journeys, got {len(active)}"
+    async with test_session() as db:
+        names = {
+            t.name
+            for t in (
+                await db.execute(
+                    select(JourneyTemplate).where(
+                        JourneyTemplate.id.in_([j.template_id for j in active])
+                    )
+                )
+            ).scalars().all()
+        }
+    assert names == {"Transportation", "Employment"}, f"got {names}"
+
+
+@pytest.mark.asyncio
+async def test_rehab_is_no_longer_a_valid_need(
+    client: AsyncClient,
+    reconcile_pair: tuple[dict, dict, str],
+) -> None:
+    """'rehab' was repurposed to 'transportation' and must now be rejected (422)."""
+    chw_tokens, _, member_id = reconcile_pair
+
+    res = await client.patch(
+        f"/api/v1/chw/members/{member_id}/resource-needs",
+        json={"needs": ["rehab"], "levels": [{"slug": "rehab", "level": "high"}]},
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 422, res.text
+
+
+@pytest.mark.asyncio
+async def test_custom_journey_survives_resource_needs_save(
+    client: AsyncClient,
+    reconcile_pair: tuple[dict, dict, str],
+) -> None:
+    """A CHW-authored custom journey must NOT be abandoned by a later needs save.
+
+    The reconciler abandons active journeys whose template isn't in the needs
+    set; a custom journey's name never matches a canonical need, so without the
+    is_custom guard it would be silently abandoned the next time a CHW edits the
+    member's resource needs.
+    """
+    chw_tokens, _, member_id = reconcile_pair
+
+    # CHW creates a custom journey for the member.
+    res = await client.post(
+        "/api/v1/journeys/custom",
+        json={"member_id": member_id, "title": "Get a driver's license"},
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 201, res.text
+    custom_journey_id = res.json()["id"]
+
+    # CHW then saves an unrelated resource need (triggers reconciliation).
+    await _patch_resource_needs(
+        client,
+        member_id,
+        chw_tokens,
+        needs=["housing"],
+        levels=[{"slug": "housing", "level": "high"}],
+    )
+
+    # The custom journey must still be active.
+    active_ids = {str(j.id) for j in await _get_active_journeys(member_id)}
+    assert custom_journey_id in active_ids, (
+        "custom journey was abandoned by the resource-needs reconciliation"
+    )

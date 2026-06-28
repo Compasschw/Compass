@@ -8,10 +8,11 @@ class UserRole(str, enum.Enum):
 
 class Vertical(str, enum.Enum):
     housing = "housing"
-    rehab = "rehab"
+    transportation = "transportation"
     food = "food"
     mental_health = "mental_health"
     healthcare = "healthcare"
+    employment = "employment"
 
 class SessionStatus(str, enum.Enum):
     scheduled = "scheduled"

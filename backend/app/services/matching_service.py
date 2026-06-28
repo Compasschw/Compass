@@ -47,9 +47,9 @@ def haversine(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
 
 INTAKE_SPECIALIZATION_TO_VERTICALS: dict[str, set[str]] = {
     "chronic_disease": {"healthcare"},
-    "behavioral_health": {"mental_health", "rehab"},
+    "behavioral_health": {"mental_health"},
     "maternal_child": {"healthcare"},
-    "housing_social": {"housing", "food"},
+    "housing_social": {"housing", "food", "transportation", "employment"},
     "cancer_prevention": {"healthcare"},
 }
 

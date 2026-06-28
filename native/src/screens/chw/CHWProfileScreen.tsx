@@ -97,24 +97,26 @@ const LANGUAGE_OPTIONS = [
   { value: 'Cantonese',  label: '粵語' },
 ];
 
-type Vertical = 'housing' | 'food' | 'mental_health' | 'rehab' | 'healthcare';
+type Vertical = 'housing' | 'food' | 'mental_health' | 'transportation' | 'healthcare' | 'employment';
 
 const VERTICAL_LABELS: Record<Vertical, string> = {
-  housing:       'Housing',
-  food:          'Food Security',
-  mental_health: 'Mental Health',
-  rehab:         'Rehab & Recovery',
-  healthcare:    'Healthcare Access',
+  housing:        'Housing',
+  food:           'Food Security',
+  mental_health:  'Mental Health',
+  transportation: 'Transportation',
+  healthcare:     'Healthcare Access',
+  employment:     'Employment',
 };
 
-const ALL_VERTICALS: Vertical[] = ['housing', 'food', 'mental_health', 'rehab', 'healthcare'];
+const ALL_VERTICALS: Vertical[] = ['housing', 'food', 'mental_health', 'transportation', 'healthcare', 'employment'];
 
 const VERTICAL_COLORS: Record<Vertical, string> = {
-  housing:       '#3B82F6',
-  food:          '#F59E0B',
-  mental_health: '#8B5CF6',
-  rehab:         '#EF4444',
-  healthcare:    '#06B6D4',
+  housing:        '#3B82F6',
+  food:           '#F59E0B',
+  mental_health:  '#8B5CF6',
+  transportation: '#14B8A6',
+  healthcare:     '#06B6D4',
+  employment:     '#6366F1',
 };
 
 type DayKey = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
