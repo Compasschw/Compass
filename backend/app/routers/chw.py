@@ -1740,15 +1740,35 @@ async def update_member_resource_needs(
     # Store as a dict (no migration needed — JSONB column unchanged).
     profile.resource_need_levels = normalized_levels
 
-    # Reconcile member's active journeys to the new needs in the same transaction.
+    # Persist the resource needs FIRST, on their own. Recording the member's
+    # needs is the CHW's core intent; it must never fail because of the secondary
+    # journey auto-provisioning step below.
+    await db.commit()
+
+    # Reconcile the member's active journeys to the new needs — a best-effort side
+    # effect. If it raises (e.g. unexpected template data), the needs are already
+    # saved, so log and return success rather than 500ing. An unhandled 500 here
+    # would, on web, surface only as "Failed to fetch" (generated outside
+    # CORSMiddleware). See backend/TESTING.md rule #3.
     from app.services.journey_reconciler import reconcile_member_journeys_to_needs
 
     reconcile_chw_id = caller_user.id if caller_role == "chw" else None
-    await reconcile_member_journeys_to_needs(
-        db, member_id, ordered, chw_id=reconcile_chw_id
-    )
+    try:
+        await reconcile_member_journeys_to_needs(
+            db, member_id, ordered, chw_id=reconcile_chw_id
+        )
+        await db.commit()
+    except Exception as exc:  # noqa: BLE001 — provisioning must not block the save
+        await db.rollback()
+        import logging as _logging
 
-    await db.commit()
+        _logging.getLogger("compass.chw").exception(
+            "resource-needs: journey reconciliation failed for member %s "
+            "(needs saved; journeys not reconciled): %s",
+            member_id,
+            exc,
+        )
+
     # Return levels as a list of {slug, level} objects in resource_needs order.
     # Slug stays a string value — immune to camelCase key transforms on mobile.
     return {

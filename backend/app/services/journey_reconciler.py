@@ -102,13 +102,25 @@ async def get_or_create_canonical_template(
     Returns:
         A JourneyTemplate (existing or newly flushed) whose name matches label.
     """
+    # NOTE: use .first() (not scalar_one_or_none) — production data can hold more
+    # than one active template with the same name (accumulated across seeds /
+    # migrations / concurrent on-demand creation). scalar_one_or_none() would
+    # raise MultipleResultsFound → an unhandled 500 that, on web, surfaces only as
+    # "Failed to fetch" (the 500 is generated outside CORSMiddleware, so the
+    # browser never sees the real error). See backend/TESTING.md rule #2.
+    # Deterministic tie-break: oldest active template wins.
     result = await db.execute(
         select(JourneyTemplate)
         .where(JourneyTemplate.name == label)
         .where(JourneyTemplate.is_active.is_(True))
+        .order_by(JourneyTemplate.created_at)
     )
-    template = result.scalar_one_or_none()
+    template = result.scalars().first()
     if template is not None:
+        # Heal legacy/partially-seeded templates that have no steps. Without this,
+        # create_journey_for_template raises ValueError("...has no steps...") →
+        # another unhandled 500 on the resource-needs save.
+        await _ensure_template_has_steps(db, template)
         return template
 
     slug = _LABEL_TO_SLUG.get(label, _slugify(label))
@@ -141,6 +153,48 @@ async def get_or_create_canonical_template(
 
     await db.flush()
     return template
+
+
+async def _ensure_template_has_steps(
+    db: AsyncSession,
+    template: JourneyTemplate,
+) -> None:
+    """Backfill the canonical STANDARD_STEPS for a template that has none.
+
+    A canonical (non-custom) JourneyTemplate is expected to carry the 6 standard
+    steps. Legacy rows, partial seeds, or older creation paths can leave a
+    template with zero steps; instantiating a member journey from such a template
+    raises ValueError in ``create_journey_for_template`` and 500s the caller.
+
+    This heal is idempotent: it inserts steps only when the template currently has
+    none, and flushes so the new rows are visible to the subsequent journey
+    creation in the same transaction.
+
+    Args:
+        db: An active async database session.
+        template: The (active, canonical) template to verify/heal.
+    """
+    step_count = await db.scalar(
+        select(func.count())
+        .select_from(JourneyTemplateStep)
+        .where(JourneyTemplateStep.template_id == template.id)
+    )
+    if step_count and step_count > 0:
+        return
+
+    for step_def in STANDARD_STEPS:
+        db.add(
+            JourneyTemplateStep(
+                id=uuid.uuid4(),
+                template_id=template.id,
+                order=step_def["order"],
+                name=step_def["name"],
+                description=step_def["description"],
+                points_on_completion=step_def["points_on_completion"],
+                required_documents=step_def["required_documents"],
+            )
+        )
+    await db.flush()
 
 
 async def create_journey_for_template(
