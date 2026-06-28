@@ -54,6 +54,8 @@ export interface SessionFollowup {
   sessionDate?: string | null;
   /** Present on roadmap items — surfaced from the session join */
   chwName?: string | null;
+  /** Present on roadmap items — session FK for the mark-complete action */
+  sessionId?: string | null;
 }
 
 export interface ExtractFollowupsResponse {

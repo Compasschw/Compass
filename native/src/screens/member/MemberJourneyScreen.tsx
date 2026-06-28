@@ -804,11 +804,11 @@ export function MemberJourneyScreen(props: MemberJourneyScreenProps): React.JSX.
       if (!item.id) return;
       setCompletingId(item.id);
       try {
-        // The backend PATCH path requires session_id. The roadmap endpoint should
-        // surface session_id on each item. We fall back gracefully on a placeholder
-        // that will 404 without crashing — tracked in Compass #[roadmap-session-id].
-        const sessionId =
-          (item as SessionFollowup & { sessionId?: string }).sessionId ?? 'unknown';
+        const sessionId = item.sessionId;
+        if (!sessionId) {
+          setCompletingId(null);
+          return;
+        }
         await completeRoadmapItem.mutateAsync({ sessionId, followupId: item.id });
       } finally {
         setCompletingId(null);
