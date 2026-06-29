@@ -1400,6 +1400,17 @@ const RESOURCE_NEED_OPTIONS: ReadonlyArray<{ slug: string; label: string }> = [
   { slug: 'employment',     label: 'Employment' },
 ];
 
+/**
+ * Canonical journey/template names that correspond 1:1 to a fixed resource need.
+ * A member journey whose template name is NOT in this set is a CHW-authored
+ * CUSTOM journey (i.e. a custom resource need). Used to (a) surface custom
+ * journeys in the Resource Needs card and (b) prevent a custom need from
+ * duplicating a fixed one.
+ */
+const CANONICAL_JOURNEY_NAMES: ReadonlySet<string> = new Set(
+  RESOURCE_NEED_OPTIONS.map((o) => o.label),
+);
+
 interface EditResourceNeedsModalProps {
   visible: boolean;
   /** Current selection-ordered resource needs — used to pre-fill selection. */
@@ -1437,6 +1448,8 @@ function EditResourceNeedsModal({
   onClose,
 }: EditResourceNeedsModalProps): React.JSX.Element {
   const updateResourceNeeds = useUpdateMemberResourceNeeds(memberId);
+  const createCustomJourney = useCreateCustomJourney(memberId);
+  const { data: existingJourneys } = useMemberJourneys(memberId);
 
   /**
    * Selection-ordered list of selected slugs — preserved for the `needs`
@@ -1446,6 +1459,8 @@ function EditResourceNeedsModal({
   /** CHW-assigned priority level per selected slug. */
   const [levels, setLevels] = useState<Record<string, ResourceNeedLevel>>({});
   const [error, setError] = useState<string | null>(null);
+  /** Free-text name for a CHW-authored custom resource need. */
+  const [customName, setCustomName] = useState('');
 
   // Hydrate selection and levels whenever the modal opens.
   useEffect(() => {
@@ -1512,6 +1527,45 @@ function EditResourceNeedsModal({
       setError(detail);
     }
   }, [selectedSlugs, levels, updateResourceNeeds, onClose]);
+
+  /**
+   * Create a CHW-authored custom resource need. This provisions a custom journey
+   * (POST /journeys/custom) which then surfaces in BOTH the Resource Needs card
+   * and the Member Journey section. Guards prevent duplicating a fixed need or an
+   * existing custom journey.
+   */
+  const handleAddCustom = useCallback(async (): Promise<void> => {
+    setError(null);
+    const name = customName.trim();
+    if (!name) return;
+
+    const fixedLabels = RESOURCE_NEED_OPTIONS.map((o) => o.label.toLowerCase());
+    if (fixedLabels.includes(name.toLowerCase())) {
+      setError(`"${name}" is already a standard resource need — select it above instead.`);
+      return;
+    }
+    const activeJourneyNames = (existingJourneys ?? [])
+      .filter((j) => j.status === 'active')
+      .map((j) => j.template.name.toLowerCase());
+    if (activeJourneyNames.includes(name.toLowerCase())) {
+      setError(`"${name}" already exists for this member.`);
+      return;
+    }
+
+    try {
+      await createCustomJourney.mutateAsync(name);
+      setCustomName('');
+    } catch (err: unknown) {
+      const detail =
+        err != null &&
+        typeof err === 'object' &&
+        'detail' in err &&
+        typeof (err as { detail: unknown }).detail === 'string'
+          ? (err as { detail: string }).detail
+          : 'Could not add custom resource need. Please try again.';
+      setError(detail);
+    }
+  }, [customName, existingJourneys, createCustomJourney]);
 
   const body = (
     <View style={editResourceNeedsStyles.container}>
@@ -1627,6 +1681,42 @@ function EditResourceNeedsModal({
             </View>
           );
         })}
+      </View>
+
+      {/* Add a custom resource need — creates a custom journey that then appears
+          in BOTH the Resource Needs card and the Member Journey section. */}
+      <View style={editResourceNeedsStyles.customRow}>
+        <TextInput
+          style={editResourceNeedsStyles.customInput}
+          value={customName}
+          onChangeText={setCustomName}
+          placeholder="Add a custom resource need…"
+          placeholderTextColor={tokens.textMuted}
+          editable={!createCustomJourney.isPending}
+          returnKeyType="done"
+          onSubmitEditing={() => void handleAddCustom()}
+          accessibilityLabel="Custom resource need name"
+        />
+        <TouchableOpacity
+          style={[
+            editResourceNeedsStyles.customAddBtn,
+            (createCustomJourney.isPending || customName.trim().length === 0) &&
+              editResourceNeedsStyles.customAddBtnDisabled,
+          ]}
+          onPress={() => void handleAddCustom()}
+          disabled={createCustomJourney.isPending || customName.trim().length === 0}
+          accessibilityRole="button"
+          accessibilityLabel="Add custom resource need"
+        >
+          {createCustomJourney.isPending ? (
+            <ActivityIndicator size="small" color={tokens.primary} />
+          ) : (
+            <>
+              <Plus size={14} color={tokens.primary} />
+              <Text style={editResourceNeedsStyles.customAddBtnText}>Add</Text>
+            </>
+          )}
+        </TouchableOpacity>
       </View>
 
       {/* Inline error */}
@@ -1855,6 +1945,45 @@ const editResourceNeedsStyles = StyleSheet.create({
   } as TextStyle,
   levelPillTextLow: {
     color: tokens.emerald700,
+  } as TextStyle,
+
+  // Custom resource need input
+  customRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 10,
+  } as ViewStyle,
+  customInput: {
+    flex: 1,
+    height: 42,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: tokens.cardBorder,
+    backgroundColor: tokens.cardBg,
+    paddingHorizontal: 12,
+    fontSize: 14,
+    color: tokens.textPrimary,
+  } as TextStyle,
+  customAddBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 14,
+    height: 42,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: tokens.primary,
+    backgroundColor: tokens.cardBg,
+  } as ViewStyle,
+  customAddBtnDisabled: {
+    opacity: 0.5,
+  } as ViewStyle,
+  customAddBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: tokens.primary,
   } as TextStyle,
 
   // Error
@@ -4388,6 +4517,30 @@ function ResourceNeedsColumn({
     [profile.resourceNeeds, slugLevelLookup],
   );
 
+  // CHW-authored custom journeys (custom resource needs) are surfaced here too,
+  // so the Resource Needs card and the Member Journey section show the same set
+  // of items. A journey is custom when its template name isn't a canonical need.
+  const { data: journeys } = useMemberJourneys(memberId);
+  const customJourneys = useMemo(
+    () =>
+      (journeys ?? []).filter(
+        (j) => j.status === 'active' && !CANONICAL_JOURNEY_NAMES.has(j.template.name),
+      ),
+    [journeys],
+  );
+
+  /** A custom-need row — same layout as a fixed need but tagged "Custom". */
+  const renderCustomRow = (journey: MemberJourneyResponse): React.JSX.Element => (
+    <View key={journey.id} style={resourceColStyles.priorityItem}>
+      <Text style={resourceColStyles.journeyName} numberOfLines={2}>
+        {journey.template.name}
+      </Text>
+      <Pill variant="blue" size="sm">Custom</Pill>
+    </View>
+  );
+
+  const hasAnyNeeds = orderedNeeds.length > 0 || customJourneys.length > 0;
+
   return (
     <View style={resourceColStyles.container}>
       {/* Resource Needs heading */}
@@ -4408,7 +4561,7 @@ function ResourceNeedsColumn({
       </View>
 
       {/* Needs list */}
-      {orderedNeeds.length === 0 ? (
+      {!hasAnyNeeds ? (
         <Text style={resourceColStyles.emptyText}>No resource needs selected.</Text>
       ) : Platform.OS === 'web' ? (
         <View style={resourceColStyles.needsScrollWeb}>
@@ -4433,6 +4586,7 @@ function ResourceNeedsColumn({
                   </View>
                 );
               })}
+              {customJourneys.map(renderCustomRow)}
             </StaggerList>
           </View>
         </View>
@@ -4463,6 +4617,7 @@ function ResourceNeedsColumn({
                   </View>
                 );
               })}
+              {customJourneys.map(renderCustomRow)}
             </StaggerList>
           </View>
         </ScrollView>
