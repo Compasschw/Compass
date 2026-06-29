@@ -3222,6 +3222,8 @@ export interface MemberJourneyResponse {
   memberName?: string;
   /** Present on the CHW caseload list — current step name (lightweight, no full step state). */
   currentStepName?: string | null;
+  /** CHW-assigned priority for custom journeys. Null for canonical journeys. */
+  priorityLevel?: 'low' | 'medium' | 'high' | null;
 }
 
 /** Raw flat item returned by GET /chw/journeys (lightweight, no step-state detail). */
@@ -3560,10 +3562,46 @@ export function useCreateMemberJourney(memberId: string) {
 export function useCreateCustomJourney(memberId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (title: string): Promise<MemberJourneyResponse> => {
+    mutationFn: async (
+      input: string | { title: string; priorityLevel?: ResourceNeedLevel },
+    ): Promise<MemberJourneyResponse> => {
+      // Back-compat: callers may pass a bare title string or { title, priorityLevel }.
+      const title = typeof input === 'string' ? input : input.title;
+      const priorityLevel = typeof input === 'string' ? undefined : input.priorityLevel;
       const raw = await api<unknown>('/journeys/custom', {
         method: 'POST',
-        body: JSON.stringify({ member_id: memberId, title }),
+        body: JSON.stringify({
+          member_id: memberId,
+          title,
+          ...(priorityLevel ? { priority_level: priorityLevel } : {}),
+        }),
+      });
+      return transformKeys<MemberJourneyResponse>(raw);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: memberJourneysKey(memberId) });
+      void qc.invalidateQueries({ queryKey: queryKeys.chwJourneys });
+    },
+  });
+}
+
+/**
+ * Update a custom journey's CHW-assigned priority level.
+ * PATCH /api/v1/journeys/{journeyId}/priority { priority_level }.
+ */
+export function useUpdateJourneyPriority(memberId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      journeyId,
+      priorityLevel,
+    }: {
+      journeyId: string;
+      priorityLevel: ResourceNeedLevel;
+    }): Promise<MemberJourneyResponse> => {
+      const raw = await api<unknown>(`/journeys/${journeyId}/priority`, {
+        method: 'PATCH',
+        body: JSON.stringify({ priority_level: priorityLevel }),
       });
       return transformKeys<MemberJourneyResponse>(raw);
     },

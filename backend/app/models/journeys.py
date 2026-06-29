@@ -131,6 +131,10 @@ class MemberJourney(Base):
         ForeignKey("journey_template_steps.id", ondelete="SET NULL"),
         nullable=True,
     )
+    # CHW-assigned priority for custom (CHW-authored) journeys: low | medium | high.
+    # NULL for canonical journeys, whose priority comes from the member's
+    # resource_need_levels instead.
+    priority_level: Mapped[str | None] = mapped_column(String(10), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
