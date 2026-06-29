@@ -1775,48 +1775,54 @@ function EditResourceNeedsModal({
             </View>
           );
         })}
-      </View>
 
-      {/* Existing custom resource needs — name + editable priority. These are
-          CHW-authored custom journeys; the priority persists immediately. */}
-      {customNeeds.map((j) => (
-        <View
-          key={j.id}
-          style={[editResourceNeedsStyles.chipRow, editResourceNeedsStyles.chipRowSelected]}
-        >
-          <View style={editResourceNeedsStyles.chipRowToggle}>
-            <View style={[editResourceNeedsStyles.chipBadge, editResourceNeedsStyles.chipBadgeSelected]}>
-              <Check size={12} color="#FFFFFF" />
+        {/* Existing custom resource needs — rendered inside the same list so they
+            share the fixed rows' width and inset. Priority is editable (saved on
+            Save); the green badge marks them as CHW-authored. */}
+        {customNeeds.map((j) => (
+          <View
+            key={j.id}
+            style={[editResourceNeedsStyles.chipRow, editResourceNeedsStyles.chipRowSelected]}
+          >
+            <View style={editResourceNeedsStyles.chipRowToggle}>
+              <View style={[editResourceNeedsStyles.chipBadge, editResourceNeedsStyles.chipBadgeSelected]}>
+                <Check size={12} color="#FFFFFF" />
+              </View>
+              <Text
+                style={[editResourceNeedsStyles.chipLabel, editResourceNeedsStyles.chipLabelSelected]}
+                numberOfLines={1}
+              >
+                {j.template.name}
+              </Text>
             </View>
-            <Text
-              style={[editResourceNeedsStyles.chipLabel, editResourceNeedsStyles.chipLabelSelected]}
-              numberOfLines={1}
-            >
-              {j.template.name}
-            </Text>
+            {renderLevelControl(
+              customLevelEdits[j.id] ?? j.priorityLevel ?? 'medium',
+              (lvl) => handleCustomLevelChange(j.id, lvl),
+            )}
           </View>
-          {renderLevelControl(
-            customLevelEdits[j.id] ?? j.priorityLevel ?? 'medium',
-            (lvl) => handleCustomLevelChange(j.id, lvl),
-          )}
-        </View>
-      ))}
+        ))}
+      </View>
 
       {/* Add a custom resource need — creates a custom journey that then appears
           in BOTH the Resource Needs card and the Member Journey section. */}
       <View style={editResourceNeedsStyles.customAddWrap}>
-        <View style={editResourceNeedsStyles.customRow}>
-          <TextInput
-            style={editResourceNeedsStyles.customInput}
-            value={customName}
-            onChangeText={setCustomName}
-            placeholder="Add a custom resource need…"
-            placeholderTextColor={tokens.textMuted}
-            editable={!createCustomJourney.isPending}
-            returnKeyType="done"
-            onSubmitEditing={() => void handleAddCustom()}
-            accessibilityLabel="Custom resource need name"
-          />
+        <Text style={editResourceNeedsStyles.customAddHeading}>Add a custom resource need</Text>
+        <TextInput
+          style={editResourceNeedsStyles.customInput}
+          value={customName}
+          onChangeText={setCustomName}
+          placeholder="Name this resource need…"
+          placeholderTextColor={tokens.textMuted}
+          editable={!createCustomJourney.isPending}
+          returnKeyType="done"
+          onSubmitEditing={() => void handleAddCustom()}
+          accessibilityLabel="Custom resource need name"
+        />
+        <View style={editResourceNeedsStyles.customAddControls}>
+          <View style={editResourceNeedsStyles.customLevelGroup}>
+            <Text style={editResourceNeedsStyles.customLevelLabel}>Priority</Text>
+            {renderLevelControl(customLevel, setCustomLevel)}
+          </View>
           <TouchableOpacity
             style={[
               editResourceNeedsStyles.customAddBtn,
@@ -1837,10 +1843,6 @@ function EditResourceNeedsModal({
               </>
             )}
           </TouchableOpacity>
-        </View>
-        <View style={editResourceNeedsStyles.customLevelRow}>
-          <Text style={editResourceNeedsStyles.customLevelLabel}>Priority</Text>
-          {renderLevelControl(customLevel, setCustomLevel)}
         </View>
       </View>
 
@@ -2072,30 +2074,25 @@ const editResourceNeedsStyles = StyleSheet.create({
     color: tokens.emerald700,
   } as TextStyle,
 
-  // Custom resource need input
+  // ── Add-a-custom-need composer ────────────────────────────────────────────
+  // Inset to match the chip list (paddingHorizontal: 20) and separated by a
+  // hairline divider so it reads as a distinct "compose" area.
   customAddWrap: {
-    gap: 8,
-    marginTop: 10,
+    marginTop: 4,
+    marginHorizontal: 20,
+    paddingTop: 14,
+    gap: 10,
+    borderTopWidth: 1,
+    borderTopColor: tokens.cardBorder,
   } as ViewStyle,
-  customRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  } as ViewStyle,
-  customLevelRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 2,
-  } as ViewStyle,
-  customLevelLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: tokens.textMuted,
+  customAddHeading: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: tokens.textPrimary,
   } as TextStyle,
   customInput: {
-    flex: 1,
-    height: 42,
+    alignSelf: 'stretch',
+    height: 44,
     borderRadius: 10,
     borderWidth: 1,
     borderColor: tokens.cardBorder,
@@ -2104,24 +2101,41 @@ const editResourceNeedsStyles = StyleSheet.create({
     fontSize: 14,
     color: tokens.textPrimary,
   } as TextStyle,
+  customAddControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  } as ViewStyle,
+  customLevelGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexShrink: 1,
+  } as ViewStyle,
+  customLevelLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: tokens.textMuted,
+  } as TextStyle,
   customAddBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    paddingHorizontal: 14,
-    height: 42,
-    borderRadius: 10,
+    paddingHorizontal: 16,
+    height: 38,
+    borderRadius: radius.pill,
     borderWidth: 1,
-    borderStyle: 'dashed',
     borderColor: tokens.primary,
-    backgroundColor: tokens.cardBg,
+    backgroundColor: `${tokens.primary}12`,
+    flexShrink: 0,
   } as ViewStyle,
   customAddBtnDisabled: {
-    opacity: 0.5,
+    opacity: 0.45,
   } as ViewStyle,
   customAddBtnText: {
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: '700',
     color: tokens.primary,
   } as TextStyle,
 
