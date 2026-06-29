@@ -1473,12 +1473,19 @@ function EditResourceNeedsModal({
   /** Free-text name + priority for a new CHW-authored custom resource need. */
   const [customName, setCustomName] = useState('');
   const [customLevel, setCustomLevel] = useState<ResourceNeedLevel>('high');
+  /**
+   * Pending (unsaved) priority edits for existing custom needs, keyed by
+   * journey id. Applied on Save alongside the fixed-need changes; discarded on
+   * Cancel — so custom and fixed needs behave identically.
+   */
+  const [customLevelEdits, setCustomLevelEdits] = useState<Record<string, ResourceNeedLevel>>({});
 
   // Hydrate selection and levels whenever the modal opens.
   useEffect(() => {
     if (visible) {
       setSelectedSlugs([...currentNeeds]);
       setLevels({ ...currentLevels });
+      setCustomLevelEdits({});
       setError(null);
     }
   }, [visible, currentNeeds, currentLevels]);
@@ -1527,6 +1534,20 @@ function EditResourceNeedsModal({
         .filter(([slug]) => selectedSlugs.includes(slug))
         .map(([slug, level]) => ({ slug, level }));
       await updateResourceNeeds.mutateAsync({ needs: selectedSlugs, levels: levelsArray });
+
+      // Persist any pending custom-need priority edits — only the ones that
+      // actually changed — so custom needs save with the fixed ones.
+      const customPatches = customNeeds
+        .map((j) => ({ j, edited: customLevelEdits[j.id] }))
+        .filter(({ j, edited }) => edited !== undefined && edited !== (j.priorityLevel ?? 'medium'))
+        .map(({ j, edited }) =>
+          updateJourneyPriority.mutateAsync({
+            journeyId: j.id,
+            priorityLevel: edited as ResourceNeedLevel,
+          }),
+        );
+      await Promise.all(customPatches);
+
       onClose();
     } catch (err: unknown) {
       const detail =
@@ -1538,7 +1559,15 @@ function EditResourceNeedsModal({
           : 'Could not save resource needs. Please try again.';
       setError(detail);
     }
-  }, [selectedSlugs, levels, updateResourceNeeds, onClose]);
+  }, [
+    selectedSlugs,
+    levels,
+    updateResourceNeeds,
+    customNeeds,
+    customLevelEdits,
+    updateJourneyPriority,
+    onClose,
+  ]);
 
   /**
    * Create a CHW-authored custom resource need. This provisions a custom journey
@@ -1580,19 +1609,12 @@ function EditResourceNeedsModal({
     }
   }, [customName, customLevel, existingJourneys, createCustomJourney]);
 
-  /** Persist a custom need's priority immediately (PATCH). */
+  /** Stage a custom need's priority change locally — persisted on Save. */
   const handleCustomLevelChange = useCallback(
     (journeyId: string, level: ResourceNeedLevel): void => {
-      setError(null);
-      updateJourneyPriority.mutate(
-        { journeyId, priorityLevel: level },
-        {
-          onError: () =>
-            setError('Could not update priority. Please try again.'),
-        },
-      );
+      setCustomLevelEdits((prev) => ({ ...prev, [journeyId]: level }));
     },
-    [updateJourneyPriority],
+    [],
   );
 
   /** Reusable Low/Med/High segmented control (used by the custom-need rows). */
@@ -1773,8 +1795,9 @@ function EditResourceNeedsModal({
               {j.template.name}
             </Text>
           </View>
-          {renderLevelControl(j.priorityLevel ?? 'medium', (lvl) =>
-            handleCustomLevelChange(j.id, lvl),
+          {renderLevelControl(
+            customLevelEdits[j.id] ?? j.priorityLevel ?? 'medium',
+            (lvl) => handleCustomLevelChange(j.id, lvl),
           )}
         </View>
       ))}
