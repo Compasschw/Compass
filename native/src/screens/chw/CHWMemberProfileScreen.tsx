@@ -1494,13 +1494,34 @@ function EditResourceNeedsModal({
   // Hydrate selection and levels whenever the modal opens.
   useEffect(() => {
     if (visible) {
-      setSelectedSlugs([...currentNeeds]);
-      setLevels({ ...currentLevels });
+      // A fixed need is "selected" if it's saved OR already has an active
+      // canonical journey — so the modal matches the (journey-driven) Resource
+      // Needs card and Member Journey section. This keeps all three in sync, and
+      // means saving never silently abandons an in-progress journey.
+      const activeCanonical = (existingJourneys ?? []).filter(
+        (j) => j.status === 'active' && CANONICAL_JOURNEY_NAMES.has(j.template.name),
+      );
+      const slugByLabel = (label: string): string | undefined =>
+        RESOURCE_NEED_OPTIONS.find((o) => o.label === label)?.slug;
+
+      const slugs = [...currentNeeds];
+      const nextLevels: Record<string, ResourceNeedLevel> = { ...currentLevels };
+      for (const j of activeCanonical) {
+        const slug = slugByLabel(j.template.name);
+        if (slug === undefined) continue;
+        if (!slugs.includes(slug)) slugs.push(slug);
+        // Default an unrecorded level to the journey's DISPLAYED (derived) level,
+        // so opening + saving the modal doesn't change what the CHW already sees.
+        if (!(slug in nextLevels)) nextLevels[slug] = deriveSeverity(j.progressPercent);
+      }
+
+      setSelectedSlugs(slugs);
+      setLevels(nextLevels);
       setCustomLevelEdits({});
       setCustomRemovals(new Set());
       setError(null);
     }
-  }, [visible, currentNeeds, currentLevels]);
+  }, [visible, currentNeeds, currentLevels, existingJourneys]);
 
   // Esc key closes on web.
   useEffect(() => {
@@ -4666,6 +4687,44 @@ const LEVEL_SORT_ORDER: Record<ResourceNeedLevel, number> = {
   low: 2,
 };
 
+/**
+ * The member's active journeys paired with their DISPLAY level, sorted
+ * high→medium→low. This is THE single source of truth shared by the Resource
+ * Needs card and the Member Journey section, so the two are always in sync — a
+ * member need IS an active journey.
+ *
+ * Level: a fixed-need journey (template name maps to a resource-need slug) uses
+ * the CHW-assigned resource-need level when set; everything else (orphan
+ * canonical journeys, custom journeys) falls back to a progress-derived severity.
+ */
+function activeJourneysWithLevel(
+  journeys: MemberJourneyResponse[] | undefined,
+  resourceNeedLevels: Record<string, ResourceNeedLevel>,
+): { journey: MemberJourneyResponse; level: JourneySeverity }[] {
+  return (journeys ?? [])
+    .filter((j) => j.status === 'active')
+    .map((journey, i) => {
+      const slug = RESOURCE_NEED_OPTIONS.find((o) => o.label === journey.template.name)?.slug;
+      let level: JourneySeverity;
+      if (slug !== undefined && slug in resourceNeedLevels) {
+        // Fixed need with a CHW-assigned level.
+        level = resourceNeedLevels[slug];
+      } else if (journey.priorityLevel) {
+        // Custom need with a CHW-assigned priority.
+        level = journey.priorityLevel;
+      } else {
+        // Orphan canonical journey (or anything unlabelled): derive from progress.
+        level = deriveSeverity(journey.progressPercent);
+      }
+      return { journey, level, i };
+    })
+    .sort((a, b) => {
+      const diff = LEVEL_SORT_ORDER[a.level] - LEVEL_SORT_ORDER[b.level];
+      return diff !== 0 ? diff : a.i - b.i;
+    })
+    .map(({ journey, level }) => ({ journey, level }));
+}
+
 // ─── ResourceNeedsColumn ─────────────────────────────────────────────────────
 
 interface ResourceNeedsColumnProps {
@@ -4709,35 +4768,23 @@ function ResourceNeedsColumn({
    * Resource needs sorted high→medium→low (stable: preserves selection order
    * within the same level).
    */
-  const orderedNeeds = useMemo(
-    () =>
-      profile.resourceNeeds
-        .map((slug, i) => ({ slug, i }))
-        .sort((a, b) => {
-          const la = slugLevelLookup[a.slug] ?? 'low';
-          const lb = slugLevelLookup[b.slug] ?? 'low';
-          const diff = LEVEL_SORT_ORDER[la] - LEVEL_SORT_ORDER[lb];
-          return diff !== 0 ? diff : a.i - b.i;
-        })
-        .map(({ slug }) => slug),
-    [profile.resourceNeeds, slugLevelLookup],
-  );
-
-  // CHW-authored custom journeys (custom resource needs) are surfaced here too,
-  // so the Resource Needs card and the Member Journey section show the same set
-  // of items. A journey is custom when its template name isn't a canonical need.
+  // The Resource Needs card renders the member's ACTIVE JOURNEYS — the exact
+  // same set and order as the Member Journey section (shared helper) — so the
+  // two sections are always in sync. A member need IS an active journey.
   const { data: journeys } = useMemberJourneys(memberId);
-  const customJourneys = useMemo(
-    () =>
-      (journeys ?? []).filter(
-        (j) => j.status === 'active' && !CANONICAL_JOURNEY_NAMES.has(j.template.name),
-      ),
-    [journeys],
+  const needRows = useMemo(
+    () => activeJourneysWithLevel(journeys, slugLevelLookup),
+    [journeys, slugLevelLookup],
   );
 
-  /** A custom-need row — same layout + level pill as a fixed need. */
-  const renderCustomRow = (journey: MemberJourneyResponse): React.JSX.Element => {
-    const level: ResourceNeedLevel = journey.priorityLevel ?? 'medium';
+  /** One need row: journey name + its level pill. */
+  const renderNeedRow = ({
+    journey,
+    level,
+  }: {
+    journey: MemberJourneyResponse;
+    level: JourneySeverity;
+  }): React.JSX.Element => {
     const pillVariant: 'red' | 'amber' | 'emerald' =
       level === 'high' ? 'red' : level === 'medium' ? 'amber' : 'emerald';
     const pillLabel = level === 'high' ? 'High' : level === 'medium' ? 'Medium' : 'Low';
@@ -4751,7 +4798,7 @@ function ResourceNeedsColumn({
     );
   };
 
-  const hasAnyNeeds = orderedNeeds.length > 0 || customJourneys.length > 0;
+  const hasAnyNeeds = needRows.length > 0;
 
   return (
     <View style={resourceColStyles.container}>
@@ -4779,26 +4826,7 @@ function ResourceNeedsColumn({
         <View style={resourceColStyles.needsScrollWeb}>
           <View style={resourceColStyles.priorityList}>
             <StaggerList delayMs={50} durationMs={240}>
-              {orderedNeeds.map((slug) => {
-                const option = RESOURCE_NEED_OPTIONS.find((o) => o.slug === slug);
-                const level = slugLevelLookup[slug] ?? 'low';
-                const pillVariant: 'red' | 'amber' | 'emerald' =
-                  level === 'high' ? 'red' : level === 'medium' ? 'amber' : 'emerald';
-                const pillLabel = level === 'high' ? 'High' : level === 'medium' ? 'Medium' : 'Low';
-
-                return (
-                  <View key={slug} style={resourceColStyles.priorityItem}>
-                    {/* Need label */}
-                    <Text style={resourceColStyles.journeyName} numberOfLines={2}>
-                      {option?.label ?? slug}
-                    </Text>
-
-                    {/* Level pill */}
-                    <Pill variant={pillVariant} size="sm">{pillLabel}</Pill>
-                  </View>
-                );
-              })}
-              {customJourneys.map(renderCustomRow)}
+              {needRows.map(renderNeedRow)}
             </StaggerList>
           </View>
         </View>
@@ -4810,26 +4838,7 @@ function ResourceNeedsColumn({
         >
           <View style={resourceColStyles.priorityList}>
             <StaggerList delayMs={50} durationMs={240}>
-              {orderedNeeds.map((slug) => {
-                const option = RESOURCE_NEED_OPTIONS.find((o) => o.slug === slug);
-                const level = slugLevelLookup[slug] ?? 'low';
-                const pillVariant: 'red' | 'amber' | 'emerald' =
-                  level === 'high' ? 'red' : level === 'medium' ? 'amber' : 'emerald';
-                const pillLabel = level === 'high' ? 'High' : level === 'medium' ? 'Medium' : 'Low';
-
-                return (
-                  <View key={slug} style={resourceColStyles.priorityItem}>
-                    {/* Need label */}
-                    <Text style={resourceColStyles.journeyName} numberOfLines={2}>
-                      {option?.label ?? slug}
-                    </Text>
-
-                    {/* Level pill */}
-                    <Pill variant={pillVariant} size="sm">{pillLabel}</Pill>
-                  </View>
-                );
-              })}
-              {customJourneys.map(renderCustomRow)}
+              {needRows.map(renderNeedRow)}
             </StaggerList>
           </View>
         </ScrollView>
@@ -5927,23 +5936,10 @@ function MemberJourneyTimeline({
    * The matching uses journey.template.name → RESOURCE_NEED_OPTIONS label → slug.
    * Journeys with no matching resource need fall back to deriveSeverity.
    */
-  const activeJourneysSorted = useMemo(() => {
-    const active = journeys?.filter((j) => j.status === 'active') ?? [];
-    return active
-      .map((journey, i) => {
-        const slug = RESOURCE_NEED_OPTIONS.find((o) => o.label === journey.template.name)?.slug;
-        const level: JourneySeverity =
-          slug !== undefined && slug in resourceNeedLevels
-            ? resourceNeedLevels[slug]
-            : deriveSeverity(journey.progressPercent);
-        return { journey, level, i };
-      })
-      .sort((a, b) => {
-        const diff = LEVEL_SORT_ORDER[a.level] - LEVEL_SORT_ORDER[b.level];
-        return diff !== 0 ? diff : a.i - b.i;
-      })
-      .map(({ journey }) => journey);
-  }, [journeys, resourceNeedLevels]);
+  const activeJourneysSorted = useMemo(
+    () => activeJourneysWithLevel(journeys, resourceNeedLevels).map((x) => x.journey),
+    [journeys, resourceNeedLevels],
+  );
 
   if (isLoading) {
     return (
