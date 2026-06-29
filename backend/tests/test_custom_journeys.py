@@ -267,3 +267,49 @@ async def test_remove_rejects_unrelated_chw(
         f"/api/v1/journeys/{journey_id}", headers=auth_header(other.json())
     )
     assert res.status_code == 403, res.text
+
+
+@pytest.mark.asyncio
+async def test_remove_canonical_journey_also_drops_the_need(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    """Removing a canonical journey abandons it AND drops the matching resource
+    need, so a later reconcile won't recreate it."""
+    member_id = await _relate(client, member_tokens, chw_tokens)
+
+    # Create the canonical Employment journey via the resource-needs flow.
+    res = await client.patch(
+        f"/api/v1/chw/members/{member_id}/resource-needs",
+        json={"needs": ["employment"], "levels": [{"slug": "employment", "level": "high"}]},
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 200, res.text
+    listing = await client.get(
+        f"/api/v1/members/{member_id}/journeys", headers=auth_header(chw_tokens)
+    )
+    journey = next(
+        j for j in listing.json()
+        if j["template"]["name"] == "Employment" and j["status"] == "active"
+    )
+
+    # Remove it.
+    res = await client.delete(
+        f"/api/v1/journeys/{journey['id']}", headers=auth_header(chw_tokens)
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["status"] == "abandoned"
+
+    # The resource need is gone from the member's profile.
+    detail = await client.get(
+        f"/api/v1/chw/members/{member_id}", headers=auth_header(chw_tokens)
+    )
+    assert "employment" not in detail.json()["resource_needs"]
+
+    # And no active Employment journey remains.
+    listing2 = await client.get(
+        f"/api/v1/members/{member_id}/journeys", headers=auth_header(chw_tokens)
+    )
+    assert not any(
+        j["template"]["name"] == "Employment" and j["status"] == "active"
+        for j in listing2.json()
+    )

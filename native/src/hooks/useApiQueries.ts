@@ -2589,6 +2589,11 @@ export function useUpdateMemberResourceNeeds(memberId: string) {
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['chw', 'members', memberId, 'detail'] });
+      // Saving needs runs the server-side reconcile (creates/abandons journeys),
+      // so the journeys query — read by BOTH the Resource Needs card and the
+      // Member Journey section — must refresh too, or the views show stale data.
+      void qc.invalidateQueries({ queryKey: memberJourneysKey(memberId) });
+      void qc.invalidateQueries({ queryKey: queryKeys.chwJourneys });
     },
   });
 }
@@ -3613,10 +3618,12 @@ export function useUpdateJourneyPriority(memberId: string) {
 }
 
 /**
- * Remove (abandon) a CHW-authored custom journey.
- * DELETE /api/v1/journeys/{journeyId}.
+ * Remove (abandon) a journey owned by the CHW — custom OR canonical.
+ * DELETE /api/v1/journeys/{journeyId}. For a canonical journey the backend also
+ * drops the matching resource need, so the member-detail query is invalidated
+ * too (its resource_needs change).
  */
-export function useRemoveCustomJourney(memberId: string) {
+export function useRemoveJourney(memberId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (journeyId: string): Promise<void> => {
@@ -3625,6 +3632,7 @@ export function useRemoveCustomJourney(memberId: string) {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: memberJourneysKey(memberId) });
       void qc.invalidateQueries({ queryKey: queryKeys.chwJourneys });
+      void qc.invalidateQueries({ queryKey: ['chw', 'members', memberId, 'detail'] });
     },
   });
 }
