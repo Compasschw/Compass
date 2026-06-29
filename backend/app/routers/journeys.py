@@ -49,6 +49,7 @@ from app.schemas.journeys import (
     JourneyTemplateResponse,
     MemberJourneyResponse,
     MemberJourneyStepResponse,
+    UpdateJourneyPriorityRequest,
     UpdateStepStatusRequest,
     WellnessLedgerEntry,
     WellnessPointsSummary,
@@ -209,6 +210,7 @@ async def _build_member_journey_response(
         started_at=member_journey.started_at,
         completed_at=member_journey.completed_at,
         created_at=member_journey.created_at,
+        priority_level=member_journey.priority_level,
     )
 
 
@@ -612,6 +614,7 @@ async def create_custom_journey(
         status="active",
         current_step_id=steps[0].id,
         started_at=now,
+        priority_level=body.priority_level,
     )
     db.add(member_journey)
     await db.flush()
@@ -627,6 +630,31 @@ async def create_custom_journey(
             )
         )
 
+    await db.commit()
+    await db.refresh(member_journey)
+    return await _build_member_journey_response(member_journey, db)
+
+
+@router.patch(
+    "/api/v1/journeys/{member_journey_id}/priority",
+    response_model=MemberJourneyResponse,
+    summary="Update a custom journey's CHW-assigned priority level",
+)
+async def update_journey_priority(
+    member_journey_id: uuid.UUID,
+    body: UpdateJourneyPriorityRequest,
+    current_user=Depends(require_role("chw")),
+    db: AsyncSession = Depends(get_db),
+) -> MemberJourneyResponse:
+    """Set the priority (low|medium|high) of a CHW-authored custom journey.
+
+    Only custom journeys carry a priority_level. The shared helper enforces that
+    the caller is the assigned CHW and the journey is custom (404/403/409).
+    """
+    member_journey, _template = await _load_custom_journey_for_chw(
+        member_journey_id, current_user, db
+    )
+    member_journey.priority_level = body.priority_level
     await db.commit()
     await db.refresh(member_journey)
     return await _build_member_journey_response(member_journey, db)

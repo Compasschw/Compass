@@ -114,3 +114,98 @@ async def test_unrelated_chw_cannot_create_custom_journey(
         headers=auth_header(chw_tokens),
     )
     assert res.status_code == 403, res.text
+
+
+# ── Priority level on custom needs/journeys ───────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_custom_journey_defaults_to_high_priority(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    """A custom journey with no explicit priority defaults to 'high' (matches the
+    fixed-need behaviour where a newly added need defaults to High)."""
+    member_id = await _relate(client, member_tokens, chw_tokens)
+    res = await client.post(
+        "/api/v1/journeys/custom",
+        json={"member_id": member_id, "title": "Legal Aid"},
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 201, res.text
+    assert res.json()["priority_level"] == "high"
+
+
+@pytest.mark.asyncio
+async def test_custom_journey_accepts_explicit_priority(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    member_id = await _relate(client, member_tokens, chw_tokens)
+    res = await client.post(
+        "/api/v1/journeys/custom",
+        json={"member_id": member_id, "title": "Childcare", "priority_level": "low"},
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 201, res.text
+    assert res.json()["priority_level"] == "low"
+
+
+@pytest.mark.asyncio
+async def test_update_custom_journey_priority(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    """PATCH /journeys/{id}/priority updates the level and persists it."""
+    member_id = await _relate(client, member_tokens, chw_tokens)
+    create = await client.post(
+        "/api/v1/journeys/custom",
+        json={"member_id": member_id, "title": "Childcare", "priority_level": "high"},
+        headers=auth_header(chw_tokens),
+    )
+    journey_id = create.json()["id"]
+
+    res = await client.patch(
+        f"/api/v1/journeys/{journey_id}/priority",
+        json={"priority_level": "medium"},
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["priority_level"] == "medium"
+
+    # Persisted: re-fetch the member's journeys and confirm.
+    listing = await client.get(
+        f"/api/v1/members/{member_id}/journeys", headers=auth_header(chw_tokens)
+    )
+    assert listing.status_code == 200, listing.text
+    match = next(j for j in listing.json() if j["id"] == journey_id)
+    assert match["priority_level"] == "medium"
+
+
+@pytest.mark.asyncio
+async def test_update_priority_rejects_unrelated_chw(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    """A CHW who isn't the journey's assigned CHW cannot change its priority."""
+    member_id = await _relate(client, member_tokens, chw_tokens)
+    create = await client.post(
+        "/api/v1/journeys/custom",
+        json={"member_id": member_id, "title": "Childcare"},
+        headers=auth_header(chw_tokens),
+    )
+    journey_id = create.json()["id"]
+
+    other = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "other_chw_prio@example.com",
+            "password": "testpass123",
+            "name": "Other CHW",
+            "role": "chw",
+        },
+    )
+    assert other.status_code == 201, other.text
+
+    res = await client.patch(
+        f"/api/v1/journeys/{journey_id}/priority",
+        json={"priority_level": "low"},
+        headers=auth_header(other.json()),
+    )
+    assert res.status_code == 403, res.text

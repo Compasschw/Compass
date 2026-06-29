@@ -103,6 +103,9 @@ class MemberJourneyResponse(BaseModel):
     started_at: datetime
     completed_at: datetime | None
     created_at: datetime
+    # CHW-assigned priority for custom journeys: "low" | "medium" | "high".
+    # Null for canonical journeys (priority comes from resource_need_levels).
+    priority_level: str | None = None
 
 
 # ─── Caseload item (lightweight) ───────────────────────────────────────────────
@@ -152,6 +155,15 @@ class CreateCustomJourneyRequest(BaseModel):
     title: str = Field(min_length=1, max_length=120)
     icon: str | None = Field(default=None, max_length=100)
     category: str | None = Field(default=None, max_length=100)
+    # CHW-assigned priority for this custom need. Defaults to "high" to match the
+    # fixed-need behaviour (a newly added need defaults to High).
+    priority_level: Literal["low", "medium", "high"] = "high"
+
+
+class UpdateJourneyPriorityRequest(BaseModel):
+    """Body for PATCH /journeys/{id}/priority — update a custom journey's level."""
+
+    priority_level: Literal["low", "medium", "high"]
 
 
 class JourneyNodeUpsert(BaseModel):

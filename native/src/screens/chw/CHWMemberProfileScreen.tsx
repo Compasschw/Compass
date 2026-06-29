@@ -146,6 +146,7 @@ import {
   useCreateCaseNote,
   useMemberDocuments,
   useCreateCustomJourney,
+  useUpdateJourneyPriority,
   useAddJourneyNode,
   useUpdateJourneyNode,
   useDeleteJourneyNode,
@@ -1449,7 +1450,17 @@ function EditResourceNeedsModal({
 }: EditResourceNeedsModalProps): React.JSX.Element {
   const updateResourceNeeds = useUpdateMemberResourceNeeds(memberId);
   const createCustomJourney = useCreateCustomJourney(memberId);
+  const updateJourneyPriority = useUpdateJourneyPriority(memberId);
   const { data: existingJourneys } = useMemberJourneys(memberId);
+
+  /** Active CHW-authored custom needs (journeys whose name isn't a fixed need). */
+  const customNeeds = useMemo(
+    () =>
+      (existingJourneys ?? []).filter(
+        (j) => j.status === 'active' && !CANONICAL_JOURNEY_NAMES.has(j.template.name),
+      ),
+    [existingJourneys],
+  );
 
   /**
    * Selection-ordered list of selected slugs — preserved for the `needs`
@@ -1459,8 +1470,9 @@ function EditResourceNeedsModal({
   /** CHW-assigned priority level per selected slug. */
   const [levels, setLevels] = useState<Record<string, ResourceNeedLevel>>({});
   const [error, setError] = useState<string | null>(null);
-  /** Free-text name for a CHW-authored custom resource need. */
+  /** Free-text name + priority for a new CHW-authored custom resource need. */
   const [customName, setCustomName] = useState('');
+  const [customLevel, setCustomLevel] = useState<ResourceNeedLevel>('high');
 
   // Hydrate selection and levels whenever the modal opens.
   useEffect(() => {
@@ -1553,8 +1565,9 @@ function EditResourceNeedsModal({
     }
 
     try {
-      await createCustomJourney.mutateAsync(name);
+      await createCustomJourney.mutateAsync({ title: name, priorityLevel: customLevel });
       setCustomName('');
+      setCustomLevel('high');
     } catch (err: unknown) {
       const detail =
         err != null &&
@@ -1565,7 +1578,66 @@ function EditResourceNeedsModal({
           : 'Could not add custom resource need. Please try again.';
       setError(detail);
     }
-  }, [customName, existingJourneys, createCustomJourney]);
+  }, [customName, customLevel, existingJourneys, createCustomJourney]);
+
+  /** Persist a custom need's priority immediately (PATCH). */
+  const handleCustomLevelChange = useCallback(
+    (journeyId: string, level: ResourceNeedLevel): void => {
+      setError(null);
+      updateJourneyPriority.mutate(
+        { journeyId, priorityLevel: level },
+        {
+          onError: () =>
+            setError('Could not update priority. Please try again.'),
+        },
+      );
+    },
+    [updateJourneyPriority],
+  );
+
+  /** Reusable Low/Med/High segmented control (used by the custom-need rows). */
+  const renderLevelControl = (
+    value: ResourceNeedLevel,
+    onChange: (lvl: ResourceNeedLevel) => void,
+  ): React.JSX.Element => (
+    <View style={editResourceNeedsStyles.levelSegRow}>
+      {(['low', 'medium', 'high'] as const).map((lvl) => {
+        const isActive = value === lvl;
+        return (
+          <TouchableOpacity
+            key={lvl}
+            style={[
+              editResourceNeedsStyles.levelPill,
+              isActive &&
+                (lvl === 'high'
+                  ? editResourceNeedsStyles.levelPillHighActive
+                  : lvl === 'medium'
+                  ? editResourceNeedsStyles.levelPillMedActive
+                  : editResourceNeedsStyles.levelPillLowActive),
+            ]}
+            onPress={() => onChange(lvl)}
+            accessibilityRole="button"
+            accessibilityLabel={lvl === 'low' ? 'Low' : lvl === 'medium' ? 'Medium' : 'High'}
+            accessibilityState={{ selected: isActive }}
+          >
+            <Text
+              style={[
+                editResourceNeedsStyles.levelPillText,
+                isActive &&
+                  (lvl === 'high'
+                    ? editResourceNeedsStyles.levelPillTextHigh
+                    : lvl === 'medium'
+                    ? editResourceNeedsStyles.levelPillTextMed
+                    : editResourceNeedsStyles.levelPillTextLow),
+              ]}
+            >
+              {lvl === 'low' ? 'Low' : lvl === 'medium' ? 'Med' : 'High'}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
 
   const body = (
     <View style={editResourceNeedsStyles.container}>
@@ -1683,40 +1755,70 @@ function EditResourceNeedsModal({
         })}
       </View>
 
+      {/* Existing custom resource needs — name + editable priority. These are
+          CHW-authored custom journeys; the priority persists immediately. */}
+      {customNeeds.map((j) => (
+        <View
+          key={j.id}
+          style={[editResourceNeedsStyles.chipRow, editResourceNeedsStyles.chipRowSelected]}
+        >
+          <View style={editResourceNeedsStyles.chipRowToggle}>
+            <View style={[editResourceNeedsStyles.chipBadge, editResourceNeedsStyles.chipBadgeSelected]}>
+              <Check size={12} color="#FFFFFF" />
+            </View>
+            <Text
+              style={[editResourceNeedsStyles.chipLabel, editResourceNeedsStyles.chipLabelSelected]}
+              numberOfLines={1}
+            >
+              {j.template.name}
+            </Text>
+          </View>
+          {renderLevelControl(j.priorityLevel ?? 'medium', (lvl) =>
+            handleCustomLevelChange(j.id, lvl),
+          )}
+        </View>
+      ))}
+
       {/* Add a custom resource need — creates a custom journey that then appears
           in BOTH the Resource Needs card and the Member Journey section. */}
-      <View style={editResourceNeedsStyles.customRow}>
-        <TextInput
-          style={editResourceNeedsStyles.customInput}
-          value={customName}
-          onChangeText={setCustomName}
-          placeholder="Add a custom resource need…"
-          placeholderTextColor={tokens.textMuted}
-          editable={!createCustomJourney.isPending}
-          returnKeyType="done"
-          onSubmitEditing={() => void handleAddCustom()}
-          accessibilityLabel="Custom resource need name"
-        />
-        <TouchableOpacity
-          style={[
-            editResourceNeedsStyles.customAddBtn,
-            (createCustomJourney.isPending || customName.trim().length === 0) &&
-              editResourceNeedsStyles.customAddBtnDisabled,
-          ]}
-          onPress={() => void handleAddCustom()}
-          disabled={createCustomJourney.isPending || customName.trim().length === 0}
-          accessibilityRole="button"
-          accessibilityLabel="Add custom resource need"
-        >
-          {createCustomJourney.isPending ? (
-            <ActivityIndicator size="small" color={tokens.primary} />
-          ) : (
-            <>
-              <Plus size={14} color={tokens.primary} />
-              <Text style={editResourceNeedsStyles.customAddBtnText}>Add</Text>
-            </>
-          )}
-        </TouchableOpacity>
+      <View style={editResourceNeedsStyles.customAddWrap}>
+        <View style={editResourceNeedsStyles.customRow}>
+          <TextInput
+            style={editResourceNeedsStyles.customInput}
+            value={customName}
+            onChangeText={setCustomName}
+            placeholder="Add a custom resource need…"
+            placeholderTextColor={tokens.textMuted}
+            editable={!createCustomJourney.isPending}
+            returnKeyType="done"
+            onSubmitEditing={() => void handleAddCustom()}
+            accessibilityLabel="Custom resource need name"
+          />
+          <TouchableOpacity
+            style={[
+              editResourceNeedsStyles.customAddBtn,
+              (createCustomJourney.isPending || customName.trim().length === 0) &&
+                editResourceNeedsStyles.customAddBtnDisabled,
+            ]}
+            onPress={() => void handleAddCustom()}
+            disabled={createCustomJourney.isPending || customName.trim().length === 0}
+            accessibilityRole="button"
+            accessibilityLabel="Add custom resource need"
+          >
+            {createCustomJourney.isPending ? (
+              <ActivityIndicator size="small" color={tokens.primary} />
+            ) : (
+              <>
+                <Plus size={14} color={tokens.primary} />
+                <Text style={editResourceNeedsStyles.customAddBtnText}>Add</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+        <View style={editResourceNeedsStyles.customLevelRow}>
+          <Text style={editResourceNeedsStyles.customLevelLabel}>Priority</Text>
+          {renderLevelControl(customLevel, setCustomLevel)}
+        </View>
       </View>
 
       {/* Inline error */}
@@ -1948,12 +2050,26 @@ const editResourceNeedsStyles = StyleSheet.create({
   } as TextStyle,
 
   // Custom resource need input
+  customAddWrap: {
+    gap: 8,
+    marginTop: 10,
+  } as ViewStyle,
   customRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginTop: 10,
   } as ViewStyle,
+  customLevelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 2,
+  } as ViewStyle,
+  customLevelLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: tokens.textMuted,
+  } as TextStyle,
   customInput: {
     flex: 1,
     height: 42,
@@ -4529,15 +4645,21 @@ function ResourceNeedsColumn({
     [journeys],
   );
 
-  /** A custom-need row — same layout as a fixed need but tagged "Custom". */
-  const renderCustomRow = (journey: MemberJourneyResponse): React.JSX.Element => (
-    <View key={journey.id} style={resourceColStyles.priorityItem}>
-      <Text style={resourceColStyles.journeyName} numberOfLines={2}>
-        {journey.template.name}
-      </Text>
-      <Pill variant="blue" size="sm">Custom</Pill>
-    </View>
-  );
+  /** A custom-need row — same layout + level pill as a fixed need. */
+  const renderCustomRow = (journey: MemberJourneyResponse): React.JSX.Element => {
+    const level: ResourceNeedLevel = journey.priorityLevel ?? 'medium';
+    const pillVariant: 'red' | 'amber' | 'emerald' =
+      level === 'high' ? 'red' : level === 'medium' ? 'amber' : 'emerald';
+    const pillLabel = level === 'high' ? 'High' : level === 'medium' ? 'Medium' : 'Low';
+    return (
+      <View key={journey.id} style={resourceColStyles.priorityItem}>
+        <Text style={resourceColStyles.journeyName} numberOfLines={2}>
+          {journey.template.name}
+        </Text>
+        <Pill variant={pillVariant} size="sm">{pillLabel}</Pill>
+      </View>
+    );
+  };
 
   const hasAnyNeeds = orderedNeeds.length > 0 || customJourneys.length > 0;
 
