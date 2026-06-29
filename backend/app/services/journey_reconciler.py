@@ -325,53 +325,53 @@ async def reconcile_member_journeys_to_needs(
     )
     active_rows = active_result.all()
 
-    # Group active journeys by template name. CHW-authored custom journeys
-    # (is_custom=True) are intentionally excluded — they are never auto-created,
-    # deduped, or abandoned by needs reconciliation; the CHW owns their lifecycle.
-    active_by_label: dict[str, list[MemberJourney]] = {}
+    # Group ALL active journeys by template name — including custom ones. Two
+    # journeys that DISPLAY the same name (e.g. a canonical "Employment" plus a
+    # custom journey a CHW also named "Employment") are duplicates to the member
+    # and must be consolidated, so they are grouped together here.
+    by_name: dict[str, list[MemberJourney]] = {}
     for journey, template in active_rows:
-        if template.is_custom:
-            continue
-        active_by_label.setdefault(template.name, []).append(journey)
+        by_name.setdefault(template.name, []).append(journey)
 
     # Resolve CHW once; used only when we need to create a new journey.
     resolved_chw_id: uuid.UUID | None = chw_id or await _lookup_member_chw(db, member_id)
 
-    # IDs of journeys we decide to keep (one canonical per target label).
+    canonical_labels: set[str] = set(RESOURCE_NEED_LABELS.values())
     kept_ids: set[uuid.UUID] = set()
 
-    for label in target_labels:
-        existing: list[MemberJourney] = active_by_label.get(label, [])
-
-        if existing:
-            # Rank by progress (completed step count DESC, then created_at ASC).
-            ranked = await _rank_journeys_by_progress(db, existing)
-            canonical = ranked[0]
-            kept_ids.add(canonical.id)
-            # Abandon lower-ranked duplicates.
+    # 1. Collapse every name to a single survivor — abandon the rest. This is the
+    #    core "no copies" guarantee: at most one active journey per name.
+    survivor_by_name: dict[str, MemberJourney] = {}
+    for name, journeys in by_name.items():
+        if len(journeys) > 1:
+            ranked = await _rank_journeys_by_progress(db, journeys)
+            survivor_by_name[name] = ranked[0]
             for duplicate in ranked[1:]:
                 duplicate.status = "abandoned"
         else:
-            # No active journey for this need — provision one.
-            if resolved_chw_id is None:
-                # Cannot create a journey without a CHW owner; skip this need.
-                continue
+            survivor_by_name[name] = journeys[0]
+
+    # 2. Ensure a journey exists for each selected need; mark survivors as kept.
+    for label in target_labels:
+        survivor = survivor_by_name.get(label)
+        if survivor is not None:
+            kept_ids.add(survivor.id)
+        elif resolved_chw_id is not None:
             template_obj = await get_or_create_canonical_template(db, label)
             new_journey = await create_journey_for_template(
                 db, member_id, resolved_chw_id, template_obj
             )
             kept_ids.add(new_journey.id)
 
-    # Abandon every remaining active journey not in the target label set (orphans).
-    # Journeys already abandoned in the inner loop have template.name IN the target
-    # set, so this outer loop leaves them alone (condition is mutually exclusive).
-    # Custom journeys are skipped entirely — a CHW-created custom journey must
-    # survive any subsequent resource-needs save.
-    for journey, template in active_rows:
-        if template.is_custom:
+    # 3. Abandon survivors that are canonical-named but not a current need
+    #    (orphans). A true custom need — a custom name that is NOT one of the
+    #    fixed-need labels — is always preserved; only canonical names (and custom
+    #    journeys masquerading as a fixed need) are auto-managed here.
+    for name, survivor in survivor_by_name.items():
+        if survivor.id in kept_ids:
             continue
-        if template.name not in target_label_set and journey.id not in kept_ids:
-            journey.status = "abandoned"
+        if name in canonical_labels and name not in target_label_set:
+            survivor.status = "abandoned"
 
     await db.flush()
 

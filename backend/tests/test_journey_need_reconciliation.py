@@ -715,3 +715,83 @@ async def test_custom_journey_survives_resource_needs_save(
     assert custom_journey_id in active_ids, (
         "custom journey was abandoned by the resource-needs reconciliation"
     )
+
+
+# ── Consolidation: at most one active journey per name ────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_two_canonical_journeys_for_same_need_are_consolidated(
+    client: AsyncClient,
+    reconcile_pair: tuple[dict, dict, str],
+) -> None:
+    """Two active journeys for the same canonical need collapse to one on save."""
+    chw_tokens, _, member_id = reconcile_pair
+
+    # Seed TWO active journeys for the member, both via templates named "Employment".
+    async with test_session() as db:
+        for slug in ("employment", "employment_dup"):
+            t = JourneyTemplate(
+                id=uuid.uuid4(), slug=slug, name="Employment", category="employment",
+                icon="briefcase", is_custom=False, is_active=True,
+            )
+            db.add(t)
+            await db.flush()
+            steps = []
+            for s in STANDARD_STEPS:
+                st = JourneyTemplateStep(
+                    id=uuid.uuid4(), template_id=t.id, order=s["order"], name=s["name"],
+                    description=s["description"], points_on_completion=s["points_on_completion"],
+                    required_documents=s["required_documents"],
+                )
+                db.add(st)
+                steps.append(st)
+            await db.flush()
+            db.add(MemberJourney(
+                id=uuid.uuid4(), member_id=uuid.UUID(member_id), template_id=t.id,
+                chw_id=uuid.UUID(_decode_jwt_sub(chw_tokens["access_token"])),
+                status="active", current_step_id=steps[0].id,
+            ))
+        await db.commit()
+
+    assert len(await _get_active_journeys(member_id)) == 2  # precondition
+
+    await _patch_resource_needs(
+        client, member_id, chw_tokens,
+        needs=["employment"], levels=[{"slug": "employment", "level": "high"}],
+    )
+
+    active = await _get_active_journeys(member_id)
+    assert len(active) == 1, f"Expected the two Employment journeys to consolidate; got {len(active)}"
+
+
+@pytest.mark.asyncio
+async def test_custom_journey_named_like_a_fixed_need_is_consolidated(
+    client: AsyncClient,
+    reconcile_pair: tuple[dict, dict, str],
+) -> None:
+    """A custom journey named exactly like a fixed need is consolidated with the
+    canonical one — the member never sees two "Employment" journeys."""
+    chw_tokens, _, member_id = reconcile_pair
+
+    # Select Employment → creates the canonical Employment journey.
+    await _patch_resource_needs(
+        client, member_id, chw_tokens,
+        needs=["employment"], levels=[{"slug": "employment", "level": "high"}],
+    )
+    # CHW also creates a custom journey titled "Employment" (no backend guard).
+    res = await client.post(
+        "/api/v1/journeys/custom",
+        json={"member_id": member_id, "title": "Employment"},
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 201, res.text
+    assert len(await _get_active_journeys(member_id)) == 2  # the duplicate state
+
+    # Re-saving the need reconciles → exactly one active "Employment".
+    await _patch_resource_needs(
+        client, member_id, chw_tokens,
+        needs=["employment"], levels=[{"slug": "employment", "level": "high"}],
+    )
+    active = await _get_active_journeys(member_id)
+    assert len(active) == 1, f"Expected one Employment journey; got {len(active)}"
