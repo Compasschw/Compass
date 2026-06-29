@@ -209,3 +209,61 @@ async def test_update_priority_rejects_unrelated_chw(
         headers=auth_header(other.json()),
     )
     assert res.status_code == 403, res.text
+
+
+@pytest.mark.asyncio
+async def test_remove_custom_journey_abandons_it(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    """DELETE /journeys/{id} abandons a custom journey; it drops out of the
+    active-journey list."""
+    member_id = await _relate(client, member_tokens, chw_tokens)
+    create = await client.post(
+        "/api/v1/journeys/custom",
+        json={"member_id": member_id, "title": "Childcare"},
+        headers=auth_header(chw_tokens),
+    )
+    journey_id = create.json()["id"]
+
+    res = await client.delete(
+        f"/api/v1/journeys/{journey_id}", headers=auth_header(chw_tokens)
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["status"] == "abandoned"
+
+    # No longer present among the member's active journeys.
+    listing = await client.get(
+        f"/api/v1/members/{member_id}/journeys", headers=auth_header(chw_tokens)
+    )
+    active_ids = [j["id"] for j in listing.json() if j["status"] == "active"]
+    assert journey_id not in active_ids
+
+
+@pytest.mark.asyncio
+async def test_remove_rejects_unrelated_chw(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    """A CHW who isn't the journey's assigned CHW cannot remove it."""
+    member_id = await _relate(client, member_tokens, chw_tokens)
+    create = await client.post(
+        "/api/v1/journeys/custom",
+        json={"member_id": member_id, "title": "Childcare"},
+        headers=auth_header(chw_tokens),
+    )
+    journey_id = create.json()["id"]
+
+    other = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "other_chw_remove@example.com",
+            "password": "testpass123",
+            "name": "Other CHW",
+            "role": "chw",
+        },
+    )
+    assert other.status_code == 201, other.text
+
+    res = await client.delete(
+        f"/api/v1/journeys/{journey_id}", headers=auth_header(other.json())
+    )
+    assert res.status_code == 403, res.text

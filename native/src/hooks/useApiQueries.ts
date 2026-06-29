@@ -3613,6 +3613,23 @@ export function useUpdateJourneyPriority(memberId: string) {
 }
 
 /**
+ * Remove (abandon) a CHW-authored custom journey.
+ * DELETE /api/v1/journeys/{journeyId}.
+ */
+export function useRemoveCustomJourney(memberId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (journeyId: string): Promise<void> => {
+      await api(`/journeys/${journeyId}`, { method: 'DELETE' });
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: memberJourneysKey(memberId) });
+      void qc.invalidateQueries({ queryKey: queryKeys.chwJourneys });
+    },
+  });
+}
+
+/**
  * Add a node to a custom journey (5 pts; 10 if first).
  * POST /api/v1/journeys/{journeyId}/nodes { name?, description? }.
  */

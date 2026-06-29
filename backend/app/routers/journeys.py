@@ -660,6 +660,33 @@ async def update_journey_priority(
     return await _build_member_journey_response(member_journey, db)
 
 
+@router.delete(
+    "/api/v1/journeys/{member_journey_id}",
+    response_model=MemberJourneyResponse,
+    summary="Remove (abandon) a CHW-authored custom journey",
+)
+async def remove_custom_journey(
+    member_journey_id: uuid.UUID,
+    current_user=Depends(require_role("chw")),
+    db: AsyncSession = Depends(get_db),
+) -> MemberJourneyResponse:
+    """Soft-remove a custom journey by marking it 'abandoned'.
+
+    Only the assigned CHW may remove, and only custom (CHW-authored) journeys —
+    the shared helper raises 404/403/409 otherwise. The row is kept (status
+    abandoned) so any wellness points already awarded are preserved; it simply
+    drops out of every active-journey view (Resource Needs card, Member Journey
+    section, and the Edit Resource Needs modal).
+    """
+    member_journey, _template = await _load_custom_journey_for_chw(
+        member_journey_id, current_user, db
+    )
+    member_journey.status = "abandoned"
+    await db.commit()
+    await db.refresh(member_journey)
+    return await _build_member_journey_response(member_journey, db)
+
+
 async def _load_custom_journey_for_chw(
     member_journey_id: uuid.UUID, current_user, db: AsyncSession
 ) -> tuple[MemberJourney, JourneyTemplate]:

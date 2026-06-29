@@ -147,6 +147,7 @@ import {
   useMemberDocuments,
   useCreateCustomJourney,
   useUpdateJourneyPriority,
+  useRemoveCustomJourney,
   useAddJourneyNode,
   useUpdateJourneyNode,
   useDeleteJourneyNode,
@@ -1451,15 +1452,25 @@ function EditResourceNeedsModal({
   const updateResourceNeeds = useUpdateMemberResourceNeeds(memberId);
   const createCustomJourney = useCreateCustomJourney(memberId);
   const updateJourneyPriority = useUpdateJourneyPriority(memberId);
+  const removeCustomJourney = useRemoveCustomJourney(memberId);
   const { data: existingJourneys } = useMemberJourneys(memberId);
 
-  /** Active CHW-authored custom needs (journeys whose name isn't a fixed need). */
+  /** Custom needs the CHW has marked for removal (applied on Save). */
+  const [customRemovals, setCustomRemovals] = useState<ReadonlySet<string>>(new Set());
+
+  /**
+   * Active CHW-authored custom needs (journeys whose name isn't a fixed need),
+   * minus any the CHW has staged for removal this session.
+   */
   const customNeeds = useMemo(
     () =>
       (existingJourneys ?? []).filter(
-        (j) => j.status === 'active' && !CANONICAL_JOURNEY_NAMES.has(j.template.name),
+        (j) =>
+          j.status === 'active' &&
+          !CANONICAL_JOURNEY_NAMES.has(j.template.name) &&
+          !customRemovals.has(j.id),
       ),
-    [existingJourneys],
+    [existingJourneys, customRemovals],
   );
 
   /**
@@ -1486,6 +1497,7 @@ function EditResourceNeedsModal({
       setSelectedSlugs([...currentNeeds]);
       setLevels({ ...currentLevels });
       setCustomLevelEdits({});
+      setCustomRemovals(new Set());
       setError(null);
     }
   }, [visible, currentNeeds, currentLevels]);
@@ -1535,8 +1547,13 @@ function EditResourceNeedsModal({
         .map(([slug, level]) => ({ slug, level }));
       await updateResourceNeeds.mutateAsync({ needs: selectedSlugs, levels: levelsArray });
 
+      // Apply staged custom-need removals (abandon the journeys).
+      const removalPromises = Array.from(customRemovals).map((id) =>
+        removeCustomJourney.mutateAsync(id),
+      );
+
       // Persist any pending custom-need priority edits — only the ones that
-      // actually changed — so custom needs save with the fixed ones.
+      // actually changed (customNeeds already excludes removed ones).
       const customPatches = customNeeds
         .map((j) => ({ j, edited: customLevelEdits[j.id] }))
         .filter(({ j, edited }) => edited !== undefined && edited !== (j.priorityLevel ?? 'medium'))
@@ -1546,7 +1563,8 @@ function EditResourceNeedsModal({
             priorityLevel: edited as ResourceNeedLevel,
           }),
         );
-      await Promise.all(customPatches);
+
+      await Promise.all([...removalPromises, ...customPatches]);
 
       onClose();
     } catch (err: unknown) {
@@ -1565,9 +1583,16 @@ function EditResourceNeedsModal({
     updateResourceNeeds,
     customNeeds,
     customLevelEdits,
+    customRemovals,
     updateJourneyPriority,
+    removeCustomJourney,
     onClose,
   ]);
+
+  /** Stage a custom need for removal — applied (abandoned) on Save. */
+  const handleRemoveCustom = useCallback((journeyId: string): void => {
+    setCustomRemovals((prev) => new Set(prev).add(journeyId));
+  }, []);
 
   /**
    * Create a CHW-authored custom resource need. This provisions a custom journey
@@ -1782,7 +1807,11 @@ function EditResourceNeedsModal({
         {customNeeds.map((j) => (
           <View
             key={j.id}
-            style={[editResourceNeedsStyles.chipRow, editResourceNeedsStyles.chipRowSelected]}
+            style={[
+              editResourceNeedsStyles.chipRow,
+              editResourceNeedsStyles.chipRowSelected,
+              editResourceNeedsStyles.customNeedRow,
+            ]}
           >
             <View style={editResourceNeedsStyles.chipRowToggle}>
               <View style={[editResourceNeedsStyles.chipBadge, editResourceNeedsStyles.chipBadgeSelected]}>
@@ -1799,6 +1828,15 @@ function EditResourceNeedsModal({
               customLevelEdits[j.id] ?? j.priorityLevel ?? 'medium',
               (lvl) => handleCustomLevelChange(j.id, lvl),
             )}
+            <TouchableOpacity
+              style={editResourceNeedsStyles.customRemoveBtn}
+              onPress={() => handleRemoveCustom(j.id)}
+              accessibilityRole="button"
+              accessibilityLabel={`Remove ${j.template.name}`}
+              hitSlop={{ top: 8, bottom: 8, left: 4, right: 8 }}
+            >
+              <X size={15} color={tokens.textMuted} />
+            </TouchableOpacity>
           </View>
         ))}
       </View>
@@ -2073,6 +2111,21 @@ const editResourceNeedsStyles = StyleSheet.create({
   levelPillTextLow: {
     color: tokens.emerald700,
   } as TextStyle,
+
+  // Custom-need row: tighter right padding + gap so the level control and the
+  // remove (X) button both fit cleanly without crowding the edge.
+  customNeedRow: {
+    paddingRight: 8,
+    gap: 6,
+  } as ViewStyle,
+  customRemoveBtn: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  } as ViewStyle,
 
   // ── Add-a-custom-need composer ────────────────────────────────────────────
   // Inset to match the chip list (paddingHorizontal: 20) and separated by a
