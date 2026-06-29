@@ -670,18 +670,66 @@ async def remove_custom_journey(
     current_user=Depends(require_role("chw")),
     db: AsyncSession = Depends(get_db),
 ) -> MemberJourneyResponse:
-    """Soft-remove a custom journey by marking it 'abandoned'.
+    """Soft-remove a journey (custom OR canonical) owned by the calling CHW.
 
-    Only the assigned CHW may remove, and only custom (CHW-authored) journeys —
-    the shared helper raises 404/403/409 otherwise. The row is kept (status
-    abandoned) so any wellness points already awarded are preserved; it simply
-    drops out of every active-journey view (Resource Needs card, Member Journey
-    section, and the Edit Resource Needs modal).
+    The journey row is kept (status 'abandoned') so awarded points are preserved;
+    it just drops out of every active-journey view (Resource Needs card, Member
+    Journey section, Edit modal).
+
+    For a CANONICAL journey (its template maps to a fixed resource need), the
+    matching need is also removed from the member's profile, so the next
+    reconcile won't recreate it. Custom journeys touch only the journey row.
+
+    Only the assigned CHW may remove (404 if missing, 403 if not the owner).
     """
-    member_journey, _template = await _load_custom_journey_for_chw(
-        member_journey_id, current_user, db
-    )
+    member_journey = (
+        await db.execute(
+            select(MemberJourney).where(MemberJourney.id == member_journey_id)
+        )
+    ).scalar_one_or_none()
+    if member_journey is None:
+        raise HTTPException(status_code=404, detail="Journey not found.")
+    if member_journey.chw_id != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="You are not the assigned CHW for this journey.",
+        )
+
+    template = (
+        await db.execute(
+            select(JourneyTemplate).where(
+                JourneyTemplate.id == member_journey.template_id
+            )
+        )
+    ).scalar_one_or_none()
+
     member_journey.status = "abandoned"
+
+    # Canonical journey → also drop the matching resource need so reconciliation
+    # won't recreate it on the next save.
+    from app.services.journey_reconciler import RESOURCE_NEED_LABELS
+
+    label_to_slug = {label: slug for slug, label in RESOURCE_NEED_LABELS.items()}
+    slug = label_to_slug.get(template.name) if template is not None else None
+    if slug is not None:
+        profile = (
+            await db.execute(
+                select(MemberProfile).where(
+                    MemberProfile.user_id == member_journey.member_id
+                )
+            )
+        ).scalar_one_or_none()
+        if profile is not None:
+            current = (
+                [profile.primary_need] if profile.primary_need else []
+            ) + list(profile.additional_needs or [])
+            remaining = [s for s in current if s != slug]
+            profile.primary_need = remaining[0] if remaining else None
+            profile.additional_needs = remaining[1:]
+            levels = dict(profile.resource_need_levels or {})
+            levels.pop(slug, None)
+            profile.resource_need_levels = levels
+
     await db.commit()
     await db.refresh(member_journey)
     return await _build_member_journey_response(member_journey, db)

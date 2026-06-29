@@ -147,7 +147,7 @@ import {
   useMemberDocuments,
   useCreateCustomJourney,
   useUpdateJourneyPriority,
-  useRemoveCustomJourney,
+  useRemoveJourney,
   useAddJourneyNode,
   useUpdateJourneyNode,
   useDeleteJourneyNode,
@@ -1452,7 +1452,7 @@ function EditResourceNeedsModal({
   const updateResourceNeeds = useUpdateMemberResourceNeeds(memberId);
   const createCustomJourney = useCreateCustomJourney(memberId);
   const updateJourneyPriority = useUpdateJourneyPriority(memberId);
-  const removeCustomJourney = useRemoveCustomJourney(memberId);
+  const removeJourney = useRemoveJourney(memberId);
   const { data: existingJourneys } = useMemberJourneys(memberId);
 
   /** Custom needs the CHW has marked for removal (applied on Save). */
@@ -1570,7 +1570,7 @@ function EditResourceNeedsModal({
 
       // Apply staged custom-need removals (abandon the journeys).
       const removalPromises = Array.from(customRemovals).map((id) =>
-        removeCustomJourney.mutateAsync(id),
+        removeJourney.mutateAsync(id),
       );
 
       // Persist any pending custom-need priority edits — only the ones that
@@ -1606,7 +1606,7 @@ function EditResourceNeedsModal({
     customLevelEdits,
     customRemovals,
     updateJourneyPriority,
-    removeCustomJourney,
+    removeJourney,
     onClose,
   ]);
 
@@ -5354,6 +5354,29 @@ const SingleJourneyTrack = React.memo(function SingleJourneyTrack({
   const [pressedStepId, setPressedStepId] = useState<string | null>(null);
   const addNode = useAddJourneyNode(memberId);
   const completeStep = useUpdateJourneyStep();
+  const removeJourney = useRemoveJourney(memberId);
+
+  /** Remove this journey entirely (and its resource need if canonical). */
+  const handleRemoveJourney = useCallback((): void => {
+    const proceed = (): void => {
+      removeJourney.mutate(journey.id, {
+        onError: () => {
+          const msg = 'Could not remove the journey. Please try again.';
+          if (Platform.OS === 'web' && typeof window !== 'undefined') window.alert(msg);
+          else Alert.alert('Error', msg);
+        },
+      });
+    };
+    const confirmMsg = `Remove the "${journey.template.name}" journey? It will be removed from this member's resource needs and journeys.`;
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      if (window.confirm(confirmMsg)) proceed();
+    } else {
+      Alert.alert('Remove journey', confirmMsg, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Remove', style: 'destructive', onPress: proceed },
+      ]);
+    }
+  }, [removeJourney, journey.id, journey.template.name]);
 
   const handleAddNode = useCallback((): void => {
     addNode.mutate(
@@ -5417,6 +5440,19 @@ const SingleJourneyTrack = React.memo(function SingleJourneyTrack({
           <View style={trackStyles.editModeBadge}>
             <Text style={trackStyles.editModeBadgeText}>Custom</Text>
           </View>
+        )}
+        {editMode && (
+          // Remove this journey entirely (and its resource need if canonical).
+          <TouchableOpacity
+            style={trackStyles.removeJourneyBtn}
+            onPress={handleRemoveJourney}
+            disabled={removeJourney.isPending}
+            accessibilityRole="button"
+            accessibilityLabel={`Remove ${journey.template.name} journey`}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <X size={16} color="#DC2626" />
+          </TouchableOpacity>
         )}
       </View>
 
@@ -5656,6 +5692,17 @@ const trackStyles = StyleSheet.create({
     color: tokens.textMuted,
   } as TextStyle,
   verticalList: { gap: 0 } as ViewStyle,
+
+  // Remove-journey (X) button in header, shown in edit mode.
+  removeJourneyBtn: {
+    marginLeft: 8,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  } as ViewStyle,
 
   // Edit-mode badge in header
   editModeBadge: {
