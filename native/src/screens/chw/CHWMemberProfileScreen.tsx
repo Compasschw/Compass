@@ -147,6 +147,7 @@ import {
   useMemberRewardsBalance,
   useCaseNotes,
   useCreateCaseNote,
+  useSessionNotes,
   useMemberDocuments,
   useCreateCustomJourney,
   useUpdateJourneyPriority,
@@ -6918,6 +6919,16 @@ const billingWidgetStyles = StyleSheet.create({
 
 // ─── SessionNotesModal ────────────────────────────────────────────────────────
 
+/** One row in a session's notes timeline: the original summary or an added note. */
+interface SessionNoteEntry {
+  key: string;
+  kind: 'summary' | 'addendum';
+  body: string;
+  /** ISO timestamp used for ordering + display. */
+  timestamp: string;
+  pinned?: boolean;
+}
+
 interface SessionNotesModalProps {
   /** The session whose notes to display. Null when the modal is closed. */
   session: RecentSessionItem | null;
@@ -6945,18 +6956,64 @@ function SessionNotesModal({
   onClose,
 }: SessionNotesModalProps): React.JSX.Element {
   const visible = session !== null;
+  const [draft, setDraft] = useState('');
+  const createNote = useCreateCaseNote();
 
-  // Fetch all case notes for this member; filter to the selected session client-side.
-  // `enabled` is false while no session is selected to avoid a gratuitous network call.
-  const { data: noteList, isLoading, isError } = useCaseNotes(memberId, {
+  // Original session note = the CHW's documentation summary for this session.
+  // Additional notes = case notes linked to this session (session_id set), each
+  // independently timestamped. Both are fetched for the member and filtered to
+  // this session client-side.
+  const { data: noteList, isLoading: notesLoading, isError: notesError } = useCaseNotes(
+    memberId,
+    { enabled: visible, limit: 200 },
+  );
+  const { data: sessionSummaries, isLoading: summariesLoading } = useSessionNotes(memberId, {
     enabled: visible,
-    limit: 200,
   });
 
-  const sessionNotes = useMemo(() => {
-    if (!session || !noteList) return [];
-    return noteList.items.filter((n) => n.sessionId === session.id);
-  }, [session, noteList]);
+  const isLoading = notesLoading || summariesLoading;
+  const isError = notesError;
+
+  // Unified, chronological (oldest-first) list: the documentation summary first,
+  // then each added note by its own timestamp — so additions are distinguishable
+  // from the original session note.
+  const entries = useMemo((): SessionNoteEntry[] => {
+    if (!session) return [];
+    const list: SessionNoteEntry[] = [];
+    const summary = sessionSummaries?.find((s) => s.sessionId === session.id);
+    if (summary) {
+      list.push({
+        key: `summary-${session.id}`,
+        kind: 'summary',
+        body: summary.summary,
+        timestamp: summary.submittedAt,
+      });
+    }
+    for (const n of noteList?.items ?? []) {
+      if (n.sessionId === session.id) {
+        list.push({
+          key: n.id,
+          kind: 'addendum',
+          body: n.body,
+          timestamp: n.createdAt,
+          pinned: n.isPinned,
+        });
+      }
+    }
+    return list.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+  }, [session, sessionSummaries, noteList]);
+
+  // Reset the composer whenever the modal opens for a different session.
+  useEffect(() => {
+    setDraft('');
+  }, [session?.id]);
+
+  const handleAddNote = useCallback(async (): Promise<void> => {
+    const trimmed = draft.trim();
+    if (!trimmed || !session) return;
+    await createNote.mutateAsync({ memberId, body: trimmed, sessionId: session.id });
+    setDraft('');
+  }, [draft, session, memberId, createNote]);
 
   // Esc key closes on web.
   useEffect(() => {
@@ -6998,6 +7055,36 @@ function SessionNotesModal({
         contentContainerStyle={sessionNotesModalStyles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
+        {/* Composer — adds a timestamped note to THIS session */}
+        <View style={sessionNotesModalStyles.composer}>
+          <TextInput
+            style={sessionNotesModalStyles.composerInput}
+            value={draft}
+            onChangeText={setDraft}
+            placeholder="Add a note to this session…"
+            placeholderTextColor="#9CA3AF"
+            multiline
+            editable={!createNote.isPending}
+            accessibilityLabel="Add a note to this session"
+          />
+          <TouchableOpacity
+            style={[
+              sessionNotesModalStyles.addBtn,
+              (!draft.trim() || createNote.isPending) && sessionNotesModalStyles.addBtnDisabled,
+            ]}
+            onPress={() => { void handleAddNote(); }}
+            disabled={!draft.trim() || createNote.isPending}
+            accessibilityRole="button"
+            accessibilityLabel="Add note to session"
+          >
+            {createNote.isPending ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <Text style={sessionNotesModalStyles.addBtnText}>Add note</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+
         {isLoading ? (
           <View style={sessionNotesModalStyles.centerRow}>
             <ActivityIndicator size="small" color={tokens.primary} />
@@ -7007,17 +7094,38 @@ function SessionNotesModal({
           <Text style={sessionNotesModalStyles.errorText}>
             Could not load notes. Please close and try again.
           </Text>
-        ) : sessionNotes.length === 0 ? (
+        ) : entries.length === 0 ? (
           <Text style={sessionNotesModalStyles.emptyText}>
-            No notes recorded for this session.
+            No notes recorded for this session yet.
           </Text>
         ) : (
-          sessionNotes.map((note) => (
-            <View key={note.id} style={sessionNotesModalStyles.noteCard}>
-              <Text style={sessionNotesModalStyles.noteBody}>{note.body}</Text>
+          entries.map((entry) => (
+            <View key={entry.key} style={sessionNotesModalStyles.noteCard}>
+              <View style={sessionNotesModalStyles.noteTagRow}>
+                <View
+                  style={[
+                    sessionNotesModalStyles.noteTag,
+                    entry.kind === 'summary'
+                      ? sessionNotesModalStyles.noteTagSummary
+                      : sessionNotesModalStyles.noteTagAddendum,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      sessionNotesModalStyles.noteTagText,
+                      entry.kind === 'summary'
+                        ? sessionNotesModalStyles.noteTagTextSummary
+                        : sessionNotesModalStyles.noteTagTextAddendum,
+                    ]}
+                  >
+                    {entry.kind === 'summary' ? 'Session summary' : 'Added note'}
+                  </Text>
+                </View>
+              </View>
+              <Text style={sessionNotesModalStyles.noteBody}>{entry.body}</Text>
               <Text style={sessionNotesModalStyles.noteMeta}>
-                {formatDateTime(note.createdAt)}
-                {note.isPinned ? ' · Pinned' : ''}
+                {formatDateTime(entry.timestamp)}
+                {entry.pinned ? ' · Pinned' : ''}
               </Text>
             </View>
           ))
@@ -7191,6 +7299,64 @@ const sessionNotesModalStyles = StyleSheet.create({
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 11,
     color: '#9CA3AF',
+  } as TextStyle,
+  noteTagRow: {
+    flexDirection: 'row',
+  } as ViewStyle,
+  noteTag: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 999,
+  } as ViewStyle,
+  noteTagSummary: {
+    backgroundColor: `${tokens.primary}14`,
+  } as ViewStyle,
+  noteTagAddendum: {
+    backgroundColor: '#F59E0B22',
+  } as ViewStyle,
+  noteTagText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 10,
+  } as TextStyle,
+  noteTagTextSummary: {
+    color: tokens.primary,
+  } as TextStyle,
+  noteTagTextAddendum: {
+    color: '#B45309',
+  } as TextStyle,
+  // Composer
+  composer: {
+    gap: 8,
+    marginBottom: 4,
+  } as ViewStyle,
+  composerInput: {
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    minHeight: 64,
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 14,
+    color: '#111827',
+    textAlignVertical: 'top',
+  } as TextStyle,
+  addBtn: {
+    alignSelf: 'flex-end',
+    backgroundColor: tokens.primary,
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    borderRadius: 8,
+    minWidth: 96,
+    alignItems: 'center',
+  } as ViewStyle,
+  addBtnDisabled: {
+    opacity: 0.45,
+  } as ViewStyle,
+  addBtnText: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 13,
+    color: '#FFFFFF',
   } as TextStyle,
 
   // Footer
@@ -7740,16 +7906,31 @@ function formatNoteTimestamp(iso: string): string {
 interface CaseNotesModalProps {
   visible: boolean;
   memberId: string;
+  /** The member's sessions — used to label session-linked notes and to power
+   *  the "attach to session" selector in the composer. */
+  sessions: RecentSessionItem[];
   onClose: () => void;
 }
 
+/** One row in the unified Case Notes timeline. */
+interface CaseTimelineEntry {
+  key: string;
+  kind: 'summary' | 'note';
+  body: string;
+  /** ISO timestamp for ordering + display. */
+  timestamp: string;
+  /** The session this entry belongs to, if any. */
+  sessionId: string | null;
+  /** Human date of the linked session, if any (e.g. "Jun 27, 9:21 PM"). */
+  sessionLabel?: string;
+}
+
 /**
- * Modal listing all CHW case notes for this member (newest first) plus an
- * "Add a note" composer at the top.
- *
- * Notes are immutable once created — no edit affordance is rendered.
- * Submitting a new note calls useCreateCaseNote() and clears the input on
- * success (the list auto-refreshes via query invalidation in the hook).
+ * Modal showing a unified, timestamp-ordered timeline of the member's notes:
+ * every session documentation summary (the original session notes) plus every
+ * CHW case note (standalone or attached to a session). The composer can attach
+ * a new note to a specific session, so additions are timestamped addenda,
+ * distinguishable from the original session summary.
  *
  * Platform:
  *   Web  — fixed overlay + backdrop + Esc key.
@@ -7758,16 +7939,30 @@ interface CaseNotesModalProps {
 function CaseNotesModal({
   visible,
   memberId,
+  sessions,
   onClose,
 }: CaseNotesModalProps): React.JSX.Element {
-  const { data: notesList, isLoading } = useCaseNotes(memberId, { enabled: visible });
+  const { data: notesList, isLoading: notesLoading } = useCaseNotes(memberId, {
+    enabled: visible,
+  });
+  const { data: sessionSummaries, isLoading: summariesLoading } = useSessionNotes(memberId, {
+    enabled: visible,
+  });
   const createNote = useCreateCaseNote();
+  const isLoading = notesLoading || summariesLoading;
 
   const [draft, setDraft] = useState('');
+  // Which session a new note attaches to; null = general (standalone) note.
+  const [attachSessionId, setAttachSessionId] = useState<string | null>(null);
+  const [showSessionPicker, setShowSessionPicker] = useState(false);
 
-  // Reset draft whenever the modal opens.
+  // Reset composer whenever the modal opens.
   useEffect(() => {
-    if (visible) setDraft('');
+    if (visible) {
+      setDraft('');
+      setAttachSessionId(null);
+      setShowSessionPicker(false);
+    }
   }, [visible]);
 
   // Esc key closes on web.
@@ -7783,17 +7978,52 @@ function CaseNotesModal({
   const handleAddNote = useCallback(async (): Promise<void> => {
     const trimmed = draft.trim();
     if (!trimmed || createNote.isPending) return;
-    await createNote.mutateAsync({ memberId, body: trimmed });
+    await createNote.mutateAsync({ memberId, body: trimmed, sessionId: attachSessionId });
     setDraft('');
-  }, [draft, memberId, createNote]);
+    setAttachSessionId(null);
+  }, [draft, memberId, attachSessionId, createNote]);
 
-  // Newest first.
-  const items = useMemo(
-    () => [...(notesList?.items ?? [])].sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-    ),
-    [notesList],
-  );
+  // session_id -> "Mon D, h:MM AM" label for tagging session-linked entries.
+  const sessionLabelById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const s of sessions) {
+      map.set(s.id, formatDateTime(s.scheduledAt ?? s.startedAt));
+    }
+    return map;
+  }, [sessions]);
+
+  // Merge session summaries + case notes into one newest-first timeline.
+  const items = useMemo((): CaseTimelineEntry[] => {
+    const list: CaseTimelineEntry[] = [];
+    for (const s of sessionSummaries ?? []) {
+      list.push({
+        key: `summary-${s.sessionId}`,
+        kind: 'summary',
+        body: s.summary,
+        timestamp: s.submittedAt,
+        sessionId: s.sessionId,
+        sessionLabel:
+          sessionLabelById.get(s.sessionId) ??
+          (s.occurredAt ? formatDateTime(s.occurredAt) : undefined),
+      });
+    }
+    for (const n of notesList?.items ?? []) {
+      list.push({
+        key: n.id,
+        kind: 'note',
+        body: n.body,
+        timestamp: n.createdAt,
+        sessionId: n.sessionId,
+        sessionLabel: n.sessionId ? sessionLabelById.get(n.sessionId) : undefined,
+      });
+    }
+    return list.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+  }, [sessionSummaries, notesList, sessionLabelById]);
+
+  const attachLabel =
+    attachSessionId != null
+      ? sessionLabelById.get(attachSessionId) ?? 'Selected session'
+      : 'General note (no session)';
 
   const body = (
     <View style={caseNotesStyles.container}>
@@ -7824,6 +8054,51 @@ function CaseNotesModal({
           accessibilityLabel="New case note"
           editable={!createNote.isPending}
         />
+        {/* Attach-to-session selector */}
+        {sessions.length > 0 && (
+          <View>
+            <TouchableOpacity
+              style={caseNotesStyles.attachBtn}
+              onPress={() => setShowSessionPicker((p) => !p)}
+              accessibilityRole="button"
+              accessibilityLabel={`Attach to: ${attachLabel}`}
+            >
+              <Text style={caseNotesStyles.attachBtnText} numberOfLines={1}>
+                Attach to: {attachLabel}
+              </Text>
+              <Text style={caseNotesStyles.attachChevron}>{showSessionPicker ? '▲' : '▼'}</Text>
+            </TouchableOpacity>
+            {showSessionPicker && (
+              <ScrollView style={caseNotesStyles.attachList} nestedScrollEnabled>
+                <TouchableOpacity
+                  style={caseNotesStyles.attachItem}
+                  onPress={() => { setAttachSessionId(null); setShowSessionPicker(false); }}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: attachSessionId === null }}
+                >
+                  <Text style={caseNotesStyles.attachItemText}>General note (no session)</Text>
+                  {attachSessionId === null && <Check size={14} color={tokens.primary} />}
+                </TouchableOpacity>
+                {sessions.map((s) => {
+                  const label = `${formatDateTime(s.scheduledAt ?? s.startedAt)} · ${s.mode}`;
+                  const selected = attachSessionId === s.id;
+                  return (
+                    <TouchableOpacity
+                      key={s.id}
+                      style={caseNotesStyles.attachItem}
+                      onPress={() => { setAttachSessionId(s.id); setShowSessionPicker(false); }}
+                      accessibilityRole="radio"
+                      accessibilityState={{ selected }}
+                    >
+                      <Text style={caseNotesStyles.attachItemText} numberOfLines={1}>{label}</Text>
+                      {selected && <Check size={14} color={tokens.primary} />}
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            )}
+          </View>
+        )}
         <TouchableOpacity
           style={[
             caseNotesStyles.addBtn,
@@ -7844,7 +8119,7 @@ function CaseNotesModal({
 
       <View style={caseNotesStyles.divider} />
 
-      {/* Notes list */}
+      {/* Unified notes timeline (session summaries + case notes, newest first) */}
       <ScrollView
         style={caseNotesStyles.list}
         contentContainerStyle={caseNotesStyles.listContent}
@@ -7856,16 +8131,30 @@ function CaseNotesModal({
             <Text style={caseNotesStyles.mutedText}>Loading…</Text>
           </View>
         ) : items.length === 0 ? (
-          <Text style={caseNotesStyles.emptyText}>No case notes yet.</Text>
+          <Text style={caseNotesStyles.emptyText}>No notes yet.</Text>
         ) : (
-          items.map((note) => (
-            <View key={note.id} style={caseNotesStyles.noteRow}>
-              <Text style={caseNotesStyles.noteBody}>{note.body}</Text>
-              <Text style={caseNotesStyles.noteTimestamp}>
-                {formatNoteTimestamp(note.createdAt)}
-              </Text>
-            </View>
-          ))
+          items.map((entry) => {
+            const tag =
+              entry.kind === 'summary'
+                ? 'Session summary'
+                : entry.sessionId
+                ? 'Session note'
+                : null;
+            return (
+              <View key={entry.key} style={caseNotesStyles.noteRow}>
+                {tag && (
+                  <Text style={caseNotesStyles.noteTag}>
+                    {tag}
+                    {entry.sessionLabel ? ` · ${entry.sessionLabel}` : ''}
+                  </Text>
+                )}
+                <Text style={caseNotesStyles.noteBody}>{entry.body}</Text>
+                <Text style={caseNotesStyles.noteTimestamp}>
+                  {formatNoteTimestamp(entry.timestamp)}
+                </Text>
+              </View>
+            );
+          })
         )}
       </ScrollView>
     </View>
@@ -8021,6 +8310,13 @@ const caseNotesStyles = StyleSheet.create({
     borderBottomColor: '#F3F4F6',
     gap: 4,
   } as ViewStyle,
+  noteTag: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 10,
+    color: tokens.primary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  } as TextStyle,
   noteBody: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 13,
@@ -8031,6 +8327,50 @@ const caseNotesStyles = StyleSheet.create({
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 11,
     color: '#9CA3AF',
+  } as TextStyle,
+  // Attach-to-session selector (composer)
+  attachBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  } as ViewStyle,
+  attachBtnText: {
+    fontFamily: 'PlusJakartaSans_500Medium',
+    fontSize: 13,
+    color: '#374151',
+    flex: 1,
+  } as TextStyle,
+  attachChevron: {
+    fontSize: 11,
+    color: '#9CA3AF',
+    marginLeft: 8,
+  } as TextStyle,
+  attachList: {
+    marginTop: 4,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 8,
+    maxHeight: 180,
+  } as ViewStyle,
+  attachItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  } as ViewStyle,
+  attachItemText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: '#374151',
+    flex: 1,
   } as TextStyle,
 });
 
@@ -8917,6 +9257,7 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
         <CaseNotesModal
           visible={caseNotesOpen}
           memberId={memberId}
+          sessions={profile.recentSessions}
           onClose={() => setCaseNotesOpen(false)}
         />
 

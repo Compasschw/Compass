@@ -1201,6 +1201,38 @@ export function useCaseNotes(
   });
 }
 
+/** A CHW-authored session documentation summary (the "original" session note). */
+export interface SessionNoteData {
+  sessionId: string;
+  /** When the session happened (ISO); null if never scheduled/started. */
+  occurredAt: string | null;
+  /** Session modality (phone | video | in_person) — for labeling. */
+  mode: string;
+  /** The CHW-authored documentation summary. */
+  summary: string;
+  /** When the documentation was submitted (ISO) — the note's timestamp. */
+  submittedAt: string;
+}
+
+/**
+ * Fetch the CHW-authored session documentation summaries for a member — the
+ * "original" session notes shown in the View Notes and Case Notes timelines.
+ *
+ * GET /api/v1/chw/members/{memberId}/session-notes (relationship-gated;
+ * scoped to the caller CHW's own sessions with this member).
+ */
+export function useSessionNotes(memberId: string, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['chw', 'members', memberId, 'session-notes'] as const,
+    queryFn: async (): Promise<SessionNoteData[]> => {
+      const raw = await api<unknown>(`/chw/members/${memberId}/session-notes`);
+      return transformKeys<SessionNoteData[]>(raw);
+    },
+    enabled: (options?.enabled ?? true) && memberId.length > 0,
+    staleTime: 30_000,
+  });
+}
+
 export interface CreateCaseNotePayload {
   memberId: string;
   body: string;
