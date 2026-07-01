@@ -364,6 +364,18 @@ const JOURNEY_STEP_POINTS: Record<string, number> = {
   'Journey Complete': 50,
 };
 
+// Canonical step descriptions, mirroring the backend STANDARD_STEPS. Used as a
+// fallback so the read-only timeline always shows a description even when a
+// journey's step (or the placeholder "no journey" state) doesn't carry one.
+const JOURNEY_STEP_DESCRIPTIONS: Record<string, string> = {
+  'Need Identified': "CHW confirms the member's active need for this pathway.",
+  'Eligibility Screening': 'Member completes eligibility screening for the relevant program.',
+  'Upload Documents': 'Member uploads required supporting documents.',
+  'Follow Up': 'CHW follows up to confirm progress and next actions.',
+  'Resource Connection': 'Member is connected to the appropriate resource or provider.',
+  'Journey Complete': "Member's need has been addressed. Journey closed.",
+};
+
 // ─── Static suggested questions for Open Questions drawer (v1 — no backend) ──
 
 const SUGGESTED_QUESTIONS: ReadonlyArray<{ category: string; questions: string[] }> = [
@@ -2427,8 +2439,13 @@ function DemographicsColumn({
   const initials = getInitials(profile.firstName, profile.lastName);
   const ctaDisabled = servicesConsentRefused;
 
+  // Two-line address: street (+ apt/suite) on the first line; city, state, and
+  // ZIP grouped together on the second so "Los Angeles, CA, 90062" never wraps
+  // apart. `profile.address` is "line1[, line2]" and `profile.city` is
+  // "City, ST" (both assembled server-side).
+  const cityStateZip = [profile.city, profile.zipCode].filter(Boolean).join(', ');
   const addressLabel = profile.address
-    ? [profile.address, profile.city, profile.zipCode].filter(Boolean).join(', ')
+    ? [profile.address, cityStateZip].filter(Boolean).join('\n')
     : profile.zipCode
     ? `ZIP ${profile.zipCode}`
     : 'Not provided';
@@ -5056,6 +5073,7 @@ function buildRoadmapSteps(journey: MemberJourneyResponse | undefined) {
     return standardStepKeys.map((key) => ({
       key,
       label: key,
+      description: JOURNEY_STEP_DESCRIPTIONS[key] ?? '',
       state: 'upcoming' as const,
       points: JOURNEY_STEP_POINTS[key] ?? 0,
     }));
@@ -5064,9 +5082,14 @@ function buildRoadmapSteps(journey: MemberJourneyResponse | undefined) {
   return standardStepKeys.map((key) => {
     const backendStep = journey.steps.find((s) => s.stepName === key);
     const state = backendStep?.status ?? ('upcoming' as const);
+    // Prefer the journey's own step description; fall back to the canonical
+    // STANDARD_STEPS text so a node is never left without an explainer.
+    const description =
+      backendStep?.stepDescription?.trim() || JOURNEY_STEP_DESCRIPTIONS[key] || '';
     return {
       key,
       label: key,
+      description,
       state,
       points: backendStep?.pointsOnCompletion ?? JOURNEY_STEP_POINTS[key] ?? 0,
     };
@@ -5078,6 +5101,7 @@ type RoadmapStepState = 'completed' | 'in_progress' | 'missed' | 'upcoming';
 interface RoadmapStep {
   key: string;
   label: string;
+  description: string;
   state: RoadmapStepState;
   points: number;
 }
@@ -5161,6 +5185,12 @@ const StepCircle = React.memo(function StepCircle({
       >
         {step.label}
       </Text>
+      {/* Description */}
+      {step.description.trim().length > 0 && (
+        <Text style={timelineStyles.stepDescription} numberOfLines={3}>
+          {step.description}
+        </Text>
+      )}
       {/* Status */}
       <Text style={[timelineStyles.subLabel, { color: subLabelColor }]}>
         {subLabelText}
@@ -5230,6 +5260,11 @@ const VerticalStepRow = React.memo(function VerticalStepRow({
         >
           {step.label}
         </Text>
+        {step.description.trim().length > 0 && (
+          <Text style={verticalStepStyles.stepDescription} numberOfLines={2}>
+            {step.description}
+          </Text>
+        )}
         <View style={verticalStepStyles.metaRow}>
           <Text style={[verticalStepStyles.statusText, { color: subLabelColor }]}>
             {subLabelText}
@@ -5271,6 +5306,12 @@ const verticalStepStyles = StyleSheet.create({
   stepNameMuted: {
     color: tokens.textMuted,
     fontFamily: 'PlusJakartaSans_400Regular',
+  } as TextStyle,
+  stepDescription: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: tokens.textMuted,
+    lineHeight: 15,
   } as TextStyle,
   metaRow: {
     flexDirection: 'row',
@@ -5908,6 +5949,15 @@ const timelineStyles = StyleSheet.create({
     textAlign: 'center',
     maxWidth: 80,
     lineHeight: 14,
+  } as TextStyle,
+  stepDescription: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 10,
+    color: tokens.textMuted,
+    textAlign: 'center',
+    maxWidth: 96,
+    lineHeight: 13,
+    marginTop: 3,
   } as TextStyle,
   subLabel: {
     fontFamily: 'PlusJakartaSans_400Regular',
