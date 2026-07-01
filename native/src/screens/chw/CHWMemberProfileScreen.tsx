@@ -2348,6 +2348,12 @@ interface DemographicsColumnProps {
   /** When provided, the demographics pencil opens this callback instead of
    *  the legacy inline preferred-name editor. Supplied by the parent screen. */
   onEditDemographics?: () => void;
+  /** Opens the Confirm Close modal (rendered at the screen root). */
+  onOpenCloseMember: () => void;
+  /** Reopens a closed member. */
+  onReopenMember: () => void;
+  /** True while the reopen mutation is in flight. */
+  reopenPending: boolean;
 }
 
 /**
@@ -2860,6 +2866,9 @@ function DemographicsColumn({
   onNavigateAndCall,
   onBeginSession,
   onEditDemographics,
+  onOpenCloseMember,
+  onReopenMember,
+  reopenPending,
 }: DemographicsColumnProps): React.JSX.Element {
   const initials = getInitials(profile.firstName, profile.lastName);
 
@@ -2867,18 +2876,6 @@ function DemographicsColumn({
   // as a services-consent refusal — and swaps the primary CTA for "Reopen".
   const isClosed = profile.closureStatus != null;
   const ctaDisabled = servicesConsentRefused || isClosed;
-
-  const [closeModalVisible, setCloseModalVisible] = useState(false);
-  const closeMember = useCloseMember(memberId);
-  const reopenMember = useReopenMember(memberId);
-
-  const handleReopen = () => {
-    reopenMember.mutate(undefined, {
-      onError: () => {
-        Alert.alert('Could not reopen member', 'Please try again.');
-      },
-    });
-  };
 
   // Two-line address: street (+ apt/suite) on the first line; city, state, and
   // ZIP grouped together on the second so "Los Angeles, CA, 90062" never wraps
@@ -2970,24 +2967,26 @@ function DemographicsColumn({
               <Text style={[demoColStyles.ctaBtnText, { color: tokens.primary }]}>Message</Text>
             </TouchableOpacity>
 
-            {/* Close / Reopen member — the orange archive affordance */}
+            {/* Close / Reopen member — the orange archive affordance. The
+                Confirm Close modal is rendered at the screen root (see parent)
+                so its overlay isn't clipped by this card's stacking context. */}
             {isClosed ? (
               <TouchableOpacity
                 style={[demoColStyles.ctaBtn, demoColStyles.reopenBtn]}
-                onPress={handleReopen}
-                disabled={reopenMember.isPending}
+                onPress={onReopenMember}
+                disabled={reopenPending}
                 accessibilityRole="button"
                 accessibilityLabel={`Reopen ${displayName}`}
               >
                 <Archive size={14} color={CLOSE_ACCENT} />
                 <Text style={[demoColStyles.ctaBtnText, { color: CLOSE_ACCENT }]}>
-                  {reopenMember.isPending ? 'Reopening…' : 'Reopen Member'}
+                  {reopenPending ? 'Reopening…' : 'Reopen Member'}
                 </Text>
               </TouchableOpacity>
             ) : (
               <TouchableOpacity
                 style={[demoColStyles.ctaBtn, demoColStyles.closeBtn]}
-                onPress={() => setCloseModalVisible(true)}
+                onPress={onOpenCloseMember}
                 accessibilityRole="button"
                 accessibilityLabel={`Close ${displayName}`}
               >
@@ -2997,23 +2996,6 @@ function DemographicsColumn({
             )}
           </View>
         </View>
-
-        <CloseMemberModal
-          visible={closeModalVisible}
-          displayName={displayName}
-          isSubmitting={closeMember.isPending}
-          onCancel={() => setCloseModalVisible(false)}
-          onConfirm={(status, reason) => {
-            closeMember.mutate(
-              { status, reason },
-              {
-                onSuccess: () => setCloseModalVisible(false),
-                onError: () =>
-                  Alert.alert('Could not close member', 'Please try again.'),
-              },
-            );
-          }}
-        />
 
         {/* Right sub-column: fields */}
         <View style={demoColStyles.fields}>
@@ -8715,6 +8697,16 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
   const [showScreening, setShowScreening] = useState(false);
   const [caseNotesOpen, setCaseNotesOpen] = useState(false);
   const [documentsOpen, setDocumentsOpen] = useState(false);
+  // Close/Reopen member — modal rendered at the screen root (not nested in the
+  // demographics card) so its overlay isn't clipped by the card's stacking context.
+  const [closeMemberOpen, setCloseMemberOpen] = useState(false);
+  const closeMember = useCloseMember(memberId);
+  const reopenMember = useReopenMember(memberId);
+  const handleReopenMember = useCallback(() => {
+    reopenMember.mutate(undefined, {
+      onError: () => Alert.alert('Could not reopen member', 'Please try again.'),
+    });
+  }, [reopenMember]);
 
   // Journeys data used both by ResourceNeedsColumn and AddJourneyModal dedup guard.
   const { data: journeysForModal } = useMemberJourneys(memberId);
@@ -8920,6 +8912,9 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                   onNavigateAndCall={handleNavigateAndCall}
                   onBeginSession={handleBeginSession}
                   onEditDemographics={() => setEditDemographicsOpen(true)}
+                  onOpenCloseMember={() => setCloseMemberOpen(true)}
+                  onReopenMember={handleReopenMember}
+                  reopenPending={reopenMember.isPending}
                 />
 
                 {/* CENTER: Flag Note + Billing Consent */}
@@ -9259,6 +9254,23 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
           memberId={memberId}
           sessions={profile.recentSessions}
           onClose={() => setCaseNotesOpen(false)}
+        />
+
+        {/* ── Close Member modal (root-level so the overlay isn't clipped) ── */}
+        <CloseMemberModal
+          visible={closeMemberOpen}
+          displayName={displayName}
+          isSubmitting={closeMember.isPending}
+          onCancel={() => setCloseMemberOpen(false)}
+          onConfirm={(status, reason) => {
+            closeMember.mutate(
+              { status, reason },
+              {
+                onSuccess: () => setCloseMemberOpen(false),
+                onError: () => Alert.alert('Could not close member', 'Please try again.'),
+              },
+            );
+          }}
         />
 
         {/* ── Uploaded Documents modal ── */}
