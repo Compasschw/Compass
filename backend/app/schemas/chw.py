@@ -176,6 +176,29 @@ class SessionSummaryItem(BaseModel):
     units_billed: int | None
 
 
+class SessionNoteItem(BaseModel):
+    """A CHW-authored session documentation summary — the "original" note for a
+    session, shown in the View Notes and Case Notes timelines. CHWs can append
+    additional (timestamped) notes to a session via the case-notes endpoint with
+    session_id set; those come back through the case-notes API, not here.
+    """
+
+    session_id: UUID
+    """The session this summary documents."""
+
+    occurred_at: datetime | None
+    """When the session happened (started_at, else scheduled_at). For ordering."""
+
+    mode: str
+    """Session modality (phone / video / in_person) — for labeling."""
+
+    summary: str
+    """The CHW-authored documentation summary (the original session note)."""
+
+    submitted_at: datetime
+    """When the documentation was submitted — the note's timestamp."""
+
+
 class ConsentStatusView(BaseModel):
     """Most-recent consent state for each consent type held by this member."""
 
