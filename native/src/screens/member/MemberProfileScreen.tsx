@@ -1007,9 +1007,11 @@ function DemographicsCard({
 }: DemographicsCardProps): React.JSX.Element {
   const initials = getInitials(name);
 
+  // Two-line address, consistent with the CHW member-profile view: street and
+  // apartment/suite together on the first line; city + state on the second so
+  // they never wrap apart. (ZIP is shown in its own labeled row below.)
   const addressLabel = [
-    apiProfile?.addressLine1,
-    apiProfile?.addressLine2,
+    [apiProfile?.addressLine1, apiProfile?.addressLine2].filter(Boolean).join(', '),
     [apiProfile?.city, apiProfile?.state].filter(Boolean).join(', '),
   ]
     .filter((part) => part && part.trim().length > 0)
