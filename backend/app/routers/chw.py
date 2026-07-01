@@ -26,6 +26,7 @@ from app.schemas.chw import (
     PreferredNameUpdate,
     ResourceNeedLevelItem,
     ResourceNeedsUpdate,
+    SessionNoteItem,
 )
 from app.schemas.user import CHWProfileResponse, CHWProfileUpdate
 from app.services.storage.avatar_urls import presigned_avatar_url
@@ -1723,6 +1724,62 @@ async def reopen_member(
     profile.closed_by = None
     await db.commit()
     return MemberClosureResponse(member_id=member_id)
+
+
+@router.get(
+    "/members/{member_id}/session-notes",
+    response_model=list[SessionNoteItem],
+    summary="List CHW-authored session documentation summaries for a member",
+)
+async def get_member_session_notes(
+    member_id: UUID,
+    caller=Depends(_require_chw_or_admin_key),
+    db: AsyncSession = Depends(get_db),
+) -> list[SessionNoteItem]:
+    """Return the CHW-authored documentation summary for each of the member's
+    documented sessions — the "original" session notes shown in the View Notes
+    and Case Notes timelines.
+
+    Scoped like the member-detail session history: a CHW sees only their own
+    sessions with this member; admins see all. Newest first. Sessions without a
+    documentation summary are omitted.
+
+    Errors:
+      403 — CHW has no active relationship with this member
+    """
+    from app.models.session import Session, SessionDocumentation
+
+    await _assert_chw_member_relationship_or_admin(caller, member_id, db)
+
+    caller_role: str = caller["role"]
+    caller_user = caller["user"]
+
+    stmt = (
+        select(Session, SessionDocumentation)
+        .join(SessionDocumentation, SessionDocumentation.session_id == Session.id)
+        .where(Session.member_id == member_id)
+    )
+    if caller_role != "admin":
+        assert caller_user is not None
+        stmt = stmt.where(Session.chw_id == caller_user.id)
+    # Order newest-first by when the session occurred (fallback to documentation time).
+    stmt = stmt.order_by(
+        func.coalesce(
+            Session.started_at, Session.scheduled_at, SessionDocumentation.submitted_at
+        ).desc()
+    )
+
+    rows = (await db.execute(stmt)).all()
+    return [
+        SessionNoteItem(
+            session_id=session.id,
+            occurred_at=session.started_at or session.scheduled_at,
+            mode=session.mode,
+            summary=doc.summary,
+            submitted_at=doc.submitted_at,
+        )
+        for session, doc in rows
+    ]
 
 
 @router.patch("/members/{member_id}/demographics")
