@@ -103,6 +103,29 @@ async def test_add_and_edit_journey_node(
 
 
 @pytest.mark.asyncio
+async def test_duplicate_custom_journey_rejected(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    """A second active journey with the same name (case-insensitive) → 409."""
+    member_id = await _relate(client, member_tokens, chw_tokens)
+    res = await client.post(
+        "/api/v1/journeys/custom",
+        json={"member_id": member_id, "title": "Transportation"},
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 201, res.text
+
+    # Same name, different case → duplicate.
+    res = await client.post(
+        "/api/v1/journeys/custom",
+        json={"member_id": member_id, "title": "transportation"},
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 409, res.text
+    assert "already exists" in res.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
 async def test_unrelated_chw_cannot_create_custom_journey(
     client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
 ):

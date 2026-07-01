@@ -766,12 +766,13 @@ async def test_two_canonical_journeys_for_same_need_are_consolidated(
 
 
 @pytest.mark.asyncio
-async def test_custom_journey_named_like_a_fixed_need_is_consolidated(
+async def test_custom_journey_named_like_a_fixed_need_is_rejected(
     client: AsyncClient,
     reconcile_pair: tuple[dict, dict, str],
 ) -> None:
-    """A custom journey named exactly like a fixed need is consolidated with the
-    canonical one — the member never sees two "Employment" journeys."""
+    """A custom journey named exactly like an existing active need is rejected
+    (409) by the duplicate guard — so the member never gets two "Employment"
+    journeys in the first place."""
     chw_tokens, _, member_id = reconcile_pair
 
     # Select Employment → creates the canonical Employment journey.
@@ -779,19 +780,15 @@ async def test_custom_journey_named_like_a_fixed_need_is_consolidated(
         client, member_id, chw_tokens,
         needs=["employment"], levels=[{"slug": "employment", "level": "high"}],
     )
-    # CHW also creates a custom journey titled "Employment" (no backend guard).
+    # A custom journey titled "Employment" duplicates the active need → 409.
     res = await client.post(
         "/api/v1/journeys/custom",
         json={"member_id": member_id, "title": "Employment"},
         headers=auth_header(chw_tokens),
     )
-    assert res.status_code == 201, res.text
-    assert len(await _get_active_journeys(member_id)) == 2  # the duplicate state
+    assert res.status_code == 409, res.text
+    assert "already exists" in res.json()["detail"].lower()
 
-    # Re-saving the need reconciles → exactly one active "Employment".
-    await _patch_resource_needs(
-        client, member_id, chw_tokens,
-        needs=["employment"], levels=[{"slug": "employment", "level": "high"}],
-    )
+    # The guard means there is still exactly one active "Employment" journey.
     active = await _get_active_journeys(member_id)
     assert len(active) == 1, f"Expected one Employment journey; got {len(active)}"
