@@ -3348,12 +3348,10 @@ function BillingConsentCard({
   memberId,
 }: BillingConsentCardProps): React.JSX.Element {
   const [showConsent, setShowConsent] = useState(false);
-  const { data: consentData, isLoading } = useMemberServicesConsent(memberId);
-  const consentValue: ServicesConsentStatus = consentData?.value ?? null;
-  const isRefused = consentValue === 'refuse_services';
+  const { data: consentData } = useMemberServicesConsent(memberId);
 
   // Billable / non-billable toggle (CHW-controlled). Defaults to billable.
-  const { data: billingStatus } = useMemberBillingStatus(memberId);
+  const { data: billingStatus, isLoading } = useMemberBillingStatus(memberId);
   const updateBilling = useUpdateMemberBillingStatus(memberId);
   const isBillable = billingStatus?.isBillable ?? true;
 
@@ -3371,18 +3369,17 @@ function BillingConsentCard({
     });
   };
 
-  const statusLabel = isRefused
-    ? 'Refused Services'
-    : consentValue === 'consent_to_services'
-    ? 'Consented'
-    : 'Unknown';
-
-  const statusColor = isRefused ? '#B91C1C' : '#15803D';
-  const statusIcon = isRefused
-    ? <ShieldX size={13} color={statusColor} />
-    : consentValue === 'consent_to_services'
-    ? <ShieldCheck size={13} color={statusColor} />
-    : <ShieldOff size={13} color="#9CA3AF" />;
+  // Billing consent is captured by default at signup (it's required to create a
+  // member account) and stays "captured" while the member is billable. Turning
+  // the Billable toggle off records the member as having declined billing (their
+  // sessions become non-billable) until it's turned back on. Two states only.
+  const statusLabel = isBillable ? 'Consent captured' : 'Declined';
+  const statusColor = isBillable ? '#15803D' : '#B91C1C';
+  const statusIcon = isBillable ? (
+    <ShieldCheck size={13} color={statusColor} />
+  ) : (
+    <ShieldX size={13} color={statusColor} />
+  );
 
   return (
     <View style={billingConsentCardStyles.container}>
@@ -3418,12 +3415,6 @@ function BillingConsentCard({
             {statusLabel}
           </Text>
         </View>
-      )}
-
-      {consentData?.changedAt && (
-        <Text style={billingConsentCardStyles.changedAt}>
-          Updated {formatDate(consentData.changedAt)}
-        </Text>
       )}
 
       {/* Billable / non-billable toggle (CHW-controlled) */}
@@ -4274,12 +4265,14 @@ function CreateCustomJourneyModal({
   const createCustomJourney = useCreateCustomJourney(memberId);
 
   const [title, setTitle] = useState('');
+  const [priorityLevel, setPriorityLevel] = useState<ResourceNeedLevel>('high');
   const [error, setError] = useState<string | null>(null);
 
   // Reset state whenever the modal opens.
   useEffect(() => {
     if (visible) {
       setTitle('');
+      setPriorityLevel('high');
       setError(null);
     }
   }, [visible]);
@@ -4302,7 +4295,7 @@ function CreateCustomJourneyModal({
     }
     setError(null);
     try {
-      await createCustomJourney.mutateAsync(trimmed);
+      await createCustomJourney.mutateAsync({ title: trimmed, priorityLevel });
       onClose();
     } catch (err: unknown) {
       const detail =
@@ -4314,7 +4307,7 @@ function CreateCustomJourneyModal({
           : 'Could not create journey. Please try again.';
       setError(detail);
     }
-  }, [title, createCustomJourney, onClose]);
+  }, [title, priorityLevel, createCustomJourney, onClose]);
 
   const body = (
     <View style={createCustomJourneyStyles.container}>
@@ -4380,6 +4373,37 @@ function CreateCustomJourneyModal({
                   ]}
                 >
                   {label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
+        {/* Priority */}
+        <Text style={createCustomJourneyStyles.priorityLabel}>Priority</Text>
+        <View style={createCustomJourneyStyles.priorityRow}>
+          {(['low', 'medium', 'high'] as const).map((lvl) => {
+            const isActive = priorityLevel === lvl;
+            return (
+              <TouchableOpacity
+                key={lvl}
+                style={[
+                  createCustomJourneyStyles.priorityPill,
+                  isActive && createCustomJourneyStyles.priorityPillActive,
+                ]}
+                onPress={() => setPriorityLevel(lvl)}
+                disabled={createCustomJourney.isPending}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: isActive }}
+                accessibilityLabel={lvl === 'low' ? 'Low' : lvl === 'medium' ? 'Medium' : 'High'}
+              >
+                <Text
+                  style={[
+                    createCustomJourneyStyles.priorityPillText,
+                    isActive && createCustomJourneyStyles.priorityPillTextActive,
+                  ]}
+                >
+                  {lvl === 'low' ? 'Low' : lvl === 'medium' ? 'Medium' : 'High'}
                 </Text>
               </TouchableOpacity>
             );
@@ -4569,6 +4593,38 @@ const createCustomJourneyStyles = StyleSheet.create({
     color: '#374151',
   } as TextStyle,
   chipTextSelected: {
+    color: tokens.primary,
+  } as TextStyle,
+  priorityLabel: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 12,
+    marginBottom: 4,
+  } as TextStyle,
+  priorityRow: {
+    flexDirection: 'row',
+    gap: 6,
+  } as ViewStyle,
+  priorityPill: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#F9FAFB',
+  } as ViewStyle,
+  priorityPillActive: {
+    backgroundColor: `${tokens.primary}12`,
+    borderColor: tokens.primary,
+  } as ViewStyle,
+  priorityPillText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 13,
+    color: '#374151',
+  } as TextStyle,
+  priorityPillTextActive: {
     color: tokens.primary,
   } as TextStyle,
   hint: {
