@@ -16,8 +16,10 @@ from app.schemas.chw import (
     CHWMapDataResponse,
     CHWMemberProfileDetail,
     CHWMemberProfileView,
+    CloseMemberRequest,
     MapMemberPin,
     MapResourcePin,
+    MemberClosureResponse,
     MemberDemographicsUpdate,
     MembersRosterItem,
     PreferredNameResponse,
@@ -1521,6 +1523,10 @@ async def get_chw_member_full_profile(
         date_of_birth=member_profile.date_of_birth,
         gender=member_profile.gender,
         medi_cal_id=member_profile.medi_cal_id,  # EncryptedString decrypts on access
+        # Closure disposition — drives the "Closed" badge + read-only CTAs.
+        closure_status=member_profile.closure_status,
+        closure_reason=member_profile.closure_reason,
+        closed_at=member_profile.closed_at,
     )
 
 
@@ -1585,6 +1591,138 @@ async def update_member_preferred_name(
     await db.commit()
     await db.refresh(profile)
     return PreferredNameResponse(preferred_name=profile.preferred_name)
+
+
+async def _assert_chw_member_relationship_or_admin(
+    caller: dict,
+    member_id: UUID,
+    db: AsyncSession,
+) -> None:
+    """Raise 403 unless the caller may act on this member.
+
+    Admins are unrestricted. A CHW must have an active care relationship —
+    at least one session OR a matched service request — mirroring the gate used
+    by GET /chw/members/{member_id} and the preferred-name/demographics writes.
+    """
+    from app.models.request import ServiceRequest
+    from app.models.session import Session
+
+    if caller["role"] == "admin":
+        return
+
+    caller_user = caller["user"]
+    assert caller_user is not None
+    session_exists = await db.execute(
+        select(func.count())
+        .select_from(Session)
+        .where(Session.chw_id == caller_user.id)
+        .where(Session.member_id == member_id)
+    )
+    if (session_exists.scalar() or 0) > 0:
+        return
+
+    request_exists = await db.execute(
+        select(func.count())
+        .select_from(ServiceRequest)
+        .where(ServiceRequest.matched_chw_id == caller_user.id)
+        .where(ServiceRequest.member_id == member_id)
+    )
+    if (request_exists.scalar() or 0) > 0:
+        return
+
+    raise HTTPException(
+        status_code=403,
+        detail="You do not have an active relationship with this member.",
+    )
+
+
+@router.post(
+    "/members/{member_id}/close",
+    response_model=MemberClosureResponse,
+    summary="Close a member's case with a disposition + reason",
+)
+async def close_member(
+    member_id: UUID,
+    data: CloseMemberRequest,
+    caller=Depends(_require_chw_or_admin_key),
+    db: AsyncSession = Depends(get_db),
+) -> MemberClosureResponse:
+    """Close a member from the CHW Member Profile.
+
+    Records the disposition (status) + reason and stamps the audit trail
+    (closed_at / closed_by). Idempotent: closing an already-closed member
+    overwrites the disposition. Reversible via POST .../reopen.
+
+    Authorization mirrors the other member-write endpoints: a CHW needs an
+    active care relationship; admins are unrestricted.
+
+    Errors:
+      403 — CHW has no active relationship with this member
+      404 — member profile not found
+      422 — invalid status or reason slug
+    """
+    from app.models.user import MemberProfile
+
+    await _assert_chw_member_relationship_or_admin(caller, member_id, db)
+
+    result = await db.execute(
+        select(MemberProfile).where(MemberProfile.user_id == member_id)
+    )
+    profile = result.scalar_one_or_none()
+    if profile is None:
+        raise HTTPException(status_code=404, detail="Member not found.")
+
+    caller_user = caller["user"]
+    profile.closure_status = data.status
+    profile.closure_reason = data.reason
+    profile.closed_at = datetime.now(UTC)
+    profile.closed_by = caller_user.id if caller_user is not None else None
+    await db.commit()
+    await db.refresh(profile)
+    return MemberClosureResponse(
+        member_id=member_id,
+        closure_status=profile.closure_status,
+        closure_reason=profile.closure_reason,
+        closed_at=profile.closed_at,
+    )
+
+
+@router.post(
+    "/members/{member_id}/reopen",
+    response_model=MemberClosureResponse,
+    summary="Reopen a previously-closed member (clears the disposition)",
+)
+async def reopen_member(
+    member_id: UUID,
+    caller=Depends(_require_chw_or_admin_key),
+    db: AsyncSession = Depends(get_db),
+) -> MemberClosureResponse:
+    """Reopen a closed member — clears status/reason/closed_at/closed_by.
+
+    Idempotent: reopening an already-open member is a no-op that returns the
+    (null) closure state. Same relationship gate as close.
+
+    Errors:
+      403 — CHW has no active relationship with this member
+      404 — member profile not found
+    """
+    from app.models.user import MemberProfile
+
+    await _assert_chw_member_relationship_or_admin(caller, member_id, db)
+
+    result = await db.execute(
+        select(MemberProfile).where(MemberProfile.user_id == member_id)
+    )
+    profile = result.scalar_one_or_none()
+    if profile is None:
+        raise HTTPException(status_code=404, detail="Member not found.")
+
+    profile.closure_status = None
+    profile.closure_reason = None
+    profile.closed_at = None
+    profile.closed_by = None
+    await db.commit()
+    return MemberClosureResponse(member_id=member_id)
 
 
 @router.patch("/members/{member_id}/demographics")

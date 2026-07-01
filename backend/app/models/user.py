@@ -193,6 +193,25 @@ class MemberProfile(Base):
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
     )
 
+    # ── Member closure (CHW closes out the member's case) ────────────────────
+    # A CHW can close a member from the Member Profile. Closure records a
+    # disposition (closure_status) + reason and disables active engagement
+    # (Begin Session / Message) while keeping the record intact. NULL status
+    # means the member is open/active. Reversible: reopening sets all four
+    # fields back to NULL. closed_at + closed_by give the audit trail, mirroring
+    # the services_consent / billing_status patterns above.
+    #
+    # closure_status ∈ {closed_successful, closed_unsuccessful, declined}.
+    # closure_reason ∈ the 12 canonical reason slugs (see CloseMemberRequest).
+    closure_status: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    closure_reason: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    closed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    closed_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+
     # Member's chosen/preferred name (what they go by), distinct from the legal
     # name stored on User.name. Nullable — falls back to first name in the UI.
     preferred_name: Mapped[str | None] = mapped_column(String(100), nullable=True)

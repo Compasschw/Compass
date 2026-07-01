@@ -26,6 +26,30 @@ from app.schemas.cin_config import validate_cin_for_carrier as _validate_chw_cin
 # Valid CHW-assigned priority levels for a resource need.
 _VALID_LEVELS = {"low", "medium", "high"}
 
+# ── Member closure vocabulary ────────────────────────────────────────────────
+# Disposition set when a CHW closes a member. Slugs are stable API values; the
+# frontend owns the human labels. Mirrors the PearSuite "Confirm Close" modal.
+CloseStatus = Literal[
+    "closed_successful",
+    "closed_unsuccessful",
+    "declined",
+]
+
+CloseReason = Literal[
+    "successfully_completed",
+    "unable_to_make_contact",
+    "declined_all_services",
+    "declined_further_services",
+    "not_eligible",
+    "lost_to_follow_up",
+    "moved_out_of_area",
+    "transferred_to_another_program",
+    "no_longer_eligible",
+    "duplicate",
+    "deceased",
+    "other",
+]
+
 
 class ResourceNeedLevelItem(BaseModel):
     """A single resource need with its CHW-assigned priority level.
@@ -232,6 +256,18 @@ class CHWMemberProfileDetail(BaseModel):
     """Full Medi-Cal CIN (8 digits + 1 letter). Returned in plain text — the
     EncryptedString descriptor decrypts on read. Required for billing verification."""
 
+    # ── Member closure disposition ────────────────────────────────────────────
+    # NULL closure_status → member is open/active. When set, the UI shows a
+    # "Closed" badge and disables Begin Session / Message. Reversible (reopen).
+    closure_status: CloseStatus | None = None
+    """Disposition when closed: closed_successful | closed_unsuccessful | declined."""
+
+    closure_reason: CloseReason | None = None
+    """One of the 12 canonical closure reason slugs (see CloseMemberRequest)."""
+
+    closed_at: datetime | None = None
+    """When the member was closed (audit). Null when open."""
+
 
 class PreferredNameUpdate(BaseModel):
     """Request body for PATCH /api/v1/chw/members/{member_id}/preferred-name.
@@ -255,6 +291,31 @@ class PreferredNameResponse(BaseModel):
     """Response body for the preferred-name GET/PATCH endpoints."""
 
     preferred_name: str | None = None
+
+
+class CloseMemberRequest(BaseModel):
+    """Request body for POST /api/v1/chw/members/{member_id}/close.
+
+    Both fields are required — the CHW must pick a disposition (status) and a
+    reason before confirming, matching the PearSuite "Confirm Close" modal.
+    The reason list is flat: any of the 12 reasons is valid for any status.
+    """
+
+    status: CloseStatus
+    reason: CloseReason
+
+
+class MemberClosureResponse(BaseModel):
+    """Response body for the close / reopen endpoints.
+
+    Reflects the member's post-operation closure state. After a reopen all
+    fields are null (member is active again).
+    """
+
+    member_id: UUID
+    closure_status: CloseStatus | None = None
+    closure_reason: CloseReason | None = None
+    closed_at: datetime | None = None
 
 
 _DEMO_GENDER_VALUES = {"Male", "Female", "Other"}
