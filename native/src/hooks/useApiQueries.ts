@@ -3753,8 +3753,12 @@ export function useUpdateJourneyNode(memberId: string) {
       });
       return transformKeys<MemberJourneyResponse>(raw);
     },
-    onSuccess: () => {
+    onSuccess: (_data, vars) => {
+      // Invalidate BOTH the journeys list and the journey-detail slice so an
+      // edited step name/description refreshes immediately everywhere it's
+      // shown (matches useUpdateJourneyStepStatus / useDeleteJourneyNode).
       void qc.invalidateQueries({ queryKey: memberJourneysKey(memberId) });
+      void qc.invalidateQueries({ queryKey: chwJourneyDetailKey(vars.journeyId) });
     },
   });
 }
