@@ -5897,14 +5897,16 @@ const verticalStepStyles = StyleSheet.create({
 
 interface SingleJourneyTrackProps {
   journey: MemberJourneyResponse;
+  /** The CHW-assigned level computed by the shared `activeJourneysWithLevel`
+   *  helper — identical to what the Resource Needs section shows, so the two
+   *  sections stay in sync (canonical → resourceNeedLevels, custom → priorityLevel). */
+  level: JourneySeverity;
   /** Retained for keyed list rendering; no longer shown as a numeric badge. */
   rank: number;
   windowWidth: number;
   memberId: string;
   /** When true, CHW edit affordances (add node, edit/complete each node) are visible. */
   editMode: boolean;
-  /** CHW-assigned priority levels keyed by resource need slug. */
-  resourceNeedLevels: Record<string, ResourceNeedLevel>;
 }
 
 /**
@@ -5928,23 +5930,17 @@ interface SingleJourneyTrackProps {
  */
 const SingleJourneyTrack = React.memo(function SingleJourneyTrack({
   journey,
+  level,
   rank: _rank,
   windowWidth,
   memberId,
   editMode,
-  resourceNeedLevels,
 }: SingleJourneyTrackProps): React.JSX.Element {
   const steps = useMemo(() => buildRoadmapSteps(journey), [journey]);
 
-  // Map journey template name → resource need slug, then look up the CHW level.
-  // Fallback: derive severity from progressPercent for unmatched journeys.
-  const matchedSlug = RESOURCE_NEED_OPTIONS.find(
-    (opt) => opt.label === journey.template.name,
-  )?.slug;
-  const level: JourneySeverity =
-    matchedSlug !== undefined && matchedSlug in resourceNeedLevels
-      ? resourceNeedLevels[matchedSlug]
-      : deriveSeverity(journey.progressPercent);
+  // `level` is computed once by the shared activeJourneysWithLevel helper (the
+  // same value the Resource Needs section shows) and passed in — so the level
+  // pill here always matches the Resource Needs pill for the same journey.
 
   const isNarrow = windowWidth < TIMELINE_MID_BP;
   const isMid = windowWidth >= TIMELINE_MID_BP && windowWidth < TIMELINE_WIDE_BP;
@@ -6599,8 +6595,11 @@ function MemberJourneyTimeline({
    * The matching uses journey.template.name → RESOURCE_NEED_OPTIONS label → slug.
    * Journeys with no matching resource need fall back to deriveSeverity.
    */
+  // Keep the {journey, level} pairs from the shared helper — the SAME level the
+  // Resource Needs section shows — and pass each level down so the two sections
+  // can never diverge (custom journeys included, which use journey.priorityLevel).
   const activeJourneysSorted = useMemo(
-    () => activeJourneysWithLevel(journeys, resourceNeedLevels).map((x) => x.journey),
+    () => activeJourneysWithLevel(journeys, resourceNeedLevels),
     [journeys, resourceNeedLevels],
   );
 
@@ -6637,15 +6636,15 @@ function MemberJourneyTimeline({
     );
   }
 
-  const journeyList = activeJourneysSorted.map((journey, index) => (
+  const journeyList = activeJourneysSorted.map(({ journey, level }, index) => (
     <SingleJourneyTrack
       key={journey.id}
       journey={journey}
+      level={level}
       rank={index + 1}
       windowWidth={windowWidth}
       memberId={memberId}
       editMode={editMode}
-      resourceNeedLevels={resourceNeedLevels}
     />
   ));
 
