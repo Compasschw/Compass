@@ -57,6 +57,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
+  Archive,
   ArrowLeft,
   ArrowRight,
   Calendar,
@@ -134,6 +135,8 @@ import {
   useUpdateMemberPreferredName,
   useUpdateMemberDemographics,
   useUpdateMemberResourceNeeds,
+  useCloseMember,
+  useReopenMember,
   useFlagNote,
   useCreateFlagNote,
   useDeleteFlagNote,
@@ -252,6 +255,13 @@ interface CHWMemberProfileDetail {
   gender: 'Male' | 'Female' | 'Other' | null;
   /** Full Medi-Cal CIN e.g. '12345678A'. Null when not recorded. */
   mediCalId: string | null;
+  // ── Member closure disposition ────────────────────────────────────────────
+  /** Disposition when closed; null = member is open/active. */
+  closureStatus: CloseMemberStatus | null;
+  /** One of the 12 closure reason slugs; null when open. */
+  closureReason: CloseMemberReason | null;
+  /** ISO timestamp the member was closed; null when open. */
+  closedAt: string | null;
 }
 
 interface AssessmentResponseItem {
@@ -375,6 +385,52 @@ const JOURNEY_STEP_DESCRIPTIONS: Record<string, string> = {
   'Resource Connection': 'Member is connected to the appropriate resource or provider.',
   'Journey Complete': "Member's need has been addressed. Journey closed.",
 };
+
+// ─── Member closure vocabulary (mirrors backend CloseStatus / CloseReason) ──
+// Slugs are the stable API values; the labels below are the display strings
+// shown in the "Confirm Close" modal and the "Closed" badge.
+type CloseMemberStatus = 'closed_successful' | 'closed_unsuccessful' | 'declined';
+type CloseMemberReason =
+  | 'successfully_completed'
+  | 'unable_to_make_contact'
+  | 'declined_all_services'
+  | 'declined_further_services'
+  | 'not_eligible'
+  | 'lost_to_follow_up'
+  | 'moved_out_of_area'
+  | 'transferred_to_another_program'
+  | 'no_longer_eligible'
+  | 'duplicate'
+  | 'deceased'
+  | 'other';
+
+const CLOSE_STATUS_OPTIONS: ReadonlyArray<{ value: CloseMemberStatus; label: string }> = [
+  { value: 'closed_successful', label: 'Closed - Successful' },
+  { value: 'closed_unsuccessful', label: 'Closed - Unsuccessful' },
+  { value: 'declined', label: 'Declined' },
+];
+
+const CLOSE_REASON_OPTIONS: ReadonlyArray<{ value: CloseMemberReason; label: string }> = [
+  { value: 'successfully_completed', label: 'Successfully Completed' },
+  { value: 'unable_to_make_contact', label: 'Unable to Make Contact' },
+  { value: 'declined_all_services', label: 'Declined All Services' },
+  { value: 'declined_further_services', label: 'Declined Further Services' },
+  { value: 'not_eligible', label: 'Not Eligible' },
+  { value: 'lost_to_follow_up', label: 'Lost to Follow-Up' },
+  { value: 'moved_out_of_area', label: 'Moved Out of Area' },
+  { value: 'transferred_to_another_program', label: 'Transferred to Another Program' },
+  { value: 'no_longer_eligible', label: 'No Longer Eligible For Services' },
+  { value: 'duplicate', label: 'Duplicate' },
+  { value: 'deceased', label: 'Deceased' },
+  { value: 'other', label: 'Other' },
+];
+
+const CLOSE_STATUS_LABEL: Record<CloseMemberStatus, string> = Object.fromEntries(
+  CLOSE_STATUS_OPTIONS.map((o) => [o.value, o.label]),
+) as Record<CloseMemberStatus, string>;
+
+// Orange accent for the Close/Reopen affordance (matches the archive icon).
+const CLOSE_ACCENT = '#EA580C'; // orange-600
 
 // ─── Static suggested questions for Open Questions drawer (v1 — no backend) ──
 
@@ -2420,6 +2476,374 @@ function DemoField({
 }
 
 /**
+ * A single dropdown selector (button + expandable option list) used inside the
+ * Close Member modal. Mirrors the Sex/Insurance pickers in the demographics
+ * edit modal, but generic over the option value type.
+ */
+function CloseSelect<T extends string>({
+  label,
+  placeholder,
+  value,
+  options,
+  open,
+  onToggle,
+  onSelect,
+}: {
+  label: string;
+  placeholder: string;
+  value: T | null;
+  options: ReadonlyArray<{ value: T; label: string }>;
+  open: boolean;
+  onToggle: () => void;
+  onSelect: (value: T) => void;
+}): React.JSX.Element {
+  const selectedLabel = options.find((o) => o.value === value)?.label ?? null;
+  return (
+    <View style={closeModalStyles.field}>
+      <Text style={closeModalStyles.fieldLabel}>{label}</Text>
+      <TouchableOpacity
+        style={[closeModalStyles.selectorBtn, open && closeModalStyles.selectorBtnActive]}
+        onPress={onToggle}
+        accessibilityRole="button"
+        accessibilityLabel={`${label}: ${selectedLabel ?? placeholder}`}
+      >
+        <Text
+          style={[
+            closeModalStyles.selectorText,
+            !selectedLabel && closeModalStyles.selectorPlaceholder,
+          ]}
+        >
+          {selectedLabel ?? placeholder}
+        </Text>
+        <Text style={closeModalStyles.selectorChevron}>{open ? '▲' : '▼'}</Text>
+      </TouchableOpacity>
+      {open && (
+        <ScrollView style={closeModalStyles.pickerList} nestedScrollEnabled>
+          {options.map((opt) => {
+            const isSelected = opt.value === value;
+            return (
+              <TouchableOpacity
+                key={opt.value}
+                style={[
+                  closeModalStyles.pickerItem,
+                  isSelected && closeModalStyles.pickerItemSelected,
+                ]}
+                onPress={() => onSelect(opt.value)}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: isSelected }}
+                accessibilityLabel={opt.label}
+              >
+                <Text
+                  style={[
+                    closeModalStyles.pickerItemText,
+                    isSelected && closeModalStyles.pickerItemTextSelected,
+                  ]}
+                >
+                  {opt.label}
+                </Text>
+                {isSelected && <Check size={14} color={tokens.primary} />}
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      )}
+    </View>
+  );
+}
+
+/**
+ * "Confirm Close" modal — the CHW picks a disposition (Status) and Reason, then
+ * confirms. Both are required before Confirm enables. Modeled on the PearSuite
+ * close-member flow. Resets its selection each time it opens.
+ */
+function CloseMemberModal({
+  visible,
+  displayName,
+  isSubmitting,
+  onCancel,
+  onConfirm,
+}: {
+  visible: boolean;
+  displayName: string;
+  isSubmitting: boolean;
+  onCancel: () => void;
+  onConfirm: (status: CloseMemberStatus, reason: CloseMemberReason) => void;
+}): React.JSX.Element {
+  const [status, setStatus] = useState<CloseMemberStatus | null>(null);
+  const [reason, setReason] = useState<CloseMemberReason | null>(null);
+  const [statusOpen, setStatusOpen] = useState(false);
+  const [reasonOpen, setReasonOpen] = useState(false);
+
+  // Reset selection whenever the modal transitions to visible.
+  useEffect(() => {
+    if (visible) {
+      setStatus(null);
+      setReason(null);
+      setStatusOpen(false);
+      setReasonOpen(false);
+    }
+  }, [visible]);
+
+  const canConfirm = status != null && reason != null && !isSubmitting;
+
+  const body = (
+    <View style={closeModalStyles.card}>
+      <View style={closeModalStyles.header}>
+        <Text style={closeModalStyles.headerTitle}>Confirm Close</Text>
+      </View>
+      <View style={closeModalStyles.content}>
+        <Text style={closeModalStyles.prompt}>
+          {`Are you sure you want to close ${displayName}?`}
+        </Text>
+
+        <CloseSelect
+          label="Status"
+          placeholder="Select Status…"
+          value={status}
+          options={CLOSE_STATUS_OPTIONS}
+          open={statusOpen}
+          onToggle={() => {
+            setStatusOpen((p) => !p);
+            setReasonOpen(false);
+          }}
+          onSelect={(v) => {
+            setStatus(v);
+            setStatusOpen(false);
+          }}
+        />
+
+        <CloseSelect
+          label="Reason"
+          placeholder="Select Reason…"
+          value={reason}
+          options={CLOSE_REASON_OPTIONS}
+          open={reasonOpen}
+          onToggle={() => {
+            setReasonOpen((p) => !p);
+            setStatusOpen(false);
+          }}
+          onSelect={(v) => {
+            setReason(v);
+            setReasonOpen(false);
+          }}
+        />
+
+        <View style={closeModalStyles.actions}>
+          <TouchableOpacity
+            style={[closeModalStyles.actionBtn, closeModalStyles.cancelBtn]}
+            onPress={onCancel}
+            disabled={isSubmitting}
+            accessibilityRole="button"
+            accessibilityLabel="Cancel"
+          >
+            <Text style={closeModalStyles.cancelBtnText}>Cancel</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              closeModalStyles.actionBtn,
+              closeModalStyles.confirmBtn,
+              !canConfirm && closeModalStyles.confirmBtnDisabled,
+            ]}
+            onPress={() => {
+              if (status != null && reason != null) onConfirm(status, reason);
+            }}
+            disabled={!canConfirm}
+            accessibilityRole="button"
+            accessibilityLabel="Confirm close"
+            accessibilityState={{ disabled: !canConfirm }}
+          >
+            {isSubmitting ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <Text style={closeModalStyles.confirmBtnText}>Confirm</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      </View>
+    </View>
+  );
+
+  if (Platform.OS !== 'web') {
+    return (
+      <Modal
+        visible={visible}
+        animationType="fade"
+        transparent
+        onRequestClose={onCancel}
+        accessibilityViewIsModal
+      >
+        <View style={closeModalStyles.nativeOverlay}>
+          <Pressable
+            style={closeModalStyles.backdrop}
+            onPress={onCancel}
+            accessibilityRole="button"
+            accessibilityLabel="Dismiss"
+          />
+          {body}
+        </View>
+      </Modal>
+    );
+  }
+
+  if (!visible) return <></>;
+
+  return (
+    <View style={closeModalStyles.webOverlay}>
+      <Pressable
+        style={closeModalStyles.backdrop}
+        onPress={onCancel}
+        accessibilityRole="button"
+        accessibilityLabel="Dismiss"
+      />
+      {body}
+    </View>
+  );
+}
+
+const closeModalStyles = StyleSheet.create({
+  webOverlay: {
+    position: 'fixed' as 'absolute',
+    inset: 0,
+    zIndex: 300,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 16,
+  } as ViewStyle,
+  nativeOverlay: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 16,
+  } as ViewStyle,
+  backdrop: {
+    position: 'absolute' as 'absolute',
+    inset: 0,
+    backgroundColor: 'rgba(17,24,39,0.45)',
+  } as ViewStyle,
+  card: {
+    width: '100%',
+    maxWidth: 460,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    overflow: 'hidden',
+    zIndex: 1,
+  } as ViewStyle,
+  header: {
+    backgroundColor: tokens.emerald700,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+  } as ViewStyle,
+  headerTitle: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 18,
+    color: '#FFFFFF',
+  } as TextStyle,
+  content: {
+    padding: 20,
+    gap: 16,
+  } as ViewStyle,
+  prompt: {
+    fontFamily: 'PlusJakartaSans_500Medium',
+    fontSize: 15,
+    color: tokens.textPrimary,
+  } as TextStyle,
+  field: {
+    gap: 6,
+  } as ViewStyle,
+  fieldLabel: {
+    fontFamily: 'PlusJakartaSans_500Medium',
+    fontSize: 13,
+    color: tokens.textSecondary,
+  } as TextStyle,
+  selectorBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 10,
+    paddingVertical: 11,
+    paddingHorizontal: 14,
+  } as ViewStyle,
+  selectorBtnActive: {
+    borderColor: tokens.primary,
+  } as ViewStyle,
+  selectorText: {
+    fontFamily: 'PlusJakartaSans_500Medium',
+    fontSize: 15,
+    color: tokens.textPrimary,
+  } as TextStyle,
+  selectorPlaceholder: {
+    color: tokens.textMuted,
+  } as TextStyle,
+  selectorChevron: {
+    fontSize: 12,
+    color: tokens.textMuted,
+    marginLeft: 8,
+  } as TextStyle,
+  pickerList: {
+    marginTop: 4,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 10,
+    maxHeight: 200,
+  } as ViewStyle,
+  pickerItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 11,
+    paddingHorizontal: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  } as ViewStyle,
+  pickerItemSelected: {
+    backgroundColor: tokens.primary + '10',
+  } as ViewStyle,
+  pickerItemText: {
+    fontFamily: 'PlusJakartaSans_500Medium',
+    fontSize: 15,
+    color: tokens.textPrimary,
+  } as TextStyle,
+  pickerItemTextSelected: {
+    color: tokens.primary,
+  } as TextStyle,
+  actions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 12,
+    marginTop: 4,
+  } as ViewStyle,
+  actionBtn: {
+    minWidth: 104,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 11,
+    paddingHorizontal: 18,
+    borderRadius: 10,
+  } as ViewStyle,
+  cancelBtn: {
+    backgroundColor: '#EF4444',
+  } as ViewStyle,
+  cancelBtnText: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 14,
+    color: '#FFFFFF',
+  } as TextStyle,
+  confirmBtn: {
+    backgroundColor: tokens.emerald700,
+  } as ViewStyle,
+  confirmBtnDisabled: {
+    opacity: 0.45,
+  } as ViewStyle,
+  confirmBtnText: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 14,
+    color: '#FFFFFF',
+  } as TextStyle,
+});
+
+/**
  * Left column of the 3-column top card. Compact two-sub-column card: avatar +
  * Call/Message on the left, demographic fields listed to the right (per mockup).
  *
@@ -2428,7 +2852,7 @@ function DemoField({
  */
 function DemographicsColumn({
   profile,
-  memberId: _memberId,
+  memberId,
   displayName,
   servicesConsentRefused,
   onNavigateToConversation,
@@ -2437,7 +2861,23 @@ function DemographicsColumn({
   onEditDemographics,
 }: DemographicsColumnProps): React.JSX.Element {
   const initials = getInitials(profile.firstName, profile.lastName);
-  const ctaDisabled = servicesConsentRefused;
+
+  // A closed member disables active engagement (Begin Session / Message) — same
+  // as a services-consent refusal — and swaps the primary CTA for "Reopen".
+  const isClosed = profile.closureStatus != null;
+  const ctaDisabled = servicesConsentRefused || isClosed;
+
+  const [closeModalVisible, setCloseModalVisible] = useState(false);
+  const closeMember = useCloseMember(memberId);
+  const reopenMember = useReopenMember(memberId);
+
+  const handleReopen = () => {
+    reopenMember.mutate(undefined, {
+      onError: () => {
+        Alert.alert('Could not reopen member', 'Please try again.');
+      },
+    });
+  };
 
   // Two-line address: street (+ apt/suite) on the first line; city, state, and
   // ZIP grouped together on the second so "Los Angeles, CA, 90062" never wraps
@@ -2485,17 +2925,25 @@ function DemographicsColumn({
             )}
           </View>
           <View style={demoColStyles.badgesRow}>
-            <Pill variant="emerald" size="sm">Active</Pill>
+            {isClosed ? (
+              <Pill variant="amber" size="sm">
+                {`Closed · ${CLOSE_STATUS_LABEL[profile.closureStatus as CloseMemberStatus]}`}
+              </Pill>
+            ) : (
+              <Pill variant="emerald" size="sm">Active</Pill>
+            )}
             {profile.ecmEligible && <Pill variant="blue" size="sm">ECM</Pill>}
           </View>
-          <View style={[demoColStyles.ctaStack, ctaDisabled && demoColStyles.ctaStackDisabled]}>
+          <View style={demoColStyles.ctaStack}>
             <TouchableOpacity
-              style={[demoColStyles.ctaBtn, demoColStyles.beginSessionBtn]}
+              style={[demoColStyles.ctaBtn, demoColStyles.beginSessionBtn, ctaDisabled && demoColStyles.ctaBtnDisabled]}
               onPress={ctaDisabled ? undefined : onBeginSession}
               disabled={ctaDisabled}
               accessibilityRole="button"
               accessibilityLabel={
-                ctaDisabled
+                isClosed
+                  ? 'Begin Session disabled — member is closed'
+                  : ctaDisabled
                   ? 'Begin Session disabled — member has refused services'
                   : `Begin Session with ${displayName}`
               }
@@ -2504,20 +2952,67 @@ function DemographicsColumn({
               <Text style={demoColStyles.ctaBtnText}>Begin Session</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[demoColStyles.ctaBtn, demoColStyles.messageBtn]}
+              style={[demoColStyles.ctaBtn, demoColStyles.messageBtn, ctaDisabled && demoColStyles.ctaBtnDisabled]}
               onPress={ctaDisabled ? undefined : () => onNavigateToConversation('')}
               disabled={ctaDisabled}
               accessibilityRole="button"
               accessibilityLabel={
-                ctaDisabled ? 'Message disabled — member has refused services' : `Message ${displayName}`
+                isClosed
+                  ? 'Message disabled — member is closed'
+                  : ctaDisabled
+                  ? 'Message disabled — member has refused services'
+                  : `Message ${displayName}`
               }
               accessibilityState={{ disabled: ctaDisabled }}
             >
               <MessageSquare size={14} color={tokens.primary} />
               <Text style={[demoColStyles.ctaBtnText, { color: tokens.primary }]}>Message</Text>
             </TouchableOpacity>
+
+            {/* Close / Reopen member — the orange archive affordance */}
+            {isClosed ? (
+              <TouchableOpacity
+                style={[demoColStyles.ctaBtn, demoColStyles.reopenBtn]}
+                onPress={handleReopen}
+                disabled={reopenMember.isPending}
+                accessibilityRole="button"
+                accessibilityLabel={`Reopen ${displayName}`}
+              >
+                <Archive size={14} color={CLOSE_ACCENT} />
+                <Text style={[demoColStyles.ctaBtnText, { color: CLOSE_ACCENT }]}>
+                  {reopenMember.isPending ? 'Reopening…' : 'Reopen Member'}
+                </Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={[demoColStyles.ctaBtn, demoColStyles.closeBtn]}
+                onPress={() => setCloseModalVisible(true)}
+                accessibilityRole="button"
+                accessibilityLabel={`Close ${displayName}`}
+              >
+                <Archive size={14} color={CLOSE_ACCENT} />
+                <Text style={[demoColStyles.ctaBtnText, { color: CLOSE_ACCENT }]}>Close Member</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
+
+        <CloseMemberModal
+          visible={closeModalVisible}
+          displayName={displayName}
+          isSubmitting={closeMember.isPending}
+          onCancel={() => setCloseModalVisible(false)}
+          onConfirm={(status, reason) => {
+            closeMember.mutate(
+              { status, reason },
+              {
+                onSuccess: () => setCloseModalVisible(false),
+                onError: () =>
+                  Alert.alert('Could not close member', 'Please try again.'),
+              },
+            );
+          }}
+        />
 
         {/* Right sub-column: fields */}
         <View style={demoColStyles.fields}>
@@ -2628,6 +3123,20 @@ const demoColStyles = StyleSheet.create({
     backgroundColor: tokens.primary + '12',
     borderWidth: 1,
     borderColor: tokens.primary + '40',
+  } as ViewStyle,
+  // Orange outline affordance for Close Member (matches the archive icon).
+  closeBtn: {
+    backgroundColor: CLOSE_ACCENT + '12',
+    borderWidth: 1,
+    borderColor: CLOSE_ACCENT + '40',
+  } as ViewStyle,
+  reopenBtn: {
+    backgroundColor: CLOSE_ACCENT + '12',
+    borderWidth: 1,
+    borderColor: CLOSE_ACCENT + '40',
+  } as ViewStyle,
+  ctaBtnDisabled: {
+    opacity: 0.45,
   } as ViewStyle,
   ctaBtnText: {
     fontFamily: 'DMSans_700Bold',

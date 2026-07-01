@@ -2562,6 +2562,66 @@ export function useUpdateMemberDemographics(memberId: string) {
   });
 }
 
+/** Disposition + reason for closing a member. Slugs mirror the backend. */
+export interface CloseMemberPayload {
+  status:
+    | 'closed_successful'
+    | 'closed_unsuccessful'
+    | 'declined';
+  reason:
+    | 'successfully_completed'
+    | 'unable_to_make_contact'
+    | 'declined_all_services'
+    | 'declined_further_services'
+    | 'not_eligible'
+    | 'lost_to_follow_up'
+    | 'moved_out_of_area'
+    | 'transferred_to_another_program'
+    | 'no_longer_eligible'
+    | 'duplicate'
+    | 'deceased'
+    | 'other';
+}
+
+/**
+ * Close a member's case from the CHW Member Profile.
+ *
+ * POST /api/v1/chw/members/{member_id}/close with { status, reason }. On success
+ * invalidates the member-detail (badge + read-only CTAs refresh) and the roster.
+ */
+export function useCloseMember(memberId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: CloseMemberPayload): Promise<void> => {
+      await api(`/chw/members/${memberId}/close`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['chw', 'members', memberId, 'detail'] });
+      void qc.invalidateQueries({ queryKey: queryKeys.chwMembers });
+    },
+  });
+}
+
+/**
+ * Reopen a previously-closed member. POST /api/v1/chw/members/{member_id}/reopen.
+ * Clears the disposition server-side; invalidates the same queries as close.
+ */
+export function useReopenMember(memberId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (): Promise<void> => {
+      await api(`/chw/members/${memberId}/reopen`, { method: 'POST' });
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['chw', 'members', memberId, 'detail'] });
+      void qc.invalidateQueries({ queryKey: queryKeys.chwMembers });
+    },
+  });
+}
+
 /**
  * Edit a member's resource needs from the CHW Member Profile (Resource Needs
  * pencil). PATCH /api/v1/chw/members/{member_id}/resource-needs.
