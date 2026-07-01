@@ -578,10 +578,29 @@ async def create_custom_journey(
     """
     await _assert_chw_member_relationship(current_user.id, body.member_id, db)
 
+    title = body.title.strip()
+
+    # Guard against duplicates: a member may not have two active journeys with the
+    # same name (case-insensitive). Covers both canonical needs (e.g. "Transportation")
+    # and previously-created custom journeys. The FE surfaces this 409 detail inline.
+    duplicate = await db.execute(
+        select(func.count())
+        .select_from(MemberJourney)
+        .join(JourneyTemplate, JourneyTemplate.id == MemberJourney.template_id)
+        .where(MemberJourney.member_id == body.member_id)
+        .where(MemberJourney.status == "active")
+        .where(func.lower(JourneyTemplate.name) == title.lower())
+    )
+    if (duplicate.scalar() or 0) > 0:
+        raise HTTPException(
+            status_code=409,
+            detail=f'A journey named "{title}" already exists for this member.',
+        )
+
     template = JourneyTemplate(
         id=uuid.uuid4(),
         slug=f"custom-{uuid.uuid4().hex}",
-        name=body.title.strip(),
+        name=title,
         category=(body.category or body.title).strip().lower()[:100],
         icon=(body.icon or "circle"),
         is_active=True,
