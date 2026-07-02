@@ -150,29 +150,60 @@ export async function clearTokens(): Promise<void> {
 
 // ─── Refresh logic ────────────────────────────────────────────────────────────
 
+// Shared in-flight refresh promise. When several requests hit a 401 in the same
+// tick (common on a screen with multiple/polling queries), they all await this
+// one refresh instead of each POSTing /auth/refresh. Without this, a server that
+// rotates refresh tokens on use invalidates the first token as the second call
+// presents it, tearing down an otherwise-valid new session.
+let inFlightRefresh: Promise<string> | null = null;
+
 /**
- * Attempt a silent token refresh.
- * Returns the new access token on success, throws ApiError on failure.
+ * Attempt a silent token refresh, de-duplicated across concurrent callers.
+ * Returns the new access token on success. Throws `ApiError` with the refresh
+ * endpoint's status (401/403 = truly expired; 5xx = server issue) or a
+ * network `ApiError(0, ...)` — callers use the status to decide whether to log
+ * the user out.
  */
 async function refreshAccessToken(refreshToken: string): Promise<string> {
-  const response = await fetch(`${API_BASE}/auth/refresh`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ refresh_token: refreshToken }),
-  });
+  if (inFlightRefresh) return inFlightRefresh;
 
-  if (!response.ok) {
-    throw new ApiError(response.status, 'Token refresh failed — session expired.');
-  }
+  inFlightRefresh = (async (): Promise<string> => {
+    try {
+      let response: Response;
+      try {
+        response = await fetch(`${API_BASE}/auth/refresh`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refresh_token: refreshToken }),
+        });
+      } catch {
+        // Network failure (offline / DNS / CORS) — not an auth decision.
+        throw new ApiError(0, 'Network error during token refresh.');
+      }
 
-  const data = (await response.json()) as { access_token: string; refresh_token?: string };
+      if (!response.ok) {
+        // Preserve the real status so the caller can distinguish a genuinely
+        // expired session (401/403) from a transient server error (5xx).
+        throw new ApiError(response.status, 'Token refresh failed.');
+      }
 
-  // Persist updated tokens; keep existing refresh token if the server doesn't
-  // issue a new one (some implementations rotate, others don't).
-  const tokens = await getTokens();
-  await setTokens(data.access_token, data.refresh_token ?? tokens?.refresh ?? '');
+      const data = (await response.json()) as {
+        access_token: string;
+        refresh_token?: string;
+      };
 
-  return data.access_token;
+      // Persist updated tokens; keep existing refresh token if the server
+      // doesn't issue a new one (some implementations rotate, others don't).
+      const tokens = await getTokens();
+      await setTokens(data.access_token, data.refresh_token ?? tokens?.refresh ?? '');
+
+      return data.access_token;
+    } finally {
+      inFlightRefresh = null;
+    }
+  })();
+
+  return inFlightRefresh;
 }
 
 // ─── Core request function ────────────────────────────────────────────────────
@@ -215,17 +246,30 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
 
     try {
       newAccessToken = await refreshAccessToken(tokens.refresh);
-    } catch {
-      // Tokens are cleared first so that any subsequent code (including the
-      // _onSessionExpired callback) cannot accidentally reuse them.
-      await clearTokens();
+    } catch (refreshError) {
+      // Only tear down the session when the refresh endpoint explicitly rejects
+      // the token (401/403). A network failure or 5xx means the refresh couldn't
+      // complete — NOT that the session is invalid — so we surface the error but
+      // keep the tokens, avoiding a spurious mid-shift logout on a spotty
+      // connection or a transient backend blip.
+      const isExpired =
+        refreshError instanceof ApiError &&
+        (refreshError.status === 401 || refreshError.status === 403);
 
-      // Notify AuthContext so it can flip isAuthenticated → false and drive the
-      // navigator to the LoginStack. This is fire-and-forget from our
-      // perspective; the throw below still fails the in-flight request fast.
-      _onSessionExpired?.();
+      if (isExpired) {
+        // Tokens are cleared first so that any subsequent code (including the
+        // _onSessionExpired callback) cannot accidentally reuse them.
+        await clearTokens();
+        // Notify AuthContext so it can flip isAuthenticated → false and drive
+        // the navigator to the LoginStack.
+        _onSessionExpired?.();
+        throw new ApiError(401, 'Session expired. Please log in again.');
+      }
 
-      throw new ApiError(401, 'Session expired. Please log in again.');
+      // Transient failure — keep the session, fail just this request.
+      throw refreshError instanceof ApiError
+        ? refreshError
+        : new ApiError(0, 'Network error. Please try again.');
     }
 
     response = await executeRequest(newAccessToken);
