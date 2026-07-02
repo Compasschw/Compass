@@ -8683,6 +8683,19 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
   const servicesConsentRefused = servicesConsentData?.value === 'refuse_services';
   const { data: assessmentLatest } = useAssessmentLatest(memberId);
 
+  // Single stable resource-need level map (slug → level), memoized off the
+  // profile's levels array. Passed by reference to BOTH the Member Journey
+  // section and the Edit Resource Needs modal. Building it inline in JSX created
+  // a fresh object every render, which re-fired the Edit modal's hydrate effect
+  // and silently wiped the CHW's in-progress edits; a stable reference fixes that.
+  const resourceNeedLevelsMap = useMemo(
+    () =>
+      Object.fromEntries(
+        (profile?.resourceNeedLevels ?? []).map((x) => [x.slug, x.level]),
+      ) as Record<string, ResourceNeedLevel>,
+    [profile?.resourceNeedLevels],
+  );
+
   // ── Drawer / modal state ─────────────────────────────────────────────────────
   const [openQuestionsOpen, setOpenQuestionsOpen] = useState(false);
   const [flagModalOpen, setFlagModalOpen] = useState(false);
@@ -9011,9 +9024,7 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                     onAddJourney={() => setCreateCustomJourneyOpen(true)}
                     windowWidth={windowWidth}
                     editMode={journeyEditMode}
-                    resourceNeedLevels={Object.fromEntries(
-                      profile.resourceNeedLevels.map((x) => [x.slug, x.level]),
-                    ) as Record<string, ResourceNeedLevel>}
+                    resourceNeedLevels={resourceNeedLevelsMap}
                   />
                 </SectionCard>
 
@@ -9186,9 +9197,7 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
         <EditResourceNeedsModal
           visible={editResourceNeedsOpen}
           currentNeeds={profile.resourceNeeds}
-          currentLevels={Object.fromEntries(
-            profile.resourceNeedLevels.map((x) => [x.slug, x.level]),
-          ) as Record<string, ResourceNeedLevel>}
+          currentLevels={resourceNeedLevelsMap}
           memberId={memberId}
           onClose={() => setEditResourceNeedsOpen(false)}
         />

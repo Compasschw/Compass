@@ -8,12 +8,13 @@
  * All request bodies are auto-transformed from camelCase → snake_case.
  */
 
-import { Alert, Platform } from 'react-native';
+import { Platform } from 'react-native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { api, getTokens } from '../api/client';
 import { transformKeys, toSnakeCase } from '../utils/caseTransform';
+import { showAlert } from '../utils/showAlert';
 import { getSessionAISummary, type AISummaryResponse } from '../api/sessions';
 
 // ─── Types (camelCase, matching what screens expect) ─────────────────────────
@@ -936,7 +937,7 @@ export function useCreateRequest() {
       void qc.invalidateQueries({ queryKey: queryKeys.requests });
     },
     onError: (error: Error) => {
-      Alert.alert('Something went wrong', error?.message ?? 'Please try again.');
+      showAlert('Something went wrong', error?.message ?? 'Please try again.');
     },
   });
 }
@@ -982,7 +983,7 @@ export function useCreateSession() {
       void qc.invalidateQueries({ queryKey: queryKeys.requests });
     },
     onError: (error: Error) => {
-      Alert.alert('Failed to schedule session', error?.message ?? 'Please try again.');
+      showAlert('Failed to schedule session', error?.message ?? 'Please try again.');
     },
   });
 }
@@ -1029,7 +1030,7 @@ export function useScheduleSession() {
       void qc.invalidateQueries({ queryKey: queryKeys.sessions });
     },
     onError: (error: Error) => {
-      Alert.alert('Failed to schedule session', error?.message ?? 'Please try again.');
+      showAlert('Failed to schedule session', error?.message ?? 'Please try again.');
     },
   });
 }
@@ -1069,7 +1070,13 @@ export function useSubmitDocumentation() {
       });
     },
     onSuccess: () => {
+      // Submitting documentation creates a BillingClaim and stamps the session's
+      // billed units/amounts, so the Earnings / Claims / Payouts views must
+      // refresh too — not just the sessions list.
       void qc.invalidateQueries({ queryKey: queryKeys.sessions });
+      void qc.invalidateQueries({ queryKey: queryKeys.chwClaims });
+      void qc.invalidateQueries({ queryKey: queryKeys.chwEarnings });
+      void qc.invalidateQueries({ queryKey: ['chw', 'payouts'] });
     },
   });
 }
@@ -1163,7 +1170,7 @@ export function useEndSession() {
       void qc.invalidateQueries({ queryKey: queryKeys.sessions });
     },
     onError: (error: Error) => {
-      Alert.alert('Could not end session', error?.message ?? 'Please try again.');
+      showAlert('Could not end session', error?.message ?? 'Please try again.');
     },
   });
 }
@@ -1272,7 +1279,7 @@ export function useCreateCaseNote() {
       });
     },
     onError: (error: Error) => {
-      Alert.alert('Could not save note', error?.message ?? 'Please try again.');
+      showAlert('Could not save note', error?.message ?? 'Please try again.');
     },
   });
 }
@@ -1549,7 +1556,7 @@ export function useConnectOnboardingLink() {
       void qc.invalidateQueries({ queryKey: ['payments', 'account-status'] });
     },
     onError: (error: Error) => {
-      Alert.alert('Something went wrong', error?.message ?? 'Please try again.');
+      showAlert('Something went wrong', error?.message ?? 'Please try again.');
     },
   });
 }
@@ -1682,7 +1689,7 @@ export function useSoftDeleteConversation(options?: {
       if (context?.previousArchived !== undefined) {
         qc.setQueryData(queryKeys.conversationList(true), context.previousArchived);
       }
-      Alert.alert('Could not delete conversation', 'Please try again.');
+      showAlert('Could not delete conversation', 'Please try again.');
     },
 
     onSuccess: (_data, conversationId) => {
@@ -1845,7 +1852,7 @@ export function useToggleConversationPin() {
       if (context?.previousArchived !== undefined) {
         qc.setQueryData(queryKeys.conversationList(true), context.previousArchived);
       }
-      Alert.alert('Could not update pin', 'Please try again.');
+      showAlert('Could not update pin', 'Please try again.');
     },
 
     onSuccess: () => {
@@ -1917,7 +1924,7 @@ export function useToggleConversationArchive() {
       if (context?.previousArchived !== undefined) {
         qc.setQueryData(queryKeys.conversationList(true), context.previousArchived);
       }
-      Alert.alert('Could not update archive', 'Please try again.');
+      showAlert('Could not update archive', 'Please try again.');
     },
 
     onSuccess: () => {
@@ -3439,6 +3446,10 @@ export function useUpdateJourneyStep() {
       void qc.invalidateQueries({ queryKey: queryKeys.chwJourneys });
       void qc.invalidateQueries({ queryKey: chwJourneyDetailKey(updated.id) });
       void qc.invalidateQueries({ queryKey: memberRewardsBalanceKey(updated.memberId) });
+      // Also refresh the member-scoped journeys list so the member's own
+      // MemberJourney/Home progress updates immediately (matches the sibling
+      // useUpdateJourneyStepStatus which keeps all three slices consistent).
+      void qc.invalidateQueries({ queryKey: memberJourneysKey(updated.memberId) });
     },
   });
 }
@@ -3757,8 +3768,12 @@ export function useAddJourneyNode(memberId: string) {
       });
       return transformKeys<MemberJourneyResponse>(raw);
     },
-    onSuccess: () => {
+    onSuccess: (_data, vars) => {
+      // Invalidate BOTH the member journeys list and this journey's detail slice
+      // so an added node shows immediately in the expandable Journeys card too
+      // (matches useUpdateJourneyNode / useDeleteJourneyNode).
       void qc.invalidateQueries({ queryKey: memberJourneysKey(memberId) });
+      void qc.invalidateQueries({ queryKey: chwJourneyDetailKey(vars.journeyId) });
     },
   });
 }
@@ -4123,7 +4138,7 @@ export function useCreateFlagNote(memberId: string) {
       void qc.invalidateQueries({ queryKey: flagNoteQueryKeys.flagNote(memberId) });
     },
     onError: (error: Error) => {
-      Alert.alert('Failed to save flag note', error?.message ?? 'Please try again.');
+      showAlert('Failed to save flag note', error?.message ?? 'Please try again.');
     },
   });
 }
@@ -4146,7 +4161,7 @@ export function useDeleteFlagNote(memberId: string) {
       void qc.invalidateQueries({ queryKey: flagNoteQueryKeys.flagNote(memberId) });
     },
     onError: (error: Error) => {
-      Alert.alert('Failed to remove flag', error?.message ?? 'Please try again.');
+      showAlert('Failed to remove flag', error?.message ?? 'Please try again.');
     },
   });
 }
