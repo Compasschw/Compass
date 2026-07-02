@@ -63,3 +63,9 @@ pgdata/
 landing-new
 web/.vite/
 .vercel
+
+# Agent workflow artifacts + parked design exploration (not source)
+docs/superpowers/
+native/docs/superpowers/
+mockups/
+*.xlsx
