@@ -2355,6 +2355,8 @@ interface DemographicsColumnProps {
   onReopenMember: () => void;
   /** True while the reopen mutation is in flight. */
   reopenPending: boolean;
+  /** Narrow/split-screen web: render full-width (stacked) instead of a flex column. */
+  stacked?: boolean;
 }
 
 /**
@@ -2861,6 +2863,7 @@ function DemographicsColumn({
   onOpenCloseMember,
   onReopenMember,
   reopenPending,
+  stacked = false,
 }: DemographicsColumnProps): React.JSX.Element {
   const initials = getInitials(profile.firstName, profile.lastName);
 
@@ -2885,7 +2888,7 @@ function DemographicsColumn({
     .join(', ');
 
   return (
-    <View style={demoColStyles.container}>
+    <View style={[demoColStyles.container, stacked && demoColStyles.containerStacked]}>
       {/* Card header: title + section edit pencil */}
       <View style={demoColStyles.cardHeader}>
         <Text style={demoColStyles.cardTitle}>Member Demographics</Text>
@@ -3021,6 +3024,13 @@ const demoColStyles = StyleSheet.create({
     borderRightWidth: Platform.OS === 'web' ? 1 : 0,
     borderRightColor: '#F3F4F6',
     padding: 16,
+  } as ViewStyle,
+  // Stacked (narrow/split web): full-width, hug content, drop the row divider.
+  containerStacked: {
+    flexGrow: 0,
+    flexShrink: 1,
+    flexBasis: 'auto',
+    borderRightWidth: 0,
   } as ViewStyle,
   cardHeader: {
     flexDirection: 'row',
@@ -3159,6 +3169,8 @@ interface CenterColumnProps {
   memberId: string;
   /** Opens the Flag Member edit drawer (re-uses FlagMemberModal). */
   onEditFlag: () => void;
+  /** Narrow/split-screen web: render full-width (stacked). */
+  stacked?: boolean;
 }
 
 /**
@@ -3172,9 +3184,10 @@ interface CenterColumnProps {
 function CenterColumn({
   memberId,
   onEditFlag,
+  stacked = false,
 }: CenterColumnProps): React.JSX.Element {
   return (
-    <View style={centerColStyles.container}>
+    <View style={[centerColStyles.container, stacked && centerColStyles.containerStacked]}>
       <FlagNoteCard memberId={memberId} onEditFlag={onEditFlag} />
       <BillingConsentCard memberId={memberId} />
     </View>
@@ -3189,6 +3202,14 @@ const centerColStyles = StyleSheet.create({
     borderTopWidth: Platform.OS === 'web' ? 0 : 1,
     borderTopColor: '#F3F4F6',
     gap: 0,
+  } as ViewStyle,
+  // Stacked (narrow/split web): full-width, hug content, divider on top.
+  containerStacked: {
+    flexGrow: 0,
+    flexShrink: 1,
+    flexBasis: 'auto',
+    borderRightWidth: 0,
+    borderTopWidth: 1,
   } as ViewStyle,
 });
 
@@ -5291,6 +5312,8 @@ interface ResourceNeedsColumnProps {
   servicesConsentRefused: boolean;
   /** Opens the Edit Resource Needs modal — supplied by the parent screen. */
   onEditResourceNeeds: () => void;
+  /** Narrow/split-screen web: render full-width (stacked). */
+  stacked?: boolean;
 }
 
 /**
@@ -5309,6 +5332,7 @@ function ResourceNeedsColumn({
   sessionCount,
   servicesConsentRefused,
   onEditResourceNeeds,
+  stacked = false,
 }: ResourceNeedsColumnProps): React.JSX.Element {
   const { data: rewardsBalance } = useMemberRewardsBalance(memberId);
 
@@ -5358,7 +5382,7 @@ function ResourceNeedsColumn({
   const hasAnyNeeds = needRows.length > 0;
 
   return (
-    <View style={resourceColStyles.container}>
+    <View style={[resourceColStyles.container, stacked && resourceColStyles.containerStacked]}>
       {/* Resource Needs heading */}
       <View style={resourceColStyles.headRow}>
         <View>
@@ -5445,6 +5469,13 @@ const resourceColStyles = StyleSheet.create({
     borderTopWidth: Platform.OS === 'web' ? 0 : 1,
     borderTopColor: '#F3F4F6',
     gap: 10,
+  } as ViewStyle,
+  // Stacked (narrow/split web): full-width, hug content, divider on top.
+  containerStacked: {
+    flexGrow: 0,
+    flexShrink: 1,
+    flexBasis: 'auto',
+    borderTopWidth: 1,
   } as ViewStyle,
   headRow: {
     flexDirection: 'row',
@@ -8665,6 +8696,11 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
 
   const { width: windowWidth } = useWindowDimensions();
 
+  // Stack the dense 3-column header vertically when the window is narrow
+  // (e.g. split-screen / half-width) so the columns go full-width instead of
+  // cramping side by side. Mirrors the native (always-stacked) treatment.
+  const stackColumns = Platform.OS === 'web' && windowWidth < TIMELINE_WIDE_BP;
+
   /**
    * When true, OpenQuestionsDrawer renders as an inline side panel inside the
    * content flex-row — no backdrop, content compresses. When false it renders
@@ -8917,7 +8953,7 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                   Right  — Resource Needs (Priority) + Call/Message CTAs
             ─────────────────────────────────────────────────────────────── */}
             <Card style={s.topCard}>
-              <View style={s.topCardRow}>
+              <View style={[s.topCardRow, stackColumns && s.topCardRowStacked]}>
 
                 {/* LEFT: Demographics + Begin Session/Message */}
                 <DemographicsColumn
@@ -8932,12 +8968,14 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                   onOpenCloseMember={() => setCloseMemberOpen(true)}
                   onReopenMember={handleReopenMember}
                   reopenPending={reopenMember.isPending}
+                  stacked={stackColumns}
                 />
 
                 {/* CENTER: Flag Note + Billing Consent */}
                 <CenterColumn
                   memberId={memberId}
                   onEditFlag={() => setFlagModalOpen(true)}
+                  stacked={stackColumns}
                 />
 
                 {/* RIGHT: Resource Needs (Priority) */}
@@ -8947,6 +8985,7 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                   sessionCount={profile.sessionCount}
                   servicesConsentRefused={servicesConsentRefused}
                   onEditResourceNeeds={() => setEditResourceNeedsOpen(true)}
+                  stacked={stackColumns}
                 />
 
               </View>
@@ -9517,6 +9556,10 @@ const s = StyleSheet.create({
   } as ViewStyle,
   topCardRow: {
     flexDirection: Platform.OS === 'web' ? 'row' : 'column',
+  } as ViewStyle,
+  // Narrow / split-screen web: stack the columns vertically.
+  topCardRowStacked: {
+    flexDirection: 'column',
   } as ViewStyle,
 
   // Content row (main + right rail)
