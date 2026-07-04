@@ -35,6 +35,7 @@ import {
   TouchableOpacity,
   TextInput,
   Platform,
+  useWindowDimensions,
   type ViewStyle,
   type TextStyle,
 } from 'react-native';
@@ -421,6 +422,9 @@ function ActivityRow({ item }: { item: ActivityItem }): React.JSX.Element {
 
 export function CHWDashboardScreen(): React.JSX.Element {
   const { userName } = useAuth();
+  const { width: windowWidth } = useWindowDimensions();
+  // Stack the two bottom panels vertically when the window is narrow/split.
+  const stackBottom = Platform.OS === 'web' && windowWidth < 1024;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const navigation = useNavigation<any>();
 
@@ -770,10 +774,10 @@ export function CHWDashboardScreen(): React.JSX.Element {
         </View>
 
         {/* ── Bottom row: Weekly Snapshot (5/12) + Recent Activity (7/12) ── */}
-        <View style={styles.bottomRow}>
+        <View style={[styles.bottomRow, stackBottom && styles.bottomRowStacked]}>
 
           {/* Weekly Snapshot */}
-          <Card style={[styles.bottomLeft, styles.card]}>
+          <Card style={[styles.bottomLeft, styles.card, stackBottom && styles.panelStacked]}>
             <Text style={[styles.cardTitle, { marginBottom: spacing.md }]}>Weekly snapshot</Text>
             <View style={styles.snapshotGrid}>
               <SnapshotBox
@@ -806,7 +810,7 @@ export function CHWDashboardScreen(): React.JSX.Element {
           </Card>
 
           {/* Recent Activity */}
-          <Card style={[styles.bottomRight, styles.card]}>
+          <Card style={[styles.bottomRight, styles.card, stackBottom && styles.panelStacked]}>
             <View style={styles.cardHeaderRow}>
               <Text style={styles.cardTitle}>Recent activity</Text>
               <TouchableOpacity
@@ -1022,6 +1026,16 @@ const styles = StyleSheet.create({
   bottomRight: {
     // col-span-7 out of 12
     flex: Platform.OS === 'web' ? 7 : undefined,
+  } as ViewStyle,
+
+  // Narrow/split web: stack the two panels full-width instead of side by side.
+  bottomRowStacked: {
+    flexDirection: 'column',
+  } as ViewStyle,
+  panelStacked: {
+    flexGrow: 0,
+    flexBasis: 'auto',
+    width: '100%',
   } as ViewStyle,
 
   // ── Shared card padding ────────────────────────────────────────────────────

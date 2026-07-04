@@ -9011,8 +9011,8 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                 The drawer renders as a fixed overlay outside the ScrollView
                 (see below). mainCol is full-width.
             */}
-            <View style={s.contentRow}>
-              <View style={s.mainCol}>
+            <View style={[s.contentRow, stackColumns && s.contentRowStacked]}>
+              <View style={[s.mainCol, stackColumns && s.mainColStacked]}>
 
                 {/* ─────────────────────────────────────────────────────────
                     MEMBER JOURNEY — multi-track horizontal timeline
@@ -9186,7 +9186,7 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
 
               {/* ── Web right rail: Quick Access (hidden when inline drawer is open) ── */}
               {Platform.OS === 'web' && !(isOpenQuestionsInline && openQuestionsOpen) && (
-                <RightRail width={240}>
+                <RightRail width={240} style={stackColumns ? s.railStacked : undefined}>
                   <Card style={s.railCard}>
                     <Text style={s.railCardTitle}>Quick Access</Text>
                     <RailAccessItem
@@ -9574,7 +9574,20 @@ const s = StyleSheet.create({
     gap: 24,
     alignItems: 'flex-start',
   } as ViewStyle,
+  // Narrow/split web: stack the main content over a full-width rail.
+  contentRowStacked: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+  } as ViewStyle,
   mainCol: { flex: 1 } as ViewStyle,
+  mainColStacked: {
+    flexGrow: 0,
+    flexBasis: 'auto',
+    width: '100%',
+  } as ViewStyle,
+  railStacked: {
+    width: '100%',
+  } as ViewStyle,
 
   // Web right rail card
   railCard: {

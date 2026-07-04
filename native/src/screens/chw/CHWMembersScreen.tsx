@@ -27,6 +27,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
   type TextStyle,
   type ViewStyle,
@@ -772,6 +773,9 @@ const pageStyles = StyleSheet.create({
 
 export function CHWMembersScreen(): React.JSX.Element {
   const { userName } = useAuth();
+  const { width: windowWidth } = useWindowDimensions();
+  // Stack the header (title over search) when the window is narrow/split.
+  const stackHeader = Platform.OS === 'web' && windowWidth < 768;
   const navigation = useNavigation<DrawerNavigationProp<CHWTabParamList>>();
   const [activeFilter, setActiveFilter] = useState<FilterKey>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -861,7 +865,7 @@ export function CHWMembersScreen(): React.JSX.Element {
   const content = (
     <>
       {/* ── Header row ────────────────────────────────────────────────────── */}
-      <View style={styles.headerRow}>
+      <View style={[styles.headerRow, stackHeader && styles.headerRowStacked]}>
         <View>
           <PageHeader title="My Members" />
           <Text style={styles.subtitle}>
@@ -1090,6 +1094,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom:  spacing.xl,
     gap:           spacing.md,
+  } as ViewStyle,
+  // Narrow/split web: stack the title over the search/actions, left-aligned.
+  headerRowStacked: {
+    flexDirection: 'column',
+    alignItems:    'flex-start',
   } as ViewStyle,
 
   subtitle: {
