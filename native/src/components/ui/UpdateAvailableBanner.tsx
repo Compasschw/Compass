@@ -19,7 +19,7 @@
  * universally across all authenticated and unauthenticated screens.
  */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
   Animated,
   Platform,
@@ -48,6 +48,24 @@ const POSITION_FIXED = 'fixed' as unknown as ViewStyle['position'];
  */
 const SLIDE_START_PX = 80;
 
+// ─── Auto-reload tuning ────────────────────────────────────────────────────────
+
+/** Grace period after an update is detected before the first reload attempt. */
+const AUTO_RELOAD_GRACE_MS = 1_500;
+
+/** How often we re-attempt the reload while it isn't yet safe. */
+const AUTO_RELOAD_POLL_MS = 2_000;
+
+/**
+ * Require this much user inactivity (no keypress / pointer / scroll) before
+ * auto-reloading, so we only reload during a natural pause — never mid-task.
+ */
+const AUTO_RELOAD_IDLE_MS = 4_000;
+
+/** sessionStorage key + window guarding against rapid reload loops. */
+const AUTO_RELOAD_TS_KEY = 'compass:lastAutoReloadAt';
+const AUTO_RELOAD_LOOP_GUARD_MS = 60_000;
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /**
@@ -59,6 +77,34 @@ function prefersReducedMotion(): boolean {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
+/**
+ * True if the focused element is something the user might be typing into
+ * (input / textarea / select / contentEditable). We never auto-reload while
+ * one of these is focused, to avoid discarding unsaved input.
+ */
+function isEditableFocused(): boolean {
+  if (typeof document === 'undefined') return false;
+  const el = document.activeElement as HTMLElement | null;
+  if (!el) return false;
+  const tag = el.tagName;
+  return (
+    tag === 'INPUT' ||
+    tag === 'TEXTAREA' ||
+    tag === 'SELECT' ||
+    el.isContentEditable === true
+  );
+}
+
+/** True if we auto-reloaded within the loop-guard window (avoids reload loops). */
+function reloadedRecently(): boolean {
+  try {
+    const last = Number(window.sessionStorage?.getItem(AUTO_RELOAD_TS_KEY) ?? 0);
+    return last > 0 && Date.now() - last < AUTO_RELOAD_LOOP_GUARD_MS;
+  } catch {
+    return false;
+  }
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 /**
@@ -68,7 +114,6 @@ function prefersReducedMotion(): boolean {
  */
 export function UpdateAvailableBanner(): React.JSX.Element | null {
   const { updateAvailable, reload } = useBuildUpdateCheck();
-  const [dismissed, setDismissed] = useState<boolean>(false);
 
   /**
    * Animated translateY value. Starts at SLIDE_START_PX (off-screen below the
@@ -76,9 +121,9 @@ export function UpdateAvailableBanner(): React.JSX.Element | null {
    */
   const translateY = useRef(new Animated.Value(SLIDE_START_PX)).current;
 
-  // Animate in when an update is first detected (and not yet dismissed).
+  // Animate the "updating…" indicator in when an update is first detected.
   useEffect(() => {
-    if (!updateAvailable || dismissed || Platform.OS !== 'web') return;
+    if (!updateAvailable || Platform.OS !== 'web') return;
 
     if (prefersReducedMotion()) {
       // Jump to resting position instantly — no visual motion.
@@ -86,27 +131,75 @@ export function UpdateAvailableBanner(): React.JSX.Element | null {
     } else {
       Animated.spring(translateY, {
         toValue: 0,
-        // useNativeDriver: false is required here because:
-        //   1. We are on web — the native compositor path is not used.
-        //   2. The element uses position: 'fixed', so the transform is driven
-        //      by the React/JS thread through React Native Web's style system.
         useNativeDriver: false,
         tension: 80,
         friction: 10,
       }).start();
     }
-  }, [updateAvailable, dismissed, translateY]);
+  }, [updateAvailable, translateY]);
 
-  const handleDismiss = useCallback((): void => {
-    setDismissed(true);
-  }, []);
+  // Auto-reload to the new bundle, but only during a safe moment: not while the
+  // user is typing, only after a short idle pause, or immediately if the tab is
+  // backgrounded. A sessionStorage guard prevents reload loops. The manual
+  // "Reload now" button remains for anyone who wants it sooner.
+  useEffect(() => {
+    if (!updateAvailable || Platform.OS !== 'web' || typeof window === 'undefined') return;
+    if (reloadedRecently()) return;
+
+    let done = false;
+    let lastActivityAt = Date.now();
+
+    const performReload = (): void => {
+      if (done) return;
+      done = true;
+      try {
+        window.sessionStorage?.setItem(AUTO_RELOAD_TS_KEY, String(Date.now()));
+      } catch {
+        // sessionStorage unavailable — reload anyway.
+      }
+      reload();
+    };
+
+    const tryReload = (): void => {
+      if (done) return;
+      // Safe = not typing AND the user has paused for a beat.
+      if (!isEditableFocused() && Date.now() - lastActivityAt >= AUTO_RELOAD_IDLE_MS) {
+        performReload();
+      }
+    };
+
+    const bumpActivity = (): void => {
+      lastActivityAt = Date.now();
+    };
+    const activityEvents = ['keydown', 'pointerdown', 'wheel', 'touchstart'] as const;
+    activityEvents.forEach((e) =>
+      window.addEventListener(e, bumpActivity, { passive: true }),
+    );
+
+    // If the user backgrounds the tab (and isn't mid-edit), reload right away —
+    // when they return they land on the same URL with the fresh bundle.
+    const onVisibility = (): void => {
+      if (document.visibilityState === 'hidden' && !isEditableFocused()) performReload();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+
+    const graceTimer = setTimeout(tryReload, AUTO_RELOAD_GRACE_MS);
+    const poll = setInterval(tryReload, AUTO_RELOAD_POLL_MS);
+
+    return () => {
+      done = true;
+      clearTimeout(graceTimer);
+      clearInterval(poll);
+      activityEvents.forEach((e) => window.removeEventListener(e, bumpActivity));
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [updateAvailable, reload]);
 
   // Web-only guard — renders nothing on iOS / Android.
   if (Platform.OS !== 'web') return null;
 
-  // Don't mount the DOM node at all until an update is confirmed. Once
-  // dismissed the user's intent is respected for the rest of the session.
-  if (!updateAvailable || dismissed) return null;
+  // Nothing to show until an update is confirmed.
+  if (!updateAvailable) return null;
 
   return (
     <Animated.View
@@ -116,7 +209,7 @@ export function UpdateAvailableBanner(): React.JSX.Element | null {
       accessibilityLiveRegion="polite"
     >
       <Text style={styles.message}>
-        A new version of Compass is available.
+        Updating Compass to the latest version…
       </Text>
 
       <Pressable
@@ -126,20 +219,9 @@ export function UpdateAvailableBanner(): React.JSX.Element | null {
           pressed && styles.reloadButtonPressed,
         ]}
         accessibilityRole="button"
-        accessibilityLabel="Reload to get the latest version"
+        accessibilityLabel="Reload now to get the latest version"
       >
-        <Text style={styles.reloadText}>Reload</Text>
-      </Pressable>
-
-      <Pressable
-        onPress={handleDismiss}
-        style={styles.dismissButton}
-        accessibilityRole="button"
-        accessibilityLabel="Dismiss update notification"
-        hitSlop={10}
-      >
-        {/* Decorative — screen readers use accessibilityLabel on the Pressable. */}
-        <Text style={styles.dismissText} accessibilityElementsHidden>×</Text>
+        <Text style={styles.reloadText}>Reload now</Text>
       </Pressable>
     </Animated.View>
   );
@@ -197,17 +279,5 @@ const styles = StyleSheet.create({
     fontSize:   13,
     fontWeight: '600',
     lineHeight: 18,
-  } as TextStyle,
-
-  dismissButton: {
-    paddingHorizontal: 4,
-    paddingVertical:   2,
-  } as ViewStyle,
-
-  dismissText: {
-    color:      'rgba(255, 255, 255, 0.65)',
-    fontSize:   20,
-    lineHeight: 22,
-    fontWeight: '400',
   } as TextStyle,
 });
