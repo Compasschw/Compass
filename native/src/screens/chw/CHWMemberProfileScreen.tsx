@@ -5688,6 +5688,12 @@ interface RoadmapStep {
 const TIMELINE_WIDE_BP = 1024;
 const TIMELINE_MID_BP = 768;
 
+// Stack the dense 3-column member header below this WINDOW width. Set generously
+// (not 1024) because the ~256px sidebar eats into the content area, so 3 columns
+// only have room to breathe on genuinely wide windows — below this they cramp
+// (labels wrap one word per line, values clip). Below → clean full-width stack.
+const STACK_COLUMNS_BP = 1280;
+
 interface StepCircleProps {
   step: RoadmapStep;
   isLast: boolean;
@@ -8699,7 +8705,7 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
   // Stack the dense 3-column header vertically when the window is narrow
   // (e.g. split-screen / half-width) so the columns go full-width instead of
   // cramping side by side. Mirrors the native (always-stacked) treatment.
-  const stackColumns = Platform.OS === 'web' && windowWidth < TIMELINE_WIDE_BP;
+  const stackColumns = Platform.OS === 'web' && windowWidth < STACK_COLUMNS_BP;
 
   /**
    * When true, OpenQuestionsDrawer renders as an inline side panel inside the
