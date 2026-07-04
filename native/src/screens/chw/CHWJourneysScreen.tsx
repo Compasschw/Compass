@@ -48,6 +48,7 @@ import {
   type MemberJourneyStepResponse,
 } from '../../hooks/useApiQueries';
 import { PressableMember } from '../../components/shared/PressableMember';
+import { POINTS_ENABLED } from '../../constants/featureFlags';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -311,20 +312,35 @@ function StepRow({ step, isCurrent, busy, onComplete }: StepRowProps): React.JSX
       <View style={stepStyles.action}>
         {isCompleted ? (
           <View style={stepStyles.awardedPill}>
-            <Trophy size={11} color={colors.emerald700} />
-            <Text style={stepStyles.awardedText}>{step.pointsAwarded} pts</Text>
+            {POINTS_ENABLED ? (
+              <>
+                <Trophy size={11} color={colors.emerald700} />
+                <Text style={stepStyles.awardedText}>{step.pointsAwarded} pts</Text>
+              </>
+            ) : (
+              <>
+                <CheckCircle2 size={11} color={colors.emerald700} />
+                <Text style={stepStyles.awardedText}>Completed</Text>
+              </>
+            )}
           </View>
         ) : (
           <TouchableOpacity
             style={[stepStyles.rewardBtn, busy && stepStyles.rewardBtnDisabled]}
             disabled={busy}
             accessibilityRole="button"
-            accessibilityLabel={`Mark ${step.stepName} complete and award ${step.pointsOnCompletion} points`}
+            accessibilityLabel={
+              POINTS_ENABLED
+                ? `Mark ${step.stepName} complete and award ${step.pointsOnCompletion} points`
+                : `Mark ${step.stepName} complete`
+            }
             onPress={() => onComplete(step)}
           >
-            <Trophy size={12} color="#FFFFFF" />
+            <CheckCircle2 size={12} color="#FFFFFF" />
             <Text style={stepStyles.rewardBtnText}>
-              Complete · +{step.pointsOnCompletion} pts
+              {POINTS_ENABLED
+                ? `Complete · +${step.pointsOnCompletion} pts`
+                : 'Mark Complete'}
             </Text>
           </TouchableOpacity>
         )}
@@ -450,12 +466,16 @@ function JourneyCard({ journey, memberName, stalled = false }: JourneyCardProps)
         </View>
       )}
 
-      {/* Points + started date */}
+      {/* Points + started date (points gated by POINTS_ENABLED) */}
       <View style={journeyCardStyles.pointsRow}>
-        <Trophy size={12} color={colors.amber700} />
-        <Text style={journeyCardStyles.pointsText}>
-          {journey.wellnessPointsEarned} pts earned
-        </Text>
+        {POINTS_ENABLED && (
+          <>
+            <Trophy size={12} color={colors.amber700} />
+            <Text style={journeyCardStyles.pointsText}>
+              {journey.wellnessPointsEarned} pts earned
+            </Text>
+          </>
+        )}
         <Text style={journeyCardStyles.startedText}>
           Started {formatDate(journey.startedAt)}
         </Text>

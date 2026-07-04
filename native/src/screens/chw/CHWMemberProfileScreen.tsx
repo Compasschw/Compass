@@ -170,6 +170,7 @@ import {
   validateCinForCarrier,
   expectedFormatMessage,
 } from '../../constants/insurance';
+import { POINTS_ENABLED } from '../../constants/featureFlags';
 
 // ─── Navigation types ─────────────────────────────────────────────────────────
 
@@ -5400,8 +5401,9 @@ function ResourceNeedsColumn({
         </ScrollView>
       )}
 
-      {/* Wellness points stat — read-only, promoted from the old pill */}
-      {rewardsBalance !== undefined && (
+      {/* Wellness points stat — read-only, promoted from the old pill.
+          Gated by POINTS_ENABLED (points hidden platform-wide for now). */}
+      {POINTS_ENABLED && rewardsBalance !== undefined && (
         <View
           style={resourceColStyles.rewardsBadge}
           accessibilityRole="text"
@@ -5740,10 +5742,12 @@ const StepCircle = React.memo(function StepCircle({
       <Text style={[timelineStyles.subLabel, { color: subLabelColor }]}>
         {subLabelText}
       </Text>
-      {/* Points */}
-      <Text style={[isUpcoming ? timelineStyles.pointsMuted : timelineStyles.pointsActive, numerals.tabular]}>
-        +{step.points} pts
-      </Text>
+      {/* Points — hidden platform-wide for now (POINTS_ENABLED) */}
+      {POINTS_ENABLED && (
+        <Text style={[isUpcoming ? timelineStyles.pointsMuted : timelineStyles.pointsActive, numerals.tabular]}>
+          +{step.points} pts
+        </Text>
+      )}
     </View>
   );
 });
@@ -5814,7 +5818,9 @@ const VerticalStepRow = React.memo(function VerticalStepRow({
           <Text style={[verticalStepStyles.statusText, { color: subLabelColor }]}>
             {subLabelText}
           </Text>
-          <Text style={[verticalStepStyles.pointsText, numerals.tabular]}>+{step.points} pts</Text>
+          {POINTS_ENABLED && (
+            <Text style={[verticalStepStyles.pointsText, numerals.tabular]}>+{step.points} pts</Text>
+          )}
         </View>
       </View>
     </View>
@@ -6097,7 +6103,9 @@ const SingleJourneyTrack = React.memo(function SingleJourneyTrack({
                         {step.stepDescription}
                       </Text>
                     )}
-                    <Text style={trackStyles.editNodePts}>+{step.pointsOnCompletion} pts</Text>
+                    {POINTS_ENABLED && (
+                      <Text style={trackStyles.editNodePts}>+{step.pointsOnCompletion} pts</Text>
+                    )}
                   </View>
                 </Pressable>
                 {index < journey.steps.length - 1 && (
