@@ -347,9 +347,38 @@ const SESSIONS_PAGE_SIZE = 10;
 const SESSION_STATUS_LABELS: Record<string, string> = {
   scheduled: 'Scheduled',
   in_progress: 'In Progress',
+  awaiting_documentation: 'Awaiting Docs',
   completed: 'Completed',
   cancelled: 'Cancelled',
+  no_show: 'No Show',
 };
+
+/**
+ * Format a session duration (minutes) as "Xh Ym" — or "Ym" under an hour.
+ * Returns "—" when there is no recorded duration (e.g. scheduled/cancelled).
+ */
+function formatSessionDuration(mins: number | null | undefined): string {
+  if (mins == null) return '—';
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  const minutes = mins % 60;
+  return minutes === 0 ? `${hours}h` : `${hours}h ${minutes}m`;
+}
+
+/**
+ * Billable Medi-Cal units from a session's duration (founder rule, 2026-07-04):
+ * nothing bills until the 16th minute, then one unit per additional 30 minutes,
+ * capped at the per-day maximum of 4.
+ *
+ *   ≤ 15 min  → 0    16–45 → 1    46–75 → 2    76–105 → 3    > 105 → 4
+ *
+ * Returns null when there is no duration to measure (nothing to bill yet).
+ */
+function billableUnitsFromDuration(mins: number | null | undefined): number | null {
+  if (mins == null) return null;
+  if (mins <= 15) return 0;
+  return Math.min(4, Math.ceil((mins - 15) / 30));
+}
 
 const SESSION_MODE_LABELS: Record<string, string> = {
   in_person: 'In Person',
@@ -7463,7 +7492,7 @@ function SessionsTable({
         <Text style={[tableStyles.headerCell, tableStyles.colStatus]}>Status</Text>
         <Text style={[tableStyles.headerCell, tableStyles.colDuration]}>Duration</Text>
         <Text style={[tableStyles.headerCell, tableStyles.colUnits]}>Units</Text>
-        <Text style={[tableStyles.headerCell, tableStyles.colActions]}>Actions</Text>
+        <Text style={[tableStyles.headerCell, tableStyles.colActions]}>Notes</Text>
       </View>
 
       {/* Table rows */}
@@ -7475,6 +7504,8 @@ function SessionsTable({
             ? tokens.primary
             : session.status === 'in_progress'
             ? '#D97706'
+            : session.status === 'awaiting_documentation'
+            ? '#2563EB'
             : session.status === 'cancelled'
             ? '#9CA3AF'
             : '#6B7280';
@@ -7489,18 +7520,26 @@ function SessionsTable({
             </Text>
             <View style={tableStyles.colStatus}>
               <View style={[tableStyles.statusPill, { backgroundColor: statusColor + '18' }]}>
-                <Text style={[tableStyles.statusText, { color: statusColor }]}>
+                <Text
+                  style={[tableStyles.statusText, { color: statusColor }]}
+                  numberOfLines={1}
+                >
                   {statusLabel}
                 </Text>
               </View>
             </View>
-            <Text style={[tableStyles.cell, tableStyles.colDuration]}>
-              {session.durationMinutes != null
-                ? `${session.durationMinutes} min`
-                : '—'}
+            <Text style={[tableStyles.cell, tableStyles.colDuration]} numberOfLines={1}>
+              {formatSessionDuration(session.durationMinutes)}
             </Text>
-            <Text style={[tableStyles.cell, tableStyles.colUnits]}>
-              {session.unitsBilled != null ? session.unitsBilled.toFixed(2) : '—'}
+            <Text style={[tableStyles.cell, tableStyles.colUnits]} numberOfLines={1}>
+              {(() => {
+                // Prefer the actual billed units once documented; otherwise show
+                // the units this session will bill based on its duration.
+                const units =
+                  session.unitsBilled ??
+                  billableUnitsFromDuration(session.durationMinutes);
+                return units == null ? '—' : String(units);
+              })()}
             </Text>
             <View style={tableStyles.colActions}>
               <TouchableOpacity
@@ -7586,12 +7625,12 @@ const tableStyles = StyleSheet.create({
     color: '#374151',
   } as TextStyle,
   // Column width distribution (Modality removed; freed flex redistributed to Date, Type, Units)
-  colDate: { flex: 4 } as ViewStyle,
-  colType: { flex: 2.5 } as ViewStyle,
-  colStatus: { flex: 2 } as ViewStyle,
-  colDuration: { flex: 1.5 } as ViewStyle,
-  colUnits: { flex: 1.5 } as ViewStyle,
-  colActions: { flex: 2, alignItems: 'flex-end' } as ViewStyle,
+  colDate: { flex: 2.6 } as ViewStyle,
+  colType: { flex: 1.5 } as ViewStyle,
+  colStatus: { flex: 2.4 } as ViewStyle,
+  colDuration: { flex: 1.4 } as ViewStyle,
+  colUnits: { flex: 1 } as ViewStyle,
+  colActions: { flex: 1.8, alignItems: 'flex-end' } as ViewStyle,
   dateText: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 12,
