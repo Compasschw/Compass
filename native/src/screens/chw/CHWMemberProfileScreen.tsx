@@ -5598,7 +5598,7 @@ const resourceColStyles = StyleSheet.create({
  * Derives step state from the backend step.status values.
  * Uses actual pointsOnCompletion from the API (post-T06: 10/25/30/10/25/50).
  */
-function buildRoadmapSteps(journey: MemberJourneyResponse | undefined) {
+function buildRoadmapSteps(journey: MemberJourneyResponse | undefined): RoadmapStep[] {
   const standardStepKeys = [
     'Need Identified',
     'Eligibility Screening',
@@ -5608,31 +5608,37 @@ function buildRoadmapSteps(journey: MemberJourneyResponse | undefined) {
     'Journey Complete',
   ];
 
-  if (!journey) {
-    return standardStepKeys.map((key) => ({
+  // Placeholder for the loading / no-journey state only.
+  const placeholder = (): RoadmapStep[] =>
+    standardStepKeys.map((key) => ({
       key,
       label: key,
       description: JOURNEY_STEP_DESCRIPTIONS[key] ?? '',
       state: 'upcoming' as const,
       points: JOURNEY_STEP_POINTS[key] ?? 0,
     }));
-  }
 
-  return standardStepKeys.map((key) => {
-    const backendStep = journey.steps.find((s) => s.stepName === key);
-    const state = backendStep?.status ?? ('upcoming' as const);
-    // Prefer the journey's own step description; fall back to the canonical
-    // STANDARD_STEPS text so a node is never left without an explainer.
-    const description =
-      backendStep?.stepDescription?.trim() || JOURNEY_STEP_DESCRIPTIONS[key] || '';
-    return {
-      key,
-      label: key,
-      description,
-      state,
-      points: backendStep?.pointsOnCompletion ?? JOURNEY_STEP_POINTS[key] ?? 0,
-    };
-  });
+  if (!journey || journey.steps.length === 0) return placeholder();
+
+  // Render the journey's OWN steps (in order) — NOT a hardcoded canonical list.
+  // Custom journeys can have any number of steps with any names/descriptions;
+  // matching against canonical names silently dropped edits and showed the wrong
+  // steps for custom journeys. Fall back to the canonical description only when a
+  // step has no description of its own and its name matches a standard step.
+  return [...journey.steps]
+    .sort((a, b) => a.stepOrder - b.stepOrder)
+    .map((step) => {
+      const name = step.stepName?.trim() ?? '';
+      const description =
+        step.stepDescription?.trim() || (name ? JOURNEY_STEP_DESCRIPTIONS[name] ?? '' : '');
+      return {
+        key: step.id,
+        label: name || 'Untitled step',
+        description,
+        state: (step.status ?? 'upcoming') as RoadmapStepState,
+        points: step.pointsOnCompletion ?? 0,
+      };
+    });
 }
 
 type RoadmapStepState = 'completed' | 'in_progress' | 'missed' | 'upcoming';
