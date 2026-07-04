@@ -684,6 +684,18 @@ function ThreadListPane({
     [withMember],
   );
 
+  // Total UNREAD messages across non-archived threads. The header badge shows
+  // this (not the thread count) and is hidden entirely when there are none, so
+  // a number appears only when there's actually an unread message.
+  const unreadTotal = useMemo(
+    () =>
+      withMember.reduce(
+        (sum, c) => (c.archivedAt ? sum : sum + Math.max(0, c.unreadCount ?? 0)),
+        0,
+      ),
+    [withMember],
+  );
+
   const tabs: { key: ThreadFilterTab; label: string }[] = [
     { key: 'all', label: 'All' },
     { key: 'unread', label: 'Unread' },
@@ -698,11 +710,17 @@ function ThreadListPane({
         {/* Title row */}
         <View style={styles.threadListTitleRow}>
           <Text style={styles.threadListTitle}>Messages</Text>
-          <View style={[styles.threadCountBadge]}>
-            <Text style={[styles.threadCountBadgeText, numerals.tabular]}>
-              {totalCount}
-            </Text>
-          </View>
+          {/* Unread badge — only shown when there are actual unread messages. */}
+          {unreadTotal > 0 && (
+            <View
+              style={[styles.threadCountBadge]}
+              accessibilityLabel={`${unreadTotal} unread message${unreadTotal === 1 ? '' : 's'}`}
+            >
+              <Text style={[styles.threadCountBadgeText, numerals.tabular]}>
+                {unreadTotal}
+              </Text>
+            </View>
+          )}
         </View>
 
         {/* Search */}
