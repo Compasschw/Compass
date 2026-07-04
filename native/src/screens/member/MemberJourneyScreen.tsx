@@ -84,6 +84,7 @@ import {
   type SessionFollowup,
   type FollowupVertical,
 } from '../../hooks/useFollowupQueries';
+import { POINTS_ENABLED } from '../../constants/featureFlags';
 import { VERTICAL_LABEL } from '../../lib/verticals';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
@@ -376,12 +377,14 @@ function StepDetailCard({ step }: StepDetailCardProps): React.JSX.Element {
         <Pill variant={pillVariant}>
           {step.status.replace('_', ' ')}
         </Pill>
-        <View style={stepDetailStyles.pointsBadge}>
-          <Gift size={12} color={tokens.amber700} />
-          <Text style={[stepDetailStyles.pointsText, numerals.tabular]}>
-            +{step.pointsOnCompletion} pts
-          </Text>
-        </View>
+        {POINTS_ENABLED && (
+          <View style={stepDetailStyles.pointsBadge}>
+            <Gift size={12} color={tokens.amber700} />
+            <Text style={[stepDetailStyles.pointsText, numerals.tabular]}>
+              +{step.pointsOnCompletion} pts
+            </Text>
+          </View>
+        )}
       </View>
 
       {/* Step name */}
@@ -1034,12 +1037,14 @@ export function MemberJourneyScreen(props: MemberJourneyScreenProps): React.JSX.
                               <Text style={styles.pointsLegendName} numberOfLines={1}>
                                 {step.stepName}
                               </Text>
-                              <View style={styles.pointsLegendBadge}>
-                                <Gift size={10} color={tokens.amber700} accessibilityLabel="" />
-                                <Text style={[styles.pointsLegendPts, numerals.tabular]}>
-                                  +{step.pointsOnCompletion}
-                                </Text>
-                              </View>
+                              {POINTS_ENABLED && (
+                                <View style={styles.pointsLegendBadge}>
+                                  <Gift size={10} color={tokens.amber700} accessibilityLabel="" />
+                                  <Text style={[styles.pointsLegendPts, numerals.tabular]}>
+                                    +{step.pointsOnCompletion}
+                                  </Text>
+                                </View>
+                              )}
                             </View>
                           ))}
                         </View>

@@ -32,6 +32,7 @@ import {
 import { Check } from 'lucide-react-native';
 
 import { colors, spacing, radius } from '../../theme/tokens';
+import { POINTS_ENABLED } from '../../constants/featureFlags';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -301,19 +302,21 @@ export function JourneyStepSpring({
           )}
         </Animated.View>
 
-        {/* Floating "+{points} pts" chip */}
-        <Animated.View
-          style={[
-            styles.ptsChip,
-            {
-              opacity:   chipOpacity,
-              transform: [{ translateY: chipTranslateY }],
-            },
-          ]}
-          pointerEvents="none"
-        >
-          <Text style={styles.ptsChipText}>+{points} pts</Text>
-        </Animated.View>
+        {/* Floating "+{points} pts" chip (gated by POINTS_ENABLED) */}
+        {POINTS_ENABLED && (
+          <Animated.View
+            style={[
+              styles.ptsChip,
+              {
+                opacity:   chipOpacity,
+                transform: [{ translateY: chipTranslateY }],
+              },
+            ]}
+            pointerEvents="none"
+          >
+            <Text style={styles.ptsChipText}>+{points} pts</Text>
+          </Animated.View>
+        )}
       </View>
 
       {/* Step name */}
@@ -321,8 +324,8 @@ export function JourneyStepSpring({
         {name}
       </Text>
 
-      {/* Points label */}
-      <Text style={styles.pointsLabel}>+{points} pts</Text>
+      {/* Points label (gated by POINTS_ENABLED) */}
+      {POINTS_ENABLED && <Text style={styles.pointsLabel}>+{points} pts</Text>}
     </View>
   );
 }
