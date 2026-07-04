@@ -2670,53 +2670,37 @@ function CloseMemberModal({
     </View>
   );
 
-  if (Platform.OS !== 'web') {
-    return (
-      <Modal
-        visible={visible}
-        animationType="fade"
-        transparent
-        onRequestClose={onCancel}
-        accessibilityViewIsModal
-      >
-        <View style={closeModalStyles.nativeOverlay}>
-          <Pressable
-            style={closeModalStyles.backdrop}
-            onPress={onCancel}
-            accessibilityRole="button"
-            accessibilityLabel="Dismiss"
-          />
-          {body}
-        </View>
-      </Modal>
-    );
-  }
-
-  if (!visible) return <></>;
-
+  // Use a React Native <Modal> on BOTH web and native. On web, react-native-web
+  // renders the Modal into a portal appended to the document root, so it escapes
+  // the (transform-wrapped, tall) profile-screen container that made a
+  // position:fixed overlay behave like position:absolute — which parked the
+  // dialog near the bottom of the long page and behind the cards. The portal
+  // covers the FULL viewport (sidebar included), so the backdrop dims everything
+  // and the dialog is always centered and on top.
   return (
-    <View style={closeModalStyles.webOverlay}>
-      <Pressable
-        style={closeModalStyles.backdrop}
-        onPress={onCancel}
-        accessibilityRole="button"
-        accessibilityLabel="Dismiss"
-      />
-      {body}
-    </View>
+    <Modal
+      visible={visible}
+      animationType="fade"
+      transparent
+      onRequestClose={onCancel}
+      accessibilityViewIsModal
+    >
+      <View style={closeModalStyles.overlay}>
+        <Pressable
+          style={closeModalStyles.backdrop}
+          onPress={onCancel}
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss"
+        />
+        {body}
+      </View>
+    </Modal>
   );
 }
 
 const closeModalStyles = StyleSheet.create({
-  webOverlay: {
-    position: 'fixed' as 'absolute',
-    inset: 0,
-    zIndex: 300,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 16,
-  } as ViewStyle,
-  nativeOverlay: {
+  // Fills the Modal's portal (full viewport on web + native) and centers the card.
+  overlay: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
@@ -2725,7 +2709,8 @@ const closeModalStyles = StyleSheet.create({
   backdrop: {
     position: 'absolute' as 'absolute',
     inset: 0,
-    backgroundColor: 'rgba(17,24,39,0.45)',
+    // Dim the ENTIRE screen so only the dialog is highlighted.
+    backgroundColor: 'rgba(17,24,39,0.55)',
   } as ViewStyle,
   card: {
     width: '100%',
@@ -2734,6 +2719,12 @@ const closeModalStyles = StyleSheet.create({
     borderRadius: 16,
     overflow: 'hidden',
     zIndex: 1,
+    // Lift the dialog off the dimmed page so it reads as the only active surface.
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.25,
+    shadowRadius: 32,
+    elevation: 12,
   } as ViewStyle,
   header: {
     backgroundColor: tokens.emerald700,
