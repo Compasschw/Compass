@@ -46,6 +46,7 @@ import { DashboardSidebar } from './DashboardSidebar';
 import { chwSidebarItems, memberSidebarItems } from './sidebarItems';
 import type { UserBlock } from './DashboardSidebar';
 import { colors as tokens, spacing } from '../../theme/tokens';
+import { useConversations } from '../../hooks/useApiQueries';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -138,6 +139,20 @@ export function AppShell({
 }: AppShellProps): React.JSX.Element {
   const items = role === 'chw' ? chwSidebarItems : memberSidebarItems;
 
+  // Live unread-message total for the sidebar "Messages" badge. Shares the
+  // conversations query with the Messages screen (same key → no extra fetch),
+  // refreshes on mark-read, and resolves to 0 when there's nothing unread (the
+  // badge hides at 0). Caller-provided badges are preserved.
+  const { data: conversations } = useConversations();
+  const unreadMessages = (conversations ?? []).reduce(
+    (sum, c) => sum + Math.max(0, c.unreadCount ?? 0),
+    0,
+  );
+  const mergedBadges: Record<string, string | number> = {
+    ...badges,
+    unreadMessages,
+  };
+
   // Native: no shell — the navigator provides chrome.
   if (Platform.OS !== 'web') {
     return <>{children}</>;
@@ -147,7 +162,7 @@ export function AppShell({
     <AppShellWeb
       items={items}
       activeKey={activeKey}
-      badges={badges}
+      badges={mergedBadges}
       userBlock={userBlock}
       switchViewLabel={switchViewLabel}
       switchViewRoute={switchViewRoute}

@@ -244,6 +244,12 @@ function SidebarContent({
             'badgeKey' in item && item.badgeKey !== undefined
               ? badges?.[item.badgeKey as string]
               : undefined;
+          // Unread-message badge uses the attention-grabbing red (like a
+          // messaging app); other badges keep the default tone.
+          const badgeTone: 'default' | 'danger' =
+            'badgeKey' in item && item.badgeKey === 'unreadMessages'
+              ? 'danger'
+              : 'default';
 
           return (
             <NavItem
@@ -253,6 +259,7 @@ function SidebarContent({
               route={item.route}
               isActive={isActive}
               badgeValue={badgeValue}
+              badgeTone={badgeTone}
               onPress={() => {
                 // For nested-stack routes, navigate to the stack's root screen
                 // so we pop back to it even when already deep inside that stack
@@ -334,6 +341,8 @@ interface NavItemProps {
   route: string;
   isActive: boolean;
   badgeValue?: string | number;
+  /** 'danger' renders the badge in attention red (unread messages). */
+  badgeTone?: 'default' | 'danger';
   onPress: () => void;
 }
 
@@ -342,6 +351,7 @@ function NavItem({
   iconName,
   isActive,
   badgeValue,
+  badgeTone = 'default',
   onPress,
 }: NavItemProps): React.JSX.Element {
   const [hovered, setHovered] = useState(false);
@@ -383,7 +393,7 @@ function NavItem({
 
       {/* Badge */}
       {badgeValue !== undefined && String(badgeValue) !== '0' && (
-        <View style={styles.badge}>
+        <View style={[styles.badge, badgeTone === 'danger' && styles.badgeDanger]}>
           <Text style={styles.badgeText}>{String(badgeValue)}</Text>
         </View>
       )}
@@ -673,6 +683,11 @@ const styles = StyleSheet.create({
     paddingVertical:   2,
     minWidth:          20,
     alignItems:        'center',
+  } as ViewStyle,
+
+  // Attention-red badge for unread messages (like a messaging app).
+  badgeDanger: {
+    backgroundColor: '#EF4444',
   } as ViewStyle,
 
   badgeText: {
