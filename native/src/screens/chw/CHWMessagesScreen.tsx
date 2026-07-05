@@ -2223,6 +2223,63 @@ function MemberContextRail({
       .slice(0, 3);
   }, [memberJourneys]);
 
+  // ── Session Focus ───────────────────────────────────────────────────────────
+  // The focus journey = the member's top priority: highest CHW-assigned priority
+  // (high > medium > low > none), tie-broken by urgency (lowest progress).
+  const focusJourney = useMemo<MemberJourneyResponse | null>(() => {
+    if (memberJourneys.length === 0) return null;
+    const rank = (p: MemberJourneyResponse['priorityLevel']): number =>
+      p === 'high' ? 3 : p === 'medium' ? 2 : p === 'low' ? 1 : 0;
+    return (
+      [...memberJourneys].sort((a, b) => {
+        const byPriority = rank(b.priorityLevel) - rank(a.priorityLevel);
+        if (byPriority !== 0) return byPriority;
+        return a.progressPercent - b.progressPercent;
+      })[0] ?? null
+    );
+  }, [memberJourneys]);
+
+  // Derive Last Interaction / Today's Goal / Next Step from the focus journey's
+  // step state. Null when the member has no active journeys.
+  const sessionFocus = useMemo(() => {
+    if (!focusJourney) return null;
+    const journeyName = focusJourney.template?.name ?? 'the top resource need';
+    const steps = [...(focusJourney.steps ?? [])].sort(
+      (a, b) => a.stepOrder - b.stepOrder,
+    );
+    const stepText = (
+      s: (typeof steps)[number] | null | undefined,
+    ): string | null =>
+      s ? s.stepDescription?.trim() || s.stepName?.trim() || null : null;
+
+    const completed = steps.filter((s) => s.status === 'completed');
+    const lastCompleted =
+      [...completed]
+        .filter((s) => s.completedAt)
+        .sort((a, b) => Date.parse(b.completedAt!) - Date.parse(a.completedAt!))[0] ??
+      completed[completed.length - 1] ??
+      null;
+    const current =
+      focusJourney.currentStep ??
+      steps.find((s) => s.status === 'in_progress') ??
+      steps.find((s) => s.status === 'upcoming') ??
+      null;
+    const currentIdx = current
+      ? steps.findIndex((s) => s.id === current.id)
+      : -1;
+    const next =
+      steps.slice(currentIdx + 1).find((s) => s.status !== 'completed') ?? null;
+
+    return {
+      lastInteraction: lastCompleted
+        ? `Completed "${lastCompleted.stepName}" in ${journeyName}.`
+        : `Started the ${journeyName} journey.`,
+      todaysGoal: stepText(current) ?? `Advance ${journeyName}.`,
+      nextStep:
+        stepText(next) ?? 'Complete the current step to unlock the next one.',
+    };
+  }, [focusJourney]);
+
   // Services consent
   const consentQuery = useMemberServicesConsent(conv.memberId ?? '');
   const consentValue = consentQuery.data?.value ?? null;
@@ -2545,19 +2602,19 @@ function MemberContextRail({
           <View style={railCardStyles.sessionFocusSection}>
             <Text style={railCardStyles.sessionFocusFieldLabel}>Last Interaction</Text>
             <Text style={railCardStyles.sessionFocusFieldValue}>
-              Member completed housing intake and needs income verification.
+              {sessionFocus?.lastInteraction ?? 'No journey activity logged yet.'}
             </Text>
           </View>
           <View style={[railCardStyles.sessionFocusSection, railCardStyles.sessionFocusBorder]}>
             <Text style={railCardStyles.sessionFocusFieldLabel}>Today's Goal</Text>
             <Text style={railCardStyles.sessionFocusFieldValue}>
-              Obtain proof of income documents.
+              {sessionFocus?.todaysGoal ?? "Identify the member's top resource need."}
             </Text>
           </View>
           <View style={[railCardStyles.sessionFocusSection, railCardStyles.sessionFocusBorder]}>
             <Text style={railCardStyles.sessionFocusFieldLabel}>Next Step</Text>
             <Text style={railCardStyles.sessionFocusFieldValue}>
-              Upload documents by the agreed date.
+              {sessionFocus?.nextStep ?? 'Add a journey to set next steps.'}
             </Text>
           </View>
         </Card>
