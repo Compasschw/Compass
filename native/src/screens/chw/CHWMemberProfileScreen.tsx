@@ -63,6 +63,9 @@ import {
   Calendar,
   Check,
   CheckCircle,
+  CheckCircle2,
+  Circle,
+  Clock,
   Edit2,
   FileText,
   Flag,
@@ -5751,50 +5754,56 @@ const StepCircle = React.memo(function StepCircle({
   const isCompleted = step.state === 'completed';
   const isInProgress = step.state === 'in_progress';
   const isMissed = step.state === 'missed';
-  const isUpcoming = step.state === 'upcoming';
 
-  const dotBg = isCompleted ? '#16A34A' : isInProgress ? '#EAB308' : isMissed ? '#F59E0B' : '#E5E7EB';
+  // Match the member "Journey Steps" node format: a 52px ring with a
+  // clock / check / outline-circle icon, a status pill, and a colour-coded label.
+  const circleColor = isCompleted
+    ? tokens.primary
+    : isInProgress
+    ? tokens.amber700
+    : isMissed
+    ? tokens.red700
+    : tokens.textMuted;
   const lineBg = isCompleted ? '#34D399' : '#E5E7EB';
 
-  const subLabelText = isCompleted
-    ? 'Completed'
+  const statusLabel = step.state.replace('_', ' ');
+  const pillVariant: 'emerald' | 'amber' | 'red' | 'gray' = isCompleted
+    ? 'emerald'
     : isInProgress
-    ? 'In Progress'
+    ? 'amber'
     : isMissed
-    ? 'Missed'
-    : 'Upcoming';
-
-  const subLabelColor = isCompleted
-    ? '#16A34A'
-    : isInProgress
-    ? '#CA8A04'
-    : isMissed
-    ? '#D97706'
-    : tokens.textMuted;
+    ? 'red'
+    : 'gray';
 
   return (
     <View
-      style={timelineStyles.stepWrapper}
-      accessibilityLabel={`${step.label}: ${subLabelText}, ${step.points} points on completion`}
+      style={[
+        timelineStyles.stepWrapper,
+        isInProgress && timelineStyles.stepWrapperActive,
+      ]}
+      accessibilityLabel={`${step.label}: ${statusLabel}`}
       accessibilityRole="text"
     >
       {/* Circle + connector */}
       <View style={timelineStyles.circleRow}>
         <View
           style={[
-            timelineStyles.circleOuter,
-            isInProgress && timelineStyles.circleInProgressRing,
+            timelineStyles.stepCircle,
+            {
+              borderColor: circleColor,
+              backgroundColor: isCompleted ? circleColor : 'transparent',
+            },
           ]}
         >
-          <View style={[timelineStyles.dot, { backgroundColor: dotBg }]}>
-            {isCompleted || isInProgress ? (
-              <Check size={10} color="#FFFFFF" strokeWidth={3} />
-            ) : isMissed ? (
-              <X size={10} color="#FFFFFF" strokeWidth={3} />
-            ) : (
-              <View style={timelineStyles.dotInner} />
-            )}
-          </View>
+          {isCompleted ? (
+            <CheckCircle2 size={20} color="#FFFFFF" />
+          ) : isInProgress ? (
+            <Clock size={20} color={circleColor} />
+          ) : isMissed ? (
+            <X size={18} color={circleColor} strokeWidth={2.5} />
+          ) : (
+            <Circle size={20} color={circleColor} />
+          )}
         </View>
         {!isLast && (
           <View style={[timelineStyles.connector, { backgroundColor: lineBg }]} />
@@ -5803,7 +5812,7 @@ const StepCircle = React.memo(function StepCircle({
 
       {/* Step name */}
       <Text
-        style={isUpcoming ? timelineStyles.stepLabelMuted : timelineStyles.stepLabelActive}
+        style={[timelineStyles.stepLabelActive, { color: circleColor }]}
         numberOfLines={2}
       >
         {step.label}
@@ -5814,13 +5823,13 @@ const StepCircle = React.memo(function StepCircle({
           {step.description}
         </Text>
       )}
-      {/* Status */}
-      <Text style={[timelineStyles.subLabel, { color: subLabelColor }]}>
-        {subLabelText}
-      </Text>
+      {/* Status pill */}
+      <Pill variant={pillVariant} size="sm">
+        {statusLabel}
+      </Pill>
       {/* Points — hidden platform-wide for now (POINTS_ENABLED) */}
       {POINTS_ENABLED && (
-        <Text style={[isUpcoming ? timelineStyles.pointsMuted : timelineStyles.pointsActive, numerals.tabular]}>
+        <Text style={[timelineStyles.pointsActive, numerals.tabular]}>
           +{step.points} pts
         </Text>
       )}
@@ -6514,6 +6523,24 @@ const timelineStyles = StyleSheet.create({
     flexShrink: 0,
     position: 'relative',
     paddingHorizontal: 2,
+    gap: 4,
+  } as ViewStyle,
+  // Light-green highlight on the in-progress node (mirrors the member view).
+  stepWrapperActive: {
+    backgroundColor: `${tokens.primary}12`,
+    borderRadius: 12,
+    paddingVertical: 8,
+  } as ViewStyle,
+  // 52px status ring (mirrors the member Journey Steps node).
+  stepCircle: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+    zIndex: 1,
   } as ViewStyle,
   circleRow: {
     flexDirection: 'row',
