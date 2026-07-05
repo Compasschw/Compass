@@ -874,8 +874,12 @@ export function MemberJourneyScreen(props: MemberJourneyScreenProps): React.JSX.
     : 'Track your health milestones';
 
   // ── Other journeys (rail) ──────────────────────────────────────────────────
+  // Exclude abandoned journeys — members shouldn't see a long list of dropped
+  // journeys; only the active journey plus other live/completed ones.
   const otherJourneys = activeJourney
-    ? journeys.filter((j) => j.id !== activeJourney.id)
+    ? journeys.filter(
+        (j) => j.id !== activeJourney.id && j.status !== 'abandoned',
+      )
     : [];
   const showRail = Platform.OS === 'web' && otherJourneys.length > 0;
 
