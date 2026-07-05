@@ -229,6 +229,11 @@ export interface ConversationData {
   chwName: string;
   /** Display name of the member participant. */
   memberName: string;
+  /**
+   * Member's last authenticated activity (ISO8601). Null if never active.
+   * Drives the presence "Active" pill (member on the app within ~10 min).
+   */
+  memberLastActiveAt: string | null;
   /** Body-truncated preview of the most recent message. Null when no messages yet. */
   lastMessagePreview: string | null;
   /** ISO8601 timestamp of the most recent message. Null when no messages yet. */
@@ -794,6 +799,8 @@ export function useConversations(options?: { includeArchived?: boolean }) {
       const raw = await api<unknown[]>(`/conversations/${qs}`);
       return transformKeys<ConversationData[]>(raw);
     },
+    // Poll so member presence (the "Active" pill) and unread counts stay live.
+    refetchInterval: 45_000,
   });
 }
 

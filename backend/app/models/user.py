@@ -28,6 +28,9 @@ class User(Base):
     is_onboarded: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    # Last authenticated activity — bumped (throttled) in get_current_user. Drives
+    # presence in the UI (e.g. a member's "Active" pill when active < 10 min ago).
+    last_active_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # ── Account-deletion fields (soft-delete + HIPAA 6-year retention) ──────────
     # Populated by AccountDeletionService. A non-null deleted_at means the account

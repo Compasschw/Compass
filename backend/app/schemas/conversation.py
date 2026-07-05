@@ -58,6 +58,8 @@ class ConversationResponse(BaseModel):
     # Names resolved via JOIN to users table — avoid extra round-trips.
     member_name: str | None = None
     chw_name: str | None = None
+    # Member's last authenticated activity — drives the presence ("Active") pill.
+    member_last_active_at: datetime | None = None
     # Last message preview (truncated to 60 chars, HIPAA minimum-necessary).
     last_message_preview: str | None = None
     last_message_at: datetime | None = None
