@@ -9,9 +9,9 @@ every authenticated request in ``get_current_user``. Used to drive presence in
 the UI (e.g. a member's "Active" pill when they were on the app within the last
 10 minutes). Nullable + no backfill, so the migration is instant and safe.
 """
-from alembic import op
 import sqlalchemy as sa
 
+from alembic import op
 
 revision = "presence0704"
 down_revision = "perfidx0701"

@@ -35,8 +35,8 @@ async def get_current_user(
     # must never break auth, so it's guarded and rolled back on error. get_db
     # does not auto-commit, so committing just this field is isolated from the
     # request handler's own transaction.
-    from datetime import datetime, timezone
-    now = datetime.now(timezone.utc)
+    from datetime import UTC, datetime
+    now = datetime.now(UTC)
     last = user.last_active_at
     if last is None or last.tzinfo is None or (now - last).total_seconds() > 60:
         try:
