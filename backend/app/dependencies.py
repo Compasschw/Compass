@@ -29,6 +29,22 @@ async def get_current_user(
     user = result.scalar_one_or_none()
     if user is None or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or inactive")
+
+    # Presence: bump last_active_at, throttled to at most once per minute so we
+    # don't write on every authenticated request. Best-effort — a failure here
+    # must never break auth, so it's guarded and rolled back on error. get_db
+    # does not auto-commit, so committing just this field is isolated from the
+    # request handler's own transaction.
+    from datetime import UTC, datetime
+    now = datetime.now(UTC)
+    last = user.last_active_at
+    if last is None or last.tzinfo is None or (now - last).total_seconds() > 60:
+        try:
+            user.last_active_at = now
+            await db.commit()
+        except Exception:
+            await db.rollback()
+
     return user
 
 

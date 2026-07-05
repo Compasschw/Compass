@@ -272,6 +272,19 @@ function formatLastMessageMeta(iso: string | null | undefined): string | null {
   return `Last message at ${label}`;
 }
 
+/** Presence window: a member counts as "Active" if seen within this long. */
+const PRESENCE_WINDOW_MS = 10 * 60 * 1000;
+
+/**
+ * True when the member was on the app within the presence window (~10 min),
+ * based on their last authenticated activity (memberLastActiveAt).
+ */
+function isMemberPresent(lastActiveAt: string | null | undefined): boolean {
+  if (!lastActiveAt) return false;
+  const t = Date.parse(lastActiveAt);
+  return Number.isFinite(t) && Date.now() - t < PRESENCE_WINDOW_MS;
+}
+
 /** Human-readable time for a message bubble. */
 function formatMessageTimestamp(iso: string): string {
   return new Date(iso).toLocaleTimeString('en-US', {
@@ -533,6 +546,8 @@ function ThreadRow({
   // unreadCount > 0 → "Highly Engaged" (member recently replied); lastMessageAt
   // within 24 h → "Engaged"; otherwise → "Quiet".
   const engagementLabel: string = (() => {
+    // Presence wins: member currently on the app (active < 10 min ago).
+    if (isMemberPresent(conv.memberLastActiveAt)) return 'Active';
     if (conv.unreadCount > 0) return 'Highly Engaged';
     if (conv.lastMessageAt) {
       const hoursAgo =
@@ -542,6 +557,7 @@ function ThreadRow({
     return 'Quiet';
   })();
   const engagementPillVariant: PillVariant = (() => {
+    if (engagementLabel === 'Active') return 'emerald';
     if (engagementLabel === 'Highly Engaged') return 'emerald';
     if (engagementLabel === 'Engaged') return 'blue';
     return 'gray';
@@ -1440,6 +1456,9 @@ function ConversationPane({
     [mergedMessages, conv.chwId],
   );
   const engagement = useEngagementStatus(messagesForEngagement, conv.chwId);
+  // Presence takes precedence over message-derived engagement: if the member is
+  // currently on the app (active < 10 min ago), show a green "Active" pill.
+  const memberPresent = isMemberPresent(conv.memberLastActiveAt);
 
   // ── Quick-reply templates — 4 chips per mockup spec ───────────────────────
 
@@ -1506,8 +1525,12 @@ function ConversationPane({
                 {memberName}
               </Text>
             </PressableMember>
-            <Pill variant={engagement.pillVariant} size="sm" withDot>
-              {engagement.label}
+            <Pill
+              variant={memberPresent ? 'emerald' : engagement.pillVariant}
+              size="sm"
+              withDot
+            >
+              {memberPresent ? 'Active' : engagement.label}
             </Pill>
           </View>
           {formatLastMessageMeta(conv.lastMessageAt) !== null && (

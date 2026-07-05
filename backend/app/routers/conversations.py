@@ -242,7 +242,7 @@ async def list_conversations(
     MemberUser = aliased(User)
 
     stmt = (
-        select(Conversation, CHWUser.name, MemberUser.name)
+        select(Conversation, CHWUser.name, MemberUser.name, MemberUser.last_active_at)
         .join(CHWUser, Conversation.chw_id == CHWUser.id)
         .join(MemberUser, Conversation.member_id == MemberUser.id)
         .where(
@@ -265,10 +265,14 @@ async def list_conversations(
 
     result = await db.execute(stmt)
     rows = result.all()
-    conversations = [conv for conv, _chw_name, _member_name in rows]
+    conversations = [conv for conv, _chw_name, _member_name, _la in rows]
     name_map: dict = {
         conv.id: (chw_name, member_name)
-        for conv, chw_name, member_name in rows
+        for conv, chw_name, member_name, _la in rows
+    }
+    member_last_active_map: dict = {
+        conv.id: member_last_active
+        for conv, _chw_name, _member_name, member_last_active in rows
     }
 
     if not conversations:
@@ -363,6 +367,7 @@ async def list_conversations(
                 deleted_by_user_id=conv.deleted_by_user_id,
                 chw_name=chw_name,
                 member_name=member_name,
+                member_last_active_at=member_last_active_map.get(conv.id),
                 last_message_preview=last_msg.get("last_message_preview"),
                 last_message_at=last_msg.get("last_message_at"),
                 last_message_sender_id=last_msg.get("last_message_sender_id"),
@@ -504,6 +509,7 @@ async def update_conversation_pin(
         deleted_by_user_id=conv.deleted_by_user_id,
         chw_name=chw.name if chw else None,
         member_name=member.name if member else None,
+        member_last_active_at=member.last_active_at if member else None,
         pinned_at=conv.pinned_at,
         archived_at=conv.archived_at,
     )
@@ -545,6 +551,7 @@ async def update_conversation_archive(
         deleted_by_user_id=conv.deleted_by_user_id,
         chw_name=chw.name if chw else None,
         member_name=member.name if member else None,
+        member_last_active_at=member.last_active_at if member else None,
         pinned_at=conv.pinned_at,
         archived_at=conv.archived_at,
     )

@@ -634,3 +634,24 @@ async def test_dangling_read_cursor_returns_404_not_500(client: AsyncClient):
     )
     assert res.status_code == 404
     assert "not found" in res.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_conversation_exposes_member_last_active_at(client: AsyncClient):
+    """The member's presence (last_active_at) surfaces on the CHW's conversation.
+
+    Drives the Messages "Active" pill. The member makes authenticated requests
+    during setup, which bump last_active_at in get_current_user, so it must be
+    non-null on the CHW's conversation list.
+    """
+    chw_tokens = await _register_chw(client, email="presence_chw@example.com")
+    member_tokens = await _register_member(client, email="presence_member@example.com")
+    await _build_relationship_and_conversation(
+        client, chw_tokens=chw_tokens, member_tokens=member_tokens
+    )
+
+    res = await client.get("/api/v1/conversations/", headers=auth_header(chw_tokens))
+    assert res.status_code == 200
+    convs = res.json()
+    assert len(convs) >= 1
+    assert convs[0]["member_last_active_at"] is not None
