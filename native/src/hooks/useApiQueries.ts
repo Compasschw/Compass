@@ -1070,10 +1070,15 @@ export function useSubmitDocumentation() {
       });
     },
     onSuccess: () => {
-      // Submitting documentation creates a BillingClaim and stamps the session's
-      // billed units/amounts, so the Earnings / Claims / Payouts views must
-      // refresh too — not just the sessions list.
+      // Submitting documentation completes the session and creates a
+      // BillingClaim + stamps billed units/amounts, so refresh:
+      //  - sessions: the session status flips to "completed" (Messages rail's
+      //    "Complete Session" button → "Begin Session").
+      //  - conversations: the completed session is no longer in_progress, so the
+      //    conversation's active_session_id clears and the rail fully resets.
+      //  - Earnings / Claims / Payouts: the new claim + earnings appear.
       void qc.invalidateQueries({ queryKey: queryKeys.sessions });
+      void qc.invalidateQueries({ queryKey: queryKeys.conversations });
       void qc.invalidateQueries({ queryKey: queryKeys.chwClaims });
       void qc.invalidateQueries({ queryKey: queryKeys.chwEarnings });
       void qc.invalidateQueries({ queryKey: ['chw', 'payouts'] });

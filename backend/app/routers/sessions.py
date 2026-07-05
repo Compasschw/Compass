@@ -829,6 +829,14 @@ async def submit_documentation(
     session.units_billed = computed_units
     session.gross_amount = earnings["gross"]
     session.net_amount = earnings["net"]
+    # Submitting documentation is the final step of the CHW session flow
+    # (Complete Session → /end → awaiting_documentation → /documentation), so it
+    # completes the session. Without this the session stays stuck in
+    # awaiting_documentation and the CHW's "Complete Session" button never flips
+    # back to "Begin Session". Guard against resurrecting a cancelled or
+    # already-completed session.
+    if session.status in ("awaiting_documentation", "in_progress"):
+        session.status = "completed"
     await db.commit()
     await db.refresh(claim)
 
