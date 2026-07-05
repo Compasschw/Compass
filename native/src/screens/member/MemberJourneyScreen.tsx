@@ -876,12 +876,12 @@ export function MemberJourneyScreen(props: MemberJourneyScreenProps): React.JSX.
   // ── Other journeys (rail) ──────────────────────────────────────────────────
   // Exclude abandoned journeys — members shouldn't see a long list of dropped
   // journeys; only the active journey plus other live/completed ones.
+  // Show every (non-abandoned) journey so the list stays stable when the member
+  // picks one — the selected journey is highlighted rather than removed/reordered.
   const otherJourneys = activeJourney
-    ? journeys.filter(
-        (j) => j.id !== activeJourney.id && j.status !== 'abandoned',
-      )
+    ? journeys.filter((j) => j.status !== 'abandoned')
     : [];
-  const showRail = Platform.OS === 'web' && otherJourneys.length > 0;
+  const showRail = Platform.OS === 'web' && otherJourneys.length > 1;
 
   return (
     <AppShell role="member" activeKey="journey" userBlock={shellUserBlock}>
@@ -1107,12 +1107,12 @@ export function MemberJourneyScreen(props: MemberJourneyScreenProps): React.JSX.
               {showRail && (
                 <RightRail width={280}>
                   <Card style={styles.railCard}>
-                    <Text style={styles.railLabel}>OTHER JOURNEYS</Text>
+                    <Text style={styles.railLabel}>ALL JOURNEYS</Text>
                     {otherJourneys.map((j) => (
                       <OtherJourneyRow
                         key={j.id}
                         journey={j}
-                        isActive={false}
+                        isActive={j.id === activeJourney?.id}
                         onPress={() => {
                           setSelectedJourneyId(j.id);
                           setSelectedStepId(null);
