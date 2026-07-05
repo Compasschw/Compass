@@ -255,6 +255,21 @@ function formatThreadTimestamp(iso: string | undefined): string {
   return `${diffDays}d`;
 }
 
+/**
+ * Real conversation-header meta line. Derived from the member's actual last
+ * message time (no mock availability / contact-time / response-rate data
+ * exists to back the old placeholder). Returns null when there are no messages.
+ */
+function formatLastMessageMeta(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const label = formatThreadTimestamp(iso);
+  if (!label) return null;
+  if (label === 'Yesterday') return 'Last message yesterday';
+  const dayMatch = /^(\d+)d$/.exec(label);
+  if (dayMatch) return `Last message ${dayMatch[1]} days ago`;
+  return `Last message at ${label}`;
+}
+
 /** Human-readable time for a message bubble. */
 function formatMessageTimestamp(iso: string): string {
   return new Date(iso).toLocaleTimeString('en-US', {
@@ -1493,9 +1508,11 @@ function ConversationPane({
               {engagement.label}
             </Pill>
           </View>
-          <Text style={styles.convHeaderMeta}>
-            Member Available · Best contact time: 4–7 PM · Avg response: 30 min
-          </Text>
+          {formatLastMessageMeta(conv.lastMessageAt) !== null && (
+            <Text style={styles.convHeaderMeta}>
+              {formatLastMessageMeta(conv.lastMessageAt)}
+            </Text>
+          )}
         </View>
 
         {/* Call button — tinted green while a session is in progress to cue the
