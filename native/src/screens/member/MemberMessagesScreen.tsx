@@ -418,13 +418,11 @@ function ImageAttachmentBubble({
   }
   const imageUri = stableUriRef.current || downloadUrl;
 
+  // Open an in-app full-size preview (lightbox) on all platforms, so the image
+  // is viewable without opening a new tab / downloading.
   const handleTap = useCallback((): void => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.open(downloadUrl, '_blank', 'noopener,noreferrer');
-    } else {
-      setZoomVisible(true);
-    }
-  }, [downloadUrl]);
+    setZoomVisible(true);
+  }, []);
 
   return (
     <>
@@ -445,32 +443,36 @@ function ImageAttachmentBubble({
         />
       </TouchableOpacity>
 
-      {Platform.OS !== 'web' ? (
-        <Modal
-          visible={zoomVisible}
-          transparent
-          animationType="fade"
-          onRequestClose={() => setZoomVisible(false)}
-          accessibilityViewIsModal
+      <Modal
+        visible={zoomVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setZoomVisible(false)}
+        accessibilityViewIsModal
+      >
+        <TouchableOpacity
+          style={styles.imageZoomOverlay}
+          activeOpacity={1}
+          onPress={() => setZoomVisible(false)}
+          accessibilityRole="button"
+          accessibilityLabel="Close image preview"
         >
-          <View style={styles.imageZoomOverlay}>
-            <TouchableOpacity
-              style={styles.imageZoomClose}
-              onPress={() => setZoomVisible(false)}
-              accessibilityRole="button"
-              accessibilityLabel="Close image"
-            >
-              <X size={24} color="#fff" />
-            </TouchableOpacity>
-            <Image
-              source={{ uri: imageUri }}
-              style={styles.imageZoomFull}
-              resizeMode="contain"
-              accessibilityIgnoresInvertColors
-            />
-          </View>
-        </Modal>
-      ) : null}
+          <TouchableOpacity
+            style={styles.imageZoomClose}
+            onPress={() => setZoomVisible(false)}
+            accessibilityRole="button"
+            accessibilityLabel="Close image"
+          >
+            <X size={24} color="#fff" />
+          </TouchableOpacity>
+          <Image
+            source={{ uri: imageUri }}
+            style={styles.imageZoomFull}
+            resizeMode="contain"
+            accessibilityIgnoresInvertColors
+          />
+        </TouchableOpacity>
+      </Modal>
     </>
   );
 }
