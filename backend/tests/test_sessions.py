@@ -111,6 +111,48 @@ async def test_documentation_duplicate_rejected(client: AsyncClient, chw_tokens,
 
 
 @pytest.mark.asyncio
+async def test_documentation_completes_awaiting_session(
+    client: AsyncClient, chw_tokens, member_tokens
+):
+    """Submitting documentation completes an awaiting_documentation session.
+
+    Regression: the real CHW flow is Complete Session → /end
+    (awaiting_documentation) → /documentation. Before the fix, /documentation
+    left the session in awaiting_documentation, so the CHW's "Complete Session"
+    button never flipped back to "Begin Session".
+    """
+    session_id = await _create_in_progress_session(client, member_tokens, chw_tokens)
+
+    # End → awaiting_documentation
+    res = await client.post(
+        f"/api/v1/sessions/{session_id}/end", headers=auth_header(chw_tokens)
+    )
+    assert res.status_code == 200
+    assert res.json()["status"] == "awaiting_documentation"
+
+    # Submit documentation → should complete the session.
+    doc_payload = {
+        "summary": "Helped with housing",
+        "diagnosis_codes": ["Z59.1"],
+        "procedure_code": "98960",
+        "units_to_bill": 1,
+    }
+    res = await client.post(
+        f"/api/v1/sessions/{session_id}/documentation",
+        json=doc_payload,
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 200
+
+    # The session is now completed (the bug left it in awaiting_documentation).
+    res = await client.get(
+        f"/api/v1/sessions/{session_id}", headers=auth_header(chw_tokens)
+    )
+    assert res.status_code == 200
+    assert res.json()["status"] == "completed"
+
+
+@pytest.mark.asyncio
 async def test_invalid_enum_rejected(client: AsyncClient, member_tokens):
     res = await client.post("/api/v1/requests/", json={
         "vertical": "invalid_vertical", "urgency": "routine",
