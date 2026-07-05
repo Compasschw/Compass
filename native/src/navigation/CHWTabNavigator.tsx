@@ -45,6 +45,7 @@ import { CHWRequestsScreen } from '../screens/chw/CHWRequestsScreen';
 import { CHWSessionsScreen } from '../screens/chw/CHWSessionsScreen';
 import { CHWMessagesScreen } from '../screens/chw/CHWMessagesScreen';
 import { CHWSessionReviewScreen } from '../screens/chw/CHWSessionReviewScreen';
+import { CHWMemberAssessmentScreen } from '../screens/chw/CHWMemberAssessmentScreen';
 import { CHWCalendarScreen } from '../screens/chw/CHWCalendarScreen';
 import { CHWEarningsScreen } from '../screens/chw/CHWEarningsScreen';
 import { CHWIntakeScreen } from '../screens/chw/CHWIntakeScreen';
@@ -140,6 +141,12 @@ export type CHWSessionsStackParamList = {
   SessionReview: { sessionId: string; memberName: string; memberId?: string };
   /** HIPAA-gated member profile — requires an active CHW relationship. */
   MemberProfile: { memberId: string };
+  /**
+   * SDOH / Health Screening questionnaire for the given session. Reached from
+   * the "SDOH / Health Screening" card in the session rail; on completion the
+   * answers surface in the member profile's Screening Results.
+   */
+  CHWMemberAssessment: { sessionId: string };
 };
 
 const Tab = createBottomTabNavigator<CHWTabParamList>();
@@ -183,6 +190,7 @@ function SessionsStackNavigator(): React.JSX.Element {
         <SessionsStack.Screen name="Sessions" component={withErrorBoundary(CHWSessionsScreen)} />
         <SessionsStack.Screen name="SessionReview" component={withErrorBoundary(CHWSessionReviewScreen)} />
         <SessionsStack.Screen name="MemberProfile" component={withErrorBoundary(CHWMemberProfileScreen)} />
+        <SessionsStack.Screen name="CHWMemberAssessment" component={withErrorBoundary(CHWMemberAssessmentScreen)} />
       </SessionsStack.Navigator>
     );
   }
@@ -192,6 +200,7 @@ function SessionsStackNavigator(): React.JSX.Element {
       <SessionsStack.Screen name="Messages" component={withErrorBoundary(CHWMessagesScreen)} />
       <SessionsStack.Screen name="SessionReview" component={withErrorBoundary(CHWSessionReviewScreen)} />
       <SessionsStack.Screen name="MemberProfile" component={withErrorBoundary(CHWMemberProfileScreen)} />
+      <SessionsStack.Screen name="CHWMemberAssessment" component={withErrorBoundary(CHWMemberAssessmentScreen)} />
     </SessionsStack.Navigator>
   );
 }

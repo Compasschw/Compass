@@ -135,6 +135,7 @@ import {
   useEngagementStatus,
 } from '../../hooks/useMessagesInsights';
 import { SwipeableThreadRow } from '../../components/chw/SwipeableThreadRow';
+import { showAlert } from '../../utils/showAlert';
 import {
   useMessageAttachmentUpload,
   type MessageAttachmentUploadResult,
@@ -2564,7 +2565,21 @@ function MemberContextRail({
         {/* CARD 4 — Screening Questions */}
         <Card style={styles.railCard}>
           <PressableCard
-            onPress={() => setQuestionsDrawerOpen(true)}
+            onPress={() => {
+              // Launch the actual SDOH/Health Screening assessment for the
+              // active session — its answers surface in the member profile's
+              // Screening Results. Requires an in-progress session.
+              if (conv.activeSessionId) {
+                navigation.navigate('CHWMemberAssessment', {
+                  sessionId: conv.activeSessionId,
+                });
+              } else {
+                showAlert(
+                  'Begin a session first',
+                  'Start a session with this member to run the SDOH / Health Screening and capture answers.',
+                );
+              }
+            }}
             accessibilityLabel="Open SDOH / Health Screening"
             style={railCardStyles.screeningRow}
           >
