@@ -116,6 +116,7 @@ import { useAuth } from '../../context/AuthContext';
 import {
   useConversations,
   useConversationMessages,
+  useConversationMarkRead,
   useConversationSendMessage,
   useSoftDeleteConversation,
   useStartCall,
@@ -1202,9 +1203,32 @@ function ConversationPane({
   // ── Conversation-scoped messaging hooks ───────────────────────────────────────
   const messagesQuery  = useConversationMessages(conversation.id);
   const sendMessage    = useConversationSendMessage();
+  const markRead       = useConversationMarkRead();
   const startCall      = useStartCall();
   const approveConsent = useApproveConsentRequest();
   const denyConsent    = useDenyConsentRequest();
+
+  // Mark this conversation read while the member is viewing it (and it has
+  // unread messages), so the inbox + sidebar unread badge clears. The backend
+  // read cursor is monotonic (idempotent); we only fire while unreadCount > 0
+  // so a subsequent refetch (unreadCount → 0) doesn't loop.
+  const newestMessageId = useMemo<string | null>(() => {
+    const msgs = messagesQuery.data ?? [];
+    if (msgs.length === 0) return null;
+    return msgs.reduce((latest, m) =>
+      Date.parse(m.createdAt) >= Date.parse(latest.createdAt) ? m : latest,
+    ).id;
+  }, [messagesQuery.data]);
+
+  useEffect(() => {
+    if (conversation.unreadCount > 0 && newestMessageId) {
+      markRead.mutate({
+        conversationId: conversation.id,
+        upToMessageId: newestMessageId,
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversation.id, conversation.unreadCount, newestMessageId]);
 
   // Recording consent polling — only when an active session exists.
   const activeSessionId = conversation.activeSessionId ?? '';
