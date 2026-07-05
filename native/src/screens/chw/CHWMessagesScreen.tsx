@@ -88,6 +88,8 @@ import {
   Flag,
   BookOpen,
   Activity,
+  ChevronLeft,
+  ChevronRight,
   MoreVertical,
   Trash2,
 } from 'lucide-react-native';
@@ -2303,10 +2305,28 @@ function MemberContextRail({
   const servicesRefused = consentValue === 'refuse_services';
 
   // Journey display values
-  const journeyPercent = activeJourney?.progressPercent ?? 0;
-  const journeyName = activeJourney?.template.name ?? 'General';
-  const journeyCurrentStep = activeJourney?.currentStep?.stepName ?? null;
-  const journeyDueDate = activeJourney?.currentStep?.dueDate ?? null;
+  // Care Status card: the CHW can switch across the member's active journeys;
+  // the card shows that journey's real step track (mirrors the member profile).
+  const [careJourneyIndex, setCareJourneyIndex] = useState(0);
+  useEffect(() => {
+    setCareJourneyIndex(0);
+  }, [conv.memberId]);
+  const careJourneyCount = memberJourneys.length;
+  const careIndex =
+    careJourneyCount > 0 ? Math.min(careJourneyIndex, careJourneyCount - 1) : 0;
+  const careJourney = memberJourneys[careIndex] ?? null;
+  const careSteps = useMemo(
+    () =>
+      careJourney
+        ? [...careJourney.steps].sort((a, b) => a.stepOrder - b.stepOrder)
+        : [],
+    [careJourney],
+  );
+
+  const journeyPercent = careJourney?.progressPercent ?? 0;
+  const journeyName = careJourney?.template.name ?? 'General';
+  const journeyCurrentStep = careJourney?.currentStep?.stepName ?? null;
+  const journeyDueDate = careJourney?.currentStep?.dueDate ?? null;
 
   const dueDateCaption = useMemo((): string | null => {
     if (!journeyCurrentStep) return null;
@@ -2316,31 +2336,6 @@ function MemberContextRail({
     );
     return `Current step: ${journeyCurrentStep} (due in ${daysUntilDue}d)`;
   }, [journeyCurrentStep, journeyDueDate]);
-
-  // 5-stage care stepper derived from journeyPercent (20% per stage)
-  const CARE_STAGES = [
-    'Intake Complete',
-    'Eligibility Checked',
-    'Documents Needed',
-    'Application Submitted',
-    'Approved',
-  ] as const;
-
-  type StageState = 'completed' | 'current' | 'future';
-
-  const stageStates = useMemo((): StageState[] => {
-    // Each stage covers a 20% band: stage 0 = 0–20, stage 1 = 20–40, …, stage 4 = 80–100
-    const currentStageIndex = Math.min(
-      Math.floor(journeyPercent / 20),
-      CARE_STAGES.length - 1,
-    );
-    return CARE_STAGES.map((_, i): StageState => {
-      if (i < currentStageIndex) return 'completed';
-      if (i === currentStageIndex) return 'current';
-      return 'future';
-    });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [journeyPercent]);
 
   // ── End Session handler ───────────────────────────────────────────────────
 
@@ -2500,6 +2495,37 @@ function MemberContextRail({
           <View style={styles.railCardTitleRow}>
             <Activity size={13} color={tokens.textSecondary} />
             <Text style={styles.railCardTitle}>Care Status</Text>
+            {careJourneyCount > 1 && (
+              <View style={styles.careSwitcher}>
+                <Pressable
+                  onPress={() =>
+                    setCareJourneyIndex(
+                      (careIndex - 1 + careJourneyCount) % careJourneyCount,
+                    )
+                  }
+                  accessibilityRole="button"
+                  accessibilityLabel="Previous journey"
+                  hitSlop={8}
+                  style={styles.careSwitcherBtn}
+                >
+                  <ChevronLeft size={16} color={tokens.textSecondary} />
+                </Pressable>
+                <Text style={[styles.careSwitcherCount, numerals.tabular]}>
+                  {careIndex + 1}/{careJourneyCount}
+                </Text>
+                <Pressable
+                  onPress={() =>
+                    setCareJourneyIndex((careIndex + 1) % careJourneyCount)
+                  }
+                  accessibilityRole="button"
+                  accessibilityLabel="Next journey"
+                  hitSlop={8}
+                  style={styles.careSwitcherBtn}
+                >
+                  <ChevronRight size={16} color={tokens.textSecondary} />
+                </Pressable>
+              </View>
+            )}
           </View>
           <View style={styles.journeyNameRow}>
             <Text style={styles.railJourneyName} numberOfLines={1}>
@@ -2532,49 +2558,63 @@ function MemberContextRail({
             </Text>
           )}
 
-          {/* 5-stage vertical stepper */}
+          {/* Real step track for the selected journey (mirrors the member profile) */}
           <View style={railCardStyles.stepper}>
-            {CARE_STAGES.map((stageName, i) => {
-              const state = stageStates[i] ?? 'future';
-              return (
-                <View key={stageName} style={railCardStyles.stepRow}>
-                  {/* Connector line above (all except first) */}
-                  {i > 0 ? (
-                    <View
-                      style={[
-                        railCardStyles.stepConnector,
-                        state === 'future' && stageStates[i - 1] === 'future'
-                          ? railCardStyles.stepConnectorFuture
-                          : railCardStyles.stepConnectorDone,
-                      ]}
-                    />
-                  ) : (
-                    <View style={railCardStyles.stepConnectorSpacer} />
-                  )}
-                  <View style={railCardStyles.stepDotCol}>
-                    {state === 'completed' ? (
-                      <View style={railCardStyles.stepDotCompleted}>
-                        <CheckCircle2 size={14} color="#15803d" />
-                      </View>
-                    ) : state === 'current' ? (
-                      <View style={railCardStyles.stepDotCurrent} />
+            {careSteps.length === 0 ? (
+              <Text style={railCardStyles.stepLabelFuture}>
+                No steps in this journey yet.
+              </Text>
+            ) : (
+              careSteps.map((step, i) => {
+                const toState = (s: string): 'completed' | 'current' | 'future' =>
+                  s === 'completed'
+                    ? 'completed'
+                    : s === 'in_progress'
+                    ? 'current'
+                    : 'future';
+                const state = toState(step.status);
+                const prevState = i > 0 ? toState(careSteps[i - 1].status) : null;
+                return (
+                  <View key={step.id} style={railCardStyles.stepRow}>
+                    {/* Connector line above (all except first) */}
+                    {i > 0 ? (
+                      <View
+                        style={[
+                          railCardStyles.stepConnector,
+                          state === 'future' && prevState === 'future'
+                            ? railCardStyles.stepConnectorFuture
+                            : railCardStyles.stepConnectorDone,
+                        ]}
+                      />
                     ) : (
-                      <View style={railCardStyles.stepDotFuture} />
+                      <View style={railCardStyles.stepConnectorSpacer} />
                     )}
+                    <View style={railCardStyles.stepDotCol}>
+                      {state === 'completed' ? (
+                        <View style={railCardStyles.stepDotCompleted}>
+                          <CheckCircle2 size={14} color="#15803d" />
+                        </View>
+                      ) : state === 'current' ? (
+                        <View style={railCardStyles.stepDotCurrent} />
+                      ) : (
+                        <View style={railCardStyles.stepDotFuture} />
+                      )}
+                    </View>
+                    <Text
+                      style={[
+                        railCardStyles.stepLabel,
+                        state === 'completed' && railCardStyles.stepLabelCompleted,
+                        state === 'current' && railCardStyles.stepLabelCurrent,
+                        state === 'future' && railCardStyles.stepLabelFuture,
+                      ]}
+                      numberOfLines={2}
+                    >
+                      {step.stepName?.trim() || 'Untitled step'}
+                    </Text>
                   </View>
-                  <Text
-                    style={[
-                      railCardStyles.stepLabel,
-                      state === 'completed' && railCardStyles.stepLabelCompleted,
-                      state === 'current' && railCardStyles.stepLabelCurrent,
-                      state === 'future' && railCardStyles.stepLabelFuture,
-                    ]}
-                  >
-                    {stageName}
-                  </Text>
-                </View>
-              );
-            })}
+                );
+              })
+            )}
           </View>
         </Card>
 
@@ -4100,6 +4140,25 @@ const styles = StyleSheet.create({
     fontWeight: '650' as any,
     letterSpacing: -0.1,
     color: tokens.textPrimary,
+  } as TextStyle,
+
+  // Care Status journey switcher (< X/N > on the right of the title row).
+  careSwitcher: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginLeft: 'auto',
+  } as ViewStyle,
+  careSwitcherBtn: {
+    padding: 2,
+    borderRadius: 6,
+  } as ViewStyle,
+  careSwitcherCount: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: tokens.textSecondary,
+    minWidth: 26,
+    textAlign: 'center',
   } as TextStyle,
 
   // Journey card
