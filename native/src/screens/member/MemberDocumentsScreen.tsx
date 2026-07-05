@@ -575,15 +575,6 @@ export function MemberDocumentsScreen(): React.JSX.Element {
               <View style={styles.mainCol}>
                 <Text style={styles.sectionLabel}>YOUR DOCUMENTS</Text>
 
-                {!hasDocuments ? (
-                  <EmptyState
-                    icon={FileText}
-                    title="No documents uploaded yet"
-                    body="Upload ID, income proof, and other documents your CHW requests."
-                    style={styles.emptyState}
-                  />
-                ) : null}
-
                 <View style={styles.docGrid}>
                   {DOCUMENT_CATEGORIES.map((config) => {
                     const existing = docsByType[config.type];
@@ -606,6 +597,15 @@ export function MemberDocumentsScreen(): React.JSX.Element {
                     );
                   })}
                 </View>
+
+                {!hasDocuments ? (
+                  <EmptyState
+                    icon={FileText}
+                    title="No documents uploaded yet"
+                    body="Upload ID, income proof, and other documents your CHW requests."
+                    style={styles.emptyState}
+                  />
+                ) : null}
               </View>
 
               {/* Right rail */}
