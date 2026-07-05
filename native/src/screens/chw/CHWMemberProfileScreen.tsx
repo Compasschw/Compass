@@ -2948,7 +2948,7 @@ function DemographicsColumn({
           </View>
           <View style={demoColStyles.badgesRow}>
             {isClosed ? (
-              <Pill variant="amber" size="sm">
+              <Pill variant="amber" size="sm" style={demoColStyles.statusPillWrap}>
                 {`Closed · ${CLOSE_STATUS_LABEL[profile.closureStatus as CloseMemberStatus]}`}
               </Pill>
             ) : (
@@ -3106,6 +3106,14 @@ const demoColStyles = StyleSheet.create({
     gap: 6,
     flexWrap: 'wrap',
     justifyContent: 'center',
+    // Fill the left sub-column so a capped-width status pill can wrap instead
+    // of overflowing past the avatar on both sides.
+    alignSelf: 'stretch',
+  } as ViewStyle,
+  // Caps the closed-status pill to the column width → its label wraps to two
+  // lines rather than being clipped on either side.
+  statusPillWrap: {
+    maxWidth: '100%',
   } as ViewStyle,
   ctaStack: {
     alignSelf: 'stretch',

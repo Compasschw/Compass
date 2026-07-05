@@ -22,6 +22,7 @@ import {
   View,
   Text,
   StyleSheet,
+  type StyleProp,
   type ViewStyle,
   type TextStyle,
 } from 'react-native';
@@ -45,6 +46,12 @@ export interface PillProps {
   size?: PillSize;
   /** When true, renders an 8×8 filled dot before the label text. */
   withDot?: boolean;
+  /**
+   * Optional container override — e.g. `{ maxWidth: '100%' }` to cap the pill
+   * to its parent so a long label wraps onto multiple lines instead of
+   * overflowing. Applied after the variant/size styles.
+   */
+  style?: StyleProp<ViewStyle>;
   children: React.ReactNode;
 }
 
@@ -81,6 +88,7 @@ export function Pill({
   variant,
   size = 'md',
   withDot = false,
+  style,
   children,
 }: PillProps): React.JSX.Element {
   const { bg, text, dot } = variantTokens[variant];
@@ -91,6 +99,7 @@ export function Pill({
         styles.base,
         size === 'sm' ? styles.sizeSm : styles.sizeMd,
         { backgroundColor: bg },
+        style,
       ]}
     >
       {withDot && (
@@ -135,5 +144,9 @@ const styles = StyleSheet.create({
     fontSize:   11,
     fontWeight: '600',
     lineHeight: 16,
+    // Shrink + centre so a capped-width pill wraps its label cleanly onto two
+    // lines instead of overflowing. No effect on hug-width single-line pills.
+    flexShrink: 1,
+    textAlign:  'center',
   } as TextStyle,
 });
