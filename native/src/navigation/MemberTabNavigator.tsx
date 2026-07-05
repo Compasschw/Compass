@@ -171,7 +171,9 @@ const SCREENS: ScreenSpec[] = [
     icon: ClipboardList,
   },
   { name: 'Calendar',        title: 'Appointments', component: MemberCalendarScreen,  icon: CalendarDays },
-  { name: 'MemberRewards',   title: 'Rewards',      component: MemberRewardsScreen,   icon: Gift },
+  // Temporarily removed 2026-07 (restore for the rewards feature). The Rewards
+  // screen stays registered in HomeStackNavigator so any deep link still works.
+  // { name: 'MemberRewards',   title: 'Rewards',      component: MemberRewardsScreen,   icon: Gift },
   { name: 'MemberDocuments', title: 'My Documents', component: MemberDocumentsScreen, icon: FileText },
   { name: 'Profile',         title: 'Profile',      component: MemberProfileScreen,   icon: UserCircle },
   { name: 'MemberSettings',  title: 'Settings',     component: MemberSettingsScreen,  icon: SettingsIcon },

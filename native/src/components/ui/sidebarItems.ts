@@ -48,7 +48,8 @@ export const memberSidebarItems = [
   { key: 'journey',      label: 'My Journey',    icon: 'route',          route: 'MemberJourney'      },
   { key: 'messages',     label: 'Messages',      icon: 'message-square', route: 'Sessions',           badgeKey: 'unreadMessages' },
   { key: 'appointments', label: 'Appointments',  icon: 'calendar',       route: 'Calendar'           },
-  { key: 'rewards',      label: 'Rewards',       icon: 'gift',           route: 'MemberRewards',      badgeKey: 'wellnessPoints' },
+  // Temporarily removed 2026-07 (restore for the rewards feature):
+  // { key: 'rewards',      label: 'Rewards',       icon: 'gift',           route: 'MemberRewards',      badgeKey: 'wellnessPoints' },
   { key: 'documents',    label: 'My Documents',  icon: 'file-text',      route: 'MemberDocuments'    },
   { key: 'settings',     label: 'Settings',      icon: 'settings',       route: 'MemberSettings'     },
 ] as const;

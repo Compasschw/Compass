@@ -655,6 +655,8 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
            */}
           <View style={styles.statGrid}>
             <StaggerList delayMs={50} durationMs={240}>
+              {/* Temporarily removed 2026-07 (restore for the rewards feature).
+                  handleOpenRewards + rewardsBalance are kept for restoration.
               <StatTile
                 icon={<Gift color={tokens.emerald700} size={18} />}
                 iconBg={tokens.emerald100}
@@ -664,7 +666,7 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
                 style={styles.statGridTile}
                 onPress={handleOpenRewards}
                 accessibilityLabel={`Wellness Points: ${rewardsBalance.toLocaleString()}`}
-              />
+              /> */}
               <StatTile
                 icon={<CalendarCheck color={tokens.blue700} size={18} />}
                 iconBg={tokens.blue100}
