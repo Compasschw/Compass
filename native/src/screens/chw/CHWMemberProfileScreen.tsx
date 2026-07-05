@@ -5745,7 +5745,7 @@ const StepCircle = React.memo(function StepCircle({
   const isMissed = step.state === 'missed';
   const isUpcoming = step.state === 'upcoming';
 
-  const dotBg = isCompleted || isInProgress ? '#16A34A' : isMissed ? '#F59E0B' : '#E5E7EB';
+  const dotBg = isCompleted ? '#16A34A' : isInProgress ? '#EAB308' : isMissed ? '#F59E0B' : '#E5E7EB';
   const lineBg = isCompleted ? '#34D399' : '#E5E7EB';
 
   const subLabelText = isCompleted
@@ -5756,8 +5756,10 @@ const StepCircle = React.memo(function StepCircle({
     ? 'Missed'
     : 'Upcoming';
 
-  const subLabelColor = isCompleted || isInProgress
+  const subLabelColor = isCompleted
     ? '#16A34A'
+    : isInProgress
+    ? '#CA8A04'
     : isMissed
     ? '#D97706'
     : tokens.textMuted;
@@ -5833,7 +5835,7 @@ const VerticalStepRow = React.memo(function VerticalStepRow({
   const isMissed = step.state === 'missed';
   const isUpcoming = step.state === 'upcoming';
 
-  const dotBg = isCompleted || isInProgress ? '#16A34A' : isMissed ? '#F59E0B' : '#E5E7EB';
+  const dotBg = isCompleted ? '#16A34A' : isInProgress ? '#EAB308' : isMissed ? '#F59E0B' : '#E5E7EB';
   const subLabelText = isCompleted
     ? 'Completed'
     : isInProgress
@@ -5841,8 +5843,10 @@ const VerticalStepRow = React.memo(function VerticalStepRow({
     : isMissed
     ? 'Missed'
     : 'Upcoming';
-  const subLabelColor = isCompleted || isInProgress
+  const subLabelColor = isCompleted
     ? '#16A34A'
+    : isInProgress
+    ? '#CA8A04'
     : isMissed
     ? '#D97706'
     : tokens.textMuted;
@@ -5912,7 +5916,7 @@ const verticalStepStyles = StyleSheet.create({
   } as ViewStyle,
   dotInProgress: {
     borderWidth: 2,
-    borderColor: '#34D399',
+    borderColor: '#FACC15',
   } as ViewStyle,
   textBlock: { flex: 1, gap: 2 } as ViewStyle,
   stepName: {
@@ -6522,7 +6526,7 @@ const timelineStyles = StyleSheet.create({
   } as ViewStyle,
   circleInProgressRing: {
     borderWidth: 2,
-    borderColor: '#34D399',
+    borderColor: '#FACC15',
     width: 28,
     height: 28,
     borderRadius: 14,
