@@ -204,6 +204,11 @@ function WebDrawer({
           style={webStyles.body}
           contentContainerStyle={webStyles.bodyContent}
           showsVerticalScrollIndicator={false}
+          // Deliver taps to children even when an input inside the drawer is
+          // focused. Without this, a focused field (e.g. an autoFocus search)
+          // swallows the first tap on a list row to blur itself, so selecting
+          // an item appears to do nothing.
+          keyboardShouldPersistTaps="handled"
         >
           {children}
         </ScrollView>
@@ -289,6 +294,7 @@ function WebInlineDrawer({
         style={webInlineStyles.body}
         contentContainerStyle={webInlineStyles.bodyContent}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
       >
         {children}
       </ScrollView>
@@ -365,6 +371,7 @@ function NativeDrawer({
         <ScrollView
           style={nativeStyles.body}
           contentContainerStyle={nativeStyles.bodyContent}
+          keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
           {children}
