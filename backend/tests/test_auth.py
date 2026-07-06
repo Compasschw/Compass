@@ -197,6 +197,52 @@ async def test_chw_can_update_name(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_completing_intake_makes_chw_discoverable(client: AsyncClient):
+    """Completing the CHW intake sets is_onboarded + specializations so the CHW
+    appears in the member Find-CHW browse.
+
+    Regression: is_onboarded was never set anywhere, so onboarded CHWs stayed
+    hidden from GET /chw/browse — only seeded accounts (Jemal) showed.
+    """
+    from app.routers.chw_intake import VALID_OPTIONS
+    from tests.conftest import complete_member_signup_payload
+
+    reg = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": f"discover-chw-{uuid.uuid4()}@example.com",
+            "password": "testpass123",
+            "name": "Discoverable CHW",
+            "role": "chw",
+        },
+    )
+    assert reg.status_code == 201
+    chw_headers = {"Authorization": f"Bearer {reg.json()['access_token']}"}
+
+    # Answer every required intake field with a valid value, then submit.
+    payload = {field: sorted(opts)[0] for field, opts in VALID_OPTIONS.items()}
+    payload["primary_specialization"] = "housing_social"
+    patch = await client.patch("/api/v1/chw/intake", json=payload, headers=chw_headers)
+    assert patch.status_code == 200, patch.text
+    submit = await client.post("/api/v1/chw/intake/submit", headers=chw_headers)
+    assert submit.status_code == 200, submit.text
+
+    # A member now sees this CHW in the browse (was hidden before the fix).
+    mem = await client.post(
+        "/api/v1/auth/register",
+        json=complete_member_signup_payload(
+            email=f"discover-mem-{uuid.uuid4()}@example.com", name="Discover Member"
+        ),
+    )
+    assert mem.status_code == 201
+    mem_headers = {"Authorization": f"Bearer {mem.json()['access_token']}"}
+
+    browse = await client.get("/api/v1/chw/browse", headers=mem_headers)
+    assert browse.status_code == 200, browse.text
+    assert "Discoverable CHW" in [c["name"] for c in browse.json()]
+
+
+@pytest.mark.asyncio
 async def test_register_member_rejects_single_token_name(client: AsyncClient):
     """Members must provide both first and last name — Pear Suite rejects
     members without lastName and we want the error surfaced at signup, not
