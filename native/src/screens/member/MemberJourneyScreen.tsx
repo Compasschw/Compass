@@ -926,20 +926,22 @@ export function MemberJourneyScreen(props: MemberJourneyScreenProps): React.JSX.
                       style={styles.statTile}
                       accessibilityLabel={`Journey progress: ${journeyProgressPercent}%`}
                     />
-                    <StatTile
-                      icon={
-                        <Gift
-                          size={18}
-                          color={tokens.amber700}
-                          accessibilityLabel=""
-                        />
-                      }
-                      iconBg={tokens.amber100}
-                      label="Points Earned"
-                      value={totalPointsEarned}
-                      style={styles.statTile}
-                      accessibilityLabel={`Total wellness points earned: ${totalPointsEarned}`}
-                    />
+                    {POINTS_ENABLED && (
+                      <StatTile
+                        icon={
+                          <Gift
+                            size={18}
+                            color={tokens.amber700}
+                            accessibilityLabel=""
+                          />
+                        }
+                        iconBg={tokens.amber100}
+                        label="Points Earned"
+                        value={totalPointsEarned}
+                        style={styles.statTile}
+                        accessibilityLabel={`Total wellness points earned: ${totalPointsEarned}`}
+                      />
+                    )}
                   </View>
                 )}
 
@@ -1017,8 +1019,8 @@ export function MemberJourneyScreen(props: MemberJourneyScreenProps): React.JSX.
                           <Text style={{ fontWeight: '700' }}>
                             You're making real progress!
                           </Text>
-                          {' '}Completing each step unlocks wellness points toward
-                          rewards.
+                          {' '}Keep completing steps with your CHW to reach your
+                          goals.
                         </Text>
                       </View>
                     </PressableCard>
@@ -1029,7 +1031,7 @@ export function MemberJourneyScreen(props: MemberJourneyScreenProps): React.JSX.
                     )}
 
                     {/* Points reference — derived from the journey's real steps */}
-                    {activeJourney.steps.length > 0 && (
+                    {POINTS_ENABLED && activeJourney.steps.length > 0 && (
                       <Card style={styles.pointsLegendCard}>
                         <SectionHeader
                           title="Points per step"

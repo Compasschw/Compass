@@ -56,6 +56,7 @@ import { useAuth } from '../../context/AuthContext';
 import { PhoneVerificationModal } from '../../components/shared/PhoneVerificationModal';
 import { colors as legacyColors } from '../../theme/colors';
 import { colors as tokens, spacing, radius, shadows } from '../../theme/tokens';
+import { POINTS_ENABLED } from '../../constants/featureFlags';
 import { typography } from '../../theme/typography';
 import {
   verticalLabels,
@@ -1436,16 +1437,20 @@ function JourneysRewardsCard({
 
   return (
     <View style={journeyCardStyles.card}>
-      {/* Rewards balance tile */}
-      <View style={journeyCardStyles.balanceTile}>
-        <Gift size={16} color={tokens.amber700} />
-        <View style={journeyCardStyles.balanceText}>
-          <Text style={journeyCardStyles.balanceLabel}>Rewards</Text>
-          <Text style={journeyCardStyles.balanceValue}>{rewardsBalance} pts</Text>
-        </View>
-      </View>
+      {/* Rewards balance tile — hidden while rewards is removed (POINTS_ENABLED) */}
+      {POINTS_ENABLED && (
+        <>
+          <View style={journeyCardStyles.balanceTile}>
+            <Gift size={16} color={tokens.amber700} />
+            <View style={journeyCardStyles.balanceText}>
+              <Text style={journeyCardStyles.balanceLabel}>Rewards</Text>
+              <Text style={journeyCardStyles.balanceValue}>{rewardsBalance} pts</Text>
+            </View>
+          </View>
 
-      <View style={journeyCardStyles.divider} />
+          <View style={journeyCardStyles.divider} />
+        </>
+      )}
 
       {/* Active journeys section */}
       <Text style={journeyCardStyles.sectionLabel}>Active Journeys</Text>
@@ -2506,56 +2511,60 @@ export function MemberProfileScreen(): React.JSX.Element {
             />
           </SectionCard>
 
-          {/* ── Rewards history ── */}
-          <View style={screenStyles.rewardsHistoryCard}>
-            <View style={screenStyles.rewardsHistoryHeader}>
-              <Bell size={15} color={tokens.amber700} />
-              <Text style={screenStyles.rewardsHistoryTitle}>Rewards History</Text>
-            </View>
-            <FlatList
-              data={rewardsQuery.data ?? []}
-              keyExtractor={(item) => item.id}
-              renderItem={({ item, index }) => (
-                <>
-                  {index > 0 ? <View style={screenStyles.divider} /> : null}
-                  <RewardRow item={item} />
-                </>
-              )}
-              scrollEnabled={false}
-              accessibilityLabel="Rewards history list"
-            />
-          </View>
-
-          {/* ── Redemption catalog ── */}
-          <View style={screenStyles.catalogSection}>
-            <View style={screenStyles.catalogHeader}>
-              <ShoppingBag size={15} color={tokens.primary} />
-              <Text style={screenStyles.catalogTitle}>Redemption Catalog</Text>
-            </View>
-            <Text style={screenStyles.catalogBalance}>
-              Your balance:{' '}
-              <Text style={screenStyles.catalogBalanceBold}>{effectiveBalance} pts</Text>
-            </Text>
-            {rewardsCatalogQuery.isLoading ? (
-              <LoadingSkeleton variant="rows" rows={3} />
-            ) : rewardsCatalogQuery.isError ? (
-              <ErrorState
-                message="Could not load rewards catalog. Please try again."
-                onRetry={() => void rewardsCatalogQuery.refetch()}
-              />
-            ) : activeRewardItems.length === 0 ? (
-              <Text style={screenStyles.catalogEmptyText}>No rewards available yet.</Text>
-            ) : (
-              activeRewardItems.map((item) => (
-                <RedemptionCard
-                  key={item.id}
-                  item={item}
-                  onRedeem={handleRedeem}
-                  balance={effectiveBalance}
+          {/* ── Rewards history + Redemption catalog ──
+              Hidden while the rewards feature is removed (POINTS_ENABLED). */}
+          {POINTS_ENABLED && (
+            <>
+              <View style={screenStyles.rewardsHistoryCard}>
+                <View style={screenStyles.rewardsHistoryHeader}>
+                  <Bell size={15} color={tokens.amber700} />
+                  <Text style={screenStyles.rewardsHistoryTitle}>Rewards History</Text>
+                </View>
+                <FlatList
+                  data={rewardsQuery.data ?? []}
+                  keyExtractor={(item) => item.id}
+                  renderItem={({ item, index }) => (
+                    <>
+                      {index > 0 ? <View style={screenStyles.divider} /> : null}
+                      <RewardRow item={item} />
+                    </>
+                  )}
+                  scrollEnabled={false}
+                  accessibilityLabel="Rewards history list"
                 />
-              ))
-            )}
-          </View>
+              </View>
+
+              <View style={screenStyles.catalogSection}>
+                <View style={screenStyles.catalogHeader}>
+                  <ShoppingBag size={15} color={tokens.primary} />
+                  <Text style={screenStyles.catalogTitle}>Redemption Catalog</Text>
+                </View>
+                <Text style={screenStyles.catalogBalance}>
+                  Your balance:{' '}
+                  <Text style={screenStyles.catalogBalanceBold}>{effectiveBalance} pts</Text>
+                </Text>
+                {rewardsCatalogQuery.isLoading ? (
+                  <LoadingSkeleton variant="rows" rows={3} />
+                ) : rewardsCatalogQuery.isError ? (
+                  <ErrorState
+                    message="Could not load rewards catalog. Please try again."
+                    onRetry={() => void rewardsCatalogQuery.refetch()}
+                  />
+                ) : activeRewardItems.length === 0 ? (
+                  <Text style={screenStyles.catalogEmptyText}>No rewards available yet.</Text>
+                ) : (
+                  activeRewardItems.map((item) => (
+                    <RedemptionCard
+                      key={item.id}
+                      item={item}
+                      onRedeem={handleRedeem}
+                      balance={effectiveBalance}
+                    />
+                  ))
+                )}
+              </View>
+            </>
+          )}
 
           {/* ── Account ── */}
           <SectionCard title="Account">
