@@ -174,13 +174,29 @@ async def _exec_delete(db: AsyncSession, stmt: object) -> int:
 
 # ─── Founder accounts — these user rows + profiles are PRESERVED ──────────────
 
-KEEP_EMAILS: frozenset[str] = frozenset(
+_DEFAULT_KEEP_EMAILS: frozenset[str] = frozenset(
     {
         "akram@joincompasschw.com",
         "jt@joincompasschw.com",
         "jemal@joincompasschw.com",
     }
 )
+
+# Optional one-off override via env var (comma-separated emails), e.g. to delete
+# specific founder/test accounts for a fresh end-to-end test:
+#   WIPE_KEEP_EMAILS=akram@joincompasschw.com  → keeps ONLY akram, deletes the
+#   rest (jemal@ + jt@ + all their data). Emails are lower-cased + trimmed.
+# When unset, the default founder set is preserved (no behaviour change).
+def _resolve_keep_emails() -> frozenset[str]:
+    import os
+
+    raw = os.environ.get("WIPE_KEEP_EMAILS")
+    if not raw or not raw.strip():
+        return _DEFAULT_KEEP_EMAILS
+    return frozenset(e.strip().lower() for e in raw.split(",") if e.strip())
+
+
+KEEP_EMAILS: frozenset[str] = _resolve_keep_emails()
 
 # ─── Table classification for the completeness assertion ──────────────────────
 #
