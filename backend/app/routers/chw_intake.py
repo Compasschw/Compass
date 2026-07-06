@@ -352,6 +352,23 @@ async def submit_intake(
 
     row.completed_at = datetime.now(UTC)
     row.last_completed_section = 6
+
+    # Completing the intake makes the CHW discoverable to members. `is_onboarded`
+    # was never set anywhere before, so onboarded CHWs stayed hidden from the
+    # Find-CHW browse (which gates on is_onboarded == True) — only seeded accounts
+    # showed. Set it here, and seed CHWProfile.specializations from the intake so
+    # the CHW also satisfies the browse's "specializations >= 1" gate.
+    current_user.is_onboarded = True
+    if row.primary_specialization:
+        from app.models.user import CHWProfile
+
+        prof_res = await db.execute(
+            select(CHWProfile).where(CHWProfile.user_id == current_user.id)
+        )
+        prof = prof_res.scalar_one_or_none()
+        if prof is not None and not prof.specializations:
+            prof.specializations = [row.primary_specialization]
+
     await db.commit()
     await db.refresh(row)
     return row
