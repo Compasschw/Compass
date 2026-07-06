@@ -1803,6 +1803,7 @@ function ConversationPane({
           visible={documentingSessionId != null}
           onClose={() => setDocumentingSessionId(null)}
           sessionId={documentingSessionId}
+          memberId={conv.memberId ?? undefined}
           durationMinutes={null}
           onSubmit={handleDocumentationSubmit}
         />
@@ -3288,6 +3289,7 @@ export function CHWMessagesScreen(): React.JSX.Element {
           visible={documentingSessionId != null}
           onClose={() => setDocumentingSessionId(null)}
           sessionId={documentingSessionId}
+          memberId={selectedConversation?.memberId ?? undefined}
           durationMinutes={null}
           onSubmit={handleDocumentationSubmit}
         />

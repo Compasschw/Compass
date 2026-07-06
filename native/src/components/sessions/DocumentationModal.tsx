@@ -44,7 +44,7 @@ import { ResourceMentionInput } from '../resources/ResourceMentionInput';
 import { colors as tokens, numerals, spacing, radius, shadows } from '../../theme/tokens';
 import { typography } from '../../theme/typography';
 import { Card, SectionHeader, Pill } from '../ui';
-import { useGenerateAISummary } from '../../hooks/useApiQueries';
+import { useGenerateAISummary, useCaseNotes } from '../../hooks/useApiQueries';
 import {
   diagnosisCodes,
   procedureCodes,
@@ -67,6 +67,12 @@ export interface DocumentationModalProps {
   onClose: () => void;
   /** Session ID being documented */
   sessionId: string;
+  /**
+   * Member the session is with. Used to fetch the case notes the CHW wrote
+   * during this session so the Session Notes field can be pre-filled with them
+   * for review/editing. Optional so existing callers keep compiling.
+   */
+  memberId?: string;
   /**
    * Total session duration in minutes. Used to auto-derive the units-to-bill
    * value the CHW sees in the modal — see ``computeUnitsFromDuration``. The
@@ -110,7 +116,10 @@ const Z_CODE_CATEGORIES: ZCodeCategory[] = [
   'legal',
 ];
 
-const NOTES_MAX = 200;
+// Session Notes cap. Roomy enough to hold this session's case notes (pre-filled
+// for review/editing) plus the CHW's edits; the backend `summary` column is
+// unbounded Text, so this is a UI guardrail only.
+const NOTES_MAX = 2000;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -910,6 +919,7 @@ export function DocumentationModal({
   visible,
   onClose,
   sessionId,
+  memberId,
   durationMinutes,
   onSubmit,
 }: DocumentationModalProps): React.JSX.Element {
@@ -946,8 +956,44 @@ export function DocumentationModal({
 
   const generateAISummary = useGenerateAISummary();
 
+  // Case notes the CHW wrote during this session — used to pre-fill the Session
+  // Notes field so they can review/edit rather than retype. Only fetched while
+  // the modal is open and a member is known.
+  const caseNotesQuery = useCaseNotes(memberId ?? '', {
+    enabled: visible && !!memberId,
+  });
+
   // Guard: auto-fetch only once per modal-open, not on remount.
   const hasFetchedRef = useRef(false);
+  // Guard: pre-fill Session Notes from case notes only once per modal-open.
+  const notesPrefilledRef = useRef(false);
+
+  // Reset the pre-fill guard each time the modal opens (for a new session).
+  useEffect(() => {
+    if (!visible) notesPrefilledRef.current = false;
+  }, [visible]);
+
+  // Pre-fill Session Notes with this session's case notes, once, without
+  // clobbering anything the CHW has already typed.
+  useEffect(() => {
+    if (!visible || !sessionId || notesPrefilledRef.current) return;
+    if (caseNotesQuery.isLoading) return; // wait for the fetch to settle
+    // Don't overwrite in-progress edits.
+    if (chwNotes.trim().length > 0) {
+      notesPrefilledRef.current = true;
+      return;
+    }
+    const sessionNotes = (caseNotesQuery.data?.items ?? [])
+      .filter((note) => note.sessionId === sessionId)
+      .slice()
+      .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))
+      .map((note) => note.body.trim())
+      .filter(Boolean);
+    notesPrefilledRef.current = true;
+    if (sessionNotes.length > 0) {
+      setChwNotes(sessionNotes.join('\n\n').slice(0, NOTES_MAX));
+    }
+  }, [visible, sessionId, caseNotesQuery.isLoading, caseNotesQuery.data, chwNotes]);
 
   // ── Auto-generate AI summary on modal open ──────────────────────────────
   // Called once when modal becomes visible. The "Regenerate" button is the
