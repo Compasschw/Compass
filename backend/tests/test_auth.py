@@ -166,6 +166,37 @@ async def test_register_chw_auto_creates_chw_profile(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_chw_can_update_name(client: AsyncClient):
+    """A CHW can update their display name via PUT /chw/profile.
+
+    Regression: `name` lives on the User row (not CHWProfile) and was missing
+    from CHWProfileUpdate, so the value was silently dropped and never persisted.
+    """
+    email = f"rename-chw-{uuid.uuid4()}@example.com"
+    reg = await client.post(
+        "/api/v1/auth/register",
+        json={"email": email, "password": "test-password-1234", "name": "Old Name", "role": "chw"},
+    )
+    assert reg.status_code == 201
+    headers = {"Authorization": f"Bearer {reg.json()['access_token']}"}
+
+    put_res = await client.put(
+        "/api/v1/chw/profile", json={"name": "New Name"}, headers=headers
+    )
+    assert put_res.status_code == 200, put_res.text
+
+    get_res = await client.get("/api/v1/chw/profile", headers=headers)
+    assert get_res.status_code == 200
+    assert get_res.json()["name"] == "New Name"
+
+    # Blank name is rejected.
+    blank = await client.put(
+        "/api/v1/chw/profile", json={"name": "   "}, headers=headers
+    )
+    assert blank.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_register_member_rejects_single_token_name(client: AsyncClient):
     """Members must provide both first and last name — Pear Suite rejects
     members without lastName and we want the error surfaced at signup, not

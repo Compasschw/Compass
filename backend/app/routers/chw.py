@@ -113,6 +113,13 @@ async def update_profile(data: CHWProfileUpdate, current_user=Depends(require_ro
     if "profile_picture_url" in payload:
         current_user.profile_picture_url = payload.pop("profile_picture_url")
 
+    # Name lives on the User row too — route it there and reject blank values.
+    if "name" in payload:
+        new_name = (payload.pop("name") or "").strip()
+        if not new_name:
+            raise HTTPException(status_code=422, detail="Name cannot be empty.")
+        current_user.name = new_name
+
     for field, value in payload.items():
         setattr(profile, field, value)
 
