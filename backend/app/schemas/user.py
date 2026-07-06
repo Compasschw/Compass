@@ -46,6 +46,8 @@ class CHWProfileResponse(BaseModel):
     background_check_status: str = "not_started"
 
 class CHWProfileUpdate(BaseModel):
+    # Lives on the User row (not CHWProfile) — routed explicitly in the endpoint.
+    name: str | None = None
     specializations: list[str] | None = None
     languages: list[str] | None = None
     bio: str | None = None
