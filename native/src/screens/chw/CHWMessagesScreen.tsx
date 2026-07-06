@@ -2138,7 +2138,14 @@ function terminalSessionLabel(status: string): string {
 
 interface MemberContextRailProps {
   readonly conversation: ConversationData;
-  readonly onEndSessionComplete?: () => void;
+  /**
+   * Called after the in-progress session is ended, with the just-ended
+   * session id so the parent can open the documentation modal. The id is
+   * passed explicitly because conversation.activeSessionId resolves to the
+   * in_progress session only, and goes null the moment the session flips to
+   * awaiting_documentation — re-reading it here would open nothing.
+   */
+  readonly onEndSessionComplete?: (endedSessionId: string) => void;
   /** Called after a new session has been created and started from a completed session. */
   readonly onSessionStarted?: (newSession: SessionData) => void;
   /**
@@ -2478,7 +2485,9 @@ function MemberContextRail({
     setEndSessionPending(true);
     try {
       await endSession.mutateAsync(activeId);
-      onEndSessionComplete?.();
+      // Pass the just-ended session id so the parent opens the documentation
+      // modal with it — activeSessionId is already null by now (in_progress only).
+      onEndSessionComplete?.(activeId);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Could not end session. Try again.';
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -3050,12 +3059,13 @@ export function CHWMessagesScreen(): React.JSX.Element {
     setShowThreadList(true);
   }, []);
 
-  // After End Session completes — open DocumentationModal automatically
-  const handleEndSessionComplete = useCallback((): void => {
-    if (selectedConversation?.activeSessionId) {
-      setDocumentingSessionId(selectedConversation.activeSessionId);
-    }
-  }, [selectedConversation]);
+  // After End Session completes — open DocumentationModal with the just-ended
+  // session id (passed from the rail). Do NOT re-read activeSessionId here: it
+  // resolves to the in_progress session only, so it's already null by now and
+  // the modal would never open (the bug that required a full page refresh).
+  const handleEndSessionComplete = useCallback((endedSessionId: string): void => {
+    setDocumentingSessionId(endedSessionId);
+  }, []);
 
   // After a new session is created+started from a bare/completed conversation —
   // the conversation query will refetch and update activeSessionId automatically.
