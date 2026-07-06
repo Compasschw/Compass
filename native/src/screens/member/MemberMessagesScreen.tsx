@@ -134,6 +134,7 @@ import {
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 import { useEngagementStatus } from '../../hooks/useMessagesInsights';
+import { POINTS_ENABLED } from '../../constants/featureFlags';
 import {
   useMessageAttachmentUpload,
   type MessageAttachmentUploadResult,
@@ -1917,14 +1918,17 @@ function CareContextRail({
               </View>
 
               <Text style={[styles.journeyStats, numerals.tabular]}>
-                {progressPct}% complete · {wellnessPoints} wellness points earned
+                {progressPct}% complete
+                {POINTS_ENABLED ? ` · ${wellnessPoints} wellness points earned` : ''}
               </Text>
-              <View style={styles.marigoldHint}>
-                <Gift size={12} color="#F2B33D" />
-                <Text style={[styles.marigoldHintText, numerals.tabular]}>
-                  +25 pts to next step
-                </Text>
-              </View>
+              {POINTS_ENABLED && (
+                <View style={styles.marigoldHint}>
+                  <Gift size={12} color="#F2B33D" />
+                  <Text style={[styles.marigoldHintText, numerals.tabular]}>
+                    +25 pts to next step
+                  </Text>
+                </View>
+              )}
             </>
           ) : (
             <EmptyState
@@ -2035,26 +2039,28 @@ function CareContextRail({
           </View>
         </View>
 
-        {/* ── Section 5: Earn next reward — ONLY marigold in the rail ──────── */}
-        <View style={[styles.railSection, styles.railSectionDivider, styles.railSectionLast]}>
-          <PressableCard
-            onPress={onGoToRewards}
-            style={styles.rewardCard}
-            accessibilityLabel="3 more journey steps to your next reward"
-          >
-            <View style={styles.rewardIconCircle}>
-              <Gift size={18} color="#fff" />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.rewardCardText}>
-                3 more journey steps to your next reward
-              </Text>
-              <Text style={styles.rewardCardSub}>
-                Keep going — you're more than halfway there
-              </Text>
-            </View>
-          </PressableCard>
-        </View>
+        {/* ── Section 5: Earn next reward — hidden while rewards is removed (POINTS_ENABLED) ── */}
+        {POINTS_ENABLED && (
+          <View style={[styles.railSection, styles.railSectionDivider, styles.railSectionLast]}>
+            <PressableCard
+              onPress={onGoToRewards}
+              style={styles.rewardCard}
+              accessibilityLabel="3 more journey steps to your next reward"
+            >
+              <View style={styles.rewardIconCircle}>
+                <Gift size={18} color="#fff" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.rewardCardText}>
+                  3 more journey steps to your next reward
+                </Text>
+                <Text style={styles.rewardCardSub}>
+                  Keep going — you're more than halfway there
+                </Text>
+              </View>
+            </PressableCard>
+          </View>
+        )}
 
       </Card>
     </ScrollView>
