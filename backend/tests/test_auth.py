@@ -243,6 +243,39 @@ async def test_completing_intake_makes_chw_discoverable(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_registered_chw_appears_in_browse_without_onboarding(client: AsyncClient):
+    """A registered, available CHW appears in the member browse even before
+    completing onboarding — the browse no longer gates on is_onboarded /
+    specializations, so the platform can grow past seeded accounts.
+    """
+    from tests.conftest import complete_member_signup_payload
+
+    reg = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": f"newchw-{uuid.uuid4()}@example.com",
+            "password": "testpass123",
+            "name": "Lemaj James",
+            "role": "chw",
+        },
+    )
+    assert reg.status_code == 201  # no intake completed
+
+    mem = await client.post(
+        "/api/v1/auth/register",
+        json=complete_member_signup_payload(
+            email=f"browsemem-{uuid.uuid4()}@example.com", name="Browse Member"
+        ),
+    )
+    assert mem.status_code == 201
+    mem_headers = {"Authorization": f"Bearer {mem.json()['access_token']}"}
+
+    browse = await client.get("/api/v1/chw/browse", headers=mem_headers)
+    assert browse.status_code == 200, browse.text
+    assert "Lemaj James" in [c["name"] for c in browse.json()]
+
+
+@pytest.mark.asyncio
 async def test_register_member_rejects_single_token_name(client: AsyncClient):
     """Members must provide both first and last name — Pear Suite rejects
     members without lastName and we want the error surfaced at signup, not

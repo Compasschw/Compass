@@ -150,28 +150,21 @@ async def browse_chws(
     - User.role == "chw"  (defensive — a flipped-role user with an old
       CHWProfile shouldn't surface)
     - CHWProfile.is_available == True  (CHW opted into receiving requests)
-    - User.is_onboarded == True  (CHW completed the intake questionnaire)
-    - cardinality(CHWProfile.specializations) >= 1  (CHW picked at least one
-      vertical — without this they have nothing to match a request against)
     - email NOT LIKE %.demo@compasschw.com  (defense in depth against the
       seed_founders.py demo accounts even after cleanup_seed_data.py runs)
 
-    The combination keeps half-registered CHW accounts (someone who signed
-    up to test the flow but never completed intake) out of the Find CHW
-    results until their profile is actually usable.
+    Note: the previous is_onboarded and "specializations >= 1" gates were
+    dropped — the platform is meant to grow, so any registered, available CHW
+    should be discoverable to members even before they finish onboarding. A CHW
+    with no specializations still surfaces here and is handled gracefully by the
+    matching service (empty specializations → small penalty, still surfaced).
     """
-    from sqlalchemy import func
-
     from app.models.user import CHWProfile, User
     stmt = (
         select(CHWProfile, User.name)
         .join(User, CHWProfile.user_id == User.id)
         .where(CHWProfile.is_available == True)  # noqa: E712
         .where(User.role == "chw")
-        .where(User.is_onboarded == True)  # noqa: E712
-        # cardinality() returns 0 for an empty ARRAY (or NULL via coalesce).
-        # Postgres-specific; fine since we're on Postgres in prod and tests.
-        .where(func.coalesce(func.cardinality(CHWProfile.specializations), 0) >= 1)
         # Exclude seeded demo CHW accounts. Pattern matches DEMO_EMAIL_SUFFIX
         # in seed_founders.py / cleanup_seed_data.py — keep in sync.
         .where(~User.email.like("%.demo@compasschw.com"))
