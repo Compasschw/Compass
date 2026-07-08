@@ -1472,6 +1472,43 @@ export function useUpdateChwProfile() {
   });
 }
 
+/** The CHW's weekly availability windows: { "mon": "09:00-17:00", ... }. */
+export interface ChwAvailability {
+  availabilityWindows: Record<string, string>;
+}
+
+/** GET /chw/availability — the authenticated CHW's own working-hours windows. */
+export function useChwAvailability() {
+  return useQuery({
+    queryKey: ['chw', 'availability'] as const,
+    queryFn: async (): Promise<ChwAvailability> => {
+      const raw = await api<unknown>('/chw/availability');
+      return transformKeys<ChwAvailability>(raw);
+    },
+    staleTime: 60_000,
+  });
+}
+
+/** PUT /chw/availability — set the CHW's weekly working-hours windows. */
+export function useUpdateChwAvailability() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (windows: Record<string, string>): Promise<ChwAvailability> => {
+      const raw = await api<unknown>('/chw/availability', {
+        method: 'PUT',
+        body: JSON.stringify({ availability_windows: windows }),
+      });
+      return transformKeys<ChwAvailability>(raw);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['chw', 'availability'] });
+    },
+    onError: (error: Error) => {
+      showAlert('Failed to save availability', error?.message ?? 'Please try again.');
+    },
+  });
+}
+
 export function useUpdateMemberProfile() {
   const qc = useQueryClient();
   return useMutation({
