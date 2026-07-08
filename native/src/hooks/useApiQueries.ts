@@ -1065,6 +1065,40 @@ export function useStartSession() {
   });
 }
 
+/** CHW confirms a member-requested (pending) session → scheduling_status confirmed. */
+export function useConfirmSession() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (sessionId: string): Promise<SessionData> => {
+      const raw = await api<unknown>(`/sessions/${sessionId}/confirm`, { method: 'PATCH' });
+      return transformKeys<SessionData>(raw);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.sessions });
+    },
+    onError: (error: Error) => {
+      showAlert('Failed to confirm session', error?.message ?? 'Please try again.');
+    },
+  });
+}
+
+/** CHW declines a member-requested (pending) session → status cancelled. */
+export function useDeclineSession() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (sessionId: string): Promise<SessionData> => {
+      const raw = await api<unknown>(`/sessions/${sessionId}/decline`, { method: 'PATCH' });
+      return transformKeys<SessionData>(raw);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.sessions });
+    },
+    onError: (error: Error) => {
+      showAlert('Failed to decline session', error?.message ?? 'Please try again.');
+    },
+  });
+}
+
 export function useCompleteSession() {
   const qc = useQueryClient();
   return useMutation({
