@@ -1458,7 +1458,7 @@ export function MemberCalendarScreen(): React.JSX.Element {
           accessibilityLabel={`Schedule a session with ${assignedChw.name}`}
         >
           <CalendarPlus size={16} color="#FFFFFF" />
-          <Text style={mainStyles.scheduleBtnText}>Schedule a session</Text>
+          <Text style={mainStyles.scheduleBtnText}>Schedule Session</Text>
         </TouchableOpacity>
       )}
       <View style={mainStyles.viewToggle}>
@@ -1593,8 +1593,8 @@ export function MemberCalendarScreen(): React.JSX.Element {
       <AppShell role="member" activeKey="appointments" userBlock={shellUserBlock}>
         <View style={webStyles.root}>
           <PageHeader
-            title="Appointments"
-            subtitle="Your upcoming sessions and milestones"
+            title="Calendar"
+            subtitle="Your schedule and appointments"
             right={headerRight}
           />
 
@@ -1627,8 +1627,8 @@ export function MemberCalendarScreen(): React.JSX.Element {
       >
         <PageWrap style={styles.pageWrap}>
           <PageHeader
-            title="Appointments"
-            subtitle="Your upcoming sessions and milestones."
+            title="Calendar"
+            subtitle="Your schedule and appointments"
           />
 
           {allEvents.length === 0 ? (
