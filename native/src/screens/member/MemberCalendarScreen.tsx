@@ -33,12 +33,14 @@ import {
   StatusBar,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
   Modal,
 } from 'react-native';
 import {
   CalendarDays,
+  CalendarPlus,
   ChevronLeft,
   ChevronRight,
   Clock,
@@ -56,7 +58,7 @@ import { useNavigation, type NavigationProp } from '@react-navigation/native';
 
 import { colors as tokens, numerals, spacing, radius } from '../../theme/tokens';
 import { verticalLabels, type Vertical } from '../../data/mock';
-import { useSessions, type SessionData } from '../../hooks/useApiQueries';
+import { useSessions, useScheduleSession, type SessionData } from '../../hooks/useApiQueries';
 import { useRefreshControl } from '../../hooks/useRefreshControl';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
@@ -1281,6 +1283,15 @@ export function MemberCalendarScreen(): React.JSX.Element {
   const refresh = useRefreshControl([sessionsQuery.refetch]);
   const liveSessions = useMemo(() => sessionsQuery.data ?? [], [sessionsQuery.data]);
 
+  // The member's assigned CHW, derived from their sessions — needed to schedule.
+  // Scheduling requires an existing relationship, so if there are no sessions
+  // yet there is no CHW to book with and the button is hidden.
+  const assignedChw = useMemo(() => {
+    const withChw = liveSessions.find((s) => Boolean(s.chwId));
+    return withChw ? { id: withChw.chwId, name: withChw.chwName ?? 'your CHW' } : null;
+  }, [liveSessions]);
+  const [isScheduleOpen, setIsScheduleOpen] = useState(false);
+
   const sessionsByDate = useMemo(() => groupSessionsByDate(liveSessions), [liveSessions]);
 
   // Now reference — stable within a render pass for badge derivation.
@@ -1418,6 +1429,17 @@ export function MemberCalendarScreen(): React.JSX.Element {
 
   const headerRight = (
     <View style={mainStyles.headerRight}>
+      {assignedChw && (
+        <TouchableOpacity
+          style={mainStyles.scheduleBtn}
+          onPress={() => setIsScheduleOpen(true)}
+          accessibilityRole="button"
+          accessibilityLabel={`Schedule a session with ${assignedChw.name}`}
+        >
+          <CalendarPlus size={16} color="#FFFFFF" />
+          <Text style={mainStyles.scheduleBtnText}>Schedule a session</Text>
+        </TouchableOpacity>
+      )}
       <View style={mainStyles.viewToggle}>
         {(['day', 'week', 'month'] as CalendarViewMode[]).map((mode) => (
           <TouchableOpacity
@@ -1648,9 +1670,298 @@ export function MemberCalendarScreen(): React.JSX.Element {
         visible={isDetailModalOpen}
         onClose={() => setIsDetailModalOpen(false)}
       />
+      {assignedChw && (
+        <MemberScheduleModal
+          visible={isScheduleOpen}
+          onClose={() => setIsScheduleOpen(false)}
+          chwId={assignedChw.id}
+          chwName={assignedChw.name}
+        />
+      )}
     </AppShell>
   );
 }
+
+// ─── Member schedule modal ──────────────────────────────────────────────────
+
+interface MemberScheduleModalProps {
+  visible: boolean;
+  onClose: () => void;
+  chwId: string;
+  chwName: string;
+}
+
+/**
+ * Member-side "Schedule a session" — mirrors the CHW ScheduleSessionModal but
+ * books with the member's own CHW (no member picker). The booking is created as
+ * pending (a request the CHW confirms) via POST /sessions/schedule with chw_id.
+ */
+function MemberScheduleModal({
+  visible,
+  onClose,
+  chwId,
+  chwName,
+}: MemberScheduleModalProps): React.JSX.Element {
+  const { mutateAsync, isPending } = useScheduleSession();
+  const [mode, setMode] = useState<'in_person' | 'virtual' | 'phone'>('in_person');
+  const [dateInput, setDateInput] = useState<string>(() => {
+    const t = new Date();
+    t.setDate(t.getDate() + 1);
+    return `${String(t.getMonth() + 1).padStart(2, '0')}/${String(t.getDate()).padStart(2, '0')}/${t.getFullYear()}`;
+  });
+  const [startTime, setStartTime] = useState('10:00 AM');
+  const [endTime, setEndTime] = useState('11:00 AM');
+  const [error, setError] = useState<string | null>(null);
+
+  const parseDateTime = (datePart: string, timePart: string): string | null => {
+    try {
+      const [mm, dd, yyyy] = datePart.split('/').map(Number);
+      if (!mm || !dd || !yyyy || isNaN(mm) || isNaN(dd) || isNaN(yyyy)) return null;
+      const m = timePart.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+      if (!m) return null;
+      let hour = parseInt(m[1], 10);
+      const minute = parseInt(m[2], 10);
+      if (m[3].toUpperCase() === 'AM' && hour === 12) hour = 0;
+      if (m[3].toUpperCase() === 'PM' && hour !== 12) hour += 12;
+      const d = new Date(yyyy, mm - 1, dd, hour, minute, 0);
+      return isNaN(d.getTime()) ? null : d.toISOString();
+    } catch {
+      return null;
+    }
+  };
+
+  const handleSubmit = useCallback(async () => {
+    setError(null);
+    const scheduledAt = parseDateTime(dateInput, startTime);
+    if (!scheduledAt) {
+      setError('Enter a valid date (MM/DD/YYYY) and start time (e.g. 10:00 AM).');
+      return;
+    }
+    const scheduledEndAt = parseDateTime(dateInput, endTime);
+    if (!scheduledEndAt) {
+      setError('Enter a valid end time (e.g. 11:00 AM).');
+      return;
+    }
+    if (new Date(scheduledEndAt) <= new Date(scheduledAt)) {
+      setError('End time must be after start time.');
+      return;
+    }
+    try {
+      await mutateAsync({
+        chwId,
+        scheduledAt,
+        scheduledEndAt,
+        mode,
+        schedulingStatus: 'pending',
+      });
+      onClose();
+    } catch {
+      // useScheduleSession surfaces the error via its onError alert.
+    }
+  }, [dateInput, startTime, endTime, mode, chwId, mutateAsync, onClose]);
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={scheduleStyles.overlay}>
+        <View style={scheduleStyles.card}>
+          <Text style={scheduleStyles.title}>Schedule a session</Text>
+          <Text style={scheduleStyles.sub}>with {chwName}</Text>
+
+          <Text style={scheduleStyles.label}>Date</Text>
+          <TextInput
+            style={scheduleStyles.input}
+            value={dateInput}
+            onChangeText={setDateInput}
+            placeholder="MM/DD/YYYY"
+            placeholderTextColor={tokens.textMuted}
+          />
+
+          <View style={scheduleStyles.row}>
+            <View style={scheduleStyles.rowItem}>
+              <Text style={scheduleStyles.label}>Start</Text>
+              <TextInput
+                style={scheduleStyles.input}
+                value={startTime}
+                onChangeText={setStartTime}
+                placeholder="10:00 AM"
+                placeholderTextColor={tokens.textMuted}
+              />
+            </View>
+            <View style={scheduleStyles.rowItem}>
+              <Text style={scheduleStyles.label}>End</Text>
+              <TextInput
+                style={scheduleStyles.input}
+                value={endTime}
+                onChangeText={setEndTime}
+                placeholder="11:00 AM"
+                placeholderTextColor={tokens.textMuted}
+              />
+            </View>
+          </View>
+
+          <Text style={scheduleStyles.label}>Type</Text>
+          <View style={scheduleStyles.segment}>
+            {(['in_person', 'virtual', 'phone'] as const).map((m) => (
+              <TouchableOpacity
+                key={m}
+                style={[scheduleStyles.segBtn, mode === m && scheduleStyles.segBtnActive]}
+                onPress={() => setMode(m)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: mode === m }}
+              >
+                <Text style={[scheduleStyles.segText, mode === m && scheduleStyles.segTextActive]}>
+                  {m === 'in_person' ? 'In person' : m === 'virtual' ? 'Virtual' : 'Phone'}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {error && <Text style={scheduleStyles.error}>{error}</Text>}
+          <Text style={scheduleStyles.note}>Your CHW will confirm this request.</Text>
+
+          <View style={scheduleStyles.actions}>
+            <TouchableOpacity
+              style={scheduleStyles.cancelBtn}
+              onPress={onClose}
+              disabled={isPending}
+              accessibilityRole="button"
+              accessibilityLabel="Cancel"
+            >
+              <Text style={scheduleStyles.cancelText}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[scheduleStyles.submitBtn, isPending && { opacity: 0.6 }]}
+              onPress={() => void handleSubmit()}
+              disabled={isPending}
+              accessibilityRole="button"
+              accessibilityLabel="Request session"
+            >
+              <Text style={scheduleStyles.submitText}>
+                {isPending ? 'Scheduling…' : 'Request session'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+const scheduleStyles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.lg,
+  },
+  card: {
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: '#FFFFFF',
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    gap: spacing.xs,
+  },
+  title: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: tokens.textPrimary,
+  },
+  sub: {
+    fontSize: 13,
+    color: tokens.textSecondary,
+    marginBottom: spacing.sm,
+  },
+  label: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: tokens.textSecondary,
+    marginTop: spacing.sm,
+    marginBottom: 4,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: tokens.textPrimary,
+    backgroundColor: '#FFFFFF',
+  },
+  row: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  rowItem: {
+    flex: 1,
+  },
+  segment: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+  },
+  segBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    alignItems: 'center',
+  },
+  segBtnActive: {
+    backgroundColor: tokens.primary,
+    borderColor: tokens.primary,
+  },
+  segText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: tokens.textSecondary,
+  },
+  segTextActive: {
+    color: '#FFFFFF',
+  },
+  error: {
+    fontSize: 12,
+    color: '#b91c1c',
+    marginTop: spacing.sm,
+  },
+  note: {
+    fontSize: 12,
+    color: tokens.textMuted,
+    marginTop: spacing.xs,
+  },
+  actions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  cancelBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    alignItems: 'center',
+  },
+  cancelText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: tokens.textSecondary,
+  },
+  submitBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: radius.md,
+    backgroundColor: tokens.primary,
+    alignItems: 'center',
+  },
+  submitText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+});
 
 // ─── Web styles ───────────────────────────────────────────────────────────────
 
@@ -1673,6 +1984,20 @@ const mainStyles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.sm,
     flexWrap: 'wrap',
+  },
+  scheduleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: tokens.primary,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 9,
+    borderRadius: radius.pill,
+  },
+  scheduleBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
   },
   viewToggle: {
     flexDirection: 'row',
