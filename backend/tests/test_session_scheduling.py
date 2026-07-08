@@ -102,3 +102,58 @@ async def test_chw_cannot_schedule_with_unrelated_member(
         headers=auth_header(chw_tokens),
     )
     assert res.status_code == 403, res.text
+
+
+@pytest.mark.asyncio
+async def test_member_schedules_with_their_chw(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    """A member can schedule with their CHW. The booking is forced to pending
+    (a request the CHW confirms) and appears on BOTH sessions lists.
+    """
+    member_id = await _establish_relationship(client, member_tokens, chw_tokens)
+    chw_id = _member_id(chw_tokens)  # CHW's user id (sub claim)
+
+    res = await client.post(
+        "/api/v1/sessions/schedule",
+        json={
+            "chw_id": chw_id,
+            "scheduled_at": "2026-07-02T17:00:00Z",
+            "scheduled_end_at": "2026-07-02T18:00:00Z",
+            "mode": "phone",
+            # Even if the member sends confirmed, the server forces pending.
+            "scheduling_status": "confirmed",
+        },
+        headers=auth_header(member_tokens),
+    )
+    assert res.status_code == 201, res.text
+    body = res.json()
+    assert body["member_id"] == member_id
+    assert body["chw_id"] == chw_id
+    assert body["status"] == "scheduled"
+    assert body["scheduling_status"] == "pending"
+
+    # Appears on the member's calendar…
+    res = await client.get("/api/v1/sessions/", headers=auth_header(member_tokens))
+    assert any(s["id"] == body["id"] for s in res.json()), "missing from member list"
+    # …and the CHW's (surfaces as a pending session to confirm).
+    res = await client.get("/api/v1/sessions/", headers=auth_header(chw_tokens))
+    assert any(s["id"] == body["id"] for s in res.json()), "missing from CHW list"
+
+
+@pytest.mark.asyncio
+async def test_member_cannot_schedule_with_unrelated_chw(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    """No care relationship → 403."""
+    chw_id = _member_id(chw_tokens)
+    res = await client.post(
+        "/api/v1/sessions/schedule",
+        json={
+            "chw_id": chw_id,
+            "scheduled_at": "2026-07-02T17:00:00Z",
+            "mode": "phone",
+        },
+        headers=auth_header(member_tokens),
+    )
+    assert res.status_code == 403, res.text

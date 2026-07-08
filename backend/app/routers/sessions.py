@@ -319,29 +319,45 @@ async def get_session(session_id: UUID, current_user=Depends(get_current_user), 
 @router.post("/schedule", response_model=SessionResponse, status_code=201)
 async def schedule_session(
     data: ScheduleSessionRequest,
-    current_user=Depends(require_role("chw")),
+    current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Session:
-    """CHW schedules a session directly with one of their members.
+    """Schedule a session between a CHW and a member.
 
-    Unlike ``POST /sessions/`` (which requires an accepted ServiceRequest), this
-    lets a CHW book a follow-up with any member they already have a care
-    relationship with — the Calendar "Schedule Session" flow. The request_id
-    NOT NULL invariant is satisfied by reusing an existing CHW↔member
-    ServiceRequest, or auto-creating a minimal one when none exists.
+    Called by a CHW (Calendar "Schedule Session") with ``member_id``, or by a
+    member (Appointments "Schedule a session") with ``chw_id`` — in which case
+    the booking is recorded as ``pending`` for the CHW to confirm. Unlike
+    ``POST /sessions/`` (which requires an accepted ServiceRequest), either
+    party may book against an existing care relationship; the request_id NOT
+    NULL invariant is satisfied by reusing the CHW↔member ServiceRequest, or
+    auto-creating a minimal one when none exists.
     """
     from app.models.user import MemberProfile
 
-    member_id = data.member_id
+    # ── Resolve the CHW/member pair + booking status from the caller's role ──
+    if current_user.role == "chw":
+        chw_id = current_user.id
+        member_id = data.member_id
+        if member_id is None:
+            raise HTTPException(status_code=422, detail="member_id is required.")
+        scheduling_status = data.scheduling_status
+    elif current_user.role == "member":
+        member_id = current_user.id
+        chw_id = data.chw_id
+        if chw_id is None:
+            raise HTTPException(status_code=422, detail="chw_id is required.")
+        # A member's booking is a request the CHW confirms — always pending.
+        scheduling_status = "pending"
+    else:
+        raise HTTPException(status_code=403, detail="Not allowed to schedule sessions.")
 
     # ── Relationship gate ────────────────────────────────────────────────────
-    # CHW may only schedule with their own members. A relationship is a prior
-    # shared Session OR a ServiceRequest matched to this CHW (mirrors the
-    # /chw/members roster definition).
+    # Either party may only schedule within an existing care relationship: a
+    # prior shared Session OR a ServiceRequest matched between this CHW & member.
     shared_session = (
         await db.execute(
             select(Session.id)
-            .where(Session.chw_id == current_user.id, Session.member_id == member_id)
+            .where(Session.chw_id == chw_id, Session.member_id == member_id)
             .limit(1)
         )
     ).scalar_one_or_none()
@@ -350,7 +366,7 @@ async def schedule_session(
         await db.execute(
             select(ServiceRequest)
             .where(
-                ServiceRequest.matched_chw_id == current_user.id,
+                ServiceRequest.matched_chw_id == chw_id,
                 ServiceRequest.member_id == member_id,
             )
             .order_by(ServiceRequest.created_at.desc())
@@ -361,7 +377,7 @@ async def schedule_session(
     if shared_session is None and matched_request is None:
         raise HTTPException(
             status_code=403,
-            detail="You can only schedule sessions with your own members.",
+            detail="You can only schedule sessions within an existing care relationship.",
         )
 
     # ── Resolve request_id: reuse the matched request, else auto-create one ──
@@ -381,11 +397,11 @@ async def schedule_session(
         )
         auto_request = ServiceRequest(
             member_id=member_id,
-            matched_chw_id=current_user.id,
+            matched_chw_id=chw_id,
             vertical=vertical,
             verticals=[vertical],
             urgency="routine",
-            description="Auto-created for a CHW-scheduled session.",
+            description="Auto-created for a scheduled session.",
             preferred_mode=data.mode.value,
             status="matched",
         )
@@ -395,13 +411,13 @@ async def schedule_session(
 
     session = Session(
         request_id=request_id,
-        chw_id=current_user.id,
+        chw_id=chw_id,
         member_id=member_id,
         vertical=vertical,
         mode=data.mode.value,
         scheduled_at=data.scheduled_at,
         scheduled_end_at=data.scheduled_end_at,
-        scheduling_status=data.scheduling_status,
+        scheduling_status=scheduling_status,
         notes=data.notes,
         status="scheduled",
     )
@@ -409,7 +425,7 @@ async def schedule_session(
 
     # Back-link the conversation so session-per-call lookups resolve this row.
     conversation = await find_or_create_conversation_for_pair(
-        db, chw_id=current_user.id, member_id=member_id,
+        db, chw_id=chw_id, member_id=member_id,
     )
     session.conversation_id = conversation.id
 
