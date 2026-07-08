@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.dependencies import get_current_user, require_role
+from app.dependencies import get_current_user
 from app.models.billing import BillingClaim
 from app.models.request import ServiceRequest
 from app.models.session import ConsentRequest, MemberConsent, Session, SessionDocumentation
