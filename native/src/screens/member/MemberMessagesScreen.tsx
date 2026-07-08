@@ -89,7 +89,6 @@ import {
   Globe,
   Clock,
   MoreVertical,
-  Trash2,
   Check,
   ChevronRight,
   Navigation,
@@ -118,7 +117,6 @@ import {
   useConversationMessages,
   useConversationMarkRead,
   useConversationSendMessage,
-  useSoftDeleteConversation,
   useStartCall,
   usePendingConsents,
   useApproveConsentRequest,
@@ -850,7 +848,6 @@ interface InboxThreadRowProps {
   conversation: ConversationData;
   isActive: boolean;
   onSelect: (conversation: ConversationData, type: InboxItemType) => void;
-  onDelete: (conversation: ConversationData) => void;
   /** The authenticated member's User.id — used to derive engagement pill. */
   memberId: string;
 }
@@ -859,10 +856,8 @@ function InboxThreadRow({
   conversation,
   isActive,
   onSelect,
-  onDelete,
   memberId,
 }: InboxThreadRowProps): React.JSX.Element {
-  const [menuOpen, setMenuOpen] = useState(false);
   const name = conversation.chwName;
   const initials = getInitials(name);
   const { bg, text } = avatarColors(name);
@@ -947,45 +942,9 @@ function InboxThreadRow({
           </View>
         </View>
 
-        {/* Overflow menu trigger */}
-        <TouchableOpacity
-          onPress={(e) => {
-            e.stopPropagation?.();
-            setMenuOpen((v) => !v);
-          }}
-          style={memberInboxStyles.overflowBtn}
-          accessibilityRole="button"
-          accessibilityLabel={`More options for thread with ${name}`}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        >
-          <MoreVertical size={16} color={colors.textMuted} />
-        </TouchableOpacity>
+        {/* Members cannot delete threads — deletion is CHW-only (soft-delete is
+            global and would hide the thread from the CHW too). No overflow menu. */}
       </PressableCard>
-
-      {/* Dropdown menu */}
-      {menuOpen ? (
-        <>
-          <TouchableOpacity
-            style={StyleSheet.absoluteFillObject}
-            onPress={() => setMenuOpen(false)}
-            accessibilityLabel="Close menu"
-          />
-          <View style={memberInboxStyles.threadMenu} accessibilityRole="menu">
-            <TouchableOpacity
-              style={memberInboxStyles.threadMenuItemDanger}
-              onPress={() => {
-                setMenuOpen(false);
-                onDelete(conversation);
-              }}
-              accessibilityRole="menuitem"
-              accessibilityLabel="Delete conversation"
-            >
-              <Trash2 size={14} color="#b91c1c" />
-              <Text style={memberInboxStyles.threadMenuItemDangerText}>Delete conversation</Text>
-            </TouchableOpacity>
-          </View>
-        </>
-      ) : null}
     </View>
   );
 }
@@ -2217,57 +2176,8 @@ export function MemberMessagesScreen(): React.JSX.Element {
   const handleGoToRewards      = useCallback(() => navigation.navigate('Rewards'),   [navigation]);
   const handleViewCHWProfile   = useCallback(() => navigation.navigate('FindCHW'),   [navigation]);
 
-  // ── Delete conversation — uses soft-delete hook (DELETE /conversations/{id}) ──
-  // On success: the optimistic update in useSoftDeleteConversation removes the row
-  // from the cache, and the onDeselect callback clears the selected thread when
-  // the currently-open conversation is deleted.
-
-  const softDeleteConversation = useSoftDeleteConversation({
-    onDeselect: (conversationId: string) => {
-      setSelectedConversation((prev) =>
-        prev?.id === conversationId ? null : prev,
-      );
-    },
-  });
-
-  const handleDeleteConversation = useCallback(
-    (conversation: ConversationData): void => {
-      const name = conversation.chwName;
-
-      const doDelete = async (): Promise<void> => {
-        try {
-          await softDeleteConversation.mutateAsync(conversation.id);
-        } catch {
-          // useSoftDeleteConversation already shows an Alert on error and
-          // rolls back optimistic state — no additional handling needed here.
-        }
-      };
-
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        if (
-          window.confirm(
-            `Delete this conversation with ${name}? You can restore it by sending a new message.`,
-          )
-        ) {
-          void doDelete();
-        }
-      } else {
-        Alert.alert(
-          'Delete conversation?',
-          `This will hide the conversation with ${name}. You can restore it by sending a new message.`,
-          [
-            { text: 'Cancel', style: 'cancel' },
-            {
-              text: 'Delete',
-              style: 'destructive',
-              onPress: () => void doDelete(),
-            },
-          ],
-        );
-      }
-    },
-    [softDeleteConversation],
-  );
+  // Conversation deletion is CHW-only (the backend rejects member deletes with
+  // 403, and soft-delete is global). Members have no delete affordance here.
 
   // ── Loading state ─────────────────────────────────────────────────────────────
   if (conversationsQuery.isLoading) {
@@ -2357,7 +2267,6 @@ export function MemberMessagesScreen(): React.JSX.Element {
                       conversation={conversation}
                       isActive={selectedConversation?.id === conversation.id}
                       onSelect={handleSelectConversation}
-                      onDelete={handleDeleteConversation}
                       memberId={memberId}
                     />
                   ))}

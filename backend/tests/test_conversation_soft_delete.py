@@ -177,18 +177,31 @@ async def test_soft_delete_non_participant_returns_403(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_soft_delete_member_participant_can_delete(client: AsyncClient):
-    """The member participant (not just the CHW) can also soft-delete the thread."""
-    _, member_tokens, conversation_id = await _setup_conversation(client)
+async def test_soft_delete_by_member_participant_is_forbidden(client: AsyncClient):
+    """Members cannot delete threads — deletion is CHW-only.
+
+    Soft-delete is global (it hides the thread from the CHW too), so a member
+    must not be able to remove a thread from the CHW's inbox. The member on the
+    thread gets 403, and the thread stays intact.
+    """
+    chw_tokens, member_tokens, conversation_id = await _setup_conversation(client)
 
     res = await client.delete(
         f"/api/v1/conversations/{conversation_id}",
         headers=auth_header(member_tokens),
     )
-    assert res.status_code == 200, (
-        f"Member soft-delete: {res.status_code}: {res.text}"
+    assert res.status_code == 403, (
+        f"Member delete should be forbidden: {res.status_code}: {res.text}"
     )
-    assert res.json()["deleted_at"] is not None
+
+    # Thread must still be present in the CHW's inbox (not deleted).
+    listing = await client.get(
+        "/api/v1/conversations/",
+        headers=auth_header(chw_tokens),
+    )
+    assert listing.status_code == 200
+    ids = [c["id"] for c in listing.json()]
+    assert conversation_id in ids, "Thread must remain after a rejected member delete"
 
 
 @pytest.mark.asyncio
