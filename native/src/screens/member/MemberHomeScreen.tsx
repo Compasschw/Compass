@@ -442,10 +442,10 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
     navigation.navigate('Sessions');
   }, [navigation]);
 
-  // "Schedule a session" → the Appointments page (Calendar route), where the
-  // member can book against their CHW's available time slots.
+  // "Schedule a session" → the Appointments page and auto-open the schedule
+  // modal, so the member lands directly in the booking flow (not just the tab).
   const handleScheduleSession = useCallback(() => {
-    navigation.navigate('Calendar');
+    navigation.navigate('Calendar', { openSchedule: true });
   }, [navigation]);
 
   const handleOpenRoadmap = useCallback(() => {

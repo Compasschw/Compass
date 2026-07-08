@@ -54,7 +54,12 @@ import {
   User,
   Tag,
 } from 'lucide-react-native';
-import { useNavigation, type NavigationProp } from '@react-navigation/native';
+import {
+  useNavigation,
+  useRoute,
+  type NavigationProp,
+  type RouteProp,
+} from '@react-navigation/native';
 
 import { colors as tokens, numerals, spacing, radius } from '../../theme/tokens';
 import { verticalLabels, type Vertical } from '../../data/mock';
@@ -1296,6 +1301,17 @@ export function MemberCalendarScreen(): React.JSX.Element {
     return withChw ? { id: withChw.chwId, name: withChw.chwName ?? 'your CHW' } : null;
   }, [liveSessions]);
   const [isScheduleOpen, setIsScheduleOpen] = useState(false);
+
+  // Auto-open the schedule modal when navigated here with { openSchedule: true }
+  // (e.g. from the Home "Schedule a session" button). Fires once the assigned
+  // CHW is known; the param is cleared so it won't re-open on the next focus.
+  const route = useRoute<RouteProp<MemberTabParamList, 'Calendar'>>();
+  useEffect(() => {
+    if (route.params?.openSchedule && assignedChw) {
+      setIsScheduleOpen(true);
+      navigation.setParams({ openSchedule: undefined });
+    }
+  }, [route.params?.openSchedule, assignedChw, navigation]);
 
   const sessionsByDate = useMemo(() => groupSessionsByDate(liveSessions), [liveSessions]);
 

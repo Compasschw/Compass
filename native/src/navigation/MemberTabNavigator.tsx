@@ -88,7 +88,7 @@ export type MemberTabParamList = {
    * to work exactly as before.
    */
   Sessions: { chwId?: string; autoCall?: boolean } | undefined;
-  Calendar: undefined;
+  Calendar: { openSchedule?: boolean } | undefined;
   Profile: undefined;
   // New (Wave 2) sidebar destinations.
   /**
