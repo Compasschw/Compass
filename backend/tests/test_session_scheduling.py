@@ -157,3 +157,54 @@ async def test_member_cannot_schedule_with_unrelated_chw(
         headers=auth_header(member_tokens),
     )
     assert res.status_code == 403, res.text
+
+
+async def _member_pending_session_id(
+    client: AsyncClient, member_tokens: dict, chw_tokens: dict
+) -> str:
+    """Establish a relationship, member schedules → returns the pending session id."""
+    await _establish_relationship(client, member_tokens, chw_tokens)
+    chw_id = _member_id(chw_tokens)
+    res = await client.post(
+        "/api/v1/sessions/schedule",
+        json={"chw_id": chw_id, "scheduled_at": "2026-07-03T17:00:00Z", "mode": "phone"},
+        headers=auth_header(member_tokens),
+    )
+    assert res.status_code == 201, res.text
+    assert res.json()["scheduling_status"] == "pending"
+    return res.json()["id"]
+
+
+@pytest.mark.asyncio
+async def test_chw_confirms_member_pending_session(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    """The owning CHW confirms a member's pending session → confirmed. The member
+    cannot confirm it themselves (404 — ownership is not leaked)."""
+    sid = await _member_pending_session_id(client, member_tokens, chw_tokens)
+
+    res = await client.patch(
+        f"/api/v1/sessions/{sid}/confirm", headers=auth_header(member_tokens)
+    )
+    assert res.status_code == 404, res.text
+
+    res = await client.patch(
+        f"/api/v1/sessions/{sid}/confirm", headers=auth_header(chw_tokens)
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["scheduling_status"] == "confirmed"
+    assert res.json()["status"] == "scheduled"
+
+
+@pytest.mark.asyncio
+async def test_chw_declines_member_pending_session(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    """The owning CHW declines a member's pending session → cancelled."""
+    sid = await _member_pending_session_id(client, member_tokens, chw_tokens)
+
+    res = await client.patch(
+        f"/api/v1/sessions/{sid}/decline", headers=auth_header(chw_tokens)
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["status"] == "cancelled"
