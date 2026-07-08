@@ -1484,7 +1484,8 @@ function ConversationPane({
 
         {/* Action buttons — card-style, matching CHW iconBtnCard treatment */}
         <View style={styles.convActions}>
-          {/* Phone */}
+          {/* Phone / masked-call button — removed for members (2026-07). May be
+              restored later; handleCall + startCall are kept wired for that.
           <PressableCard
             onPress={() => void handleCall()}
             disabled={callInitiating}
@@ -1497,6 +1498,7 @@ function ConversationPane({
               <Phone size={18} color={colors.textSecondary} strokeWidth={1.5} />
             )}
           </PressableCard>
+          */}
 
           {/* Calendar */}
           <PressableCard
@@ -3088,7 +3090,10 @@ const styles = StyleSheet.create({
   } as TextStyle,
   roadmap: {
     flexDirection: 'row',
-    alignItems: 'center',
+    // Top-align so every bubble sits on the same line regardless of how many
+    // lines its label wraps to (a shorter/blank label was letting one node
+    // drift lower with center alignment).
+    alignItems: 'flex-start',
     gap: 0,
     marginBottom: spacing.sm,
     overflow: 'visible',
