@@ -25,6 +25,22 @@ WEEKDAY_KEYS: tuple[str, ...] = ("mon", "tue", "wed", "thu", "fri", "sat", "sun"
 # Default slot length for member bookings.
 SLOT_MINUTES = 30
 
+# Fallback weekly hours used when a CHW has not set their own availability yet,
+# so member self-scheduling works out of the box (Mon–Fri, 9–5). Once the CHW
+# saves hours via PUT /chw/availability, those override this.
+DEFAULT_WINDOWS: dict[str, str] = {
+    "mon": "09:00-17:00",
+    "tue": "09:00-17:00",
+    "wed": "09:00-17:00",
+    "thu": "09:00-17:00",
+    "fri": "09:00-17:00",
+}
+
+# All slot generation + booked-session comparison happens in this clinic-local
+# timezone (the platform serves LA County). Availability windows are wall-clock
+# in this zone; slots are converted to UTC for the wire + DB comparison.
+CLINIC_TZ_NAME = "America/Los_Angeles"
+
 
 class AvailabilityError(ValueError):
     """Raised when an availability payload is malformed."""
