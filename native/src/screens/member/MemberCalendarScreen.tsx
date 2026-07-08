@@ -1610,6 +1610,14 @@ export function MemberCalendarScreen(): React.JSX.Element {
           visible={isDetailModalOpen}
           onClose={() => setIsDetailModalOpen(false)}
         />
+        {assignedChw && (
+          <MemberScheduleModal
+            visible={isScheduleOpen}
+            onClose={() => setIsScheduleOpen(false)}
+            chwId={assignedChw.id}
+            chwName={assignedChw.name}
+          />
+        )}
       </AppShell>
     );
   }
