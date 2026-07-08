@@ -207,6 +207,70 @@ async def update_session_archive(
     })
 
 
+@router.patch("/{session_id}/confirm", response_model=SessionResponse)
+async def confirm_session(
+    session_id: UUID,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SessionResponse:
+    """CHW confirms a pending (member-requested) scheduled session.
+
+    Flips ``scheduling_status`` pending → confirmed. Only the owning CHW (or an
+    admin) may act. 409 when the session is not in the ``scheduled`` state.
+    Idempotent: confirming an already-confirmed scheduled session is a no-op 200.
+    """
+    session = await _load_chw_session_or_404(
+        session_id=session_id, db=db, current_user=current_user
+    )
+    if session.status != "scheduled":
+        raise HTTPException(
+            status_code=409, detail="Only a scheduled session can be confirmed."
+        )
+    session.scheduling_status = "confirmed"
+    await db.commit()
+    await db.refresh(session)
+    from app.models.user import User as _User
+    chw = await db.get(_User, session.chw_id)
+    member = await db.get(_User, session.member_id)
+    return SessionResponse.model_validate({
+        **session.__dict__,
+        "chw_name": chw.name if chw else None,
+        "member_name": member.name if member else None,
+    })
+
+
+@router.patch("/{session_id}/decline", response_model=SessionResponse)
+async def decline_session(
+    session_id: UUID,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SessionResponse:
+    """CHW declines a pending (member-requested) scheduled session.
+
+    Marks the session ``cancelled`` so it drops off both parties' upcoming
+    calendar views. Only the owning CHW (or an admin) may act. 409 when the
+    session is not in the ``scheduled`` state.
+    """
+    session = await _load_chw_session_or_404(
+        session_id=session_id, db=db, current_user=current_user
+    )
+    if session.status != "scheduled":
+        raise HTTPException(
+            status_code=409, detail="Only a scheduled session can be declined."
+        )
+    session.status = "cancelled"
+    await db.commit()
+    await db.refresh(session)
+    from app.models.user import User as _User
+    chw = await db.get(_User, session.chw_id)
+    member = await db.get(_User, session.member_id)
+    return SessionResponse.model_validate({
+        **session.__dict__,
+        "chw_name": chw.name if chw else None,
+        "member_name": member.name if member else None,
+    })
+
+
 @router.delete("/{session_id}", status_code=204)
 async def delete_session(
     session_id: UUID,
