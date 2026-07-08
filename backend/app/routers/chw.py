@@ -138,6 +138,65 @@ async def toggle_availability(current_user=Depends(require_role("chw")), db: Asy
     await db.commit()
     return {"is_available": profile.is_available}
 
+
+@router.get("/availability")
+async def get_availability(
+    current_user=Depends(require_role("chw")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Return the authenticated CHW's weekly availability windows.
+
+    Shape: ``{"availability_windows": {"mon": "09:00-17:00", ...}}``. Empty dict
+    when the CHW has not set any hours yet.
+    """
+    from app.models.user import CHWProfile
+
+    result = await db.execute(
+        select(CHWProfile).where(CHWProfile.user_id == current_user.id)
+    )
+    profile = result.scalar_one_or_none()
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return {"availability_windows": profile.availability_windows or {}}
+
+
+@router.put("/availability")
+async def set_availability(
+    payload: dict,
+    current_user=Depends(require_role("chw")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Set the authenticated CHW's weekly availability windows.
+
+    Body: ``{"availability_windows": {"mon": "09:00-17:00", ...}}``. Weekdays are
+    lowercase 3-letter keys; each value is a ``"HH:MM-HH:MM"`` window (legacy
+    ``"9-17"`` accepted and normalized). A day cleared to null/empty is dropped.
+    Invalid weekdays or windows return 422.
+    """
+    from app.models.user import CHWProfile
+    from app.services.availability import AvailabilityError, validate_and_normalize
+
+    raw = payload.get("availability_windows")
+    if raw is None:
+        raise HTTPException(
+            status_code=422, detail="Body must include 'availability_windows'."
+        )
+    try:
+        normalized = validate_and_normalize(raw)
+    except AvailabilityError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    result = await db.execute(
+        select(CHWProfile).where(CHWProfile.user_id == current_user.id)
+    )
+    profile = result.scalar_one_or_none()
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    profile.availability_windows = normalized
+    await db.commit()
+    return {"availability_windows": normalized}
+
+
 @router.get("/browse", response_model=list[dict])
 async def browse_chws(
     vertical: str | None = None,
