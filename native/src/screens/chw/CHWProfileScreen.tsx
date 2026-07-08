@@ -34,7 +34,7 @@
  *     EditableField, to match the existing CHW UX expectation.
  */
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Platform,
@@ -64,6 +64,8 @@ import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../../context/AuthContext';
 import {
   useChwProfile,
+  useChwAvailability,
+  useUpdateChwAvailability,
   useUpdateChwProfile,
   useChwEarnings,
   useDeleteAccount,
@@ -664,6 +666,40 @@ export function CHWProfileScreen(): React.JSX.Element {
   const [modality, setModality]       = useState<Modality>('hybrid');
   const [availableDays, setAvailableDays] = useState<DayKey[]>(['mon', 'tue', 'wed', 'thu', 'fri']);
 
+  // ── Availability (working hours) — wired to GET/PUT /chw/availability ────────
+  const availabilityQuery = useChwAvailability();
+  const updateAvailability = useUpdateChwAvailability();
+  const [workStart, setWorkStart] = useState('09:00');
+  const [workEnd, setWorkEnd] = useState('17:00');
+  const availabilityLoadedRef = useRef(false);
+
+  // Load the saved windows into the editor once (days + a single hours window).
+  useEffect(() => {
+    const windows = availabilityQuery.data?.availabilityWindows;
+    if (!windows || availabilityLoadedRef.current) return;
+    const days = (Object.keys(windows) as DayKey[]).filter((d) => ALL_DAYS.includes(d));
+    if (days.length > 0) {
+      setAvailableDays(days);
+      const [s, e] = (windows[days[0]] ?? '').split('-');
+      if (s && e) {
+        setWorkStart(s);
+        setWorkEnd(e);
+      }
+    }
+    availabilityLoadedRef.current = true;
+  }, [availabilityQuery.data]);
+
+  const handleSaveAvailability = useCallback(async () => {
+    // One shared hours window applied to each selected day.
+    const windows: Record<string, string> = {};
+    for (const d of availableDays) windows[d] = `${workStart}-${workEnd}`;
+    try {
+      await updateAvailability.mutateAsync(windows);
+    } catch {
+      // useUpdateChwAvailability surfaces the error via its onError alert.
+    }
+  }, [availableDays, workStart, workEnd, updateAvailability]);
+
   // Sync specializations when profile loads.
   React.useEffect(() => {
     if (profile?.specializations != null) {
@@ -955,7 +991,8 @@ export function CHWProfileScreen(): React.JSX.Element {
                         </Text>
                       </View>
 
-                      {/* Available Days — stubbed (no backend field yet) */}
+                      {/* Availability — wired to /chw/availability. Members can
+                          only book slots inside these days + hours. */}
                       <View style={profileStyles.chipsSection}>
                         <Text style={profileStyles.chipsSectionLabel}>Available Days</Text>
                         <ChipRow<DayKey>
@@ -964,9 +1001,46 @@ export function CHWProfileScreen(): React.JSX.Element {
                           selected={availableDays}
                           onChange={setAvailableDays}
                         />
-                        <Text style={profileStyles.stubNote}>
-                          Availability saved locally until backend field ships
+                        <Text style={[profileStyles.chipsSectionLabel, { marginTop: 12 }]}>
+                          Working hours
                         </Text>
+                        <View style={availStyles.hoursRow}>
+                          <TextInput
+                            style={availStyles.hoursInput}
+                            value={workStart}
+                            onChangeText={setWorkStart}
+                            placeholder="09:00"
+                            placeholderTextColor="#9CA3AF"
+                            accessibilityLabel="Working hours start, 24-hour HH:MM"
+                          />
+                          <Text style={availStyles.hoursDash}>to</Text>
+                          <TextInput
+                            style={availStyles.hoursInput}
+                            value={workEnd}
+                            onChangeText={setWorkEnd}
+                            placeholder="17:00"
+                            placeholderTextColor="#9CA3AF"
+                            accessibilityLabel="Working hours end, 24-hour HH:MM"
+                          />
+                        </View>
+                        <Text style={profileStyles.stubNote}>
+                          24-hour time (e.g. 09:00–17:00). Members can only book
+                          slots within your available days + hours.
+                        </Text>
+                        <Pressable
+                          onPress={() => void handleSaveAvailability()}
+                          disabled={updateAvailability.isPending}
+                          style={[
+                            availStyles.saveBtn,
+                            updateAvailability.isPending && { opacity: 0.6 },
+                          ]}
+                          accessibilityRole="button"
+                          accessibilityLabel="Save availability"
+                        >
+                          <Text style={availStyles.saveBtnText}>
+                            {updateAvailability.isPending ? 'Saving…' : 'Save availability'}
+                          </Text>
+                        </Pressable>
                       </View>
                     </View>
                   </View>
@@ -1549,4 +1623,41 @@ const pageStyles = StyleSheet.create({
     fontWeight: '600',
     color:      '#DC2626',
   } as TextStyle,
+});
+
+const availStyles = StyleSheet.create({
+  hoursRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 6,
+  },
+  hoursInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: '#111827',
+    backgroundColor: '#FFFFFF',
+  },
+  hoursDash: {
+    fontSize: 13,
+    color: '#6B7280',
+  },
+  saveBtn: {
+    marginTop: 12,
+    alignSelf: 'flex-start',
+    backgroundColor: '#10B981',
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  saveBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
 });
