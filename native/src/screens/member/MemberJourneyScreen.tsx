@@ -55,6 +55,7 @@ import {
   Brain,
   Building2,
   CalendarDays,
+  Check,
   CheckCircle2,
   Circle,
   Clock,
@@ -272,19 +273,12 @@ function JourneyStepNode({
   isSelected,
   onPress,
 }: JourneyStepNodeProps): React.JSX.Element {
-  const pillVariant = stepStatusPillVariant(step.status);
   const isCompleted = step.status === 'completed';
   const isInProgress = step.status === 'in_progress';
-
-  // Derive circle border + fill color from status
-  const circleColor: string = (() => {
-    switch (step.status) {
-      case 'completed': return tokens.primary;
-      case 'in_progress': return tokens.amber700;
-      case 'missed': return tokens.red700;
-      default: return tokens.textMuted;
-    }
-  })();
+  // Filled green = done or current; everything else (upcoming/missed) is a muted
+  // grey bubble. Mirrors the Active Journey JourneyStepSpring look — a clean
+  // filled bubble, no ring/icon/pill.
+  const isFilled = isCompleted || isInProgress;
 
   return (
     <Pressable
@@ -301,26 +295,19 @@ function JourneyStepNode({
       <View
         style={[
           stepNodeStyles.circle,
-          {
-            borderColor: circleColor,
-            backgroundColor: isCompleted ? circleColor : 'transparent',
-          },
+          isFilled ? stepNodeStyles.circleFilled : stepNodeStyles.circleUpcoming,
+          isInProgress && stepNodeStyles.circleCurrent,
         ]}
       >
         {isCompleted ? (
-          <CheckCircle2 size={20} color="#FFFFFF" />
+          <Check size={16} color="#FFFFFF" strokeWidth={2.5} />
         ) : isInProgress ? (
-          <Clock size={20} color={circleColor} />
-        ) : (
-          <Circle size={20} color={circleColor} />
-        )}
+          <Text style={stepNodeStyles.currentDot}>·</Text>
+        ) : null}
       </View>
-      <Text style={[stepNodeStyles.label, { color: circleColor }]} numberOfLines={2}>
+      <Text style={stepNodeStyles.label} numberOfLines={2}>
         {step.stepName}
       </Text>
-      <Pill variant={pillVariant} size="sm">
-        {step.status.replace('_', ' ')}
-      </Pill>
     </Pressable>
   );
 }
@@ -344,15 +331,35 @@ const stepNodeStyles = StyleSheet.create({
     width: 52,
     height: 52,
     borderRadius: 26,
-    borderWidth: 2,
     alignItems: 'center',
     justifyContent: 'center',
   } as ViewStyle,
+  circleFilled: {
+    backgroundColor: tokens.primary,
+  } as ViewStyle,
+  circleUpcoming: {
+    backgroundColor: tokens.gray100,
+  } as ViewStyle,
+  // Soft green glow on the current step (matches JourneyStepSpring).
+  circleCurrent: {
+    ...Platform.select({
+      web: { boxShadow: '0 0 0 4px rgba(22, 163, 74, 0.2)' } as unknown as ViewStyle,
+      default: {},
+    }),
+  } as ViewStyle,
+  currentDot: {
+    color: '#FFFFFF',
+    fontSize: 22,
+    lineHeight: 22,
+    fontWeight: '700',
+    marginTop: -6,
+  } as TextStyle,
   label: {
     fontSize: 11,
     fontWeight: '600',
     textAlign: 'center',
     lineHeight: 15,
+    color: tokens.textSecondary,
   } as TextStyle,
 });
 
