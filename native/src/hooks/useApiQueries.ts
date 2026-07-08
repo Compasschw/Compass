@@ -1099,6 +1099,31 @@ export function useDeclineSession() {
   });
 }
 
+/** The CHW's open 30-min slots for a day (ISO-8601 UTC), for member scheduling. */
+export interface AvailableSlotsResponse {
+  date: string;
+  slots: string[];
+}
+
+/**
+ * GET /member/chws/{chwId}/available-slots?date=YYYY-MM-DD — the CHW's open
+ * slots (within their working hours, minus booked) so the member can only pick
+ * times the CHW is free.
+ */
+export function useChwAvailableSlots(chwId: string, date: string, enabled = true) {
+  return useQuery({
+    queryKey: ['member', 'chws', chwId, 'available-slots', date] as const,
+    queryFn: async (): Promise<AvailableSlotsResponse> => {
+      const raw = await api<unknown>(
+        `/member/chws/${chwId}/available-slots?date=${date}`,
+      );
+      return transformKeys<AvailableSlotsResponse>(raw);
+    },
+    enabled: enabled && !!chwId && !!date,
+    staleTime: 15_000,
+  });
+}
+
 export function useCompleteSession() {
   const qc = useQueryClient();
   return useMutation({
