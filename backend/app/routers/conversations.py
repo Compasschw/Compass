@@ -431,12 +431,15 @@ async def soft_delete_conversation(
     if conv is None:
         raise HTTPException(status_code=404, detail="Conversation not found.")
 
-    # Participant gate: only the CHW or member on this thread may delete it.
-    # Admins are intentionally excluded — use the admin panel for audit access.
-    if conv.chw_id != current_user.id and conv.member_id != current_user.id:
+    # Deletion is CHW-only. Soft-delete is global (it hides the thread from both
+    # parties), so members must not be able to remove a thread from the CHW's
+    # inbox. Only the CHW who owns this thread may delete it; members (even the
+    # one on the thread) and non-participant CHWs get 403. Admins are excluded —
+    # use the admin panel for audit access.
+    if current_user.role != "chw" or conv.chw_id != current_user.id:
         raise HTTPException(
             status_code=403,
-            detail="Not authorized: you are not a participant on this conversation.",
+            detail="Not authorized: only the CHW on this conversation may delete it.",
         )
 
     # Idempotent: already deleted — return existing state unchanged.

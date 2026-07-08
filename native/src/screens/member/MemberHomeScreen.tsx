@@ -53,7 +53,6 @@ import {
   Home,
   ListChecks,
   MessageSquare,
-  Phone,
   Route,
   ShoppingBasket,
   Stethoscope,
@@ -444,6 +443,12 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
     navigation.navigate('Sessions');
   }, [navigation]);
 
+  // "Schedule a session" → the Appointments page (Calendar route), where the
+  // member can book against their CHW's available time slots.
+  const handleScheduleSession = useCallback(() => {
+    navigation.navigate('Calendar');
+  }, [navigation]);
+
   const handleOpenRoadmap = useCallback(() => {
     navigation.navigate('MemberJourney');
   }, [navigation]);
@@ -604,16 +609,16 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
                 </Pressable>
 
                 <Pressable
-                  onPress={handleOpenSessions}
+                  onPress={handleScheduleSession}
                   style={({ pressed }) => [
                     styles.heroSecondaryBtn,
                     pressed && { opacity: 0.85 },
                   ]}
                   accessibilityRole="button"
-                  accessibilityLabel={`Schedule a call with ${assignedCHW.name}`}
+                  accessibilityLabel={`Schedule a session with ${assignedCHW.name}`}
                 >
-                  <Phone size={16} color={tokens.primary} />
-                  <Text style={styles.heroSecondaryBtnText}>Schedule a call</Text>
+                  <CalendarCheck size={16} color={tokens.primary} />
+                  <Text style={styles.heroSecondaryBtnText}>Schedule a session</Text>
                 </Pressable>
               </View>
             </Card>
