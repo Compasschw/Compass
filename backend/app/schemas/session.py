@@ -18,15 +18,23 @@ class SessionCreate(BaseModel):
 
 
 class ScheduleSessionRequest(BaseModel):
-    """Body for POST /api/v1/sessions/schedule — CHW schedules a session directly
-    with one of their members (no pre-existing service request required).
+    """Body for POST /api/v1/sessions/schedule.
+
+    Two callers:
+    - CHW schedules with one of their members → send ``member_id`` (chw_id is the
+      authenticated CHW). ``scheduling_status`` may be confirmed or pending.
+    - Member schedules with their CHW → send ``chw_id`` (member_id is the
+      authenticated member). The booking is always recorded as ``pending`` — it
+      is a request the CHW confirms — regardless of any supplied value.
 
     The backend reuses an existing CHW↔member ServiceRequest as the session's
     request_id when one exists, or auto-creates a minimal one, so the
-    request_id NOT NULL invariant holds without the CHW filing a request first.
+    request_id NOT NULL invariant holds without a request being filed first.
     """
 
-    member_id: UUID
+    # Exactly one of these is supplied, determined by the caller's role.
+    member_id: UUID | None = None  # required when a CHW schedules
+    chw_id: UUID | None = None     # required when a member schedules
     scheduled_at: datetime
     scheduled_end_at: datetime | None = None
     mode: SessionMode = SessionMode.in_person
