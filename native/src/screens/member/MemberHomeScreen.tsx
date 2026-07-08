@@ -41,7 +41,6 @@ import {
   View,
 } from 'react-native';
 import {
-  ArrowRight,
   CalendarCheck,
   CheckCircle2,
   ClipboardList,
@@ -705,20 +704,17 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
                 onPress={handleFindCHW}
                 accessibilityLabel={`Open requests: ${openRequestsCount}`}
               />
+              <StatTile
+                icon={<CheckCircle2 color={tokens.emerald700} size={18} />}
+                iconBg={tokens.emerald100}
+                label="Completed Sessions"
+                value={completedSessionsCount}
+                delta={completedSessionsCount === 1 ? 'Session all-time' : 'Sessions all-time'}
+                deltaColor={tokens.emerald700}
+                style={styles.statGridTile}
+                accessibilityLabel={`Completed sessions: ${completedSessionsCount}`}
+              />
             </StaggerList>
-          </View>
-
-          {/* ── Secondary stat row — completed sessions ──────────────── */}
-          <View style={styles.statRow}>
-            <StatTile
-              icon={<CheckCircle2 color={tokens.emerald700} size={18} />}
-              iconBg={tokens.emerald100}
-              label="Completed Sessions"
-              value={completedSessionsCount}
-              delta={completedSessionsCount === 1 ? 'Session all-time' : 'Sessions all-time'}
-              style={{ flex: 1 }}
-              accessibilityLabel={`Completed sessions: ${completedSessionsCount}`}
-            />
           </View>
 
           {/* ── Your Journeys ────────────────────────────────────────────
@@ -857,25 +853,6 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
               </Card>
             </>
           )}
-
-          {/* ── Find CHW CTA card ────────────────────────────────────────
-           *  Solid green action strip — same pattern as CHW dashboard CTAs.
-           */}
-          <Pressable
-            onPress={handleFindCHW}
-            style={({ pressed }) => [styles.ctaCard, pressed && { opacity: 0.9 }]}
-            accessibilityRole="button"
-            accessibilityLabel="Find a Community Health Worker"
-          >
-            <View style={styles.ctaContent}>
-              <Text style={styles.ctaTitle}>Need help with a new goal?</Text>
-              <Text style={styles.ctaSub}>Find a Community Health Worker near you.</Text>
-            </View>
-            <View style={styles.ctaButton}>
-              <Text style={styles.ctaButtonText}>Find CHW</Text>
-              <ArrowRight color={tokens.primary} size={13} />
-            </View>
-          </Pressable>
 
           {/* ── Upcoming Sessions card ───────────────────────────────────
            *  Hidden when the member has no upcoming sessions.
@@ -1064,16 +1041,12 @@ const styles = StyleSheet.create({
   } as import('react-native').ViewStyle,
 
   statGridTile: {
-    minWidth: '48%',
-    flexBasis: '48%',
-    flexGrow: 1,
+    // flex:1 → all KPI tiles share the row equally (single evenly-spaced row of
+    // 4: Upcoming · Active Goals · Open Requests · Completed Sessions).
+    flex: 1,
+    minWidth: 0,
   } as import('react-native').ViewStyle,
 
-  statRow: {
-    flexDirection: 'row',
-    gap: spacing.md,
-    marginBottom: spacing.xxl,
-  } as import('react-native').ViewStyle,
 
   // ── View all link ──────────────────────────────────────────────────────────
 
