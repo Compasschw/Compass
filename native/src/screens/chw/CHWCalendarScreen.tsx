@@ -55,6 +55,8 @@ import {
   useSessions,
   useChwMembers,
   useScheduleSession,
+  useConfirmSession,
+  useDeclineSession,
   type SessionData,
   type MembersRosterItem,
 } from '../../hooks/useApiQueries';
@@ -785,10 +787,16 @@ function SessionDetailsModal({
   onClose,
   onOpenProfile,
 }: SessionDetailsModalProps): React.JSX.Element {
+  // Hooks must run unconditionally, before the early return below.
+  const confirmSession = useConfirmSession();
+  const declineSession = useDeclineSession();
+  const actionPending = confirmSession.isPending || declineSession.isPending;
+
   if (!session) return <View />;
 
   const badge = deriveBadgeStatus(session, now);
   const badgeStyle = BADGE_COLORS[badge];
+  const isPending = badge === 'Pending';
 
   return (
     <Modal
@@ -895,6 +903,46 @@ function SessionDetailsModal({
 
           {/* Footer */}
           <View style={detailModalStyles.footer}>
+            {/* Confirm / Decline — only for a member-requested pending session. */}
+            {isPending && (
+              <View style={detailModalStyles.confirmRow}>
+                <TouchableOpacity
+                  style={[detailModalStyles.declineBtn, actionPending && { opacity: 0.6 }]}
+                  disabled={actionPending}
+                  onPress={async () => {
+                    try {
+                      await declineSession.mutateAsync(session.id);
+                      onClose();
+                    } catch {
+                      // error surfaced by the hook's onError alert
+                    }
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Decline session request"
+                >
+                  <Text style={detailModalStyles.declineText}>Decline</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[detailModalStyles.confirmBtn, actionPending && { opacity: 0.6 }]}
+                  disabled={actionPending}
+                  onPress={async () => {
+                    try {
+                      await confirmSession.mutateAsync(session.id);
+                      onClose();
+                    } catch {
+                      // error surfaced by the hook's onError alert
+                    }
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Confirm session request"
+                >
+                  <CheckCircle size={14} color="#FFFFFF" />
+                  <Text style={detailModalStyles.confirmText}>
+                    {confirmSession.isPending ? 'Confirming…' : 'Confirm'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
             <TouchableOpacity
               style={detailModalStyles.openProfileBtn}
               onPress={() => {
@@ -1054,6 +1102,43 @@ const detailModalStyles = StyleSheet.create({
     minHeight: 44,
   },
   openProfileText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 14,
+    color: '#FFFFFF',
+  },
+  confirmRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  declineBtn: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    backgroundColor: '#FEF2F2',
+    minHeight: 44,
+  },
+  declineText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 14,
+    color: '#b91c1c',
+  },
+  confirmBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    paddingVertical: 12,
+    borderRadius: radius.md,
+    backgroundColor: tokens.primary,
+    minHeight: 44,
+  },
+  confirmText: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 14,
     color: '#FFFFFF',
