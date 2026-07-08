@@ -4033,7 +4033,12 @@ export function useMemberJourneys(memberId: string) {
       return transformKeys<MemberJourneyResponse[]>(raw);
     },
     enabled: !!memberId,
-    staleTime: 60_000,
+    // Short stale + background polling so a CHW's edits to the member's journey
+    // (new steps, status changes, added journeys) surface on the member side
+    // without a manual refresh. Also refetches when the member refocuses the tab.
+    staleTime: 20_000,
+    refetchInterval: 30_000,
+    refetchOnWindowFocus: true,
   });
 }
 

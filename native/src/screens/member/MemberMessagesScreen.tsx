@@ -84,10 +84,9 @@ import {
   AlertCircle,
   FileText,
   Gift,
-  MapPin,
   User,
-  Globe,
   Clock,
+  Circle,
   MoreVertical,
   Check,
   ChevronRight,
@@ -1789,6 +1788,7 @@ interface CareContextRailProps {
   onViewCHWProfile: () => void;
   onViewProfile: () => void;
   onGoToRewards: () => void;
+  onViewJourney: () => void;
   style?: { width: number };
 }
 
@@ -1804,6 +1804,7 @@ function CareContextRail({
   onViewCHWProfile,
   onViewProfile,
   onGoToRewards,
+  onViewJourney,
   style: widthOverride,
 }: CareContextRailProps): React.JSX.Element {
   const chwName      = conversation.chwName;
@@ -1832,6 +1833,33 @@ function CareContextRail({
 
   // Wellness points (computed from completedSteps × 10 if not provided by BE)
   const wellnessPoints = completedSteps * 10 + (completedSteps > 0 ? 5 : 0);
+
+  // Real To-Do list: incomplete steps the CHW laid out across the member's
+  // active/paused journeys. Sourced from useMemberJourneys — no mock data.
+  // Order: in_progress → upcoming → missed, then by step order. Capped at 5.
+  const todoItems = useMemo(() => {
+    const journeys = (journeysQuery.data ?? []).filter(
+      (j) => j.status === 'active' || j.status === 'paused',
+    );
+    const rank: Record<string, number> = { in_progress: 0, upcoming: 1, missed: 2 };
+    return journeys
+      .flatMap((j) =>
+        j.steps
+          .filter((s) => s.status !== 'completed')
+          .map((s) => ({
+            id: s.id,
+            label: s.stepName,
+            journeyName: j.template?.name ?? '',
+            status: s.status,
+            order: s.stepOrder,
+          })),
+      )
+      .sort((a, b) => {
+        const r = (rank[a.status] ?? 3) - (rank[b.status] ?? 3);
+        return r !== 0 ? r : a.order - b.order;
+      })
+      .slice(0, 5);
+  }, [journeysQuery.data]);
 
   return (
     <View style={[styles.railOuter, widthOverride]}>
@@ -1898,70 +1926,54 @@ function CareContextRail({
           )}
         </View>
 
-        {/* ── Section 2: Things you shared ────────────────────────────────── */}
+        {/* ── Section 2: To-Do List — real journey steps the CHW laid out ──── */}
         <View style={[styles.railSection, styles.railSectionDivider]}>
-          <Text style={styles.railSectionLabel}>Things you shared</Text>
-          <StaggerList delayMs={30} durationMs={180}>
-            {[
-              { id: 'inc',  Icon: FileText, label: 'Income document',              time: 'May 22' },
-              { id: 'addr', Icon: MapPin,   label: 'Address verification',          time: 'May 28' },
-              { id: 'lang', Icon: Globe,    label: 'Preferred language: English',   time: 'May 1' },
-              { id: 'cont', Icon: Clock,    label: 'Best contact: text after 4 PM', time: 'May 1' },
-            ].map(({ id, Icon, label, time }) => (
-              <PressableCard
-                key={id}
-                onPress={() => {}}
-                style={styles.sharedRow}
-                accessibilityLabel={`${label}, shared ${time}`}
+          <Text style={styles.railSectionLabel}>To-Do List</Text>
+          {todoItems.length > 0 ? (
+            <>
+              <StaggerList delayMs={30} durationMs={180}>
+                {todoItems.map((item) => {
+                  const meta =
+                    item.status === 'in_progress'
+                      ? { color: colors.primary, label: 'Active' }
+                      : item.status === 'missed'
+                        ? { color: '#b91c1c', label: 'Overdue' }
+                        : { color: colors.textMuted, label: 'To do' };
+                  return (
+                    <PressableCard
+                      key={item.id}
+                      onPress={onViewJourney}
+                      style={styles.sharedRow}
+                      accessibilityLabel={`${item.label} — ${meta.label}${item.journeyName ? `, ${item.journeyName} journey` : ''}`}
+                    >
+                      <View style={styles.sharedIconCircle}>
+                        <Circle size={14} color={meta.color} />
+                      </View>
+                      <Text style={styles.sharedLabel} numberOfLines={1}>{item.label}</Text>
+                      <Text style={[styles.sharedTime, { color: meta.color }]} numberOfLines={1}>
+                        {meta.label}
+                      </Text>
+                    </PressableCard>
+                  );
+                })}
+              </StaggerList>
+              <TouchableOpacity
+                style={styles.viewAllRow}
+                onPress={onViewJourney}
+                accessibilityRole="link"
+                accessibilityLabel="View all journey steps"
               >
-                <View style={styles.sharedIconCircle}>
-                  <Icon size={14} color={colors.emerald700} />
-                </View>
-                <Text style={styles.sharedLabel} numberOfLines={1}>{label}</Text>
-                <Text style={[styles.sharedTime, numerals.tabular]}>{time}</Text>
-              </PressableCard>
-            ))}
-          </StaggerList>
-          <TouchableOpacity
-            style={styles.viewAllRow}
-            accessibilityRole="link"
-            accessibilityLabel="View all shared items"
-          >
-            <Text style={styles.viewAllText}>View all</Text>
-            <ChevronRight size={12} color={colors.primary} />
-          </TouchableOpacity>
-        </View>
-
-        {/* ── Section 3: Your CHW knows ────────────────────────────────────── */}
-        <View style={[styles.railSection, styles.railSectionDivider]}>
-          <Text style={styles.railSectionLabel}>Your CHW knows</Text>
-          <View style={styles.knowsList}>
-            {[
-              { icon: User,          label: `${memberFirstName}, member` },
-              { icon: Clock,         label: 'Primary Need: Food Security' },
-              { icon: Calendar,      label: 'Member since May 2026' },
-            ].map(({ icon: Icon, label }) => (
-              <View key={label} style={styles.knowsRow}>
-                <Icon size={13} color={colors.textSecondary} />
-                <Text style={styles.knowsText}>{label}</Text>
-              </View>
-            ))}
-            <View style={styles.knowsRow}>
-              <Check size={13} color={colors.textSecondary} />
-              <Text style={styles.knowsText}>Status: </Text>
-              <Pill variant="emerald" size="sm">Highly Engaged</Pill>
-            </View>
-          </View>
-          <Text style={styles.knowsCaption}>
-            Your CHW only sees what's needed to help you. Edit at any time.{' '}
-          </Text>
-          <TouchableOpacity
-            onPress={onViewProfile}
-            accessibilityRole="link"
-            accessibilityLabel="View my profile"
-          >
-            <Text style={styles.knowsProfileLink}>View my profile</Text>
-          </TouchableOpacity>
+                <Text style={styles.viewAllText}>View all</Text>
+                <ChevronRight size={12} color={colors.primary} />
+              </TouchableOpacity>
+            </>
+          ) : (
+            <EmptyState
+              icon={Route}
+              title="No action items yet"
+              body="Your CHW will add steps to your journey for you to complete"
+            />
+          )}
         </View>
 
         {/* ── Section 4: Upcoming appointment ─────────────────────────────── */}
@@ -2174,6 +2186,7 @@ export function MemberMessagesScreen(): React.JSX.Element {
   const handleGoToProfile      = useCallback(() => navigation.navigate('Profile'),   [navigation]);
   const handleGoToDocuments    = useCallback(() => navigation.navigate('Documents'), [navigation]);
   const handleGoToRewards      = useCallback(() => navigation.navigate('Rewards'),   [navigation]);
+  const handleGoToJourney      = useCallback(() => navigation.navigate('MemberJourney'), [navigation]);
   const handleViewCHWProfile   = useCallback(() => navigation.navigate('FindCHW'),   [navigation]);
 
   // Conversation deletion is CHW-only (the backend rejects member deletes with
@@ -2342,6 +2355,7 @@ export function MemberMessagesScreen(): React.JSX.Element {
             onViewCHWProfile={handleViewCHWProfile}
             onViewProfile={handleGoToProfile}
             onGoToRewards={handleGoToRewards}
+            onViewJourney={handleGoToJourney}
             style={{ width: rightWidth }}
           />
         ) : null}
