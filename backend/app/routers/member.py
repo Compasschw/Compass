@@ -438,6 +438,96 @@ async def get_chw_member_facing_profile(
     )
 
 
+@router.get("/chws/{chw_id}/available-slots")
+async def get_chw_available_slots(
+    chw_id: UUID,
+    date: str,
+    current_user=Depends(require_role("member")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Open 30-minute slots for the member's CHW on a given day.
+
+    Returns only the times the CHW is free — within their weekly availability
+    (or the Mon–Fri 9–5 default) and not already booked — so the member can
+    request a session without ever seeing the CHW's other members. Relationship-
+    gated to a shared care relationship.
+
+    Query:
+        date: target day as ``YYYY-MM-DD``.
+    Response:
+        ``{"date": "...", "slots": ["<ISO-8601 UTC>", ...]}``
+    """
+    from datetime import UTC, timedelta
+    from datetime import date as _date
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo
+
+    from app.models.session import Session
+    from app.models.user import CHWProfile
+    from app.services.availability import (
+        CLINIC_TZ_NAME,
+        DEFAULT_WINDOWS,
+        SLOT_MINUTES,
+        generate_day_slots,
+        window_for_day,
+    )
+    from app.services.relationship_guards import assert_shared_session
+
+    await assert_shared_session(db, chw_id=chw_id, member_id=current_user.id)
+
+    try:
+        target = _date.fromisoformat(date)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="date must be YYYY-MM-DD.") from exc
+
+    profile = (
+        await db.execute(select(CHWProfile).where(CHWProfile.user_id == chw_id))
+    ).scalar_one_or_none()
+    windows = (
+        profile.availability_windows
+        if profile and profile.availability_windows
+        else DEFAULT_WINDOWS
+    )
+    window = window_for_day(windows, target)
+    if window is None:
+        return {"date": date, "slots": []}
+
+    clinic_tz = ZoneInfo(CLINIC_TZ_NAME)
+    local_slots = generate_day_slots(target, window, slot_minutes=SLOT_MINUTES)
+    slot_starts = [s.replace(tzinfo=clinic_tz).astimezone(UTC) for s in local_slots]
+
+    # Times already taken by any of this CHW's scheduled sessions that day.
+    day_start = _dt.combine(target, _dt.min.time(), tzinfo=clinic_tz).astimezone(UTC)
+    day_end = day_start + timedelta(days=1)
+    booked_rows = (
+        (
+            await db.execute(
+                select(Session.scheduled_at).where(
+                    Session.chw_id == chw_id,
+                    Session.status.in_(["scheduled", "in_progress"]),
+                    Session.scheduled_at >= day_start,
+                    Session.scheduled_at < day_end,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    booked = {
+        b.astimezone(UTC).replace(second=0, microsecond=0)
+        for b in booked_rows
+        if b is not None
+    }
+
+    now = _dt.now(UTC)
+    slots = [
+        s.isoformat()
+        for s in slot_starts
+        if s > now and s.replace(second=0, microsecond=0) not in booked
+    ]
+    return {"date": date, "slots": slots}
+
+
 # ── Services Consent (T03) ──────────────────────────────────────────
 
 
