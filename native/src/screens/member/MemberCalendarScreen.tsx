@@ -26,7 +26,7 @@
  * keep the CHW screen byte-for-byte unchanged while the member POV diverges.
  */
 
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Platform,
   ScrollView,
@@ -58,7 +58,12 @@ import { useNavigation, type NavigationProp } from '@react-navigation/native';
 
 import { colors as tokens, numerals, spacing, radius } from '../../theme/tokens';
 import { verticalLabels, type Vertical } from '../../data/mock';
-import { useSessions, useScheduleSession, type SessionData } from '../../hooks/useApiQueries';
+import {
+  useSessions,
+  useScheduleSession,
+  useChwAvailableSlots,
+  type SessionData,
+} from '../../hooks/useApiQueries';
 import { useRefreshControl } from '../../hooks/useRefreshControl';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
@@ -1709,47 +1714,38 @@ function MemberScheduleModal({
     t.setDate(t.getDate() + 1);
     return `${String(t.getMonth() + 1).padStart(2, '0')}/${String(t.getDate()).padStart(2, '0')}/${t.getFullYear()}`;
   });
-  const [startTime, setStartTime] = useState('10:00 AM');
-  const [endTime, setEndTime] = useState('11:00 AM');
+  const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const parseDateTime = (datePart: string, timePart: string): string | null => {
-    try {
-      const [mm, dd, yyyy] = datePart.split('/').map(Number);
-      if (!mm || !dd || !yyyy || isNaN(mm) || isNaN(dd) || isNaN(yyyy)) return null;
-      const m = timePart.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
-      if (!m) return null;
-      let hour = parseInt(m[1], 10);
-      const minute = parseInt(m[2], 10);
-      if (m[3].toUpperCase() === 'AM' && hour === 12) hour = 0;
-      if (m[3].toUpperCase() === 'PM' && hour !== 12) hour += 12;
-      const d = new Date(yyyy, mm - 1, dd, hour, minute, 0);
-      return isNaN(d.getTime()) ? null : d.toISOString();
-    } catch {
-      return null;
-    }
-  };
+  // MM/DD/YYYY → YYYY-MM-DD for the slots API. null when the date is malformed.
+  const isoDate = useMemo(() => {
+    const [mm, dd, yyyy] = dateInput.split('/').map(Number);
+    if (!mm || !dd || !yyyy || isNaN(mm) || isNaN(dd) || isNaN(yyyy)) return null;
+    return `${yyyy}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
+  }, [dateInput]);
+
+  // Only the CHW's open slots are offered — unavailable/booked times never appear.
+  const slotsQuery = useChwAvailableSlots(chwId, isoDate ?? '', visible && !!isoDate);
+  const slots = slotsQuery.data?.slots ?? [];
+
+  // Clear the picked slot whenever the date changes (its slots no longer apply).
+  useEffect(() => {
+    setSelectedSlot(null);
+  }, [isoDate]);
 
   const handleSubmit = useCallback(async () => {
     setError(null);
-    const scheduledAt = parseDateTime(dateInput, startTime);
-    if (!scheduledAt) {
-      setError('Enter a valid date (MM/DD/YYYY) and start time (e.g. 10:00 AM).');
+    if (!selectedSlot) {
+      setError('Pick an available time.');
       return;
     }
-    const scheduledEndAt = parseDateTime(dateInput, endTime);
-    if (!scheduledEndAt) {
-      setError('Enter a valid end time (e.g. 11:00 AM).');
-      return;
-    }
-    if (new Date(scheduledEndAt) <= new Date(scheduledAt)) {
-      setError('End time must be after start time.');
-      return;
-    }
+    const scheduledEndAt = new Date(
+      new Date(selectedSlot).getTime() + 30 * 60 * 1000,
+    ).toISOString();
     try {
       await mutateAsync({
         chwId,
-        scheduledAt,
+        scheduledAt: selectedSlot,
         scheduledEndAt,
         mode,
         schedulingStatus: 'pending',
@@ -1758,7 +1754,7 @@ function MemberScheduleModal({
     } catch {
       // useScheduleSession surfaces the error via its onError alert.
     }
-  }, [dateInput, startTime, endTime, mode, chwId, mutateAsync, onClose]);
+  }, [selectedSlot, mode, chwId, mutateAsync, onClose]);
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
@@ -1776,28 +1772,38 @@ function MemberScheduleModal({
             placeholderTextColor={tokens.textMuted}
           />
 
-          <View style={scheduleStyles.row}>
-            <View style={scheduleStyles.rowItem}>
-              <Text style={scheduleStyles.label}>Start</Text>
-              <TextInput
-                style={scheduleStyles.input}
-                value={startTime}
-                onChangeText={setStartTime}
-                placeholder="10:00 AM"
-                placeholderTextColor={tokens.textMuted}
-              />
+          <Text style={scheduleStyles.label}>Available times</Text>
+          {slotsQuery.isLoading ? (
+            <Text style={scheduleStyles.note}>Loading open times…</Text>
+          ) : slots.length === 0 ? (
+            <Text style={scheduleStyles.note}>
+              No open times on this day. Try another date.
+            </Text>
+          ) : (
+            <View style={scheduleStyles.slotGrid}>
+              {slots.map((iso) => {
+                const label = new Date(iso).toLocaleTimeString([], {
+                  hour: 'numeric',
+                  minute: '2-digit',
+                });
+                const active = selectedSlot === iso;
+                return (
+                  <TouchableOpacity
+                    key={iso}
+                    style={[scheduleStyles.slotPill, active && scheduleStyles.slotPillActive]}
+                    onPress={() => setSelectedSlot(iso)}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: active }}
+                    accessibilityLabel={`${label}${active ? ', selected' : ''}`}
+                  >
+                    <Text style={[scheduleStyles.slotText, active && scheduleStyles.slotTextActive]}>
+                      {label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
-            <View style={scheduleStyles.rowItem}>
-              <Text style={scheduleStyles.label}>End</Text>
-              <TextInput
-                style={scheduleStyles.input}
-                value={endTime}
-                onChangeText={setEndTime}
-                placeholder="11:00 AM"
-                placeholderTextColor={tokens.textMuted}
-              />
-            </View>
-          </View>
+          )}
 
           <Text style={scheduleStyles.label}>Type</Text>
           <View style={scheduleStyles.segment}>
@@ -1830,9 +1836,9 @@ function MemberScheduleModal({
               <Text style={scheduleStyles.cancelText}>Cancel</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[scheduleStyles.submitBtn, isPending && { opacity: 0.6 }]}
+              style={[scheduleStyles.submitBtn, (isPending || !selectedSlot) && { opacity: 0.6 }]}
               onPress={() => void handleSubmit()}
-              disabled={isPending}
+              disabled={isPending || !selectedSlot}
               accessibilityRole="button"
               accessibilityLabel="Request session"
             >
@@ -1890,12 +1896,31 @@ const scheduleStyles = StyleSheet.create({
     color: tokens.textPrimary,
     backgroundColor: '#FFFFFF',
   },
-  row: {
+  slotGrid: {
     flexDirection: 'row',
-    gap: spacing.sm,
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+    maxHeight: 168,
   },
-  rowItem: {
-    flex: 1,
+  slotPill: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 8,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#FFFFFF',
+  },
+  slotPillActive: {
+    backgroundColor: tokens.primary,
+    borderColor: tokens.primary,
+  },
+  slotText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: tokens.textSecondary,
+  },
+  slotTextActive: {
+    color: '#FFFFFF',
   },
   segment: {
     flexDirection: 'row',
