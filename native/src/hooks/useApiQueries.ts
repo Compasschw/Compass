@@ -550,6 +550,12 @@ export function useSessions(options?: { includeArchived?: boolean }) {
       const raw = await api<unknown[]>(`/sessions/${qs}`);
       return transformKeys<SessionData[]>(raw);
     },
+    // Poll + refetch on focus so a session scheduled by the other party (e.g. a
+    // CHW booking a follow-up) shows up on this side's calendar without a manual
+    // refresh. Both calendars read this query.
+    staleTime: 15_000,
+    refetchInterval: 30_000,
+    refetchOnWindowFocus: true,
   });
 }
 
@@ -996,8 +1002,10 @@ export function useCreateSession() {
 }
 
 export interface ScheduleSessionPayload {
-  /** The member to schedule with (CHW must already work with them). */
-  memberId: string;
+  /** CHW path: the member to schedule with (CHW must already work with them). */
+  memberId?: string;
+  /** Member path: the CHW to schedule with (the member's assigned CHW). */
+  chwId?: string;
   /** ISO-8601 datetime for the appointment start. */
   scheduledAt: string;
   /** ISO-8601 datetime for the appointment end (optional). */
@@ -1023,7 +1031,10 @@ export function useScheduleSession() {
       const raw = await api<unknown>('/sessions/schedule', {
         method: 'POST',
         body: JSON.stringify({
-          member_id: payload.memberId,
+          // CHW path sends member_id; member path sends chw_id. The backend
+          // resolves the other side from the authenticated caller.
+          ...(payload.memberId ? { member_id: payload.memberId } : {}),
+          ...(payload.chwId ? { chw_id: payload.chwId } : {}),
           scheduled_at: payload.scheduledAt,
           scheduled_end_at: payload.scheduledEndAt ?? null,
           mode: payload.mode,
