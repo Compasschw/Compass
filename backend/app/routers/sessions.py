@@ -32,6 +32,7 @@ from app.schemas.session import (
     SessionArchiveUpdate,
     SessionCreate,
     SessionDocumentationSubmit,
+    SessionMuteUpdate,
     SessionPinUpdate,
     SessionResponse,
     TranscriptResponse,
@@ -111,6 +112,7 @@ async def list_sessions(
 # Three small endpoints back the CHW Messages thread-row swipe actions:
 #   PATCH  /sessions/{id}/pin      → toggle pinned_at
 #   PATCH  /sessions/{id}/archive  → toggle archived_at
+#   PATCH  /sessions/{id}/mute     → toggle muted_at
 #   DELETE /sessions/{id}          → soft-delete (deleted_at)
 #
 # All three require the caller to be either (a) the CHW that owns the
@@ -195,6 +197,39 @@ async def update_session_archive(
         session_id=session_id, db=db, current_user=current_user
     )
     session.archived_at = datetime.now(UTC) if body.archived else None
+    await db.commit()
+    await db.refresh(session)
+    from app.models.user import User as _User
+    chw = await db.get(_User, session.chw_id)
+    member = await db.get(_User, session.member_id)
+    return SessionResponse.model_validate({
+        **session.__dict__,
+        "chw_name": chw.name if chw else None,
+        "member_name": member.name if member else None,
+    })
+
+
+@router.patch("/{session_id}/mute", response_model=SessionResponse)
+async def update_session_mute(
+    session_id: UUID,
+    body: SessionMuteUpdate,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SessionResponse:
+    """Mute or unmute a thread in the CHW's Messages inbox.
+
+    ``muted=true`` stamps the current UTC time onto ``muted_at``; a muted
+    thread stays in the inbox but its unread notification/badge is suppressed
+    and a bell-off indicator is shown on the row.  ``muted=false`` clears the
+    timestamp.  CHW-owned via ``_load_chw_session_or_404`` (non-owner → 404).
+
+    Idempotent: re-muting an already-muted thread updates the timestamp;
+    un-muting a never-muted thread is a no-op that returns 200 unchanged.
+    """
+    session = await _load_chw_session_or_404(
+        session_id=session_id, db=db, current_user=current_user
+    )
+    session.muted_at = datetime.now(UTC) if body.muted else None
     await db.commit()
     await db.refresh(session)
     from app.models.user import User as _User
