@@ -308,6 +308,8 @@ export interface MemberFacingCHWProfile {
   serviceAreaZips: string[];
   /** Day abbreviations from availability_windows JSONB. E.g. ["mon","wed","fri"]. */
   availableDays: string[];
+  /** Effective weekly hours: { "mon": "09:00-17:00", ... }. Drives calendar shading. */
+  availabilityWindows: Record<string, string>;
   /** Count of sessions the calling member has had with this CHW (any status). */
   sharedSessionCount: number;
   /** CHW's self-uploaded avatar (presigned). Null → fall back to initials. */
