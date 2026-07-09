@@ -207,6 +207,45 @@ async def update_session_archive(
     })
 
 
+def _scheduled_at_label(session) -> str:
+    """Human-readable clinic-local label for the session start, e.g.
+    'Thu, Jul 09 at 11:30 AM'. Falls back gracefully when scheduled_at is null."""
+    if session.scheduled_at is None:
+        return "your session"
+    from zoneinfo import ZoneInfo
+
+    from app.services.availability import CLINIC_TZ_NAME
+
+    local = session.scheduled_at.astimezone(ZoneInfo(CLINIC_TZ_NAME))
+    return local.strftime("%a, %b %d at %I:%M %p")
+
+
+def _add_scheduling_message(db: AsyncSession, session, sender_id, *, confirmed: bool) -> None:
+    """Post a notification message to the session's conversation on confirm/decline.
+
+    The message lands in the shared CHW↔member thread, so both parties see the
+    outcome in Messages. No-op when the session has no conversation linked.
+    """
+    if session.conversation_id is None:
+        return
+    from app.models.conversation import Message
+
+    label = _scheduled_at_label(session)
+    body = (
+        f"✅ Session confirmed for {label}."
+        if confirmed
+        else f"❌ Session request for {label} was declined."
+    )
+    db.add(
+        Message(
+            conversation_id=session.conversation_id,
+            sender_id=sender_id,
+            body=body,
+            type="text",
+        )
+    )
+
+
 @router.patch("/{session_id}/confirm", response_model=SessionResponse)
 async def confirm_session(
     session_id: UUID,
@@ -227,6 +266,7 @@ async def confirm_session(
             status_code=409, detail="Only a scheduled session can be confirmed."
         )
     session.scheduling_status = "confirmed"
+    _add_scheduling_message(db, session, current_user.id, confirmed=True)
     await db.commit()
     await db.refresh(session)
     from app.models.user import User as _User
@@ -259,6 +299,7 @@ async def decline_session(
             status_code=409, detail="Only a scheduled session can be declined."
         )
     session.status = "cancelled"
+    _add_scheduling_message(db, session, current_user.id, confirmed=False)
     await db.commit()
     await db.refresh(session)
     from app.models.user import User as _User

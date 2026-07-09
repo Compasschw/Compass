@@ -54,7 +54,6 @@ import {
 import {
   useSessions,
   useChwMembers,
-  useChwAvailability,
   useScheduleSession,
   useConfirmSession,
   useDeclineSession,
@@ -1864,12 +1863,6 @@ const TODAY_DAY = NOW.getDate();
  */
 export function CHWCalendarScreen(): React.JSX.Element {
   const { data: rawSessions, isLoading, error, refetch } = useSessions();
-
-  // The CHW's own working hours → grey out off-days/off-hours on the grid.
-  const availabilityQuery = useChwAvailability();
-  const ownWindows = availabilityQuery.data?.availabilityWindows as
-    | AvailabilityWindows
-    | undefined;
   const { data: rawMembers, isLoading: isLoadingMembers } = useChwMembers();
   const refresh = useRefreshControl([refetch]);
   const navigation = useNavigation();
@@ -2069,7 +2062,6 @@ export function CHWCalendarScreen(): React.JSX.Element {
           today={{ year: TODAY_YEAR, month: TODAY_MONTH, day: TODAY_DAY }}
           now={nowRef}
           onSessionPress={handleSessionPress}
-          availabilityWindows={ownWindows}
         />
       ) : viewMode === 'day' ? (
         <DayViewGrid
@@ -2077,7 +2069,6 @@ export function CHWCalendarScreen(): React.JSX.Element {
           sessions={todaySessions}
           now={nowRef}
           onSessionPress={handleSessionPress}
-          availabilityWindows={ownWindows}
         />
       ) : (
         <>
