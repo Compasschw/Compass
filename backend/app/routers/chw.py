@@ -3,7 +3,7 @@ from typing import Literal
 from uuid import NAMESPACE_URL, UUID, uuid5
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.security import HTTPBearer
 from sqlalchemy import any_, case, extract, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +13,8 @@ from app.dependencies import require_role
 from app.schemas.billing import EarningsSummary, PayoutItem, SessionEarningItem
 from app.schemas.chw import (
     ActiveJourneyInfo,
+    CHWCreateMemberRequest,
+    CHWCreateMemberResponse,
     CHWMapDataResponse,
     CHWMemberProfileDetail,
     CHWMemberProfileView,
@@ -761,6 +763,96 @@ async def list_chw_members(
     roster.sort(key=lambda item: item.last_contact_at or datetime.min.replace(tzinfo=UTC), reverse=True)
 
     return roster
+
+
+@router.post(
+    "/members",
+    response_model=CHWCreateMemberResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_chw_member(
+    data: CHWCreateMemberRequest,
+    current_user=Depends(require_role("chw")),
+    db: AsyncSession = Depends(get_db),
+) -> CHWCreateMemberResponse:
+    """Onboard a brand-new member account wired to the calling CHW.
+
+    Creates a member ``User`` + ``MemberProfile`` (mirroring the signup-time
+    provisioning in ``auth_service.register_user``) and immediately establishes
+    the CHW↔member care relationship so the existing relationship gates pass —
+    the CHW can message, schedule (``POST /sessions/schedule``), and start
+    journeys with this member right away. The relationship is established by:
+
+    1. A ``ServiceRequest`` with ``matched_chw_id == current CHW``,
+       ``member_id == new member``, ``status == "matched"`` — this is exactly
+       what ``schedule_session`` / the roster / the member-profile gate look for.
+    2. The CHW↔member ``Conversation`` (via ``find_or_create_conversation_for_pair``)
+       so messaging has a thread from the first moment.
+
+    Login model (product decision): the CHW supplies the member's email and a
+    temporary password in the request body. The CHW shares that password with
+    the member out-of-band; the member logs in via the normal ``POST
+    /auth/login`` flow and can change it later. No email-invite/token flow.
+
+    Pear-required demographics (DOB, sex, insurance, CIN, ZIP) are NOT collected
+    here — they are completed afterward (CHW "Edit demographics" or member
+    self-service), at which point a Pear sync can run. This mirrors the
+    OAuth-signup path, which also creates a member with an incomplete profile.
+
+    Authorization: ``require_role("chw")`` — members / admins get 403.
+
+    Returns:
+        201 with the created member's id, name, and email.
+        400 when the email is already registered (mirrors /auth/register).
+        422 when the name lacks a first + last token or the password is < 8 chars.
+    """
+    from app.models.request import ServiceRequest
+    from app.services.auth_service import register_user
+    from app.services.session_lookup import find_or_create_conversation_for_pair
+
+    # ── Create the member User + MemberProfile (reuses signup provisioning) ──
+    # register_user handles the duplicate-email guard (returns None), phone
+    # E.164 normalization, and MemberProfile creation in one transaction.
+    member = await register_user(
+        db,
+        email=data.email,
+        password=data.temp_password,
+        name=data.name,
+        role="member",
+        phone=data.phone,
+    )
+    if member is None:
+        raise HTTPException(status_code=400, detail="Email already registered")
+
+    # ── Establish the care relationship the downstream gates key off ─────────
+    # A matched ServiceRequest is what schedule_session, the members roster, and
+    # the member-profile authorization gate all treat as "this CHW works with
+    # this member". "other" is a safe default vertical until the member submits
+    # a real request or the CHW sets a primary need.
+    service_request = ServiceRequest(
+        member_id=member.id,
+        matched_chw_id=current_user.id,
+        vertical="other",
+        verticals=["other"],
+        urgency="routine",
+        description="CHW-initiated member onboarding.",
+        preferred_mode="in_person",
+        status="matched",
+    )
+    db.add(service_request)
+
+    # Create the CHW↔member conversation so messaging has a thread immediately.
+    await find_or_create_conversation_for_pair(
+        db, chw_id=current_user.id, member_id=member.id
+    )
+
+    await db.commit()
+
+    return CHWCreateMemberResponse(
+        id=member.id,
+        name=member.name,
+        email=member.email,
+    )
 
 
 # ─── Map Data ─────────────────────────────────────────────────────────────────

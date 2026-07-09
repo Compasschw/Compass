@@ -19,7 +19,7 @@ from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 from app.schemas.cin_config import validate_cin_for_carrier as _validate_chw_cin
 
@@ -590,3 +590,55 @@ class CHWMapDataResponse(BaseModel):
 
     members: list[MapMemberPin]
     resources: list[MapResourcePin]
+
+
+# ─── CHW-initiated member onboarding ─────────────────────────────────────────
+
+
+class CHWCreateMemberRequest(BaseModel):
+    """Body for POST /api/v1/chw/members — a CHW onboarding a brand-new member.
+
+    The CHW creates an account for a member who never had one and is
+    immediately wired to that CHW as their designated worker (via a matched
+    ServiceRequest + a shared Conversation) so messaging, scheduling, and
+    journeys work right away.
+
+    Login model (product decision — kept deliberately simple):
+    - The CHW supplies the member's ``email`` and a ``temp_password`` (min 8
+      chars). The CHW communicates that password to the member out-of-band
+      (verbally / in person). The member logs in with it and can change it
+      later. We do NOT build an email-invite / token flow here.
+
+    Pear-required demographics (DOB, sex, insurance, CIN, ZIP) are NOT
+    collected at this step — unlike the self-service /auth/register member
+    path. They can be completed afterward via the CHW "Edit demographics"
+    flow or by the member from their own profile, at which point the Pear
+    sync succeeds. This mirrors the OAuth-signup path, which also creates a
+    member with an incomplete profile.
+
+    ``name`` must contain a first AND last name (≥2 whitespace tokens) so the
+    downstream Pear billing payload is well-formed once demographics land.
+    """
+
+    email: EmailStr
+    temp_password: str = Field(..., min_length=8, description="Temporary password the CHW shares with the member")
+    name: str = Field(..., min_length=1)
+    phone: str | None = None
+
+    @field_validator("name")
+    @classmethod
+    def _require_first_and_last_name(cls, value: str) -> str:
+        tokens = [t for t in value.strip().split() if t]
+        if len(tokens) < 2:
+            raise ValueError("Member name must include both a first and last name")
+        return value.strip()
+
+
+class CHWCreateMemberResponse(BaseModel):
+    """Response for POST /api/v1/chw/members — the newly-created member."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+    email: str

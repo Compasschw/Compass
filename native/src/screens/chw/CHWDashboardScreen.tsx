@@ -26,7 +26,7 @@
  * chip — this is a perfect match. No primitive was modified.
  */
 
-import React, { useMemo, useCallback } from 'react';
+import React, { useMemo, useCallback, useState } from 'react';
 import {
   View,
   Text,
@@ -70,6 +70,7 @@ import { useRefreshControl } from '../../hooks/useRefreshControl';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 import { PressableMember } from '../../components/shared/PressableMember';
+import { AddMemberModal } from './AddMemberModal';
 
 import {
   AppShell,
@@ -428,6 +429,9 @@ export function CHWDashboardScreen(): React.JSX.Element {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const navigation = useNavigation<any>();
 
+  // Controls the "Add New Member" onboarding dialog opened from the header.
+  const [addMemberOpen, setAddMemberOpen] = useState(false);
+
   const firstName  = userName?.split(' ')[0] ?? 'there';
   const greeting   = morningGreeting(firstName);
   const todayLabel = formatTodayLabel();
@@ -656,7 +660,7 @@ export function CHWDashboardScreen(): React.JSX.Element {
 
             {/* Add New Member */}
             <PressableCard
-              onPress={() => navigation.navigate('CHWMembers' as never)}
+              onPress={() => setAddMemberOpen(true)}
               style={styles.newSessionBtn}
               accessibilityLabel="Add a new member"
             >
@@ -847,6 +851,10 @@ export function CHWDashboardScreen(): React.JSX.Element {
       >
         {screenContent}
       </AppShell>
+      <AddMemberModal
+        visible={addMemberOpen}
+        onClose={() => setAddMemberOpen(false)}
+      />
     </SafeAreaView>
   );
 }
