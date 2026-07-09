@@ -3662,6 +3662,62 @@ export function useChwMembers() {
   });
 }
 
+/** Payload for POST /chw/members — a CHW onboarding a brand-new member. */
+export interface CreateChwMemberPayload {
+  /** Member's full name — must include first AND last (backend enforces ≥2 tokens). */
+  name: string;
+  /** Member's login email. Duplicate → 400. */
+  email: string;
+  /** Optional contact phone (normalized to E.164 server-side). */
+  phone?: string;
+  /** Temporary password the CHW shares with the member (min 8 chars). */
+  tempPassword: string;
+}
+
+/** Response for POST /chw/members — the freshly-created member. */
+export interface CreatedChwMember {
+  id: string;
+  name: string;
+  email: string;
+}
+
+/**
+ * CHW mutation — onboard a brand-new member account wired to this CHW.
+ *
+ * POST /api/v1/chw/members. The backend creates the member User + MemberProfile,
+ * establishes the CHW↔member care relationship (matched ServiceRequest +
+ * Conversation) so messaging / scheduling / journeys work immediately, and
+ * returns the created member. On success we invalidate the roster so the new
+ * member appears without a manual refresh.
+ *
+ * Login model: the CHW supplies a temporary password and shares it with the
+ * member out-of-band; the member logs in via the normal flow and changes it
+ * later. Duplicate email surfaces as a 400 ApiError (handled by the caller).
+ */
+export function useCreateChwMember() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: CreateChwMemberPayload): Promise<CreatedChwMember> => {
+      const raw = await api<unknown>('/chw/members', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: payload.name,
+          email: payload.email,
+          phone: payload.phone ?? null,
+          temp_password: payload.tempPassword,
+        }),
+      });
+      return transformKeys<CreatedChwMember>(raw);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.chwMembers });
+      void qc.invalidateQueries({ queryKey: queryKeys.conversations });
+    },
+    // Intentionally no onError alert here — the AddMemberModal renders inline
+    // validation (e.g. duplicate-email 400) next to the form instead.
+  });
+}
+
 /**
  * CHW Resource-folder search.
  *
