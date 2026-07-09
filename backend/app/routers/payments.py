@@ -68,6 +68,19 @@ async def connect_onboarding(
     """
     from app.models.user import CHWProfile
 
+    # Stripe not configured (no STRIPE_SECRET_KEY) → the provider would hand back
+    # a placeholder onboarding URL that dead-ends in the app. Fail loudly instead
+    # so the CHW sees "payouts aren't set up yet" rather than a silent bounce to
+    # the dashboard, and so we never persist a placeholder acct_ id.
+    if not settings.stripe_secret_key:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Payouts aren't set up on Compass yet. This will be enabled soon — "
+                "please check back or contact support."
+            ),
+        )
+
     result = await db.execute(
         select(CHWProfile).where(CHWProfile.user_id == current_user.id)
     )
