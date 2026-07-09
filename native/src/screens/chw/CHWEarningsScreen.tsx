@@ -13,8 +13,12 @@
  * Session detail modal: tapping a row shows Member Name, Session Date,
  * Session Type, Units, Amount Earned, Payment Status.
  *
- * The Update Bank Account button opens Stripe Connect onboarding (unchanged
- * from the previous implementation).
+ * The bank-account button opens Stripe Connect onboarding via
+ * useConnectOnboardingLink (POST /payments/connect-onboarding). Its label
+ * and styling react to usePaymentsAccountStatus: a CHW who hasn't finished
+ * Stripe onboarding sees a prominent "Set up payouts with Stripe" CTA;
+ * once stripe_payouts_enabled is true it reads "Update bank account" in the
+ * quieter default style.
  */
 
 import React, { useState, useCallback, useMemo } from 'react';
@@ -48,6 +52,7 @@ import {
   useChwEarningSessions,
   useChwPayouts,
   useConnectOnboardingLink,
+  usePaymentsAccountStatus,
   type EarningsPeriod,
   type SessionEarningItem,
 } from '../../hooks/useApiQueries';
@@ -468,6 +473,13 @@ export function CHWEarningsScreen(): React.JSX.Element {
   const earningSessionsQuery = useChwEarningSessions(period);
   const payoutsQuery        = useChwPayouts(period);
   const connectOnboarding   = useConnectOnboardingLink();
+  const accountStatusQuery  = usePaymentsAccountStatus();
+
+  // Defaults to "connected" while status is loading so the header doesn't
+  // flash the urgent CTA before we know the real state. Once loaded, an
+  // account that hasn't finished Stripe onboarding gets the prominent
+  // "Set up payouts with Stripe" treatment instead of the quiet default.
+  const payoutsEnabled = accountStatusQuery.data?.payoutsEnabled ?? true;
 
   // ── Stripe Connect onboarding flow ────────────────────────────────────────
   const handleUpdateBankAccount = useCallback(() => {
@@ -524,16 +536,18 @@ export function CHWEarningsScreen(): React.JSX.Element {
     <View style={styles.headerRight}>
       <PeriodSelector value={period} onChange={setPeriod} />
       <TouchableOpacity
-        style={styles.updateBankBtn}
+        style={[styles.updateBankBtn, !payoutsEnabled && styles.setupPayoutsBtn]}
         onPress={handleUpdateBankAccount}
         disabled={connectOnboarding.isPending}
         accessibilityRole="button"
-        accessibilityLabel="Update bank account"
+        accessibilityLabel={payoutsEnabled ? 'Update bank account' : 'Set up payouts with Stripe'}
       >
         {connectOnboarding.isPending ? (
-          <ActivityIndicator size="small" color={tokens.textPrimary} />
+          <ActivityIndicator size="small" color={payoutsEnabled ? tokens.textPrimary : '#ffffff'} />
         ) : null}
-        <Text style={styles.updateBankBtnText}>Update bank account</Text>
+        <Text style={[styles.updateBankBtnText, !payoutsEnabled && styles.setupPayoutsBtnText]}>
+          {payoutsEnabled ? 'Update bank account' : 'Set up payouts with Stripe'}
+        </Text>
       </TouchableOpacity>
     </View>
   );
@@ -846,6 +860,18 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: tokens.textPrimary,
+  } as TextStyle,
+
+  // Prominent variant shown when the CHW hasn't finished Stripe onboarding
+  // yet (stripe_payouts_enabled === false) — matches Stripe's recommended
+  // "Set up payouts" call-to-action treatment.
+  setupPayoutsBtn: {
+    backgroundColor: tokens.emerald700,
+    borderColor: tokens.emerald700,
+  } as ViewStyle,
+
+  setupPayoutsBtnText: {
+    color: '#ffffff',
   } as TextStyle,
 
   // ── Summary card row ────────────────────────────────────────────────────────
