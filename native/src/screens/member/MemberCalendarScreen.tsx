@@ -28,6 +28,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  Alert,
   Platform,
   ScrollView,
   StatusBar,
@@ -68,6 +69,7 @@ import {
   useScheduleSession,
   useChwAvailableSlots,
   useMemberFacingCHWProfile,
+  useCancelSession,
   type SessionData,
 } from '../../hooks/useApiQueries';
 import { useRefreshControl } from '../../hooks/useRefreshControl';
@@ -902,23 +904,53 @@ interface SessionDetailsModalProps {
   now: Date;
   visible: boolean;
   onClose: () => void;
+  /** Member taps "Edit" on an upcoming session → reschedule flow in the parent. */
+  onEdit?: (session: SessionData) => void;
 }
 
 /**
- * Read-only session detail modal. Member POV: shows the CHW name + vertical.
- * No member-profile action and no scheduling/edit/cancel actions.
+ * Session detail modal (member POV): CHW name + vertical, plus Edit/Remove
+ * actions for the member's own upcoming (scheduled) sessions.
  */
 function SessionDetailsModal({
   session,
   now,
   visible,
   onClose,
+  onEdit,
 }: SessionDetailsModalProps): React.JSX.Element {
+  // Hooks must run unconditionally, before the early return below.
+  const cancelSession = useCancelSession();
+
   if (!session) return <View />;
 
+  const activeSession = session; // non-null past this point
   const badge = deriveBadgeStatus(session, now);
   const badgeStyle = BADGE_COLORS[badge];
   const verticalText = verticalLabel(session.vertical);
+  // Only a still-scheduled session can be edited/removed (backend enforces 409).
+  const canModify = session.status === 'scheduled';
+
+  const handleRemove = (): void => {
+    const doRemove = async (): Promise<void> => {
+      try {
+        await cancelSession.mutateAsync(activeSession.id);
+        onClose();
+      } catch {
+        // useCancelSession surfaces the error via its onError alert.
+      }
+    };
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      if (window.confirm('Remove this session? Your CHW will be notified.')) {
+        void doRemove();
+      }
+    } else {
+      Alert.alert('Remove session?', 'Your CHW will be notified.', [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Remove', style: 'destructive', onPress: () => void doRemove() },
+      ]);
+    }
+  };
 
   return (
     <Modal
@@ -1035,6 +1067,37 @@ function SessionDetailsModal({
               ) : null}
             </View>
           </ScrollView>
+
+          {/* Edit / Remove — only for the member's own upcoming sessions. */}
+          {canModify && (
+            <View style={detailModalStyles.actionFooter}>
+              <TouchableOpacity
+                style={[
+                  detailModalStyles.removeBtn,
+                  cancelSession.isPending && { opacity: 0.6 },
+                ]}
+                onPress={handleRemove}
+                disabled={cancelSession.isPending}
+                accessibilityRole="button"
+                accessibilityLabel="Remove session"
+              >
+                <Text style={detailModalStyles.removeBtnText}>
+                  {cancelSession.isPending ? 'Removing…' : 'Remove'}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={detailModalStyles.editBtn}
+                onPress={() => {
+                  onClose();
+                  onEdit?.(activeSession);
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Edit session"
+              >
+                <Text style={detailModalStyles.editBtnText}>Edit</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
       </View>
     </Modal>
@@ -1042,6 +1105,45 @@ function SessionDetailsModal({
 }
 
 const detailModalStyles = StyleSheet.create({
+  actionFooter: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.xl,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.xl,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+  },
+  removeBtn: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    backgroundColor: '#FEF2F2',
+    minHeight: 44,
+  },
+  removeBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#b91c1c',
+  },
+  editBtn: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    borderRadius: radius.md,
+    backgroundColor: '#2563EB',
+    minHeight: 44,
+  },
+  editBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
   overlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.45)',
@@ -1337,6 +1439,19 @@ export function MemberCalendarScreen(): React.JSX.Element {
     return withChw ? { id: withChw.chwId, name: withChw.chwName ?? 'your CHW' } : null;
   }, [liveSessions]);
   const [isScheduleOpen, setIsScheduleOpen] = useState(false);
+  // Session being rescheduled via "Edit". On a successful re-book the old slot
+  // is cancelled. null = a fresh booking.
+  const [rescheduleSession, setRescheduleSession] = useState<SessionData | null>(null);
+
+  const handleEditSession = useCallback((s: SessionData) => {
+    setRescheduleSession(s);
+    setIsScheduleOpen(true);
+  }, []);
+
+  const handleScheduleClose = useCallback(() => {
+    setIsScheduleOpen(false);
+    setRescheduleSession(null);
+  }, []);
 
   // Assigned CHW's working hours → grey out off-days/off-hours on the grid.
   const chwProfileQuery = useMemberFacingCHWProfile(assignedChw?.id ?? '');
@@ -1653,13 +1768,15 @@ export function MemberCalendarScreen(): React.JSX.Element {
           now={nowRef}
           visible={isDetailModalOpen}
           onClose={() => setIsDetailModalOpen(false)}
+          onEdit={handleEditSession}
         />
         {assignedChw && (
           <MemberScheduleModal
             visible={isScheduleOpen}
-            onClose={() => setIsScheduleOpen(false)}
+            onClose={handleScheduleClose}
             chwId={assignedChw.id}
             chwName={assignedChw.name}
+            replaceSessionId={rescheduleSession?.id}
           />
         )}
       </AppShell>
@@ -1736,19 +1853,21 @@ export function MemberCalendarScreen(): React.JSX.Element {
         </PageWrap>
       </ScrollView>
 
-      {/* Read-only session details modal */}
+      {/* Session details modal (with Edit/Remove for upcoming sessions) */}
       <SessionDetailsModal
         session={detailSession}
         now={nowRef}
         visible={isDetailModalOpen}
         onClose={() => setIsDetailModalOpen(false)}
+        onEdit={handleEditSession}
       />
       {assignedChw && (
         <MemberScheduleModal
           visible={isScheduleOpen}
-          onClose={() => setIsScheduleOpen(false)}
+          onClose={handleScheduleClose}
           chwId={assignedChw.id}
           chwName={assignedChw.name}
+          replaceSessionId={rescheduleSession?.id}
         />
       )}
     </AppShell>
@@ -1762,20 +1881,26 @@ interface MemberScheduleModalProps {
   onClose: () => void;
   chwId: string;
   chwName: string;
+  /** When set (Edit flow), the old session is cancelled after the re-book. */
+  replaceSessionId?: string;
 }
 
 /**
  * Member-side "Schedule a session" — mirrors the CHW ScheduleSessionModal but
  * books with the member's own CHW (no member picker). The booking is created as
  * pending (a request the CHW confirms) via POST /sessions/schedule with chw_id.
+ * In the Edit/reschedule flow (`replaceSessionId`), the old session is cancelled
+ * only after the new one books successfully — so nothing is lost if it fails.
  */
 function MemberScheduleModal({
   visible,
   onClose,
   chwId,
   chwName,
+  replaceSessionId,
 }: MemberScheduleModalProps): React.JSX.Element {
   const { mutateAsync, isPending } = useScheduleSession();
+  const cancelOldSession = useCancelSession();
   const [mode, setMode] = useState<'in_person' | 'virtual' | 'phone'>('in_person');
   const [dateInput, setDateInput] = useState<string>(() => {
     const t = new Date();
@@ -1818,17 +1943,29 @@ function MemberScheduleModal({
         mode,
         schedulingStatus: 'pending',
       });
+      // Reschedule: only after the new booking succeeds do we cancel the old
+      // slot, so a failure never leaves the member with no session.
+      if (replaceSessionId) {
+        try {
+          await cancelOldSession.mutateAsync(replaceSessionId);
+        } catch {
+          // Non-fatal — the new session booked; the stale one can be removed
+          // manually. cancelOldSession surfaces its own error alert.
+        }
+      }
       onClose();
     } catch {
       // useScheduleSession surfaces the error via its onError alert.
     }
-  }, [selectedSlot, mode, chwId, mutateAsync, onClose]);
+  }, [selectedSlot, mode, chwId, mutateAsync, replaceSessionId, cancelOldSession, onClose]);
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={scheduleStyles.overlay}>
         <View style={scheduleStyles.card}>
-          <Text style={scheduleStyles.title}>Schedule a session</Text>
+          <Text style={scheduleStyles.title}>
+            {replaceSessionId ? 'Reschedule session' : 'Schedule a session'}
+          </Text>
           <Text style={scheduleStyles.sub}>with {chwName}</Text>
 
           <Text style={scheduleStyles.label}>Date</Text>

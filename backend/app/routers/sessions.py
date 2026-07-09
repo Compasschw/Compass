@@ -312,6 +312,56 @@ async def decline_session(
     })
 
 
+@router.patch("/{session_id}/cancel", response_model=SessionResponse)
+async def cancel_session(
+    session_id: UUID,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SessionResponse:
+    """Either participant (member or CHW) cancels a scheduled session.
+
+    Powers the member's "Remove" action on their own appointment (and the
+    cancel half of a reschedule). Marks the session ``cancelled`` and posts a
+    notification to the shared thread so the other party is informed. Only a
+    participant on the session (or an admin) may act — a non-participant gets
+    404 so session existence isn't leaked. 409 when the session isn't
+    ``scheduled`` (e.g. already completed/cancelled/in progress).
+    """
+    session = await db.get(Session, session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    is_participant = current_user.id in (session.member_id, session.chw_id)
+    if not (is_participant or current_user.role == "admin"):
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.status != "scheduled":
+        raise HTTPException(
+            status_code=409, detail="Only a scheduled session can be cancelled."
+        )
+
+    session.status = "cancelled"
+    if session.conversation_id is not None:
+        from app.models.conversation import Message
+
+        db.add(
+            Message(
+                conversation_id=session.conversation_id,
+                sender_id=current_user.id,
+                body=f"🚫 The session for {_scheduled_at_label(session)} was cancelled.",
+                type="text",
+            )
+        )
+    await db.commit()
+    await db.refresh(session)
+    from app.models.user import User as _User
+    chw = await db.get(_User, session.chw_id)
+    member = await db.get(_User, session.member_id)
+    return SessionResponse.model_validate({
+        **session.__dict__,
+        "chw_name": chw.name if chw else None,
+        "member_name": member.name if member else None,
+    })
+
+
 @router.delete("/{session_id}", status_code=204)
 async def delete_session(
     session_id: UUID,
