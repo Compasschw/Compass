@@ -12,7 +12,7 @@ import { Platform } from 'react-native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
-import { api, getTokens } from '../api/client';
+import { ApiError, api, getTokens } from '../api/client';
 import { transformKeys, toSnakeCase } from '../utils/caseTransform';
 import { showAlert } from '../utils/showAlert';
 import { getSessionAISummary, type AISummaryResponse } from '../api/sessions';
@@ -1724,6 +1724,13 @@ export function useConnectOnboardingLink() {
       void qc.invalidateQueries({ queryKey: ['payments', 'account-status'] });
     },
     onError: (error: Error) => {
+      // 503 = Stripe payouts aren't configured on the platform yet. This is an
+      // expected pre-launch state, not a failure — show the server's friendly
+      // message with a neutral title instead of alarming "Something went wrong".
+      if (error instanceof ApiError && error.status === 503) {
+        showAlert('Payouts not available yet', error.detail);
+        return;
+      }
       showAlert('Something went wrong', error?.message ?? 'Please try again.');
     },
   });
