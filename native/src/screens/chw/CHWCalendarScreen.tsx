@@ -86,8 +86,10 @@ const DAY_LABELS_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 /** Hours displayed in the week/day view grid (8 AM – 5 PM inclusive). */
 const WEEK_VIEW_HOURS = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
 
-/** Height in px for a single 1-hour slot in the week grid. */
-const SLOT_HEIGHT = 60;
+/** Height in px for a single 1-hour slot in the week grid. Taller so 30-minute
+ *  session blocks (SLOT_HEIGHT/2 = 48px) are easy to read; a lighter divider
+ *  line marks the :30 half-hour increment. */
+const SLOT_HEIGHT = 96;
 
 type CalendarViewMode = 'day' | 'week' | 'month';
 
@@ -454,7 +456,7 @@ function WeekViewGrid({
 
           return (
             <View key={key} style={[weekStyles.dayColumn, isToday && weekStyles.dayColumnToday]}>
-              {/* Hour grid lines — greyed outside the CHW's working hours. */}
+              {/* Hour grid lines with a lighter :30 half-hour divider. */}
               {WEEK_VIEW_HOURS.map((hour) => {
                 const unavailable =
                   availabilityWindows !== undefined &&
@@ -463,7 +465,9 @@ function WeekViewGrid({
                   <View
                     key={hour}
                     style={[weekStyles.hourLine, unavailable && weekStyles.hourUnavailable]}
-                  />
+                  >
+                    <View style={weekStyles.halfHourLine} />
+                  </View>
                 );
               })}
               {/* Absolute-position session cards */}
@@ -548,6 +552,15 @@ const weekStyles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#F3F4F6',
   },
+  // Lighter divider at the :30 half-hour mark inside each hour cell.
+  halfHourLine: {
+    position: 'absolute',
+    top: SLOT_HEIGHT / 2,
+    left: 0,
+    right: 0,
+    height: 1,
+    backgroundColor: '#F9FAFB',
+  },
   // Outside the CHW's working hours.
   hourUnavailable: {
     backgroundColor: '#F3F4F6',
@@ -610,7 +623,9 @@ function DayViewGrid({
               <View
                 key={hour}
                 style={[weekStyles.hourLine, unavailable && weekStyles.hourUnavailable]}
-              />
+              >
+                <View style={weekStyles.halfHourLine} />
+              </View>
             );
           })}
           <View style={[weekStyles.cardsLayer, { height: totalGridHeight }]}>
@@ -1900,6 +1915,19 @@ export function CHWCalendarScreen(): React.JSX.Element {
   const allSessions = rawSessions ?? [];
   const allMembers = rawMembers ?? [];
 
+  // Member-requested sessions awaiting this CHW's approval → shown as a list
+  // under the calendar (soonest first).
+  const pendingRequests = useMemo(
+    () =>
+      allSessions
+        .filter((s) => s.status === 'scheduled' && s.schedulingStatus === 'pending')
+        .sort(
+          (a, b) =>
+            new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime(),
+        ),
+    [allSessions],
+  );
+
   const sessionsByDate = useMemo(() => groupSessionsByDate(allSessions), [allSessions]);
 
   // Now reference — stable within a render pass for badge derivation.
@@ -2146,6 +2174,8 @@ export function CHWCalendarScreen(): React.JSX.Element {
           <Card style={webStyles.calendarCard}>
             {calendarContent}
           </Card>
+
+          <PendingRequestsList requests={pendingRequests} />
         </View>
 
         {/* Session Details modal */}
@@ -2191,6 +2221,8 @@ export function CHWCalendarScreen(): React.JSX.Element {
         <View style={mainStyles.calendarCard}>
           {calendarContent}
         </View>
+
+        <PendingRequestsList requests={pendingRequests} />
       </ScrollView>
 
       {/* Session Details modal */}
@@ -2422,5 +2454,143 @@ const mainStyles = StyleSheet.create({
   monthBadgeText: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 10,
+  },
+});
+
+// ─── Pending requests list (under the calendar) ───────────────────────────────
+
+interface PendingRequestsListProps {
+  requests: SessionData[];
+}
+
+/**
+ * Member-requested (pending) sessions awaiting this CHW's approval, listed under
+ * the calendar. Each row can be Approved (→ confirmed) or Declined (→ cancelled)
+ * inline via useConfirmSession / useDeclineSession, which post a message to the
+ * shared thread and refresh both calendars.
+ */
+function PendingRequestsList({
+  requests,
+}: PendingRequestsListProps): React.JSX.Element | null {
+  const confirmSession = useConfirmSession();
+  const declineSession = useDeclineSession();
+  const busy = confirmSession.isPending || declineSession.isPending;
+
+  if (requests.length === 0) return null;
+
+  return (
+    <Card style={pendingStyles.card}>
+      <Text style={pendingStyles.title}>Pending Requests ({requests.length})</Text>
+      <Text style={pendingStyles.subtitle}>
+        Member-requested sessions awaiting your approval.
+      </Text>
+      {requests.map((r) => (
+        <View key={r.id} style={pendingStyles.row}>
+          <View style={pendingStyles.info}>
+            <Text style={pendingStyles.name} numberOfLines={1}>
+              {r.memberName ?? 'Member'}
+            </Text>
+            <Text style={pendingStyles.meta} numberOfLines={2}>
+              {formatDateLabel(r.scheduledAt)} ·{' '}
+              {formatTimeRange(r.scheduledAt, r.scheduledEndAt)} ·{' '}
+              {sessionModeLabel(r.mode)}
+            </Text>
+          </View>
+          <View style={pendingStyles.actions}>
+            <TouchableOpacity
+              style={[pendingStyles.declineBtn, busy && { opacity: 0.6 }]}
+              disabled={busy}
+              onPress={() => {
+                void declineSession.mutateAsync(r.id).catch(() => {});
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={`Decline request from ${r.memberName ?? 'member'}`}
+            >
+              <Text style={pendingStyles.declineText}>Decline</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[pendingStyles.approveBtn, busy && { opacity: 0.6 }]}
+              disabled={busy}
+              onPress={() => {
+                void confirmSession.mutateAsync(r.id).catch(() => {});
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={`Approve request from ${r.memberName ?? 'member'}`}
+            >
+              <Text style={pendingStyles.approveText}>Approve</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ))}
+    </Card>
+  );
+}
+
+const pendingStyles = StyleSheet.create({
+  card: {
+    marginTop: spacing.lg,
+    padding: spacing.lg,
+  },
+  title: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 16,
+    color: '#1E3320',
+  },
+  subtitle: {
+    fontSize: 13,
+    color: tokens.textSecondary,
+    marginTop: 2,
+    marginBottom: spacing.sm,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingVertical: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+    flexWrap: 'wrap',
+  },
+  info: {
+    flex: 1,
+    minWidth: 160,
+  },
+  name: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: tokens.textPrimary,
+  },
+  meta: {
+    fontSize: 12,
+    color: tokens.textSecondary,
+    marginTop: 2,
+  },
+  actions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  declineBtn: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 8,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    backgroundColor: '#FEF2F2',
+  },
+  declineText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#b91c1c',
+  },
+  approveBtn: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 8,
+    borderRadius: radius.md,
+    backgroundColor: tokens.primary,
+  },
+  approveText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
 });
