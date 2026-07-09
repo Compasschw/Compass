@@ -401,10 +401,20 @@ async def get_chw_member_facing_profile(
     if chw_profile is not None and chw_profile.zip_code:
         service_area_zips = [chw_profile.zip_code]
 
-    # ── Available days from availability_windows JSONB ────────────────────────
-    available_days = _extract_available_days(
-        chw_profile.availability_windows if chw_profile else None
+    # ── Available days + effective hours from availability_windows JSONB ──────
+    from app.services.availability import (  # noqa: PLC0415
+        DEFAULT_WINDOWS,
+        validate_and_normalize,
     )
+
+    raw_windows = chw_profile.availability_windows if chw_profile else None
+    available_days = _extract_available_days(raw_windows)
+    try:
+        effective_windows = (
+            validate_and_normalize(raw_windows) if raw_windows else dict(DEFAULT_WINDOWS)
+        )
+    except Exception:  # noqa: BLE001 — malformed legacy data → safe default
+        effective_windows = dict(DEFAULT_WINDOWS)
 
     # ── Shared session count (member-scoped) ──────────────────────────────────
     # Count ALL sessions between this CHW and the calling member — any status.
@@ -431,6 +441,7 @@ async def get_chw_member_facing_profile(
         modality=modality,
         service_area_zips=service_area_zips,
         available_days=available_days,
+        availability_windows=effective_windows,
         shared_session_count=shared_session_count,
         # CHW's avatar lives on the User row; presign for the member client so
         # the member-facing CHW profile shows the photo the CHW set.

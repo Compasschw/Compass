@@ -86,6 +86,11 @@ class CHWMemberFacingProfile(BaseModel):
     available_days: list[str]
     """Day abbreviations from availability_windows JSONB keys. E.g. ["mon","tue"]."""
 
+    availability_windows: dict[str, str] = {}
+    """Effective weekly hours the member can book within — {"mon": "09:00-17:00", ...}.
+    Falls back to the Mon–Fri 9–5 default when the CHW hasn't set hours, matching
+    the slot endpoint. Drives the availability shading on the member calendar."""
+
     shared_session_count: int
     """Sessions this calling member has had with this CHW (any status)."""
 
