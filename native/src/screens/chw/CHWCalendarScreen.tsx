@@ -54,6 +54,7 @@ import {
 import {
   useSessions,
   useChwMembers,
+  useChwAvailability,
   useScheduleSession,
   useConfirmSession,
   useDeclineSession,
@@ -61,6 +62,10 @@ import {
   type MembersRosterItem,
 } from '../../hooks/useApiQueries';
 import { useRefreshControl } from '../../hooks/useRefreshControl';
+import {
+  isHourAvailable,
+  type AvailabilityWindows,
+} from '../../utils/availabilityShading';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 
@@ -384,6 +389,8 @@ interface WeekViewGridProps {
   today: { year: number; month: number; day: number };
   now: Date;
   onSessionPress: (session: SessionData) => void;
+  /** The CHW's own availability — cells outside these hours/days are greyed. */
+  availabilityWindows?: AvailabilityWindows;
 }
 
 /**
@@ -397,6 +404,7 @@ function WeekViewGrid({
   today,
   now,
   onSessionPress,
+  availabilityWindows,
 }: WeekViewGridProps): React.JSX.Element {
   const totalGridHeight = WEEK_VIEW_HOURS.length * SLOT_HEIGHT;
 
@@ -447,10 +455,18 @@ function WeekViewGrid({
 
           return (
             <View key={key} style={[weekStyles.dayColumn, isToday && weekStyles.dayColumnToday]}>
-              {/* Hour grid lines */}
-              {WEEK_VIEW_HOURS.map((hour) => (
-                <View key={hour} style={weekStyles.hourLine} />
-              ))}
+              {/* Hour grid lines — greyed outside the CHW's working hours. */}
+              {WEEK_VIEW_HOURS.map((hour) => {
+                const unavailable =
+                  availabilityWindows !== undefined &&
+                  !isHourAvailable(availabilityWindows, date, hour);
+                return (
+                  <View
+                    key={hour}
+                    style={[weekStyles.hourLine, unavailable && weekStyles.hourUnavailable]}
+                  />
+                );
+              })}
               {/* Absolute-position session cards */}
               <View style={[weekStyles.cardsLayer, { height: totalGridHeight }]}>
                 {daySessions.map((session) => (
@@ -533,6 +549,10 @@ const weekStyles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#F3F4F6',
   },
+  // Outside the CHW's working hours.
+  hourUnavailable: {
+    backgroundColor: '#F3F4F6',
+  },
   cardsLayer: {
     position: 'absolute',
     top: 0,
@@ -554,9 +574,17 @@ interface DayViewGridProps {
   sessions: SessionData[];
   now: Date;
   onSessionPress: (session: SessionData) => void;
+  /** The CHW's own availability — cells outside these hours are greyed. */
+  availabilityWindows?: AvailabilityWindows;
 }
 
-function DayViewGrid({ date, sessions, now, onSessionPress }: DayViewGridProps): React.JSX.Element {
+function DayViewGrid({
+  date,
+  sessions,
+  now,
+  onSessionPress,
+  availabilityWindows,
+}: DayViewGridProps): React.JSX.Element {
   const totalGridHeight = WEEK_VIEW_HOURS.length * SLOT_HEIGHT;
 
   return (
@@ -575,9 +603,17 @@ function DayViewGrid({ date, sessions, now, onSessionPress }: DayViewGridProps):
           ))}
         </View>
         <View style={dayViewStyles.column}>
-          {WEEK_VIEW_HOURS.map((hour) => (
-            <View key={hour} style={weekStyles.hourLine} />
-          ))}
+          {WEEK_VIEW_HOURS.map((hour) => {
+            const unavailable =
+              availabilityWindows !== undefined &&
+              !isHourAvailable(availabilityWindows, date, hour);
+            return (
+              <View
+                key={hour}
+                style={[weekStyles.hourLine, unavailable && weekStyles.hourUnavailable]}
+              />
+            );
+          })}
           <View style={[weekStyles.cardsLayer, { height: totalGridHeight }]}>
             {sessions.map((session) => (
               <SessionCard
@@ -1828,6 +1864,12 @@ const TODAY_DAY = NOW.getDate();
  */
 export function CHWCalendarScreen(): React.JSX.Element {
   const { data: rawSessions, isLoading, error, refetch } = useSessions();
+
+  // The CHW's own working hours → grey out off-days/off-hours on the grid.
+  const availabilityQuery = useChwAvailability();
+  const ownWindows = availabilityQuery.data?.availabilityWindows as
+    | AvailabilityWindows
+    | undefined;
   const { data: rawMembers, isLoading: isLoadingMembers } = useChwMembers();
   const refresh = useRefreshControl([refetch]);
   const navigation = useNavigation();
@@ -2027,6 +2069,7 @@ export function CHWCalendarScreen(): React.JSX.Element {
           today={{ year: TODAY_YEAR, month: TODAY_MONTH, day: TODAY_DAY }}
           now={nowRef}
           onSessionPress={handleSessionPress}
+          availabilityWindows={ownWindows}
         />
       ) : viewMode === 'day' ? (
         <DayViewGrid
@@ -2034,6 +2077,7 @@ export function CHWCalendarScreen(): React.JSX.Element {
           sessions={todaySessions}
           now={nowRef}
           onSessionPress={handleSessionPress}
+          availabilityWindows={ownWindows}
         />
       ) : (
         <>
