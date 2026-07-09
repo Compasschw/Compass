@@ -1101,6 +1101,26 @@ export function useDeclineSession() {
   });
 }
 
+/**
+ * Either participant cancels a scheduled session (the member "Remove" action,
+ * and the cancel half of a reschedule). PATCH /sessions/{id}/cancel.
+ */
+export function useCancelSession() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (sessionId: string): Promise<SessionData> => {
+      const raw = await api<unknown>(`/sessions/${sessionId}/cancel`, { method: 'PATCH' });
+      return transformKeys<SessionData>(raw);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.sessions });
+    },
+    onError: (error: Error) => {
+      showAlert('Failed to remove session', error?.message ?? 'Please try again.');
+    },
+  });
+}
+
 /** The CHW's open 30-min slots for a day (ISO-8601 UTC), for member scheduling. */
 export interface AvailableSlotsResponse {
   date: string;

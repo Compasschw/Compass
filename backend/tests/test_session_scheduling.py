@@ -229,3 +229,36 @@ async def _thread_has_message(client: AsyncClient, tokens: dict, needle: str) ->
     )
     assert msgs.status_code == 200, msgs.text
     return any(needle.lower() in m["body"].lower() for m in msgs.json())
+
+
+@pytest.mark.asyncio
+async def test_member_cancels_own_session(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    """A member removes their own scheduled session → cancelled + thread message.
+    A non-participant cannot (404)."""
+    sid = await _member_pending_session_id(client, member_tokens, chw_tokens)
+
+    # A stranger CHW (not on the session) cannot cancel it.
+    stranger = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "stranger_cancel@example.com",
+            "password": "testpass123",
+            "name": "Stranger CHW",
+            "role": "chw",
+        },
+    )
+    assert stranger.status_code == 201, stranger.text
+    res = await client.patch(
+        f"/api/v1/sessions/{sid}/cancel", headers=auth_header(stranger.json())
+    )
+    assert res.status_code == 404, res.text
+
+    # The member cancels their own session.
+    res = await client.patch(
+        f"/api/v1/sessions/{sid}/cancel", headers=auth_header(member_tokens)
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["status"] == "cancelled"
+    assert await _thread_has_message(client, member_tokens, "cancelled")
