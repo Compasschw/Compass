@@ -92,6 +92,10 @@ import {
   ChevronRight,
   MoreVertical,
   Trash2,
+  Pin,
+  Archive,
+  Bell,
+  BellOff,
 } from 'lucide-react-native';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { CHWSessionsStackParamList } from '../../navigation/CHWTabNavigator';
@@ -124,6 +128,7 @@ import {
   useSoftDeleteConversation,
   useToggleConversationPin,
   useToggleConversationArchive,
+  useToggleSessionMute,
   useSession as useSessionHook,
   type ConversationData,
   type MessageData,
@@ -197,6 +202,44 @@ function writeStoredWidth(key: string, value: number): void {
   if (typeof window === 'undefined') return;
   try {
     window.localStorage.setItem(key, String(value));
+  } catch {
+    // Storage unavailable — ignore.
+  }
+}
+
+/** localStorage key for the CHW's muted conversation ids. */
+const LS_KEY_CHW_MUTED = 'compass:chwMessages:mutedConvIds';
+
+/**
+ * Reads the set of muted conversation ids from localStorage.
+ *
+ * The inbox is conversation-based while mute state lives on the underlying
+ * session (``muted_at``), and the conversation-list payload does not surface
+ * that field — so the row-level muted indicator is driven from this locally
+ * persisted set (best-effort mirrored to the backend on toggle). Returns an
+ * empty set in SSR context or when the stored value is missing / malformed.
+ */
+function readStoredMutedIds(): Set<string> {
+  if (typeof window === 'undefined') return new Set();
+  try {
+    const stored = window.localStorage.getItem(LS_KEY_CHW_MUTED);
+    if (stored === null) return new Set();
+    const parsed: unknown = JSON.parse(stored);
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.filter((id): id is string => typeof id === 'string'));
+  } catch {
+    return new Set();
+  }
+}
+
+/**
+ * Persists the set of muted conversation ids to localStorage.
+ * Silently swallows errors (e.g. private-browsing quota exceptions).
+ */
+function writeStoredMutedIds(ids: Set<string>): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(LS_KEY_CHW_MUTED, JSON.stringify([...ids]));
   } catch {
     // Storage unavailable — ignore.
   }
@@ -513,15 +556,21 @@ function CalendarNavigationButton(): React.JSX.Element {
 interface ThreadRowProps {
   readonly conversation: ConversationData;
   readonly isActive: boolean;
+  /** True when the CHW has muted this thread (unread badge suppressed). */
+  readonly isMuted: boolean;
   readonly onSelect: (conv: ConversationData) => void;
   readonly onDelete: (conv: ConversationData) => void;
+  readonly onTogglePin: (conv: ConversationData) => void;
+  readonly onToggleArchive: (conv: ConversationData) => void;
+  readonly onToggleMute: (conv: ConversationData) => void;
 }
 
 /**
  * A single row in the thread list pane.
  * Shows: 36px avatar, member name, engagement Pill, last message preview,
- * timestamp (tabular mono), unread dot, and a ⋯ overflow button that
- * reveals a "Delete conversation" action.
+ * timestamp (tabular mono), unread dot, an optional bell-off (muted) icon,
+ * and a ⋯ overflow button that reveals Pin / Archive / Mute / Delete actions
+ * (each toggling based on the thread's current state).
  *
  * Engagement pill is derived from conv.unreadCount and conv.lastMessageAt —
  * no per-row message fetch. This avoids N parallel polls in the thread list.
@@ -529,8 +578,12 @@ interface ThreadRowProps {
 function ThreadRow({
   conversation: conv,
   isActive,
+  isMuted,
   onSelect,
   onDelete,
+  onTogglePin,
+  onToggleArchive,
+  onToggleMute,
 }: ThreadRowProps): React.JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false);
   const name = conv.memberName ?? 'Unknown Member';
@@ -579,6 +632,13 @@ function ThreadRow({
             <Text style={styles.threadName} numberOfLines={1}>
               {name}
             </Text>
+            {isMuted ? (
+              <BellOff
+                size={12}
+                color={tokens.textMuted}
+                accessibilityLabel="Muted"
+              />
+            ) : null}
             <Text style={[styles.threadTimestamp, numerals.tabular]}>{timestamp}</Text>
           </View>
           <View style={styles.threadEngagementRow}>
@@ -591,7 +651,7 @@ function ThreadRow({
           </Text>
         </View>
 
-        {conv.unreadCount > 0 ? <View style={styles.unreadIndicator} /> : null}
+        {conv.unreadCount > 0 && !isMuted ? <View style={styles.unreadIndicator} /> : null}
 
         {/* Overflow menu trigger */}
         <TouchableOpacity
@@ -618,6 +678,57 @@ function ThreadRow({
             accessibilityLabel="Close menu"
           />
           <View style={styles.threadMenu} accessibilityRole="menu">
+            <TouchableOpacity
+              style={styles.threadMenuItem}
+              onPress={() => {
+                setMenuOpen(false);
+                onTogglePin(conv);
+              }}
+              accessibilityRole="menuitem"
+              accessibilityLabel={conv.pinnedAt ? 'Unpin conversation' : 'Pin conversation'}
+            >
+              <Pin size={14} color={tokens.textSecondary} />
+              <Text style={styles.threadMenuItemText}>
+                {conv.pinnedAt ? 'Unpin' : 'Pin'}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.threadMenuItem}
+              onPress={() => {
+                setMenuOpen(false);
+                onToggleArchive(conv);
+              }}
+              accessibilityRole="menuitem"
+              accessibilityLabel={
+                conv.archivedAt ? 'Unarchive conversation' : 'Archive conversation'
+              }
+            >
+              <Archive size={14} color={tokens.textSecondary} />
+              <Text style={styles.threadMenuItemText}>
+                {conv.archivedAt ? 'Unarchive' : 'Archive'}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.threadMenuItem}
+              onPress={() => {
+                setMenuOpen(false);
+                onToggleMute(conv);
+              }}
+              accessibilityRole="menuitem"
+              accessibilityLabel={isMuted ? 'Unmute conversation' : 'Mute conversation'}
+            >
+              {isMuted ? (
+                <Bell size={14} color={tokens.textSecondary} />
+              ) : (
+                <BellOff size={14} color={tokens.textSecondary} />
+              )}
+              <Text style={styles.threadMenuItemText}>
+                {isMuted ? 'Unmute' : 'Mute'}
+              </Text>
+            </TouchableOpacity>
+
             <TouchableOpacity
               style={styles.threadMenuItemDanger}
               onPress={() => {
@@ -669,6 +780,54 @@ function ThreadListPane({
 
   const togglePin = useToggleConversationPin();
   const toggleArchive = useToggleConversationArchive();
+  const toggleMute = useToggleSessionMute();
+
+  // Muted conversation ids. The inbox is conversation-based but mute state
+  // lives on the underlying session, and the conversation-list payload does
+  // not surface it — so the locally persisted set is the source of truth for
+  // the row indicator + badge suppression, and we best-effort mirror the
+  // toggle to the backend session-mute endpoint.
+  const [mutedConvIds, setMutedConvIds] = useState<Set<string>>(() =>
+    readStoredMutedIds(),
+  );
+
+  const handleTogglePin = useCallback(
+    (conv: ConversationData): void => {
+      void togglePin.mutateAsync({ conversationId: conv.id, pinned: !conv.pinnedAt });
+    },
+    [togglePin],
+  );
+
+  const handleToggleArchive = useCallback(
+    (conv: ConversationData): void => {
+      void toggleArchive.mutateAsync({
+        conversationId: conv.id,
+        archived: !conv.archivedAt,
+      });
+    },
+    [toggleArchive],
+  );
+
+  const handleToggleMute = useCallback(
+    (conv: ConversationData): void => {
+      const willMute = !mutedConvIds.has(conv.id);
+      setMutedConvIds((prev) => {
+        const next = new Set(prev);
+        if (willMute) next.add(conv.id);
+        else next.delete(conv.id);
+        writeStoredMutedIds(next);
+        return next;
+      });
+      // Persist to the backend when the conversation has an underlying session
+      // (originating or active). Best-effort — the local set already drives the
+      // UI, so a session-less thread still mutes visually.
+      const sessionId = conv.sessionId ?? conv.activeSessionId;
+      if (sessionId) {
+        void toggleMute.mutateAsync({ sessionId, muted: willMute });
+      }
+    },
+    [mutedConvIds, toggleMute],
+  );
 
   const withMember = useMemo(
     () => conversations.filter((c) => !!c.memberName),
@@ -724,10 +883,13 @@ function ThreadListPane({
   const unreadTotal = useMemo(
     () =>
       withMember.reduce(
-        (sum, c) => (c.archivedAt ? sum : sum + Math.max(0, c.unreadCount ?? 0)),
+        (sum, c) =>
+          c.archivedAt || mutedConvIds.has(c.id)
+            ? sum
+            : sum + Math.max(0, c.unreadCount ?? 0),
         0,
       ),
-    [withMember],
+    [withMember, mutedConvIds],
   );
 
   const tabs: { key: ThreadFilterTab; label: string }[] = [
@@ -846,8 +1008,12 @@ function ThreadListPane({
                 <ThreadRow
                   conversation={conv}
                   isActive={selectedConversationId === conv.id}
+                  isMuted={mutedConvIds.has(conv.id)}
                   onSelect={onSelectConversation}
                   onDelete={onDeleteConversation}
+                  onTogglePin={handleTogglePin}
+                  onToggleArchive={handleToggleArchive}
+                  onToggleMute={handleToggleMute}
                 />
               </SwipeableThreadRow>
             ))}
@@ -3665,6 +3831,20 @@ const styles = StyleSheet.create({
     zIndex: 100,
     ...(shadows.elevated as object),
   } as ViewStyle,
+
+  threadMenuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 11,
+  } as ViewStyle,
+
+  threadMenuItemText: {
+    fontSize: 13,
+    color: tokens.textPrimary,
+    fontWeight: '500',
+  } as TextStyle,
 
   threadMenuItemDanger: {
     flexDirection: 'row',

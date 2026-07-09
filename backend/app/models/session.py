@@ -77,6 +77,8 @@ class Session(Base):
     #     still retrievable via the "Show archived" filter toggle.
     #   - deleted_at: thread is hidden everywhere; PHI/messages remain in
     #     the DB for compliance audit + admin-side undelete.
+    #   - muted_at: thread stays in the inbox but its unread notification /
+    #     badge is suppressed; a bell-off indicator is shown on the row.
     pinned_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -84,6 +86,9 @@ class Session(Base):
         DateTime(timezone=True), nullable=True
     )
     deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    muted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

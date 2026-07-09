@@ -1229,6 +1229,33 @@ export function useToggleSessionArchive() {
 }
 
 /**
+ * Mute or unmute a thread.  A muted thread stays in the inbox but its unread
+ * notification/badge is suppressed and a bell-off indicator is shown on the
+ * row.  Backed by ``PATCH /sessions/{id}/mute`` (body ``{ muted: boolean }``),
+ * which toggles the session's ``muted_at`` timestamp.
+ *
+ * The CHW Messages inbox is conversation-based, so this operates on the
+ * conversation's underlying session id (originating or active session).
+ * Invalidates both the sessions and conversations queries so any dependent
+ * view refetches.
+ */
+export function useToggleSessionMute() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ sessionId, muted }: { sessionId: string; muted: boolean }) => {
+      await api(`/sessions/${sessionId}/mute`, {
+        method: 'PATCH',
+        body: JSON.stringify({ muted }),
+      });
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.sessions });
+      void qc.invalidateQueries({ queryKey: queryKeys.conversations });
+    },
+  });
+}
+
+/**
  * Soft-delete a thread.  Hides it from the inbox; PHI/messages remain
  * in the DB for compliance audit + admin-side undelete.
  */

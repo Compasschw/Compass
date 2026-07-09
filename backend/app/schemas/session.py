@@ -68,6 +68,10 @@ class SessionResponse(BaseModel):
     pinned_at: datetime | None = None
     archived_at: datetime | None = None
     deleted_at: datetime | None = None
+    # ``None`` when the thread is not muted; a populated timestamp records when
+    # the CHW muted it. Muted threads stay in the inbox but their unread badge
+    # is suppressed on the frontend.
+    muted_at: datetime | None = None
     created_at: datetime
     chw_name: str | None = None
     member_name: str | None = None
@@ -87,6 +91,13 @@ class SessionArchiveUpdate(BaseModel):
     """Body for ``PATCH /sessions/{id}/archive``."""
 
     archived: bool
+
+
+class SessionMuteUpdate(BaseModel):
+    """Body for ``PATCH /sessions/{id}/mute``. ``muted=true`` stamps the
+    timestamp (suppressing the thread's unread badge); ``muted=false`` clears it."""
+
+    muted: bool
 
 
 class SessionDocumentationSubmit(BaseModel):
