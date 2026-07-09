@@ -195,12 +195,16 @@ async def test_chw_confirms_member_pending_session(
     assert res.json()["scheduling_status"] == "confirmed"
     assert res.json()["status"] == "scheduled"
 
+    # A confirmation message posts to the shared thread — the member sees it too.
+    assert await _thread_has_message(client, member_tokens, "confirmed")
+
 
 @pytest.mark.asyncio
 async def test_chw_declines_member_pending_session(
     client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
 ):
-    """The owning CHW declines a member's pending session → cancelled."""
+    """The owning CHW declines a member's pending session → cancelled, and a
+    rejection message posts to the shared thread."""
     sid = await _member_pending_session_id(client, member_tokens, chw_tokens)
 
     res = await client.patch(
@@ -208,3 +212,20 @@ async def test_chw_declines_member_pending_session(
     )
     assert res.status_code == 200, res.text
     assert res.json()["status"] == "cancelled"
+
+    assert await _thread_has_message(client, member_tokens, "declined")
+
+
+async def _thread_has_message(client: AsyncClient, tokens: dict, needle: str) -> bool:
+    """True when the caller's first conversation contains a message with `needle`."""
+    convos = await client.get("/api/v1/conversations/", headers=auth_header(tokens))
+    assert convos.status_code == 200, convos.text
+    items = convos.json()
+    if not items:
+        return False
+    conv_id = items[0]["id"]
+    msgs = await client.get(
+        f"/api/v1/conversations/{conv_id}/messages", headers=auth_header(tokens)
+    )
+    assert msgs.status_code == 200, msgs.text
+    return any(needle.lower() in m["body"].lower() for m in msgs.json())
