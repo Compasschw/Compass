@@ -21,6 +21,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
+from app.schemas.auth import SexEnum, normalize_member_pear_fields
 from app.schemas.cin_config import validate_cin_for_carrier as _validate_chw_cin
 
 # Valid CHW-assigned priority levels for a resource need.
@@ -609,15 +610,18 @@ class CHWCreateMemberRequest(BaseModel):
       (verbally / in person). The member logs in with it and can change it
       later. We do NOT build an email-invite / token flow here.
 
-    Pear-required demographics (DOB, sex, insurance, CIN, ZIP) are NOT
-    collected at this step — unlike the self-service /auth/register member
-    path. They can be completed afterward via the CHW "Edit demographics"
-    flow or by the member from their own profile, at which point the Pear
-    sync succeeds. This mirrors the OAuth-signup path, which also creates a
-    member with an incomplete profile.
+    Pear-required demographics are collected at this step so the CHW-created
+    member is as complete as a self-service ``/auth/register`` signup and is
+    immediately Pear/Medi-Cal-billing-ready. The exact same boundary validator
+    (``normalize_member_pear_fields``) is reused, so the two creation paths
+    can never diverge. Hard-required: first + last ``name``, ``date_of_birth``,
+    ``gender``, ``insurance_company``, ``medi_cal_id`` (CIN), and ``zip_code``.
 
-    ``name`` must contain a first AND last name (≥2 whitespace tokens) so the
-    downstream Pear billing payload is well-formed once demographics land.
+    OPTIONAL (mirrors ``/auth/register`` + the nullable member-model columns):
+    - ``phone`` — Pear prefers it but the billing pipeline proceeds without it.
+    - ``address_line1`` / ``address_line2`` / ``city`` — completable via the CHW
+      "Edit demographics" flow before the first Pear sync.
+    - ``state`` — format-validated (2-letter USPS) only when supplied.
     """
 
     email: EmailStr
@@ -625,13 +629,38 @@ class CHWCreateMemberRequest(BaseModel):
     name: str = Field(..., min_length=1)
     phone: str | None = None
 
-    @field_validator("name")
-    @classmethod
-    def _require_first_and_last_name(cls, value: str) -> str:
-        tokens = [t for t in value.strip().split() if t]
-        if len(tokens) < 2:
-            raise ValueError("Member name must include both a first and last name")
-        return value.strip()
+    # ── Pear-required member demographics (mirrors RegisterRequest) ──────────
+    date_of_birth: date | None = None
+    gender: SexEnum | None = None
+    insurance_company: str | None = None
+    # Medi-Cal CIN — PHI, stored encrypted. Pear's primaryCIN identifier.
+    medi_cal_id: str | None = None
+    # ── Address (optional; matches the nullable member-model columns) ────────
+    address_line1: str | None = Field(default=None, max_length=160)
+    address_line2: str | None = Field(default=None, max_length=160)
+    city: str | None = Field(default=None, max_length=80)
+    state: str | None = Field(default=None, max_length=2)
+    zip_code: str | None = Field(default=None, max_length=10)
+
+    @model_validator(mode="after")
+    def _enforce_member_pear_required_fields(self) -> "CHWCreateMemberRequest":
+        """Reuse the /auth/register member validator so a CHW-created member is
+        as complete (and Pear-ready) as a self-signed-up one. Normalizes the CIN
+        (BIC/whitespace stripping) and the 2-letter state in place. Any
+        violation raises ValueError → HTTP 422 at the Pydantic boundary."""
+        normalized_cin, normalized_state = normalize_member_pear_fields(
+            name=self.name,
+            date_of_birth=self.date_of_birth,
+            gender=self.gender,
+            insurance_company=self.insurance_company,
+            medi_cal_id=self.medi_cal_id,
+            state=self.state,
+            zip_code=self.zip_code,
+        )
+        self.name = self.name.strip()
+        self.medi_cal_id = normalized_cin
+        self.state = normalized_state
+        return self
 
 
 class CHWCreateMemberResponse(BaseModel):

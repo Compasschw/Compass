@@ -2,28 +2,44 @@
 
 Covers the end-to-end contract the feature promises:
   - A CHW can create a brand-new member account (201) and get back id/name/email.
+  - The full Pear-required demographic set is persisted onto the MemberProfile
+    so the CHW-created member is as complete as a self-service signup.
   - The new member can immediately log in with the CHW-supplied temp password.
   - The CHW↔member care relationship is established, so the CHW can schedule a
     session with the new member without any prior request (relationship gate).
   - Duplicate email is rejected with 400 (mirrors /auth/register).
   - A member-role caller is rejected with 403 (require_role("chw")).
   - A single-token name (no last name) is rejected with 422.
+  - Missing a Pear-required demographic field is rejected with 422 (not 500).
 """
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
 
 from tests.conftest import auth_header
+from tests.conftest import test_session as _session_factory
 
 pytestmark = pytest.mark.asyncio
 
 
+# Full Pear-ready payload — mirrors the member self-signup field set so the
+# CHW-created member is complete and immediately billable.
 _NEW_MEMBER_PAYLOAD = {
     "email": "brand.new.member@example.com",
     "temp_password": "temp-pass-1234",
     "name": "Brand New",
     "phone": "+13105550142",
+    "date_of_birth": "1990-04-12",
+    "gender": "Female",
+    "insurance_company": "Health Net",
+    "medi_cal_id": "91234567A",
+    "address_line1": "742 Evergreen Ter",
+    "address_line2": "Apt 3",
+    "city": "Los Angeles",
+    "state": "CA",
+    "zip_code": "90001",
 }
 
 
@@ -39,6 +55,69 @@ async def test_chw_creates_member_returns_201(client: AsyncClient, chw_tokens: d
     assert body["name"] == "Brand New"
     assert body["email"] == "brand.new.member@example.com"
     assert "id" in body and body["id"]
+
+
+async def test_full_demographics_persisted_on_profile(
+    client: AsyncClient, chw_tokens: dict
+):
+    """The full Pear-required field set lands on the MemberProfile row, so the
+    CHW-created member is as complete as a self-service /auth/register signup."""
+    from uuid import UUID
+
+    from app.models.user import MemberProfile
+
+    res = await client.post(
+        "/api/v1/chw/members",
+        json=_NEW_MEMBER_PAYLOAD,
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 201, res.text
+    member_id = UUID(res.json()["id"])
+
+    async with _session_factory() as session:
+        profile = (
+            await session.execute(
+                select(MemberProfile).where(MemberProfile.user_id == member_id)
+            )
+        ).scalar_one()
+
+    assert profile.date_of_birth == date(1990, 4, 12)
+    assert profile.gender == "Female"
+    assert profile.insurance_company == "Health Net"
+    assert profile.medi_cal_id == "91234567A"  # decrypted via EncryptedString
+    assert profile.address_line1 == "742 Evergreen Ter"
+    assert profile.address_line2 == "Apt 3"
+    assert profile.city == "Los Angeles"
+    assert profile.state == "CA"
+    assert profile.zip_code == "90001"
+
+
+@pytest.mark.parametrize(
+    "missing_field",
+    ["date_of_birth", "gender", "insurance_company", "medi_cal_id", "zip_code"],
+)
+async def test_missing_required_field_returns_422(
+    client: AsyncClient, chw_tokens: dict, missing_field: str
+):
+    """Dropping any Pear-required demographic is a 422 (boundary-validated,
+    never an unhandled 500)."""
+    payload = {k: v for k, v in _NEW_MEMBER_PAYLOAD.items() if k != missing_field}
+    res = await client.post(
+        "/api/v1/chw/members",
+        json=payload,
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 422, res.text
+
+
+async def test_invalid_cin_returns_422(client: AsyncClient, chw_tokens: dict):
+    """A garbage member ID is rejected at the boundary (mirrors /auth/register)."""
+    res = await client.post(
+        "/api/v1/chw/members",
+        json={**_NEW_MEMBER_PAYLOAD, "medi_cal_id": "!!!"},
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 422, res.text
 
 
 async def test_created_member_can_log_in(client: AsyncClient, chw_tokens: dict):

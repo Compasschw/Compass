@@ -3716,7 +3716,12 @@ export function useChwMembers() {
   });
 }
 
-/** Payload for POST /chw/members — a CHW onboarding a brand-new member. */
+/** Payload for POST /chw/members — a CHW onboarding a brand-new member.
+ *
+ * Mirrors the member self-signup field set so the CHW-created member is
+ * immediately as complete as a self-registered one (Pear/Medi-Cal-billing
+ * ready). The backend reuses the same boundary validator as /auth/register.
+ */
 export interface CreateChwMemberPayload {
   /** Member's full name — must include first AND last (backend enforces ≥2 tokens). */
   name: string;
@@ -3726,6 +3731,24 @@ export interface CreateChwMemberPayload {
   phone?: string;
   /** Temporary password the CHW shares with the member (min 8 chars). */
   tempPassword: string;
+  /** Date of birth, ISO YYYY-MM-DD (Pear-required). */
+  dateOfBirth: string;
+  /** Sex — Pear CreateMember enum value (Pear-required). */
+  gender: 'Male' | 'Female' | 'Other';
+  /** Curated Medi-Cal carrier display label (Pear-required). */
+  insuranceCompany: string;
+  /** CIN / Medi-Cal member ID — normalized + validated server-side (Pear-required). */
+  mediCalId: string;
+  /** Street address line 1 (optional — completable before first Pear sync). */
+  addressLine1?: string;
+  /** Address line 2 — apt/suite/unit (optional). */
+  addressLine2?: string;
+  /** City (optional). */
+  city?: string;
+  /** 2-letter USPS state code (optional; format-validated server-side). */
+  state?: string;
+  /** Member ZIP code (Pear-required). */
+  zipCode: string;
 }
 
 /** Response for POST /chw/members — the freshly-created member. */
@@ -3759,6 +3782,15 @@ export function useCreateChwMember() {
           email: payload.email,
           phone: payload.phone ?? null,
           temp_password: payload.tempPassword,
+          date_of_birth: payload.dateOfBirth,
+          gender: payload.gender,
+          insurance_company: payload.insuranceCompany,
+          medi_cal_id: payload.mediCalId,
+          address_line1: payload.addressLine1 ?? null,
+          address_line2: payload.addressLine2 ?? null,
+          city: payload.city ?? null,
+          state: payload.state ?? null,
+          zip_code: payload.zipCode,
         }),
       });
       return transformKeys<CreatedChwMember>(raw);
