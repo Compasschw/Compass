@@ -303,13 +303,6 @@ export function AddMemberModal({
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator
           >
-            <Text style={styles.subtitle}>
-              Create a complete member account and connect them to you. These are
-              the same details a member provides at signup, so the account is
-              ready for sessions and billing right away. You’ll share the
-              temporary password with them so they can log in.
-            </Text>
-
             <Text style={styles.sectionLabel}>Account</Text>
 
             <View style={styles.field}>
@@ -666,12 +659,6 @@ const styles = StyleSheet.create({
     padding: 20,
     gap: 14,
   } as ViewStyle,
-  subtitle: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 13,
-    lineHeight: 19,
-    color: tokens.textSecondary,
-  } as TextStyle,
   sectionLabel: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 12,
