@@ -28,6 +28,7 @@ def get_payments_provider() -> PaymentsProvider:
             secret_key=getattr(settings, "stripe_secret_key", ""),
             webhook_secret=getattr(settings, "stripe_webhook_secret", ""),
             platform_name=getattr(settings, "stripe_platform_name", "CompassCHW"),
+            platform_webhook_secret=getattr(settings, "stripe_platform_webhook_secret", ""),
         )
     else:
         raise ValueError(f"Unknown payments provider: {provider_name}")
