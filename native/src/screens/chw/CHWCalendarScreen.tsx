@@ -1916,7 +1916,7 @@ export function CHWCalendarScreen(): React.JSX.Element {
   const allMembers = rawMembers ?? [];
 
   // Member-requested sessions awaiting this CHW's approval → shown as a list
-  // under the calendar (soonest first).
+  // above the calendar (soonest first).
   const pendingRequests = useMemo(
     () =>
       allSessions
@@ -2171,11 +2171,11 @@ export function CHWCalendarScreen(): React.JSX.Element {
             right={headerRight}
           />
 
+          <PendingRequestsList requests={pendingRequests} />
+
           <Card style={webStyles.calendarCard}>
             {calendarContent}
           </Card>
-
-          <PendingRequestsList requests={pendingRequests} />
         </View>
 
         {/* Session Details modal */}
@@ -2217,12 +2217,12 @@ export function CHWCalendarScreen(): React.JSX.Element {
           {headerRight}
         </View>
 
+        <PendingRequestsList requests={pendingRequests} />
+
         {/* Calendar card */}
         <View style={mainStyles.calendarCard}>
           {calendarContent}
         </View>
-
-        <PendingRequestsList requests={pendingRequests} />
       </ScrollView>
 
       {/* Session Details modal */}
@@ -2457,14 +2457,14 @@ const mainStyles = StyleSheet.create({
   },
 });
 
-// ─── Pending requests list (under the calendar) ───────────────────────────────
+// ─── Pending requests list (above the calendar) ───────────────────────────────
 
 interface PendingRequestsListProps {
   requests: SessionData[];
 }
 
 /**
- * Member-requested (pending) sessions awaiting this CHW's approval, listed under
+ * Member-requested (pending) sessions awaiting this CHW's approval, listed above
  * the calendar. Each row can be Approved (→ confirmed) or Declined (→ cancelled)
  * inline via useConfirmSession / useDeclineSession, which post a message to the
  * shared thread and refresh both calendars.
@@ -2480,7 +2480,7 @@ function PendingRequestsList({
 
   return (
     <Card style={pendingStyles.card}>
-      <Text style={pendingStyles.title}>Pending Requests ({requests.length})</Text>
+      <Text style={pendingStyles.title}>Pending Session Requests ({requests.length})</Text>
       <Text style={pendingStyles.subtitle}>
         Member-requested sessions awaiting your approval.
       </Text>
