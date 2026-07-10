@@ -794,17 +794,19 @@ async def create_chw_member(
     the member out-of-band; the member logs in via the normal ``POST
     /auth/login`` flow and can change it later. No email-invite/token flow.
 
-    Pear-required demographics (DOB, sex, insurance, CIN, ZIP) are NOT collected
-    here — they are completed afterward (CHW "Edit demographics" or member
-    self-service), at which point a Pear sync can run. This mirrors the
-    OAuth-signup path, which also creates a member with an incomplete profile.
+    Pear-required demographics (DOB, sex, insurance, CIN, ZIP) ARE collected
+    here and persisted onto the MemberProfile in the same transaction, so the
+    CHW-created member is immediately as complete as a self-service
+    /auth/register signup and ready for a Pear sync. The exact same boundary
+    validator (``normalize_member_pear_fields``) backs both paths.
 
     Authorization: ``require_role("chw")`` — members / admins get 403.
 
     Returns:
         201 with the created member's id, name, and email.
         400 when the email is already registered (mirrors /auth/register).
-        422 when the name lacks a first + last token or the password is < 8 chars.
+        422 when a required field is missing/invalid (name lacks first + last,
+            DOB/sex/insurance/CIN/ZIP missing, bad CIN, or password < 8 chars).
     """
     from app.models.request import ServiceRequest
     from app.services.auth_service import register_user
@@ -812,7 +814,10 @@ async def create_chw_member(
 
     # ── Create the member User + MemberProfile (reuses signup provisioning) ──
     # register_user handles the duplicate-email guard (returns None), phone
-    # E.164 normalization, and MemberProfile creation in one transaction.
+    # E.164 normalization, and MemberProfile creation in one transaction. The
+    # Pear-required demographics are copied onto the profile in the SAME
+    # transaction (register_user allow-lists the keys) so the CHW-created member
+    # is immediately as complete as a self-service /auth/register signup.
     member = await register_user(
         db,
         email=data.email,
@@ -820,6 +825,17 @@ async def create_chw_member(
         name=data.name,
         role="member",
         phone=data.phone,
+        member_profile_fields={
+            "date_of_birth": data.date_of_birth,
+            "gender": data.gender,
+            "insurance_company": data.insurance_company,
+            "medi_cal_id": data.medi_cal_id,
+            "address_line1": data.address_line1,
+            "address_line2": data.address_line2,
+            "city": data.city,
+            "state": data.state,
+            "zip_code": data.zip_code,
+        },
     )
     if member is None:
         raise HTTPException(status_code=400, detail="Email already registered")

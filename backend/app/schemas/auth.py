@@ -11,6 +11,81 @@ from app.schemas.cin_config import validate_cin_for_carrier
 SexEnum = Literal["Male", "Female", "Other"]
 
 
+def normalize_member_pear_fields(
+    *,
+    name: str,
+    date_of_birth: date | None,
+    gender: str | None,
+    insurance_company: str | None,
+    medi_cal_id: str | None,
+    state: str | None,
+    zip_code: str | None,
+) -> tuple[str, str | None]:
+    """Validate + normalize the Pear-required member demographic fields.
+
+    Single source of truth for the two member-creation paths so they can never
+    silently diverge:
+      - self-service ``POST /auth/register`` (``RegisterRequest``)
+      - CHW-initiated ``POST /chw/members`` (``CHWCreateMemberRequest``)
+
+    Hard-required (Pear billing pipeline needs them at the boundary): first +
+    last name, ``date_of_birth``, ``gender``, ``insurance_company``,
+    ``medi_cal_id`` (CIN), and ``zip_code``.  Address line1/line2/city are
+    intentionally NOT required here — they can be completed via profile-edit
+    before the first Pear sync — matching the nullable member model columns.
+
+    Args:
+        name: Member full name (must contain ≥2 whitespace tokens).
+        date_of_birth: Parsed DOB (required — ValueError when None).
+        gender: Sex enum value (required — ValueError when None).
+        insurance_company: Curated carrier label (required, non-blank).
+        medi_cal_id: Raw CIN / commercial member ID (required, non-blank).
+        state: Optional 2-letter USPS state (format-validated when supplied).
+        zip_code: Member ZIP (required, non-blank).
+
+    Returns:
+        ``(normalized_cin, normalized_state)`` — the CIN with BIC/whitespace
+        stripped and the uppercased 2-letter state (or the original ``state``
+        when blank/None).
+
+    Raises:
+        ValueError: On any missing/invalid field (surfaces as HTTP 422 at the
+            Pydantic boundary).
+    """
+    tokens = [t for t in name.strip().split() if t]
+    if len(tokens) < 2:
+        raise ValueError("Members must provide both first and last name")
+
+    if date_of_birth is None:
+        raise ValueError("Date of birth is required for members")
+    if gender is None:
+        raise ValueError("Sex is required for members")
+    if not insurance_company or not insurance_company.strip():
+        raise ValueError("Insurance is required for members")
+
+    raw_cin = (medi_cal_id or "").strip()
+    if not raw_cin:
+        raise ValueError("CIN (Medi-Cal ID) is required for members")
+
+    normalized_cin, cin_valid = validate_cin_for_carrier(raw_cin, insurance_company)
+    if not cin_valid:
+        raise ValueError(
+            "Double-check the member ID — Medi-Cal CINs look like 91234567A2, "
+            "or enter the full commercial/Medicare ID."
+        )
+
+    normalized_state = state
+    if state is not None and state.strip():
+        normalized_state = state.strip().upper()
+        if len(normalized_state) != 2 or not normalized_state.isalpha():
+            raise ValueError("State must be a 2-letter USPS code (e.g. CA)")
+
+    if not zip_code or not zip_code.strip():
+        raise ValueError("ZIP code is required for members")
+
+    return normalized_cin, normalized_state
+
+
 class RegisterRequest(BaseModel):
     """Body for POST /auth/register.
 
@@ -56,71 +131,25 @@ class RegisterRequest(BaseModel):
         # role == "member".  Anything that 422s here would otherwise show
         # up later as a silently-dropped Pear row or a failed background
         # sync, so we'd rather block at the signup boundary.
+        # CHWs bypass every Pear-required check; only members are gated.
+        # Phone stays OPTIONAL for members (Pear prefers it but the billing
+        # pipeline proceeds without it) — no required-check here.
         if self.role != "member":
             return self
 
-        # First + Last name (≥2 whitespace tokens).
-        tokens = [t for t in self.name.strip().split() if t]
-        if len(tokens) < 2:
-            raise ValueError(
-                "Members must provide both first and last name"
-            )
-
-        # Phone is OPTIONAL — Pear prefers it but the billing pipeline can
-        # proceed without it.  No required-check here.
-
-        # Required member profile fields.
-        if self.date_of_birth is None:
-            raise ValueError("Date of birth is required for members")
-        if self.gender is None:
-            raise ValueError("Sex is required for members")
-        if not self.insurance_company or not self.insurance_company.strip():
-            raise ValueError("Insurance is required for members")
-
-        # CIN format: carrier-aware validation.
-        #
-        # Policy (cross-reference: native/src/constants/insurance.ts):
-        #   - Empty / whitespace-only → always 422 (required for all members).
-        #   - 14-char BIC (9+7digits+letter+check+4-digit Julian date) → the
-        #     leading 10-char CIN is extracted and stored.
-        #   - All configured carriers are now 'confirmed' Medi-Cal MCPs.
-        #     A value is valid if, after normalization, it matches EITHER:
-        #       (a) Medi-Cal CIN: ^9\d{7}[A-Z]\d?$
-        #       (b) Commercial/Medicare: ^[A-Z0-9]{6,15}$
-        #     Values matching neither pattern are 422'd (clearly garbage).
-        #
-        # See app/schemas/cin_config.py for full pattern definitions.
-        raw_cin = (self.medi_cal_id or "").strip()
-        if not raw_cin:
-            raise ValueError("CIN (Medi-Cal ID) is required for members")
-
-        normalized_cin, cin_valid = validate_cin_for_carrier(
-            raw_cin, self.insurance_company
+        # Delegate to the shared validator so /auth/register and
+        # POST /chw/members enforce the identical Pear billing contract.
+        normalized_cin, normalized_state = normalize_member_pear_fields(
+            name=self.name,
+            date_of_birth=self.date_of_birth,
+            gender=self.gender,
+            insurance_company=self.insurance_company,
+            medi_cal_id=self.medi_cal_id,
+            state=self.state,
+            zip_code=self.zip_code,
         )
-
-        if not cin_valid:
-            raise ValueError(
-                "Double-check the member ID — Medi-Cal CINs look like 91234567A2, "
-                "or enter the full commercial/Medicare ID."
-            )
-
         self.medi_cal_id = normalized_cin  # store normalized CIN
-
-        # Address fields are OPTIONAL — can be completed via
-        # PUT /member/profile before the first Pear sync.
-        # State is format-validated (2-letter USPS) only when provided.
-        if self.state is not None and self.state.strip():
-            normalized_state = self.state.strip().upper()
-            if len(normalized_state) != 2 or not normalized_state.isalpha():
-                raise ValueError(
-                    "State must be a 2-letter USPS code (e.g. CA)"
-                )
-            self.state = normalized_state
-
-        # ZIP is still required for Pear's billing pipeline.
-        if not self.zip_code or not self.zip_code.strip():
-            raise ValueError("ZIP code is required for members")
-
+        self.state = normalized_state
         return self
 
 
