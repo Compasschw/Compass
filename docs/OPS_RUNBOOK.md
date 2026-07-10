@@ -629,6 +629,51 @@ The signature secret rotation matters: it's what `_verify_vonage_signature`
 checks on inbound webhooks. Rotating it without updating prod env will 401
 every Vonage webhook (recordings, call events).
 
+### Stripe secrets via SSM Parameter Store
+
+Stripe secrets are the encrypted source-of-truth in **SSM Parameter Store**
+(SecureString, KMS-encrypted). On every deploy, the pipeline (`deploy.yml`
+Step 1b) pulls them from `/compass/prod/*` and writes them into the box's
+`.env` before the container starts. To rotate a key: update it in SSM, then
+redeploy — no SSH editing of `.env` needed.
+
+Managed keys: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` (connected-accounts
+webhook destination), `STRIPE_PLATFORM_WEBHOOK_SECRET` (platform/transfer
+webhook destination).
+
+**Safe-by-default:** if a param doesn't exist in SSM, the deploy leaves the
+existing `.env` value untouched — so this is a no-op until you create the
+params. (That's why test mode today still reads the hand-edited `.env`.)
+
+**One-time setup (per environment):**
+
+1. Create the params (from your Mac; values never touch git):
+   ```bash
+   aws ssm put-parameter --region us-west-2 --type SecureString --overwrite \
+     --name /compass/prod/STRIPE_SECRET_KEY --value 'sk_live_...'
+   aws ssm put-parameter --region us-west-2 --type SecureString --overwrite \
+     --name /compass/prod/STRIPE_WEBHOOK_SECRET --value 'whsec_...'
+   aws ssm put-parameter --region us-west-2 --type SecureString --overwrite \
+     --name /compass/prod/STRIPE_PLATFORM_WEBHOOK_SECRET --value 'whsec_...'
+   ```
+2. Grant the EC2 instance role read access. Find the role:
+   ```bash
+   aws ec2 describe-instances --region us-west-2 \
+     --instance-ids i-0f3d13da68b0974ee \
+     --query "Reservations[].Instances[].IamInstanceProfile.Arn" --output text
+   ```
+   Attach a policy allowing `ssm:GetParameter` on
+   `arn:aws:ssm:us-west-2:<ACCOUNT_ID>:parameter/compass/prod/*` and
+   `kms:Decrypt` on the key that encrypts those params (the AWS-managed
+   `alias/aws/ssm` key, unless you used a custom CMK).
+3. Redeploy (Actions → "Run workflow"). Step 1b logs `hydrated <KEY> from SSM`
+   for each param it applied. If it logs `not in SSM`, the param name or the
+   IAM permission is wrong.
+
+**Rotation:** `aws ssm put-parameter ... --overwrite` with the new value, then
+redeploy. Roll/revoke the old key in the Stripe dashboard after the deploy is
+confirmed live.
+
 ---
 
 ## 8. Emergency contacts
