@@ -64,6 +64,38 @@ jobs:
             git --no-pager log -1 --oneline
             echo "::endgroup::"
 
+            echo "::group::Step 1b/6 — hydrate secrets from SSM Parameter Store"
+            # Deploy-time secret hydration: pull SecureString params from SSM and
+            # upsert them into .env BEFORE the container starts, so SSM is the
+            # encrypted source-of-truth (rotate in one place, redeploy to apply).
+            # Safe-by-default: if a param is absent, or the AWS CLI / instance
+            # role isn't set up, that key is skipped and the existing .env value
+            # is left untouched — a genuine no-op until the params exist. Secret
+            # VALUES are never echoed to the deploy log (only key names).
+            SSM_PREFIX="/compass/prod"
+            SSM_KEYS="STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET STRIPE_PLATFORM_WEBHOOK_SECRET"
+            if command -v aws >/dev/null 2>&1; then
+              touch .env
+              for KEY in $SSM_KEYS; do
+                VAL=$(aws ssm get-parameter --name "$SSM_PREFIX/$KEY" --with-decryption \
+                  --region "$AWS_REGION" --query 'Parameter.Value' --output text 2>/dev/null || true)
+                if [ -n "$VAL" ] && [ "$VAL" != "None" ]; then
+                  # Upsert without sed (secret values may contain sed-special
+                  # chars): drop any existing line for KEY, then append fresh.
+                  grep -vE "^${KEY}=" .env > .env.tmp 2>/dev/null || true
+                  printf '%s=%s\n' "$KEY" "$VAL" >> .env.tmp
+                  mv .env.tmp .env
+                  chmod 600 .env
+                  echo "  hydrated ${KEY} from SSM"
+                else
+                  echo "  ${KEY} not in SSM — leaving .env as-is"
+                fi
+              done
+            else
+              echo "  AWS CLI not present — skipping SSM hydration"
+            fi
+            echo "::endgroup::"
+
             echo "::group::Step 2/6 — docker compose build + up"
             # --build rebuilds any image whose layer inputs changed.
             # --no-deps keeps unaffected services running for fewer seconds of downtime.
