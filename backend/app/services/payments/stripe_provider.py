@@ -25,6 +25,7 @@ All methods return typed results; never raise on provider-side business errors
 (missing config, bad request shape).
 """
 
+import json
 import logging
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
@@ -58,11 +59,25 @@ class StripeProvider(PaymentsProvider):
         secret_key: str,
         webhook_secret: str,
         platform_name: str = "CompassCHW",
+        platform_webhook_secret: str = "",
     ) -> None:
         self._secret_key = secret_key
         self._webhook_secret = webhook_secret
+        self._platform_webhook_secret = platform_webhook_secret
         self._platform_name = platform_name
         self._stripe = None
+
+    @property
+    def _webhook_secrets(self) -> list[str]:
+        """All configured webhook signing secrets, in try-order.
+
+        Stripe splits Connect events across two destinations — connected-account
+        events (account.updated, payout.paid) and platform events (transfer.*) —
+        each with its own signing secret, both delivered to the same endpoint.
+        An incoming event is signed with exactly one of them, so verification
+        tries each until one validates.
+        """
+        return [s for s in (self._webhook_secret, self._platform_webhook_secret) if s]
 
     def _get_stripe(self):
         """Lazy-load the Stripe SDK so we don't import it when unused."""
@@ -256,14 +271,32 @@ class StripeProvider(PaymentsProvider):
         stripe = self._get_stripe()
         if stripe is None:
             raise RuntimeError("stripe SDK not installed")
-        if not self._webhook_secret:
+
+        secrets = self._webhook_secrets
+        if not secrets:
             raise RuntimeError("STRIPE_WEBHOOK_SECRET not configured")
 
-        # stripe.Webhook.construct_event raises SignatureVerificationError
-        # if the signature doesn't match — let it propagate
-        event = stripe.Webhook.construct_event(
-            payload=payload,
-            sig_header=signature_header,
-            secret=self._webhook_secret,
-        )
-        return dict(event)
+        # An event is signed with exactly one destination's secret. Try each;
+        # return on the first that validates. Only if ALL fail do we reject —
+        # re-raising the last SignatureVerificationError so the router returns
+        # 400 and Stripe does not retry against a genuinely bad signature.
+        last_error: Exception | None = None
+        for secret in secrets:
+            try:
+                event = stripe.Webhook.construct_event(
+                    payload=payload,
+                    sig_header=signature_header,
+                    secret=secret,
+                )
+                # stripe>=15 returns a StripeObject that is NOT dict-compatible:
+                # `event.get("data", {}).get("object", {})` (how the router reads
+                # it) raises AttributeError, so events would be received but never
+                # processed. Serialize to a fully-plain, recursively-nested dict.
+                return json.loads(str(event))
+            except stripe.error.SignatureVerificationError as e:
+                last_error = e
+                continue
+
+        # None of the configured secrets matched — reject.
+        assert last_error is not None  # guaranteed: secrets is non-empty
+        raise last_error

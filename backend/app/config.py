@@ -193,7 +193,15 @@ class Settings(BaseSettings):
     # Payments (Stripe Connect Express)
     payments_provider: str = "stripe"
     stripe_secret_key: str = ""  # sk_live_... or sk_test_...
-    stripe_webhook_secret: str = ""  # whsec_... from Stripe dashboard
+    # whsec_... for the "Connected accounts" webhook destination
+    # (account.updated, payout.paid — events about CHW connected accounts).
+    stripe_webhook_secret: str = ""
+    # whsec_... for the "Your account" / platform webhook destination
+    # (transfer.paid, transfer.failed — events about platform-initiated
+    # transfers). Stripe delivers these to a separate destination with its own
+    # signing secret; both destinations hit the same endpoint URL, so the
+    # webhook handler must accept either secret. Blank until real payouts go live.
+    stripe_platform_webhook_secret: str = ""
     stripe_platform_name: str = "CompassCHW"
 
     # Vonage WebSocket JWT auth — signs short-lived tokens embedded in NCCO
