@@ -188,13 +188,19 @@ class StripeProvider(PaymentsProvider):
             return stripe.Account.retrieve(connected_account_id)
 
         account = await asyncio.to_thread(_get_sync)
-        requirements = account.get("requirements", {}) or {}
+        # stripe>=15 returns a StripeObject that is NOT dict-compatible:
+        # `account.get(...)` and `dict(account)` raise AttributeError, which the
+        # account-status endpoint would swallow — silently pinning the payout
+        # button to the stale cache even after Stripe enables the account.
+        # Serialize to a plain nested dict first.
+        data = json.loads(str(account))
+        requirements = data.get("requirements", {}) or {}
         return AccountStatus(
-            charges_enabled=bool(account.get("charges_enabled", False)),
-            payouts_enabled=bool(account.get("payouts_enabled", False)),
-            details_submitted=bool(account.get("details_submitted", False)),
+            charges_enabled=bool(data.get("charges_enabled", False)),
+            payouts_enabled=bool(data.get("payouts_enabled", False)),
+            details_submitted=bool(data.get("details_submitted", False)),
             requirements_currently_due=list(requirements.get("currently_due", []) or []),
-            raw=dict(account),
+            raw=data,
         )
 
     async def transfer(self, req: TransferRequest) -> TransferResult:
@@ -250,11 +256,15 @@ class StripeProvider(PaymentsProvider):
 
         try:
             transfer = await asyncio.to_thread(_transfer_sync)
+            # stripe>=15: dict(transfer) raises, which would be caught below and
+            # wrongly reported as a FAILED transfer even though the money moved.
+            # Serialize to a plain dict first.
+            data = json.loads(str(transfer))
             return TransferResult(
                 success=True,
-                provider_transfer_id=transfer["id"],
+                provider_transfer_id=data["id"],
                 amount_cents=req.amount_cents,
-                raw=dict(transfer),
+                raw=data,
             )
         except Exception as e:  # noqa: BLE001
             logger.error("Stripe transfer failed: %s", e)
