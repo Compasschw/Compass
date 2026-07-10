@@ -101,8 +101,12 @@ const DAY_LABELS_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 /** Hours displayed in the week/day view grid (8 AM – 5 PM inclusive). */
 const WEEK_VIEW_HOURS = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
 
-/** Height in px for a single 1-hour slot in the week grid. */
-const SLOT_HEIGHT = 60;
+/**
+ * Height in px for a single 1-hour slot in the week grid. Matched to the CHW
+ * calendar (96px) so half-hour session blocks (SLOT_HEIGHT/2 = 48px) are easy
+ * to read and event labels aren't cramped against the hour line.
+ */
+const SLOT_HEIGHT = 96;
 
 type CalendarViewMode = 'day' | 'week' | 'month';
 
@@ -546,7 +550,8 @@ function WeekViewGrid({
 
           return (
             <View key={key} style={[weekStyles.dayColumn, isToday && weekStyles.dayColumnToday]}>
-              {/* Hour grid lines — greyed when outside the CHW's working hours. */}
+              {/* Hour grid lines with a lighter :30 half-hour divider —
+                  greyed when outside the CHW's working hours. */}
               {WEEK_VIEW_HOURS.map((hour) => {
                 const unavailable =
                   availabilityWindows !== undefined &&
@@ -555,7 +560,9 @@ function WeekViewGrid({
                   <View
                     key={hour}
                     style={[weekStyles.hourLine, unavailable && weekStyles.hourUnavailable]}
-                  />
+                  >
+                    <View style={weekStyles.halfHourLine} />
+                  </View>
                 );
               })}
               {/* Absolute-position session blocks */}
@@ -640,6 +647,15 @@ const weekStyles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#F3F4F6',
   },
+  // Lighter divider at the :30 half-hour mark inside each hour cell.
+  halfHourLine: {
+    position: 'absolute',
+    top: SLOT_HEIGHT / 2,
+    left: 0,
+    right: 0,
+    height: 1,
+    backgroundColor: '#F9FAFB',
+  },
   // Outside the CHW's working hours — visually blocked for booking.
   hourUnavailable: {
     backgroundColor: '#F3F4F6',
@@ -702,7 +718,9 @@ function DayViewGrid({
               <View
                 key={hour}
                 style={[weekStyles.hourLine, unavailable && weekStyles.hourUnavailable]}
-              />
+              >
+                <View style={weekStyles.halfHourLine} />
+              </View>
             );
           })}
           <View style={[weekStyles.cardsLayer, { height: totalGridHeight }]}>
