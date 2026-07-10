@@ -16,8 +16,9 @@ Payout flow (triggered when a billing claim is marked paid by Pear Suite):
 
 Webhook events handled:
   - account.updated — refresh local AccountStatus cache
-  - transfer.paid — mark billing claim as paid_to_chw
-  - transfer.failed — log + alert (bad bank info, frozen account)
+  - transfer.created — mark billing claim as paid_to_chw (transfers settle
+    synchronously; the modern API has no transfer.paid)
+  - transfer.reversed — log + alert on a clawback
   - payout.paid — for visibility only; funds hit CHW's bank
 
 All methods return typed results; never raise on provider-side business errors

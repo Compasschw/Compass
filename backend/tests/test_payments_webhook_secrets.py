@@ -3,7 +3,7 @@
 Real payouts split Connect events across two Stripe webhook destinations, each
 with its own signing secret, both delivered to the same endpoint:
   - connected-accounts destination → account.updated, payout.paid
-  - platform destination           → transfer.paid, transfer.failed
+  - platform destination           → transfer.created, transfer.reversed
 
 `StripeProvider.verify_webhook` must accept an event signed by EITHER secret and
 reject one signed by neither.
@@ -68,18 +68,18 @@ def test_verifies_event_signed_with_connected_accounts_secret():
 
 def test_verifies_event_signed_with_platform_secret():
     provider = _provider()
-    payload = _event_payload("transfer.paid", {"id": "tr_1"})
+    payload = _event_payload("transfer.created", {"id": "tr_1"})
     header = _sign(payload, PLATFORM_SECRET)
 
     event = provider.verify_webhook(payload, header)
 
-    assert event["type"] == "transfer.paid"
+    assert event["type"] == "transfer.created"
     assert event.get("data", {}).get("object", {}).get("id") == "tr_1"
 
 
 def test_rejects_event_signed_with_unknown_secret():
     provider = _provider()
-    payload = _event_payload("transfer.paid")
+    payload = _event_payload("transfer.created")
     header = _sign(payload, "whsec_some_other_secret")
 
     with pytest.raises(stripe.error.SignatureVerificationError):
