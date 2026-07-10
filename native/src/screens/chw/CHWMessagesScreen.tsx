@@ -117,6 +117,7 @@ import {
   useConversations,
   useConversationMessages,
   useConversationSendMessage,
+  useConversationMarkRead,
   useStartCall,
   useSubmitDocumentation,
   useChwJourneys,
@@ -1314,6 +1315,7 @@ function ConversationPane({
 
   const messagesQuery = useConversationMessages(conv.id);
   const sendMessage = useConversationSendMessage();
+  const markRead = useConversationMarkRead();
   const startCall = useStartCall();
   const submitDocumentation = useSubmitDocumentation();
 
@@ -1417,6 +1419,33 @@ function ConversationPane({
       (a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt),
     );
   }, [messagesQuery.data, localMessages]);
+
+  // ── Mark thread read while the CHW is viewing it ───────────────────────────
+  // Advances the CHW read cursor (server field `chw_read_up_to`) to the newest
+  // message so the inbox row's unread dot AND the sidebar "Messages" badge clear
+  // without a manual refresh. The mark-read mutation invalidates the
+  // `['conversations']` query key, which the AppShell badge sums over — so the
+  // badge decrements immediately and hides at 0.
+  //
+  // The backend read cursor is monotonic (idempotent); we only fire while
+  // unreadCount > 0 so a subsequent refetch (unreadCount → 0) doesn't loop.
+  const newestServerMessageId = useMemo<string | null>(() => {
+    const msgs = messagesQuery.data ?? [];
+    if (msgs.length === 0) return null;
+    return msgs.reduce((latest, m) =>
+      Date.parse(m.createdAt) >= Date.parse(latest.createdAt) ? m : latest,
+    ).id;
+  }, [messagesQuery.data]);
+
+  useEffect(() => {
+    if (conv.unreadCount > 0 && newestServerMessageId) {
+      markRead.mutate({
+        conversationId: conv.id,
+        upToMessageId: newestServerMessageId,
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conv.id, conv.unreadCount, newestServerMessageId]);
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
