@@ -12,8 +12,8 @@ Flow summary:
 
 Webhooks (all go through POST /payments/webhooks/stripe):
   - account.updated: refresh CHWProfile.stripe_payouts_enabled
-  - transfer.paid: mark BillingClaim.paid_to_chw_at + stripe_transfer_id
-  - transfer.failed: log + alert (bank rejection, frozen account)
+  - transfer.created: mark BillingClaim.paid_to_chw_at + stripe_transfer_id
+  - transfer.reversed: log + alert (clawback; manual re-pay via ops CLI)
   - payout.paid: informational; no DB writes
 """
 
@@ -203,10 +203,14 @@ async def stripe_webhook(
     try:
         if event_type == "account.updated":
             await _handle_account_updated(db, obj)
-        elif event_type == "transfer.paid":
-            await _handle_transfer_paid(db, obj)
-        elif event_type == "transfer.failed":
-            await _handle_transfer_failed(db, obj)
+        elif event_type == "transfer.created":
+            # Platform → CHW transfer succeeded (completes synchronously at
+            # creation; there is no separate transfer.paid in the modern API).
+            await _handle_transfer_created(db, obj)
+        elif event_type == "transfer.reversed":
+            # Funds clawed back from a prior transfer (there is no
+            # transfer.failed — creation failures raise inline, not via webhook).
+            await _handle_transfer_reversed(db, obj)
         elif event_type == "payout.paid":
             # CHW's bank received the money; informational only
             logger.info("Payout paid to account %s: $%s", obj.get("destination"), (obj.get("amount", 0) / 100))
@@ -245,8 +249,12 @@ async def _handle_account_updated(db: AsyncSession, account_obj: dict) -> None:
     )
 
 
-async def _handle_transfer_paid(db: AsyncSession, transfer_obj: dict) -> None:
-    """Mark the billing claim tied to this transfer as paid-to-CHW."""
+async def _handle_transfer_created(db: AsyncSession, transfer_obj: dict) -> None:
+    """Mark the billing claim tied to this transfer as paid-to-CHW.
+
+    A Stripe Transfer moves funds to the connected account's balance
+    synchronously at creation, so `transfer.created` is the success signal.
+    """
     from app.models.billing import BillingClaim
 
     transfer_id = transfer_obj.get("id")
@@ -254,19 +262,19 @@ async def _handle_transfer_paid(db: AsyncSession, transfer_obj: dict) -> None:
     billing_claim_id = metadata.get("billing_claim_id")
 
     if not billing_claim_id:
-        logger.warning("transfer.paid without billing_claim_id metadata: %s", transfer_id)
+        logger.warning("transfer.created without billing_claim_id metadata: %s", transfer_id)
         return
 
     from uuid import UUID
     try:
         claim_uuid = UUID(billing_claim_id)
     except ValueError:
-        logger.warning("transfer.paid with malformed claim id: %s", billing_claim_id)
+        logger.warning("transfer.created with malformed claim id: %s", billing_claim_id)
         return
 
     claim = await db.get(BillingClaim, claim_uuid)
     if claim is None:
-        logger.warning("transfer.paid for unknown claim %s", billing_claim_id)
+        logger.warning("transfer.created for unknown claim %s", billing_claim_id)
         return
 
     claim.stripe_transfer_id = transfer_id
@@ -274,14 +282,21 @@ async def _handle_transfer_paid(db: AsyncSession, transfer_obj: dict) -> None:
     await db.commit()
 
 
-async def _handle_transfer_failed(db: AsyncSession, transfer_obj: dict) -> None:
-    """Log a transfer failure so we can alert + retry."""
+async def _handle_transfer_reversed(db: AsyncSession, transfer_obj: dict) -> None:
+    """Log a transfer reversal (clawback) so ops can review + re-pay manually.
+
+    Deliberately does NOT auto-clear the claim's paid status: the retry
+    scheduler would then re-transfer, risking a double-pay if the reversal was
+    intentional. Reversals are rare and handled by hand via the ops CLI.
+    """
     transfer_id = transfer_obj.get("id")
     destination = transfer_obj.get("destination")
-    failure_message = transfer_obj.get("failure_message") or transfer_obj.get("failure_code")
+    metadata = transfer_obj.get("metadata", {}) or {}
+    billing_claim_id = metadata.get("billing_claim_id")
+    amount_reversed = transfer_obj.get("amount_reversed")
     logger.error(
-        "Stripe transfer failed: id=%s, destination=%s, reason=%s",
-        transfer_id, destination, failure_message,
+        "Stripe transfer REVERSED: id=%s, destination=%s, claim=%s, amount_reversed=%s",
+        transfer_id, destination, billing_claim_id, amount_reversed,
     )
     # TODO: when we have an admin alert channel, send a notification here.
 
@@ -342,7 +357,7 @@ async def trigger_chw_payout(
 
     if result.success and result.provider_transfer_id:
         claim.stripe_transfer_id = result.provider_transfer_id
-        # Actual `paid_to_chw_at` timestamp is set by the transfer.paid webhook
+        # Actual `paid_to_chw_at` timestamp is set by the transfer.created webhook
         await db.commit()
         return True
     return False
