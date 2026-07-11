@@ -15,7 +15,10 @@
     "build:android:prod": "eas build --platform android --profile production",
     "build:all:preview": "eas build --platform all --profile preview",
     "submit:ios": "eas submit --platform ios --latest",
-    "submit:android": "eas submit --platform android --latest"
+    "submit:android": "eas submit --platform android --latest",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:cov": "vitest run --coverage"
   },
   "dependencies": {
     "@expo-google-fonts/dm-sans": "^0.4.2",
@@ -60,9 +63,11 @@
   },
   "devDependencies": {
     "@types/react": "~19.1.0",
+    "@vitest/coverage-v8": "^2.1.0",
     "babel-preset-expo": "^55.0.18",
     "eas-cli": "^13.0.0",
-    "typescript": "~5.9.2"
+    "typescript": "~5.9.2",
+    "vitest": "^2.1.0"
   },
   "private": true
 }
