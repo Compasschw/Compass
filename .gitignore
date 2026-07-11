@@ -55,6 +55,9 @@ npm-debug.log*
 # Test coverage
 coverage/
 .nyc_output/
+coverage.xml
+.coverage
+htmlcov/
 
 # Docker volumes
 pgdata/

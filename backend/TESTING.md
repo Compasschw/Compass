@@ -54,3 +54,20 @@ cd backend && .venv/bin/python -m pytest          # full suite (needs the test P
 
 Pure-unit tests (e.g. CSV formatters) still import `conftest`, which connects to
 Postgres at fixture setup — so a local run needs the test DB up, or rely on CI.
+
+## Coverage gate (diff-based)
+
+CI runs the suite with coverage and gates on **changed lines**, not a global
+percentage. `diff-cover` fails a PR when the `app/` lines it adds or edits are
+less than **85%** covered. Untouched legacy code is exempt — the goal is that
+every *new* line of logic ships with a test, without a giant retroactive backfill.
+
+Check it locally before pushing:
+
+```bash
+cd backend && .venv/bin/python -m pytest tests/ --cov=app --cov-report=xml
+diff-cover coverage.xml --compare-branch=origin/main --fail-under=85 --show-uncovered
+```
+
+If the gate flags lines, add tests for the new branch/handler rather than lowering
+the threshold. (Push-to-main skips the gate — there's no PR base to diff against.)
