@@ -25,6 +25,8 @@ jobs:
       - run: bun install --frozen-lockfile
       - name: TypeScript check
         run: bun run typecheck
+      - name: Unit tests (Vitest — pure-logic harness)
+        run: bun run test
       - name: Expo doctor (informational — does not fail the build)
         run: bun run doctor || true
         continue-on-error: true
