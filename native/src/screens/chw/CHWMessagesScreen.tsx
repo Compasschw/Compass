@@ -142,6 +142,7 @@ import {
   useEngagementStatus,
 } from '../../hooks/useMessagesInsights';
 import { SwipeableThreadRow } from '../../components/chw/SwipeableThreadRow';
+import { applyThreadFilter, type ThreadFilterTab } from './threadFilter';
 import { showAlert } from '../../utils/showAlert';
 import { formatElapsedSince } from '../../utils/sessionTimer';
 import {
@@ -755,7 +756,7 @@ function ThreadRow({
 
 // ─── Thread list pane ─────────────────────────────────────────────────────────
 
-type ThreadFilterTab = 'all' | 'unread' | 'flagged' | 'archived';
+// Thread-list tab filtering lives in ./threadFilter (pure, unit-tested).
 
 interface ThreadListPaneProps {
   readonly conversations: ConversationData[];
@@ -769,7 +770,7 @@ interface ThreadListPaneProps {
  * Left pane: one row per member–CHW conversation pair with search and 4 filter tabs.
  *
  * Sort: pinned conversations first (pinnedAt desc), then by lastMessageAt desc.
- * Tabs: All (n) / Unread / Flagged / Archived.
+ * Tabs: All (n) / Unread / Pinned / Archived.
  * Thread rows wrapped in SwipeableThreadRow for swipe-to-pin/archive/delete.
  * StaggerList for cascading mount animation.
  */
@@ -849,23 +850,7 @@ function ThreadListPane({
       return bTs - aTs;
     });
 
-    let filtered = sorted;
-
-    switch (activeFilter) {
-      case 'archived':
-        filtered = filtered.filter((c) => !!c.archivedAt);
-        break;
-      case 'unread':
-        filtered = filtered.filter((c) => c.unreadCount > 0);
-        break;
-      case 'flagged':
-        // Flagged is presentation-only in v1 — show same unarchived list.
-        filtered = filtered.filter((c) => !c.archivedAt);
-        break;
-      default:
-        filtered = filtered.filter((c) => !c.archivedAt);
-        break;
-    }
+    let filtered = applyThreadFilter(sorted, activeFilter);
 
     const query = searchQuery.trim().toLowerCase();
     if (query) {
@@ -900,7 +885,7 @@ function ThreadListPane({
   const tabs: { key: ThreadFilterTab; label: string }[] = [
     { key: 'all', label: 'All' },
     { key: 'unread', label: 'Unread' },
-    { key: 'flagged', label: 'Flagged' },
+    { key: 'pinned', label: 'Pinned' },
     { key: 'archived', label: 'Archived' },
   ];
 

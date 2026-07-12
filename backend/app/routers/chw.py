@@ -387,6 +387,8 @@ async def list_earning_sessions(
             select(
                 BillingClaim.session_id,
                 func.coalesce(BillingClaim.service_date, func.date(BillingClaim.created_at)).label("svc_date"),
+                Session.started_at.label("started_at"),
+                Session.ended_at.label("ended_at"),
                 User.name.label("member_name"),
                 Session.mode.label("session_mode"),
                 BillingClaim.units,
@@ -417,6 +419,8 @@ async def list_earning_sessions(
         SessionEarningItem(
             session_id=r.session_id,
             service_date=r.svc_date,
+            started_at=r.started_at,
+            ended_at=r.ended_at,
             member_name=r.member_name or "Member",
             session_mode=r.session_mode or "in_person",
             units=int(r.units),

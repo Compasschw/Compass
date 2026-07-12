@@ -97,6 +97,8 @@ export type EarningsPeriod = 'this_month' | 'last_month';
 export interface SessionEarningItem {
   sessionId: string;
   serviceDate?: string | null; // ISO date
+  startedAt?: string | null; // ISO datetime — actual session start
+  endedAt?: string | null; // ISO datetime — actual session end
   memberName: string;
   sessionMode: string; // 'in_person' | 'virtual' | 'phone'
   units: number;
