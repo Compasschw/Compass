@@ -1,12 +1,16 @@
 import hashlib
+import logging
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.utils.security import create_access_token, create_refresh_token, hash_password, verify_password
+
+logger = logging.getLogger("compass.auth")
 
 
 async def register_user(
@@ -112,6 +116,92 @@ async def register_user(
     return user
 
 
+async def append_new_member_to_csv(user_id: UUID) -> None:
+    """Best-effort background task: append a freshly-created member to the
+    Pear Member-Import rolling monthly CSV in S3.
+
+    Shared by EVERY member-creation surface — self-signup (``POST
+    /auth/register``), OAuth sign-up (``POST /auth/oauth/google`` and
+    ``/oauth/apple``), completed OAuth onboarding (``POST
+    /auth/complete-member-onboarding``), and CHW-initiated onboarding
+    (``POST /chw/members``) — so a member exported to Pear's billing
+    pipeline never depends on which surface created the account. Callers
+    schedule this via ``BackgroundTasks.add_task`` AFTER their own
+    ``db.commit()`` succeeds, so the export only ever runs against a
+    durably-persisted member row.
+
+    Opens its own DB session because the request session is closed by the
+    time this fires, logs any failure but never re-raises (admin can
+    re-run the backfill script later). Idempotent on
+    ``MemberProfile.member_csv_exported_at``: skips if it's already
+    populated, sets it to ``NOW()`` after a successful S3 append.
+    """
+    from sqlalchemy import select as _select
+
+    from app.config import settings as _settings
+    from app.database import async_session
+    from app.models.user import MemberProfile
+    from app.models.user import User as _User
+    from app.services.member_csv_writer import (
+        append_row,
+        build_row_from_models,
+        is_export_eligible,
+        is_pear_complete,
+    )
+
+    if not getattr(_settings, "member_csv_enabled", False):
+        return
+
+    async with async_session() as db:
+        try:
+            user = await db.get(_User, user_id)
+            if user is None or not is_export_eligible(user):
+                return
+            result = await db.execute(
+                _select(MemberProfile).where(MemberProfile.user_id == user_id)
+            )
+            profile = result.scalar_one_or_none()
+            if profile is None:
+                logger.warning(
+                    "member_csv: skipped export — no MemberProfile for user=%s",
+                    user_id,
+                )
+                return
+            if profile.member_csv_exported_at is not None:
+                logger.info(
+                    "member_csv: already exported user=%s at %s — skipping",
+                    user_id, profile.member_csv_exported_at,
+                )
+                return
+            if not is_pear_complete(user, profile):
+                # Profile is missing one or more Pear-required fields.
+                # Leave member_csv_exported_at NULL so the next backfill
+                # run picks them up once their profile is complete.
+                logger.info(
+                    "member_csv: skipped user=%s — profile missing "
+                    "Pear-required fields; will retry via backfill",
+                    user_id,
+                )
+                return
+
+            row = build_row_from_models(user=user, member_profile=profile)
+            env_prefix = "prod" if _settings.pear_suite_enabled else "sandbox"
+            append_row(row, environment=env_prefix)
+
+            profile.member_csv_exported_at = datetime.now(UTC)
+            await db.commit()
+            logger.info(
+                "member_csv: appended user=%s env=%s",
+                user_id, env_prefix,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "member_csv: append failed user=%s (non-fatal, "
+                "retryable via scripts/backfill_member_csv.py)",
+                user_id,
+            )
+
+
 def _normalize_phone_e164(value: str | None) -> str | None:
     """Canonicalize a US phone string to E.164 (+1XXXXXXXXXX) for storage.
 
@@ -146,7 +236,15 @@ def _normalize_phone_e164(value: str | None) -> str | None:
 
 
 # Re-exported for callers that want the type without re-importing date.
-__all__ = ["register_user", "authenticate_user", "create_tokens", "store_refresh_token", "revoke_refresh_token", "date"]
+__all__ = [
+    "register_user",
+    "append_new_member_to_csv",
+    "authenticate_user",
+    "create_tokens",
+    "store_refresh_token",
+    "revoke_refresh_token",
+    "date",
+]
 
 
 async def authenticate_user(db: AsyncSession, email: str, password: str):
