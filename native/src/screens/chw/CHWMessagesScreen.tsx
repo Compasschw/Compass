@@ -2300,6 +2300,17 @@ interface MemberContextRailProps {
   /** Fired after the auto-begin attempt so the parent can clear the one-shot flag. */
   readonly onAutoBeginSessionConsumed?: () => void;
   /**
+   * When true, automatically open the inline Complete-Session confirm panel
+   * on mount (once the session status is known and it's actually in a
+   * completable state). Set by the parent when route.params.promptComplete
+   * === true and this rail's conversation matches the target member — see
+   * ActiveSessionBadge's "Complete Session" button. Mirrors the
+   * autoBeginSessionOnMount pattern above.
+   */
+  readonly promptCompleteOnMount?: boolean;
+  /** Fired after the auto-prompt attempt so the parent can clear the one-shot flag. */
+  readonly onPromptCompleteConsumed?: () => void;
+  /**
    * Called when the CHW taps "SDOH / Health Screening" with an active
    * session. The parent (CHWMessagesScreen) owns the panel's open/close
    * state because the panel renders as a sibling pane of the rail, not
@@ -2325,6 +2336,8 @@ function MemberContextRail({
   onSessionStarted,
   autoBeginSessionOnMount,
   onAutoBeginSessionConsumed,
+  promptCompleteOnMount,
+  onPromptCompleteConsumed,
   onOpenSdohPanel,
 }: MemberContextRailProps): React.JSX.Element {
   const navigation = useNavigation<any>(); // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -2627,6 +2640,40 @@ function MemberContextRail({
     canBeginNewSession,
     handleBeginNewSession,
     onAutoBeginSessionConsumed,
+  ]);
+
+  // One-shot auto-prompt: open the inline Complete-Session confirm panel on
+  // mount when the caller requested it (route param promptComplete === true,
+  // e.g. from ActiveSessionBadge's "Complete Session" button) and the session
+  // is actually in a completable state (in_progress / awaiting_documentation,
+  // not terminal, and not disabled by a services-refused consent — mirrors
+  // the manual button's own disabled condition). A ref guards against
+  // double-firing across re-renders, same as autoBeginFiredRef above.
+  const promptCompleteFiredRef = useRef(false);
+  useEffect(() => {
+    if (!promptCompleteOnMount) return;
+    if (promptCompleteFiredRef.current) return;
+    // Wait until both the live session AND the consent query have settled —
+    // firing while consent is still loading would race servicesRefused (it
+    // defaults to false until the fetch resolves), risking a false-negative
+    // auto-open for a member who has actually refused services.
+    if (liveSessionQuery.isLoading || consentQuery.isLoading) return;
+    const canComplete =
+      !canBeginSession && !canBeginNewSession && !isTerminalSession && !servicesRefused;
+    if (!canComplete) return;
+
+    promptCompleteFiredRef.current = true;
+    onPromptCompleteConsumed?.();
+    setShowEndConfirm(true);
+  }, [
+    promptCompleteOnMount,
+    liveSessionQuery.isLoading,
+    consentQuery.isLoading,
+    canBeginSession,
+    canBeginNewSession,
+    isTerminalSession,
+    servicesRefused,
+    onPromptCompleteConsumed,
   ]);
 
   const handleEndSessionConfirmed = useCallback(async (): Promise<void> => {
@@ -3182,6 +3229,12 @@ export function CHWMessagesScreen(): React.JSX.Element {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const shouldAutoBeginSession = (route.params as any)?.autoBeginSession === true;
   const autoBeginFiredRef = useRef(false);
+  // promptComplete: navigated from ActiveSessionBadge's "Complete Session"
+  // button (any CHW page). When true, auto-select the member's conversation
+  // (handled by the same effect as targetMemberId below) and open
+  // MemberContextRail's inline Complete-Session confirm panel on mount.
+  const shouldPromptComplete = route.params?.promptComplete === true;
+  const promptCompleteFiredRef = useRef(false);
 
   const hideRail = width < BP_HIDE_RAIL;
   const hideList = width < BP_HIDE_LIST;
@@ -3506,6 +3559,14 @@ export function CHWMessagesScreen(): React.JSX.Element {
               }
               onAutoBeginSessionConsumed={() => {
                 autoBeginFiredRef.current = true;
+              }}
+              promptCompleteOnMount={
+                shouldPromptComplete &&
+                !promptCompleteFiredRef.current &&
+                selectedConversation.memberId === targetMemberId
+              }
+              onPromptCompleteConsumed={() => {
+                promptCompleteFiredRef.current = true;
               }}
               onOpenSdohPanel={handleOpenSdohPanel}
             />
