@@ -52,9 +52,23 @@ vi.mock('lucide-react-native', () => {
         if (typeof prop === 'string' && !NON_ICON_PROPS.has(prop)) return IconStub;
         return undefined;
       },
+      // Vitest validates `import { X } from '...'` against the mock via the
+      // `in` operator (the `has` trap) before falling through to `get` — the
+      // default `has` trap on an empty target always says "no", which made
+      // every named icon import fail with "No 'X' export is defined on the
+      // mock" even though `get` would have answered it. Answer `true` for
+      // any icon-shaped string so every named import resolves.
+      has(_target, prop: string | symbol) {
+        return typeof prop === 'string' && !NON_ICON_PROPS.has(prop);
+      },
     },
   );
 });
+
+// react-native-reanimated is stubbed deterministically via `resolve.alias` in
+// vitest.config.ts → test/reanimated-stub.tsx (NOT a runtime vi.mock here — that
+// races vitest's parallel workers and lets reanimated's broken browser `mock.js`
+// load first, flaking CI). See that stub for the rationale.
 
 // Unmount any rendered component tree after each test so DOM state and React
 // Query providers never leak between tests.

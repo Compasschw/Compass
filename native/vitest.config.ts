@@ -1,3 +1,5 @@
+import { fileURLToPath } from 'node:url';
+
 import { defineConfig } from 'vitest/config';
 
 /**
@@ -23,11 +25,23 @@ export default defineConfig({
     jsxImportSource: 'react',
   },
   resolve: {
-    alias: {
-      // Production web resolves `react-native` → `react-native-web` (Metro/Expo);
-      // mirror that so component tests exercise the real web render path.
-      'react-native': 'react-native-web',
-    },
+    // Order matters: the more specific `react-native-reanimated` entry MUST come
+    // before `react-native` so the latter's prefix doesn't shadow it.
+    alias: [
+      {
+        // Deterministic stub (resolves at bundler layer — a runtime vi.mock
+        // races vitest's parallel workers and lets reanimated's broken browser
+        // `mock.js` load first, which flaked CI). See test/reanimated-stub.tsx.
+        find: /^react-native-reanimated$/,
+        replacement: fileURLToPath(new URL('./test/reanimated-stub.tsx', import.meta.url).href),
+      },
+      {
+        // Production web resolves `react-native` → `react-native-web` (Metro/Expo);
+        // mirror that so component tests exercise the real web render path.
+        find: /^react-native$/,
+        replacement: 'react-native-web',
+      },
+    ],
   },
   test: {
     globals: true,
