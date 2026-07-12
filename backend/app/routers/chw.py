@@ -3,7 +3,7 @@ from typing import Literal
 from uuid import NAMESPACE_URL, UUID, uuid5
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from fastapi.security import HTTPBearer
 from sqlalchemy import any_, case, extract, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -772,6 +772,7 @@ async def list_chw_members(
 )
 async def create_chw_member(
     data: CHWCreateMemberRequest,
+    background_tasks: BackgroundTasks,
     current_user=Depends(require_role("chw")),
     db: AsyncSession = Depends(get_db),
 ) -> CHWCreateMemberResponse:
@@ -809,6 +810,16 @@ async def create_chw_member(
     (e.g. the ServiceRequest/Conversation insert fails), ``get_db`` rolls the
     whole session back — the member is never left orphaned with no CHW link.
 
+    Pear Member-Import CSV: after the single commit above succeeds, this
+    schedules ``append_new_member_to_csv`` (the SAME background task
+    ``/auth/register`` fires) so a CHW-created member lands in the rolling
+    monthly member CSV in S3 exactly like a self-signup member does. It is
+    best-effort/non-blocking (``BackgroundTasks``, its own DB session, gated
+    on ``settings.member_csv_enabled``, idempotent on
+    ``MemberProfile.member_csv_exported_at``) — an S3/CSV failure never fails
+    this request, and re-running it (e.g. from the backfill script) is a
+    no-op once the row has been exported.
+
     Authorization: ``require_role("chw")`` — members / admins get 403.
 
     Returns:
@@ -820,7 +831,7 @@ async def create_chw_member(
     from datetime import UTC, datetime
 
     from app.models.request import ServiceRequest
-    from app.services.auth_service import register_user
+    from app.services.auth_service import append_new_member_to_csv, register_user
     from app.services.session_lookup import find_or_create_conversation_for_pair
 
     # ── Create the member User + MemberProfile (reuses signup provisioning) ──
@@ -887,6 +898,12 @@ async def create_chw_member(
     )
 
     await db.commit()
+
+    # Schedule the Pear Member-Import CSV export AFTER the commit above has
+    # succeeded — mirrors /auth/register's background_tasks.add_task call.
+    # Best-effort/non-blocking: a CSV/S3 failure never fails this request,
+    # and the export is gated + idempotent (see append_new_member_to_csv).
+    background_tasks.add_task(append_new_member_to_csv, member.id)
 
     return CHWCreateMemberResponse(
         id=member.id,

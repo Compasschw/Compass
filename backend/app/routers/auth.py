@@ -12,6 +12,9 @@ from app.limiter import limiter
 from app.models.user import User
 from app.schemas.auth import LoginRequest, RefreshRequest, RegisterRequest, TokenResponse
 from app.services.auth_service import (
+    append_new_member_to_csv as _append_new_member_to_csv,
+)
+from app.services.auth_service import (
     authenticate_user,
     create_tokens,
     register_user,
@@ -25,85 +28,13 @@ logger = logging.getLogger("compass.auth")
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
-
-async def _append_new_member_to_csv(user_id: UUID) -> None:
-    """Best-effort background task: append a freshly-registered member to
-    the Pear Member-Import rolling monthly CSV in S3.
-
-    Mirrors the pattern of ``_sync_new_member_to_pear`` — opens its own
-    DB session because the request session is closed by the time this
-    fires, logs any failure but never re-raises (admin can re-run the
-    backfill script later).  Idempotent on
-    ``MemberProfile.member_csv_exported_at``: skips if it's already
-    populated, sets it to ``NOW()`` after a successful S3 append.
-    """
-    from datetime import UTC
-    from datetime import datetime as _dt
-
-    from sqlalchemy import select
-
-    from app.config import settings as _settings
-    from app.database import async_session
-    from app.models.user import MemberProfile
-    from app.models.user import User as _User
-    from app.services.member_csv_writer import (
-        append_row,
-        build_row_from_models,
-        is_export_eligible,
-        is_pear_complete,
-    )
-
-    if not getattr(_settings, "member_csv_enabled", False):
-        return
-
-    async with async_session() as db:
-        try:
-            user = await db.get(_User, user_id)
-            if user is None or not is_export_eligible(user):
-                return
-            result = await db.execute(
-                select(MemberProfile).where(MemberProfile.user_id == user_id)
-            )
-            profile = result.scalar_one_or_none()
-            if profile is None:
-                logger.warning(
-                    "register: skipped member CSV — no MemberProfile for user=%s",
-                    user_id,
-                )
-                return
-            if profile.member_csv_exported_at is not None:
-                logger.info(
-                    "register: member CSV already exported user=%s at %s — skipping",
-                    user_id, profile.member_csv_exported_at,
-                )
-                return
-            if not is_pear_complete(user, profile):
-                # Profile is missing one or more Pear-required fields.
-                # Leave member_csv_exported_at NULL so the next backfill
-                # run picks them up once their profile is complete.
-                logger.info(
-                    "register: member CSV skipped user=%s — profile missing "
-                    "Pear-required fields; will retry via backfill",
-                    user_id,
-                )
-                return
-
-            row = build_row_from_models(user=user, member_profile=profile)
-            env_prefix = "prod" if _settings.pear_suite_enabled else "sandbox"
-            append_row(row, environment=env_prefix)
-
-            profile.member_csv_exported_at = _dt.now(UTC)
-            await db.commit()
-            logger.info(
-                "register: member CSV appended user=%s env=%s",
-                user_id, env_prefix,
-            )
-        except Exception:  # noqa: BLE001
-            logger.exception(
-                "register: member CSV append failed user=%s (non-fatal, "
-                "retryable via scripts/backfill_member_csv.py)",
-                user_id,
-            )
+# ``_append_new_member_to_csv`` is imported (not redefined) from
+# ``app.services.auth_service.append_new_member_to_csv`` — the CSV-export
+# logic is shared verbatim by every member-creation surface (self-signup,
+# OAuth sign-up, OAuth-onboarding-completion, and CHW-initiated onboarding
+# in ``routers/chw.py``). Keep the local alias name so existing call sites
+# below (and tests that ``patch("app.routers.auth._append_new_member_to_csv")``)
+# don't need to change.
 
 
 async def _sync_new_member_to_pear(user_id: UUID) -> None:
