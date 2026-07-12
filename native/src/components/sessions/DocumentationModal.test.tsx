@@ -82,7 +82,7 @@ function setDateTimeField(label: string, value: string): void {
 function selectADiagnosisCode(): void {
   fireEvent.click(screen.getByLabelText('Counseling & Wellness'));
   fireEvent.click(
-    screen.getByLabelText('Z71.89: Other specified counseling, wellness visits'),
+    screen.getByLabelText('Z71.89: Other specified counseling'),
   );
 }
 

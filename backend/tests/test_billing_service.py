@@ -107,8 +107,11 @@ class TestValidateClaim:
         frontend catalog; if a picker code is removed here the submit will 422.
         """
         frontend_picker_codes = [
-            "Z71.89", "Z59.12", "Z72.3", "Z75.3", "Z59.00",
-            "Z59.89", "Z55.6", "Z59.9", "Z59.86", "Z65.3",
+            "Z59.10", "Z59.4", "Z59.6", "Z59.71", "Z59.72",
+            "Z55.6", "Z55.9", "Z56.9", "Z59.00", "Z59.01",
+            "Z59.89", "Z59.9", "Z65.3", "Z71.89", "Z72.3",
+            "Z59.82", "Z59.861", "Z59.868", "Z59.869", "Z59.87",
+            "Z74.8", "Z75.3",
         ]
         errors = validate_claim(frontend_picker_codes, "98960", 1)
         assert errors == [], f"Frontend picker codes rejected by backend: {errors}"
