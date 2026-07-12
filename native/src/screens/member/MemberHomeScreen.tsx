@@ -91,6 +91,7 @@ import {
 import type { PillVariant } from '../../components/ui/Pill';
 import { useMemberRoadmap } from '../../hooks/useFollowupQueries';
 import { useRefreshControl } from '../../hooks/useRefreshControl';
+import { countAwaitingChw } from './memberDashboard';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 import type {
@@ -365,8 +366,9 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
     (item) => item.status !== 'completed' && item.status !== 'dismissed',
   );
 
-  // Open requests = member-submitted, not yet picked up by a CHW.
-  const openRequestsCount = allRequests.filter((r) => r.status === 'open').length;
+  // "Awaiting CHW" — pending-approval sessions + open service requests. See
+  // countAwaitingChw for why (keeps this tile in sync with the Appointments page).
+  const openRequestsCount = countAwaitingChw(allSessions, allRequests);
 
   // Active journeys for the Your Journeys section.
   const allJourneys   = journeysQuery.data ?? [];
@@ -440,6 +442,13 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
 
   const handleOpenSessions = useCallback(() => {
     navigation.navigate('Sessions');
+  }, [navigation]);
+
+  // The member's Appointments page is the 'Calendar' route (MemberCalendarScreen,
+  // titled "Appointments"). The Upcoming and "Awaiting CHW" tiles both point
+  // here — that's where a member's upcoming + pending-approval sessions live.
+  const handleOpenAppointments = useCallback(() => {
+    navigation.navigate('Calendar');
   }, [navigation]);
 
   // "Schedule a session" → the Appointments page and auto-open the schedule
@@ -679,7 +688,7 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
                 delta={upcomingSessions.length === 1 ? 'Session' : 'Sessions'}
                 deltaColor={tokens.blue700}
                 style={styles.statGridTile}
-                onPress={handleOpenSessions}
+                onPress={handleOpenAppointments}
                 accessibilityLabel={`Upcoming sessions: ${upcomingSessions.length}`}
               />
               <StatTile
@@ -701,7 +710,7 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
                 delta="Awaiting CHW"
                 deltaColor={tokens.purple700}
                 style={styles.statGridTile}
-                onPress={handleFindCHW}
+                onPress={handleOpenAppointments}
                 accessibilityLabel={`Open requests: ${openRequestsCount}`}
               />
               <StatTile
