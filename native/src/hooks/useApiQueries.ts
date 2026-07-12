@@ -15,6 +15,7 @@ import * as Sharing from 'expo-sharing';
 import { ApiError, api, getTokens } from '../api/client';
 import { transformKeys, toSnakeCase } from '../utils/caseTransform';
 import { showAlert } from '../utils/showAlert';
+import { withSessionStarted, withStartedAtForSession } from '../utils/sessionStartOptimistic';
 import { getSessionAISummary, type AISummaryResponse } from '../api/sessions';
 
 // ─── Types (camelCase, matching what screens expect) ─────────────────────────
@@ -1067,8 +1068,53 @@ export function useStartSession() {
     mutationFn: async (sessionId: string) => {
       await api(`/sessions/${sessionId}/start`, { method: 'PATCH' });
     },
-    onSuccess: () => {
+    // Optimistic flip: the Begin Session button reads the session's status from
+    // useSession(['sessions', id]), and the header timer reads the conversation's
+    // activeSessionStartedAt. Without this, both only update after the PATCH +
+    // a follow-up refetch land — so the green→red change and the timer visibly
+    // lagged. Write in_progress + started_at into the cache immediately so the
+    // button turns red and the timer starts the instant the CHW taps Begin.
+    onMutate: async (sessionId: string) => {
+      const nowIso = new Date().toISOString();
+      const sessionKey = queryKeys.session(sessionId);
+      await qc.cancelQueries({ queryKey: sessionKey });
+
+      const prevSession = qc.getQueryData<SessionData>(sessionKey);
+      if (prevSession) {
+        qc.setQueryData<SessionData>(sessionKey, withSessionStarted(prevSession, nowIso));
+      }
+
+      // Seed the conversation-list timer start for this session (both archived
+      // filter variants), so the header clock appears without waiting on refetch.
+      const prevConvLists: Array<[readonly unknown[], ConversationData[] | undefined]> = [];
+      for (const includeArchived of [false, true]) {
+        const key = queryKeys.conversationList(includeArchived);
+        const list = qc.getQueryData<ConversationData[]>(key);
+        prevConvLists.push([key, list]);
+        if (list) {
+          qc.setQueryData<ConversationData[]>(
+            key,
+            withStartedAtForSession(list, sessionId, nowIso),
+          );
+        }
+      }
+
+      return { prevSession, prevConvLists, sessionKey };
+    },
+    onError: (_error: Error, _sessionId, ctx) => {
+      // Roll back the optimistic writes so a failed start doesn't leave a phantom
+      // in_progress session / running timer. The user-facing message is owned by
+      // each caller's own catch (e.g. CHWSessionsScreen's specialized 409 toast),
+      // so this hook must NOT also alert — that would double-notify and clobber
+      // the 409 handling.
+      if (ctx?.prevSession) qc.setQueryData(ctx.sessionKey, ctx.prevSession);
+      ctx?.prevConvLists?.forEach(([key, list]) => qc.setQueryData(key, list));
+    },
+    onSettled: () => {
+      // Reconcile with the server (real started_at, active_session_id) once the
+      // request resolves — success or failure.
       void qc.invalidateQueries({ queryKey: queryKeys.sessions });
+      void qc.invalidateQueries({ queryKey: queryKeys.conversations });
     },
   });
 }

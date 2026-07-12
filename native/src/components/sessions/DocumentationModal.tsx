@@ -951,6 +951,9 @@ export function DocumentationModal({
    */
   const [aiError, setAiError] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // After a successful submit, show an in-app "submitted for billing" panel
+  // (replaces the browser alert + earnings breakdown). Dismissed via Done.
+  const [showSubmitted, setShowSubmitted] = useState(false);
   // Tracks whether the notes TextInput is focused, for focus-ring styling.
   const [notesFocused, setNotesFocused] = useState(false);
 
@@ -1145,20 +1148,10 @@ export function DocumentationModal({
 
     setIsSubmitting(false);
 
-    // RN's Alert.alert() is a no-op for multi-button dialogs on web; use
-    // window.alert() so the CHW gets visible confirmation on the web build.
-    if (Platform.OS === 'web') {
-      if (typeof window !== 'undefined') {
-        window.alert(`Documentation Submitted\n\nClaim filed for ${unitsToBill} unit(s).`);
-      }
-      onClose();
-      return;
-    }
-    Alert.alert(
-      'Documentation Submitted',
-      `Claim filed for ${unitsToBill} unit(s).`,
-      [{ text: 'Done', onPress: onClose }],
-    );
+    // In-app, on-brand confirmation (replaces the browser "…says" alert and the
+    // old earnings/units breakdown). Shows a styled success panel inside the
+    // modal; the CHW dismisses it with Done, which closes the modal.
+    setShowSubmitted(true);
   }, [
     isValid,
     isSubmitting,
@@ -1175,7 +1168,6 @@ export function DocumentationModal({
     aiGeneratedAt,
     aiExcluded,
     onSubmit,
-    onClose,
   ]);
 
   /**
@@ -1187,29 +1179,16 @@ export function DocumentationModal({
   const handleSubmit = useCallback((): void => {
     if (!isValid || isSubmitting) return;
 
-    const gross = unitsToBill * 26.66; // Medi-Cal T1016 rate per 15-min unit
-    const platformFee = gross * 0.15;
-    const rewardsPool = gross * 0.25;
-    const chwNet = gross * 0.6;
-    const procedureLabel = selectedProcedureCode || 'CPT/HCPCS';
-    const diagCount = selectedDiagnosisCodes.length;
+    // Plain confirmation gate — guards against an accidental one-tap claim
+    // filing without exposing any earnings/payout breakdown to the CHW.
+    const confirmBody = "Submit this session's documentation for billing?";
 
-    const previewBody =
-      `${unitsToBill} unit(s) of ${procedureLabel}\n` +
-      `Diagnoses: ${diagCount} code${diagCount === 1 ? '' : 's'}\n\n` +
-      `Gross:        $${gross.toFixed(2)}\n` +
-      `Platform fee: -$${platformFee.toFixed(2)}\n` +
-      `Rewards pool: -$${rewardsPool.toFixed(2)}\n` +
-      `Your payout:  $${chwNet.toFixed(2)}\n\n` +
-      `This will file the claim with PearSuite. Continue?`;
-
-    // RN's Alert.alert() with a multi-button [Edit / Submit Claim] callback
-    // shape is a no-op on web — the dialog never renders and `onPress` never
-    // fires, so the CHW taps Submit and nothing visibly happens. Bridge to
-    // window.confirm() on web; native keeps the styled Alert.
+    // RN's Alert.alert() with a multi-button [Cancel / Submit] callback shape is
+    // a no-op on web — the dialog never renders and `onPress` never fires. Bridge
+    // to window.confirm() on web; native keeps the styled Alert.
     if (Platform.OS === 'web') {
       if (typeof window === 'undefined') return;
-      const confirmed = window.confirm(`Review claim before submitting\n\n${previewBody}`);
+      const confirmed = window.confirm(confirmBody);
       if (confirmed) {
         void performSubmit();
       }
@@ -1217,12 +1196,12 @@ export function DocumentationModal({
     }
 
     Alert.alert(
-      'Review claim before submitting',
-      previewBody,
+      'Submit for billing',
+      confirmBody,
       [
-        { text: 'Edit', style: 'cancel' },
+        { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Submit Claim',
+          text: 'Submit',
           style: 'default',
           onPress: () => {
             void performSubmit();
@@ -1233,9 +1212,6 @@ export function DocumentationModal({
   }, [
     isValid,
     isSubmitting,
-    unitsToBill,
-    selectedProcedureCode,
-    selectedDiagnosisCodes,
     performSubmit,
   ]);
 
@@ -1249,6 +1225,27 @@ export function DocumentationModal({
       accessibilityViewIsModal
     >
       <View style={mo.container}>
+        {/* ── Submitted-for-billing success panel (in-app, replaces the browser
+              alert + earnings breakdown). Covers the form once the claim files. */}
+        {showSubmitted && (
+          <View style={mo.submittedOverlay} accessibilityViewIsModal>
+            <View style={mo.submittedIconCircle}>
+              <Check size={30} color="#FFFFFF" strokeWidth={3} />
+            </View>
+            <Text style={mo.submittedTitle}>
+              Session submitted for billing pending approval
+            </Text>
+            <TouchableOpacity
+              style={mo.submittedDoneBtn}
+              onPress={onClose}
+              accessibilityRole="button"
+              accessibilityLabel="Done"
+            >
+              <Text style={mo.submittedDoneText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* ── Header ───────────────────────────────────────────────────────── */}
         <View style={mo.header}>
           <View style={mo.headerText}>
@@ -1510,6 +1507,43 @@ const mo = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: tokens.pageBg,
+  },
+  // In-app success panel shown after a claim files — replaces the browser alert.
+  submittedOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 10,
+    backgroundColor: tokens.pageBg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.xl,
+    gap: spacing.xl,
+  },
+  submittedIconCircle: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: tokens.emerald700,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  submittedTitle: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 18,
+    lineHeight: 26,
+    color: tokens.textPrimary,
+    textAlign: 'center',
+    maxWidth: 360,
+  },
+  submittedDoneBtn: {
+    paddingHorizontal: spacing.xxl,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: tokens.primary,
+  },
+  submittedDoneText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 15,
+    color: '#FFFFFF',
   },
   header: {
     flexDirection: 'row',
