@@ -297,6 +297,151 @@ async def test_end_session_relationship_gate(client: AsyncClient, chw_tokens, me
 
 
 @pytest.mark.asyncio
+async def test_documentation_bills_units_from_chw_entered_times(
+    client: AsyncClient, chw_tokens, member_tokens
+):
+    """When the CHW supplies session_start_time/session_end_time, units are
+    billed from that entered window (not the ~0-min server-tracked duration of
+    a just-started test session), and the window is persisted on the session."""
+    from uuid import UUID
+
+    from sqlalchemy import select
+
+    from app.models.billing import BillingClaim
+    from app.models.session import Session
+    from tests.conftest import test_session as _tsf
+
+    session_id = await _create_in_progress_session(client, member_tokens, chw_tokens)
+
+    # 80-minute window → 3 units (>75, ≤105 bracket in calculate_units).
+    payload = {
+        "summary": "Worked on housing goals",
+        "diagnosis_codes": ["Z59.1"],
+        "procedure_code": "98960",
+        "session_start_time": "2026-07-10T15:00:00Z",
+        "session_end_time": "2026-07-10T16:20:00Z",
+    }
+    res = await client.post(
+        f"/api/v1/sessions/{session_id}/documentation",
+        json=payload, headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 200, res.text
+
+    async with _tsf() as db:
+        claim = (
+            await db.execute(
+                select(BillingClaim).where(BillingClaim.session_id == UUID(session_id))
+            )
+        ).scalar_one()
+        sess = await db.get(Session, UUID(session_id))
+
+    assert claim.units == 3
+    assert sess.duration_minutes == 80
+    assert sess.started_at.isoformat().startswith("2026-07-10T15:00")
+    assert sess.ended_at.isoformat().startswith("2026-07-10T16:20")
+
+
+@pytest.mark.asyncio
+async def test_documentation_rejects_end_not_after_start(
+    client: AsyncClient, chw_tokens, member_tokens
+):
+    """End time must be strictly after start time → 422, no claim created."""
+    session_id = await _create_in_progress_session(client, member_tokens, chw_tokens)
+    payload = {
+        "summary": "x",
+        "diagnosis_codes": ["Z59.1"],
+        "procedure_code": "98960",
+        "session_start_time": "2026-07-10T16:00:00Z",
+        "session_end_time": "2026-07-10T15:00:00Z",
+    }
+    res = await client.post(
+        f"/api/v1/sessions/{session_id}/documentation",
+        json=payload, headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 422, res.text
+
+
+@pytest.mark.asyncio
+async def test_abort_active_session_cancels_without_claim(
+    client: AsyncClient, chw_tokens, member_tokens
+):
+    """Aborting an in_progress session cancels it and files NO billing claim."""
+    from uuid import UUID
+
+    from sqlalchemy import select
+
+    from app.models.billing import BillingClaim
+    from tests.conftest import test_session as _tsf
+
+    session_id = await _create_in_progress_session(client, member_tokens, chw_tokens)
+
+    res = await client.patch(
+        f"/api/v1/sessions/{session_id}/abort", headers=auth_header(chw_tokens)
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["status"] == "cancelled"
+
+    async with _tsf() as db:
+        claims = (
+            await db.execute(
+                select(BillingClaim).where(BillingClaim.session_id == UUID(session_id))
+            )
+        ).scalars().all()
+    assert claims == []
+
+
+@pytest.mark.asyncio
+async def test_abort_rejects_scheduled_session(
+    client: AsyncClient, chw_tokens, member_tokens
+):
+    """A scheduled (not-yet-started) session can't be aborted → 409 (use /cancel)."""
+    request_id = await create_request_and_match(client, member_tokens, chw_tokens)
+    res = await client.post(
+        "/api/v1/sessions/",
+        json={"request_id": request_id, "scheduled_at": "2026-06-10T10:00:00Z", "mode": "in_person"},
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 201
+    session_id = res.json()["id"]
+
+    res = await client.patch(
+        f"/api/v1/sessions/{session_id}/abort", headers=auth_header(chw_tokens)
+    )
+    assert res.status_code == 409, res.text
+
+
+@pytest.mark.asyncio
+async def test_abort_is_idempotent(client: AsyncClient, chw_tokens, member_tokens):
+    """Aborting an already-cancelled session returns 200 with current state."""
+    session_id = await _create_in_progress_session(client, member_tokens, chw_tokens)
+    res = await client.patch(
+        f"/api/v1/sessions/{session_id}/abort", headers=auth_header(chw_tokens)
+    )
+    assert res.status_code == 200
+    res = await client.patch(
+        f"/api/v1/sessions/{session_id}/abort", headers=auth_header(chw_tokens)
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_abort_relationship_gate(client: AsyncClient, chw_tokens, member_tokens):
+    """A CHW who doesn't own the session gets 404 (existence not leaked)."""
+    session_id = await _create_in_progress_session(client, member_tokens, chw_tokens)
+    res = await client.post("/api/v1/auth/register", json={
+        "email": "chw_abort2@example.com", "password": "testpass123",
+        "name": "Other CHW", "role": "chw",
+    })
+    assert res.status_code == 201
+    other = res.json()
+    res = await client.patch(
+        f"/api/v1/sessions/{session_id}/abort", headers=auth_header(other)
+    )
+    assert res.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_roadmap_item_includes_session_id_and_mark_complete_succeeds(
     client: AsyncClient, chw_tokens: dict, member_tokens: dict
 ) -> None:

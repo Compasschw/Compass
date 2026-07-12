@@ -941,6 +941,93 @@ async def end_session(
     })
 
 
+@router.patch("/{session_id}/abort", response_model=SessionResponse)
+async def abort_session(
+    session_id: UUID,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SessionResponse:
+    """PATCH /api/v1/sessions/{session_id}/abort
+
+    CHW aborts an ACTIVE session from the "Complete Session" confirm dialog's
+    "Cancel Session" action. Unlike ``/end`` (which moves the session to
+    ``awaiting_documentation`` so it can be documented + billed), abort throws
+    the session away: it transitions ``in_progress`` / ``awaiting_documentation``
+    → ``cancelled`` and creates NO documentation and NO billing claim.
+
+    Distinct from ``PATCH /{id}/cancel`` (member/CHW cancelling a *scheduled*
+    appointment) — abort is specifically for a session the CHW already started.
+
+    Relationship gate: only the owning CHW (or an admin) may abort — a
+    non-owner gets 404 so session existence isn't leaked.
+
+    Idempotency: aborting an already-``cancelled`` session returns 200 with the
+    current state.
+
+    Errors:
+      404 — session not found or caller is not the owning CHW
+      409 — session is in a state that cannot be aborted (``scheduled`` —
+            use ``/cancel`` — or ``completed``)
+    """
+    import logging as _logging
+
+    from app.models.audit import AuditLog
+
+    session = await _load_chw_session_or_404(
+        session_id=session_id, db=db, current_user=current_user
+    )
+
+    # Idempotency: already cancelled → return current state.
+    if session.status == "cancelled":
+        chw = await db.get(User, session.chw_id)
+        member = await db.get(User, session.member_id)
+        return SessionResponse.model_validate({
+            **session.__dict__,
+            "chw_name": chw.name if chw else None,
+            "member_name": member.name if member else None,
+        })
+
+    if session.status not in ("in_progress", "awaiting_documentation"):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Only an active session can be aborted. "
+                "Use /cancel for a scheduled appointment."
+            ),
+        )
+
+    previous_status = session.status
+    session.status = "cancelled"
+    if session.ended_at is None:
+        session.ended_at = datetime.now(UTC)
+
+    db.add(
+        AuditLog(
+            user_id=current_user.id,
+            action="session_abort",
+            resource="session",
+            resource_id=str(session_id),
+            details={"previous_status": previous_status, "new_status": "cancelled"},
+        )
+    )
+
+    await db.commit()
+    await db.refresh(session)
+
+    _logging.getLogger("compass.sessions.abort").info(
+        "session %s aborted by chw %s (was %s)",
+        session_id, current_user.id, previous_status,
+    )
+
+    chw = await db.get(User, session.chw_id)
+    member = await db.get(User, session.member_id)
+    return SessionResponse.model_validate({
+        **session.__dict__,
+        "chw_name": chw.name if chw else None,
+        "member_name": member.name if member else None,
+    })
+
+
 async def _run_extraction_in_background(session_id: UUID) -> None:
     """Run LLM follow-up extraction in a fresh DB session, fire-and-forget.
 
@@ -1010,11 +1097,51 @@ async def submit_documentation(
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Documentation already submitted for this session")
 
-    # Authoritatively compute units from the session's actual duration so a
-    # CHW cannot upcode by submitting a higher units_to_bill from the client.
-    # The client's data.units_to_bill is intentionally ignored.
+    # Units are always computed server-side from a duration (never trusted as a
+    # raw count from the client) — this preserves the anti-upcoding guarantee.
+    # The DURATION source, however, is now the CHW-entered start/end times when
+    # both are supplied on the documentation screen (product decision: the CHW
+    # edits the actual session window before filing). When they're absent we
+    # fall back to the session's server-tracked duration (legacy/clients that
+    # don't send times). The entered window is validated and audit-logged
+    # against the server-tracked times so any adjustment is traceable.
     from app.services.billing_service import calculate_units
-    computed_units = calculate_units(session.duration_minutes)
+
+    entered_start = data.session_start_time
+    entered_end = data.session_end_time
+    if entered_start is not None and entered_end is not None:
+        # Normalize to aware UTC for a correct delta regardless of client tz.
+        if entered_start.tzinfo is None:
+            entered_start = entered_start.replace(tzinfo=UTC)
+        if entered_end.tzinfo is None:
+            entered_end = entered_end.replace(tzinfo=UTC)
+        if entered_end <= entered_start:
+            raise HTTPException(
+                status_code=422,
+                detail="Session end time must be after the start time.",
+            )
+        duration_minutes: int | None = int(
+            (entered_end - entered_start).total_seconds() / 60
+        )
+        import logging as _logging
+
+        _logging.getLogger("compass").info(
+            "submit_documentation: CHW-entered session window for %s — "
+            "entered=[%s, %s] (%dmin) vs tracked=[%s, %s] (%smin)",
+            session_id, entered_start.isoformat(), entered_end.isoformat(),
+            duration_minutes, session.started_at, session.ended_at,
+            session.duration_minutes,
+        )
+        # Persist the CHW-adjusted window as the session's authoritative times
+        # so downstream (Earnings Session Detail, service_date, reporting) all
+        # agree with what was billed.
+        session.started_at = entered_start
+        session.ended_at = entered_end
+        session.duration_minutes = duration_minutes
+    else:
+        duration_minutes = session.duration_minutes
+
+    computed_units = calculate_units(duration_minutes)
 
     errors = validate_claim(data.diagnosis_codes, data.procedure_code, computed_units)
     if errors:
