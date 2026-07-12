@@ -397,6 +397,10 @@ export function AddMemberModal({
                 editable={!isSubmitting}
                 accessibilityLabel="Member phone"
               />
+              <Text style={styles.hint}>
+                No phone? Enter 555-555-5555 — the member gets in-app messages
+                only (no texts).
+              </Text>
             </View>
 
             <View style={styles.field}>

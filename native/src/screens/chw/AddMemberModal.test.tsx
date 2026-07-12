@@ -162,6 +162,20 @@ describe('AddMemberModal — required consent gate', () => {
     expect(message).toContain('sign in');
   });
 
+  it('accepts the 555-555-5555 no-phone sentinel', async () => {
+    // CHWs enter 555-555-5555 when a member has no phone. It's 10 digits so it
+    // clears the phone check; the backend treats it as SMS-ineligible.
+    renderModal();
+    fillRequiredFields();
+    setText('Member phone', '555-555-5555');
+    fireEvent.click(screen.getByTestId('consent-terms'));
+    fireEvent.click(screen.getByTestId('consent-communications'));
+
+    expect(
+      screen.getByLabelText('Add member').getAttribute('aria-disabled'),
+    ).not.toBe('true');
+  });
+
   it('does not submit when only one consent box is checked', async () => {
     renderModal();
     fillRequiredFields();
