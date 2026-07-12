@@ -80,6 +80,44 @@ async def get_active_session_ids_for_conversations(
     return {conversation_id: session_id for conversation_id, session_id in result.all()}
 
 
+async def get_active_session_started_ats_for_conversations(
+    db: AsyncSession,
+    conversation_ids: list[UUID],
+) -> dict[UUID, datetime]:
+    """Return the ``started_at`` of each conversation's in_progress Session.
+
+    Companion to :func:`get_active_session_ids_for_conversations`, kept separate
+    so that helper's contract is unchanged. Drives the CHW Messages session
+    timer, which counts up from the active session's start. Same DISTINCT ON
+    tie-break (newest per conversation). Conversations with no in_progress
+    Session — or an in_progress Session whose ``started_at`` is NULL — are absent
+    from the result.
+
+    Args:
+        db: The async SQLAlchemy session.
+        conversation_ids: Conversation UUIDs to resolve (empty list is fine).
+
+    Returns:
+        Mapping of conversation_id → the active session's ``started_at``.
+    """
+    if not conversation_ids:
+        return {}
+    result = await db.execute(
+        select(Session.conversation_id, Session.started_at)
+        .where(
+            Session.conversation_id.in_(conversation_ids),
+            Session.status == "in_progress",
+        )
+        .order_by(Session.conversation_id, Session.created_at.desc())
+        .distinct(Session.conversation_id)
+    )
+    return {
+        conversation_id: started_at
+        for conversation_id, started_at in result.all()
+        if started_at is not None
+    }
+
+
 async def find_or_create_conversation_for_pair(
     db: AsyncSession,
     *,

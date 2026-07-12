@@ -224,6 +224,12 @@ export interface ConversationData {
    * Messages screen — when null, those buttons should be hidden.
    */
   activeSessionId: string | null;
+  /**
+   * Start time (ISO8601) of the in_progress Session named by `activeSessionId`.
+   * The CHW Messages screen counts a live session timer up from this. Null when
+   * there is no active session.
+   */
+  activeSessionStartedAt: string | null;
   createdAt: string;
   /** Display name of the CHW participant. */
   chwName: string;

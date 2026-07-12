@@ -50,6 +50,11 @@ class ConversationResponse(BaseModel):
     # populated server-side (not pulled from the column) via
     # app.services.session_lookup.get_active_session_for_conversation.
     active_session_id: UUID | None = None
+    # Start time of the in_progress Session (``active_session_id``), if any. The
+    # CHW Messages screen counts a live session timer up from this. None when
+    # there is no active Session. Populated server-side alongside
+    # active_session_id via session_lookup.get_active_session_started_ats_for_conversations.
+    active_session_started_at: datetime | None = None
     created_at: datetime
     # Soft-delete fields. None = active thread.
     deleted_at: datetime | None = None
