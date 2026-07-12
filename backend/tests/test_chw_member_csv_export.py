@@ -24,7 +24,7 @@ tests/test_social_auth.py's OAuth background-task assertions).
 from __future__ import annotations
 
 from datetime import date
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 from uuid import UUID
 
 import pytest
@@ -247,4 +247,81 @@ async def test_self_signup_register_no_export_when_flag_disabled(
     with patch("app.services.member_csv_writer.append_row") as mock_append_row:
         res = await client.post("/api/v1/auth/register", json=payload)
     assert res.status_code == 201, res.text
+    assert mock_append_row.call_count == 0
+
+
+# ─── Shared-helper edge branches (exercised directly — unreachable via the
+# API surfaces since both /auth/register and /chw/members boundary-validate
+# the Pear-required fields before a row can even be created) ─────────────────
+
+
+async def test_export_skips_member_with_incomplete_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """is_pear_complete() gates the export: a member missing a Pear-required
+    field (e.g. insurance_company) is skipped, exported_at stays NULL so the
+    backfill script can pick it up later, and no S3 call is made."""
+    monkeypatch.setattr(settings, "member_csv_enabled", True)
+
+    async with _session_factory() as session:
+        user = User(
+            email="incomplete.profile@compasschw-test.dev",
+            password_hash="not-a-real-hash",
+            name="Incomplete Profile",
+            role="member",
+            phone="+13105550199",
+        )
+        session.add(user)
+        await session.flush()
+        profile = MemberProfile(
+            user_id=user.id,
+            date_of_birth=date(1990, 1, 1),
+            gender="Female",
+            # insurance_company intentionally omitted — Pear-required, missing.
+            medi_cal_id="91234567A",
+            address_line1="1 Main St",
+            city="Los Angeles",
+            state="CA",
+            zip_code="90001",
+        )
+        session.add(profile)
+        await session.commit()
+        member_id = user.id
+
+    from app.services.auth_service import append_new_member_to_csv
+
+    with patch("app.services.member_csv_writer.append_row") as mock_append_row:
+        await append_new_member_to_csv(member_id)
+
+    assert mock_append_row.call_count == 0
+
+    profile = await _get_profile(member_id)
+    assert profile.member_csv_exported_at is None
+
+
+async def test_export_skips_member_with_no_profile_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Defensive guard: a member User row with no MemberProfile at all (data
+    integrity edge case) is skipped cleanly — no crash, no S3 call."""
+    monkeypatch.setattr(settings, "member_csv_enabled", True)
+
+    async with _session_factory() as session:
+        user = User(
+            email="no.profile.row@compasschw-test.dev",
+            password_hash="not-a-real-hash",
+            name="No Profile Row",
+            role="member",
+            phone="+13105550188",
+        )
+        session.add(user)
+        await session.commit()
+        member_id = user.id
+
+    from app.services.auth_service import append_new_member_to_csv
+
+    with patch("app.services.member_csv_writer.append_row") as mock_append_row:
+        # Must not raise even though there's no MemberProfile to read.
+        await append_new_member_to_csv(member_id)
+
     assert mock_append_row.call_count == 0
