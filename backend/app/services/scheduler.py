@@ -4,9 +4,13 @@ Runs inside the FastAPI process (single-instance deploy). Uses APScheduler
 with the AsyncIO executor — no external Redis/Celery required for MVP scale.
 
 Scheduled jobs:
-  - session_reminder — every 2 minutes, sends push notifications to members
-    whose session starts in 14-16 minutes.
-  - claim_retry      — every 10 minutes, retries failed Pear Suite claims.
+  - session_reminder    — every 2 minutes, sends push notifications to both
+    parties whose session starts in 14-16 minutes.
+  - session_reminder_1d — every 30 minutes, notifies the MEMBER of sessions
+    starting in ~23-25 hours ("your session is tomorrow").
+  - session_reminder_1h — every 2 minutes, notifies the MEMBER of sessions
+    starting in ~59-61 minutes ("your session is in 1 hour").
+  - claim_retry         — every 10 minutes, retries failed Pear Suite claims.
 
 For horizontal scaling (multi-instance), replace with APScheduler's
 SQLAlchemyJobStore or migrate to Celery Beat with a shared Redis broker.
@@ -25,19 +29,44 @@ logger = logging.getLogger("compass.scheduler")
 _scheduler: AsyncIOScheduler | None = None
 
 
-async def send_session_reminders() -> None:
+def _format_local_time(scheduled_at: datetime | None) -> str:
+    """Render ``scheduled_at`` as a clinic-local time label, e.g. '11:30 AM'.
+
+    Built on the same ``to_clinic_local`` conversion (CLINIC_TZ_NAME) that
+    ``routers.sessions._scheduled_at_label`` uses for the shared
+    conversation-thread messages and the confirm-approval push, so every
+    session-time surface renders the same wall-clock time from a single
+    source of truth.
+    """
+    if scheduled_at is None:
+        return "the scheduled time"
+    from app.services.availability import to_clinic_local
+
+    local = to_clinic_local(scheduled_at)
+    return local.strftime("%I:%M %p").lstrip("0")
+
+
+async def send_session_reminders(now: datetime | None = None) -> None:
     """Notify members about sessions starting in ~15 minutes.
 
     Windows the scan to [14, 16] minutes-from-now to catch sessions the
     2-minute scheduler cadence would otherwise miss. Tracks which sessions
     have been reminded via a simple in-memory set (lost on process restart;
     acceptable because the overlap window is small).
+
+    Args:
+        now: Reference time for the window scan. Defaults to
+            ``datetime.now(UTC)``. Exposed as a parameter (rather than always
+            reading the wall clock) so tests can seed sessions at controlled
+            offsets and deterministically exercise the window edges instead
+            of racing real time.
     """
     from app.database import async_session
     from app.models.session import Session
     from app.services.notifications import NotificationPayload, notify_user
 
-    now = datetime.now(UTC)
+    if now is None:
+        now = datetime.now(UTC)
     window_start = now + timedelta(minutes=14)
     window_end = now + timedelta(minutes=16)
 
@@ -88,6 +117,127 @@ async def send_session_reminders() -> None:
                 _reminded_sessions.add(key)
             except Exception as e:  # noqa: BLE001
                 logger.warning("Failed to send session reminder for %s: %s", session.id, e)
+
+
+async def send_day_before_session_reminders(now: datetime | None = None) -> None:
+    """Notify the MEMBER about sessions starting in ~1 day.
+
+    Mirrors :func:`send_session_reminders` exactly (windowing + in-memory
+    dedup + ``status == "scheduled"`` filter), but scoped to the MEMBER only
+    and windowed to [23, 25] hours-from-now — wide enough that the 30-minute
+    job cadence can't skip a session between runs.
+
+    Args:
+        now: Reference time for the window scan; defaults to
+            ``datetime.now(UTC)``. See :func:`send_session_reminders` for why
+            this is a parameter rather than always reading the wall clock.
+    """
+    from app.database import async_session
+    from app.models.session import Session
+    from app.services.notifications import NotificationPayload, notify_user
+
+    if now is None:
+        now = datetime.now(UTC)
+    window_start = now + timedelta(hours=23)
+    window_end = now + timedelta(hours=25)
+
+    async with async_session() as db:
+        result = await db.execute(
+            select(Session)
+            .where(
+                and_(
+                    Session.status == "scheduled",
+                    Session.scheduled_at >= window_start,
+                    Session.scheduled_at <= window_end,
+                )
+            )
+        )
+        upcoming = list(result.scalars().all())
+
+        for session in upcoming:
+            key = f"reminded_1d:{session.id}"
+            if key in _reminded_sessions:
+                continue
+
+            try:
+                local_time = _format_local_time(session.scheduled_at)
+                await notify_user(
+                    db,
+                    session.member_id,
+                    NotificationPayload(
+                        user_id=session.member_id,
+                        title="Session tomorrow",
+                        body=f"Reminder: your session is tomorrow at {local_time}.",
+                        deeplink=f"compasschw://sessions/{session.id}",
+                        category="session.reminder",
+                        data={"session_id": str(session.id)},
+                    ),
+                )
+                _reminded_sessions.add(key)
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "Failed to send day-before session reminder for %s: %s", session.id, e
+                )
+
+
+async def send_hour_before_session_reminders(now: datetime | None = None) -> None:
+    """Notify the MEMBER about sessions starting in ~1 hour.
+
+    Mirrors :func:`send_session_reminders` exactly (windowing + in-memory
+    dedup + ``status == "scheduled"`` filter), but scoped to the MEMBER only
+    and windowed to [59, 61] minutes-from-now to match the existing 2-minute
+    scheduler cadence.
+
+    Args:
+        now: Reference time for the window scan; defaults to
+            ``datetime.now(UTC)``. See :func:`send_session_reminders` for why
+            this is a parameter rather than always reading the wall clock.
+    """
+    from app.database import async_session
+    from app.models.session import Session
+    from app.services.notifications import NotificationPayload, notify_user
+
+    if now is None:
+        now = datetime.now(UTC)
+    window_start = now + timedelta(minutes=59)
+    window_end = now + timedelta(minutes=61)
+
+    async with async_session() as db:
+        result = await db.execute(
+            select(Session)
+            .where(
+                and_(
+                    Session.status == "scheduled",
+                    Session.scheduled_at >= window_start,
+                    Session.scheduled_at <= window_end,
+                )
+            )
+        )
+        upcoming = list(result.scalars().all())
+
+        for session in upcoming:
+            key = f"reminded_1h:{session.id}"
+            if key in _reminded_sessions:
+                continue
+
+            try:
+                await notify_user(
+                    db,
+                    session.member_id,
+                    NotificationPayload(
+                        user_id=session.member_id,
+                        title="Session in 1 hour",
+                        body="Reminder: your session is in 1 hour.",
+                        deeplink=f"compasschw://sessions/{session.id}",
+                        category="session.reminder",
+                        data={"session_id": str(session.id)},
+                    ),
+                )
+                _reminded_sessions.add(key)
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "Failed to send hour-before session reminder for %s: %s", session.id, e
+                )
 
 
 async def retry_pending_claims() -> None:
@@ -452,6 +602,28 @@ def start_scheduler() -> None:
         id="session_reminders",
         max_instances=1,  # Prevent overlapping runs
         coalesce=True,    # If the scheduler fell behind, run once not N times
+    )
+
+    # Day-before reminder — [23, 25]-hour window is wide relative to a
+    # 30-minute cadence, so a single missed/delayed run can't skip a session.
+    _scheduler.add_job(
+        send_day_before_session_reminders,
+        "interval",
+        minutes=30,
+        id="session_reminders_1d",
+        max_instances=1,
+        coalesce=True,
+    )
+
+    # Hour-before reminder — mirrors the 15-minute job's 2-minute cadence
+    # since its window is similarly narrow ([59, 61] minutes).
+    _scheduler.add_job(
+        send_hour_before_session_reminders,
+        "interval",
+        minutes=2,
+        id="session_reminders_1h",
+        max_instances=1,
+        coalesce=True,
     )
 
     _scheduler.add_job(
