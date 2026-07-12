@@ -1,29 +1,46 @@
 import { defineConfig } from 'vitest/config';
 
 /**
- * Vitest harness — scoped to PURE TypeScript logic.
+ * Vitest harness — two tiers:
  *
- * This project is Expo React Native; full component rendering under jsdom is
- * fragile across the RN/React 19 boundary. So this harness deliberately covers
- * only pure, framework-free modules (data transforms, validation, date/geo
- * math) — exactly the logic where silent regressions have bitten us. Tests live
- * next to the code they cover as `*.test.ts`.
+ *  1. Pure-logic tests (`*.test.ts`) run in the fast `node` environment. No
+ *     React, no DOM — data transforms, validation, date/geo math.
  *
- * A test file that imports `react-native` will fail to resolve here by design:
- * keep component tests out until we add a proper RN test runner (jest-expo).
+ *  2. Component / hook tests (`*.test.tsx`) run in `jsdom` with `react-native`
+ *     aliased to `react-native-web`. Compass ships web-first via react-native-web,
+ *     so this renders components/hooks *exactly as they run in production web* — a
+ *     faithful harness, not a mock. Use @testing-library/react (`render`,
+ *     `renderHook`, `screen`, `fireEvent`) in these files.
+ *
+ * A `.test.tsx` file opts into jsdom by extension (glob below); a `.test.ts` file
+ * must not import a component (it has no DOM).
  */
 export default defineConfig({
+  // React 19 automatic JSX runtime via esbuild (no @vitejs/plugin-react — its
+  // v6 requires Vite 6, which conflicts with the Vite 5 bundled by vitest 2.1).
+  esbuild: {
+    jsx: 'automatic',
+    jsxImportSource: 'react',
+  },
+  resolve: {
+    alias: {
+      // Production web resolves `react-native` → `react-native-web` (Metro/Expo);
+      // mirror that so component tests exercise the real web render path.
+      'react-native': 'react-native-web',
+    },
+  },
   test: {
+    globals: true,
     environment: 'node',
-    include: ['src/**/*.test.ts'],
-    // Coverage floor is enforced on CHANGED lines via diff-cover in CI, not as a
-    // global percentage — see .github/workflows/ci.yml. Local `bun run test:cov`
-    // still prints a full report for spot checks.
+    // Component/hook tests opt into jsdom by file extension.
+    environmentMatchGlobs: [['**/*.test.tsx', 'jsdom']],
+    include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+    setupFiles: ['./vitest.setup.ts'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov'],
-      include: ['src/**/*.ts'],
-      exclude: ['src/**/*.test.ts', 'src/**/*.d.ts'],
+      include: ['src/**/*.ts', 'src/**/*.tsx'],
+      exclude: ['src/**/*.test.ts', 'src/**/*.test.tsx', 'src/**/*.d.ts'],
     },
   },
 });
