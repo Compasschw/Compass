@@ -77,6 +77,22 @@ class Message(Base):
     sender_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
     type: Mapped[str] = mapped_column(String(20), default="text")
+    # ── Masked SMS messaging ──────────────────────────────────────────────────
+    # Transport the message traveled over — distinct from `type` (content
+    # kind: text/file). 'in_app' (default, backfilled on every pre-existing
+    # row) means the message only ever existed in the in-app thread.  'sms'
+    # means it was sent/received over the shared masked Vonage number AND
+    # mirrored into this same in-app thread so either party can continue in
+    # whichever channel they prefer. Enforced at the DB layer by
+    # ck_messages_channel (see migration smsmsg0711).
+    channel: Mapped[str] = mapped_column(String(20), nullable=False, server_default="in_app")
+    # Vonage Messages API `message_uuid`. Populated for channel='sms' rows
+    # only (both outbound sends and inbound webhook deliveries); NULL for
+    # in_app messages. A partial UNIQUE index (WHERE NOT NULL, see migration
+    # smsmsg0711) makes the inbound webhook idempotent without a separate
+    # dedup table — a re-delivered Vonage webhook for the same message_uuid
+    # cannot create a second Message row.
+    provider_message_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 class FileAttachment(Base):

@@ -1,3 +1,4 @@
+import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -17,9 +18,21 @@ from app.schemas.conversation import (
     FileAttachmentInline,
     MessageCreate,
     MessageResponse,
+    SmsSendRequest,
 )
 
+logger = logging.getLogger("compass.conversations")
+
 router = APIRouter(prefix="/api/v1/conversations", tags=["conversations"])
+
+# ── Masked SMS outbound rate limit ──────────────────────────────────────────
+# Per (CHW, member) per UTC calendar day, counted against the same
+# CommunicationTouch audit table the call rate limit uses (kind='sms'
+# instead of kind='call'). 30/day is deliberately more generous than the
+# 5/day call limit — texting is a normal back-and-forth conversation medium,
+# not an ad-hoc outreach ping — while still bounding worst-case per-pair
+# Vonage spend if a CHW account is compromised or a client bug loops.
+_SMS_OUTBOUND_RATE_LIMIT = 30
 
 
 # ─── In-app messaging decision ────────────────────────────────────────────────
@@ -161,6 +174,7 @@ def _serialize_message(msg, attachment) -> MessageResponse:
         "sender_id": msg.sender_id,
         "body": msg.body,
         "type": msg.type,
+        "channel": getattr(msg, "channel", "in_app"),
         "created_at": msg.created_at,
         "attachment": None,
     }
@@ -750,6 +764,166 @@ async def send_message(conversation_id: UUID, data: MessageCreate, current_user=
         logging.getLogger("compass").warning("Notification fanout failed on message send: %s", e)
 
     return _serialize_message(msg, attachment)
+
+
+@router.post(
+    "/{conversation_id}/sms",
+    response_model=MessageResponse,
+    status_code=201,
+    summary="CHW sends a masked-number SMS to the member on this conversation",
+    description=(
+        "Sends a real text message to the member's phone via the shared Vonage "
+        "masked number (see app.services.vonage_sms for the pool-ready "
+        "from-number seam), and mirrors it into this conversation's in-app "
+        "thread as a channel='sms' Message so either party can continue in "
+        "whichever channel they prefer. CHW-only, and only the CHW who owns "
+        "this conversation (403 otherwise — relationship gate, not just a "
+        "role gate). Requires the member to be SMS-eligible (verified, "
+        "non-placeholder, non-duplicate phone; not opted out — see "
+        "app.services.sms_eligibility) and to still consent to services "
+        "(T03 gate). Rate-limited to 30 messages per (CHW, member) per UTC "
+        "calendar day. Sets the member's sticky inbound-routing pointer to "
+        "this conversation."
+    ),
+)
+async def send_sms(
+    conversation_id: UUID,
+    data: SmsSendRequest,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    """POST /api/v1/conversations/{conversation_id}/sms
+
+    Auth: CHW who owns this conversation only (403 for members, other CHWs,
+    and admins alike — SMS send-as is scoped to the actual assigned CHW so
+    the member always knows whose thread they're texting into).
+
+    Steps: ownership gate -> services-consent gate -> SMS eligibility gate
+    -> per-pair daily rate limit -> Vonage send -> persist Message(channel=
+    'sms') -> set the member's sticky routing pointer -> CommunicationTouch
+    audit row -> best-effort push notification.
+
+    A failed Vonage send (client returns success=False) raises 502 and
+    persists NOTHING — we never claim a message was sent when it wasn't.
+    """
+    from app.models.conversation import Conversation, Message
+    from app.models.user import MemberProfile, User
+    from app.services.communication_touch_log import TouchKind, count_touches_today, record_touch
+    from app.services.relationship_guards import assert_member_consents_to_services
+    from app.services.sms_eligibility import check_sms_eligibility
+    from app.services.vonage_sms import get_vonage_sms_messages_client
+
+    conv = await db.get(Conversation, conversation_id)
+    if conv is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    if current_user.role != "chw" or conv.chw_id != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Not authorized: only the CHW on this conversation may send SMS.",
+        )
+
+    member_user = await db.get(User, conv.member_id)
+    member_profile_result = await db.execute(
+        select(MemberProfile).where(MemberProfile.user_id == conv.member_id)
+    )
+    member_profile = member_profile_result.scalar_one_or_none()
+    if member_user is None or member_profile is None:
+        raise HTTPException(status_code=404, detail="Member not found.")
+
+    # T03: block SMS when the member has refused services — same rule as
+    # in-app messaging (see send_message above).
+    await assert_member_consents_to_services(db, member_id=conv.member_id)
+
+    eligibility = await check_sms_eligibility(
+        db, member_user=member_user, member_profile=member_profile
+    )
+    if not eligibility.eligible or eligibility.normalized_phone is None:
+        raise HTTPException(
+            status_code=422,
+            detail={"detail": eligibility.detail, "code": eligibility.reason_code},
+        )
+
+    daily_count = await count_touches_today(
+        db,
+        initiator_id=current_user.id,
+        recipient_id=conv.member_id,
+        kind=TouchKind.sms,
+    )
+    if daily_count >= _SMS_OUTBOUND_RATE_LIMIT:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Rate limit reached: {_SMS_OUTBOUND_RATE_LIMIT} SMS messages "
+                "per day to the same member. Please try again tomorrow."
+            ),
+        )
+
+    client = get_vonage_sms_messages_client()
+    send_result = await client.send_text(eligibility.normalized_phone, data.text)
+    if not send_result.success:
+        logger.error(
+            "sms send failed conversation=%s chw=%s error=%s status=%s",
+            conversation_id, current_user.id, send_result.error, send_result.status_code,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=f"SMS delivery failed: {send_result.error or 'unknown error'}",
+        )
+
+    # Auto-restore a soft-deleted thread — mirrors send_message's behavior.
+    if conv.deleted_at is not None:
+        conv.deleted_at = None
+        conv.deleted_by_user_id = None
+
+    msg = Message(
+        conversation_id=conversation_id,
+        sender_id=current_user.id,
+        body=data.text,
+        type="text",
+        channel="sms",
+        provider_message_id=send_result.provider_message_id,
+    )
+    db.add(msg)
+    await db.flush()  # populate msg.id / msg.created_at before serializing
+
+    # Sticky routing pointer — inbound replies from this member land back in
+    # THIS conversation until a different CHW SMS's them.
+    member_profile.last_sms_conversation_id = conversation_id
+
+    await record_touch(
+        db,
+        initiator_id=current_user.id,
+        recipient_id=conv.member_id,
+        kind=TouchKind.sms,
+        provider_session_id=send_result.provider_message_id,
+        extra_data={"direction": "outbound"},
+    )
+
+    await db.commit()
+    await db.refresh(msg)
+
+    # Best-effort push notification — short preview only (HIPAA minimum
+    # necessary), same pattern as send_message.
+    try:
+        preview = (data.text[:40] + "…") if len(data.text) > 40 else data.text
+        from app.services.notifications import NotificationPayload, notify_user
+        await notify_user(
+            db,
+            conv.member_id,
+            NotificationPayload(
+                user_id=conv.member_id,
+                title=f"New message from {current_user.name.split(' ')[0]}",
+                body=preview,
+                deeplink=f"compasschw://conversations/{conversation_id}",
+                category="message.new",
+                data={"conversation_id": str(conversation_id), "message_id": str(msg.id)},
+            ),
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Notification fanout failed on SMS send: %s", e)
+
+    return _serialize_message(msg, None)
 
 
 @router.get("/messages/{message_id}/attachment-url")

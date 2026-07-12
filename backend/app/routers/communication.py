@@ -923,6 +923,271 @@ async def voice_events(
     return {"received": True}
 
 
+# ─── Masked SMS messaging (shared Vonage number) ──────────────────────────────
+#
+# POST /api/v1/communication/sms/inbound
+#   Vonage webhook for member -> shared-number SMS replies. Routes the reply
+#   into the member's "sticky" conversation (see app.models.user.MemberProfile.
+#   last_sms_conversation_id) and mirrors it as a channel='sms' Message.
+#
+#   Coded against the Messages API's inbound webhook shape (see the
+#   function docstring below for the exact fields assumed + the legacy-SMS-API
+#   fallback) — configure the Vonage Application's Messages "Inbound URL" to
+#   point here, NOT the number's legacy SMS webhook.
+
+# CTIA-standard SMS opt-out keywords (case-insensitive, whole-message match).
+# Kept in sync with app.services.sms_eligibility.STOP_KEYWORDS.
+_STOP_KEYWORDS = frozenset(
+    {"STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT", "OPTOUT", "OPT-OUT"}
+)
+
+
+class SmsInboundAck(BaseModel):
+    """Response body for POST /sms/inbound.
+
+    Always 200 with received=True once past signature verification — `note`
+    carries a short machine-readable outcome for observability (dashboards /
+    log-based alerting) without changing the HTTP contract Vonage sees.
+    """
+    received: bool = True
+    note: str | None = None
+
+
+def _extract_phone_field(value: object) -> str | None:
+    """Extract a phone-number string from a Vonage `from`/`to` webhook field.
+
+    The Messages API sends these as plain digit strings ("14155551234"); some
+    SDK/legacy shapes nest them as ``{"number": "14155551234", "type": "sms"}``.
+    Handle both defensively so a minor Vonage payload-shape difference doesn't
+    turn into an unhandled routing failure.
+    """
+    if isinstance(value, str) and value:
+        return value
+    if isinstance(value, dict):
+        number = value.get("number")
+        if isinstance(number, str) and number:
+            return number
+    return None
+
+
+@router.post("/sms/inbound", response_model=SmsInboundAck)
+async def sms_inbound(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    _sig: None = Depends(_verify_vonage_signature),
+) -> SmsInboundAck:
+    """Vonage inbound webhook for masked-number SMS replies (member -> shared number).
+
+    Payload shape coded against (Vonage **Messages API** inbound webhook —
+    https://developer.vonage.com/en/messages/concepts/inbound-message):
+
+        {
+          "message_uuid": "<uuid>",
+          "to": "<our number, digits only>",
+          "from": "<member's real number, digits only>",
+          "channel": "sms",
+          "message_type": "text",
+          "text": "...",
+          "timestamp": "..."
+        }
+
+    A defensive fallback also reads the **legacy SMS API**'s inbound field
+    names (`msisdn` for the sender, `messageId` for the dedup id) in case the
+    Vonage dashboard ends up wired to the number's legacy SMS webhook instead
+    of the Application's Messages API webhook — routing logic is identical
+    either way. Flagged here (and in the PR description) so ops can confirm
+    which one is actually configured in the Vonage dashboard.
+
+    Routing is intentionally number-agnostic: it never assumes a specific
+    `to` value (only logs a non-blocking warning if `to` doesn't match a
+    known number — see get_our_sms_numbers()), since a future number pool
+    would have several. It routes purely by the member's `from` number.
+
+    Order of operations:
+      1. Idempotency: dedup on `message_uuid` against
+         Message.provider_message_id — a re-delivered webhook is a no-op
+         200. A DB-level partial UNIQUE index backs this up if two
+         deliveries race past the SELECT check.
+      2. Normalize `from` to E.164 -> find the member by phone. No match ->
+         dead-letter (logged, 200, nothing persisted — Message.sender_id is
+         NOT NULL so an unmapped inbound cannot become a Message).
+      3. STOP keyword -> member_profiles.sms_opt_out = true. NOT persisted
+         as a Message (would render as a confusing chat bubble); a
+         CommunicationTouch audit row is still written for compliance.
+      4. Otherwise route to member_profiles.last_sms_conversation_id (the
+         sticky pointer) if set and still owned by this member, else fall
+         back to the member's single/most-recent conversation. No
+         conversation at all -> dead-letter.
+
+    Never returns non-2xx for anything past signature verification —
+    Vonage retries on non-2xx, and a routing/parsing failure should be
+    logged for ops, not retried forever.
+    """
+    from sqlalchemy.exc import IntegrityError
+
+    from app.models.conversation import Conversation, Message
+    from app.models.user import MemberProfile, User
+    from app.services.auth_service import _normalize_phone_e164
+    from app.services.communication_touch_log import TouchKind, record_touch
+    from app.services.vonage_sms import get_our_sms_numbers
+
+    payload = await _safely_read_body(request)
+    if not isinstance(payload, dict):
+        payload = {}
+
+    message_uuid = (
+        payload.get("message_uuid")
+        or payload.get("messageId")  # legacy SMS API field name
+        or payload.get("messageUuid")
+    )
+    from_raw = _extract_phone_field(payload.get("from")) or payload.get("msisdn")
+    to_raw = _extract_phone_field(payload.get("to"))
+    text = str(payload.get("text") or "")
+
+    # Never log raw phone numbers (PHI) — only whether we received one.
+    logger.info(
+        "sms/inbound received message_uuid=%s has_from=%s has_to=%s",
+        message_uuid, bool(from_raw), bool(to_raw),
+    )
+
+    # Non-blocking, informational only: warn if `to` doesn't match any
+    # number we currently own. Never used to reject/dead-letter — routing
+    # decisions come exclusively from `from_raw` below.
+    if to_raw:
+        known_numbers = {
+            "".join(ch for ch in n if ch.isdigit()) for n in get_our_sms_numbers()
+        }
+        to_digits = "".join(ch for ch in to_raw if ch.isdigit())
+        if known_numbers and to_digits not in known_numbers:
+            logger.warning(
+                "sms/inbound: 'to' number does not match any configured Vonage "
+                "SMS number (informational only — routing is by from-number)"
+            )
+
+    # ── Idempotency ─────────────────────────────────────────────────────────
+    if message_uuid:
+        existing = await db.execute(
+            select(Message.id)
+            .where(Message.provider_message_id == str(message_uuid))
+            .limit(1)
+        )
+        if existing.scalar_one_or_none() is not None:
+            logger.info("sms/inbound: duplicate message_uuid=%s — already processed", message_uuid)
+            return SmsInboundAck(note="duplicate")
+
+    if not from_raw:
+        logger.warning("sms/inbound: no 'from' number in payload — dead-letter")
+        return SmsInboundAck(note="dead_letter_no_from")
+
+    normalized_from = _normalize_phone_e164(str(from_raw))
+    if not normalized_from:
+        logger.warning("sms/inbound: could not normalize from-number — dead-letter")
+        return SmsInboundAck(note="dead_letter_bad_from")
+
+    member_result = await db.execute(
+        select(User, MemberProfile)
+        .join(MemberProfile, MemberProfile.user_id == User.id)
+        .where(
+            User.role == "member",
+            User.phone == normalized_from,
+            User.deleted_at.is_(None),
+        )
+        .limit(1)
+    )
+    row = member_result.first()
+    if row is None:
+        logger.warning("sms/inbound: no member matches from-number — dead-letter")
+        return SmsInboundAck(note="dead_letter_unknown_member")
+    member_user, member_profile = row
+
+    # ── STOP keyword handling ──────────────────────────────────────────────
+    if text.strip().upper() in _STOP_KEYWORDS:
+        member_profile.sms_opt_out = True
+        await record_touch(
+            db,
+            initiator_id=member_user.id,
+            # No single CHW recipient for a platform-wide opt-out — the
+            # member is recorded as both initiator and recipient so the
+            # audit row still satisfies the NOT NULL FK columns.
+            recipient_id=member_user.id,
+            kind=TouchKind.sms,
+            provider_session_id=str(message_uuid) if message_uuid else None,
+            extra_data={"direction": "inbound", "stop_keyword": True},
+        )
+        await db.commit()
+        logger.info("sms/inbound: STOP processed, sms_opt_out=true member=%s", member_user.id)
+        return SmsInboundAck(note="stop_processed")
+
+    # ── Route to the member's sticky (or most-recent) conversation ─────────
+    target_conv: Conversation | None = None
+    if member_profile.last_sms_conversation_id is not None:
+        target_conv = await db.get(Conversation, member_profile.last_sms_conversation_id)
+        if target_conv is not None and target_conv.member_id != member_user.id:
+            target_conv = None  # stale/foreign pointer — ignore, fall through
+
+    if target_conv is None:
+        fallback_result = await db.execute(
+            select(Conversation)
+            .where(Conversation.member_id == member_user.id)
+            .order_by(Conversation.created_at.desc())
+            .limit(1)
+        )
+        target_conv = fallback_result.scalar_one_or_none()
+
+    if target_conv is None:
+        logger.warning(
+            "sms/inbound: member=%s has no conversation to route to — dead-letter",
+            member_user.id,
+        )
+        return SmsInboundAck(note="dead_letter_no_conversation")
+
+    # Auto-restore a soft-deleted thread — an inbound SMS reply is new
+    # activity (mirrors conversations.send_message's behavior).
+    if target_conv.deleted_at is not None:
+        target_conv.deleted_at = None
+        target_conv.deleted_by_user_id = None
+
+    msg = Message(
+        conversation_id=target_conv.id,
+        sender_id=member_user.id,
+        body=text,
+        type="text",
+        channel="sms",
+        provider_message_id=str(message_uuid) if message_uuid else None,
+    )
+    db.add(msg)
+
+    await record_touch(
+        db,
+        initiator_id=member_user.id,
+        recipient_id=target_conv.chw_id,
+        kind=TouchKind.sms,
+        provider_session_id=str(message_uuid) if message_uuid else None,
+        extra_data={"direction": "inbound"},
+    )
+
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        # Race: two deliveries of the same message_uuid both passed the
+        # idempotency SELECT before either committed. The partial UNIQUE
+        # index (ix_messages_provider_message_id_unique) catches it here —
+        # treat as already-processed rather than surfacing a 500.
+        await db.rollback()
+        logger.info(
+            "sms/inbound: duplicate-delivery race on message_uuid=%s — "
+            "treated as already-processed: %s",
+            message_uuid, exc,
+        )
+        return SmsInboundAck(note="duplicate_race")
+
+    logger.info(
+        "sms/inbound: routed message to conversation=%s member=%s",
+        target_conv.id, member_user.id,
+    )
+    return SmsInboundAck()
+
+
 # ─── Helpers ────────────────────────────────────────────────────────────────
 
 

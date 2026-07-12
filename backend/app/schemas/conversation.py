@@ -33,8 +33,23 @@ class MessageResponse(BaseModel):
     sender_id: UUID
     body: str
     type: str
+    # Transport the message traveled over: 'in_app' (default) | 'sms'. See
+    # app/models/conversation.py::Message.channel for the full rationale.
+    channel: str = "in_app"
     created_at: datetime
     attachment: FileAttachmentInline | None = None
+
+
+class SmsSendRequest(BaseModel):
+    """Body for POST /conversations/{id}/sms — CHW sends masked SMS to the member.
+
+    1600 chars is Vonage's practical ceiling for a single Messages API SMS
+    submission before it silently multi-segments in ways that complicate
+    delivery-status tracking; kept as a hard client-facing cap so a runaway
+    message body fails fast with a clear 422 rather than a confusing partial
+    send.
+    """
+    text: str = Field(min_length=1, max_length=1600)
 
 
 class ConversationResponse(BaseModel):
