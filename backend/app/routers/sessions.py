@@ -247,11 +247,9 @@ def _scheduled_at_label(session) -> str:
     'Thu, Jul 09 at 11:30 AM'. Falls back gracefully when scheduled_at is null."""
     if session.scheduled_at is None:
         return "your session"
-    from zoneinfo import ZoneInfo
+    from app.services.availability import to_clinic_local
 
-    from app.services.availability import CLINIC_TZ_NAME
-
-    local = session.scheduled_at.astimezone(ZoneInfo(CLINIC_TZ_NAME))
+    local = to_clinic_local(session.scheduled_at)
     return local.strftime("%a, %b %d at %I:%M %p")
 
 
@@ -304,6 +302,33 @@ async def confirm_session(
     _add_scheduling_message(db, session, current_user.id, confirmed=True)
     await db.commit()
     await db.refresh(session)
+
+    # ── Push notification to the member — "request approved" ───────────────
+    # Best-effort: a delivery failure here must never fail the confirm action
+    # (mirrors the accept-request notification pattern in routers/requests.py).
+    # NOTE: we don't store a per-member timezone yet, so the label below is
+    # rendered in clinic-local time (CLINIC_TZ_NAME) via `_scheduled_at_label`
+    # — same fallback the existing scheduling-message helper already uses.
+    try:
+        from app.services.notifications import NotificationPayload, notify_user
+        await notify_user(
+            db,
+            session.member_id,
+            NotificationPayload(
+                user_id=session.member_id,
+                title="Session approved",
+                body=f"Your session was approved for {_scheduled_at_label(session)}.",
+                deeplink=f"compasschw://sessions/{session.id}",
+                category="session.confirmed",
+                data={"session_id": str(session.id)},
+            ),
+        )
+    except Exception as e:  # noqa: BLE001
+        import logging
+        logging.getLogger("compass").warning(
+            "Notification fanout failed on session confirm: %s", e
+        )
+
     from app.models.user import User as _User
     chw = await db.get(_User, session.chw_id)
     member = await db.get(_User, session.member_id)

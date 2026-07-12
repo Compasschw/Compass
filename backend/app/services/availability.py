@@ -42,6 +42,21 @@ DEFAULT_WINDOWS: dict[str, str] = {
 CLINIC_TZ_NAME = "America/Los_Angeles"
 
 
+def to_clinic_local(dt: datetime) -> datetime:
+    """Convert an aware datetime to clinic-local time (``CLINIC_TZ_NAME``).
+
+    Single source of truth for the platform's clinic-local time conversion —
+    used by ``routers.sessions._scheduled_at_label`` (thread/confirm-approval
+    messages) and the scheduler's day-before/hour-before reminder jobs, so
+    every session-time-facing surface (in-thread messages, push notifications)
+    renders the same wall-clock time from the same conversion. We don't store
+    a per-member timezone yet; clinic-local is the platform-wide fallback.
+    """
+    from zoneinfo import ZoneInfo
+
+    return dt.astimezone(ZoneInfo(CLINIC_TZ_NAME))
+
+
 class AvailabilityError(ValueError):
     """Raised when an availability payload is malformed."""
 
