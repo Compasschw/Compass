@@ -23,7 +23,7 @@ export type { RightRailProps } from './RightRail';
 export { StickyActionBar } from './StickyActionBar';
 export type { StickyActionBarProps, ActionItem, PrimaryAction } from './StickyActionBar';
 
-export { RightDrawer } from './RightDrawer';
+export { RightDrawer, WEB_PANEL_WIDTH } from './RightDrawer';
 export type { RightDrawerProps } from './RightDrawer';
 
 export { chwSidebarItems, memberSidebarItems } from './sidebarItems';

@@ -108,6 +108,7 @@ import {
   SectionHeader,
   ResizableDivider,
   RightDrawer,
+  WEB_PANEL_WIDTH,
   PressableCard,
   StaggerList,
   EmptyState,
@@ -155,6 +156,9 @@ import { DocumentationModal } from '../../components/sessions/DocumentationModal
 import {
   InlineSdohPanel,
   SDOH_PANEL_PANE_BREAKPOINT,
+  SDOH_PANEL_WIDTH,
+  SDOH_PANEL_SHEET_WIDTH,
+  type SdohPanelVariant,
 } from '../../components/assessment/InlineSdohPanel';
 import type { SessionDocumentation } from '../../data/mock';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
@@ -164,8 +168,8 @@ import { colors as tokens, spacing, radius, numerals, shadows } from '../../them
 
 // ─── Breakpoints ──────────────────────────────────────────────────────────────
 
-/** Below this width the right rail is hidden. */
-const BP_HIDE_RAIL = 1280;
+/** Below this width the right rail is hidden. Exported for test width fixtures. */
+export const BP_HIDE_RAIL = 1280;
 /** Below this width only one pane is shown at a time. */
 const BP_HIDE_LIST = 900;
 
@@ -183,6 +187,28 @@ const CHW_RIGHT_MAX = 480;
 /** localStorage keys for persisted pane widths. */
 const LS_KEY_CHW_LEFT = 'compass:chwMessages:leftWidth';
 const LS_KEY_CHW_RIGHT = 'compass:chwMessages:rightWidth';
+
+// ─── Case Note × SDOH side-by-side layout ──────────────────────────────────────
+
+/**
+ * Case-note drawer width on web — re-exported alias of `RightDrawer`'s
+ * `WEB_PANEL_WIDTH` (imported above) so callers in this file don't need to
+ * know the case-note drawer is, mechanically, just a `RightDrawer`. Used to
+ * compute whether there's enough viewport width left over to show the
+ * case-note panel and the SDOH panel side by side. Exported for test width
+ * fixtures.
+ */
+export const CASE_NOTE_PANEL_WIDTH = WEB_PANEL_WIDTH;
+
+/**
+ * Minimum leftover width (thread list + conversation pane, + rail when it's
+ * still visible) required to show "Add Case Note" side by side with the SDOH
+ * panel instead of stacking it in front. Chosen so a 13" laptop (~1440px
+ * logical width) still gets a legible fallback rather than a 3-way squeeze —
+ * see CHWMessagesScreen's header comment / the PR description for the
+ * narrow-width tradeoff this encodes. Exported for test width fixtures.
+ */
+export const CASE_NOTE_SIDE_BY_SIDE_MIN_REMAINING_WIDTH = 480;
 
 /**
  * Reads a numeric pane width from localStorage.
@@ -2146,6 +2172,18 @@ interface CaseNoteModalProps {
   readonly sessionId: string;
   readonly visible: boolean;
   readonly onClose: () => void;
+  /**
+   * Non-null when `InlineSdohPanel` is currently open alongside this thread.
+   * Lets the case-note drawer avoid painting UNDER the SDOH panel (both are
+   * `position: fixed`, right-docked, same default z-index — without this,
+   * whichever renders later in the DOM wins and buries the other). When
+   * there's enough viewport width, the case-note drawer instead docks
+   * immediately to the SDOH panel's LEFT so both stay fully visible and
+   * usable at once; on narrower widths it falls back to stacking in front of
+   * (not behind) the SDOH panel — see `CHWMessagesScreen`'s module doc /
+   * the PR description for the width math and narrow-screen tradeoff.
+   */
+  readonly sdohPanel: { widthPx: number; variant: SdohPanelVariant } | null;
 }
 
 /**
@@ -2157,10 +2195,52 @@ function CaseNoteModal({
   sessionId,
   visible,
   onClose,
+  sdohPanel,
 }: CaseNoteModalProps): React.JSX.Element {
   const [noteBody, setNoteBody] = useState('');
   const [isPinned, setIsPinned] = useState(false);
   const createNote = useCreateCaseNote();
+  const { width: viewportWidth } = useWindowDimensions();
+
+  // ── Side-by-side layout with InlineSdohPanel, when both are open ──────────
+  //
+  // sdohPanel == null            → SDOH isn't open. Default RightDrawer
+  //                                 behaviour, unchanged: flush right, own
+  //                                 full backdrop, default z-index.
+  // sideBySideWithSdoh == true   → Enough width to dock the case-note panel
+  //                                 immediately left of the SDOH panel.
+  //                                 Both fully visible + usable at once.
+  //                                 - 'sheet' variant already renders its own
+  //                                   full-screen backdrop, so the case-note
+  //                                   drawer skips its own (avoids stacking
+  //                                   two dimming layers) and just raises its
+  //                                   z-index above it.
+  //                                 - 'pane' variant has no backdrop at all
+  //                                   (it's a true in-flow sibling column),
+  //                                   so the case-note drawer keeps its own —
+  //                                   offset to stop before the SDOH pane so
+  //                                   the pane itself stays undimmed.
+  // sideBySideWithSdoh == false  → SDOH is open but the viewport is too
+  //                                 narrow to fit both panels legibly.
+  //                                 Degrades to stacking the case-note
+  //                                 drawer IN FRONT of the SDOH panel
+  //                                 (flush right, own backdrop, raised
+  //                                 z-index) — a dismissible sheet the CHW
+  //                                 can close to return to the SDOH panel,
+  //                                 rather than the pre-fix bug of it being
+  //                                 silently buried and unreachable.
+  const sdohOpen = sdohPanel != null;
+  const sideBySideWithSdoh =
+    sdohOpen &&
+    Platform.OS === 'web' &&
+    viewportWidth >=
+      sdohPanel.widthPx + CASE_NOTE_PANEL_WIDTH + CASE_NOTE_SIDE_BY_SIDE_MIN_REMAINING_WIDTH;
+
+  const rightOffsetPx = sideBySideWithSdoh ? sdohPanel.widthPx : 0;
+  const showBackdrop = sideBySideWithSdoh ? sdohPanel.variant !== 'sheet' : true;
+  // Above InlineSdohPanel's 'sheet' variant (z-index 1000) and the default
+  // RightDrawer z-index (1000) so it's never buried behind either.
+  const zIndexOverride = sdohOpen ? 1010 : undefined;
 
   const handleSave = useCallback(async (): Promise<void> => {
     const trimmed = noteBody.trim();
@@ -2189,6 +2269,10 @@ function CaseNoteModal({
     <RightDrawer
       isOpen={visible}
       onClose={handleClose}
+      rightOffsetPx={rightOffsetPx}
+      showBackdrop={showBackdrop}
+      zIndexOverride={zIndexOverride}
+      testID="case-note-panel-root"
       title="Add Case Note"
       subtitle="Attach a clinical note to this member's record"
       footer={
@@ -2400,6 +2484,12 @@ interface MemberContextRailProps {
    * nested inside it — see InlineSdohPanel's header comment for why.
    */
   readonly onOpenSdohPanel: (sessionId: string) => void;
+  /**
+   * Non-null when the SDOH panel is currently open for this conversation.
+   * Forwarded to `CaseNoteModal` so it can dock beside (rather than get
+   * buried under) the SDOH panel — see `CaseNoteModalProps.sdohPanel`.
+   */
+  readonly sdohPanel: { widthPx: number; variant: SdohPanelVariant } | null;
 }
 
 /**
@@ -2421,6 +2511,7 @@ function MemberContextRail({
   autoBeginSessionOnMount,
   onAutoBeginSessionConsumed,
   onOpenSdohPanel,
+  sdohPanel,
 }: MemberContextRailProps): React.JSX.Element {
   const navigation = useNavigation<any>(); // eslint-disable-line @typescript-eslint/no-explicit-any
 
@@ -3192,6 +3283,7 @@ function MemberContextRail({
           sessionId={conv.activeSessionId ?? ''}
           visible={caseNoteModalOpen}
           onClose={() => setCaseNoteModalOpen(false)}
+          sdohPanel={sdohPanel}
         />
       ) : null}
     </View>
@@ -3244,8 +3336,15 @@ export function CHWMessagesScreen(): React.JSX.Element {
   // range where the rail itself is already hidden) it falls back to a
   // dismissible overlay sheet — see InlineSdohPanel's header comment for the
   // documented tradeoff.
-  const sdohPanelVariant: 'pane' | 'sheet' =
+  const sdohPanelVariant: SdohPanelVariant =
     !hideRail && width >= SDOH_PANEL_PANE_BREAKPOINT ? 'pane' : 'sheet';
+
+  // Rendered width of the SDOH panel in its current variant — forwarded to
+  // MemberContextRail → CaseNoteModal so "Add Case Note" can dock beside it
+  // (rather than get buried under it) when both are open. See
+  // CaseNoteModalProps.sdohPanel's doc comment for the full layout strategy.
+  const sdohPanelWidthPx =
+    sdohPanelVariant === 'pane' ? SDOH_PANEL_WIDTH : SDOH_PANEL_SHEET_WIDTH;
 
   // Resizable pane widths (web only, persisted via localStorage)
   const [leftWidth, setLeftWidth] = useState<number>(() =>
@@ -3550,6 +3649,11 @@ export function CHWMessagesScreen(): React.JSX.Element {
                 autoBeginFiredRef.current = true;
               }}
               onOpenSdohPanel={handleOpenSdohPanel}
+              sdohPanel={
+                sdohSessionId != null
+                  ? { widthPx: sdohPanelWidthPx, variant: sdohPanelVariant }
+                  : null
+              }
             />
           </View>
         ) : null}

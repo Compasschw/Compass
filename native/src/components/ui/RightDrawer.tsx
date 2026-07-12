@@ -30,6 +30,16 @@ import { X } from 'lucide-react-native';
 
 import { colors, spacing, radius, shadows } from '../../theme/tokens';
 
+/**
+ * Fixed pixel width of the web (non-`inline`) panel. Named so it's declared
+ * once and reused for the slide-in animation, the panel's own width, and the
+ * backdrop's right-inset math (`rightOffsetPx + WEB_PANEL_WIDTH`) — see
+ * `WebDrawer`. Exported so callers computing a `rightOffsetPx` to sit another
+ * panel beside this one (e.g. CHWMessagesScreen's "Add Case Note" ×
+ * InlineSdohPanel side-by-side layout) don't have to duplicate the number.
+ */
+export const WEB_PANEL_WIDTH = 520;
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface RightDrawerProps {
@@ -62,6 +72,33 @@ export interface RightDrawerProps {
    * @default 360
    */
   inlineWidth?: number;
+  /**
+   * Web-only, non-`inline` mode only. Pixel offset from the right edge of the
+   * viewport for both the panel and its backdrop's right inset — e.g. to sit
+   * this drawer to the LEFT of another fixed-position, right-docked panel
+   * that's already open (like `InlineSdohPanel`'s 'sheet' variant), so the
+   * two coexist side by side instead of one painting over the other.
+   * @default 0
+   */
+  rightOffsetPx?: number;
+  /**
+   * Web-only, non-`inline` mode only. When `false`, no dimming backdrop is
+   * rendered and backdrop-tap-to-dismiss is disabled — use when another
+   * panel is already providing its own full-screen backdrop, so two
+   * semi-transparent backdrops don't stack on top of each other. The X
+   * button / footer actions remain the only way to close.
+   * @default true
+   */
+  showBackdrop?: boolean;
+  /**
+   * Web-only, non-`inline` mode only. Overrides the overlay's `zIndex`
+   * (default 1000). Raise this above another `position: fixed` panel that
+   * might otherwise paint on top purely due to DOM order.
+   * @default 1000
+   */
+  zIndexOverride?: number;
+  /** Forwarded to the outermost web overlay `View` for test/debug queries. */
+  testID?: string;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -92,6 +129,10 @@ export function RightDrawer({
   footer,
   inline = false,
   inlineWidth = 360,
+  rightOffsetPx,
+  showBackdrop,
+  zIndexOverride,
+  testID,
 }: RightDrawerProps): React.JSX.Element {
   if (Platform.OS !== 'web') {
     return (
@@ -129,6 +170,10 @@ export function RightDrawer({
       title={title}
       subtitle={subtitle}
       footer={footer}
+      rightOffsetPx={rightOffsetPx}
+      showBackdrop={showBackdrop}
+      zIndexOverride={zIndexOverride}
+      testID={testID}
     >
       {children}
     </WebDrawer>
@@ -149,10 +194,14 @@ function WebDrawer({
   subtitle,
   children,
   footer,
+  rightOffsetPx,
+  showBackdrop,
+  zIndexOverride,
+  testID,
 }: DrawerInternalProps): React.JSX.Element {
   // Track whether the panel should be mounted so we can animate out before unmount.
   const [mounted, setMounted] = useState(isOpen);
-  const translateX = useRef(new Animated.Value(isOpen ? 0 : 520)).current;
+  const translateX = useRef(new Animated.Value(isOpen ? 0 : WEB_PANEL_WIDTH)).current;
 
   useEffect(() => {
     if (isOpen) {
@@ -165,7 +214,7 @@ function WebDrawer({
       }).start();
     } else {
       Animated.timing(translateX, {
-        toValue:         520,
+        toValue:         WEB_PANEL_WIDTH,
         duration:        200,
         useNativeDriver: true,
       }).start(() => setMounted(false));
@@ -176,23 +225,45 @@ function WebDrawer({
     return <View />;
   }
 
+  const panelRight = rightOffsetPx ?? 0;
+  const overlayZIndex = zIndexOverride ?? 1000;
+  const shouldShowBackdrop = showBackdrop ?? true;
+
   return (
-    <View style={webStyles.root}>
-      {/* Backdrop */}
-      <Pressable
-        style={webStyles.backdrop}
-        onPress={onClose}
-        accessibilityRole="button"
-        accessibilityLabel="Close drawer"
-      />
+    <View
+      style={[webStyles.root, { zIndex: overlayZIndex }]}
+      // Let clicks pass through the empty (non-backdrop, non-panel) area of
+      // this full-viewport container to whatever's rendered underneath —
+      // relevant when `showBackdrop={false}` leaves most of the container
+      // visually empty (e.g. another panel, like InlineSdohPanel's 'sheet'
+      // variant, is providing the shared backdrop instead).
+      pointerEvents="box-none"
+      testID={testID}
+    >
+      {/* Backdrop — right inset stops before the panel AND before whatever
+          `rightOffsetPx` of screen real estate is reserved for a sibling
+          panel docked further right (e.g. InlineSdohPanel), so that sibling
+          stays undimmed and clickable. */}
+      {shouldShowBackdrop && (
+        <Pressable
+          style={[webStyles.backdrop, { right: panelRight + WEB_PANEL_WIDTH }]}
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Close drawer"
+        />
+      )}
 
       {/* Panel */}
       <Animated.View
         style={[
           webStyles.panel,
           shadows.card as ViewStyle,
-          { transform: [{ translateX }] },
+          { right: panelRight, transform: [{ translateX }] },
         ]}
+        // Distinct from the root `testID` (which covers the full-viewport
+        // overlay + backdrop) — this is the actual panel surface, whose
+        // `right` offset is what proves side-by-side vs. flush-right docking.
+        testID={testID !== undefined ? `${testID}-panel` : undefined}
       >
         <DrawerHeader
           title={title}
@@ -440,8 +511,15 @@ const webStyles = StyleSheet.create({
   } as ViewStyle,
 
   backdrop: {
+    // Explicit longhands (not the `inset` shorthand) so a per-instance
+    // `{ right: N }` override — see `panelRight` in WebDrawer — merges
+    // cleanly at the style-object level instead of racing against `inset`'s
+    // expansion order in the generated CSS.
     position:        'absolute' as 'absolute',
-    inset:           0,
+    top:             0,
+    left:            0,
+    bottom:          0,
+    right:           0,
     backgroundColor: 'rgba(0,0,0,0.4)',
   } as ViewStyle,
 
@@ -450,7 +528,7 @@ const webStyles = StyleSheet.create({
     right:           0,
     top:             0,
     bottom:          0,
-    width:           520,
+    width:           WEB_PANEL_WIDTH,
     backgroundColor: colors.cardBg,
     borderLeftWidth: 1,
     borderLeftColor: colors.cardBorder,

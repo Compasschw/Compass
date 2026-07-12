@@ -67,6 +67,14 @@ export const SDOH_PANEL_WIDTH = 420;
  */
 export const SDOH_PANEL_PANE_BREAKPOINT = 1280 + SDOH_PANEL_WIDTH;
 
+/**
+ * Fixed pixel width of the panel in 'sheet' mode (see `sheetStyles.panel`
+ * below — kept as a named export so callers, e.g. CHWMessagesScreen's
+ * "Add Case Note" panel, can compute a side-by-side offset without
+ * duplicating the magic number.
+ */
+export const SDOH_PANEL_SHEET_WIDTH = 520;
+
 // ─── Props ────────────────────────────────────────────────────────────────────
 
 export type SdohPanelVariant = 'pane' | 'sheet';
@@ -100,7 +108,7 @@ export function InlineSdohPanel({
 
   if (variant === 'sheet') {
     return (
-      <View style={sheetStyles.root} accessibilityViewIsModal>
+      <View style={sheetStyles.root} accessibilityViewIsModal testID="inline-sdoh-panel">
         <Pressable
           style={sheetStyles.backdrop}
           onPress={onClose}
@@ -116,7 +124,12 @@ export function InlineSdohPanel({
   }
 
   return (
-    <View style={[paneStyles.root, { width: SDOH_PANEL_WIDTH }]} role="region" aria-label="SDOH / Health Screening">
+    <View
+      style={[paneStyles.root, { width: SDOH_PANEL_WIDTH }]}
+      role="region"
+      aria-label="SDOH / Health Screening"
+      testID="inline-sdoh-panel"
+    >
       <PanelHeader title="SDOH / Health Screening" subtitle={subtitle} onClose={onClose} />
       <View style={paneStyles.body}>{body}</View>
     </View>
@@ -304,7 +317,7 @@ const sheetStyles = StyleSheet.create({
     right: 0,
     top: 0,
     bottom: 0,
-    width: 520,
+    width: SDOH_PANEL_SHEET_WIDTH,
     maxWidth: '100%',
     backgroundColor: tokens.cardBg,
     borderLeftWidth: 1,
