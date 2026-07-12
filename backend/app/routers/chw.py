@@ -800,6 +800,15 @@ async def create_chw_member(
     /auth/register signup and ready for a Pear sync. The exact same boundary
     validator (``normalize_member_pear_fields``) backs both paths.
 
+    Atomicity: the member (User + MemberProfile), the matched ServiceRequest,
+    and the Conversation are all committed together in ONE transaction.
+    ``register_user`` is called with ``commit=False`` so it only flushes the
+    User/MemberProfile (populating IDs without ending the transaction); this
+    handler adds the relationship rows on the same session and issues the
+    single ``db.commit()`` below. If anything raises before that commit
+    (e.g. the ServiceRequest/Conversation insert fails), ``get_db`` rolls the
+    whole session back — the member is never left orphaned with no CHW link.
+
     Authorization: ``require_role("chw")`` — members / admins get 403.
 
     Returns:
@@ -818,6 +827,12 @@ async def create_chw_member(
     # Pear-required demographics are copied onto the profile in the SAME
     # transaction (register_user allow-lists the keys) so the CHW-created member
     # is immediately as complete as a self-service /auth/register signup.
+    #
+    # commit=False: only flush here. The member row must NOT be durable until
+    # the CHW-link (ServiceRequest + Conversation) below also succeeds — a
+    # committed-but-unlinked member is an orphan (see module docstring above).
+    # The single db.commit() at the end of this handler is the sole commit
+    # point for the whole member-creation unit.
     member = await register_user(
         db,
         email=data.email,
@@ -836,6 +851,7 @@ async def create_chw_member(
             "state": data.state,
             "zip_code": data.zip_code,
         },
+        commit=False,
     )
     if member is None:
         raise HTTPException(status_code=400, detail="Email already registered")
