@@ -47,6 +47,7 @@ import { chwSidebarItems, memberSidebarItems } from './sidebarItems';
 import type { UserBlock } from './DashboardSidebar';
 import { colors as tokens, spacing } from '../../theme/tokens';
 import { useConversations } from '../../hooks/useApiQueries';
+import { ActiveSessionBadge } from '../sessions/ActiveSessionBadge';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -153,9 +154,22 @@ export function AppShell({
     unreadMessages,
   };
 
+  // Persistent "active session" badge — CHW-only, floats above every CHW
+  // page regardless of navigation. A sibling overlay of `children`, not
+  // nested inside any scroll container, so it stays pinned to the viewport.
+  // Renders null internally when there's no in-progress session, and members
+  // never mount it (it's the only thing that calls useActiveChwSession(),
+  // and it's gated behind role === 'chw' here).
+  const activeSessionBadge = role === 'chw' ? <ActiveSessionBadge /> : null;
+
   // Native: no shell — the navigator provides chrome.
   if (Platform.OS !== 'web') {
-    return <>{children}</>;
+    return (
+      <>
+        {children}
+        {activeSessionBadge}
+      </>
+    );
   }
 
   return (
@@ -167,6 +181,7 @@ export function AppShell({
       switchViewLabel={switchViewLabel}
       switchViewRoute={switchViewRoute}
       disableMainScroll={disableMainScroll}
+      activeSessionBadge={activeSessionBadge}
     >
       {children}
     </AppShellWeb>
@@ -177,6 +192,13 @@ export function AppShell({
 
 interface AppShellWebProps extends Omit<AppShellProps, 'role'> {
   items: typeof chwSidebarItems | typeof memberSidebarItems;
+  /**
+   * Pre-resolved `<ActiveSessionBadge />` (or null) from the parent. Rendered
+   * as a sibling of the sidebar/main row — not nested inside the ScrollView
+   * `children` renders into — so it floats above content independent of
+   * scroll position and of which `disableMainScroll` branch is active.
+   */
+  activeSessionBadge?: React.ReactNode;
 }
 
 /**
@@ -191,6 +213,7 @@ function AppShellWeb({
   switchViewLabel,
   switchViewRoute,
   disableMainScroll = false,
+  activeSessionBadge,
   children,
 }: AppShellWebProps): React.JSX.Element {
   const [collapsed, setCollapsed] = useState<boolean>(readPersistedCollapsed);
@@ -281,6 +304,12 @@ function AppShellWeb({
           {children}
         </ScrollView>
       )}
+
+      {/* Persistent active-session badge — sibling of the sidebar/main row so
+       *  it floats independent of scroll position. See ActiveSessionBadge's
+       *  header comment; it's `position: fixed` on web, so this DOM position
+       *  only affects paint order (zIndex handles stacking), not layout. */}
+      {activeSessionBadge}
     </View>
   );
 }

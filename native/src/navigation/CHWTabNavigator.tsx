@@ -130,8 +130,13 @@ export type CHWSessionsStackParamList = {
    * - ``memberId``: pre-select the thread whose member matches this UUID.
    * - ``autoCall``: when ``true`` (and a thread was matched), kick off the
    *   masked-number call sequence immediately after the thread mounts.
+   * - ``promptComplete``: when ``true`` (and a thread was matched), auto-open
+   *   MemberContextRail's inline Complete-Session confirm panel as soon as
+   *   the thread's session status resolves. Used by ActiveSessionBadge's
+   *   "Complete Session" button so the CHW lands directly on the confirm
+   *   panel from anywhere in the dashboard.
    */
-  Messages: { memberId?: string; autoCall?: boolean } | undefined;
+  Messages: { memberId?: string; autoCall?: boolean; promptComplete?: boolean } | undefined;
   /** Legacy per-session list — native root; reachable from web via push. */
   Sessions: undefined;
   /**
