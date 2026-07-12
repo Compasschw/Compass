@@ -18,6 +18,7 @@ async def register_user(
     phone: str | None = None,
     *,
     member_profile_fields: dict[str, Any] | None = None,
+    commit: bool = True,
 ):
     """Register a new User and provision the role-appropriate profile row.
 
@@ -32,6 +33,21 @@ async def register_user(
     downstream Pear sync (best-effort, scheduled from the auth router) can
     build a complete Pear member payload without a follow-up PATCH.
     Unknown / None keys are ignored.
+
+    Args:
+        commit: When True (default — used by the self-signup `/auth/register`
+            flow), the User + profile are committed here so the function
+            returns a durably-persisted, loginable account, exactly as before.
+            When False, the rows are only `flush()`-ed (so `user.id` and all
+            relationships are populated and visible to later statements in
+            the *same* transaction) but left uncommitted. This lets a caller
+            that needs to attach additional rows in the same atomic unit —
+            e.g. `create_chw_member` writing the CHW↔member ServiceRequest +
+            Conversation — own the commit boundary, so a failure after this
+            call rolls back the whole thing (no orphaned member). Callers
+            passing `commit=False` MUST call `await db.commit()` themselves
+            once all related rows are added, and must let any exception
+            propagate un-caught so `get_db`'s rollback-on-exception fires.
 
     Returns None when the email is already taken (handled at the router layer
     as HTTP 400).
@@ -74,7 +90,15 @@ async def register_user(
         db.add(CHWProfile(user_id=user.id))
     # Other roles (admin) don't need a profile row.
 
-    await db.commit()
+    if commit:
+        # Session.commit() always flushes pending state first, so this both
+        # persists AND populates any remaining server-generated defaults.
+        await db.commit()
+    else:
+        # No commit — just flush so user.id/relationships are populated and
+        # visible to later statements in the SAME transaction. The caller
+        # (e.g. create_chw_member) owns the eventual db.commit().
+        await db.flush()
     await db.refresh(user)
     return user
 

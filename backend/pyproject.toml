@@ -78,6 +78,13 @@ asyncio_mode = "auto"
 source = ["app"]
 branch = true
 omit = ["app/alembic/*", "*/migrations/*"]
+# SQLAlchemy's async ORM bridges sync Core execution through greenlet
+# (greenlet_spawn) even for calls that look purely synchronous (e.g.
+# Session.add() inside a code path that also awaits flush/commit). Without
+# telling coverage.py about this, its tracer loses frame attribution across
+# the greenlet switch and mis-reports 0 hits / broken branch arcs for lines
+# that DID execute — this is SQLAlchemy's documented fix, not project-specific.
+concurrency = ["greenlet"]
 
 [tool.coverage.report]
 # Coverage is enforced on CHANGED lines via diff-cover in CI (see ci.yml), not

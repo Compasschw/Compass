@@ -11,6 +11,9 @@ Covers the end-to-end contract the feature promises:
   - A member-role caller is rejected with 403 (require_role("chw")).
   - A single-token name (no last name) is rejected with 422.
   - Missing a Pear-required demographic field is rejected with 422 (not 500).
+  - Atomicity: if the CHW-link (ServiceRequest/Conversation) step fails, the
+    member User/MemberProfile that register_user() created must NOT be left
+    committed as an orphan — the whole request is one atomic unit.
 """
 from datetime import UTC, date, datetime, timedelta
 
@@ -443,3 +446,67 @@ async def test_duplicate_email_leaves_db_clean(client: AsyncClient, chw_tokens: 
             )
         ).scalar()
         assert request_count == 1  # no orphan request from the failed attempt
+async def test_relationship_step_failure_leaves_no_orphaned_member(
+    client: AsyncClient, chw_tokens: dict, monkeypatch: pytest.MonkeyPatch
+):
+    """Atomicity: if the CHW-link step (Conversation creation, which runs
+    AFTER register_user() has created the member) raises, the member User +
+    MemberProfile must NOT be left committed in the DB.
+
+    This proves create_chw_member is one atomic transaction rather than two
+    sequential commits. Before the fix, `register_user` committed the member
+    immediately; a failure here would strand a real, loginable, CHW-less
+    member account — a silent data-integrity bug. (Reasoning for why this
+    fails on the pre-fix code: pre-fix, `register_user` calls `await
+    db.commit()` unconditionally before returning, so by the time
+    `find_or_create_conversation_for_pair` raises, the User + MemberProfile
+    rows are already durably committed and a rollback triggered by the
+    exception can no longer undo them. Post-fix, `register_user` is called
+    with `commit=False` and only flushes, so the same exception rolls back
+    the whole session via `get_db`'s except-rollback-raise, and neither row
+    is ever committed.)
+    """
+    from app.services import session_lookup
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("simulated relationship-creation failure")
+
+    # find_or_create_conversation_for_pair runs AFTER register_user() has
+    # already created (flushed) the member — exactly the failure window the
+    # bug report describes.
+    monkeypatch.setattr(session_lookup, "find_or_create_conversation_for_pair", _boom)
+
+    email = "atomicity.probe@example.com"
+    # The forced failure is an unhandled exception (no try/except wraps this
+    # handler) — httpx's ASGITransport re-raises it into the test by default
+    # rather than turning it into a 500 response. That's orthogonal to what
+    # this test proves; what matters is the DB state afterward.
+    with pytest.raises(RuntimeError, match="simulated relationship-creation failure"):
+        await client.post(
+            "/api/v1/chw/members",
+            json={**_NEW_MEMBER_PAYLOAD, "email": email},
+            headers=auth_header(chw_tokens),
+        )
+
+    from app.models.user import MemberProfile, User
+
+    async with _session_factory() as session:
+        user_row = (
+            await session.execute(select(User).where(User.email == email))
+        ).scalar_one_or_none()
+        assert user_row is None, (
+            "orphaned User row committed despite the relationship step failing "
+            "— register_user()/create_chw_member() are not atomic"
+        )
+
+        profile_rows = (
+            await session.execute(
+                select(MemberProfile).join(User, MemberProfile.user_id == User.id).where(
+                    User.email == email
+                )
+            )
+        ).scalars().all()
+        assert profile_rows == [], (
+            "orphaned MemberProfile row committed despite the relationship "
+            "step failing — register_user()/create_chw_member() are not atomic"
+        )
