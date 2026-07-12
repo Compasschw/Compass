@@ -40,6 +40,13 @@ class SessionEarningItem(BaseModel):
 
     session_id: UUID
     service_date: date | None
+    # Actual session start/end timestamps (Session.started_at / ended_at).
+    # Nullable: not every claim has a tracked session start/end (e.g. a
+    # phone session that was never formally started, or a manually-created
+    # claim). The Earnings "Session Detail" modal shows date + time when
+    # present, and falls back to service_date for the start row otherwise.
+    started_at: datetime | None
+    ended_at: datetime | None
     member_name: str
     session_mode: str
     units: int

@@ -83,6 +83,21 @@ function formatLongDate(iso: string | null | undefined): string {
 }
 
 /**
+ * Formats an ISO datetime as "May 9, 2026, 3:42 PM" (date + local time) for the
+ * Session Detail start/end rows. Renders in the viewer's local timezone.
+ */
+function formatLongDateTime(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+/**
  * Formats an ISO date string as "Fri May 16" for the payout date subtext.
  */
 function formatPayoutDate(iso: string | null | undefined): string {
@@ -347,7 +362,17 @@ function SessionDetailModal({ visible, session, onClose }: SessionDetailModalPro
           {/* Fields */}
           <View style={detailModalStyles.fields}>
             <DetailRow label="Member Name"    value={session.memberName} />
-            <DetailRow label="Session Date"   value={formatLongDate(session.serviceDate)} />
+            {/* Session Start falls back to the service date (date only) when the
+                session has no tracked start timestamp; Session End shows "—". */}
+            <DetailRow
+              label="Session Start"
+              value={
+                session.startedAt
+                  ? formatLongDateTime(session.startedAt)
+                  : formatLongDate(session.serviceDate)
+              }
+            />
+            <DetailRow label="Session End"    value={formatLongDateTime(session.endedAt)} />
             <DetailRow label="Session Type"   value={sessionModeLabel(session.sessionMode)} />
             <DetailRow label="Units"          value={session.units.toFixed(2)} />
             <DetailRow label="Amount Earned"  value={formatCurrency(session.amountEarned)} />
