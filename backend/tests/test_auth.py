@@ -58,6 +58,50 @@ async def test_login_success(client: AsyncClient, chw_tokens):
 
 
 @pytest.mark.asyncio
+async def test_login_is_case_insensitive_for_email(client: AsyncClient):
+    """An account registered with a mixed-case email must be loginable with any
+    casing. Regression for the CHW "Add New Member" login failure: the CHW typed
+    a capitalized email, and the member/CHW could not log in with lowercase
+    because the lookup was exact-match. FAILS on the pre-fix code.
+    """
+    reg = await client.post("/api/v1/auth/register", json={
+        "email": "Mixed.Case@Example.com", "password": "password123",
+        "name": "Case Tester", "role": "chw",
+    })
+    assert reg.status_code == 201, reg.text
+
+    # Log in with a DIFFERENT casing than was registered.
+    res = await client.post("/api/v1/auth/login", json={
+        "email": "mixed.case@example.com", "password": "password123",
+    })
+    assert res.status_code == 200, res.text
+
+    # And the original casing still works.
+    res2 = await client.post("/api/v1/auth/login", json={
+        "email": "Mixed.Case@Example.com", "password": "password123",
+    })
+    assert res2.status_code == 200, res2.text
+
+
+@pytest.mark.asyncio
+async def test_register_duplicate_email_is_case_insensitive(client: AsyncClient):
+    """Registering the same email in different casing must be rejected (one
+    person, one account) — prevents a capitalized duplicate that then can't log in.
+    """
+    first = await client.post("/api/v1/auth/register", json={
+        "email": "dupe.case@example.com", "password": "password123",
+        "name": "First", "role": "chw",
+    })
+    assert first.status_code == 201, first.text
+
+    second = await client.post("/api/v1/auth/register", json={
+        "email": "Dupe.Case@Example.com", "password": "password123",
+        "name": "Second", "role": "chw",
+    })
+    assert second.status_code == 400, second.text
+
+
+@pytest.mark.asyncio
 async def test_login_wrong_password(client: AsyncClient, chw_tokens):
     res = await client.post("/api/v1/auth/login", json={
         "email": "testchw@example.com", "password": "wrongpassword",

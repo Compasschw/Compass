@@ -2,7 +2,7 @@ import hashlib
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -54,12 +54,18 @@ async def register_user(
     """
     from app.models.user import CHWProfile, MemberProfile, User
 
-    existing = await db.execute(select(User).where(User.email == email))
+    # Normalize email to lowercase for consistent storage + case-insensitive
+    # login (see authenticate_user). Duplicate check is also case-insensitive so
+    # "John@x.com" and "john@x.com" can't create two accounts for one person.
+    normalized_email = (email or "").strip().lower()
+    existing = await db.execute(
+        select(User).where(func.lower(User.email) == normalized_email)
+    )
     if existing.scalar_one_or_none():
         return None
 
     user = User(
-        email=email,
+        email=normalized_email,
         password_hash=hash_password(password),
         name=name,
         role=role,
@@ -142,7 +148,13 @@ __all__ = ["register_user", "authenticate_user", "create_tokens", "store_refresh
 
 async def authenticate_user(db: AsyncSession, email: str, password: str):
     from app.models.user import User
-    result = await db.execute(select(User).where(User.email == email))
+    # Email is case-insensitive: compare on the LOWERCASED column so a member
+    # whose email was stored with any capitalization (e.g. a CHW typed
+    # "John@Example.com" in Add New Member) can still log in with any casing.
+    # Match on the column (func.lower) — not just a normalized input — so this
+    # also fixes accounts already stored mixed-case, not only new ones.
+    normalized = (email or "").strip().lower()
+    result = await db.execute(select(User).where(func.lower(User.email) == normalized))
     user = result.scalar_one_or_none()
     if user is None or user.password_hash is None or not verify_password(password, user.password_hash):
         return None
