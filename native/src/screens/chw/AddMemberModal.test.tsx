@@ -48,12 +48,17 @@ function setText(label: string, value: string): void {
 function fillRequiredFields(): void {
   setText('Member full name', 'Jordan Rivera');
   setText('Member email', 'jordan@example.com');
+  setText('Member phone', '(310) 555-0142');
   setText('Temporary password', 'temp-pass-1234');
   setText('Member date of birth in MM/DD/YYYY format', '04/12/1990');
   fireEvent.click(screen.getByLabelText('Sex Female'));
   fireEvent.click(screen.getByLabelText('Select insurance company'));
   fireEvent.click(screen.getByLabelText('Health Net'));
   setText('Member CIN Medi-Cal ID', '12345678A');
+  // Address is required for the Pear Member Import export (line 2 is optional).
+  setText('Member address line 1', '123 Main St');
+  setText('Member city', 'Los Angeles');
+  setText('Member state', 'CA');
   setText('Member ZIP code', '90001');
 }
 
@@ -107,6 +112,38 @@ describe('AddMemberModal — required consent gate', () => {
     // Sanity: the rest of the payload still rides along.
     expect(body.email).toBe('jordan@example.com');
     expect(body.zip_code).toBe('90001');
+  });
+
+  it('blocks submit until the Pear-required address + phone are provided', async () => {
+    // Regression: a member created without an address was silently dropped
+    // from the Pear Member CSV export (is_pear_complete === false). These
+    // fields are now required in the form so that can't happen.
+    renderModal();
+    // Everything EXCEPT phone + address filled in.
+    setText('Member full name', 'Jordan Rivera');
+    setText('Member email', 'jordan@example.com');
+    setText('Temporary password', 'temp-pass-1234');
+    setText('Member date of birth in MM/DD/YYYY format', '04/12/1990');
+    fireEvent.click(screen.getByLabelText('Sex Female'));
+    fireEvent.click(screen.getByLabelText('Select insurance company'));
+    fireEvent.click(screen.getByLabelText('Health Net'));
+    setText('Member CIN Medi-Cal ID', '12345678A');
+    setText('Member ZIP code', '90001');
+    fireEvent.click(screen.getByTestId('consent-terms'));
+    fireEvent.click(screen.getByTestId('consent-communications'));
+
+    // Consent is satisfied, but missing phone/address keeps submit disabled.
+    const submit = screen.getByLabelText('Add member');
+    expect(submit.getAttribute('aria-disabled')).toBe('true');
+    fireEvent.click(submit);
+    expect(mockedApi).not.toHaveBeenCalled();
+
+    // Fill phone + address line 1 + city + state → now submittable.
+    setText('Member phone', '(310) 555-0142');
+    setText('Member address line 1', '123 Main St');
+    setText('Member city', 'Los Angeles');
+    setText('Member state', 'CA');
+    expect(submit.getAttribute('aria-disabled')).not.toBe('true');
   });
 
   it('surfaces an on-brand confirmation after a member is created', async () => {

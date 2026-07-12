@@ -7,11 +7,11 @@
  * the same fields a member provides at self-signup:
  *   - Full name (first + last — the backend rejects a single token)
  *   - Login email
- *   - Phone (optional)
+ *   - Phone (required — Pear Member Import + masked-SMS eligibility)
  *   - Temporary password the CHW shares with the member out-of-band
  *   - Date of birth, Sex
  *   - Insurance company + CIN (Medi-Cal ID)
- *   - Address (line 1/2, city, state) + ZIP
+ *   - Address line 1, city, state, ZIP (required for Pear); line 2 optional
  *
  * On success the member appears in the CHW's roster (the hook invalidates it)
  * and the CHW can message / schedule / start journeys immediately.
@@ -140,10 +140,29 @@ function validate(form: FormState): string | null {
   if (!validateCinForCarrier(form.primaryCin, form.insuranceCompany).valid) {
     return expectedFormatMessage(form.insuranceCompany);
   }
-  if (
-    form.stateCode.trim().length > 0 &&
-    !/^[A-Za-z]{2}$/.test(form.stateCode.trim())
-  ) {
+  // Phone is required — Pear's Member Import needs it, and a real phone is
+  // what makes a member eligible for masked SMS. Basic 10-digit US check.
+  const phoneDigits = form.phone.replace(/\D/g, '');
+  if (phoneDigits.length === 0) {
+    return 'Enter the member’s phone number.';
+  }
+  if (phoneDigits.length < 10) {
+    return 'Enter a valid 10-digit phone number.';
+  }
+  // Address (line 1, city, state, ZIP) is required for the Pear Member
+  // Import — a member missing any of these is silently dropped from the
+  // export (see member_csv_writer.is_pear_complete). Only "Address line 2"
+  // is genuinely optional per Pear's spec.
+  if (form.addressLine1.trim().length === 0) {
+    return 'Enter the member’s street address (Address line 1).';
+  }
+  if (form.city.trim().length === 0) {
+    return 'Enter the member’s city.';
+  }
+  if (form.stateCode.trim().length === 0) {
+    return 'Enter the member’s state (2-letter code, e.g. CA).';
+  }
+  if (!/^[A-Za-z]{2}$/.test(form.stateCode.trim())) {
     return 'State must be a 2-letter code (e.g. CA).';
   }
   if (form.zip.trim().length === 0) {
@@ -221,7 +240,8 @@ export function AddMemberModal({
   };
 
   const clientError = useMemo(() => validate(form), [
-    name, email, password, dob, sex, insuranceCompany, primaryCin, stateCode, zip,
+    name, email, phone, password, dob, sex, insuranceCompany, primaryCin,
+    addressLine1, city, stateCode, zip,
   ]);
   // Submit also requires BOTH consent boxes — extends the existing gate. Kept
   // out of validate()/clientError so unchecked boxes don't flash a red error on
@@ -365,7 +385,7 @@ export function AddMemberModal({
 
             <View style={styles.field}>
               <Text style={styles.fieldLabel}>
-                Phone <Text style={styles.optional}>(optional)</Text>
+                Phone
               </Text>
               <TextInput
                 style={styles.input}
@@ -513,7 +533,7 @@ export function AddMemberModal({
 
             <View style={styles.field}>
               <Text style={styles.fieldLabel}>
-                Address line 1 <Text style={styles.optional}>(optional)</Text>
+                Address line 1
               </Text>
               <TextInput
                 style={styles.input}
@@ -547,7 +567,7 @@ export function AddMemberModal({
 
             <View style={styles.field}>
               <Text style={styles.fieldLabel}>
-                City <Text style={styles.optional}>(optional)</Text>
+                City
               </Text>
               <TextInput
                 style={styles.input}
@@ -564,7 +584,7 @@ export function AddMemberModal({
             <View style={styles.row}>
               <View style={[styles.field, styles.rowItemState]}>
                 <Text style={styles.fieldLabel}>
-                  State <Text style={styles.optional}>(optional)</Text>
+                  State
                 </Text>
                 <TextInput
                   style={styles.input}
