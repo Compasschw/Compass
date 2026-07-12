@@ -1,7 +1,19 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -72,6 +84,20 @@ class Conversation(Base):
 
 class Message(Base):
     __tablename__ = "messages"
+    # Partial UNIQUE index on provider_message_id (WHERE NOT NULL): declared
+    # here (not just in migration smsmsg0711) so test DBs created via
+    # Base.metadata.create_all also carry the constraint — mirrors the
+    # uq_conversations_chw_member pattern on Conversation above. Without this,
+    # the inbound SMS webhook's idempotency guarantee would be silently
+    # untested (no DB-level enforcement to actually race against).
+    __table_args__ = (
+        Index(
+            "ix_messages_provider_message_id_unique",
+            "provider_message_id",
+            unique=True,
+            postgresql_where=text("provider_message_id IS NOT NULL"),
+        ),
+    )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     conversation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("conversations.id"), nullable=False, index=True)
     sender_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)

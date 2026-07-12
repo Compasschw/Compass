@@ -970,6 +970,26 @@ def _extract_phone_field(value: object) -> str | None:
     return None
 
 
+async def _sms_message_uuid_already_processed(db: AsyncSession, message_uuid: object) -> bool:
+    """Return True when a Message with this provider_message_id already exists.
+
+    Extracted as its own function (rather than inlined in ``sms_inbound``) so
+    tests can deterministically simulate the race window between this check
+    and the later INSERT — mock this to return False while pre-seeding a
+    colliding row, forcing the handler down the INSERT path where the DB-level
+    partial UNIQUE index (``ix_messages_provider_message_id_unique``) must
+    catch the collision and degrade to the ``duplicate_race`` outcome.
+    """
+    from app.models.conversation import Message
+
+    existing = await db.execute(
+        select(Message.id)
+        .where(Message.provider_message_id == str(message_uuid))
+        .limit(1)
+    )
+    return existing.scalar_one_or_none() is not None
+
+
 @router.post("/sms/inbound", response_model=SmsInboundAck)
 async def sms_inbound(
     request: Request,
@@ -1065,15 +1085,9 @@ async def sms_inbound(
             )
 
     # ── Idempotency ─────────────────────────────────────────────────────────
-    if message_uuid:
-        existing = await db.execute(
-            select(Message.id)
-            .where(Message.provider_message_id == str(message_uuid))
-            .limit(1)
-        )
-        if existing.scalar_one_or_none() is not None:
-            logger.info("sms/inbound: duplicate message_uuid=%s — already processed", message_uuid)
-            return SmsInboundAck(note="duplicate")
+    if message_uuid and await _sms_message_uuid_already_processed(db, message_uuid):
+        logger.info("sms/inbound: duplicate message_uuid=%s — already processed", message_uuid)
+        return SmsInboundAck(note="duplicate")
 
     if not from_raw:
         logger.warning("sms/inbound: no 'from' number in payload — dead-letter")
@@ -1157,17 +1171,19 @@ async def sms_inbound(
     )
     db.add(msg)
 
-    await record_touch(
-        db,
-        initiator_id=member_user.id,
-        recipient_id=target_conv.chw_id,
-        kind=TouchKind.sms,
-        provider_session_id=str(message_uuid) if message_uuid else None,
-        extra_data={"direction": "inbound"},
-    )
-
+    # Flush (not commit) the Message INSERT in isolation, BEFORE calling
+    # record_touch(). This matters: record_touch() does its own internal
+    # flush() and swallows any failure there (by design — an audit-log
+    # write must never crash a call/SMS endpoint). If the Message INSERT's
+    # unique-index violation surfaced *inside* record_touch's flush instead
+    # of here, it would be silently swallowed there while leaving this
+    # AsyncSession in SQLAlchemy's "pending rollback" state — so the
+    # `await db.commit()` below would then raise a DIFFERENT exception
+    # (PendingRollbackError, not IntegrityError), escaping the except clause
+    # and surfacing as an unhandled 500. Flushing the Message write on its
+    # own first ensures the race is caught exactly where we expect it.
     try:
-        await db.commit()
+        await db.flush()
     except IntegrityError as exc:
         # Race: two deliveries of the same message_uuid both passed the
         # idempotency SELECT before either committed. The partial UNIQUE
@@ -1180,6 +1196,17 @@ async def sms_inbound(
             message_uuid, exc,
         )
         return SmsInboundAck(note="duplicate_race")
+
+    await record_touch(
+        db,
+        initiator_id=member_user.id,
+        recipient_id=target_conv.chw_id,
+        kind=TouchKind.sms,
+        provider_session_id=str(message_uuid) if message_uuid else None,
+        extra_data={"direction": "inbound"},
+    )
+
+    await db.commit()
 
     logger.info(
         "sms/inbound: routed message to conversation=%s member=%s",

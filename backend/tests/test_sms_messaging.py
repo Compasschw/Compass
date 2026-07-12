@@ -797,3 +797,285 @@ async def test_in_app_message_still_defaults_channel_in_app(client: AsyncClient)
         msg = msg_result.scalars().one()
         assert msg.channel == "in_app"
         assert msg.provider_message_id is None
+
+
+# ─── Outbound: additional edge cases (404s, rate limit, soft-delete restore) ──
+
+
+@pytest.mark.asyncio
+async def test_outbound_sms_conversation_not_found_returns_404(client: AsyncClient):
+    chw_tokens = await _register(client, "sms_404_chw@test.com", "chw")
+    res = await client.post(
+        f"/api/v1/conversations/{uuid.uuid4()}/sms",
+        json={"text": "hello"},
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_outbound_sms_rate_limit_enforced_on_31st_message(client: AsyncClient):
+    chw_tokens = await _register(client, "sms_rl_chw@test.com", "chw")
+    member_tokens = await _register(client, "sms_rl_member@test.com", "member")
+
+    chw_id = _user_id_from_tokens(chw_tokens)
+    member_id = _user_id_from_tokens(member_tokens)
+    await _set_phone_via_db(chw_id, "+15550200012")
+    await _set_member_phone_verified(member_id, "+15550200013")
+
+    await _create_session_between(client, chw_tokens, member_tokens)
+    conv_id = await _find_or_create_conversation(client, chw_tokens, member_id)
+
+    for i in range(30):
+        res = await client.post(
+            f"/api/v1/conversations/{conv_id}/sms",
+            json={"text": f"message {i + 1}"},
+            headers=auth_header(chw_tokens),
+        )
+        assert res.status_code == 201, f"message {i + 1} failed: {res.status_code} {res.text}"
+
+    res = await client.post(
+        f"/api/v1/conversations/{conv_id}/sms",
+        json={"text": "should be rate limited"},
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 429, f"Expected 429, got {res.status_code}: {res.text}"
+
+
+@pytest.mark.asyncio
+async def test_outbound_sms_restores_soft_deleted_conversation(client: AsyncClient):
+    chw_tokens = await _register(client, "sms_restore_chw@test.com", "chw")
+    member_tokens = await _register(client, "sms_restore_member@test.com", "member")
+
+    chw_id = _user_id_from_tokens(chw_tokens)
+    member_id = _user_id_from_tokens(member_tokens)
+    await _set_phone_via_db(chw_id, "+15550200014")
+    await _set_member_phone_verified(member_id, "+15550200015")
+
+    await _create_session_between(client, chw_tokens, member_tokens)
+    conv_id = await _find_or_create_conversation(client, chw_tokens, member_id)
+
+    # Soft-delete the thread directly (mirrors DELETE /conversations/{id}).
+    from datetime import UTC, datetime
+
+    async with _test_session_factory() as session:
+        conv = await session.get(Conversation, UUID(conv_id))
+        assert conv is not None
+        conv.deleted_at = datetime.now(UTC)
+        conv.deleted_by_user_id = UUID(chw_id)
+        await session.commit()
+
+    res = await client.post(
+        f"/api/v1/conversations/{conv_id}/sms",
+        json={"text": "This should restore the thread"},
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 201, f"Expected 201, got {res.status_code}: {res.text}"
+
+    async with _test_session_factory() as session:
+        conv = await session.get(Conversation, UUID(conv_id))
+        assert conv is not None
+        assert conv.deleted_at is None
+        assert conv.deleted_by_user_id is None
+
+
+@pytest.mark.asyncio
+async def test_outbound_sms_notification_failure_does_not_fail_the_request(client: AsyncClient):
+    """A broken push-notification fanout must not fail the SMS send itself —
+    mirrors the same best-effort try/except pattern as in-app send_message."""
+    chw_tokens = await _register(client, "sms_notifyfail_chw@test.com", "chw")
+    member_tokens = await _register(client, "sms_notifyfail_member@test.com", "member")
+
+    chw_id = _user_id_from_tokens(chw_tokens)
+    member_id = _user_id_from_tokens(member_tokens)
+    await _set_phone_via_db(chw_id, "+15550200016")
+    await _set_member_phone_verified(member_id, "+15550200017")
+
+    await _create_session_between(client, chw_tokens, member_tokens)
+    conv_id = await _find_or_create_conversation(client, chw_tokens, member_id)
+
+    with patch(
+        "app.services.notifications.notify_user",
+        AsyncMock(side_effect=RuntimeError("notification service down")),
+    ):
+        res = await client.post(
+            f"/api/v1/conversations/{conv_id}/sms",
+            json={"text": "Notification fanout will fail"},
+            headers=auth_header(chw_tokens),
+        )
+    assert res.status_code == 201, f"Expected 201 despite notify failure, got {res.status_code}: {res.text}"
+
+
+# ─── Inbound: additional edge cases (malformed payloads, to-number mismatch) ──
+
+
+@pytest.mark.asyncio
+async def test_inbound_sms_missing_from_field_dead_letters(client: AsyncClient):
+    body = {
+        "message_uuid": str(uuid.uuid4()),
+        "to": "18005551234",
+        "channel": "sms",
+        "message_type": "text",
+        "text": "no from field at all",
+    }
+    res = await client.post("/api/v1/communication/sms/inbound", json=body)
+    assert res.status_code == 200
+    assert res.json()["note"] == "dead_letter_no_from"
+
+
+@pytest.mark.asyncio
+async def test_inbound_sms_unnormalizable_from_field_dead_letters(client: AsyncClient):
+    # Non-empty (so it passes the "no from" check) but contains no digits at
+    # all, so _normalize_phone_e164 returns None — a distinct dead-letter
+    # reason from "field absent entirely".
+    res = await _post_sms_inbound(client, from_number_digits="abc", text="from has no digits")
+    assert res.status_code == 200
+    assert res.json()["note"] == "dead_letter_bad_from"
+
+
+@pytest.mark.asyncio
+async def test_inbound_sms_extract_phone_field_handles_nested_dict_shape(client: AsyncClient):
+    """Some SDK/legacy payload shapes nest from/to as {"number": "..."} —
+    the webhook must still route correctly using that shape."""
+    chw_tokens = await _register(client, "sms_dictshape_chw@test.com", "chw")
+    member_tokens = await _register(client, "sms_dictshape_member@test.com", "member")
+
+    chw_id = _user_id_from_tokens(chw_tokens)
+    member_id = _user_id_from_tokens(member_tokens)
+    await _set_phone_via_db(chw_id, "+15550200018")
+    await _set_member_phone_verified(member_id, "+15550200019")
+
+    await _create_session_between(client, chw_tokens, member_tokens)
+    conv_id = await _find_or_create_conversation(client, chw_tokens, member_id)
+
+    body = {
+        "message_uuid": str(uuid.uuid4()),
+        "to": {"number": "18005551234", "type": "sms"},
+        "from": {"number": "15550200019", "type": "sms"},
+        "channel": "sms",
+        "message_type": "text",
+        "text": "nested dict shape reply",
+    }
+    res = await client.post("/api/v1/communication/sms/inbound", json=body)
+    assert res.status_code == 200
+    assert res.json().get("note") is None
+
+    async with _test_session_factory() as session:
+        msg_result = await session.execute(
+            select(Message).where(
+                Message.conversation_id == UUID(conv_id), Message.sender_id == UUID(member_id)
+            )
+        )
+        msgs = msg_result.scalars().all()
+        assert len(msgs) == 1
+        assert msgs[0].body == "nested dict shape reply"
+
+
+@pytest.mark.asyncio
+async def test_inbound_sms_to_number_mismatch_is_informational_only(client: AsyncClient):
+    """When our configured numbers don't include the inbound 'to' value, the
+    webhook logs a warning but still routes correctly by from-number — the
+    'to' field never blocks or dead-letters (pool-ready design)."""
+    import app.config as _app_cfg
+
+    chw_tokens = await _register(client, "sms_tomismatch_chw@test.com", "chw")
+    member_tokens = await _register(client, "sms_tomismatch_member@test.com", "member")
+
+    chw_id = _user_id_from_tokens(chw_tokens)
+    member_id = _user_id_from_tokens(member_tokens)
+    await _set_phone_via_db(chw_id, "+15550200020")
+    await _set_member_phone_verified(member_id, "+15550200021")
+
+    await _create_session_between(client, chw_tokens, member_tokens)
+    await _find_or_create_conversation(client, chw_tokens, member_id)
+
+    original = _app_cfg.settings
+    _app_cfg.settings = type(
+        "_S",
+        (),
+        {
+            "vonage_signature_secret": "",
+            "environment": "development",
+            "vonage_from_number": "19998887777",  # different from the 'to' we send below
+            "vonage_sms_number": "",
+        },
+    )()
+    try:
+        res = await _post_sms_inbound(
+            client,
+            from_number_digits="15550200021",
+            text="to-number does not match our configured number",
+            to_number_digits="10005551234",
+        )
+    finally:
+        _app_cfg.settings = original
+
+    assert res.status_code == 200
+    assert res.json().get("note") is None
+
+
+@pytest.mark.asyncio
+async def test_inbound_sms_duplicate_delivery_race_is_idempotent(client: AsyncClient):
+    """Simulates two concurrent deliveries of the same message_uuid racing
+    past the idempotency SELECT before either commits — the partial UNIQUE
+    index must catch the second INSERT and the handler must degrade to
+    'duplicate_race' (200), never a 500."""
+    chw_tokens = await _register(client, "sms_race_chw@test.com", "chw")
+    member_tokens = await _register(client, "sms_race_member@test.com", "member")
+
+    chw_id = _user_id_from_tokens(chw_tokens)
+    member_id = _user_id_from_tokens(member_tokens)
+    await _set_phone_via_db(chw_id, "+15550200022")
+    await _set_member_phone_verified(member_id, "+15550200023")
+
+    await _create_session_between(client, chw_tokens, member_tokens)
+    await _find_or_create_conversation(client, chw_tokens, member_id)
+
+    shared_uuid = str(uuid.uuid4())
+
+    # Pre-seed a Message with this provider_message_id directly (bypassing
+    # the idempotency SELECT) to simulate "another request already won the
+    # race and committed first" without needing real concurrency.
+    async with _test_session_factory() as session:
+        conv_result = await session.execute(
+            select(Conversation).where(Conversation.member_id == UUID(member_id))
+        )
+        conv = conv_result.scalars().first()
+        assert conv is not None
+        session.add(
+            Message(
+                conversation_id=conv.id,
+                sender_id=UUID(member_id),
+                body="winner of the race",
+                type="text",
+                channel="sms",
+                provider_message_id=shared_uuid,
+            )
+        )
+        await session.commit()
+
+    # Force the idempotency pre-check to report "not found" (simulating the
+    # race window between another request's SELECT and its COMMIT), pushing
+    # this request down the INSERT path where the DB-level partial unique
+    # index must catch the collision.
+    with patch(
+        "app.routers.communication._sms_message_uuid_already_processed",
+        AsyncMock(return_value=False),
+    ):
+        res = await _post_sms_inbound(
+            client,
+            from_number_digits="15550200023",
+            text="loser of the race",
+            message_uuid=shared_uuid,
+        )
+
+    assert res.status_code == 200, f"Must never 500 on a duplicate-delivery race: {res.text}"
+    assert res.json()["note"] == "duplicate_race"
+
+    async with _test_session_factory() as session:
+        msg_result = await session.execute(
+            select(Message).where(Message.provider_message_id == shared_uuid)
+        )
+        matching = msg_result.scalars().all()
+        assert len(matching) == 1, "Only the winning Message row should exist"
+        assert matching[0].body == "winner of the race"
