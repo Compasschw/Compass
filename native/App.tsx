@@ -44,6 +44,7 @@ const SAFE_AREA_INITIAL_METRICS =
     : initialWindowMetrics;
 import { AuthProvider } from './src/context/AuthContext';
 import { AppNavigator } from './src/navigation/AppNavigator';
+import { AppDialogProvider } from './src/components/shared/AppDialogProvider';
 import { ErrorBoundary } from './src/components/shared/ErrorBoundary';
 import { UpdateAvailableBanner } from './src/components/ui/UpdateAvailableBanner';
 import { crash } from './src/services/crash';
@@ -101,6 +102,15 @@ export default function App(): React.JSX.Element {
                 so the update check runs across every authenticated and
                 unauthenticated screen without needing per-screen wiring. */}
             <UpdateAvailableBanner />
+            {/* Global in-app dialog — renders showAlert() calls from anywhere
+                (including outside React, e.g. a mutation's onError) as an
+                on-brand Compass dialog instead of the browser's window.alert
+                "…says" popup. Mounted once here, above navigation, so it's
+                available regardless of which screen/modal is on top; see
+                src/components/shared/AppDialogProvider.tsx for why mount
+                order — not tree position — is what puts it above other
+                full-screen Modals on web. Renders null when idle. */}
+            <AppDialogProvider />
           </AuthProvider>
         </QueryClientProvider>
       </ErrorBoundary>
