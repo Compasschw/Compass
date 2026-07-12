@@ -954,6 +954,10 @@ export function DocumentationModal({
   // After a successful submit, show an in-app "submitted for billing" panel
   // (replaces the browser alert + earnings breakdown). Dismissed via Done.
   const [showSubmitted, setShowSubmitted] = useState(false);
+  // Web billing-confirm gate, shown as an in-app panel instead of the browser's
+  // "joincompasschw.com says" window.confirm — so the CHW sees it as part of
+  // Compass, clearly tied to their submission. (Native uses the styled Alert.)
+  const [showConfirm, setShowConfirm] = useState(false);
   // Tracks whether the notes TextInput is focused, for focus-ring styling.
   const [notesFocused, setNotesFocused] = useState(false);
 
@@ -1183,15 +1187,12 @@ export function DocumentationModal({
     // filing without exposing any earnings/payout breakdown to the CHW.
     const confirmBody = "Submit this session's documentation for billing?";
 
-    // RN's Alert.alert() with a multi-button [Cancel / Submit] callback shape is
-    // a no-op on web — the dialog never renders and `onPress` never fires. Bridge
-    // to window.confirm() on web; native keeps the styled Alert.
+    // On web, RN's Alert.alert() multi-button callback shape is a no-op, and
+    // window.confirm() renders the browser's "…says" box (off-brand, reads as
+    // disconnected from Compass). Show an in-app confirm panel instead. Native
+    // keeps the OS-styled Alert, which already looks in-app.
     if (Platform.OS === 'web') {
-      if (typeof window === 'undefined') return;
-      const confirmed = window.confirm(confirmBody);
-      if (confirmed) {
-        void performSubmit();
-      }
+      setShowConfirm(true);
       return;
     }
 
@@ -1225,6 +1226,42 @@ export function DocumentationModal({
       accessibilityViewIsModal
     >
       <View style={mo.container}>
+        {/* ── In-app billing confirm gate (web) — replaces the browser
+              window.confirm so the prompt reads as part of Compass. ────────── */}
+        {showConfirm && !showSubmitted && (
+          <View style={mo.confirmOverlay} accessibilityViewIsModal>
+            <View style={mo.confirmCard}>
+              <Text style={mo.confirmTitle}>Submit for billing</Text>
+              <Text style={mo.confirmBody}>
+                Submit this session&apos;s documentation for billing?
+              </Text>
+              <View style={mo.confirmActions}>
+                <TouchableOpacity
+                  style={mo.confirmCancelBtn}
+                  onPress={() => setShowConfirm(false)}
+                  disabled={isSubmitting}
+                  accessibilityRole="button"
+                  accessibilityLabel="Cancel"
+                >
+                  <Text style={mo.confirmCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={mo.confirmSubmitBtn}
+                  onPress={() => {
+                    setShowConfirm(false);
+                    void performSubmit();
+                  }}
+                  disabled={isSubmitting}
+                  accessibilityRole="button"
+                  accessibilityLabel="Submit for billing"
+                >
+                  <Text style={mo.confirmSubmitText}>Submit</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        )}
+
         {/* ── Submitted-for-billing success panel (in-app, replaces the browser
               alert + earnings breakdown). Covers the form once the claim files. */}
         {showSubmitted && (
@@ -1507,6 +1544,66 @@ const mo = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: tokens.pageBg,
+  },
+  // In-app billing confirm gate (web) — a centered dialog card over a scrim,
+  // so the prompt reads as part of Compass rather than a browser popup.
+  confirmOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 20,
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.xl,
+  },
+  confirmCard: {
+    width: '100%',
+    maxWidth: 380,
+    backgroundColor: tokens.cardBg,
+    borderRadius: radius.lg,
+    padding: spacing.xl,
+    gap: spacing.md,
+    ...shadows.card,
+  },
+  confirmTitle: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 17,
+    color: tokens.textPrimary,
+  },
+  confirmBody: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 14,
+    lineHeight: 20,
+    color: tokens.textSecondary,
+  },
+  confirmActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  confirmCancelBtn: {
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: tokens.cardBorder,
+    backgroundColor: tokens.cardBg,
+  },
+  confirmCancelText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 14,
+    color: tokens.textPrimary,
+  },
+  confirmSubmitBtn: {
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: tokens.primary,
+  },
+  confirmSubmitText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 14,
+    color: '#FFFFFF',
   },
   // In-app success panel shown after a claim files — replaces the browser alert.
   submittedOverlay: {
