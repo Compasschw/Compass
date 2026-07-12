@@ -9,16 +9,17 @@
  *     Right-aligned: filter icon + "Sort: Last contact ↓"
  *   - Table card (rounded-16, white, bordered):
  *       THEAD: #F9FAFB bg, 11px/600/uppercase/#6B7280, padding 10×16, border-bottom #F3F4F6
- *       Columns: Member · Status · Risk · Engagement · Active Journey · Last Contact · Top Need · (chevron)
+ *       Columns: Member · Status · Top Need · Last Contact · (chevron)
  *       TBODY rows: padding 14×16, border-bottom #F3F4F6, hover #F9FAFB, cursor pointer
- *   - Pagination footer: "Showing N of M members" + page buttons (static v1)
+ *   - Pagination footer: only shown when the filtered list exceeds one page
+ *     (MEMBERS_PAGE_SIZE = 10). "Showing a–b of N" + prev / numbered / next buttons.
  *
  * On native: simplified card list (table layout doesn't suit small screens).
  *
  * Data: useChwMembers() from GET /api/v1/chw/members.
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Platform,
@@ -46,7 +47,7 @@ import {
 } from 'lucide-react-native';
 
 import { AppShell, Card, EmptyState, PageHeader, Pill, PressableCard } from '../../components/ui';
-import type { PillVariant } from '../../components/ui/Pill';
+import { MEMBERS_PAGE_SIZE, paginateMembers } from './membersPagination';
 import { Avatar } from '../../components/shared/Avatar';
 import { colors, numerals, radius, spacing } from '../../theme/tokens';
 import { useAuth } from '../../context/AuthContext';
@@ -133,59 +134,6 @@ function isOverdue(lastContactAt: string | null): boolean {
 }
 
 /**
- * Maps risk level to Pill variant. Returns null when risk is null (pill hidden).
- * Accepts the loosened string type to remain forward-compatible once a risk
- * model is wired up and the backend starts returning non-null values.
- */
-function riskVariant(risk: string | null): 'emerald' | 'amber' | 'red' | null {
-  switch (risk) {
-    case 'low':    return 'emerald';
-    case 'medium': return 'amber';
-    case 'high':   return 'red';
-    default:       return null;
-  }
-}
-
-/**
- * Maps risk level to display label.
- */
-function riskLabel(risk: string | null): string {
-  switch (risk) {
-    case 'low':    return 'Low';
-    case 'medium': return 'Medium';
-    case 'high':   return 'High';
-    default:       return '';
-  }
-}
-
-/**
- * Maps engagement level → Pill variant.
- * When the member is inactive, "disengaged" renders as gray (neutral / inactive).
- */
-function engagementVariant(
-  engagement: MembersRosterItem['engagement'],
-  status: MembersRosterItem['status'],
-): 'emerald' | 'amber' | 'red' | 'gray' {
-  switch (engagement) {
-    case 'highly':      return 'emerald';
-    case 'moderately':  return 'amber';
-    case 'disengaged':
-      return status === 'inactive' ? 'gray' : 'red';
-  }
-}
-
-/**
- * Maps engagement → display label.
- */
-function engagementLabel(engagement: MembersRosterItem['engagement']): string {
-  switch (engagement) {
-    case 'highly':      return 'Highly Engaged';
-    case 'moderately':  return 'Moderately Engaged';
-    case 'disengaged':  return 'Disengaged';
-  }
-}
-
-/**
  * Maps a vertical slug to a Pill variant for the Top Need cell.
  */
 function verticalVariant(
@@ -255,22 +203,9 @@ function RequestRow({ request, onAccept, onDecline, disabled }: RequestRowProps)
     return 'over a day ago';
   }, [request.createdAt]);
 
-  // Urgency → visual variant. Matches the chip colors used in MemberFindScreen.
-  const urgencyTone = request.urgency === 'urgent'
-    ? 'red'
-    : request.urgency === 'soon'
-      ? 'amber'
-      : 'gray';
-
   const verticalsLabel = request.verticals.length > 0
     ? request.verticals.map((v) => v.replace(/_/g, ' ')).join(', ')
     : request.vertical.replace(/_/g, ' ');
-
-  const urgencyPill: PillVariant = urgencyTone === 'red'
-    ? 'red'
-    : urgencyTone === 'amber'
-      ? 'amber'
-      : 'gray';
 
   // Native: fall back to a card-style row.  Web: full table layout.
   if (Platform.OS !== 'web') {
@@ -326,28 +261,6 @@ function RequestRow({ request, onAccept, onDecline, disabled }: RequestRowProps)
         <Pill variant="amber" size="sm" withDot>Pending request</Pill>
       </View>
 
-      {/* Risk column placeholder — kept blank for prospective members. */}
-      <View style={rowStyles.cell}>
-        <Text style={rowStyles.noJourney}>—</Text>
-      </View>
-
-      {/* Engagement column → urgency chip */}
-      <View style={rowStyles.cell}>
-        <Pill variant={urgencyPill} size="sm">
-          {request.urgency.charAt(0).toUpperCase() + request.urgency.slice(1)}
-        </Pill>
-      </View>
-
-      {/* Active Journey column placeholder. */}
-      <View style={rowStyles.cell}>
-        <Text style={rowStyles.noJourney}>—</Text>
-      </View>
-
-      {/* Last Contact column → "submitted N min ago" */}
-      <View style={rowStyles.cell}>
-        <Text style={rowStyles.lastContact}>{createdAgo}</Text>
-      </View>
-
       {/* Top Need column → preferred-mode label so the CHW knows what was asked. */}
       <View style={rowStyles.cell}>
         <Text style={rowStyles.memberMeta}>
@@ -355,6 +268,11 @@ function RequestRow({ request, onAccept, onDecline, disabled }: RequestRowProps)
             : request.preferredMode === 'virtual' ? 'Virtual'
               : 'Phone'}
         </Text>
+      </View>
+
+      {/* Last Contact column → "submitted N min ago" */}
+      <View style={rowStyles.cell}>
+        <Text style={rowStyles.lastContact}>{createdAgo}</Text>
       </View>
 
       {/* Action column — Accept / Decline buttons replace the chevron */}
@@ -395,8 +313,6 @@ function MemberTableRow({ item, onPress }: RowProps): React.JSX.Element {
   const overdue = isOverdue(item.lastContactAt);
   const [hovered, setHovered] = useState(false);
 
-  const risk = riskVariant(item.risk);
-
   return (
     <TouchableOpacity
       style={[rowStyles.row, hovered && rowStyles.rowHover]}
@@ -434,34 +350,14 @@ function MemberTableRow({ item, onPress }: RowProps): React.JSX.Element {
         </Pill>
       </View>
 
-      {/* Risk — hidden when null */}
+      {/* Top Need (moved into the former Risk slot, right after Status) */}
       <View style={rowStyles.cell}>
-        {risk != null && (
-          <Pill variant={risk} size="sm" withDot>
-            {riskLabel(item.risk)}
+        {item.topNeed != null ? (
+          <Pill variant={verticalVariant(item.topNeed)} size="sm">
+            {formatVertical(item.topNeed)}
           </Pill>
-        )}
-      </View>
-
-      {/* Engagement */}
-      <View style={rowStyles.cell}>
-        <Pill variant={engagementVariant(item.engagement, item.status)} size="sm">
-          {engagementLabel(item.engagement)}
-        </Pill>
-      </View>
-
-      {/* Active Journey */}
-      <View style={rowStyles.cell}>
-        {item.activeJourney != null ? (
-          <View>
-            <Text style={rowStyles.journeyName}>{item.activeJourney.name}</Text>
-            <Text style={[rowStyles.journeyMeta, numerals.tabular]}>
-              {Math.round(item.activeJourney.percent)}%
-              {item.activeJourney.currentStep ? ` · ${item.activeJourney.currentStep}` : ''}
-            </Text>
-          </View>
         ) : (
-          <Text style={rowStyles.noJourney}>No active journey</Text>
+          <Text style={rowStyles.noJourney}>—</Text>
         )}
       </View>
 
@@ -474,17 +370,6 @@ function MemberTableRow({ item, onPress }: RowProps): React.JSX.Element {
           <Text style={rowStyles.overdueLabel}>Re-engage</Text>
         ) : (
           <Text style={rowStyles.lastContactDate}>{formatShortDate(item.lastContactAt)}</Text>
-        )}
-      </View>
-
-      {/* Top Need */}
-      <View style={rowStyles.cell}>
-        {item.topNeed != null ? (
-          <Pill variant={verticalVariant(item.topNeed)} size="sm">
-            {formatVertical(item.topNeed)}
-          </Pill>
-        ) : (
-          <Text style={rowStyles.noJourney}>—</Text>
         )}
       </View>
 
@@ -618,21 +503,12 @@ function MemberCard({ item, onPress }: MemberCardProps): React.JSX.Element {
         <Pill variant={item.status === 'active' ? 'emerald' : 'gray'} size="sm" withDot>
           {item.status === 'active' ? 'Active' : 'Inactive'}
         </Pill>
-        <Pill variant={engagementVariant(item.engagement, item.status)} size="sm">
-          {engagementLabel(item.engagement)}
-        </Pill>
         {item.topNeed != null && (
           <Pill variant={verticalVariant(item.topNeed)} size="sm">
             {formatVertical(item.topNeed)}
           </Pill>
         )}
       </View>
-
-      {item.activeJourney != null && (
-        <Text style={[cardStyles.journeyLine, numerals.tabular]}>
-          Journey: {item.activeJourney.name} · {Math.round(item.activeJourney.percent)}%
-        </Text>
-      )}
 
       <View style={cardStyles.contactRow}>
         <Text style={cardStyles.contactTime}>
@@ -714,14 +590,30 @@ interface PageButtonProps {
   label: string;
   active?: boolean;
   icon?: 'prev' | 'next';
+  disabled?: boolean;
+  onPress?: () => void;
 }
 
-function PageButton({ label, active = false, icon }: PageButtonProps): React.JSX.Element {
+function PageButton({
+  label,
+  active = false,
+  icon,
+  disabled = false,
+  onPress,
+}: PageButtonProps): React.JSX.Element {
   return (
-    <View
+    <TouchableOpacity
+      onPress={onPress}
+      disabled={disabled || active || !onPress}
+      accessibilityRole="button"
+      accessibilityState={{ selected: active, disabled }}
+      accessibilityLabel={
+        icon === 'prev' ? 'Previous page' : icon === 'next' ? 'Next page' : `Page ${label}`
+      }
       style={[
         pageStyles.btn,
         active ? pageStyles.btnActive : pageStyles.btnDefault,
+        disabled && pageStyles.btnDisabled,
       ]}
     >
       {icon === 'prev' ? (
@@ -733,7 +625,7 @@ function PageButton({ label, active = false, icon }: PageButtonProps): React.JSX
           {label}
         </Text>
       )}
-    </View>
+    </TouchableOpacity>
   );
 }
 
@@ -755,6 +647,10 @@ const pageStyles = StyleSheet.create({
 
   btnActive: {
     backgroundColor: '#059669', // emerald-600
+  } as ViewStyle,
+
+  btnDisabled: {
+    opacity: 0.4,
   } as ViewStyle,
 
   btnText: {
@@ -834,6 +730,20 @@ export function CHWMembersScreen(): React.JSX.Element {
 
     return result;
   }, [members, activeFilter, searchQuery]);
+
+  // ── Pagination: 10 members per page; controls only appear past one page ──────
+  const [page, setPage] = useState(1);
+  // Snap back to page 1 whenever the filter or search changes the result set,
+  // so the CHW never lands on a now-empty page.
+  useEffect(() => {
+    setPage(1);
+  }, [activeFilter, searchQuery]);
+  const { pageItems: pagedMembers, page: safePage, totalPages } = paginateMembers(
+    filtered,
+    page,
+  );
+  const showPagination =
+    activeFilter !== 'request' && filtered.length > MEMBERS_PAGE_SIZE;
 
   // ── User initials for AppShell user block ────────────────────────────────────
   const userInitials = (userName ?? 'CHW')
@@ -987,11 +897,8 @@ export function CHWMembersScreen(): React.JSX.Element {
               [
                 { label: 'Member',         flex: 2 },
                 { label: 'Status',         flex: 1 },
-                { label: 'Risk',           flex: 1 },
-                { label: 'Engagement',     flex: 1 },
-                { label: 'Active Journey', flex: 1 },
-                { label: 'Last Contact',   flex: 1 },
                 { label: 'Top Need',       flex: 1 },
+                { label: 'Last Contact',   flex: 1 },
                 { label: '',               flex: 0, width: 48 },
               ] as const
             ).map((col) => (
@@ -1009,7 +916,7 @@ export function CHWMembersScreen(): React.JSX.Element {
           </View>
 
           {/* Table body */}
-          {filtered.map((item) => (
+          {pagedMembers.map((item) => (
             <MemberTableRow
               key={item.id}
               item={item}
@@ -1020,7 +927,7 @@ export function CHWMembersScreen(): React.JSX.Element {
       ) : (
         /* Native: card list */
         <View style={styles.cardList}>
-          {filtered.map((item) => (
+          {pagedMembers.map((item) => (
             <MemberCard
               key={item.id}
               item={item}
@@ -1030,18 +937,35 @@ export function CHWMembersScreen(): React.JSX.Element {
         </View>
       )}
 
-      {/* ── Pagination footer (web, static v1) ───────────────────────────── */}
-      {Platform.OS === 'web' && !isLoading && filtered.length > 0 && (
+      {/* ── Pagination footer (web) — only past a single page of members ──── */}
+      {Platform.OS === 'web' && !isLoading && showPagination && (
         <View style={styles.paginationRow}>
           <Text style={styles.paginationInfo}>
-            Showing {filtered.length} of {members.length} member{members.length !== 1 ? 's' : ''}
+            Showing {(safePage - 1) * MEMBERS_PAGE_SIZE + 1}–
+            {Math.min(safePage * MEMBERS_PAGE_SIZE, filtered.length)} of {filtered.length}{' '}
+            member{filtered.length !== 1 ? 's' : ''}
           </Text>
           <View style={styles.paginationButtons}>
-            <PageButton label="‹" icon="prev" />
-            <PageButton label="1" active />
-            <PageButton label="2" />
-            <PageButton label="3" />
-            <PageButton label="›" icon="next" />
+            <PageButton
+              label="‹"
+              icon="prev"
+              disabled={safePage <= 1}
+              onPress={() => setPage(safePage - 1)}
+            />
+            {Array.from({ length: totalPages }, (_, i) => i + 1).map((n) => (
+              <PageButton
+                key={n}
+                label={String(n)}
+                active={n === safePage}
+                onPress={() => setPage(n)}
+              />
+            ))}
+            <PageButton
+              label="›"
+              icon="next"
+              disabled={safePage >= totalPages}
+              onPress={() => setPage(safePage + 1)}
+            />
           </View>
         </View>
       )}
