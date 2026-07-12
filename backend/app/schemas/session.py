@@ -117,6 +117,16 @@ class SessionDocumentationSubmit(BaseModel):
     follow_up_date: datetime | None = None
     diagnosis_codes: list[str]
     procedure_code: str
+    # CHW-entered session start/end times. When BOTH are provided the backend
+    # bills from this duration (end - start) — the CHW edits these on the
+    # documentation screen before filing. When absent, the backend falls back
+    # to the session's server-tracked duration. ``units_to_bill`` from the
+    # client is still ignored (units are always computed server-side from the
+    # authoritative duration, whichever source) so a CHW cannot upcode by
+    # sending a raw unit count. ``session_end_time`` must be after
+    # ``session_start_time`` (validated at the endpoint → 422).
+    session_start_time: datetime | None = None
+    session_end_time: datetime | None = None
     # Optional — the backend authoritatively computes units from session
     # duration via app.services.billing_service.calculate_units to prevent
     # CHW upcoding. The field is accepted (with the ge/le bounds) for legacy

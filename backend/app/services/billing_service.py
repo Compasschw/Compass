@@ -28,18 +28,33 @@ MAX_UNITS_PER_YEAR = 10
 # which guards the sync). Ideally this list is served from one source later.
 VALID_ICD10_CODES = [
     # ── Frontend picker catalog (native/src/data/mock.ts `diagnosisCodes`) ──
-    "Z71.89",  # Other specified counseling, wellness visits  (also the default)
-    "Z59.12",  # Utility insecurity
-    "Z72.3",   # Lack of physical exercise
-    "Z75.3",   # Unavailability/inaccessibility of health-care facilities
-    "Z59.00",  # Living situation, unspecified
-    "Z59.89",  # Other problems related to housing and economic circumstances
+    # Updated 2026-07-12 to the founder-provided SDOH Z-code set.
+    "Z59.10",  # Inadequate housing, unspecified
+    "Z59.4",   # Lack of adequate food and safe drinking water
+    "Z59.6",   # Low income / lack of financial resources
+    "Z59.71",  # Insufficient health insurance coverage
+    "Z59.72",  # Insufficient welfare support
     "Z55.6",   # Problems related to health literacy
+    "Z55.9",   # Problems related to education and literacy
+    "Z56.9",   # Problems related to employment, unspecified
+    "Z59.00",  # Homelessness, unspecified
+    "Z59.01",  # Sheltered homelessness
+    "Z59.89",  # Other problems related to housing and economic circumstances
     "Z59.9",   # Problem related to housing/economic circumstances, unspecified
-    "Z59.86",  # Financial insecurity
     "Z65.3",   # Problems related to other legal circumstances
-    # ── Legacy / default codes (kept valid for existing claims, demo, tests) ──
-    "Z59.1", "Z59.7", "Z63.0", "Z56.9", "Z60.2",
+    "Z71.89",  # Other specified counseling  (also the default)
+    "Z72.3",   # Lack of physical exercise
+    "Z59.82",  # Transportation insecurity
+    "Z59.861", # Financial insecurity, difficulty paying for utilities
+    "Z59.868", # Other specified financial insecurity
+    "Z59.869", # Financial insecurity, unspecified
+    "Z59.87",  # Material hardship, unable to obtain adequate childcare
+    "Z74.8",   # Other problems related to care provider dependency
+    "Z75.3",   # Unavailability/inaccessibility of health-care facilities
+    # ── Legacy / prior-picker codes (kept valid for existing claims, demo,
+    #    tests, and any historical documentation already filed) ──
+    "Z59.12", "Z59.86",
+    "Z59.1", "Z59.7", "Z63.0", "Z60.2",
     "Z72.89", "Z71.1", "Z76.89", "Z13.89",
 ]
 VALID_CPT_CODES = ["98960", "98961", "98962"]

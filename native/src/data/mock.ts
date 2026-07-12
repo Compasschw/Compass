@@ -83,21 +83,42 @@ export interface SessionDocumentation {
   sessionId: string;
   /** CHW-authored notes — required, visible to billing/audit as CHW-authored. */
   summary: string;
-  resourcesReferred: string[];
-  memberGoals: string[];
-  followUpNeeded: boolean;
-  followUpDate?: string;
   diagnosisCodes: string[];
   procedureCode?: string;
   unitsToBill: number;
-  /** Number of Medi-Cal members served in the session (1 = individual). */
-  membersServed: number;
   submittedAt?: string;
-  /** AI-generated summary text from session transcript. Null when unavailable. */
+  /**
+   * CHW-edited session start/end (ISO 8601), entered in the Documentation
+   * modal's Session Start / Session End fields. Drives the units-to-bill
+   * bracket (see ``computeUnitsFromTimes`` in utils/sessionDocumentation.ts).
+   * Null when the field couldn't be parsed — submission is blocked in the UI
+   * until both are valid and sessionEndTime > sessionStartTime, so a
+   * successful submit always carries non-null values.
+   */
+  sessionStartTime: string | null;
+  sessionEndTime: string | null;
+  /**
+   * @deprecated Members Served, Member Goals Discussed, Resources Referred,
+   * Follow-Up, and AI Summary were removed from the Documentation modal
+   * (2026-07-12 redesign) in favor of CHW-edited Session Start/End times.
+   * The backend schema defaults these — they are intentionally no longer
+   * sent. Left optional (not deleted) in case any stored/legacy documentation
+   * record still carries them.
+   */
+  resourcesReferred?: string[];
+  /** @deprecated see resourcesReferred */
+  memberGoals?: string[];
+  /** @deprecated see resourcesReferred */
+  followUpNeeded?: boolean;
+  /** @deprecated see resourcesReferred */
+  followUpDate?: string;
+  /** @deprecated see resourcesReferred */
+  membersServed?: number;
+  /** @deprecated see resourcesReferred */
   aiSummary?: string | null;
-  /** ISO8601 timestamp of AI summary generation. Null when no transcript. */
+  /** @deprecated see resourcesReferred */
   aiSummaryGeneratedAt?: string | null;
-  /** When true, the AI summary was generated but intentionally omitted by the CHW. */
+  /** @deprecated see resourcesReferred */
   aiSummaryExcluded?: boolean;
 }
 
@@ -522,17 +543,34 @@ export const zCodeCategoryLabels: Record<ZCodeCategory, string> = {
   legal: 'Legal Circumstances',
 };
 
+// SDOH Z-code picker catalog (updated 2026-07-12). MUST stay in sync with the
+// backend allow-list `VALID_ICD10_CODES` in app/services/billing_service.py —
+// a picked code not in that list is rejected at submit with a 422. The Python
+// mirror in tests/test_billing_service.py::test_frontend_picker_codes_all_valid
+// guards the sync.
 export const diagnosisCodes: DiagnosisCode[] = [
-  { code: 'Z71.89', description: 'Other specified counseling, wellness visits', category: 'counseling' },
-  { code: 'Z59.12', description: 'Utility Insecurity', category: 'housing_economic' },
-  { code: 'Z72.3', description: 'Lack of physical exercise', category: 'behavioral' },
-  { code: 'Z75.3', description: 'Unavailability and inaccessibility of health-care facilities', category: 'health_access' },
-  { code: 'Z59.00', description: 'Living Situation, unspecified', category: 'housing_economic' },
-  { code: 'Z59.89', description: 'Other problems related to housing and economic circumstances', category: 'housing_economic' },
+  { code: 'Z59.10', description: 'Inadequate housing, unspecified', category: 'housing_economic' },
+  { code: 'Z59.4', description: 'Lack of adequate food and safe drinking water', category: 'housing_economic' },
+  { code: 'Z59.6', description: 'Low income / lack of financial resources', category: 'housing_economic' },
+  { code: 'Z59.71', description: 'Insufficient health insurance coverage', category: 'housing_economic' },
+  { code: 'Z59.72', description: 'Insufficient welfare support', category: 'housing_economic' },
   { code: 'Z55.6', description: 'Problems related to health literacy', category: 'health_access' },
+  { code: 'Z55.9', description: 'Problems related to education and literacy', category: 'health_access' },
+  { code: 'Z56.9', description: 'Problems related to employment, unspecified', category: 'housing_economic' },
+  { code: 'Z59.00', description: 'Homelessness, unspecified', category: 'housing_economic' },
+  { code: 'Z59.01', description: 'Sheltered homelessness', category: 'housing_economic' },
+  { code: 'Z59.89', description: 'Other problems related to housing and economic circumstances', category: 'housing_economic' },
   { code: 'Z59.9', description: 'Problem related to housing and economic circumstances, unspecified', category: 'housing_economic' },
-  { code: 'Z59.86', description: 'Financial insecurity', category: 'housing_economic', isArchived: true },
   { code: 'Z65.3', description: 'Problems related to other legal circumstances', category: 'legal' },
+  { code: 'Z71.89', description: 'Other specified counseling', category: 'counseling' },
+  { code: 'Z72.3', description: 'Lack of physical exercise', category: 'behavioral' },
+  { code: 'Z59.82', description: 'Transportation insecurity', category: 'housing_economic' },
+  { code: 'Z59.861', description: 'Financial insecurity, difficulty paying for utilities', category: 'housing_economic' },
+  { code: 'Z59.868', description: 'Other specified financial insecurity', category: 'housing_economic' },
+  { code: 'Z59.869', description: 'Financial insecurity, unspecified', category: 'housing_economic' },
+  { code: 'Z59.87', description: 'Material hardship, unable to obtain adequate childcare', category: 'housing_economic' },
+  { code: 'Z74.8', description: 'Other problems related to care provider dependency', category: 'health_access' },
+  { code: 'Z75.3', description: 'Unavailability and inaccessibility of health-care facilities', category: 'health_access' },
 ];
 
 // ─── CPT Procedure Codes ──────────────────────────────────────────────────────

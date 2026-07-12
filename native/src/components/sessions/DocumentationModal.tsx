@@ -2,18 +2,24 @@
  * DocumentationModal — full-screen modal for documenting a completed session.
  *
  * Visual language: shared design-system tokens (theme/tokens) + ui/ primitives
- * (Card, SectionHeader, Pill). Legacy beige/cream theme/colors palette removed.
+ * (Card, SectionHeader). Legacy beige/cream theme/colors palette removed.
  *
- * Sections:
+ * Sections (in render order):
+ *  - Session Time: CHW-editable Session Start / Session End (MM/DD/YYYY HH:MM,
+ *    24hr) — pre-filled from sessionStartedAt/sessionEndedAt when known
  *  - Diagnosis Codes (Z-Codes): expandable categories with tap-to-select codes
  *  - Procedure Code: picker from procedureCodes mock data
- *  - Units to Bill: read-only billing summary (StatTile-style 3-column layout)
- *  - Member Goals: multi-select from predefinedMemberGoals
- *  - Resources Referred: multi-select pill buttons from predefinedResources
- *  - Follow-up Needed: Yes/No toggle + date input when Yes
- *  - Session Notes: multiline TextInput (200 char limit with counter)
- *  - AI Summary: read-only card generated from transcript
+ *  - Session Notes: multiline TextInput (2000 char limit with counter)
+ *  - Units to Bill: read-only billing summary, derived live from the edited
+ *    Session Start/End times (StatTile-style 3-column layout) — bottom of
+ *    the form, immediately above Submit
  *  - Submit Documentation button
+ *
+ * 2026-07-12 redesign: Members Served, Member Goals Discussed, Resources
+ * Referred, Follow-Up Needed, and AI Summary were removed (backend schema
+ * defaults them); Session Start/End replace session duration as the
+ * units-to-bill driver. See src/utils/sessionDocumentation.ts for the pure
+ * parsing/bracket math.
  */
 
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
@@ -35,21 +41,17 @@ import {
   ChevronRight,
   Check,
   FileText,
-  Sparkles,
-  RefreshCw,
   DollarSign,
 } from 'lucide-react-native';
 import { ResourceMentionInput } from '../resources/ResourceMentionInput';
 
 import { colors as tokens, numerals, spacing, radius, shadows } from '../../theme/tokens';
 import { typography } from '../../theme/typography';
-import { Card, SectionHeader, Pill } from '../ui';
-import { useGenerateAISummary, useCaseNotes } from '../../hooks/useApiQueries';
+import { Card, SectionHeader } from '../ui';
+import { useCaseNotes } from '../../hooks/useApiQueries';
 import {
   diagnosisCodes,
   procedureCodes,
-  predefinedMemberGoals,
-  predefinedResources,
   zCodeCategoryLabels,
   type ZCodeCategory,
   type SessionDocumentation,
@@ -57,6 +59,13 @@ import {
   NET_PAYOUT_RATE,
   formatCurrency,
 } from '../../data/mock';
+import {
+  computeUnitsFromDuration,
+  computeUnitsFromTimes,
+  formatIsoForSessionDateTimeInput,
+  formatSessionDateTimeInput,
+  parseSessionDateTimeInputToIso,
+} from '../../utils/sessionDocumentation';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -74,36 +83,28 @@ export interface DocumentationModalProps {
    */
   memberId?: string;
   /**
-   * Total session duration in minutes. Used to auto-derive the units-to-bill
-   * value the CHW sees in the modal — see ``computeUnitsFromDuration``. The
-   * backend ignores any client-supplied units and recomputes from the same
-   * formula, so this prop is for display only. ``null`` / undefined defaults
-   * to 1 unit (the schema's minimum).
+   * Total session duration in minutes. Legacy fallback only: used to seed
+   * the units-to-bill display when the Session Start/End fields are empty or
+   * invalid (e.g. a caller that hasn't been wired to sessionStartedAt /
+   * sessionEndedAt yet). Once both time fields are valid, the CHW-edited
+   * times are authoritative — see ``computeUnitsFromTimes``. The backend
+   * ignores any client-supplied units and recomputes from the same formula
+   * regardless, so this prop only affects what the CHW sees before they've
+   * filled in the times. ``null`` / undefined defaults to 1 unit.
    */
   durationMinutes?: number | null;
+  /**
+   * Session start time (ISO 8601), used to pre-fill the editable "Session
+   * Start" field. ``null`` / undefined leaves the field blank for manual entry.
+   */
+  sessionStartedAt?: string | null;
+  /**
+   * Session end time (ISO 8601), used to pre-fill the editable "Session End"
+   * field. ``null`` / undefined leaves the field blank for manual entry.
+   */
+  sessionEndedAt?: string | null;
   /** Called with the completed documentation data on submit */
   onSubmit: (data: SessionDocumentation) => void;
-}
-
-/**
- * Auto-derive the units-to-bill from a session's total duration.
- *
- * Founder-set bracket (2026-05-07) — must match the backend
- * ``app.services.billing_service.calculate_units`` exactly:
- *
- *   - ≤ 45 min  → 1 unit
- *   - 45–75 min → 2 units
- *   - 75–105 min → 3 units
- *   - > 105 min → 4 units (Medi-Cal daily cap)
- *
- * Returns 1 when the duration is missing so the schema's ``ge=1`` constraint
- * is honored and the CHW always gets credit for the visit.
- */
-function computeUnitsFromDuration(durationMinutes: number | null | undefined): number {
-  if (durationMinutes == null || durationMinutes <= 45) return 1;
-  if (durationMinutes <= 75) return 2;
-  if (durationMinutes <= 105) return 3;
-  return 4;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -120,24 +121,6 @@ const Z_CODE_CATEGORIES: ZCodeCategory[] = [
 // for review/editing) plus the CHW's edits; the backend `summary` column is
 // unbounded Text, so this is a UI guardrail only.
 const NOTES_MAX = 2000;
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-/**
- * Format an ISO8601 timestamp from the AI summary into a short time string
- * (e.g. "2:34 PM"). Falls back to the raw string if parsing fails.
- */
-function formatAITimestamp(iso: string): string {
-  try {
-    return new Date(iso).toLocaleTimeString('en-US', {
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true,
-    });
-  } catch {
-    return iso;
-  }
-}
 
 // ─── DiagnosisCodeSection ─────────────────────────────────────────────────────
 
@@ -602,296 +585,96 @@ const us = StyleSheet.create({
   },
 });
 
-// ─── MultiSelectList ──────────────────────────────────────────────────────────
+// ─── SessionTimesSection ──────────────────────────────────────────────────────
 
-interface MultiSelectListProps {
-  title: string;
-  items: string[];
-  selected: string[];
-  onToggle: (item: string) => void;
+interface SessionTimesSectionProps {
+  /** Displayed "MM/DD/YYYY HH:MM" text, not yet necessarily valid. */
+  startValue: string;
+  endValue: string;
+  onStartChange: (value: string) => void;
+  onEndChange: (value: string) => void;
+  /** Inline validation message shown under each field; null hides it. */
+  startError: string | null;
+  endError: string | null;
 }
 
-function MultiSelectList({
-  title,
-  items,
-  selected,
-  onToggle,
-}: MultiSelectListProps): React.JSX.Element {
+/**
+ * CHW-editable Session Start / Session End fields. Pre-filled from
+ * ``sessionStartedAt`` / ``sessionEndedAt`` when the caller has them, but
+ * always editable — the CHW is the source of truth for the actual times
+ * worked, and Units to Bill (rendered at the bottom of the form) is derived
+ * live from whatever is entered here via ``computeUnitsFromTimes``.
+ *
+ * Free-text "MM/DD/YYYY HH:MM" (24-hour clock) input with digit-only
+ * auto-formatting, mirroring the DOB field in AddMemberModal.tsx — see
+ * ``formatSessionDateTimeInput`` / ``parseSessionDateTimeInputToIso`` in
+ * utils/sessionDocumentation.ts. A 24-hour clock avoids AM/PM letters (kept
+ * consistent with the digits-only mask) and AM/PM ambiguity in a
+ * billing-adjacent field.
+ */
+function SessionTimesSection({
+  startValue,
+  endValue,
+  onStartChange,
+  onEndChange,
+  startError,
+  endError,
+}: SessionTimesSectionProps): React.JSX.Element {
   return (
     <View style={sh.section}>
-      <SectionHeader title={title} marginBottom={spacing.md} />
-      <Card style={ms.listCard}>
-        {items.map((item, index) => {
-          const isChecked = selected.includes(item);
-          const isLast = index === items.length - 1;
-          return (
-            <Pressable
-              key={item}
-              style={({ hovered }: { pressed: boolean; hovered?: boolean }) => [
-                ms.item,
-                !isLast && ms.itemBorder,
-                isChecked && ms.itemChecked,
-                hovered && !isChecked && ms.itemHovered,
-              ]}
-              onPress={() => onToggle(item)}
-              accessibilityRole="checkbox"
-              accessibilityState={{ checked: isChecked }}
-              accessibilityLabel={item}
-            >
-              <View style={[ms.checkbox, isChecked && ms.checkboxChecked]}>
-                {isChecked && <Check size={9} color="#FFFFFF" strokeWidth={3} />}
-              </View>
-              <Text style={[ms.itemText, isChecked && ms.itemTextChecked]}>{item}</Text>
-            </Pressable>
-          );
-        })}
-      </Card>
-    </View>
-  );
-}
-
-const ms = StyleSheet.create({
-  listCard: {
-    overflow: 'hidden',
-  },
-  item: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm + 2,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md - 2,
-    backgroundColor: tokens.cardBg,
-  },
-  itemBorder: {
-    borderBottomWidth: 1,
-    borderBottomColor: tokens.cardBorder,
-  },
-  itemChecked: {
-    backgroundColor: tokens.emerald100,
-  },
-  itemHovered: {
-    backgroundColor: tokens.slate100,
-  },
-  checkbox: {
-    width: 16,
-    height: 16,
-    borderRadius: radius.sm - 2,
-    borderWidth: 2,
-    borderColor: tokens.cardBorder,
-    backgroundColor: tokens.cardBg,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  checkboxChecked: {
-    borderColor: tokens.primary,
-    backgroundColor: tokens.primary,
-  },
-  itemText: {
-    flex: 1,
-    ...typography.bodySm,
-    color: tokens.textPrimary,
-  },
-  itemTextChecked: {
-    color: tokens.emerald700,
-    fontWeight: '600',
-  },
-});
-
-// ─── ResourcePills ────────────────────────────────────────────────────────────
-
-interface ResourcePillsProps {
-  selected: string[];
-  onToggle: (resource: string) => void;
-}
-
-function ResourcePills({ selected, onToggle }: ResourcePillsProps): React.JSX.Element {
-  return (
-    <View style={sh.section}>
-      <SectionHeader title="Resources Referred" marginBottom={spacing.md} />
-      <View style={rp.pillContainer}>
-        {predefinedResources.map((resource) => {
-          const isSelected = selected.includes(resource);
-          return (
-            <TouchableOpacity
-              key={resource}
-              style={[rp.pill, isSelected && rp.pillSelected]}
-              onPress={() => onToggle(resource)}
-              accessibilityRole="checkbox"
-              accessibilityState={{ checked: isSelected }}
-              accessibilityLabel={resource}
-              activeOpacity={0.7}
-            >
-              {isSelected && <Check size={10} color={tokens.emerald700} strokeWidth={3} />}
-              <Text style={[rp.pillText, isSelected && rp.pillTextSelected]}>
-                {resource}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-    </View>
-  );
-}
-
-const rp = StyleSheet.create({
-  pillContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-  },
-  pill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    borderColor: tokens.cardBorder,
-    backgroundColor: tokens.cardBg,
-  },
-  pillSelected: {
-    borderColor: tokens.primary,
-    backgroundColor: tokens.emerald100,
-  },
-  pillText: {
-    ...typography.label,
-    letterSpacing: 0.2,
-    color: tokens.textSecondary,
-  },
-  pillTextSelected: {
-    color: tokens.emerald700,
-    fontWeight: '600',
-  },
-});
-
-// ─── FollowUpSection ──────────────────────────────────────────────────────────
-
-interface FollowUpSectionProps {
-  followUpNeeded: boolean | null;
-  followUpDate: string;
-  onToggle: (value: boolean) => void;
-  onDateChange: (date: string) => void;
-}
-
-function FollowUpSection({
-  followUpNeeded,
-  followUpDate,
-  onToggle,
-  onDateChange,
-}: FollowUpSectionProps): React.JSX.Element {
-  return (
-    <View style={sh.section}>
-      <SectionHeader title="Follow-Up Needed?" marginBottom={spacing.md} />
-
-      <View style={fu.toggleRow}>
-        <Pressable
-          style={({ pressed }: { pressed?: boolean }) => [
-            fu.toggleButton,
-            followUpNeeded === true && fu.toggleButtonYes,
-            pressed && fu.toggleButtonPressed,
-          ]}
-          onPress={() => onToggle(true)}
-          accessibilityRole="radio"
-          accessibilityState={{ checked: followUpNeeded === true }}
-          accessibilityLabel="Follow-up needed: Yes"
-        >
-          <Text
-            style={[
-              fu.toggleButtonText,
-              followUpNeeded === true && fu.toggleButtonTextActive,
-            ]}
-          >
-            Yes
-          </Text>
-        </Pressable>
-
-        <Pressable
-          style={({ pressed }: { pressed?: boolean }) => [
-            fu.toggleButton,
-            followUpNeeded === false && fu.toggleButtonNo,
-            pressed && fu.toggleButtonPressed,
-          ]}
-          onPress={() => onToggle(false)}
-          accessibilityRole="radio"
-          accessibilityState={{ checked: followUpNeeded === false }}
-          accessibilityLabel="Follow-up needed: No"
-        >
-          <Text
-            style={[
-              fu.toggleButtonText,
-              followUpNeeded === false && fu.toggleButtonTextActive,
-            ]}
-          >
-            No
-          </Text>
-        </Pressable>
-      </View>
-
-      {followUpNeeded === true && (
-        <Card style={fu.dateCard}>
-          <Text style={fu.dateLabel}>Follow-up date</Text>
+      <SectionHeader title="Session Time" marginBottom={spacing.md} />
+      <Card style={st.card}>
+        <View style={st.field}>
+          <Text style={st.label}>Session Start</Text>
           <TextInput
-            style={fu.dateInput}
-            value={followUpDate}
-            onChangeText={onDateChange}
-            placeholder="YYYY-MM-DD"
+            style={[st.input, !!startError && st.inputError]}
+            value={startValue}
+            onChangeText={(t) => onStartChange(formatSessionDateTimeInput(t))}
+            placeholder="MM/DD/YYYY HH:MM"
             placeholderTextColor={tokens.textMuted}
             keyboardType={Platform.OS === 'ios' ? 'numbers-and-punctuation' : 'default'}
-            accessibilityLabel="Follow-up date"
+            maxLength={16}
+            accessibilityLabel="Session start date and time"
           />
-        </Card>
-      )}
+          {startError && <Text style={st.errorText}>{startError}</Text>}
+        </View>
+
+        <View style={st.field}>
+          <Text style={st.label}>Session End</Text>
+          <TextInput
+            style={[st.input, !!endError && st.inputError]}
+            value={endValue}
+            onChangeText={(t) => onEndChange(formatSessionDateTimeInput(t))}
+            placeholder="MM/DD/YYYY HH:MM"
+            placeholderTextColor={tokens.textMuted}
+            keyboardType={Platform.OS === 'ios' ? 'numbers-and-punctuation' : 'default'}
+            maxLength={16}
+            accessibilityLabel="Session end date and time"
+          />
+          {endError && <Text style={st.errorText}>{endError}</Text>}
+        </View>
+      </Card>
+      <Text style={st.hint}>
+        24-hour clock, e.g. 07/12/2026 14:30. Used to auto-calculate Units to Bill below.
+      </Text>
     </View>
   );
 }
 
-const fu = StyleSheet.create({
-  toggleRow: {
-    flexDirection: 'row',
-    gap: spacing.sm + 2,
-    marginBottom: spacing.md,
-  },
-  toggleButton: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: spacing.md,
-    borderRadius: radius.xl,
-    borderWidth: 1,
-    borderColor: tokens.cardBorder,
-    backgroundColor: tokens.cardBg,
-  },
-  toggleButtonYes: {
-    backgroundColor: tokens.primary,
-    borderColor: tokens.primary,
-  },
-  toggleButtonNo: {
-    backgroundColor: tokens.textSecondary,
-    borderColor: tokens.textSecondary,
-  },
-  toggleButtonPressed: {
-    opacity: 0.75,
-  },
-  toggleButtonText: {
-    ...typography.bodySm,
-    fontWeight: '600',
-    color: tokens.textSecondary,
-  },
-  toggleButtonTextActive: {
-    color: '#FFFFFF',
-  },
-  dateCard: {
+const st = StyleSheet.create({
+  card: {
     padding: spacing.lg,
-    gap: spacing.sm,
+    gap: spacing.lg,
   },
-  dateLabel: {
+  field: {
+    gap: spacing.xs,
+  },
+  label: {
     ...typography.label,
     letterSpacing: 0.3,
     color: tokens.textSecondary,
   },
-  dateInput: {
+  input: {
     borderWidth: 1,
     borderColor: tokens.cardBorder,
     borderRadius: radius.lg,
@@ -901,6 +684,21 @@ const fu = StyleSheet.create({
     ...typography.bodyMd,
     color: tokens.textPrimary,
   },
+  inputError: {
+    borderColor: tokens.red700,
+  },
+  errorText: {
+    fontSize: 12,
+    color: tokens.red700,
+  },
+  hint: {
+    ...typography.label,
+    letterSpacing: 0,
+    color: tokens.textMuted,
+    marginTop: spacing.xs,
+    lineHeight: 16,
+    paddingHorizontal: spacing.xs,
+  },
 });
 
 // ─── Main Component ───────────────────────────────────────────────────────────
@@ -908,12 +706,13 @@ const fu = StyleSheet.create({
 /**
  * Full-screen modal for documenting a completed CHW session.
  *
- * The notes area is split into two distinct sections:
- *  1. "Your Notes" — CHW-authored, editable, required for submit.
- *  2. "AI Summary" — read-only card generated from session transcript.
+ * "Your Notes" is CHW-authored, editable, required for submit. Session Start
+ * / Session End are also CHW-editable (pre-filled from sessionStartedAt /
+ * sessionEndedAt when known) and drive the live Units to Bill computation.
  *
- * Validates that at least one diagnosis code is selected and CHW notes are
- * non-empty before allowing submit.
+ * Validates that at least one diagnosis code is selected, a procedure code
+ * is chosen, CHW notes are non-empty, and both session times are valid with
+ * end after start, before allowing submit.
  */
 export function DocumentationModal({
   visible,
@@ -921,35 +720,26 @@ export function DocumentationModal({
   sessionId,
   memberId,
   durationMinutes,
+  sessionStartedAt,
+  sessionEndedAt,
   onSubmit,
 }: DocumentationModalProps): React.JSX.Element {
   const [selectedDiagnosisCodes, setSelectedDiagnosisCodes] = useState<string[]>([]);
   const [selectedProcedureCode, setSelectedProcedureCode] = useState<string>(
     procedureCodes[0]?.code ?? '',
   );
-  // Units are derived authoritatively from the session duration — no manual
-  // override. The backend recomputes from the same formula and ignores any
-  // client-supplied value (see app/services/billing_service.calculate_units).
-  const unitsToBill = computeUnitsFromDuration(durationMinutes);
-  const [selectedGoals, setSelectedGoals] = useState<string[]>([]);
-  const [selectedResources, setSelectedResources] = useState<string[]>([]);
-  const [followUpNeeded, setFollowUpNeeded] = useState<boolean | null>(null);
-  const [followUpDate, setFollowUpDate] = useState('');
-  // Number of Medi-Cal members served (1 = individual). String for the input.
-  const [membersServedStr, setMembersServedStr] = useState('1');
-  // CHW-authored notes — required, separate from AI summary.
+  // Session Start / Session End — CHW-editable "MM/DD/YYYY HH:MM" text,
+  // pre-filled from the session record when available. Lazy initializers run
+  // once per mount; callers conditionally mount this modal (documentingSessionId
+  // != null), so a fresh mount always reflects the current session's times.
+  const [sessionStartInput, setSessionStartInput] = useState<string>(() =>
+    formatIsoForSessionDateTimeInput(sessionStartedAt),
+  );
+  const [sessionEndInput, setSessionEndInput] = useState<string>(() =>
+    formatIsoForSessionDateTimeInput(sessionEndedAt),
+  );
+  // CHW-authored notes — required, separate from diagnosis/procedure codes.
   const [chwNotes, setChwNotes] = useState('');
-  // AI summary state — fetched once on modal open, regeneratable via button.
-  const [aiSummary, setAiSummary] = useState<string | null>(null);
-  const [aiGeneratedAt, setAiGeneratedAt] = useState<string | null>(null);
-  const [aiExcluded, setAiExcluded] = useState(false);
-  /**
-   * Tracks a network/server error from the AI summary endpoint.
-   * Distinct from ``aiSummary === null``, which means the endpoint succeeded
-   * but returned an empty/unavailable summary (e.g. no transcript).
-   * When true, the UI shows "Could not generate summary" + Retry button.
-   */
-  const [aiError, setAiError] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   // After a successful submit, show an in-app "submitted for billing" panel
   // (replaces the browser alert + earnings breakdown). Dismissed via Done.
@@ -961,8 +751,6 @@ export function DocumentationModal({
   // Tracks whether the notes TextInput is focused, for focus-ring styling.
   const [notesFocused, setNotesFocused] = useState(false);
 
-  const generateAISummary = useGenerateAISummary();
-
   // Case notes the CHW wrote during this session — used to pre-fill the Session
   // Notes field so they can review/edit rather than retype. Only fetched while
   // the modal is open and a member is known.
@@ -970,8 +758,6 @@ export function DocumentationModal({
     enabled: visible && !!memberId,
   });
 
-  // Guard: auto-fetch only once per modal-open, not on remount.
-  const hasFetchedRef = useRef(false);
   // Guard: pre-fill Session Notes from case notes only once per modal-open.
   const notesPrefilledRef = useRef(false);
 
@@ -1002,112 +788,64 @@ export function DocumentationModal({
     }
   }, [visible, sessionId, caseNotesQuery.isLoading, caseNotesQuery.data, chwNotes]);
 
-  // ── Auto-generate AI summary on modal open ──────────────────────────────
-  // Called once when modal becomes visible. The "Regenerate" button is the
-  // only way to refetch afterward. Does NOT pre-fill the CHW notes field —
-  // the two are now separate fields per spec.
-  useEffect(() => {
-    if (!visible || !sessionId) return;
-    if (hasFetchedRef.current) return;
-    hasFetchedRef.current = true;
-
-    generateAISummary.mutate(sessionId, {
-      onSuccess: (result) => {
-        setAiError(false);
-        const text = (result.ai_summary ?? '').trim();
-        const ts = result.generated_at ?? null;
-        // Hide section when summary is empty or timestamp is null.
-        if (text.length > 0 && ts !== null) {
-          setAiSummary(text);
-          setAiGeneratedAt(ts);
-        } else {
-          setAiSummary(null);
-          setAiGeneratedAt(null);
-        }
-      },
-      onError: () => {
-        // Network or server error — surface a retryable error card.
-        setAiError(true);
-        setAiSummary(null);
-        setAiGeneratedAt(null);
-      },
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, sessionId]);
-
-  // Reset all form state and the fetch guard when modal closes.
+  // Reset all form state when modal closes. Belt-and-suspenders: callers
+  // conditionally mount this modal, so React's own unmount already clears
+  // state, but this mirrors the pre-existing reset pattern for any caller
+  // that instead toggles the `visible` prop on a persistently-mounted modal.
   useEffect(() => {
     if (!visible) {
-      hasFetchedRef.current = false;
       setChwNotes('');
-      setAiSummary(null);
-      setAiGeneratedAt(null);
-      setAiExcluded(false);
-      setAiError(false);
       setSelectedDiagnosisCodes([]);
       setSelectedProcedureCode(procedureCodes[0]?.code ?? '');
-      // unitsToBill is derived from durationMinutes prop — no reset needed.
-      setSelectedGoals([]);
-      setSelectedResources([]);
-      setFollowUpNeeded(null);
-      setFollowUpDate('');
+      setSessionStartInput(formatIsoForSessionDateTimeInput(sessionStartedAt));
+      setSessionEndInput(formatIsoForSessionDateTimeInput(sessionEndedAt));
     }
+    // Only re-run on visibility changes — re-syncing on every prop identity
+    // change would clobber in-progress edits while the modal is open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
-  /**
-   * Regenerate the AI summary from the transcript.
-   * Called only when the CHW taps the "Regenerate" button.
-   */
-  const handleRegenerateAISummary = useCallback((): void => {
-    setAiError(false);
-    generateAISummary.mutate(sessionId, {
-      onSuccess: (result) => {
-        setAiError(false);
-        const text = (result.ai_summary ?? '').trim();
-        const ts = result.generated_at ?? null;
-        if (text.length > 0 && ts !== null) {
-          setAiSummary(text);
-          setAiGeneratedAt(ts);
-          setAiExcluded(false);
-        } else {
-          setAiSummary(null);
-          setAiGeneratedAt(null);
-        }
-      },
-      onError: () => {
-        setAiError(true);
-        setAiSummary(null);
-        setAiGeneratedAt(null);
-      },
-    });
-  }, [generateAISummary, sessionId]);
+  // ── Units to Bill — derived live from the edited Session Start/End times ──
+  const startIso = useMemo(
+    () => parseSessionDateTimeInputToIso(sessionStartInput),
+    [sessionStartInput],
+  );
+  const endIso = useMemo(
+    () => parseSessionDateTimeInputToIso(sessionEndInput),
+    [sessionEndInput],
+  );
+  const timesResult = useMemo(
+    () => computeUnitsFromTimes(startIso, endIso),
+    [startIso, endIso],
+  );
+  // Legacy fallback: until both times are valid, show units derived from the
+  // durationMinutes prop (if any) rather than an unconditional 1-unit floor,
+  // so callers not yet wired to sessionStartedAt/sessionEndedAt still see a
+  // sensible starting number. Once both times are valid, they're authoritative.
+  const unitsToBill =
+    timesResult.durationMinutes != null ? timesResult.units : computeUnitsFromDuration(durationMinutes);
+  const effectiveDurationMinutes = timesResult.durationMinutes ?? durationMinutes ?? null;
 
-  const isAiLoading = generateAISummary.isPending;
-
-  // Summary is displayable when non-null and non-empty AND not loading.
-  const hasDisplayableAiSummary =
-    !isAiLoading && aiSummary !== null && aiSummary.trim().length > 0 && aiGeneratedAt !== null;
+  const startError: string | null =
+    sessionStartInput.length > 0 && timesResult.error === 'invalid_start'
+      ? 'Enter a valid date & time (MM/DD/YYYY HH:MM).'
+      : null;
+  const endError: string | null =
+    sessionEndInput.length > 0 && timesResult.error === 'invalid_end'
+      ? 'Enter a valid date & time (MM/DD/YYYY HH:MM).'
+      : timesResult.error === 'end_before_start'
+      ? 'Session end must be after session start.'
+      : null;
 
   const isValid =
     selectedDiagnosisCodes.length > 0 &&
     selectedProcedureCode.length > 0 &&
-    chwNotes.trim().length > 0;
+    chwNotes.trim().length > 0 &&
+    timesResult.error === null;
 
   const toggleDiagnosisCode = useCallback((code: string): void => {
     setSelectedDiagnosisCodes((prev) =>
       prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code],
-    );
-  }, []);
-
-  const toggleGoal = useCallback((goal: string): void => {
-    setSelectedGoals((prev) =>
-      prev.includes(goal) ? prev.filter((g) => g !== goal) : [...prev, goal],
-    );
-  }, []);
-
-  const toggleResource = useCallback((resource: string): void => {
-    setSelectedResources((prev) =>
-      prev.includes(resource) ? prev.filter((r) => r !== resource) : [...prev, resource],
     );
   }, []);
 
@@ -1120,19 +858,13 @@ export function DocumentationModal({
       sessionId,
       // CHW-authored notes field — always the canonical `summary` key per backend contract.
       summary: chwNotes,
-      resourcesReferred: selectedResources,
-      memberGoals: selectedGoals,
-      followUpNeeded: followUpNeeded === true,
-      followUpDate: followUpNeeded === true ? followUpDate : undefined,
       diagnosisCodes: selectedDiagnosisCodes,
       procedureCode: selectedProcedureCode,
       unitsToBill,
-      membersServed: Math.max(1, parseInt(membersServedStr, 10) || 1),
       submittedAt: new Date().toISOString(),
-      // AI summary fields — included when a summary was generated.
-      aiSummary: aiSummary ?? null,
-      aiSummaryGeneratedAt: aiGeneratedAt ?? null,
-      aiSummaryExcluded: aiExcluded,
+      // isValid already guarantees timesResult.error === null, so both are non-null here.
+      sessionStartTime: startIso,
+      sessionEndTime: endIso,
     };
 
     // Await the parent's onSubmit so we only show "submitted" after the
@@ -1161,16 +893,11 @@ export function DocumentationModal({
     isSubmitting,
     sessionId,
     chwNotes,
-    selectedResources,
-    selectedGoals,
-    followUpNeeded,
-    followUpDate,
     selectedDiagnosisCodes,
     selectedProcedureCode,
     unitsToBill,
-    aiSummary,
-    aiGeneratedAt,
-    aiExcluded,
+    startIso,
+    endIso,
     onSubmit,
   ]);
 
@@ -1308,6 +1035,16 @@ export function DocumentationModal({
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
+          {/* Session Start / Session End — drives Units to Bill below */}
+          <SessionTimesSection
+            startValue={sessionStartInput}
+            endValue={sessionEndInput}
+            onStartChange={setSessionStartInput}
+            onEndChange={setSessionEndInput}
+            startError={startError}
+            endError={endError}
+          />
+
           {/* Diagnosis codes */}
           <DiagnosisCodeSection
             selectedCodes={selectedDiagnosisCodes}
@@ -1320,46 +1057,7 @@ export function DocumentationModal({
             onChange={setSelectedProcedureCode}
           />
 
-          {/* Units to bill */}
-          <UnitsSummary value={unitsToBill} durationMinutes={durationMinutes} />
-
-          {/* Members served (Medi-Cal) */}
-          <View style={mo.membersServedSection}>
-            <SectionHeader title="Members Served" marginBottom={spacing.sm} />
-            <TextInput
-              style={mo.membersServedInput}
-              value={membersServedStr}
-              onChangeText={(t) => setMembersServedStr(t.replace(/[^0-9]/g, ''))}
-              keyboardType="number-pad"
-              placeholder="1"
-              maxLength={2}
-              accessibilityLabel="Number of Medi-Cal members served in this session"
-            />
-            <Text style={mo.membersServedHint}>
-              Number of Medi-Cal members served (1 for an individual session).
-            </Text>
-          </View>
-
-          {/* Member goals */}
-          <MultiSelectList
-            title="Member Goals Discussed"
-            items={predefinedMemberGoals}
-            selected={selectedGoals}
-            onToggle={toggleGoal}
-          />
-
-          {/* Resources referred */}
-          <ResourcePills selected={selectedResources} onToggle={toggleResource} />
-
-          {/* Follow-up */}
-          <FollowUpSection
-            followUpNeeded={followUpNeeded}
-            followUpDate={followUpDate}
-            onToggle={setFollowUpNeeded}
-            onDateChange={setFollowUpDate}
-          />
-
-          {/* ── A) CHW Notes — authored, required ──────────────────────────── */}
+          {/* ── CHW Notes — authored, required ───────────────────────────── */}
           <View style={sh.section}>
             <SectionHeader
               title="Your Notes"
@@ -1394,114 +1092,8 @@ export function DocumentationModal({
             </Card>
           </View>
 
-          {/* ── B) AI Summary — read-only card ─────────────────────────────── */}
-          <View style={sh.section}>
-            <SectionHeader title="AI Summary" marginBottom={spacing.md} />
-
-            {isAiLoading ? (
-              /* Loading skeleton */
-              <Card
-                style={ai.card}
-                accessible
-                accessibilityLabel="Generating AI summary"
-              >
-                <View style={ai.headerRow}>
-                  <Sparkles size={14} color={tokens.cyan600} />
-                  <Text style={ai.headerText}>Generating summary from session transcript…</Text>
-                </View>
-                <View style={ai.shimmerLine} />
-                <View style={[ai.shimmerLine, ai.shimmerLineMid]} />
-                <View style={[ai.shimmerLine, ai.shimmerLineShort]} />
-              </Card>
-            ) : aiError ? (
-              /* Error state — retryable */
-              <Card
-                style={ai.errorCard}
-                accessible
-                accessibilityLabel="AI summary error"
-              >
-                <View style={ai.errorRow}>
-                  <Sparkles size={14} color={tokens.red700} />
-                  <Text style={ai.errorText}>Could not generate summary</Text>
-                </View>
-                <TouchableOpacity
-                  style={ai.retryButton}
-                  onPress={handleRegenerateAISummary}
-                  accessibilityRole="button"
-                  accessibilityLabel="Retry generating AI summary"
-                >
-                  <RefreshCw size={12} color={tokens.red700} />
-                  <Text style={ai.retryText}>Retry</Text>
-                </TouchableOpacity>
-              </Card>
-            ) : hasDisplayableAiSummary ? (
-              /* Populated AI card */
-              <Card
-                style={[ai.card, aiExcluded && ai.cardExcluded]}
-                accessible
-                accessibilityLabel="AI-generated summary, read only"
-                accessibilityHint="This summary was generated from the session transcript and is not editable"
-              >
-                {/* Header row */}
-                <View style={ai.headerRow}>
-                  <Sparkles size={14} color={aiExcluded ? tokens.textMuted : tokens.cyan600} />
-                  <Text style={[ai.headerText, aiExcluded && ai.headerTextDimmed]}>
-                    AI Summary
-                  </Text>
-                  <Pill variant="blue" size="sm">Generated from transcript</Pill>
-                  <Text style={ai.timestamp}>
-                    {formatAITimestamp(aiGeneratedAt!)}
-                  </Text>
-                </View>
-
-                {/* Body — read-only, italic styling */}
-                <Text
-                  style={[ai.bodyText, aiExcluded && ai.bodyTextExcluded]}
-                  selectable
-                >
-                  {aiSummary}
-                </Text>
-
-                {/* Footer row */}
-                <View style={ai.footer}>
-                  <TouchableOpacity
-                    style={ai.regenerateButton}
-                    onPress={handleRegenerateAISummary}
-                    disabled={isAiLoading}
-                    accessibilityRole="button"
-                    accessibilityLabel="Regenerate AI summary from transcript"
-                    accessibilityState={{ disabled: isAiLoading }}
-                  >
-                    <RefreshCw size={12} color={tokens.cyan600} />
-                    <Text style={ai.regenerateText}>Regenerate</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={ai.excludeRow}
-                    onPress={() => setAiExcluded((prev) => !prev)}
-                    accessibilityRole="checkbox"
-                    accessibilityState={{ checked: aiExcluded }}
-                    accessibilityLabel="Don't include AI summary in documentation"
-                    activeOpacity={0.7}
-                  >
-                    <View style={[ai.excludeCheckbox, aiExcluded && ai.excludeCheckboxChecked]}>
-                      {aiExcluded && <Check size={9} color="#FFFFFF" strokeWidth={3} />}
-                    </View>
-                    <Text style={[ai.excludeLabel, aiExcluded && ai.excludeLabelChecked]}>
-                      Don&apos;t include in documentation
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              </Card>
-            ) : (
-              /* Unavailable state */
-              <Card style={ai.unavailableCard}>
-                <Text style={ai.unavailableText}>
-                  AI summary unavailable — transcript was too short or audio capture failed.
-                </Text>
-              </Card>
-            )}
-          </View>
+          {/* Units to bill — bottom of the form, immediately above Submit */}
+          <UnitsSummary value={unitsToBill} durationMinutes={effectiveDurationMinutes} />
         </ScrollView>
 
         {/* ── Fixed footer ──────────────────────────────────────────────────── */}
@@ -1512,6 +1104,12 @@ export function DocumentationModal({
                 ? 'Select at least one diagnosis code to submit.'
                 : !selectedProcedureCode
                 ? 'Select a procedure code to submit.'
+                : timesResult.error === 'invalid_start'
+                ? 'Enter a valid session start time (MM/DD/YYYY HH:MM).'
+                : timesResult.error === 'invalid_end'
+                ? 'Enter a valid session end time (MM/DD/YYYY HH:MM).'
+                : timesResult.error === 'end_before_start'
+                ? 'Session end must be after session start.'
                 : 'Your notes are required before submitting.'}
             </Text>
           )}
@@ -1709,27 +1307,6 @@ const mo = StyleSheet.create({
     color: tokens.textPrimary,
     backgroundColor: tokens.cardBg,
   },
-  membersServedSection: {
-    paddingHorizontal: spacing.xl,
-    paddingTop: spacing.lg,
-  },
-  membersServedInput: {
-    width: 96,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderWidth: 1,
-    borderColor: tokens.cardBorder,
-    borderRadius: radius.md,
-    ...typography.bodyMd,
-    color: tokens.textPrimary,
-    backgroundColor: tokens.cardBg,
-    ...(Platform.OS === 'web' ? { outlineStyle: 'none' as unknown as undefined } : {}),
-  },
-  membersServedHint: {
-    ...typography.bodySm,
-    color: tokens.textSecondary,
-    marginTop: spacing.xs,
-  },
   footer: {
     paddingHorizontal: spacing.xl,
     paddingVertical: spacing.lg,
@@ -1763,158 +1340,5 @@ const mo = StyleSheet.create({
     ...typography.bodyMd,
     fontWeight: '700',
     color: '#FFFFFF',
-  },
-});
-
-// ─── Styles (AI Summary card) ─────────────────────────────────────────────────
-
-const ai = StyleSheet.create({
-  card: {
-    padding: spacing.lg,
-    gap: spacing.sm + 2,
-    backgroundColor: tokens.blue100,
-    borderColor: '#bfdbfe', // blue-200 — matches the blue100 card tint
-  },
-  cardExcluded: {
-    opacity: 0.55,
-    backgroundColor: tokens.slate100,
-    borderColor: tokens.cardBorder,
-  },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: spacing.sm - 2,
-  },
-  headerText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: tokens.cyan700,
-    letterSpacing: 0.4,
-  },
-  headerTextDimmed: {
-    color: tokens.textMuted,
-  },
-  timestamp: {
-    fontSize: 11,
-    color: tokens.textMuted,
-    marginLeft: 'auto' as unknown as number,
-  },
-  bodyText: {
-    ...typography.bodySm,
-    fontStyle: 'italic',
-    color: tokens.textPrimary,
-    lineHeight: 22,
-    letterSpacing: 0.1,
-  },
-  bodyTextExcluded: {
-    textDecorationLine: 'line-through',
-    color: tokens.textMuted,
-  },
-  footer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: spacing.md,
-    paddingTop: spacing.sm,
-    borderTopWidth: 1,
-    borderTopColor: '#bfdbfe',
-  },
-  regenerateButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    paddingHorizontal: spacing.sm + 2,
-    paddingVertical: spacing.xs + 2,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: tokens.cyan600 + '60',
-    backgroundColor: tokens.cyan100,
-  },
-  regenerateText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: tokens.cyan600,
-  },
-  excludeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-  },
-  excludeCheckbox: {
-    width: 16,
-    height: 16,
-    borderRadius: radius.sm - 2,
-    borderWidth: 2,
-    borderColor: tokens.cardBorder,
-    backgroundColor: tokens.cardBg,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  excludeCheckboxChecked: {
-    borderColor: tokens.textSecondary,
-    backgroundColor: tokens.textSecondary,
-  },
-  excludeLabel: {
-    fontSize: 12,
-    color: tokens.textMuted,
-  },
-  excludeLabelChecked: {
-    color: tokens.textPrimary,
-    fontWeight: '600',
-  },
-  shimmerLine: {
-    height: 10,
-    borderRadius: radius.sm - 1,
-    backgroundColor: '#bfdbfe',
-    width: '100%',
-  },
-  shimmerLineMid: {
-    width: '80%',
-  },
-  shimmerLineShort: {
-    width: '55%',
-  },
-  unavailableCard: {
-    padding: spacing.lg,
-  },
-  unavailableText: {
-    ...typography.bodySm,
-    color: tokens.textMuted,
-    fontStyle: 'italic',
-  },
-  errorCard: {
-    padding: spacing.lg,
-    gap: spacing.sm,
-    backgroundColor: tokens.red100,
-    borderColor: tokens.red700 + '40',
-  },
-  errorRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm - 2,
-  },
-  errorText: {
-    ...typography.bodySm,
-    fontWeight: '600',
-    color: tokens.red700,
-  },
-  retryButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    alignSelf: 'flex-start' as const,
-    paddingHorizontal: spacing.sm + 2,
-    paddingVertical: spacing.xs + 2,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: tokens.red700 + '60',
-    backgroundColor: tokens.cardBg,
-  },
-  retryText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: tokens.red700,
   },
 });

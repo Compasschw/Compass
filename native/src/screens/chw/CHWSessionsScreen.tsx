@@ -1939,6 +1939,19 @@ export function CHWSessionsScreen(): React.JSX.Element {
                 (s) => s.id === documentingSessionId,
               )?.durationMinutes ?? null
             }
+            // Pre-fill the editable Session Start/End fields from the same
+            // session row so units-to-bill still auto-computes without the
+            // CHW re-typing timestamps the server already recorded.
+            sessionStartedAt={
+              [...activeSessions, ...completedSessions].find(
+                (s) => s.id === documentingSessionId,
+              )?.startedAt ?? null
+            }
+            sessionEndedAt={
+              [...activeSessions, ...completedSessions].find(
+                (s) => s.id === documentingSessionId,
+              )?.endedAt ?? null
+            }
             onSubmit={handleDocumentationSubmit}
           />
         )}
@@ -2037,6 +2050,19 @@ export function CHWSessionsScreen(): React.JSX.Element {
             [...activeSessions, ...completedSessions].find(
               (s) => s.id === documentingSessionId,
             )?.durationMinutes ?? null
+          }
+          // Pre-fill the editable Session Start/End fields from the same
+          // session row so units-to-bill still auto-computes without the
+          // CHW re-typing timestamps the server already recorded.
+          sessionStartedAt={
+            [...activeSessions, ...completedSessions].find(
+              (s) => s.id === documentingSessionId,
+            )?.startedAt ?? null
+          }
+          sessionEndedAt={
+            [...activeSessions, ...completedSessions].find(
+              (s) => s.id === documentingSessionId,
+            )?.endedAt ?? null
           }
           onSubmit={handleDocumentationSubmit}
         />
