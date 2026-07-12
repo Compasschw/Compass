@@ -83,21 +83,42 @@ export interface SessionDocumentation {
   sessionId: string;
   /** CHW-authored notes — required, visible to billing/audit as CHW-authored. */
   summary: string;
-  resourcesReferred: string[];
-  memberGoals: string[];
-  followUpNeeded: boolean;
-  followUpDate?: string;
   diagnosisCodes: string[];
   procedureCode?: string;
   unitsToBill: number;
-  /** Number of Medi-Cal members served in the session (1 = individual). */
-  membersServed: number;
   submittedAt?: string;
-  /** AI-generated summary text from session transcript. Null when unavailable. */
+  /**
+   * CHW-edited session start/end (ISO 8601), entered in the Documentation
+   * modal's Session Start / Session End fields. Drives the units-to-bill
+   * bracket (see ``computeUnitsFromTimes`` in utils/sessionDocumentation.ts).
+   * Null when the field couldn't be parsed — submission is blocked in the UI
+   * until both are valid and sessionEndTime > sessionStartTime, so a
+   * successful submit always carries non-null values.
+   */
+  sessionStartTime: string | null;
+  sessionEndTime: string | null;
+  /**
+   * @deprecated Members Served, Member Goals Discussed, Resources Referred,
+   * Follow-Up, and AI Summary were removed from the Documentation modal
+   * (2026-07-12 redesign) in favor of CHW-edited Session Start/End times.
+   * The backend schema defaults these — they are intentionally no longer
+   * sent. Left optional (not deleted) in case any stored/legacy documentation
+   * record still carries them.
+   */
+  resourcesReferred?: string[];
+  /** @deprecated see resourcesReferred */
+  memberGoals?: string[];
+  /** @deprecated see resourcesReferred */
+  followUpNeeded?: boolean;
+  /** @deprecated see resourcesReferred */
+  followUpDate?: string;
+  /** @deprecated see resourcesReferred */
+  membersServed?: number;
+  /** @deprecated see resourcesReferred */
   aiSummary?: string | null;
-  /** ISO8601 timestamp of AI summary generation. Null when no transcript. */
+  /** @deprecated see resourcesReferred */
   aiSummaryGeneratedAt?: string | null;
-  /** When true, the AI summary was generated but intentionally omitted by the CHW. */
+  /** @deprecated see resourcesReferred */
   aiSummaryExcluded?: boolean;
 }
 

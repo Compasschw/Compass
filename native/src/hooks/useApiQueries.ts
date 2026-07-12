@@ -1358,6 +1358,40 @@ export function useEndSession() {
   });
 }
 
+// ─── Abort Session ───────────────────────────────────────────────────────────
+
+/**
+ * PATCH /api/v1/sessions/{sessionId}/abort
+ *
+ * Aborts an in-progress (or awaiting-documentation) session without
+ * documenting or billing it — transitions ``in_progress`` /
+ * ``awaiting_documentation`` → ``cancelled``. Used by the CHW Messages
+ * "Cancel Session" action (the left button on the Complete-Session confirm
+ * panel) when the CHW wants to discard the session entirely rather than
+ * complete + document it.
+ *
+ * Invalidates the same query the sibling `/end` mutation does — the sessions
+ * cache — so the rail's live session status (fetched via useSession) picks up
+ * the terminal `cancelled` status and swaps to the read-only status note.
+ */
+export function useAbortSession() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (sessionId: string): Promise<SessionData> => {
+      const raw = await api<unknown>(`/sessions/${sessionId}/abort`, {
+        method: 'PATCH',
+      });
+      return transformKeys<SessionData>(raw);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.sessions });
+    },
+    onError: (error: Error) => {
+      showAlert('Could not cancel session', error?.message ?? 'Please try again.');
+    },
+  });
+}
+
 // ─── Case Notes ──────────────────────────────────────────────────────────────
 
 /**

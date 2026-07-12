@@ -73,9 +73,7 @@ import {
   ArrowLeft,
   ArrowRight,
   CheckCircle2,
-  AlertCircle,
   FileText,
-  XCircle,
   X,
   Download,
   LogOut,
@@ -125,6 +123,7 @@ import {
   useMemberServicesConsent,
   useCreateCaseNote,
   useEndSession as useEndSessionHook,
+  useAbortSession as useAbortSessionHook,
   useStartSession as useStartSessionHook,
   useScheduleSession as useScheduleSessionHook,
   useSoftDeleteConversation,
@@ -138,7 +137,6 @@ import {
   type SessionData,
   type SessionMessageLocal,
   type MemberJourneyResponse,
-  type ServicesConsentValue,
 } from '../../hooks/useApiQueries';
 import {
   useEngagementStatus,
@@ -2040,104 +2038,21 @@ function ConversationPane({
           sessionId={documentingSessionId}
           memberId={conv.memberId ?? undefined}
           durationMinutes={null}
+          // Best-effort pre-fill: this pane only has the conversation's
+          // in-progress-session start stamp, not an ended-session end time
+          // (this modal is opened via handleOpenCompleteSession, which is
+          // not currently wired to any control — the live Complete Session
+          // flow is CHWMessagesScreen's rail-driven modal below, which
+          // captures both timestamps from the /end response). The CHW can
+          // still fill in Session End manually.
+          sessionStartedAt={conv.activeSessionStartedAt}
+          sessionEndedAt={null}
           onSubmit={handleDocumentationSubmit}
         />
       )}
     </View>
   );
 }
-
-// ─── Services consent status widget ──────────────────────────────────────────
-
-interface ServicesConsentStatusProps {
-  readonly consentValue: ServicesConsentValue | null;
-  readonly isLoading: boolean;
-}
-
-/**
- * Read-only consent status indicator for the CHW right rail.
- * The CHW cannot change this value — only the member can (via their Profile).
- */
-function ServicesConsentStatus({
-  consentValue,
-  isLoading,
-}: ServicesConsentStatusProps): React.JSX.Element {
-  if (isLoading) {
-    return (
-      <View style={consentStyles.row}>
-        <ActivityIndicator size="small" color={tokens.textMuted} />
-        <Text style={consentStyles.label}>Loading consent status...</Text>
-      </View>
-    );
-  }
-
-  if (consentValue === null) {
-    return (
-      <View style={[consentStyles.row, consentStyles.neutral]}>
-        <AlertCircle size={14} color={tokens.textMuted} />
-        <Text style={consentStyles.neutralText}>Consent status unavailable</Text>
-      </View>
-    );
-  }
-
-  if (consentValue === 'refuse_services') {
-    return (
-      <View style={[consentStyles.row, consentStyles.refused]}>
-        <XCircle size={14} color="#b91c1c" />
-        <Text style={consentStyles.refusedText}>Member has refused services</Text>
-      </View>
-    );
-  }
-
-  return (
-    <View style={[consentStyles.row, consentStyles.consented]}>
-      <CheckCircle2 size={14} color="#15803d" />
-      <Text style={consentStyles.consentedText}>Consent to services</Text>
-    </View>
-  );
-}
-
-const consentStyles = StyleSheet.create({
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-    borderRadius: radius.md,
-  } as ViewStyle,
-  neutral: {
-    backgroundColor: tokens.gray100,
-  } as ViewStyle,
-  neutralText: {
-    fontSize: 13,
-    color: tokens.textMuted,
-  } as TextStyle,
-  consented: {
-    backgroundColor: '#f0fdf4',
-    borderWidth: 1,
-    borderColor: '#bbf7d0',
-  } as ViewStyle,
-  consentedText: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: '#15803d',
-  } as TextStyle,
-  refused: {
-    backgroundColor: '#fef2f2',
-    borderWidth: 1,
-    borderColor: '#fecaca',
-  } as ViewStyle,
-  refusedText: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: '#b91c1c',
-  } as TextStyle,
-  label: {
-    fontSize: 13,
-    color: tokens.textMuted,
-  } as TextStyle,
-});
 
 // ─── Case Note Modal ──────────────────────────────────────────────────────────
 
@@ -2376,12 +2291,18 @@ interface MemberContextRailProps {
   readonly conversation: ConversationData;
   /**
    * Called after the in-progress session is ended, with the just-ended
-   * session id so the parent can open the documentation modal. The id is
-   * passed explicitly because conversation.activeSessionId resolves to the
-   * in_progress session only, and goes null the moment the session flips to
-   * awaiting_documentation — re-reading it here would open nothing.
+   * session id (and its started/ended timestamps, straight off the /end
+   * response) so the parent can open the documentation modal pre-filled with
+   * both. The id is passed explicitly because conversation.activeSessionId
+   * resolves to the in_progress session only, and goes null the moment the
+   * session flips to awaiting_documentation — re-reading it here would open
+   * nothing.
    */
-  readonly onEndSessionComplete?: (endedSessionId: string) => void;
+  readonly onEndSessionComplete?: (
+    endedSessionId: string,
+    startedAt: string | null,
+    endedAt: string | null,
+  ) => void;
   /** Called after a new session has been created and started from a completed session. */
   readonly onSessionStarted?: (newSession: SessionData) => void;
   /**
@@ -2410,7 +2331,6 @@ interface MemberContextRailProps {
  *   4. Screening Questions card — opens the suggested-questions drawer
  *   5. Quick Actions — Add Case Note, Open Member Profile, Schedule Session
  *   6. Complete Session — red destructive, inline slide-up confirm panel
- *   7. Services Consent — informational read-only widget
  *
  * No nested cards within a single Card region — border-top dividers used instead.
  */
@@ -2427,6 +2347,7 @@ function MemberContextRail({
   const [questionsDrawerOpen, setQuestionsDrawerOpen] = useState(false);
   const [caseNoteModalOpen, setCaseNoteModalOpen] = useState(false);
   const [endSessionPending, setEndSessionPending] = useState(false);
+  const [abortSessionPending, setAbortSessionPending] = useState(false);
   const [showEndConfirm, setShowEndConfirm] = useState(false);
   const [beginSessionPending, setBeginSessionPending] = useState(false);
 
@@ -2491,6 +2412,7 @@ function MemberContextRail({
   }, [showEndConfirm, confirmSlideY, confirmOpacity]);
 
   const endSession = useEndSessionHook();
+  const abortSession = useAbortSessionHook();
   const startSession = useStartSessionHook();
   const scheduleSession = useScheduleSessionHook();
 
@@ -2728,10 +2650,16 @@ function MemberContextRail({
     setShowEndConfirm(false);
     setEndSessionPending(true);
     try {
-      await endSession.mutateAsync(activeId);
-      // Pass the just-ended session id so the parent opens the documentation
-      // modal with it — activeSessionId is already null by now (in_progress only).
-      onEndSessionComplete?.(activeId);
+      const endedSession = await endSession.mutateAsync(activeId);
+      // Pass the just-ended session id + its started/ended timestamps so the
+      // parent can open the documentation modal pre-filled with both —
+      // activeSessionId is already null by now (in_progress only), so this
+      // is the only place those timestamps are available post-end.
+      onEndSessionComplete?.(
+        activeId,
+        endedSession.startedAt ?? null,
+        endedSession.endedAt ?? null,
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Could not end session. Try again.';
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -2743,6 +2671,35 @@ function MemberContextRail({
       setEndSessionPending(false);
     }
   }, [conv.activeSessionId, endSession, onEndSessionComplete]);
+
+  /**
+   * "Cancel Session" — the left button on the Complete-Session confirm panel.
+   * Aborts the in-progress session outright (PATCH /sessions/{id}/abort →
+   * `cancelled`) instead of ending it into `awaiting_documentation`. Unlike
+   * Complete Session, this does NOT open the documentation modal — the CHW
+   * is discarding the session, not documenting it. Closes the confirm panel
+   * either way; on success the sessions-query invalidation flips
+   * `liveSession.status` to the terminal `cancelled` state, which the rail
+   * already renders as a read-only status note (see isTerminalSession).
+   */
+  const handleCancelSessionConfirmed = useCallback(async (): Promise<void> => {
+    if (!conv.activeSessionId) return; // Guard: no active session to cancel
+    const activeId = conv.activeSessionId;
+    setShowEndConfirm(false);
+    setAbortSessionPending(true);
+    try {
+      await abortSession.mutateAsync(activeId);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not cancel session. Try again.';
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.alert(`Failed to cancel session\n\n${message}`);
+      } else {
+        Alert.alert('Failed to cancel session', message);
+      }
+    } finally {
+      setAbortSessionPending(false);
+    }
+  }, [conv.activeSessionId, abortSession]);
 
   const memberName = conv.memberName ?? 'Unknown Member';
   const initials = getInitials(memberName);
@@ -3149,32 +3106,29 @@ function MemberContextRail({
               <View style={styles.endConfirmActions}>
                 <TouchableOpacity
                   style={styles.endConfirmCancel}
-                  onPress={() => setShowEndConfirm(false)}
+                  onPress={() => void handleCancelSessionConfirmed()}
+                  disabled={abortSessionPending || endSessionPending}
                   accessibilityRole="button"
-                  accessibilityLabel="Cancel end session"
+                  accessibilityLabel="Cancel session (abort)"
+                  accessibilityState={{ disabled: abortSessionPending || endSessionPending }}
                 >
-                  <Text style={styles.endConfirmCancelText}>Cancel</Text>
+                  <Text style={styles.endConfirmCancelText}>
+                    {abortSessionPending ? 'Cancelling...' : 'Cancel Session'}
+                  </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={styles.endConfirmProceed}
                   onPress={() => void handleEndSessionConfirmed()}
+                  disabled={abortSessionPending || endSessionPending}
                   accessibilityRole="button"
                   accessibilityLabel="Confirm complete session"
+                  accessibilityState={{ disabled: abortSessionPending || endSessionPending }}
                 >
                   <Text style={styles.endConfirmProceedText}>Complete Session</Text>
                 </TouchableOpacity>
               </View>
             </Animated.View>
           ) : null}
-        </View>
-
-        {/* Services Consent (informational) */}
-        <View style={styles.railConsentSection}>
-          <SectionHeader title="Services Consent" marginBottom={spacing.sm} />
-          <ServicesConsentStatus
-            consentValue={consentValue}
-            isLoading={consentQuery.isLoading && consentQuery.fetchStatus !== 'idle'}
-          />
         </View>
       </ScrollView>
 
@@ -3216,6 +3170,15 @@ export function CHWMessagesScreen(): React.JSX.Element {
   const [selectedConversation, setSelectedConversation] = useState<ConversationData | null>(null);
   const [showThreadList, setShowThreadList] = useState(true);
   const [documentingSessionId, setDocumentingSessionId] = useState<string | null>(null);
+  // Session Start / Session End (ISO 8601) captured from the /end response
+  // when the just-ended session opens the documentation modal below — see
+  // handleEndSessionComplete. Pre-fills DocumentationModal's editable
+  // Session Start/End fields so the CHW isn't re-typing timestamps the
+  // server already recorded.
+  const [documentingSessionStartedAt, setDocumentingSessionStartedAt] = useState<string | null>(
+    null,
+  );
+  const [documentingSessionEndedAt, setDocumentingSessionEndedAt] = useState<string | null>(null);
   // SDOH / Health Screening — opened inline from MemberContextRail's rail
   // card (see onOpenSdohPanel below). Owned here, not inside
   // MemberContextRail, because the panel renders as a 4th sibling pane next
@@ -3335,9 +3298,17 @@ export function CHWMessagesScreen(): React.JSX.Element {
   // session id (passed from the rail). Do NOT re-read activeSessionId here: it
   // resolves to the in_progress session only, so it's already null by now and
   // the modal would never open (the bug that required a full page refresh).
-  const handleEndSessionComplete = useCallback((endedSessionId: string): void => {
-    setDocumentingSessionId(endedSessionId);
-  }, []);
+  // Also captures the session's started/ended timestamps straight off the
+  // /end response so DocumentationModal's Session Start/End fields are
+  // pre-filled rather than blank.
+  const handleEndSessionComplete = useCallback(
+    (endedSessionId: string, startedAt: string | null, endedAt: string | null): void => {
+      setDocumentingSessionId(endedSessionId);
+      setDocumentingSessionStartedAt(startedAt);
+      setDocumentingSessionEndedAt(endedAt);
+    },
+    [],
+  );
 
   // After a new session is created+started from a bare/completed conversation —
   // the conversation query will refetch and update activeSessionId automatically.
@@ -3409,6 +3380,8 @@ export function CHWMessagesScreen(): React.JSX.Element {
           data: data as unknown as Record<string, unknown>,
         });
         setDocumentingSessionId(null);
+        setDocumentingSessionStartedAt(null);
+        setDocumentingSessionEndedAt(null);
       } catch (err) {
         const reason =
           err instanceof Error && err.message ? err.message : 'Unknown error';
@@ -3576,10 +3549,16 @@ export function CHWMessagesScreen(): React.JSX.Element {
       {documentingSessionId != null && (
         <DocumentationModal
           visible={documentingSessionId != null}
-          onClose={() => setDocumentingSessionId(null)}
+          onClose={() => {
+            setDocumentingSessionId(null);
+            setDocumentingSessionStartedAt(null);
+            setDocumentingSessionEndedAt(null);
+          }}
           sessionId={documentingSessionId}
           memberId={selectedConversation?.memberId ?? undefined}
           durationMinutes={null}
+          sessionStartedAt={documentingSessionStartedAt}
+          sessionEndedAt={documentingSessionEndedAt}
           onSubmit={handleDocumentationSubmit}
         />
       )}
@@ -4784,9 +4763,4 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#ffffff',
   } as TextStyle,
-
-  // Consent section
-  railConsentSection: {
-    gap: spacing.xs,
-  } as ViewStyle,
 });
