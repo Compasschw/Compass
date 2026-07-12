@@ -236,7 +236,10 @@ async def list_conversations(
 
     from app.models.conversation import Message
     from app.models.user import User
-    from app.services.session_lookup import get_active_session_ids_for_conversations
+    from app.services.session_lookup import (
+        get_active_session_ids_for_conversations,
+        get_active_session_started_ats_for_conversations,
+    )
 
     CHWUser = aliased(User)
     MemberUser = aliased(User)
@@ -280,8 +283,9 @@ async def list_conversations(
 
     conv_ids = [conv.id for conv in conversations]
 
-    # ── Batch 1: active_session_id ────────────────────────────────────────────
+    # ── Batch 1: active_session_id (+ its started_at for the live timer) ───────
     active_session_ids = await get_active_session_ids_for_conversations(db, conv_ids)
+    active_session_started_ats = await get_active_session_started_ats_for_conversations(db, conv_ids)
 
     # ── Batch 2: last message per conversation ────────────────────────────────
     # DISTINCT ON (conversation_id) returns the newest message for each thread.
@@ -362,6 +366,7 @@ async def list_conversations(
                 member_id=conv.member_id,
                 session_id=conv.session_id,
                 active_session_id=active_session_ids.get(conv.id),
+                active_session_started_at=active_session_started_ats.get(conv.id),
                 created_at=conv.created_at,
                 deleted_at=conv.deleted_at,
                 deleted_by_user_id=conv.deleted_by_user_id,

@@ -484,12 +484,35 @@ async def test_start_session_within_conversation_mints_session(client: AsyncClie
     )
     assert start_res.status_code == 200, start_res.text
 
-    # Inbox should show active_session_id
+    # Inbox should show active_session_id AND its started_at (drives the CHW
+    # Messages live session timer).
     res = await client.get("/api/v1/conversations/", headers=auth_header(chw_tokens))
     assert res.status_code == 200
     rows = res.json()
     assert len(rows) == 1
     assert rows[0]["active_session_id"] is not None
+    assert rows[0]["active_session_started_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_active_session_started_at_null_without_active_session(client: AsyncClient):
+    """A conversation with no in_progress session reports null started_at.
+
+    Regression guard for the session-timer field: it must be null (timer hidden)
+    until a session is actually started, and never leak a stale value.
+    """
+    chw_tokens = await _register_chw(client, email="timer_null_chw@example.com")
+    member_tokens = await _register_member(client, email="timer_null_member@example.com")
+    await _build_relationship_and_conversation(
+        client, chw_tokens=chw_tokens, member_tokens=member_tokens
+    )
+
+    res = await client.get("/api/v1/conversations/", headers=auth_header(chw_tokens))
+    assert res.status_code == 200
+    rows = res.json()
+    assert len(rows) == 1
+    assert rows[0]["active_session_id"] is None
+    assert rows[0]["active_session_started_at"] is None
 
 
 # ─── Group 7: Two in_progress sessions → no MultipleResultsFound 500 ──────────

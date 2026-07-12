@@ -15,6 +15,7 @@ from app.services.session_lookup import (
     create_followup_session,
     find_or_create_conversation_for_pair,
     get_active_session_for_conversation,
+    get_active_session_started_ats_for_conversations,
 )
 from tests.conftest import test_session
 
@@ -94,6 +95,63 @@ async def test_active_session_returns_in_progress_session() -> None:
         result = await get_active_session_for_conversation(db, conv.id)
         assert result is not None
         assert result.id == active.id
+
+
+# ── get_active_session_started_ats_for_conversations (session-timer source) ──
+
+
+@pytest.mark.asyncio
+async def test_started_ats_empty_input_returns_empty_dict() -> None:
+    """Empty conversation list short-circuits to {} without a query."""
+    async with test_session() as db:
+        assert await get_active_session_started_ats_for_conversations(db, []) == {}
+
+
+@pytest.mark.asyncio
+async def test_started_ats_returns_start_time_for_in_progress_session() -> None:
+    """The in_progress session's started_at is returned, keyed by conversation."""
+    async with test_session() as db:
+        chw, member, req = await _seed_pair(db)
+        conv = Conversation(chw_id=chw.id, member_id=member.id)
+        db.add(conv)
+        await db.flush()
+
+        start = datetime(2026, 7, 11, 10, 0, tzinfo=UTC)
+        active = Session(
+            request_id=req.id, chw_id=chw.id, member_id=member.id,
+            vertical="health", mode="phone", status="in_progress",
+            conversation_id=conv.id, started_at=start,
+        )
+        db.add(active)
+        await db.flush()
+
+        result = await get_active_session_started_ats_for_conversations(db, [conv.id])
+        assert result[conv.id] == start
+
+
+@pytest.mark.asyncio
+async def test_started_ats_excludes_in_progress_session_with_null_start() -> None:
+    """An in_progress session whose started_at is NULL is omitted (not None-valued).
+
+    Guards the session-timer field: a half-initialized session must not surface a
+    null timer value — the conversation is simply absent from the map.
+    """
+    async with test_session() as db:
+        chw, member, req = await _seed_pair(db)
+        conv = Conversation(chw_id=chw.id, member_id=member.id)
+        db.add(conv)
+        await db.flush()
+
+        active_no_start = Session(
+            request_id=req.id, chw_id=chw.id, member_id=member.id,
+            vertical="health", mode="phone", status="in_progress",
+            conversation_id=conv.id, started_at=None,
+        )
+        db.add(active_no_start)
+        await db.flush()
+
+        result = await get_active_session_started_ats_for_conversations(db, [conv.id])
+        assert conv.id not in result
 
 
 @pytest.mark.asyncio

@@ -64,6 +64,7 @@ import {
 import {
   Search,
   Phone,
+  Clock,
   CalendarPlus,
   Paperclip,
   Image as ImageIcon,
@@ -144,6 +145,7 @@ import {
 } from '../../hooks/useMessagesInsights';
 import { SwipeableThreadRow } from '../../components/chw/SwipeableThreadRow';
 import { showAlert } from '../../utils/showAlert';
+import { formatElapsedSince } from '../../utils/sessionTimer';
 import {
   useMessageAttachmentUpload,
   type MessageAttachmentUploadResult,
@@ -1279,6 +1281,36 @@ interface ConversationPaneProps {
 }
 
 /**
+ * Live session timer — counts up from the active session's `started_at`, shown
+ * in the conversation header (to the left of the call button) while a session
+ * is in progress. Driven by the server-stamped start time, so it survives a
+ * refresh and reflects the true elapsed time, not a client-local stopwatch.
+ * Renders nothing when there's no active session.
+ */
+function SessionTimer({ startedAt }: { startedAt: string | null }): React.JSX.Element | null {
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+
+  useEffect(() => {
+    if (!startedAt) return;
+    // Re-render every second while the session is live. Cleared when the timer
+    // unmounts (session ended) or the start time changes.
+    const id = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [startedAt]);
+
+  if (!startedAt) return null;
+
+  return (
+    <View style={styles.sessionTimer} accessibilityLabel="Session elapsed time">
+      <Clock size={13} color={tokens.primary} />
+      <Text style={[styles.sessionTimerText, numerals.tabular]}>
+        {formatElapsedSince(startedAt, nowMs)}
+      </Text>
+    </View>
+  );
+}
+
+/**
  * Center pane: message thread + composer.
  *
  * Handles optimistic message rendering, auto-scroll, call initiation, and
@@ -1736,6 +1768,10 @@ function ConversationPane({
             </Text>
           )}
         </View>
+
+        {/* Live session timer — visible while a session is in progress, to the
+            left of the call button. Counts up from the server-stamped start. */}
+        <SessionTimer startedAt={conv.activeSessionStartedAt} />
 
         {/* Call button — tinted green while a session is in progress to cue the
             CHW that calling the member is the next expected step. */}
@@ -3929,6 +3965,24 @@ const styles = StyleSheet.create({
     borderColor: tokens.emerald700,
     backgroundColor: tokens.emerald700,
   } as ViewStyle,
+
+  // Live session timer pill, shown left of the call button while a session runs.
+  sessionTimer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: tokens.primary + '33',
+    backgroundColor: tokens.primary + '14',
+  } as ViewStyle,
+  sessionTimerText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 13,
+    color: tokens.primary,
+  } as TextStyle,
 
   convHeaderAvatar: {
     width: 40,
