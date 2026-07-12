@@ -73,7 +73,7 @@ jobs:
             # is left untouched — a genuine no-op until the params exist. Secret
             # VALUES are never echoed to the deploy log (only key names).
             SSM_PREFIX="/compass/prod"
-            SSM_KEYS="STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET STRIPE_PLATFORM_WEBHOOK_SECRET"
+            SSM_KEYS="STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET STRIPE_PLATFORM_WEBHOOK_SECRET VONAGE_SMS_NUMBER"
             if command -v aws >/dev/null 2>&1; then
               touch .env
               for KEY in $SSM_KEYS; do
