@@ -1,7 +1,19 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -72,11 +84,41 @@ class Conversation(Base):
 
 class Message(Base):
     __tablename__ = "messages"
+    # Partial UNIQUE index on provider_message_id (WHERE NOT NULL): declared
+    # here (not just in migration smsmsg0711) so test DBs created via
+    # Base.metadata.create_all also carry the constraint — mirrors the
+    # uq_conversations_chw_member pattern on Conversation above. Without this,
+    # the inbound SMS webhook's idempotency guarantee would be silently
+    # untested (no DB-level enforcement to actually race against).
+    __table_args__ = (
+        Index(
+            "ix_messages_provider_message_id_unique",
+            "provider_message_id",
+            unique=True,
+            postgresql_where=text("provider_message_id IS NOT NULL"),
+        ),
+    )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     conversation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("conversations.id"), nullable=False, index=True)
     sender_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
     type: Mapped[str] = mapped_column(String(20), default="text")
+    # ── Masked SMS messaging ──────────────────────────────────────────────────
+    # Transport the message traveled over — distinct from `type` (content
+    # kind: text/file). 'in_app' (default, backfilled on every pre-existing
+    # row) means the message only ever existed in the in-app thread.  'sms'
+    # means it was sent/received over the shared masked Vonage number AND
+    # mirrored into this same in-app thread so either party can continue in
+    # whichever channel they prefer. Enforced at the DB layer by
+    # ck_messages_channel (see migration smsmsg0711).
+    channel: Mapped[str] = mapped_column(String(20), nullable=False, server_default="in_app")
+    # Vonage Messages API `message_uuid`. Populated for channel='sms' rows
+    # only (both outbound sends and inbound webhook deliveries); NULL for
+    # in_app messages. A partial UNIQUE index (WHERE NOT NULL, see migration
+    # smsmsg0711) makes the inbound webhook idempotent without a separate
+    # dedup table — a re-delivered Vonage webhook for the same message_uuid
+    # cannot create a second Message row.
+    provider_message_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 class FileAttachment(Base):

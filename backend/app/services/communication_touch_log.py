@@ -16,9 +16,10 @@ import uuid as _uuid_module
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String, func
+from sqlalchemy import DateTime, Enum, ForeignKey, String, func, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -160,3 +161,42 @@ async def record_touch(
         provider_session_id,
     )
     return touch
+
+
+async def count_touches_today(
+    db: AsyncSession,
+    *,
+    initiator_id: UUID,
+    recipient_id: UUID,
+    kind: TouchKind | str,
+) -> int:
+    """Count touches of ``kind`` from ``initiator_id`` to ``recipient_id`` since UTC midnight.
+
+    Generalizes the per-(initiator, recipient, day) counting pattern first
+    written for the call rate limit (see
+    ``app.routers.communication._count_daily_calls``) so any new touch kind
+    — SMS today, possibly video later — can reuse the same counting strategy
+    against this one audit table instead of re-implementing it per endpoint.
+
+    Args:
+        db: Active async database session.
+        initiator_id: UUID of the user who originated the touch.
+        recipient_id: UUID of the user who received the touch.
+        kind: TouchKind enum value or its string equivalent.
+
+    Returns:
+        Count of matching CommunicationTouch rows created since 00:00 UTC today.
+    """
+    kind_value = kind.value if isinstance(kind, TouchKind) else str(kind)
+    today_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    result = await db.execute(
+        select(func.count())
+        .select_from(CommunicationTouch)
+        .where(
+            CommunicationTouch.initiator_id == initiator_id,
+            CommunicationTouch.recipient_id == recipient_id,
+            CommunicationTouch.kind == kind_value,
+            CommunicationTouch.created_at >= today_start,
+        )
+    )
+    return result.scalar_one()

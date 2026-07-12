@@ -107,6 +107,20 @@ class Settings(BaseSettings):
     # existing mp3 record action runs (safe fallback for local dev / staging).
     vonage_ws_audio_url_base: str = ""
 
+    # ── Masked-number SMS messaging (CHW↔member) ──────────────────────────────
+    # The Vonage number outbound SMS is sent FROM. Kept separate from
+    # vonage_from_number (voice) so SMS traffic can be split onto its own
+    # number for monitoring/cost separation without touching voice config.
+    # Empty = fall back to vonage_from_number (single shared number for both
+    # voice + SMS, which is the current production design).
+    #
+    # Pool-ready note: this setting is ONLY read by
+    # app.services.vonage_sms.get_sms_from_number() — every send call site
+    # goes through that function, never this field directly. A future
+    # number-pool feature changes that function's internals only; this
+    # setting and every caller of get_sms_from_number() stay unchanged.
+    vonage_sms_number: str = ""
+
     # Twilio (future option)
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""

@@ -224,6 +224,33 @@ class MemberProfile(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
+    # ── Masked SMS messaging (CHW↔member over the shared Vonage number) ──────
+    # Per-member "sticky" routing pointer: the Conversation an inbound SMS
+    # reply from this member should land in. Written every time ANY CHW sends
+    # an outbound SMS to this member from a conversation (last-writer-wins —
+    # a member only ever has one "currently texting" thread at a time even if
+    # they have multiple CHWs). A stored column (rather than deriving "most
+    # recent outbound SMS Message" via a query) was chosen because: (1) the
+    # inbound webhook is latency- and correctness-sensitive — a single
+    # indexed FK lookup beats a MAX(created_at) scan per inbound SMS: (2) it
+    # gives an explicit, debuggable value ops can inspect directly instead of
+    # re-deriving routing history. ON DELETE SET NULL: a deleted conversation
+    # just falls back to "most recent conversation" routing — never blocks
+    # inbound messaging.
+    last_sms_conversation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("conversations.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # STOP/UNSUBSCRIBE opt-out flag (CTIA short-code compliance). Set to True
+    # by the inbound SMS webhook when the member texts a recognized opt-out
+    # keyword (see app.routers.communication._STOP_KEYWORDS). Once True,
+    # POST /conversations/{id}/sms is blocked for this member (422) until a
+    # human/ops process resets it — there is no self-service re-subscribe
+    # flow in this PR; CTIA guidance requires an explicit new opt-in, not an
+    # automatic one, so that's deliberately out of scope here.
+    sms_opt_out: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+
     # ── Social sign-in onboarding gate ──────────────────────────────────────────
     # True for all normal (password/magic-link) signups — those users supply
     # every Pear-required field at registration.
