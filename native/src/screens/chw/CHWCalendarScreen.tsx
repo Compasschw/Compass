@@ -15,6 +15,7 @@ import React, {
   useState,
   useMemo,
   useCallback,
+  useEffect,
 } from 'react';
 import {
   View,
@@ -57,6 +58,8 @@ import {
   useScheduleSession,
   useConfirmSession,
   useDeclineSession,
+  useStartSession,
+  useCancelSession,
   type SessionData,
   type MembersRosterItem,
 } from '../../hooks/useApiQueries';
@@ -67,6 +70,7 @@ import {
 } from '../../utils/availabilityShading';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
+import { showAlert } from '../../utils/showAlert';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -253,6 +257,20 @@ function formatDateLabel(isoString: string): string {
   const d = new Date(isoString);
   if (isNaN(d.getTime())) return '';
   return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+/**
+ * Formats an ISO datetime string to "MM/DD/YYYY" local time — the exact
+ * format ScheduleSessionModal's Date TextInput expects (round-trips through
+ * its own parseDateTime). Used to prefill the "Propose New Time" flow from
+ * an existing session's scheduledAt/scheduledEndAt.
+ */
+function formatDateInputValue(isoString: string): string {
+  const d = new Date(isoString);
+  if (isNaN(d.getTime())) return '';
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${mm}/${dd}/${d.getFullYear()}`;
 }
 
 /**
@@ -828,6 +846,12 @@ interface SessionDetailsModalProps {
   visible: boolean;
   onClose: () => void;
   onOpenProfile: (memberId: string) => void;
+  /** Navigates to Messages for this member — used by "Begin Session" once the
+   *  session is confirmed started. */
+  onNavigateToMessages: (memberId: string) => void;
+  /** Opens ScheduleSessionModal in "Propose New Time" mode for this session —
+   *  identical wiring to PendingRequestsList's onProposeNewTime. */
+  onProposeNewTime: (session: SessionData) => void;
 }
 
 function SessionDetailsModal({
@@ -836,179 +860,263 @@ function SessionDetailsModal({
   visible,
   onClose,
   onOpenProfile,
+  onNavigateToMessages,
+  onProposeNewTime,
 }: SessionDetailsModalProps): React.JSX.Element {
   // Hooks must run unconditionally, before the early return below.
   const confirmSession = useConfirmSession();
   const declineSession = useDeclineSession();
+  const startSession = useStartSession();
+  const cancelSession = useCancelSession();
   const actionPending = confirmSession.isPending || declineSession.isPending;
+  const [removeConfirmOpen, setRemoveConfirmOpen] = useState(false);
 
   if (!session) return <View />;
 
   const badge = deriveBadgeStatus(session, now);
   const badgeStyle = BADGE_COLORS[badge];
   const isPending = badge === 'Pending';
+  // An upcoming session the CHW has already confirmed (not a member request
+  // still awaiting approval — that keeps its existing Confirm/Decline row +
+  // Open Member Profile below, unchanged) gets the Begin Session / Propose
+  // New Time / Remove action row instead of the plain Open Member Profile
+  // button. Missed/completed/cancelled sessions are unaffected.
+  const isConfirmedUpcoming =
+    session.status === 'scheduled' && new Date(session.scheduledAt) >= now && !isPending;
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={onClose}
-      accessibilityViewIsModal
-    >
-      <View style={detailModalStyles.overlay}>
-        <View style={detailModalStyles.sheet}>
-          {/* Header */}
-          <View style={detailModalStyles.header}>
-            <View style={detailModalStyles.headerLeft}>
-              <Text style={detailModalStyles.headerTitle}>Session Details</Text>
-            </View>
-            <TouchableOpacity
-              style={detailModalStyles.closeBtn}
-              onPress={onClose}
-              accessibilityRole="button"
-              accessibilityLabel="Close session details"
-            >
-              <X size={18} color={tokens.textSecondary} />
-            </TouchableOpacity>
-          </View>
-
-          <ScrollView
-            style={detailModalStyles.body}
-            contentContainerStyle={detailModalStyles.bodyContent}
-            showsVerticalScrollIndicator={false}
-          >
-            {/* Member name */}
-            <View style={detailModalStyles.memberRow}>
-              <View style={detailModalStyles.avatarCircle}>
-                <User size={20} color={tokens.primary} />
+      <>
+        <Modal
+          visible={visible}
+          transparent
+          animationType="fade"
+          onRequestClose={onClose}
+          accessibilityViewIsModal
+        >
+          <View style={detailModalStyles.overlay}>
+            <View style={detailModalStyles.sheet}>
+              {/* Header */}
+              <View style={detailModalStyles.header}>
+                <View style={detailModalStyles.headerLeft}>
+                  <Text style={detailModalStyles.headerTitle}>Session Details</Text>
+                </View>
+                <TouchableOpacity
+                  style={detailModalStyles.closeBtn}
+                  onPress={onClose}
+                  accessibilityRole="button"
+                  accessibilityLabel="Close session details"
+                >
+                  <X size={18} color={tokens.textSecondary} />
+                </TouchableOpacity>
               </View>
-              <Text style={detailModalStyles.memberName}>
-                {session.memberName ?? 'Member'}
-              </Text>
-            </View>
 
-            {/* Status badge */}
-            <View style={[detailModalStyles.statusBadge, { backgroundColor: badgeStyle.bg, borderColor: badgeStyle.border }]}>
-              {badge === 'Confirmed' ? (
-                <CheckCircle size={12} color={badgeStyle.text} />
-              ) : badge === 'Missed' ? (
-                <AlertCircle size={12} color={badgeStyle.text} />
-              ) : null}
-              <Text style={[detailModalStyles.statusText, { color: badgeStyle.text }]}>{badge}</Text>
-            </View>
-
-            {/* Details rows */}
-            <View style={detailModalStyles.detailsCard}>
-              <View style={detailModalStyles.detailRow}>
-                <CalendarDays size={14} color={tokens.textSecondary} />
-                <View style={detailModalStyles.detailContent}>
-                  <Text style={detailModalStyles.detailLabel}>Date</Text>
-                  <Text style={detailModalStyles.detailValue}>
-                    {formatDateLabel(session.scheduledAt)}
+              <ScrollView
+                style={detailModalStyles.body}
+                contentContainerStyle={detailModalStyles.bodyContent}
+                showsVerticalScrollIndicator={false}
+              >
+                {/* Member name */}
+                <View style={detailModalStyles.memberRow}>
+                  <View style={detailModalStyles.avatarCircle}>
+                    <User size={20} color={tokens.primary} />
+                  </View>
+                  <Text style={detailModalStyles.memberName}>
+                    {session.memberName ?? 'Member'}
                   </Text>
                 </View>
-              </View>
 
-              <View style={detailModalStyles.divider} />
-
-              <View style={detailModalStyles.detailRow}>
-                <Clock size={14} color={tokens.textSecondary} />
-                <View style={detailModalStyles.detailContent}>
-                  <Text style={detailModalStyles.detailLabel}>Time</Text>
-                  <Text style={detailModalStyles.detailValue}>
-                    {formatTimeRange(session.scheduledAt, session.scheduledEndAt)}
-                  </Text>
+                {/* Status badge */}
+                <View style={[detailModalStyles.statusBadge, { backgroundColor: badgeStyle.bg, borderColor: badgeStyle.border }]}>
+                  {badge === 'Confirmed' ? (
+                    <CheckCircle size={12} color={badgeStyle.text} />
+                  ) : badge === 'Missed' ? (
+                    <AlertCircle size={12} color={badgeStyle.text} />
+                  ) : null}
+                  <Text style={[detailModalStyles.statusText, { color: badgeStyle.text }]}>{badge}</Text>
                 </View>
-              </View>
 
-              <View style={detailModalStyles.divider} />
-
-              <View style={detailModalStyles.detailRow}>
-                <SessionModeIcon mode={session.mode} size={14} color={tokens.textSecondary} />
-                <View style={detailModalStyles.detailContent}>
-                  <Text style={detailModalStyles.detailLabel}>Session Type</Text>
-                  <Text style={detailModalStyles.detailValue}>
-                    {sessionModeLabel(session.mode)}
-                  </Text>
-                </View>
-              </View>
-
-              {session.notes ? (
-                <>
-                  <View style={detailModalStyles.divider} />
+                {/* Details rows */}
+                <View style={detailModalStyles.detailsCard}>
                   <View style={detailModalStyles.detailRow}>
-                    <View style={{ width: 14, alignItems: 'center' }}>
-                      <Text style={{ fontSize: 14 }}>📝</Text>
-                    </View>
+                    <CalendarDays size={14} color={tokens.textSecondary} />
                     <View style={detailModalStyles.detailContent}>
-                      <Text style={detailModalStyles.detailLabel}>Notes</Text>
-                      <Text style={detailModalStyles.detailValue}>{session.notes}</Text>
+                      <Text style={detailModalStyles.detailLabel}>Date</Text>
+                      <Text style={detailModalStyles.detailValue}>
+                        {formatDateLabel(session.scheduledAt)}
+                      </Text>
                     </View>
                   </View>
-                </>
-              ) : null}
-            </View>
-          </ScrollView>
 
-          {/* Footer */}
-          <View style={detailModalStyles.footer}>
-            {/* Confirm / Decline — only for a member-requested pending session. */}
-            {isPending && (
-              <View style={detailModalStyles.confirmRow}>
-                <TouchableOpacity
-                  style={[detailModalStyles.declineBtn, actionPending && { opacity: 0.6 }]}
-                  disabled={actionPending}
-                  onPress={async () => {
-                    try {
-                      await declineSession.mutateAsync(session.id);
+                  <View style={detailModalStyles.divider} />
+
+                  <View style={detailModalStyles.detailRow}>
+                    <Clock size={14} color={tokens.textSecondary} />
+                    <View style={detailModalStyles.detailContent}>
+                      <Text style={detailModalStyles.detailLabel}>Time</Text>
+                      <Text style={detailModalStyles.detailValue}>
+                        {formatTimeRange(session.scheduledAt, session.scheduledEndAt)}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={detailModalStyles.divider} />
+
+                  <View style={detailModalStyles.detailRow}>
+                    <SessionModeIcon mode={session.mode} size={14} color={tokens.textSecondary} />
+                    <View style={detailModalStyles.detailContent}>
+                      <Text style={detailModalStyles.detailLabel}>Session Type</Text>
+                      <Text style={detailModalStyles.detailValue}>
+                        {sessionModeLabel(session.mode)}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {session.notes ? (
+                    <>
+                      <View style={detailModalStyles.divider} />
+                      <View style={detailModalStyles.detailRow}>
+                        <View style={{ width: 14, alignItems: 'center' }}>
+                          <Text style={{ fontSize: 14 }}>📝</Text>
+                        </View>
+                        <View style={detailModalStyles.detailContent}>
+                          <Text style={detailModalStyles.detailLabel}>Notes</Text>
+                          <Text style={detailModalStyles.detailValue}>{session.notes}</Text>
+                        </View>
+                      </View>
+                    </>
+                  ) : null}
+                </View>
+              </ScrollView>
+
+              {/* Footer */}
+              <View style={detailModalStyles.footer}>
+                {/* Confirm / Decline — only for a member-requested pending session. */}
+                {isPending && (
+                  <View style={detailModalStyles.confirmRow}>
+                    <TouchableOpacity
+                      style={[detailModalStyles.declineBtn, actionPending && { opacity: 0.6 }]}
+                      disabled={actionPending}
+                      onPress={async () => {
+                        try {
+                          await declineSession.mutateAsync(session.id);
+                          onClose();
+                        } catch {
+                          // error surfaced by the hook's onError alert
+                        }
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel="Decline session request"
+                    >
+                      <Text style={detailModalStyles.declineText}>Decline</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[detailModalStyles.confirmBtn, actionPending && { opacity: 0.6 }]}
+                      disabled={actionPending}
+                      onPress={async () => {
+                        try {
+                          await confirmSession.mutateAsync(session.id);
+                          onClose();
+                        } catch {
+                          // error surfaced by the hook's onError alert
+                        }
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel="Confirm session request"
+                    >
+                      <CheckCircle size={14} color="#FFFFFF" />
+                      <Text style={detailModalStyles.confirmText}>
+                        {confirmSession.isPending ? 'Confirming…' : 'Confirm'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {isConfirmedUpcoming ? (
+                  // Upcoming, CHW-confirmed session — Begin/Propose/Remove replace
+                  // the plain Open Member Profile button below.
+                  <View style={detailModalStyles.scheduledActions}>
+                    <TouchableOpacity
+                      style={[detailModalStyles.beginBtn, startSession.isPending && { opacity: 0.6 }]}
+                      disabled={startSession.isPending}
+                      onPress={async () => {
+                        try {
+                          await startSession.mutateAsync(session.id);
+                        } catch {
+                          // useStartSession intentionally does not alert (its other
+                          // callers own specialized 409 handling) — surface a
+                          // generic message here instead.
+                          showAlert('Failed to start session', 'Please try again.');
+                          return;
+                        }
+                        onClose();
+                        onNavigateToMessages(session.memberId);
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel="Begin session"
+                    >
+                      {startSession.isPending ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                      ) : (
+                        <Text style={detailModalStyles.beginText}>Begin Session</Text>
+                      )}
+                    </TouchableOpacity>
+
+                    <View style={detailModalStyles.secondaryRow}>
+                      <TouchableOpacity
+                        style={detailModalStyles.proposeBtn}
+                        onPress={() => {
+                          onClose();
+                          onProposeNewTime(session);
+                        }}
+                        accessibilityRole="button"
+                        accessibilityLabel="Propose a new time"
+                      >
+                        <Text style={detailModalStyles.proposeBtnText}>Propose New Time</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={detailModalStyles.removeBtn}
+                        onPress={() => setRemoveConfirmOpen(true)}
+                        accessibilityRole="button"
+                        accessibilityLabel="Remove session"
+                      >
+                        <Text style={detailModalStyles.removeBtnText}>Remove</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    style={detailModalStyles.openProfileBtn}
+                    onPress={() => {
                       onClose();
-                    } catch {
-                      // error surfaced by the hook's onError alert
-                    }
-                  }}
-                  accessibilityRole="button"
-                  accessibilityLabel="Decline session request"
-                >
-                  <Text style={detailModalStyles.declineText}>Decline</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[detailModalStyles.confirmBtn, actionPending && { opacity: 0.6 }]}
-                  disabled={actionPending}
-                  onPress={async () => {
-                    try {
-                      await confirmSession.mutateAsync(session.id);
-                      onClose();
-                    } catch {
-                      // error surfaced by the hook's onError alert
-                    }
-                  }}
-                  accessibilityRole="button"
-                  accessibilityLabel="Confirm session request"
-                >
-                  <CheckCircle size={14} color="#FFFFFF" />
-                  <Text style={detailModalStyles.confirmText}>
-                    {confirmSession.isPending ? 'Confirming…' : 'Confirm'}
-                  </Text>
-                </TouchableOpacity>
+                      onOpenProfile(session.memberId);
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Open ${session.memberName ?? 'member'} profile`}
+                  >
+                    <User size={14} color="#FFFFFF" />
+                    <Text style={detailModalStyles.openProfileText}>Open Member Profile</Text>
+                  </TouchableOpacity>
+                )}
               </View>
-            )}
-            <TouchableOpacity
-              style={detailModalStyles.openProfileBtn}
-              onPress={() => {
-                onClose();
-                onOpenProfile(session.memberId);
-              }}
-              accessibilityRole="button"
-              accessibilityLabel={`Open ${session.memberName ?? 'member'} profile`}
-            >
-              <User size={14} color="#FFFFFF" />
-              <Text style={detailModalStyles.openProfileText}>Open Member Profile</Text>
-            </TouchableOpacity>
+            </View>
           </View>
-        </View>
-      </View>
-    </Modal>
+        </Modal>
+      <RemoveSessionConfirmModal
+        visible={removeConfirmOpen}
+        isPending={cancelSession.isPending}
+        onCancel={() => setRemoveConfirmOpen(false)}
+        onConfirm={async () => {
+          try {
+            await cancelSession.mutateAsync(session.id);
+            setRemoveConfirmOpen(false);
+            onClose();
+          } catch {
+            // useCancelSession surfaces the error via its onError alert; keep
+            // the confirm dialog open so the CHW can retry.
+          }
+        }}
+      />
+      </>
   );
 }
 
@@ -1193,6 +1301,193 @@ const detailModalStyles = StyleSheet.create({
     fontSize: 14,
     color: '#FFFFFF',
   },
+  scheduledActions: {
+    gap: spacing.sm,
+  },
+  beginBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    backgroundColor: tokens.emerald700,
+    paddingVertical: 12,
+    borderRadius: radius.md,
+    minHeight: 44,
+  },
+  beginText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 14,
+    color: '#FFFFFF',
+  },
+  secondaryRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  proposeBtn: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    backgroundColor: '#FFFFFF',
+    minHeight: 44,
+  },
+  proposeBtnText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 14,
+    color: '#374151',
+  },
+  removeBtn: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    backgroundColor: '#FEF2F2',
+    minHeight: 44,
+  },
+  removeBtnText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 14,
+    color: '#b91c1c',
+  },
+});
+
+// ─── Remove Session Confirm Modal ─────────────────────────────────────────────
+
+interface RemoveSessionConfirmModalProps {
+  visible: boolean;
+  isPending: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}
+
+/**
+ * Yes/No confirmation shown before removing (cancelling) an upcoming scheduled
+ * session — mirrors MemberProfileScreen's RefuseServicesConfirmModal pattern
+ * (an in-app Modal, never window.confirm/Alert.alert, so the prompt is
+ * consistent across web + native).
+ */
+function RemoveSessionConfirmModal({
+  visible,
+  isPending,
+  onConfirm,
+  onCancel,
+}: RemoveSessionConfirmModalProps): React.JSX.Element {
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onCancel}
+      accessibilityViewIsModal
+    >
+      <View style={removeModalStyles.overlay}>
+        <View style={removeModalStyles.dialog}>
+          <Text style={removeModalStyles.title}>Remove this scheduled session?</Text>
+          <Text style={removeModalStyles.body}>
+            The member will be notified. This can't be undone.
+          </Text>
+          <View style={removeModalStyles.actions}>
+            <TouchableOpacity
+              style={removeModalStyles.cancelBtn}
+              onPress={onCancel}
+              disabled={isPending}
+              accessibilityRole="button"
+              accessibilityLabel="No, keep session"
+            >
+              <Text style={removeModalStyles.cancelBtnText}>No, Keep It</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[removeModalStyles.confirmBtn, isPending && { opacity: 0.6 }]}
+              onPress={onConfirm}
+              disabled={isPending}
+              accessibilityRole="button"
+              accessibilityLabel="Yes, remove session"
+            >
+              {isPending ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Text style={removeModalStyles.confirmBtnText}>Yes, Remove</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+const removeModalStyles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.xl,
+  },
+  dialog: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: radius.xl,
+    padding: spacing.xl,
+    width: '100%',
+    maxWidth: 400,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.18,
+    shadowRadius: 32,
+    elevation: 12,
+  },
+  title: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 17,
+    color: '#1E3320',
+    marginBottom: spacing.sm,
+  },
+  body: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 14,
+    color: '#6B7280',
+    lineHeight: 20,
+    marginBottom: spacing.xl,
+  },
+  actions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  cancelBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 44,
+  },
+  cancelBtnText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 14,
+    color: '#374151',
+  },
+  confirmBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: radius.md,
+    backgroundColor: '#DC2626',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 44,
+  },
+  confirmBtnText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 14,
+    color: '#FFFFFF',
+  },
 });
 
 // ─── Schedule Session Modal ───────────────────────────────────────────────────
@@ -1215,6 +1510,25 @@ interface ScheduleSessionModalProps {
   onClose: () => void;
   members: MembersRosterItem[];
   isLoadingMembers: boolean;
+  /** Reschedule/"Propose New Time" mode — locks the member picker to this id. */
+  prefillMemberId?: string;
+  /** Display name shown for the locked member (avoids a members-list lookup). */
+  prefillMemberName?: string;
+  /** "MM/DD/YYYY" — matches the Date field's own input format. */
+  prefillDate?: string;
+  /** "h:mm AM/PM" — matches the Start/End Time fields' own input format. */
+  prefillStartTime?: string;
+  prefillEndTime?: string;
+  /**
+   * When set, the modal is in reschedule/"Propose New Time" mode: the member
+   * is locked, schedulingStatus is forced to 'pending' (the member must
+   * confirm the CHW's proposed time), and — only after the new booking
+   * succeeds — this session id is declined. Mirrors MemberCalendarScreen's
+   * replaceSessionId pattern: the old session is cancelled AFTER the new one
+   * is confirmed booked, so a failed re-book never loses the original
+   * session.
+   */
+  replaceSessionId?: string;
 }
 
 /**
@@ -1222,14 +1536,26 @@ interface ScheduleSessionModalProps {
  *
  * Collects: member (searchable list), session type, date, start time, end time,
  * scheduling status, and optional notes. Submits via useScheduleSession().
+ *
+ * Doubles as the "Propose New Time" reschedule flow for a member-requested
+ * pending session (see `replaceSessionId` above) — opened from
+ * PendingRequestsList with the member locked and the original time prefilled.
  */
 function ScheduleSessionModal({
   visible,
   onClose,
   members,
   isLoadingMembers,
+  prefillMemberId,
+  prefillMemberName,
+  prefillDate,
+  prefillStartTime,
+  prefillEndTime,
+  replaceSessionId,
 }: ScheduleSessionModalProps): React.JSX.Element {
   const { mutateAsync, isPending } = useScheduleSession();
+  const declineOldSession = useDeclineSession();
+  const isProposeMode = !!replaceSessionId;
 
   // Form state
   const [memberSearch, setMemberSearch] = useState('');
@@ -1276,6 +1602,31 @@ function ScheduleSessionModal({
     resetForm();
     onClose();
   }, [resetForm, onClose]);
+
+  // Propose New Time: seed the form from the request's member + scheduled
+  // time whenever the modal opens in reschedule mode. The modal stays
+  // mounted between opens (visible toggles), so this can't just be an
+  // initializer — it must re-run each time `visible` flips true.
+  useEffect(() => {
+    if (!visible || !replaceSessionId) return;
+    setSelectedMemberId(prefillMemberId ?? '');
+    setSelectedMemberName(prefillMemberName ?? '');
+    setMemberSearch('');
+    if (prefillDate) setDateInput(prefillDate);
+    if (prefillStartTime) setStartTimeInput(prefillStartTime);
+    if (prefillEndTime) setEndTimeInput(prefillEndTime);
+    setSchedulingStatus('pending');
+    setNotes('');
+    setFieldError(null);
+  }, [
+    visible,
+    replaceSessionId,
+    prefillMemberId,
+    prefillMemberName,
+    prefillDate,
+    prefillStartTime,
+    prefillEndTime,
+  ]);
 
   /**
    * Parses "MM/DD/YYYY" and "HH:MM AM/PM" into a combined ISO string.
@@ -1335,9 +1686,25 @@ function ScheduleSessionModal({
         scheduledAt,
         scheduledEndAt,
         mode: sessionMode,
-        schedulingStatus,
+        // Propose New Time always books a pending request — the member must
+        // confirm the CHW's proposed time, regardless of the Status field
+        // (which is hidden in this mode anyway).
+        schedulingStatus: isProposeMode ? 'pending' : schedulingStatus,
         notes: notes.trim() || undefined,
       });
+      // Reschedule: only after the new booking succeeds do we decline the
+      // original pending request, so a failure never leaves the member with
+      // no session at all. Mirrors MemberCalendarScreen's replaceSessionId
+      // ordering exactly.
+      if (replaceSessionId) {
+        try {
+          await declineOldSession.mutateAsync(replaceSessionId);
+        } catch {
+          // Non-fatal — the new session booked successfully; the stale
+          // pending request can be declined manually. declineOldSession
+          // surfaces its own error alert.
+        }
+      }
       handleClose();
     } catch {
       // Error alert handled by useScheduleSession onError
@@ -1352,9 +1719,12 @@ function ScheduleSessionModal({
     notes,
     mutateAsync,
     handleClose,
+    isProposeMode,
+    replaceSessionId,
+    declineOldSession,
   ]);
 
-  const canSubmit = selectedMemberId.length > 0 && !isPending;
+  const canSubmit = selectedMemberId.length > 0 && !isPending && !declineOldSession.isPending;
 
   return (
     <Modal
@@ -1368,7 +1738,9 @@ function ScheduleSessionModal({
         <View style={scheduleModalStyles.sheet}>
           {/* Header */}
           <View style={scheduleModalStyles.header}>
-            <Text style={scheduleModalStyles.headerTitle}>Schedule Session</Text>
+            <Text style={scheduleModalStyles.headerTitle}>
+              {isProposeMode ? 'Propose New Time' : 'Schedule Session'}
+            </Text>
             <TouchableOpacity
               style={scheduleModalStyles.closeBtn}
               onPress={handleClose}
@@ -1394,13 +1766,18 @@ function ScheduleSessionModal({
                     <User size={14} color={tokens.primary} />
                   </View>
                   <Text style={scheduleModalStyles.selectedMemberName}>{selectedMemberName}</Text>
-                  <TouchableOpacity
-                    onPress={() => { setSelectedMemberId(''); setSelectedMemberName(''); setMemberSearch(''); }}
-                    accessibilityRole="button"
-                    accessibilityLabel="Clear member selection"
-                  >
-                    <X size={14} color={tokens.textSecondary} />
-                  </TouchableOpacity>
+                  {/* Propose New Time reschedules the SAME member's request —
+                      the CHW can't swap who it's with, so the clear button is
+                      hidden while the member is locked. */}
+                  {!isProposeMode && (
+                    <TouchableOpacity
+                      onPress={() => { setSelectedMemberId(''); setSelectedMemberName(''); setMemberSearch(''); }}
+                      accessibilityRole="button"
+                      accessibilityLabel="Clear member selection"
+                    >
+                      <X size={14} color={tokens.textSecondary} />
+                    </TouchableOpacity>
+                  )}
                 </View>
               ) : (
                 <>
@@ -1523,29 +1900,40 @@ function ScheduleSessionModal({
               </View>
             </View>
 
-            {/* Status */}
-            <View style={scheduleModalStyles.field}>
-              <Text style={scheduleModalStyles.fieldLabel}>Status</Text>
-              <View style={scheduleModalStyles.segmentRow}>
-                {SCHEDULING_STATUS_OPTIONS.map(({ value, label }) => {
-                  const isActive = schedulingStatus === value;
-                  return (
-                    <TouchableOpacity
-                      key={value}
-                      style={[scheduleModalStyles.segmentBtn, isActive && scheduleModalStyles.segmentBtnActive]}
-                      onPress={() => setSchedulingStatus(value)}
-                      accessibilityRole="radio"
-                      accessibilityState={{ checked: isActive }}
-                      accessibilityLabel={label}
-                    >
-                      <Text style={[scheduleModalStyles.segmentText, isActive && scheduleModalStyles.segmentTextActive]}>
-                        {label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
+            {/* Status — hidden in Propose New Time mode, where it's forced to
+                'pending' since the member must confirm the CHW's new time. */}
+            {isProposeMode ? (
+              <View style={scheduleModalStyles.field}>
+                <Text style={scheduleModalStyles.fieldLabel}>Status</Text>
+                <Text style={scheduleModalStyles.proposeHint}>
+                  Sent as a new pending request — {selectedMemberName || 'the member'} will
+                  need to confirm this time.
+                </Text>
               </View>
-            </View>
+            ) : (
+              <View style={scheduleModalStyles.field}>
+                <Text style={scheduleModalStyles.fieldLabel}>Status</Text>
+                <View style={scheduleModalStyles.segmentRow}>
+                  {SCHEDULING_STATUS_OPTIONS.map(({ value, label }) => {
+                    const isActive = schedulingStatus === value;
+                    return (
+                      <TouchableOpacity
+                        key={value}
+                        style={[scheduleModalStyles.segmentBtn, isActive && scheduleModalStyles.segmentBtnActive]}
+                        onPress={() => setSchedulingStatus(value)}
+                        accessibilityRole="radio"
+                        accessibilityState={{ checked: isActive }}
+                        accessibilityLabel={label}
+                      >
+                        <Text style={[scheduleModalStyles.segmentText, isActive && scheduleModalStyles.segmentTextActive]}>
+                          {label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+            )}
 
             {/* Notes (optional) */}
             <View style={scheduleModalStyles.field}>
@@ -1587,13 +1975,15 @@ function ScheduleSessionModal({
               onPress={() => void handleSubmit()}
               disabled={!canSubmit}
               accessibilityRole="button"
-              accessibilityLabel="Schedule session"
+              accessibilityLabel={isProposeMode ? 'Propose new time' : 'Schedule session'}
               accessibilityState={{ disabled: !canSubmit }}
             >
-              {isPending ? (
+              {isPending || declineOldSession.isPending ? (
                 <ActivityIndicator size="small" color="#FFFFFF" />
               ) : (
-                <Text style={scheduleModalStyles.submitText}>Schedule Session</Text>
+                <Text style={scheduleModalStyles.submitText}>
+                  {isProposeMode ? 'Propose New Time' : 'Schedule Session'}
+                </Text>
               )}
             </TouchableOpacity>
           </View>
@@ -1663,6 +2053,12 @@ const scheduleModalStyles = StyleSheet.create({
     fontSize: 13,
     color: '#374151',
     letterSpacing: 0.2,
+  },
+  proposeHint: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: '#6B7280',
+    lineHeight: 18,
   },
   selectedMember: {
     flexDirection: 'row',
@@ -1890,6 +2286,16 @@ export function CHWCalendarScreen(): React.JSX.Element {
     });
   }, [navigation]);
 
+  // Navigate to Messages for a member — used by SessionDetailsModal's "Begin
+  // Session" once the session has actually been started (mirrors
+  // CHWMemberProfileScreen.handleNavigateToConversation).
+  const handleNavigateToMessages = useCallback((memberId: string) => {
+    (navigation as any).navigate('SessionsStack', {
+      screen: 'Messages',
+      params: { memberId },
+    });
+  }, [navigation]);
+
   // View mode: web defaults to 'week'.
   const [viewMode, setViewMode] = useState<CalendarViewMode>(
     Platform.OS === 'web' ? 'week' : 'month',
@@ -1911,6 +2317,20 @@ export function CHWCalendarScreen(): React.JSX.Element {
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
   const [detailSession, setDetailSession] = useState<SessionData | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+
+  // "Propose New Time" — the pending request currently being rescheduled, if
+  // any. Set from PendingRequestsList; drives ScheduleSessionModal into its
+  // reschedule/prefill mode (see replaceSessionId prop).
+  const [proposeRequest, setProposeRequest] = useState<SessionData | null>(null);
+
+  const handleProposeNewTime = useCallback((request: SessionData) => {
+    setProposeRequest(request);
+  }, []);
+
+  const handleScheduleModalClose = useCallback(() => {
+    setIsScheduleModalOpen(false);
+    setProposeRequest(null);
+  }, []);
 
   const allSessions = rawSessions ?? [];
   const allMembers = rawMembers ?? [];
@@ -2171,7 +2591,7 @@ export function CHWCalendarScreen(): React.JSX.Element {
             right={headerRight}
           />
 
-          <PendingRequestsList requests={pendingRequests} />
+          <PendingRequestsList requests={pendingRequests} onProposeNewTime={handleProposeNewTime} />
 
           <Card style={webStyles.calendarCard}>
             {calendarContent}
@@ -2185,14 +2605,25 @@ export function CHWCalendarScreen(): React.JSX.Element {
           visible={isDetailModalOpen}
           onClose={() => setIsDetailModalOpen(false)}
           onOpenProfile={handleOpenProfile}
+          onNavigateToMessages={handleNavigateToMessages}
+          onProposeNewTime={handleProposeNewTime}
         />
 
-        {/* Schedule Session modal */}
+        {/* Schedule Session modal — also powers "Propose New Time" (see
+            proposeRequest) when opened from a pending request row below. */}
         <ScheduleSessionModal
-          visible={isScheduleModalOpen}
-          onClose={() => setIsScheduleModalOpen(false)}
+          visible={isScheduleModalOpen || proposeRequest !== null}
+          onClose={handleScheduleModalClose}
           members={allMembers}
           isLoadingMembers={isLoadingMembers}
+          prefillMemberId={proposeRequest?.memberId}
+          prefillMemberName={proposeRequest?.memberName}
+          prefillDate={proposeRequest ? formatDateInputValue(proposeRequest.scheduledAt) : undefined}
+          prefillStartTime={proposeRequest ? formatTimeAMPM(proposeRequest.scheduledAt) : undefined}
+          prefillEndTime={
+            proposeRequest?.scheduledEndAt ? formatTimeAMPM(proposeRequest.scheduledEndAt) : undefined
+          }
+          replaceSessionId={proposeRequest?.id}
         />
       </AppShell>
     );
@@ -2217,7 +2648,7 @@ export function CHWCalendarScreen(): React.JSX.Element {
           {headerRight}
         </View>
 
-        <PendingRequestsList requests={pendingRequests} />
+        <PendingRequestsList requests={pendingRequests} onProposeNewTime={handleProposeNewTime} />
 
         {/* Calendar card */}
         <View style={mainStyles.calendarCard}>
@@ -2232,14 +2663,25 @@ export function CHWCalendarScreen(): React.JSX.Element {
         visible={isDetailModalOpen}
         onClose={() => setIsDetailModalOpen(false)}
         onOpenProfile={handleOpenProfile}
+        onNavigateToMessages={handleNavigateToMessages}
+        onProposeNewTime={handleProposeNewTime}
       />
 
-      {/* Schedule Session modal */}
+      {/* Schedule Session modal — also powers "Propose New Time" (see
+          proposeRequest) when opened from a pending request row above. */}
       <ScheduleSessionModal
-        visible={isScheduleModalOpen}
-        onClose={() => setIsScheduleModalOpen(false)}
+        visible={isScheduleModalOpen || proposeRequest !== null}
+        onClose={handleScheduleModalClose}
         members={allMembers}
         isLoadingMembers={isLoadingMembers}
+        prefillMemberId={proposeRequest?.memberId}
+        prefillMemberName={proposeRequest?.memberName}
+        prefillDate={proposeRequest ? formatDateInputValue(proposeRequest.scheduledAt) : undefined}
+        prefillStartTime={proposeRequest ? formatTimeAMPM(proposeRequest.scheduledAt) : undefined}
+        prefillEndTime={
+          proposeRequest?.scheduledEndAt ? formatTimeAMPM(proposeRequest.scheduledEndAt) : undefined
+        }
+        replaceSessionId={proposeRequest?.id}
       />
     </SafeAreaView>
   );
@@ -2461,16 +2903,22 @@ const mainStyles = StyleSheet.create({
 
 interface PendingRequestsListProps {
   requests: SessionData[];
+  /** Opens ScheduleSessionModal in "Propose New Time" mode for this request. */
+  onProposeNewTime: (request: SessionData) => void;
 }
 
 /**
  * Member-requested (pending) sessions awaiting this CHW's approval, listed above
  * the calendar. Each row can be Approved (→ confirmed) or Declined (→ cancelled)
  * inline via useConfirmSession / useDeclineSession, which post a message to the
- * shared thread and refresh both calendars.
+ * shared thread and refresh both calendars. "Propose New Time" opens the CHW
+ * scheduling modal pre-filled with this request's member + time (see
+ * onProposeNewTime / ScheduleSessionModal's replaceSessionId mode) so the CHW
+ * can counter-offer a different slot instead of just approving or declining.
  */
 function PendingRequestsList({
   requests,
+  onProposeNewTime,
 }: PendingRequestsListProps): React.JSX.Element | null {
   const confirmSession = useConfirmSession();
   const declineSession = useDeclineSession();
@@ -2497,6 +2945,15 @@ function PendingRequestsList({
             </Text>
           </View>
           <View style={pendingStyles.actions}>
+            <TouchableOpacity
+              style={[pendingStyles.proposeBtn, busy && { opacity: 0.6 }]}
+              disabled={busy}
+              onPress={() => onProposeNewTime(r)}
+              accessibilityRole="button"
+              accessibilityLabel={`Propose new time for ${r.memberName ?? 'member'}`}
+            >
+              <Text style={pendingStyles.proposeText}>Propose New Time</Text>
+            </TouchableOpacity>
             <TouchableOpacity
               style={[pendingStyles.declineBtn, busy && { opacity: 0.6 }]}
               disabled={busy}
@@ -2568,6 +3025,19 @@ const pendingStyles = StyleSheet.create({
   actions: {
     flexDirection: 'row',
     gap: spacing.sm,
+  },
+  proposeBtn: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 8,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    backgroundColor: '#FFFFFF',
+  },
+  proposeText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#374151',
   },
   declineBtn: {
     paddingHorizontal: spacing.md,

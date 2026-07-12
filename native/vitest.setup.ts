@@ -70,6 +70,31 @@ vi.mock('lucide-react-native', () => {
 // races vitest's parallel workers and lets reanimated's broken browser `mock.js`
 // load first, flaking CI). See that stub for the rationale.
 
+// react-native-safe-area-context's compiled bundle does the same bare
+// `import ... from 'react-native'` Vitest treats as external (see the
+// lucide-react-native comment above for the full mechanism) — which resolves
+// to the real `react-native` package's Flow-syntax entry and fails to parse
+// under jsdom/Node. SafeAreaView is the only export any screen actually uses
+// (checked across src/); stub it as a passthrough View plus no-op insets/
+// frame hooks for any component that reads them.
+vi.mock('react-native-safe-area-context', async () => {
+  const { View } = await import('react-native');
+  const SafeAreaView = React.forwardRef((props: Record<string, unknown>, ref: unknown) =>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    React.createElement(View as any, { ...props, ref }),
+  );
+  const SafeAreaProvider = (props: { children?: React.ReactNode }): React.ReactElement =>
+    React.createElement(React.Fragment, null, props.children);
+  const insets = { top: 0, right: 0, bottom: 0, left: 0 };
+  return {
+    SafeAreaView,
+    SafeAreaProvider,
+    SafeAreaInsetsContext: React.createContext(insets),
+    useSafeAreaInsets: () => insets,
+    useSafeAreaFrame: () => ({ x: 0, y: 0, width: 0, height: 0 }),
+  };
+});
+
 // Unmount any rendered component tree after each test so DOM state and React
 // Query providers never leak between tests.
 afterEach(() => {
