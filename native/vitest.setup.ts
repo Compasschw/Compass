@@ -1,3 +1,4 @@
+import React from 'react';
 import { cleanup } from '@testing-library/react';
 import { afterEach, vi } from 'vitest';
 
@@ -19,6 +20,41 @@ vi.mock('expo-sharing', () => ({
   isAvailableAsync: vi.fn(async () => false),
   shareAsync: vi.fn(async () => undefined),
 }));
+
+// lucide-react-native's compiled bundle does a bare `import ... from
+// 'react-native'` internally. Vitest treats node_modules packages as
+// external by default, which loads them via Node's native module loader —
+// bypassing both Vite's transform pipeline AND the `react-native` →
+// `react-native-web` alias in vitest.config.ts — so that nested import
+// resolves to the real `react-native` package, whose entry file uses Flow's
+// `import typeof` syntax and fails to parse under plain Node/jsdom. Icons are
+// decorative and irrelevant to component/hook test assertions, so stub the
+// whole package with a Proxy that returns a trivial functional component for
+// any icon name (`X`, `CheckCircle2`, `MessageSquare`, ... every named export
+// lucide-react-native has) instead of fighting SSR dependency resolution.
+vi.mock('lucide-react-native', () => {
+  const IconStub = (props: Record<string, unknown>): React.ReactElement =>
+    React.createElement('svg', { 'data-lucide-icon-stub': true, ...props });
+  // Property names that must NOT resolve to a function. Most critically
+  // `then` — if the Proxy returns a function for `then`, JS engines and
+  // interop helpers (Node's ESM/CJS interop, `await import(...)`, etc.)
+  // treat the whole module namespace object as a thenable and call
+  // `mod.then(resolve, reject)` on it. `IconStub(resolve, reject)` renders an
+  // <svg> and returns — it never calls `resolve`/`reject` — so whatever
+  // awaited the module hangs forever. Every other icon-name property still
+  // resolves to `IconStub`.
+  const NON_ICON_PROPS = new Set(['then', 'catch', 'finally', 'asymmetricMatch', 'nodeType', 'constructor']);
+  return new Proxy(
+    {},
+    {
+      get(_target, prop: string | symbol) {
+        if (prop === '__esModule') return true;
+        if (typeof prop === 'string' && !NON_ICON_PROPS.has(prop)) return IconStub;
+        return undefined;
+      },
+    },
+  );
+});
 
 // Unmount any rendered component tree after each test so DOM state and React
 // Query providers never leak between tests.
