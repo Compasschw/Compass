@@ -41,6 +41,7 @@ import {
 import { colors as tokens } from '../../theme/tokens';
 import { ConsentCheckboxes } from '../../components/shared/ConsentCheckboxes';
 import { ApiError } from '../../api/client';
+import { showAlert } from '../../utils/showAlert';
 import { useCreateChwMember, type CreatedChwMember } from '../../hooks/useApiQueries';
 import {
   INSURANCE_OPTIONS,
@@ -271,6 +272,17 @@ export function AddMemberModal({
       },
       {
         onSuccess: (member) => {
+          // On-brand confirmation. Fired here (not the caller) so it always
+          // surfaces regardless of who mounts the modal. showAlert renders the
+          // in-app Compass dialog on web (AppDialogProvider) and a native
+          // Alert on iOS/Android — never a bare browser popup. It enqueues to
+          // the app-root provider, so it survives the onClose() unmount below.
+          const firstName = (member.name || '').trim().split(/\s+/)[0] || 'The member';
+          showAlert(
+            'Member added',
+            `${firstName} has been added to your roster and can sign in with the ` +
+              'email and temporary password you provided.',
+          );
           onCreated?.(member);
           onClose();
         },

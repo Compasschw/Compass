@@ -20,9 +20,14 @@ vi.mock('../../api/client', async (importOriginal) => {
   return { ...actual, api: vi.fn() };
 });
 import { api } from '../../api/client';
+// Assert the on-brand success confirmation without needing AppDialogProvider
+// mounted in the test tree — the modal fires showAlert() on success.
+vi.mock('../../utils/showAlert', () => ({ showAlert: vi.fn() }));
+import { showAlert } from '../../utils/showAlert';
 import { AddMemberModal } from './AddMemberModal';
 
 const mockedApi = api as unknown as ReturnType<typeof vi.fn>;
+const mockedShowAlert = showAlert as unknown as ReturnType<typeof vi.fn>;
 
 function renderModal() {
   const qc = new QueryClient({
@@ -54,6 +59,7 @@ function fillRequiredFields(): void {
 
 beforeEach(() => {
   mockedApi.mockReset();
+  mockedShowAlert.mockReset();
   mockedApi.mockResolvedValue({
     id: 'm1',
     name: 'Jordan Rivera',
@@ -101,6 +107,22 @@ describe('AddMemberModal — required consent gate', () => {
     // Sanity: the rest of the payload still rides along.
     expect(body.email).toBe('jordan@example.com');
     expect(body.zip_code).toBe('90001');
+  });
+
+  it('surfaces an on-brand confirmation after a member is created', async () => {
+    renderModal();
+    fillRequiredFields();
+    fireEvent.click(screen.getByTestId('consent-terms'));
+    fireEvent.click(screen.getByTestId('consent-communications'));
+
+    fireEvent.click(screen.getByLabelText('Add member'));
+
+    await waitFor(() => expect(mockedShowAlert).toHaveBeenCalledTimes(1));
+    const [title, message] = mockedShowAlert.mock.calls[0];
+    expect(title).toBe('Member added');
+    // Personalized to the created member and reassures the CHW they can sign in.
+    expect(message).toContain('Jordan');
+    expect(message).toContain('sign in');
   });
 
   it('does not submit when only one consent box is checked', async () => {
