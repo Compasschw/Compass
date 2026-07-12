@@ -152,6 +152,10 @@ import {
 } from '../../hooks/useFileUpload';
 import { OpenQuestionsDrawer } from '../../components/chw/OpenQuestionsDrawer';
 import { DocumentationModal } from '../../components/sessions/DocumentationModal';
+import {
+  InlineSdohPanel,
+  SDOH_PANEL_PANE_BREAKPOINT,
+} from '../../components/assessment/InlineSdohPanel';
 import type { SessionDocumentation } from '../../data/mock';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
@@ -2389,6 +2393,13 @@ interface MemberContextRailProps {
   readonly autoBeginSessionOnMount?: boolean;
   /** Fired after the auto-begin attempt so the parent can clear the one-shot flag. */
   readonly onAutoBeginSessionConsumed?: () => void;
+  /**
+   * Called when the CHW taps "SDOH / Health Screening" with an active
+   * session. The parent (CHWMessagesScreen) owns the panel's open/close
+   * state because the panel renders as a sibling pane of the rail, not
+   * nested inside it — see InlineSdohPanel's header comment for why.
+   */
+  readonly onOpenSdohPanel: (sessionId: string) => void;
 }
 
 /**
@@ -2409,6 +2420,7 @@ function MemberContextRail({
   onSessionStarted,
   autoBeginSessionOnMount,
   onAutoBeginSessionConsumed,
+  onOpenSdohPanel,
 }: MemberContextRailProps): React.JSX.Element {
   const navigation = useNavigation<any>(); // eslint-disable-line @typescript-eslint/no-explicit-any
 
@@ -2946,13 +2958,11 @@ function MemberContextRail({
         <Card style={styles.railCard}>
           <PressableCard
             onPress={() => {
-              // Launch the actual SDOH/Health Screening assessment for the
-              // active session — its answers surface in the member profile's
-              // Screening Results. Requires an in-progress session.
+              // Open the SDOH/Health Screening questionnaire inline, within
+              // this Messages page — its answers surface in the member
+              // profile's Screening Results. Requires an in-progress session.
               if (conv.activeSessionId) {
-                navigation.navigate('CHWMemberAssessment', {
-                  sessionId: conv.activeSessionId,
-                });
+                onOpenSdohPanel(conv.activeSessionId);
               } else {
                 showAlert(
                   'Begin a session first',
@@ -3206,6 +3216,12 @@ export function CHWMessagesScreen(): React.JSX.Element {
   const [selectedConversation, setSelectedConversation] = useState<ConversationData | null>(null);
   const [showThreadList, setShowThreadList] = useState(true);
   const [documentingSessionId, setDocumentingSessionId] = useState<string | null>(null);
+  // SDOH / Health Screening — opened inline from MemberContextRail's rail
+  // card (see onOpenSdohPanel below). Owned here, not inside
+  // MemberContextRail, because the panel renders as a 4th sibling pane next
+  // to the rail (wide desktop) rather than nested/overlaying inside it — see
+  // InlineSdohPanel's header comment.
+  const [sdohSessionId, setSdohSessionId] = useState<string | null>(null);
 
   // Route params — navigate from CHWMemberProfileScreen with memberId + autoCall / autoBeginSession
   const route = useRoute<RouteProp<CHWSessionsStackParamList, 'Messages'>>();
@@ -3221,6 +3237,15 @@ export function CHWMessagesScreen(): React.JSX.Element {
 
   const hideRail = width < BP_HIDE_RAIL;
   const hideList = width < BP_HIDE_LIST;
+
+  // SDOH panel variant: 'pane' when there's room for a genuine 4th column
+  // beside the rail (thread + rail + panel all stay visible/interactive at
+  // once — the non-blocking design). Below that width (including the whole
+  // range where the rail itself is already hidden) it falls back to a
+  // dismissible overlay sheet — see InlineSdohPanel's header comment for the
+  // documented tradeoff.
+  const sdohPanelVariant: 'pane' | 'sheet' =
+    !hideRail && width >= SDOH_PANEL_PANE_BREAKPOINT ? 'pane' : 'sheet';
 
   // Resizable pane widths (web only, persisted via localStorage)
   const [leftWidth, setLeftWidth] = useState<number>(() =>
@@ -3290,6 +3315,21 @@ export function CHWMessagesScreen(): React.JSX.Element {
   const handleBack = useCallback((): void => {
     setShowThreadList(true);
   }, []);
+
+  const handleOpenSdohPanel = useCallback((sessionId: string): void => {
+    setSdohSessionId(sessionId);
+  }, []);
+
+  const handleCloseSdohPanel = useCallback((): void => {
+    setSdohSessionId(null);
+  }, []);
+
+  // Close the SDOH panel when the CHW switches to a different member's
+  // thread — otherwise it would keep showing (and could resume/complete)
+  // the previous member's in-progress assessment against the new thread.
+  useEffect(() => {
+    setSdohSessionId(null);
+  }, [selectedConversation?.id]);
 
   // After End Session completes — open DocumentationModal with the just-ended
   // session id (passed from the rail). Do NOT re-read activeSessionId here: it
@@ -3509,8 +3549,26 @@ export function CHWMessagesScreen(): React.JSX.Element {
               onAutoBeginSessionConsumed={() => {
                 autoBeginFiredRef.current = true;
               }}
+              onOpenSdohPanel={handleOpenSdohPanel}
             />
           </View>
+        ) : null}
+
+        {/* SDOH / Health Screening — inline panel. A genuine sibling pane of
+            the rail (never nested inside it) so the thread and every rail
+            control, including "Add Case Note", stay visible and clickable
+            while it's open. See InlineSdohPanel's header comment for the
+            'pane' vs 'sheet' variant tradeoff. */}
+        {sdohSessionId != null ? (
+          <InlineSdohPanel
+            key={sdohSessionId}
+            sessionId={sdohSessionId}
+            memberName={
+              (liveSelectedConversation ?? selectedConversation)?.memberName ?? null
+            }
+            onClose={handleCloseSdohPanel}
+            variant={sdohPanelVariant}
+          />
         ) : null}
       </View>
 
