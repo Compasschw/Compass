@@ -758,7 +758,11 @@ function MonthViewGrid({
   );
 }
 
-const CELL_SIZE = 52;
+// Month-view day-cell minimum height. Sized to give the grid vertical
+// breathing room on the desktop CHW calendar (was 52 — too cramped, leaving a
+// short grid stranded in a tall viewport). Width stays percentage-based (1/7),
+// so this only affects row height.
+const CELL_SIZE = 108;
 
 const monthStyles = StyleSheet.create({
   headerRow: {
@@ -803,9 +807,9 @@ const monthStyles = StyleSheet.create({
     backgroundColor: tokens.primary + '10',
   },
   dayNumber: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -814,7 +818,7 @@ const monthStyles = StyleSheet.create({
   },
   dayText: {
     fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 12,
+    fontSize: 14,
     color: '#1E3320',
   },
   dayTextToday: {
