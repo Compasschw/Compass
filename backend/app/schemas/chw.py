@@ -21,7 +21,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
-from app.schemas.auth import SexEnum, normalize_member_pear_fields
+from app.schemas.auth import (
+    SexEnum,
+    enforce_member_signup_consent,
+    normalize_member_pear_fields,
+)
 from app.schemas.cin_config import validate_cin_for_carrier as _validate_chw_cin
 
 # Valid CHW-assigned priority levels for a resource need.
@@ -642,12 +646,25 @@ class CHWCreateMemberRequest(BaseModel):
     state: str | None = Field(default=None, max_length=2)
     zip_code: str | None = Field(default=None, max_length=10)
 
+    # ── Required member consent (confirmed by the CHW on the member's behalf) ─
+    # A2P 10DLC documented opt-in + HIPAA consent audit. Both must be True.
+    # Default False so an absent field is treated as refusal (→ 422), matching
+    # the self-service /auth/register contract.
+    terms_accepted: bool = False
+    communications_consent: bool = False
+
     @model_validator(mode="after")
     def _enforce_member_pear_required_fields(self) -> "CHWCreateMemberRequest":
         """Reuse the /auth/register member validator so a CHW-created member is
         as complete (and Pear-ready) as a self-signed-up one. Normalizes the CIN
         (BIC/whitespace stripping) and the 2-letter state in place. Any
         violation raises ValueError → HTTP 422 at the Pydantic boundary."""
+        # Required consent — enforced at the boundary (defense in depth),
+        # identical to the self-service signup contract.
+        enforce_member_signup_consent(
+            terms_accepted=self.terms_accepted,
+            communications_consent=self.communications_consent,
+        )
         normalized_cin, normalized_state = normalize_member_pear_fields(
             name=self.name,
             date_of_birth=self.date_of_birth,

@@ -131,6 +131,9 @@ async def member_tokens(client: AsyncClient) -> dict:
         "city": "Los Angeles",
         "state": "CA",
         "zip_code": "90001",
+        # Required signup consent (documented opt-in) — see enforce_member_signup_consent.
+        "terms_accepted": True,
+        "communications_consent": True,
     })
     assert res.status_code == 201, f"Register failed: {res.text}"
     return res.json()
@@ -165,4 +168,7 @@ def complete_member_signup_payload(
         "city": "Los Angeles",
         "state": "CA",
         "zip_code": "90001",
+        # Required signup consent (documented opt-in) — see enforce_member_signup_consent.
+        "terms_accepted": True,
+        "communications_consent": True,
     }

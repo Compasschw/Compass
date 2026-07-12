@@ -42,6 +42,7 @@ import { Mail, Lock, User as UserIcon, MapPin, Phone, Eye, EyeOff, ArrowRight, C
 import { useAuth } from '../../context/AuthContext';
 import { isAppleConfigured, isGoogleConfigured, OAuthError } from '../../services/oauth';
 import { PhoneVerificationModal } from '../../components/shared/PhoneVerificationModal';
+import { ConsentCheckboxes } from '../../components/shared/ConsentCheckboxes';
 import { colors } from '../../theme/colors';
 import { fonts } from '../../theme/typography';
 import { radii, spacing } from '../../theme/spacing';
@@ -172,6 +173,12 @@ export function RegisterScreen(): React.JSX.Element {
   const [sexPickerOpen, setSexPickerOpen] = useState(false);
   const [insurancePickerOpen, setInsurancePickerOpen] = useState(false);
 
+  // ── Required signup consent (members only) ──────────────────────────────
+  // Both must be checked before submit enables; the backend independently
+  // enforces both (422 otherwise) and persists timestamped consent.
+  const [termsAccepted, setTermsAccepted] = useState(false);
+  const [communicationsConsent, setCommunicationsConsent] = useState(false);
+
   // Pre-parsed DOB for both validation and submit.  null when invalid /
   // incomplete; the submit button stays disabled until this is non-null
   // for member signups.
@@ -232,7 +239,10 @@ export function RegisterScreen(): React.JSX.Element {
       sex !== null &&
       insuranceCompany.trim().length > 0 &&
       cinIsPresent &&
-      zip.trim().length > 0
+      zip.trim().length > 0 &&
+      // Both consent boxes are hard-required for member signups.
+      termsAccepted &&
+      communicationsConsent
     );
   const canSubmit = accountBasicsOk && memberProfileOk;
 
@@ -267,6 +277,9 @@ export function RegisterScreen(): React.JSX.Element {
         role,
         trimmedPhone || undefined,
         memberExtras,
+        role === 'member'
+          ? { termsAccepted, communicationsConsent }
+          : undefined,
       );
       // AuthContext.register stores JWT tokens and flips authState.
       // If the user provided a phone number, show the verification modal
@@ -296,8 +309,17 @@ export function RegisterScreen(): React.JSX.Element {
   }, [
     canSubmit, email, password, firstName, lastName, role, phone, register,
     dobIso, sex, addressLine1, addressLine2, city, stateCode, zip,
-    insuranceCompany, primaryCin,
+    insuranceCompany, primaryCin, termsAccepted, communicationsConsent,
   ]);
+
+  // Legal links open the in-app Terms / Privacy pages (Auth-stack 'Legal'
+  // route — the same destination LandingScreen's footer links use).
+  const openTerms = useCallback((): void => {
+    navigation.navigate('Legal', { page: 'terms' });
+  }, [navigation]);
+  const openPrivacy = useCallback((): void => {
+    navigation.navigate('Legal', { page: 'privacy' });
+  }, [navigation]);
 
   // ── Social sign-up handlers (web-only) ────────────────────────────────────
   //
@@ -648,6 +670,31 @@ export function RegisterScreen(): React.JSX.Element {
                   />
                 </FormField>
               </>
+            )}
+
+            {/* Required consent — members only. Both boxes gate the submit. */}
+            {role === 'member' && (
+              <ConsentCheckboxes
+                intro="Before creating your account, please review and agree:"
+                termsPrefix="I agree to the Compass"
+                communicationsLabel="I consent to receive calls and text messages from Compass and my Community Health Worker about my care, and for Compass to bill my insurance for covered services — always at no cost to me."
+                termsAccepted={termsAccepted}
+                communicationsConsent={communicationsConsent}
+                onToggleTerms={() => setTermsAccepted((v) => !v)}
+                onToggleCommunications={() => setCommunicationsConsent((v) => !v)}
+                onPressTerms={openTerms}
+                onPressPrivacy={openPrivacy}
+                disabled={isSubmitting}
+                palette={{
+                  accent: colors.primary,
+                  text: colors.foreground,
+                  muted: colors.mutedForeground,
+                  border: colors.border,
+                  checkmark: '#FFFFFF',
+                  fontRegular: fonts.body,
+                  fontSemibold: fonts.bodySemibold,
+                }}
+              />
             )}
 
             {/* Submit */}

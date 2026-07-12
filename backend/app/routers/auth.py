@@ -169,6 +169,13 @@ async def register(
     # None for non-member roles so the service short-circuits cleanly.
     member_profile_fields = None
     if data.role == "member":
+        # RegisterRequest's model_validator has already enforced that both
+        # consents are True for members, so stamping NOW(UTC) here is safe —
+        # an unconsented member request would have 422'd before reaching this.
+        from datetime import UTC
+        from datetime import datetime as _dt
+
+        consent_now = _dt.now(UTC)
         member_profile_fields = {
             "date_of_birth": data.date_of_birth,
             "gender": data.gender,
@@ -179,6 +186,8 @@ async def register(
             "zip_code": data.zip_code,
             "insurance_company": data.insurance_company,
             "medi_cal_id": data.medi_cal_id,
+            "terms_accepted_at": consent_now,
+            "communications_consent_at": consent_now,
         }
 
     user = await register_user(

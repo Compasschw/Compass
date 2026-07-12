@@ -251,6 +251,24 @@ class MemberProfile(Base):
     # automatic one, so that's deliberately out of scope here.
     sms_opt_out: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
 
+    # ── Signup consent (A2P 10DLC documented opt-in + HIPAA audit) ───────────
+    # Timestamped consent captured at member creation on BOTH signup surfaces
+    # (self-service /auth/register and CHW-initiated /chw/members). Two distinct
+    # agreements, recorded separately so each has its own audit timestamp:
+    #   - terms_accepted_at: member agreed to the Terms of Service + Privacy Policy.
+    #   - communications_consent_at: member consented to calls/SMS from Compass and
+    #     their CHW, and to Compass billing their insurance for covered services.
+    # Both are NULL for legacy members created before this gate shipped — nullable
+    # so the migration never has to backfill and existing rows are unaffected.
+    # Only NEW signups are required (enforced at the request-schema boundary) to
+    # supply both consents; the endpoints stamp these columns = NOW(UTC) on success.
+    terms_accepted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    communications_consent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     # ── Social sign-in onboarding gate ──────────────────────────────────────────
     # True for all normal (password/magic-link) signups — those users supply
     # every Pear-required field at registration.

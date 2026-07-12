@@ -86,6 +86,9 @@ async def register_user(
             "date_of_birth", "gender",
             "address_line1", "address_line2", "city", "state",
             "zip_code", "insurance_company", "medi_cal_id",
+            # Signup consent timestamps (set by the endpoints to NOW(UTC) once
+            # the required consent booleans have been validated at the boundary).
+            "terms_accepted_at", "communications_consent_at",
         }
         if member_profile_fields:
             for key, value in member_profile_fields.items():

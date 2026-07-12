@@ -3801,6 +3801,16 @@ export interface CreateChwMemberPayload {
   state?: string;
   /** Member ZIP code (Pear-required). */
   zipCode: string;
+  /**
+   * Member agreed to the Terms of Service + Privacy Policy (confirmed by the
+   * CHW). Required — the backend rejects the create with 422 unless true.
+   */
+  termsAccepted: boolean;
+  /**
+   * Member consented to calls/SMS + insurance billing for covered services.
+   * Required — the backend rejects the create with 422 unless true.
+   */
+  communicationsConsent: boolean;
 }
 
 /** Response for POST /chw/members — the freshly-created member. */
@@ -3843,6 +3853,9 @@ export function useCreateChwMember() {
           city: payload.city ?? null,
           state: payload.state ?? null,
           zip_code: payload.zipCode,
+          // Required member consent (documented opt-in) — confirmed by the CHW.
+          terms_accepted: payload.termsAccepted,
+          communications_consent: payload.communicationsConsent,
         }),
       });
       return transformKeys<CreatedChwMember>(raw);

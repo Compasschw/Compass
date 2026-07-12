@@ -817,6 +817,8 @@ async def create_chw_member(
         422 when a required field is missing/invalid (name lacks first + last,
             DOB/sex/insurance/CIN/ZIP missing, bad CIN, or password < 8 chars).
     """
+    from datetime import UTC, datetime
+
     from app.models.request import ServiceRequest
     from app.services.auth_service import register_user
     from app.services.session_lookup import find_or_create_conversation_for_pair
@@ -833,6 +835,10 @@ async def create_chw_member(
     # committed-but-unlinked member is an orphan (see module docstring above).
     # The single db.commit() at the end of this handler is the sole commit
     # point for the whole member-creation unit.
+    # CHWCreateMemberRequest's model_validator has already enforced that both
+    # consents are True (the CHW confirmed the member agrees), so stamping
+    # NOW(UTC) here is safe — an unconsented request would have 422'd already.
+    consent_now = datetime.now(UTC)
     member = await register_user(
         db,
         email=data.email,
@@ -850,6 +856,8 @@ async def create_chw_member(
             "city": data.city,
             "state": data.state,
             "zip_code": data.zip_code,
+            "terms_accepted_at": consent_now,
+            "communications_consent_at": consent_now,
         },
         commit=False,
     )

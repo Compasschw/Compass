@@ -170,6 +170,8 @@ async def _register_member(client: AsyncClient, email: str) -> dict:
             "password": "testpass123",
             "name": "Avatar Test Member",
             "role": "member",
+            "terms_accepted": True,
+            "communications_consent": True,
             "phone": "+13105550101",
             "date_of_birth": "1990-06-15",
             "gender": "Female",

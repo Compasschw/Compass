@@ -303,6 +303,8 @@ class TestDeleteAccountMemberProfilePhi:
                 "password": "testpass123",
                 "name": "PHI Test Member",
                 "role": "member",
+                "terms_accepted": True,
+                "communications_consent": True,
                 "phone": "+13105550101",
                 "date_of_birth": "1990-03-15",
                 "gender": "Male",

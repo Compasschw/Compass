@@ -61,6 +61,8 @@ async def _setup_conversation(
             "password": "testpass123",
             "name": "Soft Delete Member",
             "role": "member",
+            "terms_accepted": True,
+            "communications_consent": True,
             "phone": "+13105550100",
             "date_of_birth": "1993-01-05",
             "gender": "Female",

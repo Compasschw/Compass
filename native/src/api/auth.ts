@@ -95,6 +95,18 @@ export interface MemberSignupExtras {
 }
 
 /**
+ * Required member-signup consent. Both booleans must be true for the backend
+ * to accept a member registration (documented opt-in + HIPAA consent audit).
+ * Sent as snake_case (`terms_accepted`, `communications_consent`) on the wire.
+ */
+export interface MemberSignupConsent {
+  /** Member agreed to the Terms of Service + Privacy Policy. */
+  termsAccepted: boolean;
+  /** Member consented to calls/SMS + insurance billing for covered services. */
+  communicationsConsent: boolean;
+}
+
+/**
  * Register a new user account.
  * Persists tokens to secure storage as a side-effect.
  *
@@ -110,6 +122,7 @@ export async function registerUser(
   role: string,
   phone?: string,
   memberExtras?: MemberSignupExtras,
+  consent?: MemberSignupConsent,
 ): Promise<AuthResponse> {
   const body: Record<string, unknown> = { email, password, name, role };
   if (phone) body.phone = phone;
@@ -119,6 +132,13 @@ export async function registerUser(
         body[key] = value;
       }
     }
+  }
+  // Required signup consent for members (A2P 10DLC documented opt-in + HIPAA
+  // audit). Sent as snake_case booleans; the backend enforces both === true
+  // for member signups (422 otherwise) and stamps the consent timestamps.
+  if (consent) {
+    body.terms_accepted = consent.termsAccepted;
+    body.communications_consent = consent.communicationsConsent;
   }
 
   const response = await api<AuthResponse>('/auth/register', {
