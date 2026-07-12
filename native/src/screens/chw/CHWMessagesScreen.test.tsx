@@ -26,23 +26,29 @@ vi.mock('../../api/client', async (importOriginal) => {
 vi.mock('../../context/AuthContext', () => ({
   useAuth: () => ({ userName: 'Test CHW' }),
 }));
-vi.mock('@react-navigation/native', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@react-navigation/native')>();
-  return {
-    ...actual,
-    useNavigation: () => ({
-      navigate: vi.fn(),
-      goBack: vi.fn(),
-      addListener: vi.fn(() => vi.fn()),
-      setOptions: vi.fn(),
-    }),
-    useRoute: () => ({ params: {} }),
-  };
-});
+// No `importOriginal` here (unlike the two mocks above): @react-navigation/native's
+// real barrel eagerly re-exports NavigationContainer, whose ESM build does an
+// extension-less `import ... from './useBackButton'` that Vite/vite-node's
+// module resolution can't satisfy under jsdom (Metro's RN platform-extension
+// resolver isn't in play here) — loading the real module at all throws
+// ERR_MODULE_NOT_FOUND. CHWMessagesScreen only uses `useNavigation` and
+// `useRoute` (plus the type-only `RouteProp`, erased at compile time) from
+// this package, so a full literal replacement covers everything it needs
+// without ever touching the real module.
+vi.mock('@react-navigation/native', () => ({
+  useNavigation: () => ({
+    navigate: vi.fn(),
+    goBack: vi.fn(),
+    addListener: vi.fn(() => vi.fn()),
+    setOptions: vi.fn(),
+  }),
+  useRoute: () => ({ params: {} }),
+}));
 
 import { api } from '../../api/client';
 import { CHWMessagesScreen } from './CHWMessagesScreen';
 import { SDOH_PANEL_PANE_BREAKPOINT } from '../../components/assessment/InlineSdohPanel';
+import * as showAlertModule from '../../utils/showAlert';
 
 const mockedApi = api as unknown as ReturnType<typeof vi.fn>;
 
@@ -192,6 +198,12 @@ function renderScreen() {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
+  // Note: AppDialogProvider (the component that actually renders showAlert()'s
+  // queued dialog) is intentionally NOT mounted here — it's mounted once at
+  // the app root in production (App.tsx) and has its own dedicated render
+  // test (AppDialogProvider.test.tsx). For the "no active session" case below
+  // we assert the *call* to showAlert() with the right title/message instead
+  // of rendering the dialog — that's the boundary this screen actually owns.
   return render(
     <QueryClientProvider client={qc}>
       <CHWMessagesScreen />
@@ -260,8 +272,10 @@ describe('CHWMessagesScreen — inline SDOH panel', () => {
 
     // The case note drawer opens on top (existing behaviour, unchanged) —
     // proves the click actually reached and activated the control, not just
-    // that it was present in the DOM inertly.
-    await screen.findByText('Add Case Note');
+    // that it was present in the DOM inertly. Match on the drawer's subtitle
+    // (unique to the open drawer) rather than "Add Case Note" — that text is
+    // ambiguous with the still-visible quick-action button label underneath.
+    await screen.findByText("Attach a clinical note to this member's record");
     const noteInput = screen.getByLabelText('Case note body');
     fireEvent.change(noteInput, { target: { value: 'Member mentioned housing concerns.' } });
 
@@ -280,10 +294,11 @@ describe('CHWMessagesScreen — inline SDOH panel', () => {
       );
     });
 
-    // The SDOH panel is still mounted/open underneath — the case note drawer
-    // closing (after save) returns focus to it without having lost state.
+    // The case note drawer closes after save, and the SDOH panel underneath
+    // is still open/untouched — proves the two coexisted rather than one
+    // having silently unmounted the other.
     await waitFor(() => {
-      expect(screen.queryByText('Add Case Note')).toBeNull();
+      expect(screen.queryByText("Attach a clinical note to this member's record")).toBeNull();
     });
     expect(screen.getByText('Do you have stable housing?')).toBeTruthy();
   });
@@ -362,22 +377,30 @@ describe('CHWMessagesScreen — inline SDOH panel', () => {
     });
   });
 
-  it('shows the in-app "Begin a session first" dialog (not the browser alert) when there is no active session', async () => {
+  it('routes to the in-app "Begin a session first" dialog (not a browser alert) when there is no active session', async () => {
     mockedApi.mockImplementation(async (path: string, options?: { method?: string; body?: string }) => {
       if (path.startsWith('/conversations/') && !path.includes('/messages')) {
         return [{ ...conversationFixture, active_session_id: null, session_id: null }];
       }
       return routeApi(path, options);
     });
+    // showAlert() is what CHWMessagesScreen actually calls in this case — the
+    // dialog itself is rendered by AppDialogProvider, which is mounted once
+    // at the app root (App.tsx) and has its own dedicated render test
+    // (AppDialogProvider.test.tsx). Asserting the call here, at this
+    // screen's actual boundary, avoids duplicating that coverage.
+    const showAlertSpy = vi.spyOn(showAlertModule, 'showAlert');
 
     renderScreen();
     await screen.findByText('Rosa Gutierrez', {}, { timeout: 3000 });
 
     fireEvent.click(await screen.findByLabelText('Open SDOH / Health Screening'));
 
-    await screen.findByText('Begin a session first');
-    expect(
-      screen.getByText(/Start a session with this member to run the SDOH \/ Health Screening/i),
-    ).toBeTruthy();
+    await waitFor(() => {
+      expect(showAlertSpy).toHaveBeenCalledWith(
+        'Begin a session first',
+        'Start a session with this member to run the SDOH / Health Screening and capture answers.',
+      );
+    });
   });
 });

@@ -105,7 +105,7 @@ export function InlineSdohPanel({
           style={sheetStyles.backdrop}
           onPress={onClose}
           accessibilityRole="button"
-          accessibilityLabel="Close SDOH panel"
+          accessibilityLabel="Dismiss SDOH panel backdrop"
         />
         <View style={[sheetStyles.panel, shadows.card as ViewStyle]}>
           <PanelHeader title="SDOH / Health Screening" subtitle={subtitle} onClose={onClose} />
@@ -152,7 +152,7 @@ function SdohBootstrapBody({ sessionId, onComplete, onPause }: SdohBootstrapBody
           onPress={onPause}
           style={bodyStyles.closeErrorBtn}
           accessibilityRole="button"
-          accessibilityLabel="Close SDOH panel"
+          accessibilityLabel="Dismiss SDOH error"
         >
           <Text style={bodyStyles.closeErrorBtnText}>Close</Text>
         </TouchableOpacity>
