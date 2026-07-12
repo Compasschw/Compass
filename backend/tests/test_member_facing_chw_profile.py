@@ -40,6 +40,8 @@ async def _register(client: AsyncClient, email: str, role: str, name: str) -> di
             "insurance_company": "Health Net",
             "medi_cal_id": f"{abs(hash(email)) % 100_000_000:08d}A",
             "zip_code": "90001",
+            "terms_accepted": True,
+            "communications_consent": True,
         })
     res = await client.post("/api/v1/auth/register", json=payload)
     assert res.status_code == 201, res.text

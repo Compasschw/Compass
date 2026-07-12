@@ -86,6 +86,44 @@ def normalize_member_pear_fields(
     return normalized_cin, normalized_state
 
 
+def enforce_member_signup_consent(
+    *,
+    terms_accepted: bool,
+    communications_consent: bool,
+) -> None:
+    """Enforce the two required signup consents for member creation.
+
+    Shared by both member-creation paths so the documented-opt-in contract
+    (A2P 10DLC + HIPAA consent audit) can never silently diverge:
+      - self-service ``POST /auth/register`` (``RegisterRequest``)
+      - CHW-initiated ``POST /chw/members`` (``CHWCreateMemberRequest``)
+
+    Both booleans MUST be ``True``. A missing field (defaulting to ``False``) or
+    an explicit ``False`` raises ``ValueError`` — surfacing as HTTP 422 at the
+    Pydantic boundary — so the backend enforces consent independently of the UI
+    (defense in depth), never relying on the client to have gated the button.
+
+    Args:
+        terms_accepted: Member agreed to the Terms of Service + Privacy Policy.
+        communications_consent: Member consented to calls/SMS from Compass and
+            their CHW, and to Compass billing their insurance for covered
+            services.
+
+    Raises:
+        ValueError: When either consent is absent or ``False``.
+    """
+    if not terms_accepted:
+        raise ValueError(
+            "You must agree to the Terms of Service and Privacy Policy to "
+            "create an account."
+        )
+    if not communications_consent:
+        raise ValueError(
+            "You must consent to communications from Compass and to insurance "
+            "billing for covered services to create an account."
+        )
+
+
 class RegisterRequest(BaseModel):
     """Body for POST /auth/register.
 
@@ -125,6 +163,13 @@ class RegisterRequest(BaseModel):
     # Medi-Cal CIN — PHI, stored encrypted.  Pear's primaryCIN identifier.
     medi_cal_id: str | None = None
 
+    # ── Required signup consent (members only) ──────────────────────────
+    # A2P 10DLC documented opt-in + HIPAA consent audit. Both must be True
+    # for member signups; default False so an absent field is treated the
+    # same as an explicit refusal (→ 422). Ignored for role == "chw".
+    terms_accepted: bool = False
+    communications_consent: bool = False
+
     @model_validator(mode="after")
     def _enforce_member_pear_required_fields(self) -> "RegisterRequest":
         # CHWs bypass every Pear-required check; only validate when
@@ -136,6 +181,14 @@ class RegisterRequest(BaseModel):
         # pipeline proceeds without it) — no required-check here.
         if self.role != "member":
             return self
+
+        # Required consent — enforced at the boundary (defense in depth) so a
+        # member account can never be created without documented opt-in, even
+        # if a client bypasses the UI gate.
+        enforce_member_signup_consent(
+            terms_accepted=self.terms_accepted,
+            communications_consent=self.communications_consent,
+        )
 
         # Delegate to the shared validator so /auth/register and
         # POST /chw/members enforce the identical Pear billing contract.

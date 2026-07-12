@@ -39,6 +39,7 @@ import {
 } from 'react-native';
 
 import { colors as tokens } from '../../theme/tokens';
+import { ConsentCheckboxes } from '../../components/shared/ConsentCheckboxes';
 import { ApiError } from '../../api/client';
 import { useCreateChwMember, type CreatedChwMember } from '../../hooks/useApiQueries';
 import {
@@ -169,6 +170,10 @@ export function AddMemberModal({
   const [city, setCity] = useState('');
   const [stateCode, setStateCode] = useState('');
   const [zip, setZip] = useState('');
+  // Required member consent (documented opt-in) — both gate the submit button
+  // and are enforced independently by the backend (422 otherwise).
+  const [termsAccepted, setTermsAccepted] = useState(false);
+  const [communicationsConsent, setCommunicationsConsent] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const createMember = useCreateChwMember();
@@ -190,6 +195,8 @@ export function AddMemberModal({
       setCity('');
       setStateCode('');
       setZip('');
+      setTermsAccepted(false);
+      setCommunicationsConsent(false);
       setError(null);
     }
   }, [visible]);
@@ -215,7 +222,12 @@ export function AddMemberModal({
   const clientError = useMemo(() => validate(form), [
     name, email, password, dob, sex, insuranceCompany, primaryCin, stateCode, zip,
   ]);
-  const canSubmit = clientError === null && !isSubmitting;
+  // Submit also requires BOTH consent boxes — extends the existing gate. Kept
+  // out of validate()/clientError so unchecked boxes don't flash a red error on
+  // an untouched form; the disabled button communicates the requirement, and
+  // the ConsentCheckboxes block sits directly above it.
+  const canSubmit =
+    clientError === null && termsAccepted && communicationsConsent && !isSubmitting;
 
   // Soft carrier-aware CIN hint — shown once the user has typed a CIN that
   // doesn't match the selected carrier's expected format.
@@ -254,6 +266,8 @@ export function AddMemberModal({
         city: city.trim() || undefined,
         state: stateCode.trim() ? stateCode.trim().toUpperCase() : undefined,
         zipCode: zip.trim(),
+        termsAccepted,
+        communicationsConsent,
       },
       {
         onSuccess: (member) => {
@@ -571,6 +585,28 @@ export function AddMemberModal({
                 />
               </View>
             </View>
+
+            {/* Required member consent — confirmed by the CHW. Both boxes gate
+                the Add Member button (canSubmit). */}
+            <ConsentCheckboxes
+              intro="Confirm the member agrees before creating their account:"
+              termsPrefix="The member agrees to the Compass"
+              communicationsLabel="The member consents to receive calls and text messages from Compass and their Community Health Worker, and for Compass to bill their insurance for covered services — always at no cost to them."
+              termsAccepted={termsAccepted}
+              communicationsConsent={communicationsConsent}
+              onToggleTerms={() => setTermsAccepted((v) => !v)}
+              onToggleCommunications={() => setCommunicationsConsent((v) => !v)}
+              disabled={isSubmitting}
+              palette={{
+                accent: tokens.emerald700,
+                text: tokens.textPrimary,
+                muted: tokens.textSecondary,
+                border: '#E5E7EB',
+                checkmark: '#FFFFFF',
+                fontRegular: 'PlusJakartaSans_400Regular',
+                fontSemibold: 'PlusJakartaSans_600SemiBold',
+              }}
+            />
 
             {error !== null && (
               <Text style={styles.errorText} accessibilityLiveRegion="polite">

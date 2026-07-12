@@ -43,6 +43,9 @@ _NEW_MEMBER_PAYLOAD = {
     "city": "Los Angeles",
     "state": "CA",
     "zip_code": "90001",
+    # Required member consent (documented opt-in) — confirmed by the CHW.
+    "terms_accepted": True,
+    "communications_consent": True,
 }
 
 
@@ -336,6 +339,8 @@ async def test_parity_with_self_register_member(client: AsyncClient, chw_tokens:
         "city": self_payload["city"],
         "state": self_payload["state"],
         "zip_code": self_payload["zip_code"],
+        "terms_accepted": True,
+        "communications_consent": True,
     }
     created = await client.post(
         "/api/v1/chw/members", json=chw_payload, headers=auth_header(chw_tokens)

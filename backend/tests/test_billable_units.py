@@ -55,6 +55,8 @@ async def _register_member(client: AsyncClient, *, email: str) -> dict:
             "password": "testpass123",
             "name": "Test Member",
             "role": "member",
+            "terms_accepted": True,
+            "communications_consent": True,
             "phone": "+13105550199",
             "date_of_birth": "1990-06-01",
             "gender": "Female",

@@ -63,6 +63,8 @@ async def _register_member(client: AsyncClient, suffix: str = "") -> dict:
         "password": "password123",
         "name": f"Test Member{suffix}",
         "role": "member",
+        "terms_accepted": True,
+        "communications_consent": True,
         "date_of_birth": "1990-01-01",
         "gender": "Female",
         "insurance_company": "Health Net",
