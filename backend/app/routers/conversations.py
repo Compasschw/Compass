@@ -1,7 +1,7 @@
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -676,8 +676,146 @@ async def get_messages(
     rows.reverse()  # Client expects oldest-first chronological order
     return [_serialize_message(msg, att) for msg, att in rows]
 
+# ─── Auto SMS fanout (every CHW→member in-app message also mirrors as SMS) ───
+#
+# Product decision (locked): the in-app thread is the single interface a CHW
+# uses — there is no separate "send SMS" button. Every message a CHW sends
+# in a conversation is ALSO delivered to the member as a masked SMS text,
+# automatically, when the member is SMS-eligible. Member→CHW messages never
+# fan out (the CHW is always in-app; we never SMS a CHW), and messages that
+# arrive via the inbound SMS webhook (app.routers.communication.sms_inbound)
+# are inserted directly as Message rows — they never pass through
+# send_message — so they can never loop back out as an outbound SMS.
+#
+# This intentionally does NOT create a second Message(channel='sms') row —
+# unlike the dedicated POST /conversations/{id}/sms endpoint (#168), which
+# is an explicit SMS-only send with its own in-app mirror. Here the single
+# source of truth stays the one in-app Message; the SMS is a transparent,
+# best-effort delivery mirror of it.
+async def _fanout_sms_for_chw_message(
+    *,
+    conversation_id: UUID,
+    chw_id: UUID,
+    member_id: UUID,
+    message_body: str,
+    db: AsyncSession,
+) -> None:
+    """Best-effort: mirror a CHW's in-app message to the member as masked SMS.
+
+    Runs as a FastAPI BackgroundTask *after* the HTTP response for
+    ``POST /conversations/{id}/messages`` has already been sent, so neither
+    Vonage latency nor a Vonage failure can affect the in-app send's
+    response time or success. Every failure mode (member/profile missing,
+    ineligible, Vonage error, DB error) is caught and logged here — this
+    function must NEVER raise, since there is no request left to fail.
+
+    Args:
+        conversation_id: UUID of the conversation the message was posted to.
+        chw_id: UUID of the CHW who sent the in-app message (touch-log initiator).
+        member_id: UUID of the member on this conversation (touch-log recipient).
+        message_body: Full message text to mirror as the SMS body.
+        db: The SAME request-scoped AsyncSession used by ``send_message`` —
+            reused here per the existing BackgroundTasks convention in this
+            codebase (see ``app.routers.sessions.create_session``).
+    """
+    from app.models.user import MemberProfile, User
+    from app.services.communication_touch_log import TouchKind, record_touch
+    from app.services.sms_eligibility import check_sms_eligibility
+    from app.services.vonage_sms import get_vonage_sms_messages_client
+
+    try:
+        member_user = await db.get(User, member_id)
+        if member_user is None:
+            logger.warning(
+                "sms_fanout: member user not found conversation=%s member=%s",
+                conversation_id, member_id,
+            )
+            return
+
+        profile_result = await db.execute(
+            select(MemberProfile).where(MemberProfile.user_id == member_id)
+        )
+        member_profile = profile_result.scalar_one_or_none()
+        if member_profile is None:
+            logger.warning(
+                "sms_fanout: member profile not found conversation=%s member=%s",
+                conversation_id, member_id,
+            )
+            return
+
+        eligibility = await check_sms_eligibility(
+            db, member_user=member_user, member_profile=member_profile
+        )
+        if not eligibility.eligible or eligibility.normalized_phone is None:
+            # Ineligible (555 sentinel, unverified, opted-out, duplicate, etc.)
+            # is an expected, silent no-op — the member already has the
+            # message in-app. Debug-level only; not an error condition.
+            logger.debug(
+                "sms_fanout: member not SMS-eligible, in-app only "
+                "conversation=%s member=%s reason=%s",
+                conversation_id, member_id, eligibility.reason_code,
+            )
+            return
+
+        client = get_vonage_sms_messages_client()
+        send_result = await client.send_text(eligibility.normalized_phone, message_body)
+        if not send_result.success:
+            # Best-effort: the in-app message is already persisted and the
+            # HTTP response already returned success. Log and stop — never
+            # raise, never retry inline (a queued retry is a future
+            # enhancement, not required for this feature).
+            logger.error(
+                "sms_fanout: SMS send failed conversation=%s chw=%s member=%s "
+                "error=%s status=%s",
+                conversation_id, chw_id, member_id,
+                send_result.error, send_result.status_code,
+            )
+            return
+
+        # Sticky routing pointer — inbound replies from this member land back
+        # in THIS conversation until a different CHW SMS's (or fans out to)
+        # them next.
+        member_profile.last_sms_conversation_id = conversation_id
+
+        await record_touch(
+            db,
+            initiator_id=chw_id,
+            recipient_id=member_id,
+            kind=TouchKind.sms,
+            provider_session_id=send_result.provider_message_id,
+            extra_data={"direction": "outbound", "auto_fanout": True},
+        )
+
+        await db.commit()
+        logger.info(
+            "sms_fanout: mirrored in-app message as SMS conversation=%s "
+            "chw=%s member=%s",
+            conversation_id, chw_id, member_id,
+        )
+    except Exception as exc:  # noqa: BLE001
+        # Absolute last-resort guard: no exception from this background task
+        # may ever propagate — there is no request/response left to carry it.
+        logger.error(
+            "sms_fanout: unexpected error conversation=%s chw=%s member=%s error=%s",
+            conversation_id, chw_id, member_id, exc,
+        )
+        try:
+            await db.rollback()
+        except Exception as rollback_exc:  # noqa: BLE001
+            logger.error(
+                "sms_fanout: rollback also failed conversation=%s error=%s",
+                conversation_id, rollback_exc,
+            )
+
+
 @router.post("/{conversation_id}/messages", response_model=MessageResponse, status_code=201)
-async def send_message(conversation_id: UUID, data: MessageCreate, current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def send_message(
+    conversation_id: UUID,
+    data: MessageCreate,
+    background_tasks: BackgroundTasks,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     from app.models.conversation import Conversation, FileAttachment, Message
     conv = await db.get(Conversation, conversation_id)
     if not conv:
@@ -762,6 +900,25 @@ async def send_message(conversation_id: UUID, data: MessageCreate, current_user=
     except Exception as e:  # noqa: BLE001
         import logging
         logging.getLogger("compass").warning("Notification fanout failed on message send: %s", e)
+
+    # Auto SMS fanout: every CHW→member in-app message is ALSO mirrored to
+    # the member as masked SMS, transparently, when the member is
+    # SMS-eligible (see _fanout_sms_for_chw_message docstring above for the
+    # full rationale). CHW-only — member-sent messages never fan out, and
+    # inbound-webhook messages never reach this handler at all (guard #5).
+    # Skipped for attachment-only messages with no text body — there is
+    # nothing meaningful to mirror as an SMS. Scheduled as a BackgroundTask
+    # so Vonage latency/failure can never affect this endpoint's response.
+    is_chw_sender = current_user.role == "chw" and current_user.id == conv.chw_id
+    if is_chw_sender and data.body and data.body.strip():
+        background_tasks.add_task(
+            _fanout_sms_for_chw_message,
+            conversation_id=conversation_id,
+            chw_id=current_user.id,
+            member_id=conv.member_id,
+            message_body=data.body,
+            db=db,
+        )
 
     return _serialize_message(msg, attachment)
 
