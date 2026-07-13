@@ -57,7 +57,7 @@ import {
 type RegisterNavProp = NativeStackNavigationProp<AuthStackParamList>;
 
 type Role = 'chw' | 'member';
-type Sex = 'Male' | 'Female' | 'Other';
+type Sex = 'Male' | 'Female';
 
 interface FieldRefs {
   firstName: React.RefObject<TextInput | null>;
@@ -102,7 +102,7 @@ function formatDobInput(raw: string): string {
   return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
 }
 
-const SEX_OPTIONS: readonly Sex[] = ['Male', 'Female', 'Other'] as const;
+const SEX_OPTIONS: readonly Sex[] = ['Male', 'Female'] as const;
 
 // ─── Google icon (inline SVG) ─────────────────────────────────────────────────
 
@@ -677,7 +677,7 @@ export function RegisterScreen(): React.JSX.Element {
               <ConsentCheckboxes
                 intro="Before creating your account, please review and agree:"
                 termsPrefix="I agree to the Compass"
-                communicationsLabel="I consent to receive calls and text messages from Compass and my Community Health Worker about my care, and for Compass to bill my insurance for covered services — always at no cost to me."
+                communicationsLabel="I consent to receive communication — by call, text, email, or in person — from my Community Health Worker via the CompassCHW platform, and for Compass to bill my insurance for covered services, always at no cost to me."
                 termsAccepted={termsAccepted}
                 communicationsConsent={communicationsConsent}
                 onToggleTerms={() => setTermsAccepted((v) => !v)}
@@ -801,7 +801,7 @@ export function RegisterScreen(): React.JSX.Element {
         onClose={handlePhoneVerificationClose}
       />
 
-      {/* Sex picker — minimal modal with the three Pear-enum options. */}
+      {/* Sex picker — minimal modal with the two Pear-enum options. */}
       <OptionPickerModal
         visible={sexPickerOpen}
         title="Sex"

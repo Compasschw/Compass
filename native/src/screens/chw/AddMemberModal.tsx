@@ -34,6 +34,7 @@ import {
   ActivityIndicator,
   StyleSheet,
   Platform,
+  Linking,
   type ViewStyle,
   type TextStyle,
 } from 'react-native';
@@ -56,12 +57,20 @@ interface AddMemberModalProps {
   onCreated?: (member: CreatedChwMember) => void;
 }
 
-type Sex = 'Male' | 'Female' | 'Other';
+type Sex = 'Male' | 'Female';
 
-const SEX_OPTIONS: readonly Sex[] = ['Male', 'Female', 'Other'] as const;
+const SEX_OPTIONS: readonly Sex[] = ['Male', 'Female'] as const;
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MIN_PASSWORD_LENGTH = 8;
+
+// Legal page links (Terms of Service / Privacy Policy) in the consent block.
+// AddMemberModal mounts inside the CHW-authenticated navigation tree, which
+// doesn't register the Auth stack's in-app 'Legal' route (RegisterScreen can
+// navigation.navigate('Legal', {page}) directly because it lives in that
+// stack) — so this opens the same public page as an external link instead.
+const LEGAL_TERMS_URL = 'https://joincompasschw.com/legal/terms';
+const LEGAL_PRIVACY_URL = 'https://joincompasschw.com/legal/privacy';
 
 // DOB input format: MM/DD/YYYY entered, ISO YYYY-MM-DD sent to backend.
 // Mirrors RegisterScreen — plain TextInput + parse keeps the Expo web build
@@ -249,6 +258,16 @@ export function AddMemberModal({
   // the ConsentCheckboxes block sits directly above it.
   const canSubmit =
     clientError === null && termsAccepted && communicationsConsent && !isSubmitting;
+
+  // Legal links open the public Terms / Privacy pages. Best-effort — a failed
+  // openURL (e.g. popup blocked) shouldn't surface as a form error, so a
+  // rejected promise is swallowed rather than routed through setError().
+  const openTerms = (): void => {
+    void Linking.openURL(LEGAL_TERMS_URL).catch(() => null);
+  };
+  const openPrivacy = (): void => {
+    void Linking.openURL(LEGAL_PRIVACY_URL).catch(() => null);
+  };
 
   // Soft carrier-aware CIN hint — shown once the user has typed a CIN that
   // doesn't match the selected carrier's expected format.
@@ -627,11 +646,13 @@ export function AddMemberModal({
             <ConsentCheckboxes
               intro="Confirm the member agrees before creating their account:"
               termsPrefix="The member agrees to the Compass"
-              communicationsLabel="The member consents to receive calls and text messages from Compass and their Community Health Worker, and for Compass to bill their insurance for covered services — always at no cost to them."
+              communicationsLabel="The member consents to receive communication — by call, text, email, or in person — from their Community Health Worker via the CompassCHW platform, and for Compass to bill their insurance for covered services, always at no cost to them."
               termsAccepted={termsAccepted}
               communicationsConsent={communicationsConsent}
               onToggleTerms={() => setTermsAccepted((v) => !v)}
               onToggleCommunications={() => setCommunicationsConsent((v) => !v)}
+              onPressTerms={openTerms}
+              onPressPrivacy={openPrivacy}
               disabled={isSubmitting}
               palette={{
                 accent: tokens.emerald700,
