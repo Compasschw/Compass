@@ -26,6 +26,7 @@ import React, { useCallback, useState } from 'react';
 import {
   Alert,
   Linking,
+  Platform,
   Pressable,
   ScrollView,
   StatusBar,
@@ -34,6 +35,7 @@ import {
   Text,
   TextInput,
   View,
+  useWindowDimensions,
   type ViewStyle,
   type TextStyle,
 } from 'react-native';
@@ -60,6 +62,7 @@ import { AppShell, PageHeader, Card, ProfilePictureEditor } from '../../componen
 import { DeleteAccountModal } from '../../components/profile/DeleteAccountModal';
 import { colors as tokens } from '../../theme/tokens';
 import { confirmAsync } from '../../utils/confirm';
+import { BP_PHONE } from '../../constants/breakpoints';
 
 // ─── Types & constants ────────────────────────────────────────────────────────
 
@@ -452,6 +455,16 @@ export function MemberSettingsScreen(): React.JSX.Element {
   const profileQuery = useMemberProfile();
   const updateProfile = useUpdateMemberProfile();
 
+  // Epic K (mobile web polish): pageWrap's 32px side padding plus the
+  // profile/bottom grids' 320px minWidth columns force a wider-than-viewport
+  // layout below phone width (360px - 64px padding = 296px < 320px minWidth,
+  // so the page body scrolls sideways even after the grid wraps to a single
+  // column). Tighten padding and drop the minWidth floor at phone width only
+  // — desktop/tablet keep the existing 2-column grid untouched. Same
+  // 0-width-before-measurement guard as MemberFindScreen's `isPhone`.
+  const { width: windowWidth } = useWindowDimensions();
+  const isPhone = Platform.OS === 'web' && windowWidth > 0 && windowWidth < BP_PHONE;
+
   const memberInitials = (userName ?? 'M')
     .split(' ')
     .slice(0, 2)
@@ -575,7 +588,7 @@ export function MemberSettingsScreen(): React.JSX.Element {
         contentContainerStyle={pageStyles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        <View style={pageStyles.pageWrap}>
+        <View style={[pageStyles.pageWrap, isPhone && pageStyles.pageWrapPhone]}>
           <PageHeader
             title="Settings"
             subtitle="Manage your account, privacy, and notifications"
@@ -607,7 +620,7 @@ export function MemberSettingsScreen(): React.JSX.Element {
                   </View>
 
                   {/* Form column */}
-                  <View style={profileStyles.formCol}>
+                  <View style={[profileStyles.formCol, isPhone && profileStyles.formColPhone]}>
                     <Text style={profileStyles.formTitle}>Profile information</Text>
 
                     <EditableField
@@ -780,7 +793,7 @@ export function MemberSettingsScreen(): React.JSX.Element {
           {/* Bottom: 2-col grid (always visible) */}
           <View style={pageStyles.bottomGrid}>
             {/* Privacy & Security summary card */}
-            <Card style={pageStyles.bottomCard}>
+            <Card style={[pageStyles.bottomCard, isPhone && pageStyles.bottomCardPhone]}>
               <Text style={pageStyles.bottomCardTitle}>Privacy & Security</Text>
               <Text style={pageStyles.bottomCardSubtitle}>Your data is protected. You're in control.</Text>
 
@@ -843,7 +856,7 @@ export function MemberSettingsScreen(): React.JSX.Element {
             </Card>
 
             {/* Need help card */}
-            <Card style={[pageStyles.bottomCard, pageStyles.helpCard]}>
+            <Card style={[pageStyles.bottomCard, isPhone && pageStyles.bottomCardPhone, pageStyles.helpCard]}>
               <Text style={pageStyles.bottomCardTitle}>Need help?</Text>
               <Text style={pageStyles.bottomCardSubtitle}>We're here for you 24/7</Text>
 
@@ -941,6 +954,11 @@ const profileStyles = StyleSheet.create({
     flex:     1,
     minWidth: 320,
   } as ViewStyle,
+  // Epic K (mobile web polish): same fix as pageStyles.bottomCardPhone —
+  // 320px minWidth exceeds a phone viewport's available content width.
+  formColPhone: {
+    minWidth: 0,
+  } as ViewStyle,
   formTitle: {
     fontSize:     16,
     fontWeight:   '600',
@@ -956,6 +974,12 @@ const pageStyles = StyleSheet.create({
     padding: 32,
     width:   '100%',
     alignSelf: 'stretch',
+  } as ViewStyle,
+  // Epic K (mobile web polish): tighter side padding at phone width — see
+  // `isPhone` above. Matches MemberFindScreen's pageContainerPhone.
+  pageWrapPhone: {
+    paddingHorizontal: 16,
+    paddingVertical: 20,
   } as ViewStyle,
 
   // Main settings card
@@ -1029,6 +1053,16 @@ const pageStyles = StyleSheet.create({
     flex:     1,
     minWidth: 320,
     padding:  24,
+  } as ViewStyle,
+  // Epic K (mobile web polish): the 320px minWidth above is wider than a
+  // phone viewport's available content width even after `bottomGrid`'s
+  // flexWrap stacks the cards to one per row (e.g. 360px - 32px padding =
+  // 328px is close, but 390px - tighter chrome can still clip) — drop the
+  // floor at phone width so `flex: 1` alone governs and the card shrinks to
+  // fit instead of forcing the page body to scroll sideways.
+  bottomCardPhone: {
+    minWidth: 0,
+    padding: 16,
   } as ViewStyle,
   helpCard: {
     backgroundColor: '#F0FDF4',

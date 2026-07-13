@@ -26,6 +26,7 @@ import {
   Text,
   TouchableOpacity,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -70,6 +71,7 @@ import {
   Pill,
   RightRail,
 } from '../../components/ui';
+import { BP_PHONE } from '../../constants/breakpoints';
 
 // ─── Vertical labels — delegated to lib/verticals (single source of truth) ───
 const VERTICAL_LABELS: Record<Vertical, string> = VERTICAL_LABEL;
@@ -1005,6 +1007,40 @@ const chatModalStyles = StyleSheet.create({
   },
 });
 
+// ─── ConditionalHorizontalScroll ──────────────────────────────────────────────
+
+interface ConditionalHorizontalScrollProps {
+  enabled: boolean;
+  children: React.ReactNode;
+}
+
+/**
+ * Epic K (mobile web polish): wraps `children` in a horizontal `ScrollView`
+ * only when `enabled` — used to let the web 3-pane session layout (fixed
+ * 320px + flex + 288px panes) scroll sideways inside its own container at
+ * phone widths, rather than the page body overflowing. At `enabled={false}`
+ * (desktop/tablet), renders children directly with no scroll wrapper so
+ * existing layout/measurement behavior is unchanged.
+ */
+function ConditionalHorizontalScroll({
+  enabled,
+  children,
+}: ConditionalHorizontalScrollProps): React.JSX.Element {
+  if (!enabled) {
+    return <>{children}</>;
+  }
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      style={webStyles.phoneScrollWrapper}
+      contentContainerStyle={webStyles.phoneScrollContent}
+    >
+      {children}
+    </ScrollView>
+  );
+}
+
 // ─── ToastBanner ─────────────────────────────────────────────────────────────
 
 interface ToastBannerProps {
@@ -1455,6 +1491,20 @@ export function CHWSessionsScreen(): React.JSX.Element {
   const [activeTab, setActiveTab] = useState<SessionTab>('active');
   const navigation = useNavigation<SessionsNavProp>();
 
+  // Epic K (mobile web polish): the web 3-pane layout below (thread list
+  // 320px + flexible middle pane + 288px context rail) has no horizontal
+  // scroll container of its own, so at phone widths it overflows the page
+  // body sideways instead of the pane row itself scrolling. A full
+  // Messages-style single-pane collapse is out of scope for this pass (that
+  // screen's live timer/chat/documentation plumbing makes a pane-collapse
+  // redesign high-risk) — instead wrap the row in a horizontal ScrollView at
+  // phone width only, so the panes keep their designed widths and scroll
+  // sideways *inside their own container*, matching the pattern used for
+  // admin tables. Desktop/tablet widths are unaffected (plain View, no
+  // scroll wrapper, unchanged from before).
+  const { width: windowWidth } = useWindowDimensions();
+  const isPhone = Platform.OS === 'web' && windowWidth > 0 && windowWidth < BP_PHONE;
+
   const { data: rawSessions, isLoading, error, refetch } = useSessions();
   const { data: rawClaims } = useChwClaims();
   const claimsBySession = useMemo<Map<string, ChwClaim>>(() => {
@@ -1822,7 +1872,13 @@ export function CHWSessionsScreen(): React.JSX.Element {
         {/* Toast overlay — positioned absolutely over all content */}
         {toastMessage !== null && <ToastBanner message={toastMessage} />}
 
-        <View style={webStyles.root}>
+        {/* Epic K (mobile web polish): at phone width, wrap the fixed-width
+            3-pane row in its own horizontal ScrollView so it scrolls sideways
+            inside this container instead of the page body overflowing. The
+            wrapper is a plain passthrough at desktop/tablet widths (no scroll,
+            unchanged from before). */}
+        <ConditionalHorizontalScroll enabled={isPhone}>
+        <View style={[webStyles.root, isPhone && webStyles.rootPhone]}>
           {/* ── Left pane: thread list (320px) ── */}
           <View style={webStyles.threadPane}>
             <View style={webStyles.threadHeader}>
@@ -1930,6 +1986,7 @@ export function CHWSessionsScreen(): React.JSX.Element {
             <MemberContextRail session={selectedWebSession} />
           </View>
         </View>
+        </ConditionalHorizontalScroll>
 
         {/* Documentation modal */}
         {documentingSessionId != null && (
@@ -2097,6 +2154,28 @@ const webStyles = StyleSheet.create({
     flexDirection: 'row',
     backgroundColor: '#F4F1ED',
     minHeight: '100vh' as unknown as number,
+  },
+
+  // Epic K (mobile web polish): inside ConditionalHorizontalScroll, `flex: 1`
+  // has no meaningful bound (the ScrollView's content container sizes to its
+  // children), so the panes would collapse to their minimum content size
+  // instead of the designed proportions. Give the row an explicit min-width
+  // equal to the sum of the two fixed panes plus a reasonable middle-pane
+  // width so it lays out identically to desktop, just horizontally
+  // scrollable within its own container.
+  rootPhone: {
+    flex: undefined,
+    minWidth: 320 + 360 + 288,
+    minHeight: undefined,
+  },
+
+  // Epic K (mobile web polish): outer wrapper for the phone-width horizontal
+  // scroll — see ConditionalHorizontalScroll.
+  phoneScrollWrapper: {
+    flex: 1,
+  },
+  phoneScrollContent: {
+    flexGrow: 1,
   },
 
   // Left thread list (320px)

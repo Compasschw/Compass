@@ -17,6 +17,7 @@ import {
   StyleSheet,
   TouchableOpacity,
   Platform,
+  useWindowDimensions,
   type ViewStyle,
   type TextStyle,
 } from 'react-native';
@@ -32,6 +33,7 @@ import {
 
 import { AppShell, PageHeader, Card, StatTile } from '../../components/ui';
 import { colors, spacing, radius } from '../../theme/tokens';
+import { BP_PHONE } from '../../constants/breakpoints';
 import { useAuth } from '../../context/AuthContext';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -198,6 +200,16 @@ export function CHWReportsScreen(): React.JSX.Element {
   const { userName } = useAuth();
   const [activeRange, setActiveRange] = useState<DateRange>('30d');
 
+  // Epic K (mobile web polish): chartCard's `calc(50% - 10px)` width and
+  // insightsCard/membersCard's 340/400px minWidth floors are fine at
+  // desktop/tablet widths but force two-up fixed-width cards wider than a
+  // phone viewport, causing the page body to scroll sideways. Fall back to
+  // full-width single-column cards at phone width only — desktop/tablet
+  // layouts are untouched. Same 0-width-before-measurement guard as
+  // MemberFindScreen's `isPhone`.
+  const { width: windowWidth } = useWindowDimensions();
+  const isPhone = Platform.OS === 'web' && windowWidth > 0 && windowWidth < BP_PHONE;
+
   const dateRanges = Object.keys(DATE_RANGE_LABELS) as DateRange[];
 
   const userInitials = (userName ?? 'CHW')
@@ -272,7 +284,7 @@ export function CHWReportsScreen(): React.JSX.Element {
       {/* 2x2 chart grid — matches mockup exactly */}
       <View style={styles.chartGrid}>
         {/* Q1: Session volume bar chart */}
-        <Card style={styles.chartCard}>
+        <Card style={[styles.chartCard, isPhone && styles.chartCardPhone]}>
           <View style={styles.cardTitleRow}>
             <Text style={styles.cardTitle}>Sessions per week</Text>
             <Text style={styles.cardSubtitle}>Bar chart · 8-week trend</Text>
@@ -283,7 +295,7 @@ export function CHWReportsScreen(): React.JSX.Element {
         </Card>
 
         {/* Q2: Earnings trend — inline SVG line chart */}
-        <Card style={styles.chartCard}>
+        <Card style={[styles.chartCard, isPhone && styles.chartCardPhone]}>
           <View style={styles.cardTitleRow}>
             <Text style={styles.cardTitle}>Earnings trend</Text>
             <Text style={styles.cardSubtitle}>Line chart · since start</Text>
@@ -317,7 +329,7 @@ export function CHWReportsScreen(): React.JSX.Element {
         </Card>
 
         {/* Q3: Donut pie — top resource needs */}
-        <Card style={styles.chartCard}>
+        <Card style={[styles.chartCard, isPhone && styles.chartCardPhone]}>
           <View style={styles.cardTitleRow}>
             <Text style={styles.cardTitle}>Top resource needs served</Text>
             <Text style={styles.cardSubtitle}>Pie · this month</Text>
@@ -359,7 +371,7 @@ export function CHWReportsScreen(): React.JSX.Element {
         </Card>
 
         {/* Q4: Time-to-first-contact table */}
-        <Card style={styles.chartCard}>
+        <Card style={[styles.chartCard, isPhone && styles.chartCardPhone]}>
           <View style={styles.cardTitleRow}>
             <Text style={styles.cardTitle}>Time-to-first-contact</Text>
             <Text style={styles.cardSubtitle}>Per new member</Text>
@@ -388,7 +400,7 @@ export function CHWReportsScreen(): React.JSX.Element {
       {/* Insights + members served row */}
       <View style={styles.insightsRow}>
         {/* AI Insights panel */}
-        <Card style={[styles.insightsCard, styles.gradientBgSubtle]}>
+        <Card style={[styles.insightsCard, isPhone && styles.insightsCardPhone, styles.gradientBgSubtle]}>
           <View style={styles.insightsTitleRow}>
             <TrendingUp size={15} color={colors.primary} />
             <Text style={styles.insightsTitle}>Compass Insights</Text>
@@ -407,7 +419,7 @@ export function CHWReportsScreen(): React.JSX.Element {
         </Card>
 
         {/* Members served grid */}
-        <Card style={styles.membersCard}>
+        <Card style={[styles.membersCard, isPhone && styles.membersCardPhone]}>
           <Text style={styles.membersTitle}>Members served this month (12)</Text>
           <View style={styles.membersGrid}>
             {[
@@ -523,6 +535,15 @@ const styles = StyleSheet.create({
     padding: spacing.xl,
     gap: spacing.md,
     width: Platform.OS === 'web' ? 'calc(50% - 10px)' as unknown as number : '100%',
+  } as ViewStyle,
+
+  // Epic K (mobile web polish): the 2-up `calc(50% - 10px)` width above
+  // squeezes two fixed-percentage cards into a phone viewport, overflowing
+  // the page body. Full-width single column at phone width instead — the
+  // 2x2 grid still wraps to 1-per-row via chartGrid's flexWrap.
+  chartCardPhone: {
+    width: '100%',
+    padding: spacing.lg,
   } as ViewStyle,
 
   cardTitleRow: {
@@ -654,6 +675,14 @@ const styles = StyleSheet.create({
     minWidth: Platform.OS === 'web' ? 340 : '100%',
   } as ViewStyle,
 
+  // Epic K (mobile web polish): 340px minWidth exceeds a phone viewport's
+  // available content width — drop the floor so flex:1 governs and the
+  // card shrinks to fit instead of forcing the page body to scroll sideways.
+  insightsCardPhone: {
+    minWidth: 0,
+    padding: spacing.lg,
+  } as ViewStyle,
+
   insightsTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -707,6 +736,13 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     flex: 1.4,
     minWidth: Platform.OS === 'web' ? 400 : '100%',
+  } as ViewStyle,
+
+  // Epic K (mobile web polish): 400px minWidth exceeds a phone viewport's
+  // available content width — same fix as insightsCardPhone.
+  membersCardPhone: {
+    minWidth: 0,
+    padding: spacing.lg,
   } as ViewStyle,
 
   membersTitle: {
