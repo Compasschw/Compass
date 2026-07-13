@@ -692,6 +692,23 @@ async def get_messages(
 # is an explicit SMS-only send with its own in-app mirror. Here the single
 # source of truth stays the one in-app Message; the SMS is a transparent,
 # best-effort delivery mirror of it.
+
+# 10DLC best practice (Vonage Quick-Start Guide): "Include brand name in every
+# message so users can easily identify your brand as the sender." Every masked
+# text the member receives is prefixed with the Compass brand.
+SMS_BRAND_PREFIX = "Compass: "
+
+
+def brand_outbound_sms(body: str) -> str:
+    """Prefix an outbound SMS body with the Compass brand for 10DLC sender
+    identification. Idempotent: if the CHW already opened the message with the
+    brand name, it's returned unchanged so members never see "Compass: Compass".
+    """
+    if body.lstrip().lower().startswith("compass"):
+        return body
+    return f"{SMS_BRAND_PREFIX}{body}"
+
+
 async def _fanout_sms_for_chw_message(
     *,
     conversation_id: UUID,
@@ -758,7 +775,9 @@ async def _fanout_sms_for_chw_message(
             return
 
         client = get_vonage_sms_messages_client()
-        send_result = await client.send_text(eligibility.normalized_phone, message_body)
+        send_result = await client.send_text(
+            eligibility.normalized_phone, brand_outbound_sms(message_body)
+        )
         if not send_result.success:
             # Best-effort: the in-app message is already persisted and the
             # HTTP response already returned success. Log and stop — never
@@ -1017,7 +1036,9 @@ async def send_sms(
         )
 
     client = get_vonage_sms_messages_client()
-    send_result = await client.send_text(eligibility.normalized_phone, data.text)
+    send_result = await client.send_text(
+        eligibility.normalized_phone, brand_outbound_sms(data.text)
+    )
     if not send_result.success:
         logger.error(
             "sms send failed conversation=%s chw=%s error=%s status=%s",

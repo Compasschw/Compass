@@ -203,7 +203,11 @@ async def test_chw_message_to_eligible_member_fans_out_as_sms(client: AsyncClien
     assert data["channel"] == "in_app", "the in-app Message must stay channel=in_app"
     assert data["body"] == "Hi, this is your CHW checking in!"
 
-    fake_send.assert_awaited_once_with("+15550300001", "Hi, this is your CHW checking in!")
+    # 10DLC brand prefix (Compass: …) is added to every outbound SMS while the
+    # in-app Message body stays exactly what the CHW typed (asserted above).
+    fake_send.assert_awaited_once_with(
+        "+15550300001", "Compass: Hi, this is your CHW checking in!"
+    )
 
     async with _test_session_factory() as session:
         # Exactly one Message row — the fanout must NOT create a second row.
@@ -588,4 +592,4 @@ async def test_regression_thread_and_unread_count_still_work_with_fanout_present
     assert conv["unread_count"] == 1
 
     # Only the CHW's message triggered a fanout attempt.
-    fake_send.assert_awaited_once_with("+15550300010", "Hello from CHW")
+    fake_send.assert_awaited_once_with("+15550300010", "Compass: Hello from CHW")

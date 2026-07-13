@@ -52,7 +52,8 @@ from app.models.conversation import Conversation, Message
 from app.models.user import MemberProfile, User
 from app.services.communication_touch_log import CommunicationTouch, TouchKind
 from app.services.vonage_sms import SmsSendResult
-from tests.conftest import auth_header, test_session as _test_session_factory
+from tests.conftest import auth_header
+from tests.conftest import test_session as _test_session_factory
 
 _VONAGE_SECRET = "test-vonage-sms-signature-secret-for-pytest"
 
@@ -689,14 +690,113 @@ async def test_inbound_sms_stop_keyword_opts_out_and_blocks_outbound(client: Asy
 
 
 @pytest.mark.asyncio
+async def test_inbound_sms_help_keyword_auto_replies_without_opting_out(client: AsyncClient):
+    """A member texting HELP gets the 10DLC-required brand/support auto-reply.
+
+    The keyword must NOT be persisted as a chat Message, must NOT opt the member
+    out, and must send `_HELP_REPLY_TEXT` back to the member's own number. A
+    CommunicationTouch is logged with help_keyword=True for auditability.
+    """
+    from app.routers.communication import _HELP_REPLY_TEXT
+
+    chw_tokens = await _register(client, "sms_help_chw@test.com", "chw")
+    member_tokens = await _register(client, "sms_help_member@test.com", "member")
+
+    chw_id = _user_id_from_tokens(chw_tokens)
+    member_id = _user_id_from_tokens(member_tokens)
+    await _set_phone_via_db(chw_id, "+15550200018")
+    await _set_member_phone_verified(member_id, "+15550200019")
+
+    await _create_session_between(client, chw_tokens, member_tokens)
+    conv_id = await _find_or_create_conversation(client, chw_tokens, member_id)
+
+    captured_reply = AsyncMock(return_value=SmsSendResult(success=True))
+    with patch(
+        "app.services.vonage_sms.VonageSmsMessagesClient.send_text", captured_reply
+    ):
+        # lowercase + whitespace — must still match case-insensitively.
+        res = await _post_sms_inbound(client, from_number_digits="15550200019", text="  help  ")
+
+    assert res.status_code == 200
+    assert res.json()["note"] == "help_processed"
+
+    # Auto-reply sent to the member's own number with the exact brand copy.
+    captured_reply.assert_awaited_once_with("+15550200019", _HELP_REPLY_TEXT)
+
+    async with _test_session_factory() as session:
+        # HELP must not be persisted as a normal chat message.
+        msg_result = await session.execute(
+            select(Message).where(Message.conversation_id == UUID(conv_id))
+        )
+        assert msg_result.scalars().all() == []
+
+        # HELP must NOT opt the member out (unlike STOP).
+        profile_result = await session.execute(
+            select(MemberProfile).where(MemberProfile.user_id == UUID(member_id))
+        )
+        assert profile_result.scalar_one().sms_opt_out is False
+
+        touch_result = await session.execute(
+            select(CommunicationTouch).where(
+                CommunicationTouch.initiator_id == UUID(member_id),
+                CommunicationTouch.kind == TouchKind.sms.value,
+            )
+        )
+        touch = touch_result.scalar_one_or_none()
+        assert touch is not None
+        assert touch.extra_data.get("help_keyword") is True
+
+    # Outbound is still allowed — HELP did not block the member.
+    res = await client.post(
+        f"/api/v1/conversations/{conv_id}/sms",
+        json={"text": "Following up after your HELP request"},
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_inbound_sms_help_reply_send_failure_still_acks_200(client: AsyncClient):
+    """A Vonage failure on the HELP auto-reply is best-effort: the webhook still
+    ACKs 200 (never a 5xx that Vonage would retry against an already-handled
+    message)."""
+    chw_tokens = await _register(client, "sms_helpfail_chw@test.com", "chw")
+    member_tokens = await _register(client, "sms_helpfail_member@test.com", "member")
+
+    await _set_phone_via_db(_user_id_from_tokens(chw_tokens), "+15550200028")
+    await _set_member_phone_verified(_user_id_from_tokens(member_tokens), "+15550200029")
+
+    failing_send = AsyncMock(side_effect=RuntimeError("vonage down"))
+    with patch(
+        "app.services.vonage_sms.VonageSmsMessagesClient.send_text", failing_send
+    ):
+        res = await _post_sms_inbound(client, from_number_digits="15550200029", text="HELP")
+
+    assert res.status_code == 200
+    assert res.json()["note"] == "help_processed"
+
+
+def test_brand_outbound_sms_prefixes_and_is_idempotent():
+    """`brand_outbound_sms` adds the Compass brand prefix once, and never doubles
+    it when the CHW already opened the message with the brand name."""
+    from app.routers.conversations import SMS_BRAND_PREFIX, brand_outbound_sms
+
+    assert brand_outbound_sms("Hi, checking in!") == f"{SMS_BRAND_PREFIX}Hi, checking in!"
+    # Already-branded (any case / leading whitespace) is returned unchanged.
+    assert brand_outbound_sms("Compass: already branded") == "Compass: already branded"
+    assert brand_outbound_sms("compass here, following up") == "compass here, following up"
+    assert brand_outbound_sms("  Compass reminder") == "  Compass reminder"
+
+
+@pytest.mark.asyncio
 async def test_inbound_sms_missing_signature_returns_401_when_secret_configured():
     """When vonage_signature_secret IS configured, a webhook with no
     Authorization header must be rejected — mirrors the voice webhook
     signature tests in tests/test_wave_a1_security.py."""
-    import app.config as _app_cfg
     from httpx import ASGITransport
     from httpx import AsyncClient as _AsyncClient
 
+    import app.config as _app_cfg
     from app.main import app as _app
 
     original = _app_cfg.settings
@@ -726,10 +826,10 @@ async def test_inbound_sms_missing_signature_returns_401_when_secret_configured(
 
 @pytest.mark.asyncio
 async def test_inbound_sms_forged_signature_returns_401():
-    import app.config as _app_cfg
     from httpx import ASGITransport
     from httpx import AsyncClient as _AsyncClient
 
+    import app.config as _app_cfg
     from app.main import app as _app
 
     original = _app_cfg.settings
