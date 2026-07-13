@@ -25,7 +25,21 @@
  * <PressableMember memberId={m.id} displayName={m.displayName}>
  *   <Text style={s.name}>{m.displayName}</Text>
  * </PressableMember>
+ *
+ * // Epic S — optional "Back to …" origin params, e.g. from the Dashboard:
+ * <PressableMember memberId={m.id} displayName={m.displayName} backLabel="Dashboard" backTo="Dashboard">
+ *   <Text style={s.name}>{m.displayName}</Text>
+ * </PressableMember>
  * ```
+ *
+ * 2026-07-13 (Epic S follow-up): `backLabel`/`backTo` are optional and thread
+ * straight into the MemberProfile navigation params
+ * (`{ memberId, backLabel?, backTo? }`) so the destination screen can render
+ * a dynamic "Back to …" affordance and route back to the correct origin tab.
+ * Absent for a caller = today's default (no back-origin params sent) — no
+ * behavior change for CHWJourneysScreen or any other existing consumer that
+ * doesn't pass them. Replaces the CHWDashboardScreen-local
+ * `DashboardMemberLink` duplicate, which this same follow-up deletes.
  */
 
 import React, { useCallback, useState } from 'react';
@@ -45,6 +59,19 @@ export interface PressableMemberProps {
    * when the memberId is known (e.g. ``isReady && memberId``).
    */
   enabled?: boolean;
+  /**
+   * Epic S "Back to …" origin params, optional. When provided (with
+   * ``backTo``), threaded into the MemberProfile navigation params as
+   * ``{ memberId, backLabel, backTo }`` so the profile screen can render a
+   * dynamic "Back to {backLabel}" affordance that routes back to ``backTo``.
+   * Omit both to keep today's default (no back-origin params sent).
+   */
+  backLabel?: string;
+  /**
+   * Route name to navigate back to — paired with ``backLabel``. See
+   * ``backLabel`` above.
+   */
+  backTo?: string;
   children: React.ReactNode;
 }
 
@@ -53,6 +80,8 @@ export function PressableMember({
   displayName,
   style,
   enabled = true,
+  backLabel,
+  backTo,
   children,
 }: PressableMemberProps): React.JSX.Element {
   const navigation = useNavigation<any>();
@@ -63,9 +92,12 @@ export function PressableMember({
     // inside SessionsStack (e.g. CHWSessionsScreen) or any other tab stack.
     navigation.navigate('SessionsStack', {
       screen: 'MemberProfile',
-      params: { memberId },
+      params:
+        backLabel !== undefined && backTo !== undefined
+          ? { memberId, backLabel, backTo }
+          : { memberId },
     });
-  }, [navigation, memberId]);
+  }, [navigation, memberId, backLabel, backTo]);
 
   if (!enabled || !memberId) {
     return <View style={style}>{children}</View>;

@@ -50,9 +50,16 @@ vi.mock('../../context/AuthContext', () => ({
 // `useRoute` (plus the type-only `RouteProp`, erased at compile time) from
 // this package, so a full literal replacement covers everything it needs
 // without ever touching the real module.
+//
+// `mockNavigate` is hoisted so every `useNavigation()` call across the whole
+// component tree (ConversationPane's header PressableMembers, the rail's
+// Quick Actions PressableMember, CalendarNavigationButton, etc.) returns the
+// SAME spy — needed to assert "Back to Messages" origin params below (Epic S
+// follow-up), same pattern as CHWDashboardScreen.test.tsx.
+const { mockNavigate } = vi.hoisted(() => ({ mockNavigate: vi.fn() }));
 vi.mock('@react-navigation/native', () => ({
   useNavigation: () => ({
-    navigate: vi.fn(),
+    navigate: mockNavigate,
     goBack: vi.fn(),
     addListener: vi.fn(() => vi.fn()),
     setOptions: vi.fn(),
@@ -148,6 +155,14 @@ const startAssessmentFixture = {
 // beforeEach so no state leaks between tests.
 let currentSessionStatus = 'in_progress';
 
+// Mutable per-test `ended_at` the mocked POST /sessions/{id}/end route
+// returns, alongside the fixture's fixed `started_at`
+// ('2026-07-11T09:00:00.000Z') — lets individual tests control the
+// resulting session duration (e.g. a sub-16-minute end time for the
+// not-billable-floor test) instead of always computing off the real wall
+// clock. Defaults to a comfortably-billable 50 minutes after start.
+let endSessionEndedAt = '2026-07-11T09:50:00.000Z';
+
 function routeApi(path: string, options?: { method?: string; body?: string }): unknown {
   const method = options?.method ?? 'GET';
 
@@ -182,6 +197,16 @@ function routeApi(path: string, options?: { method?: string; body?: string }): u
   if (path === `/sessions/${SESSION_ID}/no-show` && method === 'PATCH') {
     currentSessionStatus = 'no_show';
     return { ...sessionFixture, status: 'no_show', ended_at: new Date().toISOString() };
+  }
+
+  if (path === `/sessions/${SESSION_ID}/end` && method === 'POST') {
+    currentSessionStatus = 'awaiting_documentation';
+    return {
+      ...sessionFixture,
+      status: 'awaiting_documentation',
+      started_at: sessionFixture.started_at,
+      ended_at: endSessionEndedAt,
+    };
   }
 
   if (path.startsWith('/sessions/')) {
@@ -291,6 +316,8 @@ beforeAll(() => {
 beforeEach(() => {
   mockedApi.mockReset();
   currentSessionStatus = 'in_progress';
+  endSessionEndedAt = '2026-07-11T09:50:00.000Z';
+  mockNavigate.mockClear();
   mockedApi.mockImplementation(async (path: string, options?: { method?: string; body?: string }) =>
     routeApi(path, options),
   );
@@ -745,5 +772,103 @@ describe('CHWMessagesScreen — Cancel / Missed Session actions (Epic P + O2)', 
     await screen.findByText('Missed — member did not attend');
     const rail = within(screen.getByLabelText('Member context'));
     expect(rail.queryByLabelText('Complete session')).toBeNull();
+  });
+});
+
+// ─── Epic Q4 — Documentation submission as an on-brand Messages overlay ───────
+
+describe('CHWMessagesScreen — Documentation modal renders as an on-brand overlay (Epic Q4)', () => {
+  it('End Session opens DocumentationModal as an on-brand overlay (not a full-screen Modal takeover), with Q1-Q3 internals intact', async () => {
+    renderScreen();
+    await screen.findByText('Rosa Gutierrez', {}, { timeout: 3000 });
+
+    const rail = within(screen.getByLabelText('Member context'));
+    fireEvent.click(await rail.findByLabelText('Complete session'));
+    await rail.findByText('Complete the session for Rosa?');
+    fireEvent.click(screen.getByLabelText('Confirm complete session'));
+
+    await waitFor(() => {
+      expect(mockedApi).toHaveBeenCalledWith(
+        `/sessions/${SESSION_ID}/end`,
+        expect.objectContaining({ method: 'POST' }),
+      );
+    });
+
+    // The documentation form is now open — its header close button is a
+    // reliable "the modal mounted" signal.
+    const closeBtn = await screen.findByLabelText('Close documentation modal');
+    expect(closeBtn).toBeTruthy();
+
+    // On-brand overlay: rendered in-place inside the Messages page, NOT via
+    // RN's Modal (which react-native-web portals to a node outside the
+    // rendered tree). Asserting it's reachable through the same `document`
+    // that also still contains the Messages thread/composer proves it's an
+    // in-page overlay, not a screen takeover that replaced the page.
+    expect(screen.getByPlaceholderText(/type a message/i)).toBeTruthy();
+    expect(screen.getByLabelText('Search message threads')).toBeTruthy();
+
+    // Q1: inline "Units: N" line present (spot-assert Q1-Q3 survive the
+    // presentation change).
+    expect(screen.getByText('Units:')).toBeTruthy();
+
+    // Q3: a grouped diagnosis chip renders inside the overlay.
+    fireEvent.click(screen.getByLabelText('Housing'));
+    expect(screen.getByLabelText('Z59.00: Homelessness, unspecified')).toBeTruthy();
+  });
+
+  it('the 16-minute not-billable gate still blocks submit inside the Messages overlay', async () => {
+    // 10-minute session (started 09:00, ended 09:10) — under the 16-minute
+    // floor, so the overlay's submit must stay blocked.
+    endSessionEndedAt = '2026-07-11T09:10:00.000Z';
+    renderScreen();
+    await screen.findByText('Rosa Gutierrez', {}, { timeout: 3000 });
+
+    const rail = within(screen.getByLabelText('Member context'));
+    fireEvent.click(await rail.findByLabelText('Complete session'));
+    await rail.findByText('Complete the session for Rosa?');
+    fireEvent.click(screen.getByLabelText('Confirm complete session'));
+
+    await screen.findByLabelText('Close documentation modal');
+
+    expect(
+      screen.getByText('Under 16 minutes — not billable; no claim will be filed.'),
+    ).toBeTruthy();
+    const submit = screen.getByLabelText('Submit documentation and billing');
+    expect(submit.getAttribute('aria-disabled')).toBe('true');
+  });
+});
+
+// ─── Epic S follow-up — PressableMember "Back to Messages" origin params ──────
+
+describe('CHWMessagesScreen — Member Profile links pass backLabel "Messages" (Epic S follow-up)', () => {
+  it('the conversation header "Open Profile" button passes backLabel/backTo "Messages"', async () => {
+    renderScreen();
+    await screen.findByText('Rosa Gutierrez', {}, { timeout: 3000 });
+
+    // The conversation header wraps the avatar, the name, AND the explicit
+    // "Open Profile" button in their own PressableMember, all sharing this
+    // same accessibility label — click any one; they all resolve to the same
+    // navigation call under test here.
+    const profileLinks = screen.getAllByLabelText("Open Rosa Gutierrez's profile");
+    expect(profileLinks.length).toBeGreaterThanOrEqual(1);
+    fireEvent.click(profileLinks[0]);
+
+    expect(mockNavigate).toHaveBeenCalledWith('SessionsStack', {
+      screen: 'MemberProfile',
+      params: { memberId: MEMBER_ID, backLabel: 'Messages', backTo: 'Messages' },
+    });
+  });
+
+  it('the rail Quick Actions "Open Member Profile" button passes backLabel/backTo "Messages"', async () => {
+    renderScreen();
+    await screen.findByText('Rosa Gutierrez', {}, { timeout: 3000 });
+
+    const rail = within(screen.getByLabelText('Member context'));
+    fireEvent.click(rail.getByLabelText("Open Rosa Gutierrez's profile"));
+
+    expect(mockNavigate).toHaveBeenCalledWith('SessionsStack', {
+      screen: 'MemberProfile',
+      params: { memberId: MEMBER_ID, backLabel: 'Messages', backTo: 'Messages' },
+    });
   });
 });

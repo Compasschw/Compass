@@ -304,6 +304,104 @@ describe('DocumentationModal — Q3: diagnosis codes grouped by resource-need ve
   });
 });
 
+describe('DocumentationModal — Q4: on-brand Messages overlay presentation', () => {
+  it('defaults to the fullscreen presentation when `presentation` is not passed (other-launch-path regression)', () => {
+    const { container } = renderModal({
+      sessionStartedAt: START_ISO,
+      sessionEndedAt: END_ISO_50MIN,
+    });
+
+    // Fullscreen presentation renders RN's `Modal`, which react-native-web
+    // portals to a dedicated DOM node OUTSIDE the render() container — so
+    // the form content is NOT found inside `container` when unscoped, but
+    // IS found via `screen` (which searches `document.body`). This is the
+    // structural signature of the pre-existing pageSheet Modal takeover.
+    expect(container.querySelector('[aria-label="Close documentation modal"]')).toBeNull();
+    expect(screen.getByLabelText('Close documentation modal')).toBeTruthy();
+    expect(screen.getByText('Session Time')).toBeTruthy();
+  });
+
+  it('overlay presentation renders in-place (no Modal portal) with the Q1-Q3 internals intact', () => {
+    const { container } = renderModal({
+      presentation: 'overlay',
+      sessionStartedAt: START_ISO,
+      sessionEndedAt: END_ISO_50MIN,
+    });
+
+    // Overlay presentation is a plain View tree rendered inline — found
+    // directly inside the test's own render() container, unlike the Modal
+    // portal case above.
+    expect(container.querySelector('[aria-label="Close documentation modal"]')).toBeTruthy();
+
+    // Q1: inline "Units: N" line still present and correct (50 min → 2 units).
+    expect(getUnitsLineValue()).toBe('2');
+    expect(screen.getByText('Units:')).toBeTruthy();
+
+    // Q3: a grouped diagnosis chip renders inside the overlay.
+    fireEvent.click(screen.getByLabelText('Housing'));
+    expect(screen.getByLabelText('Z59.00: Homelessness, unspecified')).toBeTruthy();
+
+    // Q1: Session Time still after Your Notes.
+    const notesHeading = screen.getByText('Your Notes');
+    const sessionTimeHeading = screen.getByText('Session Time');
+    const position = notesHeading.compareDocumentPosition(sessionTimeHeading);
+    expect(position & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('overlay presentation renders nothing when visible is false (no dangling scrim/card)', () => {
+    const { container } = renderModal({ presentation: 'overlay', visible: false });
+
+    expect(container.querySelector('[aria-label="Close documentation modal"]')).toBeNull();
+    expect(screen.queryByText('Session Time')).toBeNull();
+  });
+
+  it('overlay presentation still enforces the 16-minute not-billable gate', () => {
+    renderModal({
+      presentation: 'overlay',
+      sessionStartedAt: START_ISO,
+      sessionEndedAt: END_ISO_10MIN,
+    });
+
+    selectADiagnosisCode();
+    fillNotes('Brief check-in, member was in a hurry.');
+
+    expect(
+      screen.getByText('Under 16 minutes — not billable; no claim will be filed.'),
+    ).toBeTruthy();
+    const submit = screen.getByLabelText('Submit documentation and billing');
+    expect(submit.getAttribute('aria-disabled')).toBe('true');
+    expect(
+      screen.getByText(
+        'Session is under 16 minutes and is not billable — no claim can be filed.',
+      ),
+    ).toBeTruthy();
+  });
+
+  it('overlay presentation still submits successfully once valid and past the billable floor', async () => {
+    const { onSubmit } = renderModal({
+      presentation: 'overlay',
+      sessionStartedAt: START_ISO,
+      sessionEndedAt: END_ISO_50MIN,
+    });
+
+    selectADiagnosisCode();
+    fillNotes('Discussed housing options and next steps.');
+
+    const submit = screen.getByLabelText('Submit documentation and billing');
+    expect(submit.getAttribute('aria-disabled')).not.toBe('true');
+    fireEvent.click(submit);
+
+    // Web confirm gate — in-app panel, not window.confirm.
+    fireEvent.click(await screen.findByLabelText('Submit for billing'));
+
+    await vi.waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({
+      sessionId: 'sess-1',
+      unitsToBill: 2,
+    });
+  });
+});
+
 describe('DocumentationModal — Submit gating on session times', () => {
   it('stays disabled while End <= Start, even with notes/diagnosis/procedure filled in', () => {
     renderModal({ sessionStartedAt: START_ISO, sessionEndedAt: END_ISO_50MIN });
