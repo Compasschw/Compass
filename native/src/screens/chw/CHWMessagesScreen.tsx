@@ -102,6 +102,7 @@ import {
   Archive,
   Bell,
   BellOff,
+  Info,
 } from 'lucide-react-native';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { CHWSessionsStackParamList } from '../../navigation/CHWTabNavigator';
@@ -167,6 +168,7 @@ import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 import { PressableMember } from '../../components/shared/PressableMember';
 import { colors as tokens, spacing, radius, numerals, shadows } from '../../theme/tokens';
+import { BP_PHONE } from '../../constants/breakpoints';
 
 // ─── Breakpoints ──────────────────────────────────────────────────────────────
 
@@ -1272,6 +1274,13 @@ interface ConversationPaneProps {
   readonly onAutoCallConsumed?: () => void;
   /** Callback so the rail can open the Documentation modal post-end. */
   readonly onRequestOpenDocumentation?: () => void;
+  /**
+   * Epic K (mobile web polish): at phone widths the member-context rail
+   * isn't rendered as a sibling pane (no room), so this header button opens
+   * it as a full-screen overlay instead. Omitted (undefined) at wider
+   * widths, where the rail is already visible as its own pane.
+   */
+  readonly onOpenPhoneRail?: () => void;
 }
 
 /**
@@ -1317,6 +1326,7 @@ function ConversationPane({
   autoCallOnMount,
   onAutoCallConsumed,
   onRequestOpenDocumentation,
+  onOpenPhoneRail,
 }: ConversationPaneProps): React.JSX.Element {
   const [draftText, setDraftText] = useState('');
   const [localMessages, setLocalMessages] = useState<ConversationMessageLocal[]>([]);
@@ -1799,6 +1809,21 @@ function ConversationPane({
 
         {/* Calendar navigation */}
         <CalendarNavigationButton />
+
+        {/* Phone-width only: the member-context rail (Care Status, Active
+            Needs, Quick Actions, Complete Session) has no sibling pane to
+            live in at this width — this button opens it as a full-screen
+            overlay instead. Hidden entirely at wider widths, where the rail
+            renders as its own pane and this would be redundant. */}
+        {onOpenPhoneRail != null ? (
+          <PressableCard
+            onPress={onOpenPhoneRail}
+            accessibilityLabel="Open member context"
+            style={styles.iconBtnCard}
+          >
+            <Info size={20} color={tokens.textSecondary} />
+          </PressableCard>
+        ) : null}
 
         {/* Open Member Profile */}
         <PressableMember
@@ -3359,6 +3384,12 @@ export function CHWMessagesScreen(): React.JSX.Element {
   const conversationsQuery = useConversations({ includeArchived: true });
   const [selectedConversation, setSelectedConversation] = useState<ConversationData | null>(null);
   const [showThreadList, setShowThreadList] = useState(true);
+  // Epic K (mobile web polish): at phone widths the member-context rail has
+  // nowhere to live as a sibling pane (there isn't room for even two
+  // columns), so it's reachable via this toggle instead — rendered as a
+  // full-screen overlay over the conversation pane. See `showPhoneRail`
+  // below and its render block near the end of this component's JSX.
+  const [showPhoneRail, setShowPhoneRail] = useState(false);
   const [documentingSessionId, setDocumentingSessionId] = useState<string | null>(null);
   // Session Start / Session End (ISO 8601) captured from the /end response
   // when the just-ended session opens the documentation modal below — see
@@ -3396,6 +3427,7 @@ export function CHWMessagesScreen(): React.JSX.Element {
 
   const hideRail = width < BP_HIDE_RAIL;
   const hideList = width < BP_HIDE_LIST;
+  const isPhone = width < BP_PHONE;
 
   // SDOH panel variant: 'pane' whenever the member-context rail itself is
   // visible, so the panel always renders as a genuine sibling column next
@@ -3498,6 +3530,12 @@ export function CHWMessagesScreen(): React.JSX.Element {
   // the previous member's in-progress assessment against the new thread.
   useEffect(() => {
     setSdohSessionId(null);
+  }, [selectedConversation?.id]);
+
+  // Close the phone-width rail overlay on thread switch too, for the same
+  // reason — it should never keep showing a stale member's context.
+  useEffect(() => {
+    setShowPhoneRail(false);
   }, [selectedConversation?.id]);
 
   // After End Session completes — open DocumentationModal with the just-ended
@@ -3694,6 +3732,7 @@ export function CHWMessagesScreen(): React.JSX.Element {
                   setDocumentingSessionId(selectedConversation.activeSessionId);
                 }
               }}
+              onOpenPhoneRail={isPhone ? () => setShowPhoneRail(true) : undefined}
             />
           </View>
         ) : shouldShowConv ? (
@@ -3760,6 +3799,46 @@ export function CHWMessagesScreen(): React.JSX.Element {
             onClose={handleCloseSdohPanel}
             variant={sdohPanelVariant}
           />
+        ) : null}
+
+        {/* Phone-width member context rail — reachable via the "Info" button
+            in ConversationPane's header (see onOpenPhoneRail). Rendered as a
+            full-screen overlay (scrim + card, same visual language as
+            DocumentationModal's `presentation="overlay"`) since there's no
+            room for it as a sibling pane at this width. */}
+        {isPhone && showPhoneRail && selectedConversation ? (
+          <View style={styles.phoneRailOverlay} accessibilityViewIsModal accessibilityRole="none">
+            <Pressable
+              style={styles.phoneRailScrim}
+              onPress={() => setShowPhoneRail(false)}
+              accessibilityLabel="Dismiss member context overlay"
+            />
+            <View style={styles.phoneRailCard}>
+              <View style={styles.phoneRailHeader}>
+                <Text style={styles.phoneRailHeaderText}>Member Context</Text>
+                <PressableCard
+                  onPress={() => setShowPhoneRail(false)}
+                  accessibilityLabel="Close member context"
+                  style={styles.iconBtnCard}
+                >
+                  <X size={18} color={tokens.textSecondary} />
+                </PressableCard>
+              </View>
+              <MemberContextRail
+                conversation={liveSelectedConversation ?? selectedConversation}
+                onEndSessionComplete={handleEndSessionComplete}
+                onSessionStarted={handleSessionStarted}
+                autoBeginSessionOnMount={false}
+                onAutoBeginSessionConsumed={() => {}}
+                promptCompleteOnMount={false}
+                onPromptCompleteConsumed={() => {}}
+                onOpenSdohPanel={(sessionId) => {
+                  setShowPhoneRail(false);
+                  handleOpenSdohPanel(sessionId);
+                }}
+              />
+            </View>
+          </View>
         ) : null}
       </View>
 
@@ -4673,6 +4752,49 @@ const styles = StyleSheet.create({
     backgroundColor: tokens.cardBg,
     position: 'relative',
   } as ViewStyle,
+
+  // ── Phone-width member context rail overlay (Epic K) ──────────────────────────
+  // Same scrim + card language as DocumentationModal's `presentation="overlay"` —
+  // absolutely fills `styles.root` (a positioned ancestor), not the whole window,
+  // so it never escapes the AppShell chrome.
+  phoneRailOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 40,
+    alignItems: 'stretch',
+    justifyContent: 'flex-end',
+  } as ViewStyle,
+
+  phoneRailScrim: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
+  } as ViewStyle,
+
+  phoneRailCard: {
+    width: '100%',
+    maxHeight: '88%',
+    backgroundColor: tokens.cardBg,
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+    overflow: 'hidden',
+    ...(shadows.card as object),
+  } as ViewStyle,
+
+  phoneRailHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: tokens.cardBorder,
+    backgroundColor: tokens.cardBg,
+  } as ViewStyle,
+
+  phoneRailHeaderText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: tokens.textPrimary,
+  } as TextStyle,
 
   railScrollView: {
     flex: 1,

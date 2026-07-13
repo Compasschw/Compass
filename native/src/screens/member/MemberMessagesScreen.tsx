@@ -94,6 +94,7 @@ import {
   Route,
   X,
   Download,
+  Info,
 } from 'lucide-react-native';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 
@@ -132,6 +133,7 @@ import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 import { useEngagementStatus } from '../../hooks/useMessagesInsights';
 import { POINTS_ENABLED } from '../../constants/featureFlags';
+import { BP_PHONE } from '../../constants/breakpoints';
 import {
   useMessageAttachmentUpload,
   type MessageAttachmentUploadResult,
@@ -994,6 +996,13 @@ interface MoreMenuProps {
   onViewCHWProfile: () => void;
   onSchedule: () => void;
   onRefuseServices: () => void;
+  /**
+   * Epic K (mobile web polish): at phone widths CareContextRail isn't
+   * rendered as a sibling pane (no room), so this menu item opens it as an
+   * overlay instead. Omitted (undefined) at wider widths, where the rail is
+   * already visible as its own pane and this item would be redundant.
+   */
+  onViewCareContext?: () => void;
 }
 
 function MoreMenu({
@@ -1002,6 +1011,7 @@ function MoreMenu({
   onViewCHWProfile,
   onSchedule,
   onRefuseServices,
+  onViewCareContext,
 }: MoreMenuProps): React.JSX.Element | null {
   if (!visible) return null;
 
@@ -1014,6 +1024,16 @@ function MoreMenu({
         accessibilityLabel="Close menu"
       />
       <View style={moreMenuStyles.menu} accessibilityRole="menu">
+        {onViewCareContext != null ? (
+          <TouchableOpacity
+            style={moreMenuStyles.item}
+            onPress={() => { onViewCareContext(); onClose(); }}
+            accessibilityRole="menuitem"
+          >
+            <Info size={14} color={colors.textSecondary} />
+            <Text style={moreMenuStyles.itemText}>Your care context</Text>
+          </TouchableOpacity>
+        ) : null}
         <TouchableOpacity
           style={moreMenuStyles.item}
           onPress={() => { onViewCHWProfile(); onClose(); }}
@@ -1103,6 +1123,8 @@ interface ConversationPaneProps {
   onGoToProfile: () => void;
   onGoToCalendar: () => void;
   onViewCHWProfile: () => void;
+  /** Epic K (mobile web polish) — see MoreMenuProps.onViewCareContext. */
+  onViewCareContext?: () => void;
 }
 
 function ConversationPane({
@@ -1117,6 +1139,7 @@ function ConversationPane({
   onGoToProfile,
   onGoToCalendar,
   onViewCHWProfile,
+  onViewCareContext,
 }: ConversationPaneProps): React.JSX.Element {
   const { userName } = useAuth();
   const navigation = useNavigation<any>(); // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -1527,6 +1550,7 @@ function ConversationPane({
         onViewCHWProfile={onViewCHWProfile}
         onSchedule={onGoToCalendar}
         onRefuseServices={onGoToProfile}
+        onViewCareContext={onViewCareContext}
       />
 
       {/* Bilingual welcome strip — shown once per day */}
@@ -1791,7 +1815,12 @@ interface CareContextRailProps {
   onViewProfile: () => void;
   onGoToRewards: () => void;
   onViewJourney: () => void;
-  style?: { width: number };
+  /**
+   * `{ width }` at wide viewports (resizable-pane width, see railOuter);
+   * a full ViewStyle override at phone width (Epic K's phoneRailContent,
+   * which also zeroes railOuter's left border for the overlay-card context).
+   */
+  style?: { width: number } | ViewStyle;
 }
 
 /**
@@ -2091,6 +2120,7 @@ export function MemberMessagesScreen(): React.JSX.Element {
   // ── Responsive breakpoints ────────────────────────────────────────────────────
   const hideRail  = width < BP_HIDE_RAIL;
   const hideInbox = width < BP_HIDE_INBOX;
+  const isPhone   = width < BP_PHONE;
 
   // ── Resizable pane widths ─────────────────────────────────────────────────────
   const [leftWidth, setLeftWidth] = useState<number>(() =>
@@ -2111,6 +2141,11 @@ export function MemberMessagesScreen(): React.JSX.Element {
   const [showInbox, setShowInbox]               = useState(true);
   const [selectedConversation, setSelectedConversation] = useState<ConversationData | null>(null);
   const [searchQuery, setSearchQuery]           = useState('');
+  // Epic K (mobile web polish): at phone widths CareContextRail has nowhere
+  // to live as a sibling pane, so it's reachable via MoreMenu's "Your care
+  // context" item instead, rendered as a full-screen overlay. See
+  // `showPhoneRail` render block near the end of this component.
+  const [showPhoneRail, setShowPhoneRail]       = useState(false);
 
   // ── Data ──────────────────────────────────────────────────────────────────────
   const conversationsQuery = useConversations();
@@ -2175,6 +2210,9 @@ export function MemberMessagesScreen(): React.JSX.Element {
     (conversation: ConversationData) => {
       setSelectedConversation(conversation);
       if (hideInbox) setShowInbox(false);
+      // Never carry a stale conversation's care-context overlay into the
+      // newly-selected thread.
+      setShowPhoneRail(false);
     },
     [hideInbox],
   );
@@ -2327,6 +2365,7 @@ export function MemberMessagesScreen(): React.JSX.Element {
               onGoToProfile={handleGoToProfile}
               onGoToCalendar={handleGoToCalendar}
               onViewCHWProfile={handleViewCHWProfile}
+              onViewCareContext={isPhone ? () => setShowPhoneRail(true) : undefined}
             />
           ) : (
             <View style={styles.noSelectionWrap}>
@@ -2362,6 +2401,45 @@ export function MemberMessagesScreen(): React.JSX.Element {
           />
         ) : null}
 
+        {/* Phone-width care context rail — reachable via MoreMenu's "Your
+            care context" item (see onViewCareContext). Rendered as a
+            full-screen overlay (scrim + card) since there's no room for it
+            as a sibling pane at this width. */}
+        {isPhone && showPhoneRail && selectedConversation != null ? (
+          <View style={styles.phoneRailOverlay} accessibilityViewIsModal accessibilityRole="none">
+            <TouchableOpacity
+              style={styles.phoneRailScrim}
+              onPress={() => setShowPhoneRail(false)}
+              accessibilityRole="button"
+              accessibilityLabel="Dismiss care context overlay"
+            />
+            <View style={styles.phoneRailCard}>
+              <View style={styles.phoneRailHeader}>
+                <Text style={styles.phoneRailHeaderText}>Your Care Context</Text>
+                <TouchableOpacity
+                  onPress={() => setShowPhoneRail(false)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Close care context"
+                  style={styles.iconBtnCard}
+                >
+                  <X size={18} color={colors.textSecondary} />
+                </TouchableOpacity>
+              </View>
+              <CareContextRail
+                conversation={selectedConversation}
+                memberId={memberId}
+                memberFirstName={memberFirstName}
+                onSchedule={handleGoToCalendar}
+                onViewCHWProfile={handleViewCHWProfile}
+                onViewProfile={handleGoToProfile}
+                onGoToRewards={handleGoToRewards}
+                onViewJourney={handleGoToJourney}
+                style={styles.phoneRailContent}
+              />
+            </View>
+          </View>
+        ) : null}
+
       </View>
     </AppShell>
   );
@@ -2381,6 +2459,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     backgroundColor: colors.pageBg,
     overflow: 'hidden',
+    position: 'relative',
   } as ViewStyle,
 
   loadingWrap: {
@@ -3039,6 +3118,56 @@ const styles = StyleSheet.create({
   railContent: {
     // no gap — the ONE card fills the rail
   } as ViewStyle,
+
+  // ── Phone-width care context rail overlay (Epic K) ────────────────────────────
+  // Same scrim + card language as the CHW Messages screen's phone-width rail
+  // overlay — absolutely fills `styles.root` (a positioned ancestor), not the
+  // whole window, so it never escapes the AppShell chrome.
+  phoneRailOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 40,
+    alignItems: 'stretch',
+    justifyContent: 'flex-end',
+  } as ViewStyle,
+
+  phoneRailScrim: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
+  } as ViewStyle,
+
+  phoneRailCard: {
+    width: '100%',
+    maxHeight: '88%',
+    backgroundColor: colors.cardBg,
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+    overflow: 'hidden',
+    ...(shadows.card as object),
+  } as ViewStyle,
+
+  // Overrides railOuter's fixed RAIL_WIDTH + left border for the overlay
+  // card context, where it should fill the available width edge-to-edge.
+  phoneRailContent: {
+    width: '100%',
+    borderLeftWidth: 0,
+  } as ViewStyle,
+
+  phoneRailHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.cardBorder,
+    backgroundColor: colors.cardBg,
+  } as ViewStyle,
+
+  phoneRailHeaderText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  } as TextStyle,
   railHeader: {
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,

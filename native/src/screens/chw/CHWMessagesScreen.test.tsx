@@ -872,3 +872,78 @@ describe('CHWMessagesScreen — Member Profile links pass backLabel "Messages" (
     });
   });
 });
+
+// ─── Epic K — phone-width usability sweep ──────────────────────────────────────
+
+describe('CHWMessagesScreen — phone-width single-pane collapse (Epic K)', () => {
+  const PHONE_VIEWPORT_WIDTH = 390;
+
+  beforeEach(() => {
+    setViewportWidth(PHONE_VIEWPORT_WIDTH);
+  });
+
+  afterEach(() => {
+    // Restore the wide viewport the other describe blocks in this file assume.
+    setViewportWidth(WIDE_VIEWPORT_WIDTH);
+  });
+
+  it('shows the thread list first, then collapses to a single conversation pane with a back control', async () => {
+    renderScreen();
+
+    // Initial render at phone width: the thread list pane, not the
+    // conversation, is what's showing (showThreadList starts true) — only
+    // one pane's worth of content at a time.
+    const threadRow = await screen.findByLabelText('Thread with Rosa Gutierrez', {}, { timeout: 3000 });
+    expect(screen.getByLabelText('Search message threads')).toBeTruthy();
+    expect(screen.queryByPlaceholderText(/type a message/i)).toBeNull();
+
+    // Selecting a thread swaps to the conversation pane...
+    fireEvent.click(threadRow);
+    expect(await screen.findByPlaceholderText(/type a message/i)).toBeTruthy();
+    // ...and the thread list is no longer rendered alongside it.
+    expect(screen.queryByLabelText('Search message threads')).toBeNull();
+    expect(screen.getByLabelText('Back to thread list')).toBeTruthy();
+
+    // Tapping back returns to the thread list.
+    fireEvent.click(screen.getByLabelText('Back to thread list'));
+    expect(await screen.findByLabelText('Search message threads')).toBeTruthy();
+    expect(screen.queryByPlaceholderText(/type a message/i)).toBeNull();
+  });
+
+  it('the member-context rail is not rendered as a sibling pane, but stays reachable via a header toggle', async () => {
+    renderScreen();
+    fireEvent.click(await screen.findByLabelText('Thread with Rosa Gutierrez', {}, { timeout: 3000 }));
+    await screen.findByPlaceholderText(/type a message/i);
+
+    // No sibling rail pane — the active-session controls (Complete Session,
+    // etc.) aren't just present-but-squeezed, they're absent until opened.
+    expect(screen.queryByLabelText('Member context')).toBeNull();
+
+    // The rail's controls, including Complete Session, are reachable behind
+    // the "Open member context" toggle in the conversation header.
+    fireEvent.click(screen.getByLabelText('Open member context'));
+    const rail = within(await screen.findByLabelText('Member context'));
+    expect(await rail.findByLabelText('Complete session')).toBeTruthy();
+
+    // Closing the overlay removes the rail again.
+    fireEvent.click(screen.getByLabelText('Close member context'));
+    await waitFor(() => {
+      expect(screen.queryByLabelText('Member context')).toBeNull();
+    });
+  });
+
+  it('opening the SDOH panel from the phone-width rail overlay closes the overlay first', async () => {
+    renderScreen();
+    fireEvent.click(await screen.findByLabelText('Thread with Rosa Gutierrez', {}, { timeout: 3000 }));
+    await screen.findByPlaceholderText(/type a message/i);
+
+    fireEvent.click(screen.getByLabelText('Open member context'));
+    const rail = within(await screen.findByLabelText('Member context'));
+    fireEvent.click(await rail.findByLabelText('Open SDOH / Health Screening'));
+
+    // SDOH panel opens...
+    await screen.findByText('Do you have stable housing?', {}, { timeout: 3000 });
+    // ...and the rail overlay is gone (not stacked underneath it).
+    expect(screen.queryByLabelText('Member context')).toBeNull();
+  });
+});

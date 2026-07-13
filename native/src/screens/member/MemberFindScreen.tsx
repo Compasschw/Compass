@@ -80,6 +80,7 @@ import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 import { ChwMapWebView } from '../../components/find/ChwMapWebView';
 import { zipToLatLng } from '../../utils/geocoding';
+import { BP_PHONE } from '../../constants/breakpoints';
 
 // ─── Platform-gated expo-maps module references ───────────────────────────────
 // expo-maps is a native-only module — it has no web build. The previous
@@ -1456,6 +1457,13 @@ export function MemberFindScreen(): React.JSX.Element {
    * container and activate 3-col at the 768px breakpoint.
    */
   const isThreeCol = Platform.OS === 'web' && windowWidth >= THREE_COL_BREAKPOINT;
+  // Epic K (mobile web polish): pageContainer's spacing.xxxl (32px) side
+  // padding is fine at desktop/tablet widths but eats too much of a phone
+  // viewport (e.g. 360px - 64px = 296px of usable content). Tighten it at
+  // phone width only — same 0-width-before-measurement guard as
+  // CHWMembersScreen's useCardLayout, so it doesn't flash tight padding on
+  // desktop before the real viewport is measured.
+  const isPhone = Platform.OS === 'web' && windowWidth > 0 && windowWidth < BP_PHONE;
 
   const memberInitials = (userName ?? 'M')
     .split(' ')
@@ -1669,7 +1677,12 @@ export function MemberFindScreen(): React.JSX.Element {
            * PageWrap is still used via composition on strictly member-only
            * read screens (profile, roadmap, etc.).
            */}
-          <View style={screenStyles.pageContainer}>
+          <View
+            style={[
+              screenStyles.pageContainer,
+              isPhone && screenStyles.pageContainerPhone,
+            ]}
+          >
             <PageHeader
               title="Find Your CHW"
               subtitle="Matched to your needs in LA County"
@@ -1751,6 +1764,12 @@ const screenStyles = StyleSheet.create({
     maxWidth: 1280,
     padding: Platform.OS === 'web' ? spacing.xxxl : spacing.xl,
     paddingBottom: 48,
+  } as ViewStyle,
+  // Epic K (mobile web polish): tighter side padding at phone width — see
+  // `isPhone` above.
+  pageContainerPhone: {
+    paddingLeft: spacing.lg,
+    paddingRight: spacing.lg,
   } as ViewStyle,
   threeColRow: {
     flexDirection: 'row',
