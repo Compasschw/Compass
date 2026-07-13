@@ -140,6 +140,21 @@ beforeEach(() => {
   installApiRouter();
 });
 
+describe('CHWProfileScreen — Account & Security', () => {
+  it('does not render the removed "Download all my data" button', async () => {
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByText('Account & Security')).toBeTruthy());
+
+    expect(screen.queryByText(/download all my data/i)).toBeNull();
+    expect(screen.queryByLabelText(/download all my data/i)).toBeNull();
+
+    // "Sign out of this device" and "Delete my account" must be unaffected.
+    expect(screen.getByText('Sign out of this device')).toBeTruthy();
+    expect(screen.getByText('Delete my account')).toBeTruthy();
+  });
+});
+
 describe('CHWProfileScreen — Epic C profile edits', () => {
   it('does not render a Modality section (C1)', async () => {
     renderScreen();

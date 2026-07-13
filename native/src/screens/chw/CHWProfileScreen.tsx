@@ -53,7 +53,6 @@ import {
   CheckCircle2,
   Clock,
   DollarSign,
-  Download,
   ExternalLink,
   FileText,
   Globe,
@@ -1095,10 +1094,6 @@ export function CHWProfileScreen(): React.JSX.Element {
     );
   }, [deleteAccount, clearAfterDeletion]);
 
-  const handleDownloadData = useCallback(() => {
-    Alert.alert('Data export', 'We will email a copy of your data to you within 24 hours.');
-  }, []);
-
   const handleLogout = useCallback(() => {
     Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
       { text: 'Cancel', style: 'cancel' },
@@ -1523,19 +1518,6 @@ export function CHWProfileScreen(): React.JSX.Element {
               </Pressable>
 
               <Pressable
-                onPress={handleDownloadData}
-                accessibilityRole="button"
-                accessibilityLabel="Download all my data"
-                style={({ pressed, hovered }: { pressed: boolean; hovered?: boolean }) => [
-                  pageStyles.outlineBtn,
-                  (pressed || hovered) && pageStyles.outlineBtnHover,
-                ]}
-              >
-                <Download size={16} color="#374151" />
-                <Text style={pageStyles.outlineBtnText}>Download all my data</Text>
-              </Pressable>
-
-              <Pressable
                 onPress={handleDeleteAccount}
                 accessibilityRole="button"
                 accessibilityLabel="Delete my account"
@@ -1829,28 +1811,6 @@ const pageStyles = StyleSheet.create({
     marginTop: 4,
     fontSize:  12,
     color:     '#6B7280',
-  } as TextStyle,
-  outlineBtn: {
-    flexDirection:     'row',
-    alignItems:        'center',
-    justifyContent:    'center',
-    gap:               8,
-    marginTop:         16,
-    paddingHorizontal: 16,
-    paddingVertical:   10,
-    borderRadius:      10,
-    borderWidth:       1,
-    borderColor:       '#E5E7EB',
-    backgroundColor:   '#FFFFFF',
-    alignSelf:         'flex-start',
-  } as ViewStyle,
-  outlineBtnHover: {
-    backgroundColor: '#F9FAFB',
-  } as ViewStyle,
-  outlineBtnText: {
-    fontSize:   13,
-    fontWeight: '600',
-    color:      '#374151',
   } as TextStyle,
   dangerLink: {
     flexDirection:   'row',
