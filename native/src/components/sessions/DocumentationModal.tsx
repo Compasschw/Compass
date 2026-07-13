@@ -1,5 +1,8 @@
 /**
- * DocumentationModal — full-screen modal for documenting a completed session.
+ * DocumentationModal — documents a completed session. Renders as either a
+ * full-screen takeover (`presentation="fullscreen"`, the default) or an
+ * on-brand overlay panel anchored over the caller's content
+ * (`presentation="overlay"`) — see the Q4 note below.
  *
  * Visual language: shared design-system tokens (theme/tokens) + ui/ primitives
  * (Card, SectionHeader). Legacy beige/cream theme/colors palette removed.
@@ -37,6 +40,20 @@
  *    (counseling/housing_economic/health_access/behavioral/legal) to the
  *    resource-need verticals used elsewhere in the app, via
  *    `data/diagnosisVerticalMap.ts`.
+ *
+ * 2026-07-13 "on-brand Messages overlay" (Epic Q4): presentation is now a
+ * prop, `presentation?: 'fullscreen' | 'overlay'` (default `'fullscreen'` —
+ * the pre-existing RN `Modal`/`pageSheet` takeover, unchanged for every
+ * caller that doesn't pass the prop). `'overlay'` is opt-in, used only by
+ * CHWMessagesScreen's live "Complete Session" flow: instead of an RN `Modal`
+ * (which portals to a fresh document root on web), it renders as a plain
+ * absolutely-positioned in-app panel — scrim + centered card, matching
+ * AppDialogProvider / DocumentationModal's own in-app confirm/success panels
+ * (`rgba(15, 23, 42, 0.45)` scrim, `tokens.cardBg` card, `radius.lg`) — so it
+ * reads as part of the Messages page rather than a screen takeover. ALL form
+ * internals (validation, 16-minute billable-floor gating, submit wiring) are
+ * identical between the two presentations; only the outer chrome differs —
+ * see `DocumentationModalShell` below.
  *
  * See src/utils/sessionDocumentation.ts for the pure parsing/bracket math.
  */
@@ -129,6 +146,18 @@ export interface DocumentationModalProps {
   sessionEndedAt?: string | null;
   /** Called with the completed documentation data on submit */
   onSubmit: (data: SessionDocumentation) => void;
+  /**
+   * Visual presentation of the form shell.
+   *  - `'fullscreen'` (default): the pre-existing RN `Modal` /
+   *    `presentationStyle="pageSheet"` screen takeover. Every existing
+   *    caller that doesn't pass this prop keeps this exact behavior.
+   *  - `'overlay'`: an on-brand in-app overlay panel anchored over the
+   *    caller's own content (scrim + centered card, no navigation-level
+   *    modal) — opt-in, used by CHWMessagesScreen so documentation reads as
+   *    part of the Messages page. Form internals, validation, and submit
+   *    wiring are identical to `'fullscreen'`; only the outer chrome differs.
+   */
+  presentation?: 'fullscreen' | 'overlay';
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -708,10 +737,63 @@ const st = StyleSheet.create({
   },
 });
 
+// ─── DocumentationModalShell ──────────────────────────────────────────────────
+//
+// Owns ONLY the outer chrome difference between the two presentations — every
+// prop it receives is the already-rendered form (header/content/footer as
+// children) plus what's needed to pick the wrapper. Keeping this split means
+// the fullscreen path is byte-for-byte what it was before Q4.
+
+interface DocumentationModalShellProps {
+  readonly presentation: 'fullscreen' | 'overlay';
+  readonly visible: boolean;
+  readonly onClose: () => void;
+  readonly children: React.ReactNode;
+}
+
+function DocumentationModalShell({
+  presentation,
+  visible,
+  onClose,
+  children,
+}: DocumentationModalShellProps): React.JSX.Element {
+  if (presentation === 'overlay') {
+    // On-brand in-app overlay: absolutely positioned over the caller's own
+    // content (no RN `Modal` — that portals to a fresh document root on web,
+    // which is exactly the "screen takeover" feel Q4 replaces). Scrim +
+    // centered card visual language matches AppDialogProvider and this same
+    // component's own web confirm/success panels below.
+    // The caller (DocumentationModal below) already returns null when
+    // `!visible` for the overlay presentation, so this branch only ever
+    // renders while visible — no separate visible-gating needed here.
+    return (
+      <View style={mo.overlayRoot} accessibilityViewIsModal accessibilityRole="none">
+        <View style={mo.overlayScrim} />
+        <View style={mo.overlayCard}>{children}</View>
+      </View>
+    );
+  }
+
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={onClose}
+      accessible
+      accessibilityViewIsModal
+    >
+      <View style={mo.container}>{children}</View>
+    </Modal>
+  );
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 /**
- * Full-screen modal for documenting a completed CHW session.
+ * Documents a completed CHW session. Renders full-screen (default) or as an
+ * on-brand Messages overlay — see `presentation` above and
+ * `DocumentationModalShell`.
  *
  * "Your Notes" is CHW-authored, editable, required for submit. Session Start
  * / Session End are also CHW-editable (pre-filled from sessionStartedAt /
@@ -730,7 +812,8 @@ export function DocumentationModal({
   sessionStartedAt,
   sessionEndedAt,
   onSubmit,
-}: DocumentationModalProps): React.JSX.Element {
+  presentation = 'fullscreen',
+}: DocumentationModalProps): React.JSX.Element | null {
   const [selectedDiagnosisCodes, setSelectedDiagnosisCodes] = useState<string[]>([]);
   const [selectedProcedureCode, setSelectedProcedureCode] = useState<string>(
     procedureCodes[0]?.code ?? '',
@@ -960,16 +1043,16 @@ export function DocumentationModal({
     performSubmit,
   ]);
 
+  // Overlay presentation never mounts an RN `Modal` at all — a plain View
+  // that renders nothing while closed, matching Modal's own `visible={false}`
+  // no-op-render semantics for callers that keep this component mounted.
+  if (presentation === 'overlay' && !visible) return null;
+
   return (
-    <Modal
-      visible={visible}
-      animationType="slide"
-      presentationStyle="pageSheet"
-      onRequestClose={onClose}
-      accessible
-      accessibilityViewIsModal
-    >
-      <View style={mo.container}>
+    <DocumentationModalShell presentation={presentation} visible={visible} onClose={onClose}>
+      <View
+        style={presentation === 'overlay' ? mo.overlayContainer : mo.container}
+      >
         {/* ── In-app billing confirm gate (web) — replaces the browser
               window.confirm so the prompt reads as part of Compass. ────────── */}
         {showConfirm && !showSubmitted && (
@@ -1154,7 +1237,7 @@ export function DocumentationModal({
           </Pressable>
         </View>
       </View>
-    </Modal>
+    </DocumentationModalShell>
   );
 }
 
@@ -1162,6 +1245,48 @@ export function DocumentationModal({
 
 const mo = StyleSheet.create({
   container: {
+    flex: 1,
+    backgroundColor: tokens.pageBg,
+  },
+  // ── Overlay presentation (Q4) — anchored over the caller's own content,
+  // not a navigation-level Modal. `overlayRoot` fills whatever positioned
+  // ancestor the caller renders it inside (CHWMessagesScreen wraps the
+  // AppShell children in a `position: relative` root — see styles.root
+  // there); `absoluteFillObject` covers just that container, not the full
+  // window, so the sidebar/AppShell chrome stays visible and it never
+  // escapes into a separate document root the way RN's web Modal does.
+  overlayRoot: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  overlayScrim: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
+  },
+  // Card chrome matches AppDialogProvider / the in-app confirm panel below:
+  // white card, tokens.radius.lg corners, shadows.card elevation. `height`
+  // (not just maxHeight) is required here — react-native-web's flexbox needs
+  // a resolvable height on this ancestor for the inner `flex: 1` ScrollView
+  // to compute a bound and actually scroll instead of pushing the footer off
+  // the bottom; `88%` of the (bounded) overlayRoot gives the same "shorter
+  // than a full screen takeover" panel feel while still resolving to a real
+  // pixel height at every viewport, including rail-hidden narrow widths.
+  overlayCard: {
+    width: '92%',
+    maxWidth: 640,
+    height: '88%',
+    maxHeight: 760,
+    backgroundColor: tokens.cardBg,
+    borderRadius: radius.xl,
+    overflow: 'hidden',
+    ...shadows.card,
+  },
+  // Inner container swaps `container`'s `flex: 1` (which assumes a Modal's
+  // full-window height) for a column that fills the fixed-height overlayCard
+  // above, so header/scroll/footer lay out and scroll correctly.
+  overlayContainer: {
     flex: 1,
     backgroundColor: tokens.pageBg,
   },

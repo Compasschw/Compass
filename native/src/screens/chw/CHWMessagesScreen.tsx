@@ -1727,10 +1727,14 @@ function ConversationPane({
           </PressableCard>
         ) : null}
 
+        {/* Epic S follow-up: "Back to Messages" origin params on every
+            Member-Profile launch point from this screen. */}
         <PressableMember
           memberId={conv.memberId ?? ''}
           displayName={memberName}
           enabled={!!conv.memberId}
+          backLabel="Messages"
+          backTo="Messages"
         >
           <View style={[styles.convHeaderAvatar, { backgroundColor: bg }]}>
             <Text style={[styles.convHeaderAvatarText, { color: fg }]}>{initials}</Text>
@@ -1743,6 +1747,8 @@ function ConversationPane({
               memberId={conv.memberId ?? ''}
               displayName={memberName}
               enabled={!!conv.memberId}
+              backLabel="Messages"
+              backTo="Messages"
             >
               <Text style={styles.convHeaderName} numberOfLines={1}>
                 {memberName}
@@ -1800,6 +1806,8 @@ function ConversationPane({
           displayName={memberName}
           enabled={!!conv.memberId}
           style={styles.openProfileBtn}
+          backLabel="Messages"
+          backTo="Messages"
         >
           <ArrowRight size={14} color={tokens.gray700} />
           <Text style={styles.openProfileText}>Open Profile</Text>
@@ -2022,7 +2030,9 @@ function ConversationPane({
         <Text style={styles.composerMeta}>SMS via Vonage masked number</Text>
       </View>
 
-      {/* Documentation modal */}
+      {/* Documentation modal — Epic Q4: on-brand overlay, anchored over this
+          Messages page rather than a full-screen takeover (see `presentation`
+          on DocumentationModal). */}
       {documentingSessionId != null && (
         <DocumentationModal
           visible={documentingSessionId != null}
@@ -2040,6 +2050,7 @@ function ConversationPane({
           sessionStartedAt={conv.activeSessionStartedAt}
           sessionEndedAt={null}
           onSubmit={handleDocumentationSubmit}
+          presentation="overlay"
         />
       )}
     </View>
@@ -3107,6 +3118,8 @@ function MemberContextRail({
               displayName={memberName}
               enabled={!!conv.memberId}
               style={[styles.quickActionBtn, railCardStyles.quickActionPressableMember]}
+              backLabel="Messages"
+              backTo="Messages"
             >
               <ArrowRight size={16} color={tokens.textSecondary} style={styles.quickActionIcon} />
               <Text style={styles.quickActionBtnText}>Open Member Profile</Text>
@@ -3750,7 +3763,12 @@ export function CHWMessagesScreen(): React.JSX.Element {
         ) : null}
       </View>
 
-      {/* Documentation modal triggered by End Session */}
+      {/* Documentation modal triggered by End Session — Epic Q4: renders as an
+          on-brand overlay anchored over this Messages page (scrim + card,
+          AppShell sidebar/nav stays visible underneath) instead of a
+          full-screen takeover. See `presentation` on DocumentationModal;
+          every other launch path (e.g. CHWSessionsScreen) omits this prop and
+          keeps the original full-screen behavior. */}
       {documentingSessionId != null && (
         <DocumentationModal
           visible={documentingSessionId != null}
@@ -3765,6 +3783,7 @@ export function CHWMessagesScreen(): React.JSX.Element {
           sessionStartedAt={documentingSessionStartedAt}
           sessionEndedAt={documentingSessionEndedAt}
           onSubmit={handleDocumentationSubmit}
+          presentation="overlay"
         />
       )}
     </AppShell>
