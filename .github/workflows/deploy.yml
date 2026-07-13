@@ -17,11 +17,18 @@ on:
         type: choice
         options: ['false', 'true']
 
-# Avoid stacking deploys: if a new push lands while one is mid-deploy,
-# the older run is cancelled in favour of the latest commit.
+# Collapse deploy bursts: if newer commits land while one is mid-deploy, cancel
+# the older run in favour of the latest. Every deploy does `git pull origin main`
+# (Step 1), so the surviving run already ships the newest state — the cancelled
+# runs would only have been redundant rebuilds (each also taking its own RDS
+# snapshot). A rapid merge train (e.g. 8 PRs in ~45 min) thus converges to a
+# single deploy instead of 8 queued ones, which is what previously OOM-risked the
+# box. Safe against mid-migration cancellation: the pre-migration RDS snapshot
+# (Step 4) runs first, alembic migrations are transactional, and a cancelled
+# deploy self-heals — the next run re-runs `alembic upgrade head`.
 concurrency:
   group: deploy-production
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   deploy:
