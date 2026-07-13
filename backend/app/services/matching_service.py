@@ -246,21 +246,49 @@ async def find_matching_chws(
     Each result is a dict with: chw, score, distance_miles, match_reasons.
     Dicts (not dataclasses) for backward compatibility with the router that
     previously consumed this shape.
+
+    Epic D follow-up: when settings.chw_work_gate_enabled is True, candidates
+    failing app.services.chw_compliance.chw_can_work are excluded before
+    scoring — auto-match must not hand a member a CHW who isn't actually
+    allowed to accept work. Flag OFF (default) is a byte-for-byte no-op: no
+    chw_can_work call is made and no candidate is filtered.
     """
+    from app.config import settings
     from app.models.chw_intake import CHWIntakeResponse
-    from app.models.user import CHWProfile
+    from app.models.user import CHWProfile, User
 
     # Single query pulling profiles + their intake (if any) in one round trip.
+    # User is inner-joined in too (not just CHWProfile) so the work-gate check
+    # below has the User row (name/phone) it needs without a second query per
+    # candidate — safe because every CHWProfile has exactly one owning User
+    # (FK NOT NULL), so this join never drops a row that the prior
+    # CHWProfile-only query would have returned.
     stmt = (
-        select(CHWProfile, CHWIntakeResponse)
+        select(CHWProfile, CHWIntakeResponse, User)
         .outerjoin(CHWIntakeResponse, CHWIntakeResponse.user_id == CHWProfile.user_id)
+        .join(User, CHWProfile.user_id == User.id)
         .where(CHWProfile.is_available == True)  # noqa: E712
     )
     result = await db.execute(stmt)
-    rows = result.all()
+    rows: list[tuple[CHWProfile, Any, User]] = list(result.all())  # type: ignore[arg-type]
+
+    if settings.chw_work_gate_enabled:
+        # Per-candidate chw_can_work() calls (N queries) are acceptable at
+        # launch scale (a handful of CHWs) — see chw_compliance.chw_can_work
+        # docstring for the exact requirement list. TODO(perf): once CHW
+        # counts grow, replace this loop with a single batch query instead of
+        # one chw_can_work() round trip per row.
+        from app.services.chw_compliance import chw_can_work
+
+        compliant_rows: list[tuple[CHWProfile, Any, User]] = []
+        for profile, intake, user in rows:
+            can_work, _missing = await chw_can_work(db, user)
+            if can_work:
+                compliant_rows.append((profile, intake, user))
+        rows = compliant_rows
 
     scored: list[dict] = []
-    for profile, intake in rows:
+    for profile, intake, _user in rows:
         match = score_chw(
             profile,
             vertical=vertical,

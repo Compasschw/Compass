@@ -209,6 +209,12 @@ async def browse_chws(
     - CHWProfile.is_available == True  (CHW opted into receiving requests)
     - email NOT LIKE %.demo@compasschw.com  (defense in depth against the
       seed_founders.py demo accounts even after cleanup_seed_data.py runs)
+    - Epic D follow-up: when settings.chw_work_gate_enabled is True, a CHW
+      failing app.services.chw_compliance.chw_can_work is excluded — members
+      should never be able to browse to, and request, a CHW who isn't
+      actually allowed to accept work. Flag OFF (default) is a byte-for-byte
+      no-op: no chw_can_work call is made and no CHW is filtered, so existing
+      (grandfathered) CHWs keep surfacing exactly as before this change.
 
     Note: the previous is_onboarded and "specializations >= 1" gates were
     dropped — the platform is meant to grow, so any registered, available CHW
@@ -216,9 +222,11 @@ async def browse_chws(
     with no specializations still surfaces here and is handled gracefully by the
     matching service (empty specializations → small penalty, still surfaced).
     """
+    from app.config import settings
     from app.models.user import CHWProfile, User
+
     stmt = (
-        select(CHWProfile, User.name)
+        select(CHWProfile, User)
         .join(User, CHWProfile.user_id == User.id)
         .where(CHWProfile.is_available == True)  # noqa: E712
         .where(User.role == "chw")
@@ -232,12 +240,30 @@ async def browse_chws(
         stmt = stmt.where(any_(CHWProfile.specializations) == vertical)
     stmt = stmt.order_by(CHWProfile.rating.desc())
     result = await db.execute(stmt)
-    rows = result.all()
+    rows: list[tuple[CHWProfile, User]] = list(result.all())  # type: ignore[arg-type]
+
+    if settings.chw_work_gate_enabled:
+        # Epic D follow-up: filter out CHWs who can't currently accept work.
+        # Per-candidate chw_can_work() calls (N queries) are acceptable at
+        # launch scale (a handful of CHWs) — see chw_compliance.chw_can_work
+        # docstring for the exact requirement list. TODO(perf): once CHW
+        # counts grow, replace this loop with a single batch query (e.g. a
+        # JOIN against credentials pre-aggregated per chw_id + profile/bio
+        # checks inline) instead of one chw_can_work() round trip per row.
+        from app.services.chw_compliance import chw_can_work
+
+        compliant_rows: list[tuple[CHWProfile, User]] = []
+        for profile, user in rows:
+            can_work, _missing = await chw_can_work(db, user)
+            if can_work:
+                compliant_rows.append((profile, user))
+        rows = compliant_rows
+
     return [
         {
             "id": str(profile.id),
             "user_id": str(profile.user_id),
-            "name": name,
+            "name": user.name,
             "specializations": profile.specializations,
             "languages": profile.languages,
             "rating": profile.rating,
@@ -247,7 +273,7 @@ async def browse_chws(
             "bio": profile.bio,
             "zip_code": profile.zip_code,
         }
-        for profile, name in rows
+        for profile, user in rows
     ]
 
 # Earnings-page period selector. "custom" is reserved for a future date-range.
