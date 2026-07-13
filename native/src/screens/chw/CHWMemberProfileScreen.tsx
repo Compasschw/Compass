@@ -1491,9 +1491,19 @@ const editDemoStyles = StyleSheet.create({
 
 // ─── EditResourceNeedsModal ───────────────────────────────────────────────────
 
-/** The selectable resource-need categories (slug → label). */
+/**
+ * The selectable resource-need categories (slug → label).
+ *
+ * Epic C5: 'housing' is grandfathered — intentionally excluded here so it can
+ * never be newly selected again. A member whose saved resource needs already
+ * include 'housing' keeps it in `selectedSlugs` (hydrated from `currentNeeds`
+ * on modal open) even though no chip renders for it; toggling other chips
+ * never touches that entry, so Save still round-trips it to the backend,
+ * which continues to accept the legacy value (see backend/app/schemas/chw.py
+ * `_RESOURCE_NEED_VALUES`). 'utilities' replaces it as the new option.
+ */
 const RESOURCE_NEED_OPTIONS: ReadonlyArray<{ slug: string; label: string }> = [
-  { slug: 'housing',        label: 'Housing' },
+  { slug: 'utilities',      label: 'Utilities' },
   { slug: 'transportation', label: 'Transportation' },
   { slug: 'food',           label: 'Food Security' },
   { slug: 'mental_health',  label: 'Mental Health' },
@@ -1502,14 +1512,29 @@ const RESOURCE_NEED_OPTIONS: ReadonlyArray<{ slug: string; label: string }> = [
 ];
 
 /**
- * Canonical journey/template names that correspond 1:1 to a fixed resource need.
- * A member journey whose template name is NOT in this set is a CHW-authored
- * CUSTOM journey (i.e. a custom resource need). Used to (a) surface custom
- * journeys in the Resource Needs card and (b) prevent a custom need from
- * duplicating a fixed one.
+ * Grandfathered superset of RESOURCE_NEED_OPTIONS — adds back 'housing' for
+ * NAME↔SLUG RECOGNITION ONLY (never for rendering chips). A legacy member
+ * journey named "Housing" must still be recognized as a canonical/fixed-need
+ * journey (not misclassified as a CHW-authored custom journey) and must still
+ * resolve its CHW-assigned resource-need level. Use this constant — not
+ * RESOURCE_NEED_OPTIONS — anywhere template-name/slug matching happens
+ * against EXISTING journeys; use RESOURCE_NEED_OPTIONS for anything the CHW
+ * can newly select from.
+ */
+const GRANDFATHERED_RESOURCE_NEED_OPTIONS: ReadonlyArray<{ slug: string; label: string }> = [
+  { slug: 'housing', label: 'Housing' },
+  ...RESOURCE_NEED_OPTIONS,
+];
+
+/**
+ * Canonical journey/template names that correspond 1:1 to a fixed resource need
+ * (including the grandfathered 'Housing'). A member journey whose template
+ * name is NOT in this set is a CHW-authored CUSTOM journey (i.e. a custom
+ * resource need). Used to (a) surface custom journeys in the Resource Needs
+ * card and (b) prevent a custom need from duplicating a fixed one.
  */
 const CANONICAL_JOURNEY_NAMES: ReadonlySet<string> = new Set(
-  RESOURCE_NEED_OPTIONS.map((o) => o.label),
+  GRANDFATHERED_RESOURCE_NEED_OPTIONS.map((o) => o.label),
 );
 
 interface EditResourceNeedsModalProps {
@@ -1600,8 +1625,12 @@ function EditResourceNeedsModal({
       const activeCanonical = (existingJourneys ?? []).filter(
         (j) => j.status === 'active' && CANONICAL_JOURNEY_NAMES.has(j.template.name),
       );
+      // Use the grandfathered superset here (not RESOURCE_NEED_OPTIONS) — a
+      // legacy "Housing" journey must still resolve its slug so its saved
+      // level survives the modal round-trip, even though 'housing' isn't an
+      // offered chip anymore.
       const slugByLabel = (label: string): string | undefined =>
-        RESOURCE_NEED_OPTIONS.find((o) => o.label === label)?.slug;
+        GRANDFATHERED_RESOURCE_NEED_OPTIONS.find((o) => o.label === label)?.slug;
 
       const slugs = [...currentNeeds];
       const nextLevels: Record<string, ResourceNeedLevel> = { ...currentLevels };
@@ -1725,7 +1754,11 @@ function EditResourceNeedsModal({
     const name = customName.trim();
     if (!name) return;
 
-    const fixedLabels = RESOURCE_NEED_OPTIONS.map((o) => o.label.toLowerCase());
+    // Block both the currently-offered names AND the grandfathered 'Housing'
+    // name — a newly-created custom journey named "Housing" would otherwise
+    // be misclassified as the canonical (grandfathered) Housing journey by
+    // CANONICAL_JOURNEY_NAMES.
+    const fixedLabels = GRANDFATHERED_RESOURCE_NEED_OPTIONS.map((o) => o.label.toLowerCase());
     if (fixedLabels.includes(name.toLowerCase())) {
       setError(`"${name}" is already a standard resource need — select it above instead.`);
       return;
@@ -5319,7 +5352,11 @@ function activeJourneysWithLevel(
   return (journeys ?? [])
     .filter((j) => j.status === 'active')
     .map((journey, i) => {
-      const slug = RESOURCE_NEED_OPTIONS.find((o) => o.label === journey.template.name)?.slug;
+      // Grandfathered superset — a legacy "Housing" journey must still
+      // resolve to its CHW-assigned resource-need level, not fall back to
+      // progress-derived severity, even though 'housing' is no longer an
+      // offered resource-need chip.
+      const slug = GRANDFATHERED_RESOURCE_NEED_OPTIONS.find((o) => o.label === journey.template.name)?.slug;
       let level: JourneySeverity;
       if (slug !== undefined && slug in resourceNeedLevels) {
         // Fixed need with a CHW-assigned level.

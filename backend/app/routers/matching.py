@@ -12,7 +12,7 @@ router = APIRouter(prefix="/api/v1/matching", tags=["matching"])
 
 @router.get("/chws")
 async def find_chws(
-    vertical: str = Query(..., description="Service vertical (housing, transportation, food, mental_health, healthcare, employment)."),
+    vertical: str = Query(..., description="Service vertical (utilities, transportation, food, mental_health, healthcare, employment; 'housing' also still accepted for legacy requests)."),
     lat: float = Query(default=34.0522),
     lng: float = Query(default=-118.2437),
     language: str = Query(default="English"),

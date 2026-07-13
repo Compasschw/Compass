@@ -29,8 +29,13 @@ export type FollowupStatus = 'pending' | 'confirmed' | 'dismissed' | 'completed'
 
 export type FollowupPriority = 'low' | 'medium' | 'high';
 
+// Epic C5: 'housing' is grandfathered (kept so a followup on a legacy session
+// still type-checks/renders); 'utilities' is its replacement. This type
+// describes wire values read off SessionFollowup.vertical (LLM-extracted or
+// inherited from Session.vertical) — it is not a selectable picker.
 export type FollowupVertical =
   | 'housing'
+  | 'utilities'
   | 'food'
   | 'mental_health'
   | 'transportation'

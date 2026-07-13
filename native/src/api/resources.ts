@@ -26,8 +26,14 @@ import { transformKeys, toSnakeCase } from '../utils/caseTransform';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+// Epic C5: 'housing' is grandfathered — kept so existing housing-categorized
+// resources still type-check/render/filter correctly (AdminResourcesScreen's
+// edit form resends the full category on every save). It is intentionally
+// excluded from the CATEGORIES list offered by the admin CategoryPicker;
+// 'utilities' is its replacement for new resource categorization.
 export type ResourceCategory =
   | 'housing'
+  | 'utilities'
   | 'food'
   | 'mental_health'
   | 'rehab'

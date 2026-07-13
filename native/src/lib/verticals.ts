@@ -4,7 +4,7 @@
  * Canonical enum values are taken directly from the backend Python enum:
  *   backend/app/models/enums.py :: class Vertical(str, enum.Enum)
  *
- * Values: housing | transportation | food | mental_health | healthcare | employment
+ * Values: housing | utilities | transportation | food | mental_health | healthcare | employment
  *
  * All frontend code should import labels, colours, and icons from here instead
  * of defining them inline. This eliminates the label-mismatch bug where the CHW
@@ -13,12 +13,24 @@
  * Icon names reference lucide-react-native components. Screens that need icons
  * should import them from lucide-react-native and use VERTICAL_ICON_NAME to
  * select the right one, or use the shared VerticalIcon component directly.
+ *
+ * ─── Epic C5 — Housing → Utilities (grandfathering) ────────────────────────
+ * "Utilities" replaced "Housing" as a NEWLY selectable vertical. Historical
+ * `housing`-tagged rows are GRANDFATHERED, not migrated: `housing` remains in
+ * VERTICAL_ENUM (so the `Vertical` type still admits it, and legacy wire data
+ * type-checks and renders) and in every label/colour/emoji map (so an old row
+ * still renders the "Housing" chip with its original styling). It is simply
+ * excluded from `SELECTABLE_VERTICALS`, which is what drives every picker and
+ * filter surface offered for NEW selections. Never re-add `housing` to
+ * SELECTABLE_VERTICALS — a re-labeled homelessness case must not resurface as
+ * a utility-bill case.
  */
 
 // ─── Enum definition (matches backend verbatim) ───────────────────────────────
 
 export const VERTICAL_ENUM = [
   'housing',
+  'utilities',
   'transportation',
   'food',
   'mental_health',
@@ -27,6 +39,17 @@ export const VERTICAL_ENUM = [
 ] as const;
 
 export type Vertical = typeof VERTICAL_ENUM[number];
+
+/**
+ * Verticals that may be NEWLY selected — used to derive every picker and
+ * filter-chip surface. `housing` is intentionally excluded: it is
+ * grandfathered (still renderable via VERTICAL_LABEL/COLOR/EMOJI and still a
+ * member of VERTICAL_ENUM/Vertical) but must never be offered again as a
+ * choice. `utilities` is its replacement.
+ */
+export const SELECTABLE_VERTICALS = VERTICAL_ENUM.filter(
+  (v): v is Exclude<Vertical, 'housing'> => v !== 'housing',
+);
 
 // ─── Display labels ───────────────────────────────────────────────────────────
 
@@ -38,7 +61,10 @@ export type Vertical = typeof VERTICAL_ENUM[number];
  * this map (directly or via `verticalLabel()`).
  */
 export const VERTICAL_LABEL: Record<Vertical, string> = {
+  // Grandfathered — no longer selectable, but historical rows must still
+  // render "Housing" (never relabel a homelessness case as a utility case).
   housing: 'Housing',
+  utilities: 'Utilities',
   transportation: 'Transportation',
   food: 'Food Security',
   mental_health: 'Mental Health',
@@ -67,7 +93,10 @@ export function verticalLabel(v: string): string {
  * indicators. Chosen for WCAG AA contrast on both #FFFFFF and #F4F1ED.
  */
 export const VERTICAL_COLOR: Record<Vertical, string> = {
+  // Grandfathered — kept so historical `housing` rows keep their original
+  // badge colour. Not offered as a new selection (see SELECTABLE_VERTICALS).
   housing: '#3B82F6',        // blue-500
+  utilities: '#F97316',      // orange-500
   transportation: '#14B8A6', // teal-500
   food: '#F59E0B',           // amber-500
   mental_health: '#8B5CF6',  // violet-500
@@ -78,7 +107,10 @@ export const VERTICAL_COLOR: Record<Vertical, string> = {
 // ─── Emoji (lightweight icon for contexts where lucide isn't available) ───────
 
 export const VERTICAL_EMOJI: Record<Vertical, string> = {
+  // Grandfathered — kept so historical `housing` rows keep their original
+  // emoji. Not offered as a new selection (see SELECTABLE_VERTICALS).
   housing: '🏠',
+  utilities: '💡',
   transportation: '🚌',
   food: '🛒',
   mental_health: '🧠',
@@ -90,20 +122,26 @@ export const VERTICAL_EMOJI: Record<Vertical, string> = {
 
 /**
  * Ordered list of verticals for rendering filter chips.
- * Order matches the backend enum declaration.
+ *
+ * Derived from SELECTABLE_VERTICALS (not VERTICAL_ENUM) — `housing` is
+ * grandfathered and must never be offered as a filter/selection option again.
+ * A legacy housing-tagged row still renders correctly via VERTICAL_LABEL; it
+ * simply can't be newly chosen from this list.
  */
 export const VERTICAL_FILTER_OPTIONS: ReadonlyArray<{ key: Vertical; label: string }> =
-  VERTICAL_ENUM.map((key) => ({ key, label: VERTICAL_LABEL[key] }));
+  SELECTABLE_VERTICALS.map((key) => ({ key, label: VERTICAL_LABEL[key] }));
 
 /**
  * Vertical options with emoji — used in the member request form and roadmap
  * goal picker where a visual cue accompanies the label.
+ *
+ * Derived from SELECTABLE_VERTICALS — see VERTICAL_FILTER_OPTIONS comment.
  */
 export const VERTICAL_PICKER_OPTIONS: ReadonlyArray<{
   key: Vertical;
   label: string;
   emoji: string;
-}> = VERTICAL_ENUM.map((key) => ({
+}> = SELECTABLE_VERTICALS.map((key) => ({
   key,
   label: VERTICAL_LABEL[key],
   emoji: VERTICAL_EMOJI[key],

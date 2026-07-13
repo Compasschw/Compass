@@ -309,8 +309,12 @@ export const ResourceMentionInput = forwardRef<
 
 // ─── Category display helpers ──────────────────────────────────────────────────
 
+// Epic C5: 'housing' is grandfathered — kept so an @-mentioned resource still
+// categorized 'housing' renders its correct colour/label. 'utilities' is its
+// replacement. This is a read-only rendering map (no picker here).
 const _CATEGORY_COLORS: Record<string, string> = {
   housing: '#3B82F6',
+  utilities: '#F97316',
   food: '#F59E0B',
   mental_health: '#8B5CF6',
   rehab: '#EF4444',
@@ -322,6 +326,7 @@ const _CATEGORY_COLORS: Record<string, string> = {
 
 const _CATEGORY_LABELS: Record<string, string> = {
   housing: 'Housing',
+  utilities: 'Utilities',
   food: 'Food',
   mental_health: 'Mental Health',
   rehab: 'Rehab',

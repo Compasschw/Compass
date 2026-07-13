@@ -7,7 +7,16 @@ class UserRole(str, enum.Enum):
     admin = "admin"
 
 class Vertical(str, enum.Enum):
+    # Epic C5: 'housing' is GRANDFATHERED — kept so historical rows (vertical
+    # columns are String(50); this enum is validation-only) still validate,
+    # deserialize, and render. It must NEVER be removed from this enum and
+    # must NEVER be re-offered as a new selection anywhere in the product —
+    # see native/src/lib/verticals.ts SELECTABLE_VERTICALS and the
+    # value-lists in schemas/chw.py, schemas/resource.py, routers/resources.py
+    # for the corresponding "selectable" exclusions. 'utilities' is its
+    # replacement as a newly selectable vertical.
     housing = "housing"
+    utilities = "utilities"
     transportation = "transportation"
     food = "food"
     mental_health = "mental_health"

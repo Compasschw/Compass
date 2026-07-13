@@ -114,8 +114,11 @@ const DAY_LABELS: Record<string, string> = {
   sun: 'Sun',
 } as const;
 
+// Epic C5: 'housing' is grandfathered (a CHW's pre-existing specialization
+// still renders); 'utilities' is the new selectable specialization.
 const SPECIALIZATION_LABELS: Record<string, string> = {
   housing: 'Housing',
+  utilities: 'Utilities',
   food: 'Food Security',
   mental_health: 'Mental Health',
   transportation: 'Transportation',

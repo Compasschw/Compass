@@ -68,8 +68,10 @@ export interface OpenQuestionsJourney {
   currentStepName: string;
   /**
    * Determines which question bank to load.
-   * Recognised values: food | housing | mental_health | healthcare | transportation | employment.
-   * Unknown values fall back to _default.
+   * Recognised values: food | housing | utilities | mental_health | healthcare | transportation | employment.
+   * 'housing' is grandfathered (an existing Housing journey must keep its
+   * question bank); 'utilities' is the new canonical-journey vertical
+   * (Epic C5). Unknown values fall back to _default.
    */
   vertical: string;
 }
@@ -220,6 +222,38 @@ const QUESTIONS_BY_VERTICAL: Record<string, QuestionSection[]> = {
       questions: [
         'Let us confirm your next appointment and any follow-up labs before we end the call.',
         'Would you like a care summary sent to you by text after this call?',
+      ],
+    },
+  ],
+
+  utilities: [
+    {
+      section: '1 · Confirm Current Situation',
+      questions: [
+        'Have you received any shutoff or past-due notices since we last spoke?',
+        'Which utility is the most urgent right now — electric, gas, water, or something else?',
+      ],
+    },
+    {
+      section: '2 · Document Support',
+      questions: [
+        'Do you have a copy of your most recent utility bill available?',
+        'Do you have your ID and proof of income ready for the assistance application?',
+        'Would you like help applying for LIHEAP or a utility hardship program?',
+      ],
+    },
+    {
+      section: '3 · Barriers',
+      questions: [
+        'Is the account in your name, or would we need additional paperwork for that?',
+        'Is a language barrier or lack of internet access making the application harder?',
+      ],
+    },
+    {
+      section: '4 · Close the Call',
+      questions: [
+        'Can we confirm a follow-up time to check on the application status before a shutoff date?',
+        'Would you like a reminder text with the next steps?',
       ],
     },
   ],

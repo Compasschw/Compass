@@ -14,6 +14,7 @@ import {
   Brain,
   Stethoscope,
   Briefcase,
+  Lightbulb,
 } from 'lucide-react-native';
 import type { Vertical } from '../../data/mock';
 import { VERTICAL_COLOR } from '../../lib/verticals';
@@ -33,7 +34,10 @@ export interface VerticalIconProps {
 type LucideRNComponent = React.ComponentType<{ size?: number; color?: string }>;
 
 const iconMap: Record<Vertical, LucideRNComponent> = {
+  // housing is grandfathered — no longer selectable, but historical rows
+  // must still resolve an icon. See lib/verticals.ts for the full policy.
   housing:        Home,
+  utilities:      Lightbulb,
   transportation: Bus,
   food:           ShoppingBasket,
   mental_health:  Brain,

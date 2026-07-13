@@ -97,10 +97,15 @@ const LANGUAGE_OPTIONS = [
   { value: 'Cantonese',  label: '粵語' },
 ];
 
-type Vertical = 'housing' | 'food' | 'mental_health' | 'transportation' | 'healthcare' | 'employment';
+// Epic C5: 'housing' is grandfathered — kept in the type/label/colour maps so
+// a CHW's pre-existing "Housing" specialization still renders, but removed
+// from ALL_VERTICALS (the offered chip list) below. 'utilities' replaces it
+// as the newly selectable specialization.
+type Vertical = 'housing' | 'utilities' | 'food' | 'mental_health' | 'transportation' | 'healthcare' | 'employment';
 
 const VERTICAL_LABELS: Record<Vertical, string> = {
   housing:        'Housing',
+  utilities:      'Utilities',
   food:           'Food Security',
   mental_health:  'Mental Health',
   transportation: 'Transportation',
@@ -108,10 +113,14 @@ const VERTICAL_LABELS: Record<Vertical, string> = {
   employment:     'Employment',
 };
 
-const ALL_VERTICALS: Vertical[] = ['housing', 'food', 'mental_health', 'transportation', 'healthcare', 'employment'];
+// Offered specialization chips — 'housing' is intentionally excluded
+// (grandfathered, not newly selectable). See comment on the Vertical type
+// above.
+const ALL_VERTICALS: Vertical[] = ['utilities', 'food', 'mental_health', 'transportation', 'healthcare', 'employment'];
 
 const VERTICAL_COLORS: Record<Vertical, string> = {
   housing:        '#3B82F6',
+  utilities:      '#F97316',
   food:           '#F59E0B',
   mental_health:  '#8B5CF6',
   transportation: '#14B8A6',
