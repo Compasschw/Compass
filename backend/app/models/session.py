@@ -42,6 +42,15 @@ class Session(Base):
     )
     vertical: Mapped[str] = mapped_column(String(50), nullable=False)
     # VARCHAR(30) — must accommodate "awaiting_documentation" (22 chars).
+    # Plain string, not a DB CHECK constraint or Postgres enum — new values
+    # (e.g. "no_show", Epic O2) are additive and need no migration.
+    # Lifecycle values: scheduled -> in_progress -> awaiting_documentation ->
+    # completed. Terminal/off-path values: cancelled (member/CHW cancelled a
+    # scheduled appointment, or CHW aborted an active session — vanishes from
+    # the calendar grid, see N1), cancelled_no_consent (member declined
+    # recording consent on a masked call), no_show (CHW began the session but
+    # the member never attended — DISTINCT from cancelled: stays visible on
+    # the calendar/history tagged "Missed" for record-keeping; no billing).
     status: Mapped[str] = mapped_column(String(30), default="scheduled", index=True)
     mode: Mapped[str] = mapped_column(String(20), nullable=False)
     scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

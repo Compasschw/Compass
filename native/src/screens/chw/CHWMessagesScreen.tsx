@@ -130,6 +130,7 @@ import {
   useCreateCaseNote,
   useEndSession as useEndSessionHook,
   useAbortSession as useAbortSessionHook,
+  useMarkSessionNoShow as useMarkSessionNoShowHook,
   useStartSession as useStartSessionHook,
   useScheduleSession as useScheduleSessionHook,
   useSoftDeleteConversation,
@@ -2316,12 +2317,20 @@ const caseNoteInlineStyles = StyleSheet.create({
  * Statuses that produce a non-actionable read-only label in the rail.
  * `completed` is intentionally excluded: a completed session (documentation
  * submitted) shows an actionable "Begin Session" button to start the next
- * session with that member. Only truly aborted sessions (cancelled /
- * cancelled_no_consent) get the read-only label.
+ * session with that member. Only truly aborted/ended sessions (cancelled /
+ * cancelled_no_consent / no_show) get the read-only label.
+ *
+ * `no_show` (Epic O2) — the CHW began the session but the member never
+ * attended (PATCH /sessions/{id}/no-show, "Missed Session" action). Terminal
+ * like cancelled, but semantically distinct: it's a record-keeping status
+ * that stays visible on the calendar tagged "Missed" (see deriveBadgeStatus
+ * in CHWCalendarScreen/MemberCalendarScreen), whereas cancelled sessions
+ * vanish from the calendar grid entirely (Epic N1).
  */
 const TERMINAL_SESSION_STATUSES: readonly string[] = [
   'cancelled',
   'cancelled_no_consent',
+  'no_show',
 ];
 
 /** Human-readable label for a terminal session status, shown in the rail. */
@@ -2333,6 +2342,8 @@ function terminalSessionLabel(status: string): string {
       return 'Cancelled — member declined recording consent';
     case 'cancelled':
       return 'Session cancelled';
+    case 'no_show':
+      return 'Missed — member did not attend';
     default:
       return 'Session ended';
   }
@@ -2414,6 +2425,7 @@ function MemberContextRail({
   const [caseNoteOpen, setCaseNoteOpen] = useState(false);
   const [endSessionPending, setEndSessionPending] = useState(false);
   const [abortSessionPending, setAbortSessionPending] = useState(false);
+  const [noShowSessionPending, setNoShowSessionPending] = useState(false);
   const [showEndConfirm, setShowEndConfirm] = useState(false);
   const [beginSessionPending, setBeginSessionPending] = useState(false);
 
@@ -2479,6 +2491,7 @@ function MemberContextRail({
 
   const endSession = useEndSessionHook();
   const abortSession = useAbortSessionHook();
+  const markSessionNoShow = useMarkSessionNoShowHook();
   const startSession = useStartSessionHook();
   const scheduleSession = useScheduleSessionHook();
 
@@ -2800,6 +2813,41 @@ function MemberContextRail({
       setAbortSessionPending(false);
     }
   }, [conv.activeSessionId, abortSession]);
+
+  /**
+   * "Missed Session" — the third button on the Complete-Session confirm
+   * panel, alongside Cancel Session and Complete Session (Epic P/O2). Marks
+   * the in-progress session a no-show (PATCH /sessions/{id}/no-show →
+   * `no_show`) when the CHW began the session but the member never showed.
+   *
+   * DISTINCT from Cancel Session: a no-show is RECORD-KEEPING — it stays
+   * visible on the calendar/history tagged "Missed" (see deriveBadgeStatus
+   * in CHWCalendarScreen/MemberCalendarScreen), whereas Cancel Session
+   * (`cancelled`) vanishes from the calendar grid entirely (Epic N1). Like
+   * Cancel Session, this does NOT open the documentation modal — no
+   * billing/documentation flow triggers for a no-show. Closes the confirm
+   * panel either way; on success the sessions-query invalidation flips
+   * `liveSession.status` to the terminal `no_show` state, which the rail
+   * renders as a read-only status note (see isTerminalSession/TERMINAL_SESSION_STATUSES).
+   */
+  const handleMissedSessionConfirmed = useCallback(async (): Promise<void> => {
+    if (!conv.activeSessionId) return; // Guard: no active session to mark missed
+    const activeId = conv.activeSessionId;
+    setShowEndConfirm(false);
+    setNoShowSessionPending(true);
+    try {
+      await markSessionNoShow.mutateAsync(activeId);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not mark session missed. Try again.';
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.alert(`Failed to mark session missed\n\n${message}`);
+      } else {
+        Alert.alert('Failed to mark session missed', message);
+      }
+    } finally {
+      setNoShowSessionPending(false);
+    }
+  }, [conv.activeSessionId, markSessionNoShow]);
 
   const memberName = conv.memberName ?? 'Unknown Member';
   const initials = getInitials(memberName);
@@ -3227,22 +3275,40 @@ function MemberContextRail({
                 <TouchableOpacity
                   style={styles.endConfirmCancel}
                   onPress={() => void handleCancelSessionConfirmed()}
-                  disabled={abortSessionPending || endSessionPending}
+                  disabled={abortSessionPending || endSessionPending || noShowSessionPending}
                   accessibilityRole="button"
                   accessibilityLabel="Cancel session (abort)"
-                  accessibilityState={{ disabled: abortSessionPending || endSessionPending }}
+                  accessibilityState={{
+                    disabled: abortSessionPending || endSessionPending || noShowSessionPending,
+                  }}
                 >
                   <Text style={styles.endConfirmCancelText}>
                     {abortSessionPending ? 'Cancelling...' : 'Cancel Session'}
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
+                  style={styles.endConfirmCancel}
+                  onPress={() => void handleMissedSessionConfirmed()}
+                  disabled={abortSessionPending || endSessionPending || noShowSessionPending}
+                  accessibilityRole="button"
+                  accessibilityLabel="Mark session missed (no-show)"
+                  accessibilityState={{
+                    disabled: abortSessionPending || endSessionPending || noShowSessionPending,
+                  }}
+                >
+                  <Text style={styles.endConfirmCancelText}>
+                    {noShowSessionPending ? 'Marking Missed...' : 'Missed Session'}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
                   style={styles.endConfirmProceed}
                   onPress={() => void handleEndSessionConfirmed()}
-                  disabled={abortSessionPending || endSessionPending}
+                  disabled={abortSessionPending || endSessionPending || noShowSessionPending}
                   accessibilityRole="button"
                   accessibilityLabel="Confirm complete session"
-                  accessibilityState={{ disabled: abortSessionPending || endSessionPending }}
+                  accessibilityState={{
+                    disabled: abortSessionPending || endSessionPending || noShowSessionPending,
+                  }}
                 >
                   <Text style={styles.endConfirmProceedText}>Complete Session</Text>
                 </TouchableOpacity>

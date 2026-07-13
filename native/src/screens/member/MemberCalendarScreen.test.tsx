@@ -77,7 +77,7 @@ describe('MemberCalendarScreen — deriveBadgeStatus truthful status tags (O1)',
     expect(deriveBadgeStatus({ status: 'scheduled', scheduledAt: past }, now)).toBe('Confirmed');
   });
 
-  it('never produces a "Missed" tag for any known status — the auto-Missed rule is gone', () => {
+  it('never produces a "Missed" tag for any past-but-never-started status — the auto-Missed rule is gone', () => {
     const statuses = [
       'scheduled',
       'in_progress',
@@ -90,5 +90,19 @@ describe('MemberCalendarScreen — deriveBadgeStatus truthful status tags (O1)',
     for (const status of statuses) {
       expect(deriveBadgeStatus({ status, scheduledAt: past }, now)).not.toBe('Missed');
     }
+  });
+
+  // ── Epic O2 — explicit no_show status ("Missed") ─────────────────────────
+
+  it('maps no_show → "Missed"', () => {
+    expect(
+      deriveBadgeStatus({ status: 'no_show', scheduledAt: '2026-07-12T15:00:00.000Z' }, now),
+    ).toBe('Missed');
+  });
+
+  it('does not conflate no_show with cancelled — they remain distinct statuses', () => {
+    const past = new Date(now.getTime() - 60 * 60 * 1000).toISOString();
+    expect(deriveBadgeStatus({ status: 'no_show', scheduledAt: past }, now)).toBe('Missed');
+    expect(deriveBadgeStatus({ status: 'cancelled', scheduledAt: past }, now)).toBe('Cancelled');
   });
 });
