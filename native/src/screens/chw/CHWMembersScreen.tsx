@@ -37,8 +37,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { DrawerNavigationProp } from '@react-navigation/drawer';
 import {
+  ChevronDown,
   ChevronRight,
   ChevronLeft,
+  ChevronUp,
   Check,
   Filter,
   Search,
@@ -70,6 +72,27 @@ interface FilterChip {
   key: FilterKey;
   label: string;
 }
+
+/**
+ * Roster sort keys — driven by the "Sort: …" control in the filter row.
+ * `lastContact` is the default (matches the pre-sorted backend order).
+ */
+type SortKey = 'lastContact' | 'createdAt' | 'name';
+
+/** Sort direction. `desc` = newest/highest/Z→A first (arrow "↓"). */
+type SortDir = 'asc' | 'desc';
+
+interface SortOption {
+  key: SortKey;
+  label: string;
+}
+
+/** Options offered in the Sort dropdown, in display order. */
+const SORT_OPTIONS: SortOption[] = [
+  { key: 'lastContact', label: 'Last contact'    },
+  { key: 'createdAt',   label: 'Account created' },
+  { key: 'name',        label: 'Name'             },
+];
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -146,6 +169,41 @@ function isOverdue(lastContactAt: string | null): boolean {
   const diffMs = Date.now() - new Date(lastContactAt).getTime();
   const diffDays = diffMs / (1000 * 60 * 60 * 24);
   return diffDays > OVERDUE_THRESHOLD_DAYS;
+}
+
+/**
+ * Returns a comparator for `Array.prototype.sort` implementing the roster's
+ * client-side sort. Null-safe: a null `lastContactAt` always sorts LAST,
+ * regardless of direction, since "no contact yet" isn't meaningfully
+ * "oldest" or "newest" — it's simply unranked. Name uses locale-aware
+ * comparison; dates compare as epoch timestamps.
+ */
+function compareMembers(
+  sortKey: SortKey,
+  sortDir: SortDir,
+): (a: MembersRosterItem, b: MembersRosterItem) => number {
+  const dirMultiplier = sortDir === 'asc' ? 1 : -1;
+
+  return (a, b) => {
+    if (sortKey === 'name') {
+      return a.displayName.localeCompare(b.displayName) * dirMultiplier;
+    }
+
+    if (sortKey === 'createdAt') {
+      const aTime = new Date(a.createdAt).getTime();
+      const bTime = new Date(b.createdAt).getTime();
+      return (aTime - bTime) * dirMultiplier;
+    }
+
+    // sortKey === 'lastContact' — null always sorts last, independent of direction.
+    if (a.lastContactAt == null && b.lastContactAt == null) return 0;
+    if (a.lastContactAt == null) return 1;
+    if (b.lastContactAt == null) return -1;
+
+    const aTime = new Date(a.lastContactAt).getTime();
+    const bTime = new Date(b.lastContactAt).getTime();
+    return (aTime - bTime) * dirMultiplier;
+  };
 }
 
 /**
@@ -704,6 +762,81 @@ const pageStyles = StyleSheet.create({
   } as TextStyle,
 });
 
+// ─── Sort menu (web + native) ──────────────────────────────────────────────────
+//
+// Adapted from the generic open/toggle/select `CloseSelect` pattern in
+// CHWMemberProfileScreen.tsx (~2555-2610) — a trigger button that expands an
+// inline option list below it. Re-selecting the ACTIVE option flips direction
+// instead of re-selecting the same key, so the CHW can toggle ↓/↑ without an
+// extra control.
+
+interface SortMenuProps {
+  sortKey: SortKey;
+  sortDir: SortDir;
+  open: boolean;
+  onToggle: () => void;
+  onSelect: (key: SortKey) => void;
+}
+
+function SortMenu({ sortKey, sortDir, open, onToggle, onSelect }: SortMenuProps): React.JSX.Element {
+  const activeLabel = SORT_OPTIONS.find((o) => o.key === sortKey)?.label ?? 'Last contact';
+  const dirArrow = sortDir === 'desc' ? '↓' : '↑';
+
+  return (
+    <View style={styles.sortWrap}>
+      <TouchableOpacity
+        onPress={onToggle}
+        style={styles.sortLabel}
+        accessibilityRole="button"
+        accessibilityLabel={`Sort: ${activeLabel} ${sortDir === 'desc' ? 'descending' : 'ascending'}`}
+        accessibilityState={{ expanded: open }}
+      >
+        <Filter size={14} color="#6B7280" />
+        <Text style={styles.sortText}>
+          Sort: {activeLabel} {dirArrow}
+        </Text>
+        {open ? (
+          <ChevronUp size={14} color="#6B7280" />
+        ) : (
+          <ChevronDown size={14} color="#6B7280" />
+        )}
+      </TouchableOpacity>
+
+      {open && (
+        <View style={styles.sortMenu}>
+          {SORT_OPTIONS.map((opt) => {
+            const isActive = opt.key === sortKey;
+            return (
+              <TouchableOpacity
+                key={opt.key}
+                onPress={() => onSelect(opt.key)}
+                style={[styles.sortMenuItem, isActive && styles.sortMenuItemActive]}
+                accessibilityRole="radio"
+                accessibilityState={{ checked: isActive }}
+                accessibilityLabel={
+                  isActive
+                    ? `${opt.label}, currently sorted ${sortDir === 'desc' ? 'descending' : 'ascending'}. Activate to flip direction.`
+                    : `Sort by ${opt.label}`
+                }
+              >
+                <Text style={[styles.sortMenuItemText, isActive && styles.sortMenuItemTextActive]}>
+                  {opt.label}
+                </Text>
+                {isActive && (
+                  <View style={styles.sortMenuItemMeta}>
+                    <Text style={styles.sortMenuItemArrow}>{dirArrow}</Text>
+                    <Check size={14} color={colors.primary} />
+                  </View>
+                )}
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      )}
+    </View>
+  );
+}
+
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export function CHWMembersScreen(): React.JSX.Element {
@@ -724,6 +857,25 @@ export function CHWMembersScreen(): React.JSX.Element {
   const navigation = useNavigation<DrawerNavigationProp<CHWTabParamList>>();
   const [activeFilter, setActiveFilter] = useState<FilterKey>('all');
   const [searchQuery, setSearchQuery] = useState('');
+
+  // ── Sort state ────────────────────────────────────────────────────────────
+  // Default = Last contact ↓, matching the backend's pre-sorted order exactly
+  // (regression-safe: a CHW who never touches Sort sees today's behavior).
+  const [sortKey, setSortKey] = useState<SortKey>('lastContact');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
+  const [sortMenuOpen, setSortMenuOpen] = useState(false);
+
+  /** Re-selecting the active option flips direction; picking a new key resets
+   *  to descending (the more common "most recent / most relevant first" start). */
+  const handleSelectSort = (key: SortKey): void => {
+    if (key === sortKey) {
+      setSortDir((prev) => (prev === 'desc' ? 'asc' : 'desc'));
+    } else {
+      setSortKey(key);
+      setSortDir('desc');
+    }
+    setSortMenuOpen(false);
+  };
 
   const { data: members = [], isLoading, isError, dataUpdatedAt } = useChwMembers();
 
@@ -777,8 +929,15 @@ export function CHWMembersScreen(): React.JSX.Element {
       );
     }
 
+    // Sort AFTER filter+search so pagination/counts downstream always see the
+    // final, sorted order. Default (lastContact/desc) reproduces the
+    // backend's pre-sorted order — a plain [...result].sort() with that
+    // comparator is a no-op reordering in that case, so existing behavior is
+    // unchanged unless the CHW explicitly picks a different sort.
+    result = [...result].sort(compareMembers(sortKey, sortDir));
+
     return result;
-  }, [members, activeFilter, searchQuery]);
+  }, [members, activeFilter, searchQuery, sortKey, sortDir]);
 
   // ── Pagination: 10 members per page; controls only appear past one page ──────
   const [page, setPage] = useState(1);
@@ -786,7 +945,7 @@ export function CHWMembersScreen(): React.JSX.Element {
   // so the CHW never lands on a now-empty page.
   useEffect(() => {
     setPage(1);
-  }, [activeFilter, searchQuery]);
+  }, [activeFilter, searchQuery, sortKey, sortDir]);
   const { pageItems: pagedMembers, page: safePage, totalPages } = paginateMembers(
     filtered,
     page,
@@ -880,11 +1039,16 @@ export function CHWMembersScreen(): React.JSX.Element {
           })}
         </ScrollView>
 
-        {/* Sort label — right-aligned, web only looks best as absolute but flex works */}
-        <View style={styles.sortLabel}>
-          <Filter size={14} color="#6B7280" />
-          <Text style={styles.sortText}>Sort: Last contact ↓</Text>
-        </View>
+        {/* Sort control — right-aligned. Opens an inline dropdown with
+            Last contact / Account created / Name; re-tapping the active
+            option flips direction. */}
+        <SortMenu
+          sortKey={sortKey}
+          sortDir={sortDir}
+          open={sortMenuOpen}
+          onToggle={() => setSortMenuOpen((prev) => !prev)}
+          onSelect={handleSelectSort}
+        />
       </View>
 
       {/* ── Body ─────────────────────────────────────────────────────────── */}
@@ -1158,17 +1322,82 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   } as TextStyle,
 
+  sortWrap: {
+    flexShrink: 0,
+    marginLeft: 'auto',
+    // @ts-ignore — web-only, lets the dropdown float above sibling rows.
+    position: Platform.OS === 'web' ? 'relative' : undefined,
+  } as ViewStyle,
+
   sortLabel: {
     flexShrink:    0,
     flexDirection: 'row',
     alignItems:    'center',
     gap:           6,
-    marginLeft:    'auto',
+    paddingHorizontal: 8,
+    paddingVertical:   6,
+    borderRadius:      8,
   } as ViewStyle,
 
   sortText: {
     fontSize: 14,
     color:    '#6B7280',
+  } as TextStyle,
+
+  sortMenu: {
+    // @ts-ignore — web-only absolute positioning; native falls back to
+    // normal in-flow stacking (still fully usable, just pushes content down).
+    position:        Platform.OS === 'web' ? 'absolute' : undefined,
+    top:             Platform.OS === 'web' ? '100%' : undefined,
+    right:           Platform.OS === 'web' ? 0 : undefined,
+    marginTop:       4,
+    minWidth:        200,
+    borderWidth:     1,
+    borderColor:     '#E5E7EB',
+    borderRadius:    10,
+    backgroundColor: '#fff',
+    overflow:        'hidden',
+    // @ts-ignore — web-only shadow/elevation so the menu reads as floating.
+    boxShadow: Platform.OS === 'web' ? '0 4px 12px rgba(0,0,0,0.08)' : undefined,
+    elevation: Platform.OS === 'web' ? undefined : 3,
+    zIndex:    20,
+  } as ViewStyle,
+
+  sortMenuItem: {
+    flexDirection:     'row',
+    alignItems:        'center',
+    justifyContent:    'space-between',
+    paddingHorizontal: 14,
+    paddingVertical:   10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  } as ViewStyle,
+
+  sortMenuItemActive: {
+    backgroundColor: '#ECFDF5',
+  } as ViewStyle,
+
+  sortMenuItemText: {
+    fontSize:   14,
+    fontWeight: '500',
+    color:      '#374151',
+  } as TextStyle,
+
+  sortMenuItemTextActive: {
+    color:      '#065F46',
+    fontWeight: '600',
+  } as TextStyle,
+
+  sortMenuItemMeta: {
+    flexDirection: 'row',
+    alignItems:    'center',
+    gap:           6,
+  } as ViewStyle,
+
+  sortMenuItemArrow: {
+    fontSize:   13,
+    fontWeight: '600',
+    color:      '#065F46',
   } as TextStyle,
 
   // ── Table (web) ──────────────────────────────────────────────────────────────

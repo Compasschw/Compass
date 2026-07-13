@@ -10,7 +10,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../api/client', async (importOriginal) => {
@@ -69,6 +69,42 @@ const noCinMemberFixture = {
   masked_id: '—',
   medi_cal_id: null,
 };
+
+// ─── Sort fixtures (QA item ③) ──────────────────────────────────────────────
+//
+// Three members with distinct name / createdAt / lastContactAt so each sort
+// key produces a unique, assertable order. Arranged in the roster's DEFAULT
+// (backend pre-sorted) order — last_contact_at DESC — to make the
+// "default order unchanged" regression test meaningful: Bob (most recent
+// contact) → Amy (older contact) → Zoe (never contacted, sorts last always).
+const sortMemberBob = {
+  ...memberRosterFixture,
+  id: 'member-bob',
+  display_name: 'Bob Baker',
+  masked_id: '...0001',
+  created_at: '2026-01-10T12:00:00.000Z',
+  last_contact_at: '2026-06-20T12:00:00.000Z', // most recent contact
+};
+
+const sortMemberAmy = {
+  ...memberRosterFixture,
+  id: 'member-amy',
+  display_name: 'Amy Adams',
+  masked_id: '...0002',
+  created_at: '2026-05-01T12:00:00.000Z', // most recently created
+  last_contact_at: '2026-03-15T12:00:00.000Z', // older contact than Bob
+};
+
+const sortMemberZoe = {
+  ...memberRosterFixture,
+  id: 'member-zoe',
+  display_name: 'Zoe Chavez',
+  masked_id: '...0003',
+  created_at: '2025-11-01T12:00:00.000Z', // oldest created
+  last_contact_at: null, // never contacted — must always sort LAST
+};
+
+const sortFixtures = [sortMemberBob, sortMemberAmy, sortMemberZoe];
 
 let rosterResponse: unknown[] = [memberRosterFixture];
 
@@ -158,6 +194,107 @@ describe('CHWMembersScreen — Account Created + CIN columns (Epic H1)', () => {
     // Both the masked-id sub-label and the new CIN column render '—'.
     const dashes = screen.getAllByText('—');
     expect(dashes.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('CHWMembersScreen — Roster sort (QA item ③)', () => {
+  /** Reads the current top-to-bottom row order by DOM position. */
+  function currentRowOrder(): string[] {
+    const rows = sortFixtures.map((f) => ({
+      name: f.display_name,
+      el: screen.getByLabelText(`View profile for ${f.display_name}`),
+    }));
+    rows.sort((a, b) => {
+      const position = a.el.compareDocumentPosition(b.el);
+      // eslint-disable-next-line no-bitwise
+      if (position & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+      return 1;
+    });
+    return rows.map((r) => r.name);
+  }
+
+  beforeEach(() => {
+    rosterResponse = sortFixtures;
+  });
+
+  it('defaults to "Sort: Last contact ↓" and preserves the backend pre-sorted order (regression)', async () => {
+    renderScreen();
+
+    await screen.findByText('Bob Baker');
+    expect(screen.getByText('Sort: Last contact ↓')).toBeTruthy();
+
+    // Backend already returns Bob (most recent contact), Amy, Zoe (never
+    // contacted) in that order — the default sort must not reorder it.
+    expect(currentRowOrder()).toEqual(['Bob Baker', 'Amy Adams', 'Zoe Chavez']);
+  });
+
+  it('sorting by Name orders rows A→Z, and re-tapping flips to Z→A', async () => {
+    renderScreen();
+    await screen.findByText('Bob Baker');
+
+    fireEvent.click(screen.getByLabelText(/Sort: Last contact descending/));
+    fireEvent.click(screen.getByLabelText('Sort by Name'));
+
+    expect(screen.getByText('Sort: Name ↓')).toBeTruthy();
+    expect(currentRowOrder()).toEqual(['Zoe Chavez', 'Bob Baker', 'Amy Adams']);
+
+    // Re-tap the now-active "Name" option to flip direction.
+    fireEvent.click(screen.getByLabelText(/Sort: Name descending/));
+    fireEvent.click(screen.getByLabelText(/Name, currently sorted descending/));
+
+    expect(screen.getByText('Sort: Name ↑')).toBeTruthy();
+    expect(currentRowOrder()).toEqual(['Amy Adams', 'Bob Baker', 'Zoe Chavez']);
+  });
+
+  it('sorting by Account created orders rows by createdAt', async () => {
+    renderScreen();
+    await screen.findByText('Bob Baker');
+
+    fireEvent.click(screen.getByLabelText(/Sort: Last contact descending/));
+    fireEvent.click(screen.getByLabelText('Sort by Account created'));
+
+    expect(screen.getByText('Sort: Account created ↓')).toBeTruthy();
+    // Newest created first: Amy (2026-05-01) > Bob (2026-01-10) > Zoe (2025-11-01).
+    expect(currentRowOrder()).toEqual(['Amy Adams', 'Bob Baker', 'Zoe Chavez']);
+  });
+
+  it('sorting by Last contact with a null lastContactAt always sorts that member LAST, in both directions', async () => {
+    renderScreen();
+    await screen.findByText('Bob Baker');
+
+    // Descending (default): Bob (newest contact) > Amy > Zoe (null, last).
+    expect(currentRowOrder()).toEqual(['Bob Baker', 'Amy Adams', 'Zoe Chavez']);
+
+    // Flip to ascending by re-tapping the active "Last contact" option.
+    fireEvent.click(screen.getByLabelText(/Sort: Last contact descending/));
+    fireEvent.click(screen.getByLabelText(/Last contact, currently sorted descending/));
+
+    expect(screen.getByText('Sort: Last contact ↑')).toBeTruthy();
+    // Ascending: Amy (oldest contact) > Bob (more recent) > Zoe (null, STILL last).
+    expect(currentRowOrder()).toEqual(['Amy Adams', 'Bob Baker', 'Zoe Chavez']);
+  });
+
+  it('the sort trigger is an accessible button and options are selectable radios reflecting the active choice', async () => {
+    renderScreen();
+    await screen.findByText('Bob Baker');
+
+    const trigger = screen.getByLabelText(/Sort: Last contact descending/);
+    expect(trigger.getAttribute('role')).toBe('button');
+
+    fireEvent.click(trigger);
+
+    // react-native-web's jsdom test rendering doesn't surface
+    // accessibilityState as an aria-checked attribute for custom roles (see
+    // CHWCalendarScreen.test.tsx's Resource Needs chips for the same caveat)
+    // — assert via role + the visible direction-arrow/check marker instead.
+    const activeOption = screen.getByLabelText(/Last contact, currently sorted descending/);
+    expect(activeOption.getAttribute('role')).toBe('radio');
+    expect(activeOption.textContent).toContain('↓');
+
+    const inactiveOption = screen.getByLabelText('Sort by Name');
+    expect(inactiveOption.getAttribute('role')).toBe('radio');
+    expect(inactiveOption.textContent).not.toContain('↓');
+    expect(inactiveOption.textContent).not.toContain('↑');
   });
 });
 
