@@ -54,7 +54,7 @@ import {
 import { colors as tokens, spacing, radius, shadows } from '../../theme/tokens';
 import { fonts } from '../../theme/typography';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
-import { useMemberFacingCHWProfile, useSessions } from '../../hooks/useApiQueries';
+import { useMemberFacingCHWProfile, useSessions, useTestimonialSummary } from '../../hooks/useApiQueries';
 import type { MemberFindStackParamList, MemberTabParamList } from '../../navigation/MemberTabNavigator';
 import {
   AppShell,
@@ -473,13 +473,35 @@ interface PerformanceCardProps {
   sharedSessionCount: number;
   yearsExperience: string | null;
   availableDays: string[];
+  /**
+   * Average of the CHW's APPROVED Testimonial ratings (1-5), or `null` when
+   * none exist yet. Rounded to 1 decimal by the backend aggregate query.
+   */
+  ratingAvg: number | null;
+  /** Count of approved testimonials contributing to `ratingAvg`. */
+  ratingCount: number;
+}
+
+/**
+ * Build a filled/empty 5-star glyph string for the delta pill, e.g. "★★★★★"
+ * for a 4.9 avg (rounds to nearest star) or "★★★★☆" for a 4.4 avg.
+ */
+function starGlyphs(avg: number): string {
+  const filled = Math.min(5, Math.max(0, Math.round(avg)));
+  return '★'.repeat(filled) + '☆'.repeat(5 - filled);
 }
 
 function PerformanceCard({
   sharedSessionCount,
   yearsExperience,
   availableDays,
+  ratingAvg,
+  ratingCount,
 }: PerformanceCardProps): React.JSX.Element {
+  // Never fabricate a rating — only render a number once at least one
+  // approved testimonial exists. Otherwise show an explicit empty state.
+  const hasRatings = ratingCount > 0 && ratingAvg != null;
+
   return (
     <Card style={[cardStyles.base, cardStyles.center]}>
       <SectionHeader title="Performance" marginBottom={spacing.lg} />
@@ -490,12 +512,20 @@ function PerformanceCard({
           icon={<Star size={18} color={tokens.emerald700} />}
           iconBg={tokens.emerald100}
           label="Member Rating"
-          value="4.9"
-          delta="★★★★★"
+          value={hasRatings ? ratingAvg.toFixed(1) : 'No ratings yet'}
+          delta={
+            hasRatings
+              ? `${starGlyphs(ratingAvg)} · ${ratingCount} review${ratingCount === 1 ? '' : 's'}`
+              : undefined
+          }
           deltaColor={tokens.amber700}
           deltaBg={tokens.amber100}
           style={cardStyles.statTile}
-          accessibilityLabel="Rating 4.9 out of 5"
+          accessibilityLabel={
+            hasRatings
+              ? `Rating ${ratingAvg.toFixed(1)} out of 5, from ${ratingCount} review${ratingCount === 1 ? '' : 's'}`
+              : 'No ratings yet'
+          }
         />
         <StatTile
           icon={<TrendingUp size={18} color={tokens.blue700} />}
@@ -897,6 +927,11 @@ export function MemberFacingCHWProfileScreen(
 
   const { data: profile, isLoading: profileLoading, error } = useMemberFacingCHWProfile(chwId);
   const sessionsQuery = useSessions();
+  // Real rating aggregate (avg + count of approved Testimonials) — replaces
+  // the previous hardcoded "4.9". Not part of `isLoading`/`error` gating
+  // below: a rating-fetch failure shouldn't block the whole profile from
+  // rendering — it just falls back to the "No ratings yet" empty state.
+  const testimonialSummaryQuery = useTestimonialSummary(chwId);
 
   const isLoading = profileLoading || sessionsQuery.isLoading;
 
@@ -1051,6 +1086,8 @@ export function MemberFacingCHWProfileScreen(
               sharedSessionCount={profile.sharedSessionCount}
               yearsExperience={profile.yearsExperience}
               availableDays={profile.availableDays}
+              ratingAvg={testimonialSummaryQuery.data?.ratingAvg ?? null}
+              ratingCount={testimonialSummaryQuery.data?.ratingCount ?? 0}
             />
 
             {/* Right — relationship context + actions */}

@@ -17,6 +17,7 @@ import { transformKeys, toSnakeCase } from '../utils/caseTransform';
 import { showAlert } from '../utils/showAlert';
 import { withSessionStarted, withStartedAtForSession } from '../utils/sessionStartOptimistic';
 import { getSessionAISummary, type AISummaryResponse } from '../api/sessions';
+import { getTestimonialSummary, type TestimonialSummary } from '../api/testimonials';
 
 // ─── Types (camelCase, matching what screens expect) ─────────────────────────
 
@@ -505,6 +506,12 @@ export const queryKeys = {
   chwMapData: ['chw', 'map-data'] as const,
   /** Public-style CHW profile for the member-facing CHW Profile screen. */
   memberFacingCHWProfile: (chwId: string) => ['member', 'chws', chwId] as const,
+  /**
+   * Aggregate rating stats (avg + count of approved Testimonial rows) for a CHW.
+   * Used to render the real member-satisfaction rating in place of a hardcoded
+   * value — see GET /chws/{chw_id}/testimonials/summary.
+   */
+  testimonialSummary: (chwId: string) => ['chws', chwId, 'testimonials', 'summary'] as const,
   /** CHW caseload journey list from GET /chw/journeys. */
   chwJourneys: ['chw', 'journeys'] as const,
   /** CHW members roster from GET /chw/members. */
@@ -794,6 +801,27 @@ export function useMemberFacingCHWProfile(chwId: string) {
       }
       return failureCount < 2;
     },
+  });
+}
+
+/**
+ * Fetch the real, live-computed rating aggregate for a CHW — the average and
+ * count of their APPROVED Testimonial rows (GET /chws/{chw_id}/testimonials/summary).
+ *
+ * This is the source of truth for "member satisfaction" displays. It is
+ * NULL-safe: `ratingAvg` is `null` and `ratingCount` is `0` when the CHW has
+ * no approved testimonials yet — callers MUST render an explicit empty state
+ * ("No ratings yet") rather than fabricating a number in that case.
+ *
+ * @param chwId - The CHW's user UUID. Pass an empty string to disable the
+ *   query (e.g. while the caller's own profile is still loading).
+ */
+export function useTestimonialSummary(chwId: string) {
+  return useQuery({
+    queryKey: queryKeys.testimonialSummary(chwId),
+    queryFn: async (): Promise<TestimonialSummary> => getTestimonialSummary(chwId),
+    enabled: chwId.length > 0,
+    staleTime: 60_000, // 1 min — ratings change slowly; avoid refetch storms
   });
 }
 
