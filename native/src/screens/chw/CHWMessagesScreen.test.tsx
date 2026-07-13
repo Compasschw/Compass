@@ -848,8 +848,14 @@ describe('CHWMessagesScreen — Member Profile links pass backLabel "Messages" (
     // The conversation header wraps the avatar, the name, AND the explicit
     // "Open Profile" button in their own PressableMember, all sharing this
     // same accessibility label — click any one; they all resolve to the same
-    // navigation call under test here.
-    const profileLinks = screen.getAllByLabelText("Open Rosa Gutierrez's profile");
+    // navigation call under test here. findAll (not getAll): under CI load
+    // the header PressableMembers can mount a tick after the name text
+    // resolves, which flaked this test in slower parallel runs.
+    const profileLinks = await screen.findAllByLabelText(
+      "Open Rosa Gutierrez's profile",
+      {},
+      { timeout: 3000 },
+    );
     expect(profileLinks.length).toBeGreaterThanOrEqual(1);
     fireEvent.click(profileLinks[0]);
 
@@ -863,8 +869,9 @@ describe('CHWMessagesScreen — Member Profile links pass backLabel "Messages" (
     renderScreen();
     await screen.findByText('Rosa Gutierrez', {}, { timeout: 3000 });
 
-    const rail = within(screen.getByLabelText('Member context'));
-    fireEvent.click(rail.getByLabelText("Open Rosa Gutierrez's profile"));
+    // findBy variants for the same CI-load reason as the header test above.
+    const rail = within(await screen.findByLabelText('Member context', {}, { timeout: 3000 }));
+    fireEvent.click(await rail.findByLabelText("Open Rosa Gutierrez's profile", {}, { timeout: 3000 }));
 
     expect(mockNavigate).toHaveBeenCalledWith('SessionsStack', {
       screen: 'MemberProfile',
