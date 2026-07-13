@@ -246,6 +246,9 @@ interface EditableFieldProps {
   keyboardType?: 'default' | 'email-address' | 'phone-pad' | 'numeric';
   /** Render a multiline TextInput (for Bio). */
   multiline?:   boolean;
+  /** When set, caps input length and shows a live "N/max" character counter
+   * (e.g. Bio — Epic C3, capped at 120 chars both client- and server-side). */
+  maxLength?:   number;
 }
 
 function EditableField({
@@ -260,6 +263,7 @@ function EditableField({
   placeholder,
   keyboardType = 'default',
   multiline = false,
+  maxLength,
 }: EditableFieldProps): React.JSX.Element {
   const [draft, setDraft] = useState(value);
   const [saving, setSaving] = useState(false);
@@ -286,18 +290,29 @@ function EditableField({
     return (
       <View style={[fieldStyles.row, multiline && fieldStyles.rowMultiline]}>
         <Text style={fieldStyles.label}>{label}</Text>
-        <TextInput
-          value={draft}
-          onChangeText={setDraft}
-          placeholder={placeholder ?? label}
-          placeholderTextColor="#9CA3AF"
-          keyboardType={keyboardType}
-          editable={!saving}
-          autoFocus
-          multiline={multiline}
-          style={[fieldStyles.input, multiline && fieldStyles.inputMultiline]}
-          accessibilityLabel={label}
-        />
+        <View style={fieldStyles.inputWrap}>
+          <TextInput
+            value={draft}
+            onChangeText={setDraft}
+            placeholder={placeholder ?? label}
+            placeholderTextColor="#9CA3AF"
+            keyboardType={keyboardType}
+            editable={!saving}
+            autoFocus
+            multiline={multiline}
+            maxLength={maxLength}
+            style={[fieldStyles.input, multiline && fieldStyles.inputMultiline]}
+            accessibilityLabel={label}
+          />
+          {maxLength != null && (
+            <Text
+              style={fieldStyles.counter}
+              accessibilityLabel={`${label} character count`}
+            >
+              {draft.length}/{maxLength}
+            </Text>
+          )}
+        </View>
         <Pressable
           onPress={() => void handleSave()}
           disabled={saving}
@@ -385,6 +400,16 @@ const fieldStyles = StyleSheet.create({
     minHeight:         80,
     textAlignVertical: 'top',
   } as ViewStyle,
+  inputWrap: {
+    flex: 1,
+    gap:  4,
+  } as ViewStyle,
+  counter: {
+    fontSize:   11,
+    fontWeight: '500',
+    color:      '#9CA3AF',
+    alignSelf:  'flex-end',
+  } as TextStyle,
   editLink: {
     paddingHorizontal: 4,
     paddingVertical:   4,
@@ -956,6 +981,7 @@ export function CHWProfileScreen(): React.JSX.Element {
                         value={profile?.bio ?? ''}
                         placeholder="Tell members about your background and specializations…"
                         multiline
+                        maxLength={120}
                         isEditing={editingField === 'bio'}
                         onEditStart={() => setEditingField('bio')}
                         onEditCancel={() => setEditingField(null)}
