@@ -712,6 +712,29 @@ class CHWCreateMemberRequest(BaseModel):
         return self
 
 
+class MemberChatAttachmentItem(BaseModel):
+    """A single chat file attachment surfaced in the CHW per-member document
+    repository (GET /chw/members/{member_id}/attachments).
+
+    ``id`` is the owning **Message.id**, not the FileAttachment.id — the
+    existing download endpoint (GET /conversations/messages/{message_id}/
+    attachment-url) keys off the message id, so the frontend can pass this
+    field straight through without a second lookup.
+
+    No ``document_type`` field: chat attachments are never categorized by the
+    CHW upload-picker taxonomy (id/income/address/medical/other) — the
+    frontend's "From Chat" filter chip identifies them structurally instead.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    filename: str
+    content_type: str
+    size_bytes: int
+    created_at: datetime
+
+
 class CHWCreateMemberResponse(BaseModel):
     """Response for POST /api/v1/chw/members — the newly-created member."""
 

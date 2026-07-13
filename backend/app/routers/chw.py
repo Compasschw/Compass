@@ -21,6 +21,7 @@ from app.schemas.chw import (
     CloseMemberRequest,
     MapMemberPin,
     MapResourcePin,
+    MemberChatAttachmentItem,
     MemberClosureResponse,
     MemberDemographicsUpdate,
     MembersRosterItem,
@@ -30,6 +31,7 @@ from app.schemas.chw import (
     ResourceNeedsUpdate,
     SessionNoteItem,
 )
+from app.schemas.pagination import PaginatedResponse, PaginationParams, pagination
 from app.schemas.testimonial import TestimonialClosureCreate, TestimonialClosureResponse
 from app.schemas.user import CHWProfileResponse, CHWProfileUpdate
 from app.services.storage.avatar_urls import presigned_avatar_url
@@ -1791,6 +1793,106 @@ async def get_chw_member_full_profile(
         closure_status=member_profile.closure_status,
         closure_reason=member_profile.closure_reason,
         closed_at=member_profile.closed_at,
+    )
+
+
+# ─── Member Chat Attachments (QA item ②: Documents repository) ────────────────
+
+
+@router.get(
+    "/members/{member_id}/attachments",
+    response_model=PaginatedResponse[MemberChatAttachmentItem],
+    summary="List a member's chat file attachments, newest first",
+)
+async def list_member_chat_attachments(
+    member_id: UUID,
+    caller=Depends(_require_chw_or_admin_key),
+    db: AsyncSession = Depends(get_db),
+    params: PaginationParams = Depends(pagination),
+) -> PaginatedResponse[MemberChatAttachmentItem]:
+    """GET /api/v1/chw/members/{member_id}/attachments
+
+    Powers the CHW Documents → per-member repository "From Chat" view: files
+    the member (or CHW) shared as message attachments in their conversation
+    thread, merged client-side with the member's uploaded MemberDocument rows.
+
+    Scope: attachments on messages that belong to a Conversation between the
+    CALLING CHW and this member specifically — mirrors the product decision
+    that a CHW's Documents repository should only ever surface what THAT CHW's
+    own thread with the member contains, not attachments exchanged with a
+    different CHW serving the same member. Admins see attachments across every
+    CHW's conversation with the member (audit/oversight use case).
+
+    Authorization gate (minimum-necessary, 45 CFR §164.514(d)):
+    - CHW: must have an active care relationship with this member (session or
+      matched service request) — same gate as GET /chw/members/{member_id}.
+      Returns 403 (not 404) on failure to avoid disclosing member existence.
+    - Admin: unrestricted.
+
+    A member with no conversations (or conversations with no attachments)
+    returns an empty page — never a 404 or 500.
+
+    Args:
+        member_id: Path parameter — UUID of the member whose attachments are listed.
+        caller:    Authenticated CHW or admin-key context (role + user).
+        db:        Async database session.
+        params:    Pagination (page, page_size).
+
+    Returns:
+        PaginatedResponse[MemberChatAttachmentItem], newest attachment first.
+
+    Raises:
+        HTTPException(403): CHW caller has no active relationship with member_id.
+    """
+    from app.models.conversation import Conversation, FileAttachment, Message
+
+    await _assert_chw_member_relationship_or_admin(caller, member_id, db)
+
+    caller_role: str = caller["role"]
+    caller_user = caller["user"]
+
+    conversation_filter = [Conversation.member_id == member_id]
+    if caller_role != "admin":
+        assert caller_user is not None
+        conversation_filter.append(Conversation.chw_id == caller_user.id)
+
+    base_query = (
+        select(Message.id, FileAttachment.filename, FileAttachment.content_type,
+               FileAttachment.size_bytes, Message.created_at)
+        .select_from(FileAttachment)
+        .join(Message, Message.id == FileAttachment.message_id)
+        .join(Conversation, Conversation.id == Message.conversation_id)
+        .where(*conversation_filter)
+    )
+
+    total = await db.scalar(
+        select(func.count()).select_from(base_query.subquery())
+    ) or 0
+
+    result = await db.execute(
+        base_query
+        .order_by(Message.created_at.desc())
+        .offset(params.offset)
+        .limit(params.page_size)
+    )
+    rows = result.all()
+
+    items = [
+        MemberChatAttachmentItem(
+            id=msg_id,
+            filename=filename,
+            content_type=content_type,
+            size_bytes=size_bytes,
+            created_at=created_at,
+        )
+        for msg_id, filename, content_type, size_bytes, created_at in rows
+    ]
+
+    return PaginatedResponse(
+        items=items,
+        total=total,
+        page=params.page,
+        page_size=params.page_size,
     )
 
 

@@ -1,24 +1,28 @@
 /**
- * CHWDocumentsScreen — member-grouped document management for CHWs.
+ * CHWDocumentsScreen — caseload member list -> per-member document repository.
  *
- * Organises all member documents by member so a CHW can quickly locate a
- * specific person's files when asked to produce documentation. Each member is
- * a collapsible section showing their full name and age as the identifier,
- * followed by their documents grouped by doc_type (id → income → address →
- * medical → other). Image files render as a thumbnail grid; PDFs and other
- * non-image files render as rows.
+ * Landing view is the CHW's searchable caseload member list (reusing
+ * useChwMembers, same as the upload picker). Selecting a member opens THEIR
+ * repository: uploaded documents (useMemberDocuments) merged with chat file
+ * attachments (useMemberChatAttachments) from every conversation the CALLING
+ * CHW has with that member, date-sorted newest-first. Each row shows its
+ * source ("Uploaded" vs "From chat") plus date and size. This replaces the
+ * previous collapsible-groups feed that fanned out a useMemberDocuments call
+ * per caseload member on load (N+1) and never surfaced chat attachments at
+ * all — chat-shared files appeared nowhere in the product.
  *
- * Data flow: fan-out per caseload member (same N+1 pattern as before — a
- * dedicated GET /chw/documents aggregation endpoint is tracked as a follow-up).
- * Grouping is done with useMemo in each MemberDocumentGroup; the parent screen
- * maintains only the aggregated counts.
+ * Preserved / carried forward:
+ *   - CHWUploadTrigger (member picker -> doc type -> file dialog); now also
+ *     launchable from inside a member's repository, which preselects that
+ *     member and skips the picker step.
+ *   - Search: filters the landing member list by name or masked ID.
+ *   - Per-doc Download (presigned URL), Delete (uploaded docs only, with
+ *     confirm), thumbnail preview for images.
+ *   - EmptyState variants, Right-rail Quick Tip on web.
  *
- * Preserved features:
- *   - CHWUploadTrigger (member picker → doc type → file dialog)
- *   - Search: filters member groups by member name OR filename within
- *   - Per-doc Download (presigned URL), Delete (with confirm), thumbnail preview
- *   - EmptyState for zero documents across all members
- *   - Right-rail Quick Tip on web
+ * Screen-local state only — the repository "back to members" control does
+ * NOT touch the navigator; selecting/deselecting a member is a local view
+ * swap so the tab's scroll position and the caseload list resist reloads.
  */
 
 import React, {
@@ -50,8 +54,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
+  ArrowLeft,
   Calendar,
-  ChevronDown,
   ChevronRight,
   ClipboardList,
   Download,
@@ -62,9 +66,11 @@ import {
   Filter,
   FolderOpen,
   Image as ImageIcon,
+  MessageSquare,
   Plus,
   Search,
   Trash2,
+  Upload,
   X,
 } from 'lucide-react-native';
 
@@ -77,16 +83,18 @@ import {
   PressableCard,
   RightDrawer,
   RightRail,
-  StatTile,
 } from '../../components/ui';
-import { colors, numerals, spacing, radius, shadows } from '../../theme/tokens';
+import { colors, numerals, spacing, radius } from '../../theme/tokens';
 import { useAuth } from '../../context/AuthContext';
 import {
   useMemberDocuments,
   useMemberDocumentDelete,
   useMemberDocumentDownloadUrl,
+  useMemberChatAttachments,
+  useMessageAttachmentDownloadUrl,
   useChwMembers,
   type MemberDocumentData,
+  type MemberChatAttachmentData,
   type MembersRosterItem,
 } from '../../hooks/useApiQueries';
 import { useFileUpload, type DocumentType } from '../../hooks/useFileUpload';
@@ -95,17 +103,40 @@ import { useFileUpload, type DocumentType } from '../../hooks/useFileUpload';
 
 type DocumentsRouteProp = RouteProp<CHWTabParamList, 'CHWDocuments'>;
 
-type FilterType = 'all' | DocumentType;
+type FilterType = 'all' | DocumentType | 'chat';
+
+/** Unified row shape merging an uploaded MemberDocument with a chat FileAttachment. */
+interface RepositoryRow {
+  /** MemberDocument.id or the owning Message.id — unique within source. */
+  id: string;
+  source: 'uploaded' | 'chat';
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+  /** ISO timestamp — uploadedAt (docs) or createdAt (chat). */
+  date: string;
+  /** Present for uploaded docs only. */
+  documentType?: DocumentType;
+}
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const DOC_TYPE_LABELS: Record<FilterType, string> = {
+const DOC_TYPE_LABELS: Record<DocumentType, string> = {
+  id:      'Photo ID',
+  income:  'Income',
+  address: 'Address',
+  medical: 'Medical',
+  other:   'Other',
+};
+
+const FILTER_LABELS: Record<FilterType, string> = {
   all:     'All Types',
   id:      'Photo ID',
   income:  'Income',
   address: 'Address',
   medical: 'Medical',
   other:   'Other',
+  chat:    'From Chat',
 };
 
 const DOC_TYPE_PILL: Record<DocumentType, 'blue' | 'purple' | 'emerald' | 'amber' | 'gray'> = {
@@ -116,14 +147,11 @@ const DOC_TYPE_PILL: Record<DocumentType, 'blue' | 'purple' | 'emerald' | 'amber
   other:   'gray',
 };
 
-/** Display order for doc types within a member group. */
-const DOC_TYPE_ORDER: DocumentType[] = ['id', 'income', 'address', 'medical', 'other'];
-
-/** Document categories offered in the picker, in display order. */
+/** Document categories offered in the upload picker, in display order. */
 const DOC_TYPE_OPTIONS: DocumentType[] = ['id', 'income', 'address', 'medical', 'other'];
 
-/** Default collapse threshold — groups are collapsed by default when caseload > this. */
-const COLLAPSE_THRESHOLD = 5;
+/** Filter chip display order on the repository view. */
+const FILTER_ORDER: FilterType[] = ['all', 'id', 'income', 'address', 'medical', 'other', 'chat'];
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -149,10 +177,7 @@ function formatDate(iso: string): string {
   });
 }
 
-/**
- * Sort MembersRosterItem alphabetically by last name. Falls back to
- * displayName sort when the name has a single word.
- */
+/** Sort MembersRosterItem alphabetically by last name. */
 function sortMembersByLastName(members: MembersRosterItem[]): MembersRosterItem[] {
   return [...members].sort((a, b) => {
     const lastA = a.displayName.trim().split(' ').pop() ?? a.displayName;
@@ -163,8 +188,8 @@ function sortMembersByLastName(members: MembersRosterItem[]): MembersRosterItem[
 
 /**
  * Format an ISO date-of-birth as "May 09, 1990 (34 yrs)" — the canonical
- * patient-matching identifier shown in member group headers. Parses at UTC
- * noon to avoid timezone off-by-one-day. Returns '—' when DOB is absent.
+ * patient-matching identifier. Parses at UTC noon to avoid timezone
+ * off-by-one-day. Returns '—' when DOB is absent.
  */
 function formatDob(iso: string | null | undefined): string {
   if (!iso) return '—';
@@ -185,6 +210,33 @@ function formatDob(iso: string | null | undefined): string {
   return `${formatted} (${age} yrs)`;
 }
 
+/** Merge uploaded documents + chat attachments into a single date-sorted list. */
+function mergeRepositoryRows(
+  docs: MemberDocumentData[],
+  attachments: MemberChatAttachmentData[],
+): RepositoryRow[] {
+  const docRows: RepositoryRow[] = docs.map((d) => ({
+    id: d.id,
+    source: 'uploaded',
+    filename: d.filename,
+    contentType: d.contentType,
+    sizeBytes: d.sizeBytes,
+    date: d.uploadedAt,
+    documentType: d.documentType as DocumentType,
+  }));
+  const attachmentRows: RepositoryRow[] = attachments.map((a) => ({
+    id: a.id,
+    source: 'chat',
+    filename: a.filename,
+    contentType: a.contentType,
+    sizeBytes: a.sizeBytes,
+    date: a.createdAt,
+  }));
+  return [...docRows, ...attachmentRows].sort(
+    (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
+  );
+}
+
 // ─── DocTypeIcon ──────────────────────────────────────────────────────────────
 
 function DocTypeIcon({
@@ -192,7 +244,7 @@ function DocTypeIcon({
   size = 16,
   color,
 }: {
-  docType: DocumentType;
+  docType: DocumentType | undefined;
   size?: number;
   color?: string;
 }): React.JSX.Element {
@@ -206,7 +258,7 @@ function DocTypeIcon({
   }
 }
 
-// ─── DownloadButton ───────────────────────────────────────────────────────────
+// ─── DownloadButton — uploaded documents ──────────────────────────────────────
 
 function DownloadButton({ docId }: { docId: string }): React.JSX.Element {
   const [enabled, setEnabled] = useState(false);
@@ -249,7 +301,55 @@ function DownloadButton({ docId }: { docId: string }): React.JSX.Element {
   );
 }
 
-// ─── ImageThumbnailModal — full-size image viewer ─────────────────────────────
+// ─── ChatAttachmentDownloadButton — chat attachments ──────────────────────────
+
+/**
+ * Download button for a chat-sourced attachment. Reuses the message
+ * attachment-url presigned endpoint (there is no MemberDocument row for
+ * chat files, so useMemberDocumentDownloadUrl does not apply).
+ */
+function ChatAttachmentDownloadButton({ messageId }: { messageId: string }): React.JSX.Element {
+  const [enabled, setEnabled] = useState(false);
+  const q = useMessageAttachmentDownloadUrl(messageId, { enabled });
+
+  const handlePress = useCallback(() => {
+    if (q.isFetching) return;
+    setEnabled(true);
+  }, [q.isFetching]);
+
+  useEffect(() => {
+    if (!enabled || !q.data) return;
+    void Linking.openURL(q.data.url).catch(() =>
+      showError('Could not open the file. Please try again.')
+    );
+    setEnabled(false);
+  }, [enabled, q.data]);
+
+  useEffect(() => {
+    if (q.isError) {
+      showError('Could not generate a download link.');
+      setEnabled(false);
+    }
+  }, [q.isError]);
+
+  return (
+    <TouchableOpacity
+      onPress={handlePress}
+      accessible
+      accessibilityLabel="Download file shared in chat"
+      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+      style={styles.actionButton}
+    >
+      {q.isFetching ? (
+        <ActivityIndicator size="small" color={colors.primary} />
+      ) : (
+        <Download size={14} color={colors.textSecondary} />
+      )}
+    </TouchableOpacity>
+  );
+}
+
+// ─── ImageThumbnailModal — full-size image viewer (uploaded docs only) ────────
 
 interface ImageThumbnailModalProps {
   docId: string;
@@ -346,7 +446,7 @@ function ImageThumbnailModal(props: ImageThumbnailModalProps): React.JSX.Element
   return <ImageThumbnailModalNative {...props} />;
 }
 
-// ─── ImageTile — thumbnail in the grid ───────────────────────────────────────
+// ─── ImageTile — thumbnail in the grid (uploaded docs only) ───────────────────
 
 interface ImageTileProps {
   doc: MemberDocumentData;
@@ -394,7 +494,6 @@ function ImageTile({ doc }: ImageTileProps): React.JSX.Element {
           </View>
         )}
 
-        {/* Doc type label */}
         <View style={styles.imageTileLabel}>
           <Text style={styles.imageTileLabelText} numberOfLines={1}>
             {DOC_TYPE_LABELS[docType] ?? doc.documentType}
@@ -413,296 +512,105 @@ function ImageTile({ doc }: ImageTileProps): React.JSX.Element {
   );
 }
 
-// ─── DocumentRow — non-image (PDF/doc) row ────────────────────────────────────
+// ─── RepositoryRowView — a single row in the merged repository list ──────────
 
-interface DocumentRowProps {
-  doc: MemberDocumentData;
+interface RepositoryRowViewProps {
+  row: RepositoryRow;
+  memberId: string;
   isAlt: boolean;
 }
 
-function DocumentRow({ doc, isAlt }: DocumentRowProps): React.JSX.Element {
-  const deleteMutation = useMemberDocumentDelete(doc.memberId);
-  const docType = doc.documentType as DocumentType;
+function RepositoryRowView({ row, memberId, isAlt }: RepositoryRowViewProps): React.JSX.Element {
+  const deleteMutation = useMemberDocumentDelete(memberId);
+  const isUploaded = row.source === 'uploaded';
 
   const handleDelete = useCallback(() => {
     const proceed = (): void => {
-      deleteMutation.mutate(doc.id, {
+      deleteMutation.mutate(row.id, {
         onError: () => showError('Could not delete the document.'),
       });
     };
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      if (window.confirm(`Delete "${doc.filename}"?`)) proceed();
+      if (window.confirm(`Delete "${row.filename}"?`)) proceed();
     } else {
-      Alert.alert('Delete document', `Delete "${doc.filename}"?`, [
+      Alert.alert('Delete document', `Delete "${row.filename}"?`, [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Delete', style: 'destructive', onPress: proceed },
       ]);
     }
-  }, [doc, deleteMutation]);
+  }, [row, deleteMutation]);
 
   return (
     <View style={[styles.docRow, isAlt && styles.docRowAlt]}>
       {/* Icon badge */}
-      <View style={styles.docRowIcon}>
-        <DocTypeIcon docType={docType} size={16} color="#065f46" />
+      <View style={[styles.docRowIcon, !isUploaded && styles.docRowIconChat]}>
+        {isUploaded ? (
+          <DocTypeIcon docType={row.documentType} size={16} color="#065f46" />
+        ) : (
+          <MessageSquare size={16} color="#1d4ed8" />
+        )}
       </View>
 
       {/* File info */}
       <View style={styles.docRowInfo}>
         <Text style={styles.docRowFilename} numberOfLines={1}>
-          {doc.filename}
+          {row.filename}
         </Text>
         <View style={styles.docRowMeta}>
-          <Pill variant={DOC_TYPE_PILL[docType] ?? 'gray'} size="sm">
-            {DOC_TYPE_LABELS[docType] ?? doc.documentType}
-          </Pill>
+          {isUploaded ? (
+            <Pill variant={DOC_TYPE_PILL[row.documentType as DocumentType] ?? 'gray'} size="sm">
+              {DOC_TYPE_LABELS[row.documentType as DocumentType] ?? row.documentType}
+            </Pill>
+          ) : (
+            <Pill variant="blue" size="sm">
+              From chat
+            </Pill>
+          )}
           <Text style={[styles.docRowMetaText, numerals.tabular as object]}>
-            {formatDate(doc.uploadedAt)}
+            {formatDate(row.date)}
           </Text>
           <Text style={[styles.docRowMetaText, numerals.tabular as object]}>
-            {formatBytes(doc.sizeBytes)}
+            {formatBytes(row.sizeBytes)}
           </Text>
         </View>
       </View>
 
       {/* Actions */}
       <View style={styles.docRowActions}>
-        <DownloadButton docId={doc.id} />
-        <TouchableOpacity
-          accessible
-          accessibilityLabel={`Delete ${doc.filename}`}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          onPress={handleDelete}
-          disabled={deleteMutation.isPending}
-          style={styles.actionButton}
-        >
-          {deleteMutation.isPending ? (
-            <ActivityIndicator size="small" color="#dc2626" />
-          ) : (
-            <Trash2 size={14} color={colors.textSecondary} />
-          )}
-        </TouchableOpacity>
+        {isUploaded ? (
+          <DownloadButton docId={row.id} />
+        ) : (
+          <ChatAttachmentDownloadButton messageId={row.id} />
+        )}
+        {isUploaded && (
+          <TouchableOpacity
+            accessible
+            accessibilityLabel={`Delete ${row.filename}`}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            onPress={handleDelete}
+            disabled={deleteMutation.isPending}
+            style={styles.actionButton}
+          >
+            {deleteMutation.isPending ? (
+              <ActivityIndicator size="small" color="#dc2626" />
+            ) : (
+              <Trash2 size={14} color={colors.textSecondary} />
+            )}
+          </TouchableOpacity>
+        )}
       </View>
     </View>
   );
 }
 
-// ─── MemberDocumentGroup ──────────────────────────────────────────────────────
-
-/**
- * Fetches and renders all documents for a single caseload member, grouped into:
- *   1. Images: thumbnail grid
- *   2. Non-images: file rows sorted by doc_type (id, income, address, medical, other)
- *
- * Collapsible via PressableCard header. Reports its visible document count
- * to the parent screen for aggregated loading/empty-state logic.
- */
-interface MemberDocumentGroupProps {
-  member: MembersRosterItem;
-  searchQuery: string;
-  activeType: FilterType;
-  defaultExpanded: boolean;
-  onResult: (memberId: string, count: number | null) => void;
-  /**
-   * When truthy, force-expands this member's section once (deep-link entry).
-   * The component only acts on a rising edge from false → true, then the
-   * parent clears the flag so subsequent user interactions are unaffected.
-   */
-  forceExpanded?: boolean;
-  /**
-   * Called with the measured y-offset of this group's root View so the parent
-   * screen can scroll to the right position after the roster renders.
-   */
-  onGroupLayout?: (memberId: string, y: number) => void;
-}
-
-function MemberDocumentGroup({
-  member,
-  searchQuery,
-  activeType,
-  defaultExpanded,
-  onResult,
-  forceExpanded = false,
-  onGroupLayout,
-}: MemberDocumentGroupProps): React.JSX.Element | null {
-  const [expanded, setExpanded] = useState(defaultExpanded);
-  const docsQuery = useMemberDocuments(member.id);
-
-  // Honour the one-shot deep-link expansion signal from the parent screen.
-  // React on a rising edge only — the parent clears forceExpanded after firing
-  // so this doesn't fight manual collapse by the user on subsequent renders.
-  const prevForceExpanded = useRef(false);
-  useEffect(() => {
-    if (forceExpanded && !prevForceExpanded.current) {
-      setExpanded(true);
-    }
-    prevForceExpanded.current = forceExpanded;
-  }, [forceExpanded]);
-  const docs = docsQuery.data?.items ?? [];
-
-  // Filter by search query and active type filter.
-  const filtered = useMemo<MemberDocumentData[]>(() => {
-    const lq = searchQuery.toLowerCase();
-    return docs.filter((d) => {
-      const typeMatch = activeType === 'all' || d.documentType === activeType;
-      const nameMatch =
-        searchQuery.length === 0 ||
-        d.filename.toLowerCase().includes(lq) ||
-        member.displayName.toLowerCase().includes(lq);
-      return typeMatch && nameMatch;
-    });
-  }, [docs, searchQuery, activeType, member.displayName]);
-
-  // Report load state and matching count to the parent.
-  useEffect(() => {
-    onResult(member.id, docsQuery.isLoading ? null : filtered.length);
-  }, [member.id, docsQuery.isLoading, filtered.length, onResult]);
-
-  // Hide members with zero matching documents unless we're actively searching
-  // by member name (in that case, keep the empty group visible so the CHW
-  // knows the member exists but has no docs of the filtered type).
-  const memberNameMatches =
-    searchQuery.length > 0 &&
-    member.displayName.toLowerCase().includes(searchQuery.toLowerCase());
-
-  if (!docsQuery.isLoading && filtered.length === 0 && !memberNameMatches) {
-    return null;
-  }
-
-  // Separate images from non-images.
-  const images = filtered.filter((d) => d.contentType.startsWith('image/'));
-  const nonImages = filtered.filter((d) => !d.contentType.startsWith('image/'));
-
-  // Sort non-images by doc_type in canonical order, then by upload date desc.
-  const sortedNonImages = [...nonImages].sort((a, b) => {
-    const orderA = DOC_TYPE_ORDER.indexOf(a.documentType as DocumentType);
-    const orderB = DOC_TYPE_ORDER.indexOf(b.documentType as DocumentType);
-    const typeSort = (orderA === -1 ? 99 : orderA) - (orderB === -1 ? 99 : orderB);
-    if (typeSort !== 0) return typeSort;
-    return new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime();
-  });
-
-  const docCount = filtered.length;
-  // Canonical identifier line: full DOB when available, else age fallback,
-  // followed by the masked CIN-last-4 for verbal verification.
-  const dobLabel = member.dateOfBirth
-    ? formatDob(member.dateOfBirth)
-    : member.age != null
-      ? `${member.age} yrs`
-      : 'DOB not on file';
-
-  return (
-    <View
-      style={styles.memberGroup}
-      onLayout={(e) => onGroupLayout?.(member.id, e.nativeEvent.layout.y)}
-    >
-      {/* Collapsible header */}
-      <PressableCard
-        onPress={() => setExpanded((prev) => !prev)}
-        accessibilityLabel={`${member.displayName}, ${docCount} document${docCount !== 1 ? 's' : ''}. ${expanded ? 'Collapse' : 'Expand'}`}
-        style={styles.memberGroupHeader}
-      >
-        <View style={styles.memberGroupHeaderInner}>
-          {/* Avatar */}
-          <View style={styles.memberAvatar}>
-            <Text style={styles.memberAvatarText}>{member.avatarInitials}</Text>
-          </View>
-
-          {/* Identity */}
-          <View style={styles.memberGroupIdentity}>
-            <Text style={styles.memberGroupName}>{member.displayName}</Text>
-            <View style={styles.memberGroupSubRow}>
-              <Calendar size={11} color={colors.textMuted} />
-              <Text style={styles.memberGroupMeta}>
-                {dobLabel} · {member.maskedId}
-              </Text>
-            </View>
-          </View>
-
-          {/* Right: pill + chevron */}
-          <View style={styles.memberGroupRight}>
-            {docsQuery.isLoading ? (
-              <ActivityIndicator size="small" color={colors.primary} />
-            ) : (
-              <Pill variant="emerald" size="sm">
-                <Text style={[numerals.tabular as object]}>
-                  {docCount} doc{docCount !== 1 ? 's' : ''}
-                </Text>
-              </Pill>
-            )}
-            <View style={styles.chevronWrap}>
-              {expanded ? (
-                <ChevronDown size={16} color={colors.textSecondary} />
-              ) : (
-                <ChevronRight size={16} color={colors.textSecondary} />
-              )}
-            </View>
-          </View>
-        </View>
-      </PressableCard>
-
-      {/* Expanded body */}
-      {expanded && (
-        <Card style={styles.memberGroupBody}>
-          {docsQuery.isLoading ? (
-            <ActivityIndicator
-              size="small"
-              color={colors.primary}
-              style={styles.groupLoading}
-              accessibilityLabel={`Loading documents for ${member.displayName}`}
-            />
-          ) : docsQuery.isError ? (
-            <Text style={styles.groupError}>
-              Could not load documents for this member. Please try again.
-            </Text>
-          ) : filtered.length === 0 ? (
-            <Text style={styles.groupEmpty}>
-              No documents match the current filter.
-            </Text>
-          ) : (
-            <>
-              {/* Image grid */}
-              {images.length > 0 && (
-                <View style={styles.imageSection}>
-                  <View style={styles.imageSectionHeader}>
-                    <ImageIcon size={13} color={colors.textSecondary} />
-                    <Text style={styles.imageSectionLabel}>
-                      Images ({images.length})
-                    </Text>
-                  </View>
-                  <View style={styles.imageGrid}>
-                    {images.map((doc) => (
-                      <ImageTile key={doc.id} doc={doc} />
-                    ))}
-                  </View>
-                </View>
-              )}
-
-              {/* Non-image rows */}
-              {sortedNonImages.length > 0 && (
-                <View style={[styles.docRowsSection, images.length > 0 && styles.docRowsSectionTop]}>
-                  {sortedNonImages.map((doc, idx) => (
-                    <DocumentRow key={doc.id} doc={doc} isAlt={idx % 2 === 1} />
-                  ))}
-                </View>
-              )}
-            </>
-          )}
-        </Card>
-      )}
-    </View>
-  );
-}
-
-// ─── Picker row sub-components ────────────────────────────────────────────────
+// ─── Picker row sub-components (upload trigger's member/doc-type drawer) ─────
 
 /**
  * PickerMemberRow — a single selectable member row in the upload-picker drawer.
  *
  * Uses `Pressable` instead of `TouchableOpacity` so we can attach `onHoverIn`/
  * `onHoverOut` for the web cursor and hover-tint affordance. `TouchableOpacity`
- * does not expose those handlers on react-native-web, and was also unreliable
- * inside a `RightDrawer` scroll region on web before the backdrop zIndex fix.
+ * does not expose those handlers on react-native-web.
  *
  * Each row owns its own `hovered` state to avoid O(n) re-renders of siblings.
  */
@@ -746,8 +654,7 @@ function PickerMemberRow({
 
 /**
  * PickerDocTypeRow — a single selectable document-type row in the upload-picker
- * drawer. Uses the same `Pressable` + hover-state pattern as `PickerMemberRow`
- * for consistency and reliable web click handling.
+ * drawer. Uses the same `Pressable` + hover-state pattern as `PickerMemberRow`.
  */
 function PickerDocTypeRow({
   docType,
@@ -778,6 +685,55 @@ function PickerDocTypeRow({
   );
 }
 
+// ─── MemberListRow — landing view row (member list → opens repository) ───────
+
+interface MemberListRowProps {
+  member: MembersRosterItem;
+  onSelect: (member: MembersRosterItem) => void;
+}
+
+/**
+ * A single row in the landing caseload list. Visually mirrors PickerMemberRow
+ * (avatar + name + masked id/age) but is the primary navigation surface for
+ * this screen, not a drawer picker — tapping opens the member's repository.
+ */
+function MemberListRow({ member, onSelect }: MemberListRowProps): React.JSX.Element {
+  const [hovered, setHovered] = useState(false);
+  const dobLabel = member.dateOfBirth
+    ? formatDob(member.dateOfBirth)
+    : member.age != null
+      ? `${member.age} yrs`
+      : 'DOB not on file';
+
+  return (
+    <Pressable
+      onPress={() => onSelect(member)}
+      onHoverIn={() => setHovered(true)}
+      onHoverOut={() => setHovered(false)}
+      accessible
+      accessibilityRole="button"
+      accessibilityLabel={`Open documents for ${member.displayName}`}
+      style={[styles.memberListRow, hovered && styles.memberListRowHover]}
+    >
+      <View style={styles.memberAvatar}>
+        <Text style={styles.memberAvatarText}>{member.avatarInitials}</Text>
+      </View>
+      <View style={styles.memberListRowText}>
+        <Text style={styles.memberListRowName} numberOfLines={1}>
+          {member.displayName}
+        </Text>
+        <View style={styles.memberGroupSubRow}>
+          <Calendar size={11} color={colors.textMuted} />
+          <Text style={styles.memberGroupMeta}>
+            {dobLabel} · {member.maskedId}
+          </Text>
+        </View>
+      </View>
+      <ChevronRight size={16} color={colors.textSecondary} />
+    </Pressable>
+  );
+}
+
 // ─── CHWUploadTrigger ─────────────────────────────────────────────────────────
 
 /**
@@ -785,13 +741,23 @@ function PickerDocTypeRow({
  *
  * Flow:
  *   1. Tap "Upload for Member" → opens a drawer listing the CHW's caseload
- *      (`useChwMembers` → GET /chw/members), searchable by name or masked ID.
- *   2. Pick a member → pick a document type.
+ *      (`useChwMembers` → GET /chw/members), searchable by name or masked ID —
+ *      UNLESS `preselectedMember` is supplied, in which case the picker step
+ *      is skipped entirely and the drawer opens straight to doc-type choice
+ *      (used when launched from inside a member's repository view, where the
+ *      member is already known).
+ *   2. Pick a member (or skip, if preselected) → pick a document type.
  *   3. The file dialog opens and the upload pipeline runs scoped to that member.
  */
 function CHWUploadTrigger({
+  preselectedMember = null,
+  label = 'Upload for Member',
   onOpenChange,
 }: {
+  /** When set, the member-picker step is skipped and this member is used. */
+  preselectedMember?: MembersRosterItem | null;
+  /** Trigger button label — repository view uses a shorter label. */
+  label?: string;
   /** Notifies the parent screen when the picker drawer opens/closes so it can
    *  hide the redundant Quick Tip rail and avoid a stacking collision. */
   onOpenChange?: (open: boolean) => void;
@@ -839,10 +805,11 @@ function CHWUploadTrigger({
 
   const openPicker = useCallback(() => {
     if (isUploading) return;
-    setSelectedMember(null);
+    // Preselected (repository view): jump straight to doc-type choice.
+    setSelectedMember(preselectedMember ?? null);
     setSearch('');
     setPickerOpen(true);
-  }, [isUploading]);
+  }, [isUploading, preselectedMember]);
 
   const handleSelectDocType = useCallback(
     (dt: DocumentType) => {
@@ -869,6 +836,14 @@ function CHWUploadTrigger({
     [upload],
   );
 
+  // If launched from a repository and the picker closes without a selection
+  // (e.g. backdrop dismiss), reset back to the preselected member rather than
+  // null so re-opening doesn't unexpectedly show the full caseload picker.
+  const handleClose = useCallback(() => {
+    setPickerOpen(false);
+    setSelectedMember(preselectedMember ?? null);
+  }, [preselectedMember]);
+
   return (
     <>
       <TouchableOpacity
@@ -876,7 +851,11 @@ function CHWUploadTrigger({
         disabled={isUploading}
         accessible
         accessibilityRole="button"
-        accessibilityLabel="Upload document for a member"
+        accessibilityLabel={
+          preselectedMember
+            ? `Upload document for ${preselectedMember.displayName}`
+            : 'Upload document for a member'
+        }
         style={styles.uploadTrigger}
       >
         {isUploading ? (
@@ -885,13 +864,13 @@ function CHWUploadTrigger({
           <Plus size={14} color="#ffffff" />
         )}
         <Text style={styles.uploadTriggerText}>
-          {isUploading ? 'Uploading...' : 'Upload for Member'}
+          {isUploading ? 'Uploading...' : label}
         </Text>
       </TouchableOpacity>
 
       <RightDrawer
         isOpen={pickerOpen}
-        onClose={() => setPickerOpen(false)}
+        onClose={handleClose}
         title={selectedMember ? 'Choose document type' : 'Select a member'}
         subtitle={
           selectedMember
@@ -947,15 +926,17 @@ function CHWUploadTrigger({
           </View>
         ) : (
           <View style={styles.pickerBody}>
-            <TouchableOpacity
-              style={styles.backRow}
-              onPress={() => setSelectedMember(null)}
-              accessible
-              accessibilityRole="button"
-              accessibilityLabel="Back to member list"
-            >
-              <Text style={styles.backText}>Back to members</Text>
-            </TouchableOpacity>
+            {!preselectedMember && (
+              <TouchableOpacity
+                style={styles.backRow}
+                onPress={() => setSelectedMember(null)}
+                accessible
+                accessibilityRole="button"
+                accessibilityLabel="Back to member list"
+              >
+                <Text style={styles.backText}>Back to members</Text>
+              </TouchableOpacity>
+            )}
             {DOC_TYPE_OPTIONS.map((dt) => (
               <PickerDocTypeRow
                 key={dt}
@@ -981,161 +962,86 @@ function CHWUploadTrigger({
   );
 }
 
-// ─── Screen ───────────────────────────────────────────────────────────────────
+// ─── MemberRepository — per-member repository view ────────────────────────────
 
-export function CHWDocumentsScreen(): React.JSX.Element {
-  const { userName } = useAuth();
-  const [query, setQuery] = useState('');
-  const [activeType, setActiveType] = useState<FilterType>('all');
-  const [resultCounts, setResultCounts] = useState<Record<string, number | null>>({});
-  // True while the "Upload for Member" drawer is open — hides the Quick Tip rail
-  // so it can't stack over the drawer.
-  const [uploadDrawerOpen, setUploadDrawerOpen] = useState(false);
+interface MemberRepositoryProps {
+  member: MembersRosterItem;
+  onBack: () => void;
+  uploadDrawerOpen: boolean;
+  onUploadDrawerOpenChange: (open: boolean) => void;
+}
 
-  // ─── Deep-link: optional memberId route param ─────────────────────────────
-  // useRoute is safe here: CHWDocumentsScreen is always mounted inside the
-  // CHWTabNavigator, so a route is always present. The param may be undefined
-  // when navigating from the plain Documents tab (no deep-link).
-  const route = useRoute<DocumentsRouteProp>();
-  const deepLinkMemberId = route.params?.memberId;
+function MemberRepository({
+  member,
+  onBack,
+  uploadDrawerOpen,
+  onUploadDrawerOpenChange,
+}: MemberRepositoryProps): React.JSX.Element {
+  const [activeFilter, setActiveFilter] = useState<FilterType>('all');
+  const docsQuery = useMemberDocuments(member.id);
+  const attachmentsQuery = useMemberChatAttachments(member.id);
 
-  // Track which member to force-expand. We use a ref to detect "applied once"
-  // so re-renders after scroll don't re-trigger the expand or scroll jump.
-  const [targetMemberId, setTargetMemberId] = useState<string | undefined>(
-    deepLinkMemberId,
+  const docs = docsQuery.data?.items ?? [];
+  const attachments = attachmentsQuery.data?.items ?? [];
+
+  const isLoading = docsQuery.isLoading || attachmentsQuery.isLoading;
+  // Both sources have independent error states; only block the whole view when
+  // BOTH fail — a single source failing still shows the other's data.
+  const isError = docsQuery.isError && attachmentsQuery.isError;
+
+  const allRows = useMemo(() => mergeRepositoryRows(docs, attachments), [docs, attachments]);
+
+  const filteredRows = useMemo(() => {
+    if (activeFilter === 'all') return allRows;
+    if (activeFilter === 'chat') return allRows.filter((r) => r.source === 'chat');
+    return allRows.filter((r) => r.source === 'uploaded' && r.documentType === activeFilter);
+  }, [allRows, activeFilter]);
+
+  // Image grid: uploaded image documents only (chat attachments never render
+  // as thumbnails — they have no MemberDocument row for the thumbnail hook).
+  const imageDocs = useMemo(
+    () =>
+      docs.filter(
+        (d) =>
+          d.contentType.startsWith('image/') &&
+          (activeFilter === 'all' || activeFilter === d.documentType),
+      ),
+    [docs, activeFilter],
   );
-  // Set to true once the scroll has been attempted so we don't loop.
-  const deepLinkApplied = useRef(false);
-
-  // Ref to the outer native ScrollView for scrollTo calls.
-  const scrollViewRef = useRef<ScrollView>(null);
-
-  // Per-member y-offsets measured via onLayout. Keyed by memberId.
-  const memberYOffsets = useRef<Record<string, number>>({});
-
-  const handleGroupLayout = useCallback((memberId: string, y: number) => {
-    memberYOffsets.current[memberId] = y;
-  }, []);
-
-  const membersQuery = useChwMembers();
-  const rawMembers = useMemo(() => membersQuery.data ?? [], [membersQuery.data]);
-
-  // Sort members alphabetically by last name for consistent "pull up when
-  // requested" findability.
-  const members = useMemo(() => sortMembersByLastName(rawMembers), [rawMembers]);
-
-  // Collapse by default when the caseload exceeds the threshold.
-  const defaultExpanded = members.length <= COLLAPSE_THRESHOLD;
-
-  const handleResult = useCallback((memberId: string, count: number | null) => {
-    setResultCounts((prev) =>
-      prev[memberId] === count ? prev : { ...prev, [memberId]: count },
-    );
-  }, []);
-
-  // ─── Deep-link effect: apply expand + scroll once roster is loaded ─────────
-  // Keyed on members array and targetMemberId. Fires once the roster is
-  // populated (members.length > 0) and a targetMemberId is set. After applying,
-  // clears targetMemberId so this is a one-shot operation — manual interaction
-  // within the screen is never overridden.
-  useEffect(() => {
-    if (!targetMemberId || deepLinkApplied.current || membersQuery.isLoading) {
-      return;
-    }
-    const memberExists = members.some((m) => m.id === targetMemberId);
-    if (!memberExists) return;
-
-    deepLinkApplied.current = true;
-
-    // Pre-fill the search filter as a fallback so the member is visible even
-    // if the scroll measurement hasn't fired yet (web or first layout pass).
-    const match = members.find((m) => m.id === targetMemberId);
-    if (match) {
-      // Only pre-fill if there's no existing search so we don't clobber CHW's
-      // active search state when navigating back to the screen with a param.
-      setQuery((prev) => (prev.trim() === '' ? match.displayName : prev));
-    }
-
-    // Schedule scroll after a short layout pass so onLayout measurements are
-    // available. requestAnimationFrame is sufficient on native; on web, a
-    // double-RAF ensures paint has completed.
-    const doScroll = (): void => {
-      const yOffset = memberYOffsets.current[targetMemberId];
-      if (yOffset !== undefined && scrollViewRef.current) {
-        scrollViewRef.current.scrollTo({ y: yOffset, animated: true });
-      }
-      // Clear target so re-navigation to the same screen without params
-      // doesn't re-trigger (React Navigation keeps the component mounted).
-      setTargetMemberId(undefined);
-    };
-
-    if (Platform.OS === 'web') {
-      requestAnimationFrame(() => requestAnimationFrame(doScroll));
-    } else {
-      // On native, a single rAF is enough — layout events fire synchronously
-      // before paint on the JS thread.
-      requestAnimationFrame(doScroll);
-    }
-  }, [targetMemberId, members, membersQuery.isLoading]);
-
-  // When the route params change (the CHW navigates to Documents again with a
-  // new memberId without the screen unmounting), reset and re-arm the effect.
-  useEffect(() => {
-    if (deepLinkMemberId && deepLinkMemberId !== targetMemberId) {
-      deepLinkApplied.current = false;
-      memberYOffsets.current = {};
-      setTargetMemberId(deepLinkMemberId);
-      // Clear any stale search pre-fill so we start fresh for the new target.
-      setQuery('');
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deepLinkMemberId]);
-
-  const allSettled =
-    members.length > 0 &&
-    members.every((m) => typeof resultCounts[m.id] === 'number');
-
-  const totalMatching = members.reduce(
-    (sum, m) => sum + (resultCounts[m.id] ?? 0),
-    0,
+  const imageDocIds = useMemo(() => new Set(imageDocs.map((d) => d.id)), [imageDocs]);
+  const nonImageRows = useMemo(
+    () => filteredRows.filter((r) => !(r.source === 'uploaded' && imageDocIds.has(r.id))),
+    [filteredRows, imageDocIds],
   );
 
-  const isLoadingDocs =
-    membersQuery.isLoading || (members.length > 0 && !allSettled);
+  const totalCount = allRows.length;
+  const filteredCount = filteredRows.length;
+  const isFiltering = activeFilter !== 'all';
+  const showEmpty = !isLoading && !isError && totalCount === 0;
+  const showNoMatch = !isLoading && !isError && totalCount > 0 && filteredCount === 0 && isFiltering;
 
-  const isFiltering = query.trim().length > 0 || activeType !== 'all';
-  const showEmpty = !isLoadingDocs && totalMatching === 0 && !isFiltering;
-  const showNoMatch =
-    !isLoadingDocs && totalMatching === 0 && isFiltering;
-
-  const filterTypes = Object.keys(DOC_TYPE_LABELS) as FilterType[];
-
-  const userInitials = (userName ?? 'CHW')
-    .split(' ')
-    .map((n) => n[0] ?? '')
-    .join('')
-    .toUpperCase()
-    .slice(0, 2);
-
-  const content = (
+  return (
     <>
       <PageHeader
-        title="Member Documents"
-        subtitle="Documents across your caseload, organised by member"
+        title={member.displayName}
+        subtitle="Uploaded documents and files shared in chat"
         right={
           <View style={styles.headerRight}>
-            <View style={styles.searchWrap}>
-              <Search size={14} color={colors.textSecondary} />
-              <TextInput
-                style={styles.searchInput}
-                placeholder="Search members or files..."
-                placeholderTextColor={colors.textMuted}
-                value={query}
-                onChangeText={setQuery}
-                accessibilityLabel="Search members or documents"
-              />
-            </View>
-            <CHWUploadTrigger onOpenChange={setUploadDrawerOpen} />
+            <TouchableOpacity
+              style={styles.backButton}
+              onPress={onBack}
+              accessible
+              accessibilityRole="button"
+              accessibilityLabel="Back to member list"
+            >
+              <ArrowLeft size={14} color={colors.textSecondary} />
+              <Text style={styles.backButtonText}>Members</Text>
+            </TouchableOpacity>
+            <CHWUploadTrigger
+              preselectedMember={member}
+              label="Upload for Member"
+              onOpenChange={onUploadDrawerOpenChange}
+            />
           </View>
         }
       />
@@ -1148,32 +1054,37 @@ export function CHWDocumentsScreen(): React.JSX.Element {
         contentContainerStyle={styles.chipRowContent}
         accessibilityLabel="Filter by document type"
       >
-        {filterTypes.map((type) => (
+        {FILTER_ORDER.map((type) => (
           <TouchableOpacity
             key={type}
-            onPress={() => setActiveType(type)}
+            onPress={() => setActiveFilter(type)}
             style={[
               styles.filterChip,
-              activeType === type && styles.filterChipActive,
+              activeFilter === type && styles.filterChipActive,
             ]}
             accessible
             accessibilityRole="button"
-            accessibilityLabel={`Filter by ${DOC_TYPE_LABELS[type]}`}
-            accessibilityState={{ selected: activeType === type }}
+            accessibilityLabel={`Filter by ${FILTER_LABELS[type]}`}
+            accessibilityState={{ selected: activeFilter === type }}
           >
-            <Filter
-              size={10}
-              color={
-                activeType === type ? colors.cardBg : colors.textSecondary
-              }
-            />
+            {type === 'chat' ? (
+              <MessageSquare
+                size={10}
+                color={activeFilter === type ? colors.cardBg : colors.textSecondary}
+              />
+            ) : (
+              <Filter
+                size={10}
+                color={activeFilter === type ? colors.cardBg : colors.textSecondary}
+              />
+            )}
             <Text
               style={[
                 styles.filterChipText,
-                activeType === type && styles.filterChipTextActive,
+                activeFilter === type && styles.filterChipTextActive,
               ]}
             >
-              {DOC_TYPE_LABELS[type]}
+              {FILTER_LABELS[type]}
             </Text>
           </TouchableOpacity>
         ))}
@@ -1182,56 +1093,70 @@ export function CHWDocumentsScreen(): React.JSX.Element {
       {/* Body */}
       <View style={styles.bodyRow}>
         <View style={styles.groupsWrap}>
-          {/* Global loading state while member list loads */}
-          {membersQuery.isLoading && (
+          {isLoading && (
             <ActivityIndicator
               size="small"
               color={colors.primary}
               style={styles.globalLoading}
-              accessibilityLabel="Loading members"
+              accessibilityLabel={`Loading documents for ${member.displayName}`}
             />
           )}
 
-          {/* Member groups */}
-          {members.map((m) => (
-            <MemberDocumentGroup
-              key={m.id}
-              member={m}
-              searchQuery={query}
-              activeType={activeType}
-              defaultExpanded={defaultExpanded}
-              onResult={handleResult}
-              forceExpanded={targetMemberId === m.id}
-              onGroupLayout={handleGroupLayout}
-            />
-          ))}
-
-          {/* Per-member queries still settling */}
-          {!membersQuery.isLoading && isLoadingDocs && (
-            <ActivityIndicator
-              size="small"
-              color={colors.primary}
-              style={styles.globalLoading}
-              accessibilityLabel="Loading documents"
-            />
+          {isError && (
+            <Text style={styles.groupError}>
+              Could not load documents for this member. Please try again.
+            </Text>
           )}
 
-          {/* Zero documents across entire caseload */}
+          {!isLoading && !isError && filteredRows.length > 0 && (
+            <Card style={styles.memberGroupBody}>
+              {/* Image grid (uploaded images only) */}
+              {imageDocs.length > 0 && (
+                <View style={styles.imageSection}>
+                  <View style={styles.imageSectionHeader}>
+                    <ImageIcon size={13} color={colors.textSecondary} />
+                    <Text style={styles.imageSectionLabel}>
+                      Images ({imageDocs.length})
+                    </Text>
+                  </View>
+                  <View style={styles.imageGrid}>
+                    {imageDocs.map((doc) => (
+                      <ImageTile key={doc.id} doc={doc} />
+                    ))}
+                  </View>
+                </View>
+              )}
+
+              {/* Merged, date-sorted rows (everything except image docs shown above) */}
+              {nonImageRows.length > 0 && (
+                <View style={[styles.docRowsSection, imageDocs.length > 0 && styles.docRowsSectionTop]}>
+                  {nonImageRows.map((row, idx) => (
+                    <RepositoryRowView
+                      key={`${row.source}-${row.id}`}
+                      row={row}
+                      memberId={member.id}
+                      isAlt={idx % 2 === 1}
+                    />
+                  ))}
+                </View>
+              )}
+            </Card>
+          )}
+
           {showEmpty && (
             <EmptyState
               icon={FolderOpen}
               title="No documents yet"
-              body="Use 'Upload for Member' to upload a document on behalf of someone in your caseload. It will appear here immediately."
+              body={`No documents yet for ${member.displayName} — upload one or files shared in chat will appear here.`}
               style={styles.emptyState}
             />
           )}
 
-          {/* Search / filter returned nothing */}
           {showNoMatch && (
             <EmptyState
               icon={FileText}
               title="No matching documents"
-              body="Try a different search term or document type filter."
+              body="Try a different document type filter."
               style={styles.emptyState}
             />
           )}
@@ -1242,11 +1167,176 @@ export function CHWDocumentsScreen(): React.JSX.Element {
             <Card style={styles.railCard}>
               <Text style={styles.railTitle}>Quick Tip</Text>
               <Text style={styles.railBody}>
-                Click "Upload for Member" and pick someone from your caseload
-                to upload a document on their behalf.{'\n\n'}
+                This repository merges documents uploaded on {member.displayName}
+                &apos;s behalf with files they&apos;ve shared in chat.{'\n\n'}
+                Use the &quot;From Chat&quot; filter to see only chat-shared files,
+                or a document-type filter to narrow uploaded documents.
+              </Text>
+            </Card>
+          </RightRail>
+        )}
+      </View>
+    </>
+  );
+}
+
+// ─── Screen ───────────────────────────────────────────────────────────────────
+
+export function CHWDocumentsScreen(): React.JSX.Element {
+  const { userName } = useAuth();
+  const [query, setQuery] = useState('');
+  // Selected member drives landing (null) vs repository (set) — screen-local
+  // state only; no navigator params are used for this view swap.
+  const [selectedMember, setSelectedMember] = useState<MembersRosterItem | null>(null);
+  // True while an upload drawer is open — hides the Quick Tip rail so it
+  // can't stack over the drawer.
+  const [uploadDrawerOpen, setUploadDrawerOpen] = useState(false);
+
+  // ─── Deep-link: optional memberId route param ─────────────────────────────
+  // useRoute is safe here: CHWDocumentsScreen is always mounted inside the
+  // CHWTabNavigator, so a route is always present. The param may be undefined
+  // when navigating from the plain Documents tab (no deep-link).
+  const route = useRoute<DocumentsRouteProp>();
+  const deepLinkMemberId = route.params?.memberId;
+  const deepLinkApplied = useRef(false);
+
+  const membersQuery = useChwMembers();
+  const rawMembers = useMemo(() => membersQuery.data ?? [], [membersQuery.data]);
+  const members = useMemo(() => sortMembersByLastName(rawMembers), [rawMembers]);
+
+  // ─── Deep-link effect: auto-open the target member's repository once ──────
+  useEffect(() => {
+    if (!deepLinkMemberId || deepLinkApplied.current || membersQuery.isLoading) {
+      return;
+    }
+    const match = members.find((m) => m.id === deepLinkMemberId);
+    if (!match) return;
+    deepLinkApplied.current = true;
+    setSelectedMember(match);
+  }, [deepLinkMemberId, members, membersQuery.isLoading]);
+
+  // Re-arm if the route param changes to a different member while mounted
+  // (React Navigation keeps the component mounted across tab re-entry).
+  const prevDeepLinkMemberId = useRef(deepLinkMemberId);
+  useEffect(() => {
+    if (deepLinkMemberId && deepLinkMemberId !== prevDeepLinkMemberId.current) {
+      deepLinkApplied.current = false;
+    }
+    prevDeepLinkMemberId.current = deepLinkMemberId;
+  }, [deepLinkMemberId]);
+
+  const filteredMembers = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return members;
+    return members.filter(
+      (m) =>
+        m.displayName.toLowerCase().includes(q) ||
+        m.maskedId.toLowerCase().includes(q),
+    );
+  }, [members, query]);
+
+  const handleSelectMember = useCallback((member: MembersRosterItem) => {
+    setSelectedMember(member);
+  }, []);
+
+  const handleBack = useCallback(() => {
+    setSelectedMember(null);
+  }, []);
+
+  const userInitials = (userName ?? 'CHW')
+    .split(' ')
+    .map((n) => n[0] ?? '')
+    .join('')
+    .toUpperCase()
+    .slice(0, 2);
+
+  const isLoadingMembers = membersQuery.isLoading;
+  const showEmptyRoster = !isLoadingMembers && members.length === 0;
+  const showNoMatch = !isLoadingMembers && members.length > 0 && filteredMembers.length === 0;
+
+  const content = selectedMember ? (
+    <MemberRepository
+      member={selectedMember}
+      onBack={handleBack}
+      uploadDrawerOpen={uploadDrawerOpen}
+      onUploadDrawerOpenChange={setUploadDrawerOpen}
+    />
+  ) : (
+    <>
+      <PageHeader
+        title="Member Documents"
+        subtitle="Select a member to view their document repository"
+        right={
+          <View style={styles.headerRight}>
+            <View style={styles.searchWrap}>
+              <Search size={14} color={colors.textSecondary} />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Search your caseload..."
+                placeholderTextColor={colors.textMuted}
+                value={query}
+                onChangeText={setQuery}
+                accessibilityLabel="Search caseload members"
+              />
+            </View>
+            <CHWUploadTrigger onOpenChange={setUploadDrawerOpen} />
+          </View>
+        }
+      />
+
+      <View style={styles.bodyRow}>
+        <View style={styles.groupsWrap}>
+          {isLoadingMembers && (
+            <ActivityIndicator
+              size="small"
+              color={colors.primary}
+              style={styles.globalLoading}
+              accessibilityLabel="Loading members"
+            />
+          )}
+
+          {membersQuery.isError && (
+            <Text style={styles.groupError}>
+              Could not load your caseload. Please try again.
+            </Text>
+          )}
+
+          {!isLoadingMembers && !membersQuery.isError && (
+            <Card style={styles.memberListCard}>
+              {filteredMembers.map((m) => (
+                <MemberListRow key={m.id} member={m} onSelect={handleSelectMember} />
+              ))}
+            </Card>
+          )}
+
+          {showEmptyRoster && (
+            <EmptyState
+              icon={Upload}
+              title="No members yet"
+              body="Members you have an active relationship with will appear here. Once they do, you can view and upload documents on their behalf."
+              style={styles.emptyState}
+            />
+          )}
+
+          {showNoMatch && (
+            <EmptyState
+              icon={Search}
+              title="No matching members"
+              body="Try a different search term."
+              style={styles.emptyState}
+            />
+          )}
+        </View>
+
+        {Platform.OS === 'web' && !uploadDrawerOpen && (
+          <RightRail>
+            <Card style={styles.railCard}>
+              <Text style={styles.railTitle}>Quick Tip</Text>
+              <Text style={styles.railBody}>
+                Select a member to see everything on file for them — documents
+                you&apos;ve uploaded and files they&apos;ve shared in chat, all
+                in one place.{'\n\n'}
                 Members are sorted alphabetically and can be searched by name.
-                The member sees the document immediately in their My Documents
-                page.
               </Text>
             </Card>
           </RightRail>
@@ -1259,7 +1349,6 @@ export function CHWDocumentsScreen(): React.JSX.Element {
     return (
       <SafeAreaView style={styles.safeArea} edges={['top']}>
         <ScrollView
-          ref={scrollViewRef}
           contentContainerStyle={styles.nativeScroll}
           showsVerticalScrollIndicator={false}
         >
@@ -1323,6 +1412,25 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     height: '100%',
     outlineStyle: 'none',
+  } as unknown as TextStyle,
+
+  backButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.cardBg,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: radius.md,
+    height: 36,
+  } as ViewStyle,
+
+  backButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.textSecondary,
   } as unknown as TextStyle,
 
   // ─── Upload button ─────────────────────────────────────────────────────────
@@ -1406,22 +1514,41 @@ const styles = StyleSheet.create({
     paddingTop: 32,
   } as ViewStyle,
 
-  // ─── Member group ──────────────────────────────────────────────────────────
-  memberGroup: {
-    gap: 4,
-  } as ViewStyle,
-
-  memberGroupHeader: {
-    padding: spacing.md,
+  // ─── Landing member list ───────────────────────────────────────────────────
+  memberListCard: {
+    padding: 0,
+    overflow: 'hidden',
     borderRadius: radius.xl,
   } as ViewStyle,
 
-  memberGroupHeaderInner: {
+  memberListRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.cardBorder,
+    cursor: 'pointer' as unknown as undefined,
   } as ViewStyle,
 
+  memberListRowHover: {
+    backgroundColor: colors.gray100,
+  } as ViewStyle,
+
+  memberListRowText: {
+    flex: 1,
+    gap: 2,
+  } as ViewStyle,
+
+  memberListRowName: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.textPrimary,
+    lineHeight: 20,
+  } as unknown as TextStyle,
+
+  // ─── Member group / repository shared bits ─────────────────────────────────
   memberAvatar: {
     width: 38,
     height: 38,
@@ -1438,18 +1565,6 @@ const styles = StyleSheet.create({
     color: '#065f46',
   } as TextStyle,
 
-  memberGroupIdentity: {
-    flex: 1,
-    gap: 2,
-  } as ViewStyle,
-
-  memberGroupName: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: colors.textPrimary,
-    lineHeight: 20,
-  } as unknown as TextStyle,
-
   memberGroupSubRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1462,21 +1577,7 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   } as unknown as TextStyle,
 
-  memberGroupRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    flexShrink: 0,
-  } as ViewStyle,
-
-  chevronWrap: {
-    width: 24,
-    height: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-  } as ViewStyle,
-
-  // ─── Member group body card ────────────────────────────────────────────────
+  // ─── Repository body card ──────────────────────────────────────────────────
   memberGroupBody: {
     marginHorizontal: 2,
     overflow: 'hidden',
@@ -1484,20 +1585,9 @@ const styles = StyleSheet.create({
     padding: 0,
   } as ViewStyle,
 
-  groupLoading: {
-    paddingVertical: spacing.xl,
-  } as ViewStyle,
-
   groupError: {
     fontSize: 13,
     color: '#dc2626',
-    padding: spacing.lg,
-    textAlign: 'center',
-  } as unknown as TextStyle,
-
-  groupEmpty: {
-    fontSize: 13,
-    color: colors.textSecondary,
     padding: spacing.lg,
     textAlign: 'center',
   } as unknown as TextStyle,
@@ -1535,7 +1625,6 @@ const styles = StyleSheet.create({
   imageTile: {
     width: THUMB_SIZE,
     gap: 4,
-    // Minimum 44×44 touch target: tile width satisfies it; label adds height.
   } as ViewStyle,
 
   imageTileImg: {
@@ -1564,7 +1653,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   } as unknown as TextStyle,
 
-  // ─── Non-image (PDF) rows section ─────────────────────────────────────────
+  // ─── Repository rows section ───────────────────────────────────────────────
   docRowsSection: {
     gap: 0,
   } as ViewStyle,
@@ -1595,6 +1684,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
+  } as ViewStyle,
+
+  docRowIconChat: {
+    backgroundColor: '#eff6ff',
   } as ViewStyle,
 
   docRowInfo: {
@@ -1743,14 +1836,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xs,
     borderBottomWidth: 1,
     borderBottomColor: '#f3f4f6',
-    // Web: pointer cursor so the row is obviously selectable.
     cursor: 'pointer' as unknown as undefined,
     borderRadius: radius.sm,
   } as ViewStyle,
 
   pickerMemberRowHover: {
     backgroundColor: colors.gray100,
-    // Web: subtle elevation shadow matching the codebase's card hover pattern.
     ...(Platform.OS === 'web'
       ? { boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }
       : {}),
@@ -1793,14 +1884,12 @@ const styles = StyleSheet.create({
     borderColor: colors.cardBorder,
     borderRadius: radius.md,
     backgroundColor: colors.cardBg,
-    // Web: pointer cursor so the row is obviously selectable.
     cursor: 'pointer' as unknown as undefined,
   } as ViewStyle,
 
   docTypeRowHover: {
     backgroundColor: colors.gray100,
     borderColor: colors.primary,
-    // Web: subtle elevation shadow on hover.
     ...(Platform.OS === 'web'
       ? { boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }
       : {}),
