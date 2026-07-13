@@ -10,6 +10,7 @@
  * snake_case body construction all run for real against a live QueryClient.
  */
 import React from 'react';
+import { Linking } from 'react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -70,6 +71,9 @@ beforeEach(() => {
     name: 'Jordan Rivera',
     email: 'jordan@example.com',
   });
+  // react-native-web's Linking.openURL calls window.open; stub it so link taps
+  // are observable without actually opening a tab in the jsdom test runner.
+  vi.spyOn(Linking, 'openURL').mockResolvedValue(true);
 });
 
 describe('AddMemberModal — required consent gate', () => {
@@ -183,5 +187,40 @@ describe('AddMemberModal — required consent gate', () => {
 
     fireEvent.click(screen.getByLabelText('Add member'));
     expect(mockedApi).not.toHaveBeenCalled();
+  });
+});
+
+describe('AddMemberModal — Sex options', () => {
+  it('offers only Male and Female (no "Other")', () => {
+    renderModal();
+    expect(screen.getByLabelText('Sex Male')).toBeTruthy();
+    expect(screen.getByLabelText('Sex Female')).toBeTruthy();
+    expect(screen.queryByLabelText('Sex Other')).toBeNull();
+    expect(screen.queryByText('Other')).toBeNull();
+  });
+});
+
+describe('AddMemberModal — Terms of Service / Privacy Policy links', () => {
+  it('opens the public Terms page when "Terms of Service" is tapped', () => {
+    renderModal();
+    fireEvent.click(screen.getByText('Terms of Service'));
+    expect(Linking.openURL).toHaveBeenCalledWith('https://joincompasschw.com/legal/terms');
+  });
+
+  it('opens the public Privacy page when "Privacy Policy" is tapped', () => {
+    renderModal();
+    fireEvent.click(screen.getByText('Privacy Policy'));
+    expect(Linking.openURL).toHaveBeenCalledWith('https://joincompasschw.com/legal/privacy');
+  });
+});
+
+describe('AddMemberModal — communications consent copy', () => {
+  it('conveys call/text/email/in-person communication via the CompassCHW platform, and no-cost insurance billing', () => {
+    renderModal();
+    const label = screen.getByTestId('consent-communications').textContent ?? '';
+    expect(label).toContain('call, text, email, or in person');
+    expect(label).toContain('CompassCHW platform');
+    expect(label).toContain('bill their insurance for covered services');
+    expect(label).toContain('no cost to them');
   });
 });
