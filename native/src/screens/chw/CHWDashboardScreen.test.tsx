@@ -30,9 +30,13 @@ vi.mock('../../context/AuthContext', () => ({
 // replacement rather than `importOriginal` — @react-navigation/native's real
 // barrel drags in an extension-less import that jsdom/vite-node can't
 // resolve. CHWDashboardScreen only uses `useNavigation` from this package.
+// `mockNavigate` is hoisted so every `useNavigation()` call (including the
+// one inside the local `DashboardMemberLink` helper — Epic S) returns the
+// SAME spy, needed to assert its "Back to …" origin params below.
+const { mockNavigate } = vi.hoisted(() => ({ mockNavigate: vi.fn() }));
 vi.mock('@react-navigation/native', () => ({
   useNavigation: () => ({
-    navigate: vi.fn(),
+    navigate: mockNavigate,
     goBack: vi.fn(),
     addListener: vi.fn(() => vi.fn()),
     setOptions: vi.fn(),
@@ -80,6 +84,35 @@ let testimonialSummaryFixture: { rating_avg: number | null; rating_count: number
   rating_count: 0,
 };
 
+// ─── Today's Schedule fixture (Epic S — "Back to …" origin params) ──────────
+//
+// Empty by default (matches the pre-existing tests above, which don't care
+// about the schedule list) — set per-test via `sessionsResponse` so only the
+// Epic S describe block below pays the cost of a scheduled session.
+const SCHEDULED_MEMBER_ID = 'member-today-1';
+const SCHEDULED_MEMBER_NAME = 'Rosa Gutierrez';
+
+/** Always "today" — computed fresh so the fixture never goes stale. */
+function todayAt(hour: number): string {
+  const d = new Date();
+  d.setHours(hour, 0, 0, 0);
+  return d.toISOString();
+}
+
+const scheduledTodaySessionFixture = {
+  id: 'sess-today-1',
+  request_id: 'req-today-1',
+  chw_id: CHW_USER_ID,
+  member_id: SCHEDULED_MEMBER_ID,
+  member_name: SCHEDULED_MEMBER_NAME,
+  vertical: 'housing',
+  status: 'scheduled',
+  mode: 'in_person',
+  scheduled_at: todayAt(14),
+};
+
+let sessionsResponse: unknown[] = [];
+
 function routeApi(path: string, options?: { method?: string }): unknown {
   const method = options?.method ?? 'GET';
 
@@ -108,7 +141,7 @@ function routeApi(path: string, options?: { method?: string }): unknown {
   }
 
   if (path === '/sessions/' && method === 'GET') {
-    return [];
+    return sessionsResponse;
   }
 
   if (path === '/requests/' && method === 'GET') {
@@ -131,6 +164,8 @@ function renderScreen() {
 
 beforeEach(() => {
   testimonialSummaryFixture = { rating_avg: null, rating_count: 0 };
+  sessionsResponse = [];
+  mockNavigate.mockClear();
   mockedApi.mockReset();
   mockedApi.mockImplementation(async (path: string, options?: { method?: string }) =>
     routeApi(path, options),
@@ -184,5 +219,23 @@ describe('CHWDashboardScreen — Member satisfaction snapshot box', () => {
 
     await waitFor(() => expect(screen.getByText('No ratings yet')).toBeTruthy());
     expect(screen.queryByText('3.1')).toBeNull();
+  });
+});
+
+describe('CHWDashboardScreen — Member Profile origin params (Epic S "Back to …")', () => {
+  it('opening a member from Today\'s Schedule passes backLabel "Dashboard" / backTo "Dashboard"', async () => {
+    sessionsResponse = [scheduledTodaySessionFixture];
+    renderScreen();
+
+    // ScheduleRow wraps BOTH the avatar and the member name in their own
+    // DashboardMemberLink (same accessibility label) — grab the first.
+    const memberLinks = await screen.findAllByLabelText(`Open ${SCHEDULED_MEMBER_NAME}'s profile`);
+    expect(memberLinks.length).toBeGreaterThanOrEqual(1);
+    memberLinks[0].click();
+
+    expect(mockNavigate).toHaveBeenCalledWith('SessionsStack', {
+      screen: 'MemberProfile',
+      params: { memberId: SCHEDULED_MEMBER_ID, backLabel: 'Dashboard', backTo: 'Dashboard' },
+    });
   });
 });

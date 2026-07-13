@@ -21,10 +21,13 @@ vi.mock('../../context/AuthContext', () => ({
   useAuth: () => ({ userName: 'Test CHW', logout: vi.fn() }),
 }));
 // See CHWCalendarScreen.test.tsx for why this needs a full literal
-// replacement rather than `importOriginal`.
+// replacement rather than `importOriginal`. `mockNavigate` is hoisted so
+// every `useNavigation()` call across re-renders returns the SAME spy —
+// needed to assert the Epic S "Back to Members" call-site params below.
+const { mockNavigate } = vi.hoisted(() => ({ mockNavigate: vi.fn() }));
 vi.mock('@react-navigation/native', () => ({
   useNavigation: () => ({
-    navigate: vi.fn(),
+    navigate: mockNavigate,
   }),
 }));
 
@@ -97,6 +100,7 @@ function renderScreen() {
 
 beforeEach(() => {
   rosterResponse = [memberRosterFixture];
+  mockNavigate.mockClear();
   mockedApi.mockReset();
   mockedApi.mockImplementation(async (path: string, options?: { method?: string }) =>
     routeApi(path, options),
@@ -133,5 +137,19 @@ describe('CHWMembersScreen — Account Created + CIN columns (Epic H1)', () => {
     // Both the masked-id sub-label and the new CIN column render '—'.
     const dashes = screen.getAllByText('—');
     expect(dashes.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('CHWMembersScreen — Member Profile origin params (Epic S "Back to …")', () => {
+  it('opening a member from the roster passes backLabel "Members" / backTo "CHWMembers"', async () => {
+    renderScreen();
+
+    const row = await screen.findByLabelText(`View profile for ${MEMBER_NAME}`);
+    row.click();
+
+    expect(mockNavigate).toHaveBeenCalledWith('SessionsStack', {
+      screen: 'MemberProfile',
+      params: { memberId: MEMBER_ID, backLabel: 'Members', backTo: 'CHWMembers' },
+    });
   });
 });

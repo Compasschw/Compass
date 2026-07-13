@@ -144,8 +144,23 @@ export type CHWSessionsStackParamList = {
    * member name in the header renders as a tappable link to MemberProfile.
    */
   SessionReview: { sessionId: string; memberName: string; memberId?: string };
-  /** HIPAA-gated member profile — requires an active CHW relationship. */
-  MemberProfile: { memberId: string };
+  /**
+   * HIPAA-gated member profile — requires an active CHW relationship.
+   *
+   * `backLabel` / `backTo` (Epic S — dynamic "Back to …" link) let the
+   * caller tell the profile screen where the CHW came from, so the web
+   * back-link reads "Back to Members" / "Back to Map" / "Back to Dashboard"
+   * (etc.) and returns to that origin instead of being hard-wired to the
+   * Members roster. Both are optional — a caller that omits them (or an
+   * older/concurrent call site that hasn't been updated yet) gets the
+   * screen's default fallback: "Back to Members" → the CHWMembers tab,
+   * which matches the screen's original hard-wired behavior.
+   *
+   * - `backLabel`: text rendered after "Back to " (e.g. "Map").
+   * - `backTo`: the route name `navigation.navigate(...)` is called with
+   *   when the back-link is pressed (e.g. "Map", "CHWMembers", "Dashboard").
+   */
+  MemberProfile: { memberId: string; backLabel?: string; backTo?: string };
   /**
    * SDOH / Health Screening questionnaire for the given session. Reached from
    * the "SDOH / Health Screening" card in the session rail; on completion the
