@@ -941,6 +941,18 @@ _STOP_KEYWORDS = frozenset(
     {"STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT", "OPTOUT", "OPT-OUT"}
 )
 
+# CTIA/10DLC-required HELP keywords. A campaign is rejected by the carriers
+# unless the number auto-replies to HELP with brand + support + opt-out info.
+_HELP_KEYWORDS = frozenset({"HELP", "INFO"})
+
+# Auto-reply sent when a member texts HELP. Must identify the brand, tell them
+# how to get support, and restate the opt-out — kept under one SMS segment.
+_HELP_REPLY_TEXT = (
+    "Compass CHW: For help, message your Community Health Worker in the Compass "
+    "app or visit joincompasschw.com. Msg & data rates may apply. "
+    "Reply STOP to unsubscribe."
+)
+
 
 class SmsInboundAck(BaseModel):
     """Response body for POST /sms/inbound.
@@ -1131,6 +1143,32 @@ async def sms_inbound(
         await db.commit()
         logger.info("sms/inbound: STOP processed, sms_opt_out=true member=%s", member_user.id)
         return SmsInboundAck(note="stop_processed")
+
+    # ── HELP keyword handling (10DLC-required) ─────────────────────────────
+    # Reply with brand + support + opt-out info. Does NOT opt the member out
+    # and does NOT route the "HELP" text into the conversation thread. The
+    # auto-reply is best-effort: a Vonage send failure is logged, not raised,
+    # so a provider hiccup never turns the webhook into a 5xx (which Vonage
+    # would retry against an already-acked message).
+    if text.strip().upper() in _HELP_KEYWORDS:
+        try:
+            from app.services.vonage_sms import get_vonage_sms_messages_client
+
+            client = get_vonage_sms_messages_client()
+            await client.send_text(normalized_from, _HELP_REPLY_TEXT)
+        except Exception:  # noqa: BLE001 — best-effort auto-reply
+            logger.exception("sms/inbound: HELP auto-reply send failed member=%s", member_user.id)
+        await record_touch(
+            db,
+            initiator_id=member_user.id,
+            recipient_id=member_user.id,
+            kind=TouchKind.sms,
+            provider_session_id=str(message_uuid) if message_uuid else None,
+            extra_data={"direction": "inbound", "help_keyword": True},
+        )
+        await db.commit()
+        logger.info("sms/inbound: HELP processed member=%s", member_user.id)
+        return SmsInboundAck(note="help_processed")
 
     # ── Route to the member's sticky (or most-recent) conversation ─────────
     target_conv: Conversation | None = None

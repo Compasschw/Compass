@@ -173,50 +173,59 @@ const PAGES: Record<LegalPage, PageContent> = {
         ],
       },
       {
-        heading: '7. Intellectual Property',
+        heading: '7. SMS / Text Messaging',
+        paragraphs: [
+          'By providing a mobile number and consenting at signup, you agree to receive text messages from Compass CHW and your Community Health Worker for care coordination — including appointment scheduling, check-ins, resource follow-ups, and replies to your questions. Consent to receive texts is not a condition of receiving services.',
+          'Message frequency varies based on your interactions with your Community Health Worker. Message and data rates may apply. Compass CHW and the mobile carriers are not liable for delayed or undelivered messages.',
+          'Reply STOP, UNSUBSCRIBE, or CANCEL at any time to opt out of all text messages. Reply HELP for help, or contact us at support@joincompasschw.com. After you opt out, you may still receive services through the app and other channels.',
+          'We do not share your mobile number or the content of your messages with third parties or affiliates for their marketing purposes. See our Privacy Policy for how we handle your information.',
+        ],
+      },
+      {
+        heading: '8. Intellectual Property',
         paragraphs: [
           'All content, software, and trademarks on the Service are owned by Compass CHW or its licensors. You may not copy, modify, or distribute them without our written permission.',
         ],
       },
       {
-        heading: '8. Disclaimers',
+        heading: '9. Disclaimers',
         paragraphs: [
           'The Service is provided "as is" and "as available" without warranties of any kind, express or implied. We do not guarantee that the Service will be uninterrupted, error-free, or free from harmful components.',
           'Information provided by CHWs is for navigation and support only and is not a substitute for medical advice. Always consult a licensed healthcare provider for medical questions.',
         ],
       },
       {
-        heading: '9. Limitation of Liability',
+        heading: '10. Limitation of Liability',
         paragraphs: [
           'To the maximum extent permitted by law, Compass CHW is not liable for any indirect, incidental, special, consequential, or punitive damages arising from your use of the Service.',
         ],
       },
       {
-        heading: '10. Indemnification',
+        heading: '11. Indemnification',
         paragraphs: [
           'You agree to indemnify and hold Compass CHW harmless from claims arising out of your violation of these Terms or your misuse of the Service.',
         ],
       },
       {
-        heading: '11. Termination',
+        heading: '12. Termination',
         paragraphs: [
           'You may close your account at any time by contacting support. We may suspend or terminate your access for violations of these Terms or applicable law.',
         ],
       },
       {
-        heading: '12. Governing Law & Disputes',
+        heading: '13. Governing Law & Disputes',
         paragraphs: [
           'These Terms are governed by the laws of the State of California, without regard to conflict-of-laws rules. Any dispute arising out of or relating to these Terms shall be resolved in the state or federal courts located in Los Angeles County, California.',
         ],
       },
       {
-        heading: '13. Changes to These Terms',
+        heading: '14. Changes to These Terms',
         paragraphs: [
           'We may update these Terms from time to time. Material changes will be communicated to active users. Continued use of the Service after changes take effect constitutes your acceptance of the revised Terms.',
         ],
       },
       {
-        heading: '14. Contact',
+        heading: '15. Contact',
         paragraphs: [
           'Questions about these Terms: hello@joincompasschw.com.',
         ],
