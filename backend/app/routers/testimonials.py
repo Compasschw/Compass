@@ -5,6 +5,10 @@ Route map
 Member (authenticated, role=member):
   POST /api/v1/sessions/{session_id}/testimonials
     — Submit a star rating + optional text for a completed session.
+  GET  /api/v1/testimonials/prompts
+    — Epic B2: the member's single most-recent completed session that has
+      no testimonial yet, so the frontend can show a post-session rating
+      prompt. Returns 200 with a null body when there is nothing to prompt.
 
 Public (any authenticated user):
   GET  /api/v1/chws/{chw_id}/testimonials
@@ -39,7 +43,7 @@ chw_user) to avoid N+1 per-row lookups in the moderation queue.
 """
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -57,19 +61,31 @@ from app.schemas.testimonial import (
     AdminTestimonialView,
     PublicTestimonial,
     TestimonialCreate,
+    TestimonialPrompt,
     TestimonialResponse,
     TestimonialSummary,
 )
 
 logger = logging.getLogger("compass.testimonials")
 
+# Epic B2: a completed session older than this is no longer offered as a
+# rating prompt — a "how was your session two months ago?" nudge is
+# confusing/annoying rather than useful. Documented here as the single
+# source of truth for the cutoff (also asserted directly in the test suite).
+PROMPT_STALE_CUTOFF_DAYS = 14
+
 # ─── Router instances ──────────────────────────────────────────────────────────
-# Three router instances keep prefix + tag grouping clean and mirror the
-# resources router pattern. All three are registered in main.py.
+# Four router instances keep prefix + tag grouping clean and mirror the
+# resources router pattern. All four are registered in main.py.
 
 member_router = APIRouter(prefix="/api/v1/sessions", tags=["testimonials-member"])
 public_router = APIRouter(prefix="/api/v1/chws", tags=["testimonials-public"])
 admin_router = APIRouter(prefix="/api/v1/admin/testimonials", tags=["testimonials-admin"])
+# Epic B2: GET /api/v1/testimonials/prompts. Separate prefix from
+# member_router (which is scoped under /sessions/{id}/testimonials) since
+# this endpoint is not session-scoped in its URL — it discovers the
+# relevant session itself.
+prompts_router = APIRouter(prefix="/api/v1/testimonials", tags=["testimonials-member"])
 
 
 # ─── Member endpoint ───────────────────────────────────────────────────────────
@@ -153,6 +169,90 @@ async def create_testimonial(
     )
 
     return TestimonialResponse.model_validate(testimonial)
+
+
+# ─── Prompt-discovery endpoint (Epic B2) ───────────────────────────────────────
+
+
+@prompts_router.get(
+    "/prompts",
+    response_model=TestimonialPrompt | None,
+    summary="Member: the most-recent completed session still awaiting a rating",
+)
+async def get_testimonial_prompt(
+    current_user: User = Depends(require_role("member")),
+    db: AsyncSession = Depends(get_db),
+) -> TestimonialPrompt | None:
+    """GET /api/v1/testimonials/prompts
+
+    Drives the post-session "How was your session?" star-rating prompt on
+    the member home screen. Returns the member's single most-recent
+    'completed' session that has NO Testimonial row yet, so the frontend
+    can nudge for a rating without the member having to navigate anywhere.
+
+    Selection semantics (deliberately narrow — see module docstring):
+      - Only 'completed' sessions are eligible (matches the POST
+        /sessions/{id}/testimonials completed-status gate — never prompt
+        for a rating the backend would then reject).
+      - Only sessions with no existing Testimonial row for this member are
+        eligible (a NOT EXISTS anti-join against Testimonial, scoped to
+        source='session' rows — closure-review testimonials are a
+        different flow keyed off member_id with session_id NULL, so they
+        never suppress a session's own prompt).
+      - Sessions completed more than PROMPT_STALE_CUTOFF_DAYS (14) days ago
+        are excluded — a rating nudge for a session from a month ago reads
+        as broken/annoying rather than helpful.
+      - Ordered newest-first (scheduled_at desc) and capped to ONE row —
+        only a single prompt is ever surfaced at a time, so the member is
+        never stacked with multiple rating requests. If several completed
+        sessions are unrated, only the most recent is offered; the older
+        ones simply age out past the 14-day cutoff (no queue/backlog UX
+        is built for this — intentionally out of scope for B2).
+
+    Returns 200 with a JSON `null` body when there is nothing to prompt
+    (no unrated session, or the only unrated session is stale/rated).
+
+    Auth: member JWT only (role gate — a CHW or unauthenticated caller
+    receives 403/401 respectively, same as the POST endpoint).
+    """
+    cutoff = datetime.now(UTC) - timedelta(days=PROMPT_STALE_CUTOFF_DAYS)
+
+    CHWUser = aliased(User, name="chw_user")
+
+    already_rated_subq = (
+        select(Testimonial.id)
+        .where(
+            Testimonial.member_id == current_user.id,
+            Testimonial.session_id == Session.id,
+            Testimonial.source == "session",
+        )
+    )
+
+    stmt = (
+        select(Session, CHWUser.name.label("chw_name"))
+        .join(CHWUser, CHWUser.id == Session.chw_id)
+        .where(
+            Session.member_id == current_user.id,
+            Session.status == "completed",
+            Session.scheduled_at.is_(None) | (Session.scheduled_at >= cutoff),
+            ~already_rated_subq.exists(),
+        )
+        .order_by(Session.scheduled_at.desc().nullslast())
+        .limit(1)
+    )
+    result = await db.execute(stmt)
+    row = result.first()
+
+    if row is None:
+        return None
+
+    session, chw_name = row
+    return TestimonialPrompt(
+        session_id=session.id,
+        chw_id=session.chw_id,
+        chw_name=chw_name,
+        scheduled_at=session.scheduled_at,
+    )
 
 
 # ─── Public endpoints ──────────────────────────────────────────────────────────
