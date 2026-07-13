@@ -51,6 +51,7 @@ import { MEMBERS_PAGE_SIZE, paginateMembers } from './membersPagination';
 import { Avatar } from '../../components/shared/Avatar';
 import { colors, numerals, radius, spacing } from '../../theme/tokens';
 import { useAuth } from '../../context/AuthContext';
+import { BP_PHONE } from '../../constants/breakpoints';
 import {
   useChwMembers,
   useIncomingMemberRequests,
@@ -710,6 +711,16 @@ export function CHWMembersScreen(): React.JSX.Element {
   const { width: windowWidth } = useWindowDimensions();
   // Stack the header (title over search) when the window is narrow/split.
   const stackHeader = Platform.OS === 'web' && windowWidth < 768;
+  // Epic K (mobile web polish): the fixed-column table has no horizontal
+  // scroll container of its own and clips/overflows below phone width — fall
+  // back to the same card layout native mobile already uses. Web-desktop and
+  // web-tablet widths are unaffected (still get the full table).
+  // `windowWidth` reads 0 on web before react-native-web's Dimensions module
+  // has measured the real viewport (e.g. first paint, or — as documented in
+  // ActiveSessionBadge — consistently under jsdom-based component tests
+  // until a resize event fires). Treat that transient/unmeasured state as
+  // "not narrow" so it falls back to the table rather than flashing cards.
+  const useCardLayout = Platform.OS !== 'web' || (windowWidth > 0 && windowWidth < BP_PHONE);
   const navigation = useNavigation<DrawerNavigationProp<CHWTabParamList>>();
   const [activeFilter, setActiveFilter] = useState<FilterKey>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -928,8 +939,8 @@ export function CHWMembersScreen(): React.JSX.Element {
             }
           />
         </Card>
-      ) : Platform.OS === 'web' ? (
-        /* Web: full table layout */
+      ) : !useCardLayout ? (
+        /* Web (tablet width and up): full table layout */
         <Card style={styles.tableCard}>
           {/* Table header */}
           <View style={styles.tableHead}>
@@ -967,7 +978,7 @@ export function CHWMembersScreen(): React.JSX.Element {
           ))}
         </Card>
       ) : (
-        /* Native: card list */
+        /* Native, and web at phone width: card list */
         <View style={styles.cardList}>
           {pagedMembers.map((item) => (
             <MemberCard

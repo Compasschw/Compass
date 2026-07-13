@@ -10,8 +10,8 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../api/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api/client')>();
@@ -87,6 +87,27 @@ function routeApi(path: string, options?: { method?: string }): unknown {
 
 // ─── Harness ──────────────────────────────────────────────────────────────────
 
+/** Desktop-width default the other describe blocks in this file assume. */
+const WIDE_VIEWPORT_WIDTH = 1024;
+
+/**
+ * See CHWMessagesScreen.test.tsx's identical helper for why the property
+ * must be set AND a resize event dispatched *before* `render()` is called.
+ */
+function setViewportWidth(width: number, height = 1000): void {
+  Object.defineProperty(document.documentElement, 'clientWidth', {
+    value: width,
+    configurable: true,
+  });
+  Object.defineProperty(document.documentElement, 'clientHeight', {
+    value: height,
+    configurable: true,
+  });
+  act(() => {
+    window.dispatchEvent(new Event('resize'));
+  });
+}
+
 function renderScreen() {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -151,5 +172,43 @@ describe('CHWMembersScreen — Member Profile origin params (Epic S "Back to …
       screen: 'MemberProfile',
       params: { memberId: MEMBER_ID, backLabel: 'Members', backTo: 'CHWMembers' },
     });
+  });
+});
+
+// ─── Epic K — phone-width usability sweep ──────────────────────────────────────
+
+describe('CHWMembersScreen — phone-width falls back to cards, not a clipped table (Epic K)', () => {
+  beforeEach(() => {
+    setViewportWidth(390);
+  });
+
+  afterEach(() => {
+    setViewportWidth(WIDE_VIEWPORT_WIDTH);
+  });
+
+  it('renders card rows (not the fixed-column table) at phone width', async () => {
+    renderScreen();
+
+    const card = await screen.findByLabelText(`View profile for ${MEMBER_NAME}`);
+    expect(card).toBeTruthy();
+
+    // The web table's column headers are absent — this proves the card
+    // layout rendered instead of the table just being visually squeezed.
+    expect(screen.queryByText('Account Created')).toBeNull();
+    expect(screen.queryByText('CIN')).toBeNull();
+
+    // The card still surfaces the same data the table's new columns did
+    // (Epic H1 parity — see MemberCard's "Joined … · CIN …" line).
+    expect(screen.getByText(/Joined Mar 14, 2026/)).toBeTruthy();
+    expect(screen.getByText(new RegExp(CIN))).toBeTruthy();
+  });
+
+  it('still renders the full table at tablet/desktop width (no regression)', async () => {
+    setViewportWidth(1024);
+    renderScreen();
+
+    await screen.findByText(MEMBER_NAME);
+    expect(screen.getByText('Account Created')).toBeTruthy();
+    expect(screen.getByText('CIN')).toBeTruthy();
   });
 });
