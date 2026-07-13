@@ -148,6 +148,34 @@ async def _load_chw_session_or_404(
     raise HTTPException(status_code=404, detail="Session not found")
 
 
+async def _load_participant_session_or_404(
+    *, session_id: UUID, db: AsyncSession, current_user: User
+) -> Session:
+    """Resolve a session for a confirm/decline-style endpoint, enforcing that
+    the caller is a participant on the session.
+
+    Unlike ``_load_chw_session_or_404`` (CHW-or-admin only), this loader also
+    admits the session's participant MEMBER — used by ``confirm_session`` /
+    ``decline_session`` now that either side of a proposed session may need
+    to approve/decline it (see the initiator-inversion rule in those
+    handlers). Returns the loaded ``Session`` row when the caller is the
+    owning CHW, the participant member, or an admin. Raises
+    HTTPException(404) when the row doesn't exist *or* the caller is not a
+    participant — 404 (never 403) so we don't leak the existence of sessions
+    the caller cannot see, matching this file's existing pattern.
+    """
+    session = await db.get(Session, session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if current_user.role == "admin":
+        return session
+    if current_user.role == "chw" and session.chw_id == current_user.id:
+        return session
+    if current_user.role == "member" and session.member_id == current_user.id:
+        return session
+    raise HTTPException(status_code=404, detail="Session not found")
+
+
 @router.patch("/{session_id}/pin", response_model=SessionResponse)
 async def update_session_pin(
     session_id: UUID,
@@ -279,21 +307,71 @@ def _add_scheduling_message(db: AsyncSession, session, sender_id, *, confirmed: 
     )
 
 
+def _reject_self_approval_if_initiator(session: Session, current_user: User) -> None:
+    """Enforce the initiator-inversion rule shared by confirm_session and
+    decline_session: only the NON-proposing party may act on a session.
+
+    - CHW caller: allowed when ``proposed_by == "member"`` or ``None``
+      (legacy rows — allow, preserving pre-existing CHW behavior). Rejected
+      (409) when ``proposed_by == "chw"`` (self-approval).
+    - Member caller: allowed only when ``proposed_by == "chw"``. Rejected
+      (409) when ``proposed_by == "member"`` (self-approval) OR ``None``
+      (legacy rows — reject for members; the initiator is unknown, so we
+      default to the safe/conservative choice rather than assume the CHW
+      proposed it).
+    - Admin caller: bypasses this rule entirely (admins act on behalf of
+      support/ops workflows and are not a "side" of the negotiation).
+
+    Raises HTTPException(409) on violation; the caller (confirm/decline)
+    should call this AFTER the participant-relationship 404 gate.
+    """
+    if current_user.role == "admin":
+        return
+    if current_user.role == "chw":
+        if session.proposed_by == "chw":
+            raise HTTPException(
+                status_code=409,
+                detail="You proposed this session's time; the other party must respond.",
+            )
+        return
+    if current_user.role == "member":
+        if session.proposed_by != "chw":
+            raise HTTPException(
+                status_code=409,
+                detail="You proposed this session's time; the other party must respond.",
+            )
+        return
+
+
 @router.patch("/{session_id}/confirm", response_model=SessionResponse)
 async def confirm_session(
     session_id: UUID,
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SessionResponse:
-    """CHW confirms a pending (member-requested) scheduled session.
+    """Confirm a pending scheduled session — either participant may call this,
+    but never the party that proposed the current time.
 
-    Flips ``scheduling_status`` pending → confirmed. Only the owning CHW (or an
-    admin) may act. 409 when the session is not in the ``scheduled`` state.
+    Flips ``scheduling_status`` pending → confirmed. Callable by the owning
+    CHW, the participant member, or an admin (``_load_participant_session_or_404``);
+    a non-participant gets 404 so session existence isn't leaked. 409 when the
+    session is not in the ``scheduled`` state.
+
+    Initiator-inversion rule (409, see ``_reject_self_approval_if_initiator``):
+    a CHW cannot confirm a session THEY proposed (``proposed_by == "chw"``);
+    a member cannot confirm a session THEY proposed (``proposed_by ==
+    "member"``) or a legacy session with no recorded proposer
+    (``proposed_by is None`` — conservative default since the initiator is
+    unknown). A CHW confirming a legacy-null or member-proposed session is
+    unaffected — this preserves the pre-existing CHW confirm flow exactly.
+    Admins bypass the inversion rule entirely.
+
     Idempotent: confirming an already-confirmed scheduled session is a no-op 200.
     """
-    session = await _load_chw_session_or_404(
+    session = await _load_participant_session_or_404(
         session_id=session_id, db=db, current_user=current_user
     )
+    _reject_self_approval_if_initiator(session, current_user)
     if session.status != "scheduled":
         raise HTTPException(
             status_code=409, detail="Only a scheduled session can be confirmed."
@@ -303,21 +381,32 @@ async def confirm_session(
     await db.commit()
     await db.refresh(session)
 
-    # ── Push notification to the member — "request approved" ───────────────
+    # ── Push notification to the OTHER party — "request approved" ──────────
     # Best-effort: a delivery failure here must never fail the confirm action
     # (mirrors the accept-request notification pattern in routers/requests.py).
     # NOTE: we don't store a per-member timezone yet, so the label below is
     # rendered in clinic-local time (CLINIC_TZ_NAME) via `_scheduled_at_label`
     # — same fallback the existing scheduling-message helper already uses.
+    #
+    # Direction depends on who called: a CHW confirming a member-proposed
+    # session notifies the MEMBER (pre-existing copy/behavior, unchanged); a
+    # member confirming a CHW-proposed session notifies the CHW instead, with
+    # copy reflecting that the member accepted the CHW's proposed time.
     try:
         from app.services.notifications import NotificationPayload, notify_user
+        if current_user.role == "member":
+            notify_user_id = session.chw_id
+            notify_body = f"Your member accepted the session for {_scheduled_at_label(session)}."
+        else:
+            notify_user_id = session.member_id
+            notify_body = f"Your session was approved for {_scheduled_at_label(session)}."
         await notify_user(
             db,
-            session.member_id,
+            notify_user_id,
             NotificationPayload(
-                user_id=session.member_id,
+                user_id=notify_user_id,
                 title="Session approved",
-                body=f"Your session was approved for {_scheduled_at_label(session)}.",
+                body=notify_body,
                 deeplink=f"compasschw://sessions/{session.id}",
                 category="session.confirmed",
                 data={"session_id": str(session.id)},
@@ -345,15 +434,30 @@ async def decline_session(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SessionResponse:
-    """CHW declines a pending (member-requested) scheduled session.
+    """Decline a pending scheduled session — either participant may call this,
+    but never the party that proposed the current time.
 
     Marks the session ``cancelled`` so it drops off both parties' upcoming
-    calendar views. Only the owning CHW (or an admin) may act. 409 when the
-    session is not in the ``scheduled`` state.
+    calendar views. Callable by the owning CHW, the participant member, or an
+    admin (``_load_participant_session_or_404``); a non-participant gets 404
+    so session existence isn't leaked. 409 when the session is not in the
+    ``scheduled`` state.
+
+    Initiator-inversion rule (409, see ``_reject_self_approval_if_initiator``):
+    same rule as ``confirm_session`` — a caller cannot decline a session they
+    themselves proposed. Legacy sessions with no recorded proposer
+    (``proposed_by is None``) still work unaffected for a CHW caller
+    (preserves the pre-existing decline flow); a member caller is rejected
+    on a legacy-null session (conservative default). Admins bypass the rule.
+
+    No push notification here — only ``_add_scheduling_message`` posts to the
+    shared thread (it already takes ``sender_id`` generically, so it works
+    correctly for either calling role).
     """
-    session = await _load_chw_session_or_404(
+    session = await _load_participant_session_or_404(
         session_id=session_id, db=db, current_user=current_user
     )
+    _reject_self_approval_if_initiator(session, current_user)
     if session.status != "scheduled":
         raise HTTPException(
             status_code=409, detail="Only a scheduled session can be declined."
@@ -556,6 +660,7 @@ async def schedule_session(
         if member_id is None:
             raise HTTPException(status_code=422, detail="member_id is required.")
         scheduling_status = data.scheduling_status
+        proposed_by = "chw"
     elif current_user.role == "member":
         member_id = current_user.id
         chw_id = data.chw_id
@@ -563,6 +668,7 @@ async def schedule_session(
             raise HTTPException(status_code=422, detail="chw_id is required.")
         # A member's booking is a request the CHW confirms — always pending.
         scheduling_status = "pending"
+        proposed_by = "member"
     else:
         raise HTTPException(status_code=403, detail="Not allowed to schedule sessions.")
 
@@ -633,6 +739,7 @@ async def schedule_session(
         scheduled_at=data.scheduled_at,
         scheduled_end_at=data.scheduled_end_at,
         scheduling_status=scheduling_status,
+        proposed_by=proposed_by,
         notes=data.notes,
         resource_needs=[v.value for v in data.resource_needs] or None,
         status="scheduled",

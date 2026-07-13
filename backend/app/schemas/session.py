@@ -61,6 +61,10 @@ class SessionResponse(BaseModel):
     scheduled_at: datetime | None
     scheduled_end_at: datetime | None = None
     scheduling_status: str | None = None
+    # 'chw' | 'member' | None (legacy rows) — who proposed this session's
+    # current scheduled time. See Session.proposed_by docstring in
+    # app/models/session.py for the full design rationale.
+    proposed_by: str | None = None
     # Epic L — resource-need verticals selected on the Schedule Session form.
     # None/empty for legacy sessions predating this field or where the CHW
     # selected none; the frontend treats both as "nothing to show".

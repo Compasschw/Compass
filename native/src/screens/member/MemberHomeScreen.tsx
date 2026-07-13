@@ -103,6 +103,10 @@ import type {
   MemberHomeStackParamList,
   MemberTabParamList,
 } from '../../navigation/MemberTabNavigator';
+import {
+  MemberPendingRequestsList,
+  selectMemberPendingRequests,
+} from './MemberPendingRequestsList';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -467,6 +471,14 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
   const roadmap      = roadmapQuery.data ?? [];
   const allRequests  = requestsQuery.data ?? [];
 
+  // CHW-proposed sessions awaiting this member's approval → dashboard widget.
+  // See MemberPendingRequestsList's module docstring for the proposedBy
+  // filter (excludes legacy null/undefined rows — opposite of the CHW side).
+  const pendingRequests = useMemo(
+    () => selectMemberPendingRequests(allSessions),
+    [allSessions],
+  );
+
   // ── Assigned CHW (Epic G1 fix) ───────────────────────────────────────────
   // Primary source: GET /member/chw, which reads ServiceRequest.matched_chw_id
   // — the SAME relationship column create_chw_member writes. This is
@@ -713,6 +725,8 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
               />
             }
           />
+
+          <MemberPendingRequestsList requests={pendingRequests} />
 
           {/* ── Your CHW hero card ───────────────────────────────────────
            *  Member-specific content: CHW initials derived from real session

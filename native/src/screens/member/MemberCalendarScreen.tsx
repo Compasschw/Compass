@@ -82,6 +82,10 @@ import { ErrorState } from '../../components/shared/ErrorState';
 import { AppShell, PageHeader, Card, SectionHeader, PageWrap } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
 import type { MemberTabParamList } from '../../navigation/MemberTabNavigator';
+import {
+  MemberPendingRequestsList,
+  selectMemberPendingRequests,
+} from './MemberPendingRequestsList';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -1501,6 +1505,15 @@ export function MemberCalendarScreen(): React.JSX.Element {
 
   const sessionsByDate = useMemo(() => groupSessionsByDate(liveSessions), [liveSessions]);
 
+  // CHW-proposed sessions awaiting this member's approval → shown as a list
+  // above the calendar. See MemberPendingRequestsList's module docstring for
+  // why this excludes legacy proposedBy: null/undefined rows (opposite of
+  // the CHW-side filter).
+  const pendingRequests = useMemo(
+    () => selectMemberPendingRequests(liveSessions),
+    [liveSessions],
+  );
+
   // Now reference — stable within a render pass for badge derivation.
   const nowRef = useMemo(() => new Date(), []);
 
@@ -1786,6 +1799,8 @@ export function MemberCalendarScreen(): React.JSX.Element {
             right={headerRight}
           />
 
+          <MemberPendingRequestsList requests={pendingRequests} />
+
           <Card style={webStyles.calendarCard}>
             {calendarContent}
           </Card>
@@ -1828,6 +1843,8 @@ export function MemberCalendarScreen(): React.JSX.Element {
             title="Calendar"
             subtitle="Your schedule and appointments"
           />
+
+          <MemberPendingRequestsList requests={pendingRequests} />
 
           {allEvents.length === 0 ? (
             <Card style={styles.emptyStateCard}>

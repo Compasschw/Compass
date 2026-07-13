@@ -179,14 +179,18 @@ async def _member_pending_session_id(
 async def test_chw_confirms_member_pending_session(
     client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
 ):
-    """The owning CHW confirms a member's pending session → confirmed. The member
-    cannot confirm it themselves (404 — ownership is not leaked)."""
+    """The owning CHW confirms a member-proposed pending session → confirmed.
+    The member cannot confirm their OWN proposal (409 — initiator-inversion
+    rule; the member is a legitimate participant, just not the party allowed
+    to act on a proposal they themselves made — see
+    test_session_confirm_decline_participants.py for the full inversion
+    matrix)."""
     sid = await _member_pending_session_id(client, member_tokens, chw_tokens)
 
     res = await client.patch(
         f"/api/v1/sessions/{sid}/confirm", headers=auth_header(member_tokens)
     )
-    assert res.status_code == 404, res.text
+    assert res.status_code == 409, res.text
 
     res = await client.patch(
         f"/api/v1/sessions/{sid}/confirm", headers=auth_header(chw_tokens)
