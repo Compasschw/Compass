@@ -235,6 +235,34 @@ const pastScheduledSessionFixture = {
   member_name: MEMBER_NAME_4,
 };
 
+// ─── Epic L — Resource Needs fixtures ────────────────────────────────────────
+
+const RESOURCE_NEEDS_SESSION_ID = 'sess-resource-needs-1';
+const MEMBER_ID_5 = 'member-5';
+const MEMBER_NAME_5 = 'Kenji Watanabe';
+
+const resourceNeedsStart = new Date(FUTURE_TODAY); // upcoming, today (never rolls)
+const resourceNeedsEnd = new Date(resourceNeedsStart.getTime() + 60 * 60 * 1000);
+
+/** A confirmed session with resource_needs selected on schedule — used to
+ *  assert Session Details renders the chips where Notes used to appear. */
+const resourceNeedsSessionFixture = {
+  id: RESOURCE_NEEDS_SESSION_ID,
+  request_id: 'req-7',
+  chw_id: CHW_ID,
+  member_id: MEMBER_ID_5,
+  vertical: 'housing',
+  status: 'scheduled',
+  mode: 'in_person',
+  scheduled_at: resourceNeedsStart.toISOString(),
+  scheduled_end_at: resourceNeedsEnd.toISOString(),
+  scheduling_status: 'confirmed',
+  resource_needs: ['housing', 'food'],
+  created_at: '2026-07-01T00:00:00.000Z',
+  chw_name: 'Test CHW',
+  member_name: MEMBER_NAME_5,
+};
+
 // ─── API router — the sole network boundary ──────────────────────────────────
 
 let scheduleShouldFail = false;
@@ -262,6 +290,7 @@ function routeApi(path: string, options?: { method?: string; body?: string }): u
       scheduled_at: body.scheduled_at,
       scheduled_end_at: body.scheduled_end_at,
       scheduling_status: body.scheduling_status,
+      resource_needs: body.resource_needs,
       created_at: new Date().toISOString(),
       chw_name: 'Test CHW',
       member_name: MEMBER_NAME,
@@ -458,6 +487,124 @@ describe('CHWCalendarScreen — Pending Session Requests "Propose New Time"', ()
 
     // The modal stays open (not silently closed) so the CHW can retry.
     expect(screen.getByLabelText('Propose new time')).toBeTruthy();
+  });
+});
+
+/**
+ * Schedule Session modal — Resource Needs multi-select (Epic L).
+ *
+ * The free-text "Notes (optional)" field was replaced by a chip multi-select
+ * of resource-need verticals (Housing, Food, Transportation, ...), reusing
+ * lib/verticals.ts's VERTICAL_PICKER_OPTIONS so the list can never drift from
+ * the backend enum. Covers: the multiselect renders (and the old Notes input
+ * does not), selecting chips submits `resource_needs`, and Session Details
+ * renders the selected chips where Notes used to appear.
+ */
+describe('CHWCalendarScreen — Schedule Session Resource Needs multi-select (Epic L)', () => {
+  /** Opens the normal (non-propose) Schedule Session modal and selects the
+   *  fixture member, so the submit button becomes enabled. */
+  async function openScheduleModalWithMember(): Promise<void> {
+    fireEvent.click(await screen.findByLabelText('Schedule a new session'));
+    await screen.findByLabelText('Search members');
+    fireEvent.click(await screen.findByLabelText(`Select ${MEMBER_NAME}`));
+  }
+
+  it('shows the Resource Needs multiselect, not a free-text Notes input', async () => {
+    renderScreen();
+    await openScheduleModalWithMember();
+
+    expect(screen.getByText('Resource Needs (optional)')).toBeTruthy();
+    expect(screen.queryByText('Notes (optional)')).toBeNull();
+    expect(screen.queryByLabelText('Session notes')).toBeNull();
+
+    // Chips for every vertical render as checkboxes (role="checkbox",
+    // accessibilityState={{checked}} on the real component — asserted here
+    // via the visible "✓" marker, since react-native-web's jsdom test
+    // rendering doesn't surface accessibilityState as an aria-checked
+    // attribute). Unchecked by default: no checkmark yet.
+    const housingChip = screen.getByLabelText('Housing');
+    expect(housingChip.getAttribute('role')).toBe('checkbox');
+    expect(housingChip.textContent).not.toContain('✓');
+    expect(screen.getByLabelText('Food Security')).toBeTruthy();
+    expect(screen.getByLabelText('Transportation')).toBeTruthy();
+  });
+
+  it('submits selected chips as resource_needs, and toggling off removes them', async () => {
+    renderScreen();
+    await openScheduleModalWithMember();
+
+    const housingChip = screen.getByLabelText('Housing');
+    const foodChip = screen.getByLabelText('Food Security');
+
+    fireEvent.click(housingChip);
+    fireEvent.click(foodChip);
+    expect(housingChip.textContent).toContain('✓');
+    expect(foodChip.textContent).toContain('✓');
+
+    // Toggle Food back off before submitting — only Housing should ship.
+    fireEvent.click(foodChip);
+    expect(foodChip.textContent).not.toContain('✓');
+
+    fireEvent.click(screen.getByLabelText('Schedule session'));
+
+    await waitFor(() => {
+      expect(mockedApi.mock.calls.some(([path]) => path === '/sessions/schedule')).toBe(true);
+    });
+
+    const [, options] = mockedApi.mock.calls.find(([path]) => path === '/sessions/schedule')!;
+    const body = JSON.parse((options as { body: string }).body);
+    expect(body.resource_needs).toEqual(['housing']);
+    // The modal no longer collects notes at all — the mutation hook still
+    // sends the legacy `notes` key (payload.notes defaults to null) for
+    // backward compatibility with the still-present DB column, but nothing
+    // in the UI ever populates it anymore.
+    expect(body.notes).toBeNull();
+  });
+
+  it('submits an empty resource_needs array when no chips are selected', async () => {
+    renderScreen();
+    await openScheduleModalWithMember();
+
+    fireEvent.click(screen.getByLabelText('Schedule session'));
+
+    await waitFor(() => {
+      expect(mockedApi.mock.calls.some(([path]) => path === '/sessions/schedule')).toBe(true);
+    });
+
+    const [, options] = mockedApi.mock.calls.find(([path]) => path === '/sessions/schedule')!;
+    const body = JSON.parse((options as { body: string }).body);
+    expect(body.resource_needs).toEqual([]);
+  });
+});
+
+describe('CHWCalendarScreen — Session Details renders Resource Needs (Epic L)', () => {
+  beforeEach(() => {
+    additionalSessionFixtures = [resourceNeedsSessionFixture];
+  });
+
+  it('renders the selected Resource Needs chips where Notes used to appear', async () => {
+    renderScreen();
+    fireEvent.click(await screen.findByLabelText('day view'));
+    const card = await screen.findByLabelText(new RegExp(`^Session with ${MEMBER_NAME_5} at`));
+    fireEvent.click(card);
+    await screen.findByText('Session Details');
+
+    expect(screen.getByText('Resource Needs')).toBeTruthy();
+    const chips = screen.getByLabelText('Resource needs');
+    expect(chips.textContent).toContain('Housing');
+    expect(chips.textContent).toContain('Food Security');
+    expect(screen.queryByText('Notes')).toBeNull();
+  });
+
+  it('does not render a Resource Needs row for a session with none selected', async () => {
+    renderScreen();
+    fireEvent.click(await screen.findByLabelText('day view'));
+    const card = await screen.findByLabelText(new RegExp(`^Session with ${MEMBER_NAME} at`));
+    fireEvent.click(card);
+    await screen.findByText('Session Details');
+
+    expect(screen.queryByText('Resource Needs')).toBeNull();
+    expect(screen.queryByLabelText('Resource needs')).toBeNull();
   });
 });
 

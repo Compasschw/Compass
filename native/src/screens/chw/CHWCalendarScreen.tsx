@@ -65,6 +65,12 @@ import {
 } from '../../hooks/useApiQueries';
 import { useRefreshControl } from '../../hooks/useRefreshControl';
 import {
+  VERTICAL_PICKER_OPTIONS,
+  VERTICAL_LABEL,
+  VERTICAL_COLOR,
+  type Vertical,
+} from '../../lib/verticals';
+import {
   isHourAvailable,
   type AvailabilityWindows,
 } from '../../utils/availabilityShading';
@@ -989,16 +995,41 @@ function SessionDetailsModal({
                     </View>
                   </View>
 
-                  {session.notes ? (
+                  {session.resourceNeeds && session.resourceNeeds.length > 0 ? (
                     <>
                       <View style={detailModalStyles.divider} />
                       <View style={detailModalStyles.detailRow}>
                         <View style={{ width: 14, alignItems: 'center' }}>
-                          <Text style={{ fontSize: 14 }}>📝</Text>
+                          <Text style={{ fontSize: 14 }}>🏷️</Text>
                         </View>
                         <View style={detailModalStyles.detailContent}>
-                          <Text style={detailModalStyles.detailLabel}>Notes</Text>
-                          <Text style={detailModalStyles.detailValue}>{session.notes}</Text>
+                          <Text style={detailModalStyles.detailLabel}>Resource Needs</Text>
+                          <View
+                            style={detailModalStyles.resourceNeedsRow}
+                            accessibilityLabel="Resource needs"
+                          >
+                            {session.resourceNeeds.map((v) => (
+                              <View
+                                key={v}
+                                style={[
+                                  detailModalStyles.resourceNeedChip,
+                                  {
+                                    backgroundColor: `${VERTICAL_COLOR[v as Vertical] ?? tokens.textSecondary}1A`,
+                                    borderColor: VERTICAL_COLOR[v as Vertical] ?? tokens.textSecondary,
+                                  },
+                                ]}
+                              >
+                                <Text
+                                  style={[
+                                    detailModalStyles.resourceNeedChipText,
+                                    { color: VERTICAL_COLOR[v as Vertical] ?? tokens.textSecondary },
+                                  ]}
+                                >
+                                  {VERTICAL_LABEL[v as Vertical] ?? v}
+                                </Text>
+                              </View>
+                            ))}
+                          </View>
                         </View>
                       </View>
                     </>
@@ -1250,6 +1281,22 @@ const detailModalStyles = StyleSheet.create({
     color: '#6B7280',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
+  },
+  resourceNeedsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 4,
+  },
+  resourceNeedChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+  },
+  resourceNeedChipText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12,
   },
   detailValue: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
@@ -1553,7 +1600,8 @@ interface ScheduleSessionModalProps {
  * Modal for scheduling a session with one of the CHW's members.
  *
  * Collects: member (searchable list), session type, date, start time, end time,
- * scheduling status, and optional notes. Submits via useScheduleSession().
+ * scheduling status, and optional Resource Needs (a multi-select of verticals,
+ * e.g. Housing/Food/Transportation). Submits via useScheduleSession().
  *
  * Doubles as the "Propose New Time" reschedule flow for a member-requested
  * pending session (see `replaceSessionId` above) — opened from
@@ -1590,8 +1638,19 @@ function ScheduleSessionModal({
   const [startTimeInput, setStartTimeInput] = useState('10:00 AM');
   const [endTimeInput, setEndTimeInput] = useState('11:00 AM');
   const [schedulingStatus, setSchedulingStatus] = useState<'confirmed' | 'pending'>('confirmed');
-  const [notes, setNotes] = useState('');
+  // Epic L — replaces the free-text Notes field with a Resource Needs
+  // multi-select. A Set gives O(1) toggle/has checks for the chip grid.
+  const [resourceNeeds, setResourceNeeds] = useState<Set<Vertical>>(new Set());
   const [fieldError, setFieldError] = useState<string | null>(null);
+
+  const toggleResourceNeed = useCallback((v: Vertical) => {
+    setResourceNeeds((prev) => {
+      const next = new Set(prev);
+      if (next.has(v)) next.delete(v);
+      else next.add(v);
+      return next;
+    });
+  }, []);
 
   const filteredMembers = useMemo(() => {
     const q = memberSearch.trim().toLowerCase();
@@ -1612,7 +1671,7 @@ function ScheduleSessionModal({
     setStartTimeInput('10:00 AM');
     setEndTimeInput('11:00 AM');
     setSchedulingStatus('confirmed');
-    setNotes('');
+    setResourceNeeds(new Set());
     setFieldError(null);
   }, []);
 
@@ -1634,7 +1693,7 @@ function ScheduleSessionModal({
     if (prefillStartTime) setStartTimeInput(prefillStartTime);
     if (prefillEndTime) setEndTimeInput(prefillEndTime);
     setSchedulingStatus('pending');
-    setNotes('');
+    setResourceNeeds(new Set());
     setFieldError(null);
   }, [
     visible,
@@ -1708,7 +1767,7 @@ function ScheduleSessionModal({
         // confirm the CHW's proposed time, regardless of the Status field
         // (which is hidden in this mode anyway).
         schedulingStatus: isProposeMode ? 'pending' : schedulingStatus,
-        notes: notes.trim() || undefined,
+        resourceNeeds: Array.from(resourceNeeds),
       });
       // Reschedule: only after the new booking succeeds do we decline the
       // original pending request, so a failure never leaves the member with
@@ -1734,7 +1793,7 @@ function ScheduleSessionModal({
     endTimeInput,
     sessionMode,
     schedulingStatus,
-    notes,
+    resourceNeeds,
     mutateAsync,
     handleClose,
     isProposeMode,
@@ -1953,20 +2012,48 @@ function ScheduleSessionModal({
               </View>
             )}
 
-            {/* Notes (optional) */}
+            {/* Resource Needs (optional) — Epic L: replaces the free-text
+                Notes field with a multi-select of the same verticals used
+                elsewhere in the app (member requests, filters, etc). Reuses
+                lib/verticals.ts as the single source of truth so this list
+                never drifts from the backend enum. */}
             <View style={scheduleModalStyles.field}>
-              <Text style={scheduleModalStyles.fieldLabel}>Notes (optional)</Text>
-              <TextInput
-                style={[scheduleModalStyles.textInput, scheduleModalStyles.notesInput]}
-                value={notes}
-                onChangeText={setNotes}
-                placeholder="Add any notes about this session..."
-                placeholderTextColor="#9CA3AF"
-                accessibilityLabel="Session notes"
-                multiline
-                numberOfLines={3}
-                textAlignVertical="top"
-              />
+              <Text style={scheduleModalStyles.fieldLabel}>Resource Needs (optional)</Text>
+              <View style={scheduleModalStyles.chipRow} accessibilityLabel="Resource needs">
+                {VERTICAL_PICKER_OPTIONS.map((opt) => {
+                  const isSelected = resourceNeeds.has(opt.key);
+                  const color = VERTICAL_COLOR[opt.key];
+                  return (
+                    <TouchableOpacity
+                      key={opt.key}
+                      style={[
+                        scheduleModalStyles.chip,
+                        isSelected && {
+                          backgroundColor: `${color}1A`,
+                          borderColor: color,
+                        },
+                      ]}
+                      onPress={() => toggleResourceNeed(opt.key)}
+                      accessibilityRole="checkbox"
+                      accessibilityState={{ checked: isSelected }}
+                      accessibilityLabel={opt.label}
+                    >
+                      <Text style={scheduleModalStyles.chipEmoji}>{opt.emoji}</Text>
+                      <Text
+                        style={[
+                          scheduleModalStyles.chipText,
+                          isSelected && { color, fontFamily: 'PlusJakartaSans_600SemiBold' },
+                        ]}
+                      >
+                        {opt.label}
+                      </Text>
+                      {isSelected ? (
+                        <Text style={[scheduleModalStyles.chipCheck, { color }]}>✓</Text>
+                      ) : null}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
             </View>
 
             {/* Inline error */}
@@ -2211,9 +2298,35 @@ const scheduleModalStyles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     minHeight: 44,
   },
-  notesInput: {
-    minHeight: 80,
-    paddingTop: 10,
+  // Epic L — Resource Needs chip multi-select, replacing the old free-text
+  // Notes field's textInput/notesInput styles.
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+  },
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 8,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    backgroundColor: '#FFFFFF',
+  },
+  chipEmoji: {
+    fontSize: 14,
+  },
+  chipText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: '#374151',
+  },
+  chipCheck: {
+    fontFamily: 'PlusJakartaSans_700Bold',
+    fontSize: 13,
   },
   timeRow: {
     flexDirection: 'row',

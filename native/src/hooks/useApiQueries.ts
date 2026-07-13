@@ -43,6 +43,10 @@ export interface SessionData {
   netAmount?: number;
   /** CHW-authored notes — the canonical `summary` field on the documentation row. */
   notes?: string;
+  /** Epic L — resource-need verticals selected on the Schedule Session form
+   *  (e.g. ["housing", "food"]). Null/undefined for sessions scheduled before
+   *  this field existed or where none were selected. */
+  resourceNeeds?: string[] | null;
   /** AI-generated summary from session transcript. Null/absent when unavailable. */
   aiSummary?: string | null;
   /** ISO8601 timestamp of AI summary generation. */
@@ -1100,6 +1104,10 @@ export interface ScheduleSessionPayload {
   /** CHW's Confirmed/Pending choice. */
   schedulingStatus?: 'confirmed' | 'pending';
   notes?: string;
+  /** Epic L — resource-need verticals selected on the Schedule Session form,
+   *  replacing the old free-text `notes` field. Sent as an array (possibly
+   *  empty) so the backend always receives a well-formed list. */
+  resourceNeeds?: string[];
 }
 
 /**
@@ -1125,6 +1133,7 @@ export function useScheduleSession() {
           mode: payload.mode,
           scheduling_status: payload.schedulingStatus ?? 'confirmed',
           notes: payload.notes ?? null,
+          resource_needs: payload.resourceNeeds ?? [],
         }),
       });
       return transformKeys<SessionData>(raw);

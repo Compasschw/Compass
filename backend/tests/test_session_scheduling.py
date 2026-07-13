@@ -262,3 +262,130 @@ async def test_member_cancels_own_session(
     assert res.status_code == 200, res.text
     assert res.json()["status"] == "cancelled"
     assert await _thread_has_message(client, member_tokens, "cancelled")
+
+
+# ─── Epic L — Resource Needs replaces the free-text Notes field ─────────────
+#
+# The CHW "Schedule Session" modal no longer sends `notes`; it sends
+# `resource_needs`: a list of Vertical enum values (Housing, Food,
+# Transportation, ...). Coverage:
+#   - scheduling with resource_needs persists + returns them
+#   - an unknown vertical value is rejected (422) before the handler runs
+#   - a session predating this field (no resource_needs ever sent) still
+#     serializes cleanly with a null value — the regression case that fails
+#     on pre-change code (SessionResponse lacked the field entirely, so
+#     accessing it below would KeyError).
+
+
+@pytest.mark.asyncio
+async def test_chw_schedules_with_resource_needs_persists_and_returns_them(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    member_id = await _establish_relationship(client, member_tokens, chw_tokens)
+
+    res = await client.post(
+        "/api/v1/sessions/schedule",
+        json={
+            "member_id": member_id,
+            "scheduled_at": "2026-07-01T17:00:00Z",
+            "scheduled_end_at": "2026-07-01T18:00:00Z",
+            "mode": "phone",
+            "scheduling_status": "confirmed",
+            "resource_needs": ["housing", "food"],
+        },
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 201, res.text
+    body = res.json()
+    assert body["resource_needs"] == ["housing", "food"]
+
+    # Persisted, not just echoed — a fresh GET returns the same value.
+    res = await client.get(f"/api/v1/sessions/{body['id']}", headers=auth_header(chw_tokens))
+    assert res.status_code == 200, res.text
+    assert res.json()["resource_needs"] == ["housing", "food"]
+
+
+@pytest.mark.asyncio
+async def test_chw_schedules_with_no_resource_needs_returns_null(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    """Omitting resource_needs entirely (the field defaults to []) must not
+    error, and the stored/returned value is null — never an empty-list vs.
+    null mismatch that would trip up frontend rendering."""
+    member_id = await _establish_relationship(client, member_tokens, chw_tokens)
+
+    res = await client.post(
+        "/api/v1/sessions/schedule",
+        json={
+            "member_id": member_id,
+            "scheduled_at": "2026-07-01T17:00:00Z",
+            "mode": "phone",
+        },
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 201, res.text
+    assert res.json()["resource_needs"] is None
+
+
+@pytest.mark.asyncio
+async def test_scheduling_with_unknown_vertical_is_rejected(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    """An unrecognized resource_needs value must 422, not silently persist a
+    value the frontend's VERTICAL_LABEL map can't render."""
+    member_id = await _establish_relationship(client, member_tokens, chw_tokens)
+
+    res = await client.post(
+        "/api/v1/sessions/schedule",
+        json={
+            "member_id": member_id,
+            "scheduled_at": "2026-07-01T17:00:00Z",
+            "mode": "phone",
+            "resource_needs": ["not_a_real_vertical"],
+        },
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 422, res.text
+
+
+@pytest.mark.asyncio
+async def test_pre_epic_l_session_without_resource_needs_still_serializes(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    """A session created via the legacy POST /sessions/ path (SessionCreate has
+    no resource_needs field at all) never wrote the column — simulating a row
+    that predates Epic L. GETting it must not 500/KeyError; resource_needs
+    must serialize as null."""
+    res = await client.post(
+        "/api/v1/requests/",
+        json={
+            "vertical": "housing",
+            "urgency": "routine",
+            "description": "Need help",
+            "preferred_mode": "in_person",
+        },
+        headers=auth_header(member_tokens),
+    )
+    assert res.status_code == 201, res.text
+    request_id = res.json()["id"]
+    res = await client.patch(
+        f"/api/v1/requests/{request_id}/accept", headers=auth_header(chw_tokens)
+    )
+    assert res.status_code == 200, res.text
+
+    res = await client.post(
+        "/api/v1/sessions/",
+        json={
+            "request_id": request_id,
+            "scheduled_at": "2026-07-04T10:00:00Z",
+            "mode": "in_person",
+        },
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 201, res.text
+    session_id = res.json()["id"]
+    assert res.json()["resource_needs"] is None
+
+    res = await client.get(f"/api/v1/sessions/{session_id}", headers=auth_header(chw_tokens))
+    assert res.status_code == 200, res.text
+    assert res.json()["resource_needs"] is None

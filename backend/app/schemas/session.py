@@ -4,7 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models.enums import SessionMode
+from app.models.enums import SessionMode, Vertical
 
 # Consent types accepted by POST /sessions/{id}/consent.
 # Extend this union when new consent flows are introduced.
@@ -40,6 +40,13 @@ class ScheduleSessionRequest(BaseModel):
     mode: SessionMode = SessionMode.in_person
     scheduling_status: Literal["confirmed", "pending"] = "confirmed"
     notes: str | None = Field(default=None, max_length=2000)
+    # Epic L — replaces the free-text Notes field on the CHW "Schedule Session"
+    # form with a structured multi-select of resource-need verticals (Housing,
+    # Food, etc). Each entry is validated against the `Vertical` enum by
+    # Pydantic — an unrecognized value is rejected with a 422 before the
+    # handler ever runs. Defaults to an empty list (no resource needs
+    # selected), never None, so downstream code can always iterate it safely.
+    resource_needs: list[Vertical] = Field(default_factory=list)
 
 
 class SessionResponse(BaseModel):
@@ -54,6 +61,10 @@ class SessionResponse(BaseModel):
     scheduled_at: datetime | None
     scheduled_end_at: datetime | None = None
     scheduling_status: str | None = None
+    # Epic L — resource-need verticals selected on the Schedule Session form.
+    # None/empty for legacy sessions predating this field or where the CHW
+    # selected none; the frontend treats both as "nothing to show".
+    resource_needs: list[str] | None = None
     started_at: datetime | None
     ended_at: datetime | None
     duration_minutes: int | None

@@ -634,6 +634,7 @@ async def schedule_session(
         scheduled_end_at=data.scheduled_end_at,
         scheduling_status=scheduling_status,
         notes=data.notes,
+        resource_needs=[v.value for v in data.resource_needs] or None,
         status="scheduled",
     )
     db.add(session)
