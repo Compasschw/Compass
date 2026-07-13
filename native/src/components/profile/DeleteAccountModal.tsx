@@ -130,19 +130,20 @@ export function DeleteAccountModal({
               <Text style={styles.title}>Delete Your Account?</Text>
               <Text style={styles.body}>
                 This action{' '}
-                <Text style={styles.emphasis}>cannot be undone.</Text>
-                {' '}Your account will be permanently deactivated and all
-                personal information will be removed.
+                <Text style={styles.emphasis}>is permanent and cannot be undone.</Text>
+                {' '}Your personal information will be erased from our systems,
+                and your email address will be freed up immediately — you're
+                welcome to sign up again any time.
               </Text>
 
               <View style={styles.hipaaBox}>
-                <Text style={styles.hipaaTitle}>HIPAA Retention Notice</Text>
+                <Text style={styles.hipaaTitle}>Medi-Cal Recordkeeping Notice</Text>
                 <Text style={styles.hipaaBody}>
-                  Per federal law (45 CFR §164.530), your service history,
-                  session records, and billing claims are retained for{' '}
-                  <Text style={styles.emphasis}>6 years</Text> for audit
-                  and Medi-Cal claim purposes. This data is anonymised and
-                  cannot be used to identify you.
+                  As required for Medi-Cal billing and audit purposes, a{' '}
+                  <Text style={styles.emphasis}>de-identified</Text> record of
+                  your service and billing history is retained. No personal
+                  information is attached to it, and it can't be traced back
+                  to you.
                 </Text>
               </View>
 

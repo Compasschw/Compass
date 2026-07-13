@@ -4,7 +4,9 @@ Covers:
 - version-aware prefix deletion (versions + delete markers, batching)
 - per-bucket error isolation and unconfigured-bucket skips
 - the full DELETE /auth/users/me flow: S3 cleanup outcome lands in the
-  deletion AuditLog row and MemberDocument rows are redacted
+  HARD_DELETE AuditLog row (MemberDocument rows are hard-deleted outright by
+  account_deletion.py as of the 2026-07 Epic E4 hard-delete policy — this
+  file only asserts the S3 cleanup + audit-row wiring, not the DB rows)
 """
 
 import uuid
@@ -20,7 +22,8 @@ from app.services.s3_phi_cleanup import (
     _cleanup_sync,
     _delete_prefix_all_versions,
 )
-from tests.conftest import auth_header, test_session as _test_session_factory
+from tests.conftest import auth_header
+from tests.conftest import test_session as _test_session_factory
 
 # ---------------------------------------------------------------------------
 # _delete_prefix_all_versions
@@ -156,7 +159,7 @@ async def test_auth_users_me_deletion_records_s3_cleanup_in_audit_row(
     client: AsyncClient, member_tokens: dict
 ):
     """The service deletion flow must run the S3 cleanup and persist its
-    outcome (including failures) in the SELF_DELETE audit row."""
+    outcome (including failures) in the HARD_DELETE audit row."""
     canned = PhiCleanupResult(
         objects_deleted={"member_documents": 3, "message_attachments": 1},
         skipped_unconfigured=["legacy_phi"],
@@ -179,10 +182,10 @@ async def test_auth_users_me_deletion_records_s3_cleanup_in_audit_row(
 
     async with _test_session_factory() as db:
         result = await db.execute(
-            select(AuditLog).where(AuditLog.action == "SELF_DELETE")
+            select(AuditLog).where(AuditLog.action == "HARD_DELETE")
         )
         audit_row = result.scalars().first()
-        assert audit_row is not None, "SELF_DELETE audit row must exist"
+        assert audit_row is not None, "HARD_DELETE audit row must exist"
         cleanup_details = audit_row.details["s3_phi_cleanup"]
         assert cleanup_details["objects_deleted"] == {
             "member_documents": 3,

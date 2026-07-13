@@ -583,12 +583,20 @@ class _DeleteAccountBody(BaseModel):
 @router.delete(
     "/users/me",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Permanently delete (anonymise) the authenticated user's account",
+    summary="Permanently and irrecoverably delete the authenticated user's account",
     description=(
-        "Soft-deletes and anonymises the caller's account. "
-        "All PII is overwritten with anonymised sentinel values. "
-        "Service records, sessions, and billing claims are retained for "
-        "the HIPAA-mandated 6-year audit window (45 CFR §164.530(j)). "
+        "Hard-deletes the caller's account and all member-owned PHI. "
+        "MemberProfile, sessions, messages, documents, case notes, and every "
+        "other member-owned data row are permanently removed from the "
+        "database — this cannot be undone. The `users` row itself is kept "
+        "(scrubbed to a non-identifying tombstone in place) only because a "
+        "small number of append-only ledger tables carry a database-level "
+        "RESTRICT constraint that blocks removing it outright; no PII "
+        "survives on that row. "
+        "The original email address is freed immediately for re-registration. "
+        "Billing claims and audit-log rows are retained for the HIPAA "
+        "6-year audit window (45 CFR §164.530(j)) but no longer resolve to "
+        "any identifying information. "
         "After deletion the account cannot be recovered via magic-link or "
         "password-reset flows because is_active is set to false and the "
         "password hash is cleared. "
@@ -604,7 +612,7 @@ async def delete_account(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> None:
-    """Delete the authenticated user's account (soft-delete + anonymisation).
+    """Hard-delete the authenticated user's account and all member-owned PHI.
 
     Security:
     - JWT auth (via current_user dependency) confirms the caller is the
@@ -616,6 +624,10 @@ async def delete_account(
 
     Returns 204 No Content on success (idempotent — also 204 if already deleted).
     Returns 401 if a password is supplied but does not match.
+    Returns 500 (never a bare unhandled crash) if the hard-delete transaction
+    fails partway through — the session is rolled back so the account is left
+    fully intact; see app/services/account_deletion.py's transactionality
+    guarantee and tests/test_account_deactivation.py::TestHardDeleteTransactionality.
     """
     from app.services.account_deletion import execute_account_deletion
     from app.utils.security import verify_password
@@ -640,14 +652,33 @@ async def delete_account(
 
     ip_address: str | None = request.client.host if request.client else None
     user_agent: str | None = request.headers.get("user-agent")
+    # Captured before the try block: after a rollback, `current_user` is an
+    # expired ORM instance, and accessing an attribute on it would trigger a
+    # lazy-load (implicit IO) outside the SQLAlchemy async greenlet context,
+    # raising MissingGreenlet instead of the intended clean HTTPException.
+    user_id_for_logging = current_user.id
 
-    await execute_account_deletion(
-        db=db,
-        user=current_user,
-        ip_address=ip_address,
-        user_agent=user_agent,
-    )
-    await db.commit()
+    try:
+        await execute_account_deletion(
+            db=db,
+            user=current_user,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        await db.commit()
+    except Exception as exc:
+        # execute_account_deletion never commits internally, so a rollback
+        # here undoes every row-scrub/DELETE issued during this attempt —
+        # the account is left fully intact. Never let a bare exception
+        # surface as an unhandled 500 with no CORS headers (TESTING.md rule 3).
+        await db.rollback()
+        logger.exception(
+            "delete_account.hard_delete_failed user_id=%s", user_id_for_logging
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Account deletion failed and was rolled back: {type(exc).__name__}: {exc}",
+        ) from exc
 
 
 # ─── Magic Link (passwordless) ────────────────────────────────────────────────
