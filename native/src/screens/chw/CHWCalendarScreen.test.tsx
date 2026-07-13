@@ -486,6 +486,17 @@ describe('CHWCalendarScreen — Pending Session Requests "Propose New Time"', ()
     );
   });
 
+  it('offers only Phone and In-Person session types — Video is not selectable', async () => {
+    renderScreen();
+    await openProposeModal();
+
+    // Product decision 2026-07-14: Video removed from NEW-session selection on
+    // both the CHW and member sides (legacy virtual sessions still render).
+    expect(screen.getByText('Phone')).toBeTruthy();
+    expect(screen.getByText('In-Person')).toBeTruthy();
+    expect(screen.queryByText('Video')).toBeNull();
+  });
+
   it('submits schedulingStatus "pending" with the new time, THEN declines the original session', async () => {
     renderScreen();
     await openProposeModal();
