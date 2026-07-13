@@ -33,6 +33,7 @@ import asyncpg
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select, text
+from sqlalchemy.engine.url import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 os.environ.setdefault("DISABLE_RATE_LIMIT", "1")
@@ -54,8 +55,24 @@ os.environ.setdefault("ADMIN_KEY", "test-admin-key-for-pytest-1234")
 from app.database import Base, get_db  # noqa: E402
 from app.main import app  # noqa: E402
 
-ADMIN_PG_URL = "postgresql://compass:compass_dev_password@localhost:5432/postgres"
-TEST_Q_SQLALCHEMY_URL = "postgresql+asyncpg://compass:compass_dev_password@localhost:5432/compass_test_q"
+# Derive the isolated-DB URLs from DATABASE_URL so this file works both
+# locally (default compass_dev_password credentials) AND in CI, where the
+# postgres service uses different credentials (see .github/workflows/ci.yml —
+# hardcoding local creds here made collection crash CI with
+# InvalidPasswordError). Only the database NAME is swapped; credentials/host
+# always follow the environment.
+_BASE_DB_URL = make_url(
+    os.environ.get(
+        "DATABASE_URL",
+        "postgresql+asyncpg://compass:compass_dev_password@localhost:5432/compass_test",
+    )
+)
+ADMIN_PG_URL = _BASE_DB_URL.set(
+    drivername="postgresql", database="postgres"
+).render_as_string(hide_password=False)
+TEST_Q_SQLALCHEMY_URL = _BASE_DB_URL.set(
+    drivername="postgresql+asyncpg", database="compass_test_q"
+).render_as_string(hide_password=False)
 
 q_isolated_engine = create_async_engine(TEST_Q_SQLALCHEMY_URL, echo=False)
 q_isolated_session = async_sessionmaker(q_isolated_engine, class_=AsyncSession, expire_on_commit=False)
