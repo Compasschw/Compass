@@ -62,6 +62,8 @@ import {
   useChwClaims,
   useChwMembers,
   useCHWIntake,
+  useChwProfile,
+  useTestimonialSummary,
   type SessionData,
   type ServiceRequestData,
   type ChwClaim,
@@ -449,6 +451,12 @@ export function CHWDashboardScreen(): React.JSX.Element {
   const membersQuery  = useChwMembers();
   // intake banner — keep so the incomplete-intake nudge still renders
   const intakeQuery   = useCHWIntake();
+  // Own CHW profile — needed to resolve the userId for the rating-summary
+  // lookup below (the testimonials endpoint is keyed by CHW user UUID).
+  const chwProfileQuery = useChwProfile();
+  // Real "member satisfaction" — avg + count of this CHW's APPROVED
+  // Testimonial rows. Replaces the previous hardcoded "4.9" SnapshotBox.
+  const testimonialSummaryQuery = useTestimonialSummary(chwProfileQuery.data?.userId ?? '');
 
   const isLoading =
     sessionsQuery.isLoading ||
@@ -464,7 +472,17 @@ export function CHWDashboardScreen(): React.JSX.Element {
     void earningsQuery.refetch();
     void claimsQuery.refetch();
     void membersQuery.refetch();
-  }, [sessionsQuery, requestsQuery, earningsQuery, claimsQuery, membersQuery]);
+    void chwProfileQuery.refetch();
+    void testimonialSummaryQuery.refetch();
+  }, [
+    sessionsQuery,
+    requestsQuery,
+    earningsQuery,
+    claimsQuery,
+    membersQuery,
+    chwProfileQuery,
+    testimonialSummaryQuery,
+  ]);
 
   const refresh = useRefreshControl([
     sessionsQuery.refetch,
@@ -473,6 +491,8 @@ export function CHWDashboardScreen(): React.JSX.Element {
     claimsQuery.refetch,
     membersQuery.refetch,
     intakeQuery.refetch,
+    chwProfileQuery.refetch,
+    testimonialSummaryQuery.refetch,
   ]);
 
   const allSessions  = sessionsQuery.data  ?? [];
@@ -571,6 +591,17 @@ export function CHWDashboardScreen(): React.JSX.Element {
       .reduce((sum, c) => sum + (c.units ?? 0), 0);
     return fromClaims > 0 ? fromClaims : 0;
   }, [allClaims, weekStart]);
+
+  /**
+   * Real member satisfaction — avg + count of this CHW's APPROVED Testimonial
+   * rows (GET /chws/{chw_id}/testimonials/summary). Never fabricated: the
+   * SnapshotBox below falls back to an explicit "No ratings yet" state when
+   * ratingCount is 0 (new CHW, or no approved reviews yet).
+   */
+  const memberSatisfactionRatingAvg = testimonialSummaryQuery.data?.ratingAvg ?? null;
+  const memberSatisfactionRatingCount = testimonialSummaryQuery.data?.ratingCount ?? 0;
+  const hasMemberSatisfactionRatings =
+    memberSatisfactionRatingCount > 0 && memberSatisfactionRatingAvg != null;
 
   // ── Recent activity ──────────────────────────────────────────────────────────
 
@@ -802,13 +833,19 @@ export function CHWDashboardScreen(): React.JSX.Element {
                 delta="v2 feature"
                 deltaColor={tokens.textSecondary}
               />
-              {/* Member satisfaction — no endpoint available yet.
-                  Static 4.9 for visual parity with the mockup.
-                  TODO: wire when /chw/stats/satisfaction ships. */}
+              {/* Member satisfaction — real avg + count of APPROVED
+                  Testimonial rows for this CHW. Never a fabricated number:
+                  shows "No ratings yet" until the CHW has at least one
+                  approved rating. */}
               <SnapshotBox
                 label="Member satisfaction"
-                value="4.9"
-                delta="stable"
+                value={hasMemberSatisfactionRatings ? memberSatisfactionRatingAvg!.toFixed(1) : '—'}
+                delta={
+                  hasMemberSatisfactionRatings
+                    ? `${memberSatisfactionRatingCount} review${memberSatisfactionRatingCount === 1 ? '' : 's'}`
+                    : 'No ratings yet'
+                }
+                deltaColor={hasMemberSatisfactionRatings ? undefined : tokens.textSecondary}
               />
             </View>
           </Card>
