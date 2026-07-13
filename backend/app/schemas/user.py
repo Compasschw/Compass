@@ -1,7 +1,7 @@
 from datetime import date
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.cin_config import validate_cin_for_carrier as _validate_cin
 
@@ -50,7 +50,10 @@ class CHWProfileUpdate(BaseModel):
     name: str | None = None
     specializations: list[str] | None = None
     languages: list[str] | None = None
-    bio: str | None = None
+    # Epic C3: capped at 120 chars to keep CHW profile cards scannable.
+    # Enforced client-side (native/CHWProfileScreen) and here — an over-long
+    # bio is rejected with 422 rather than silently truncated/stored.
+    bio: str | None = Field(default=None, max_length=120)
     zip_code: str | None = None
     is_available: bool | None = None
     # Optional: update the User.profile_picture_url after a presigned-URL upload.

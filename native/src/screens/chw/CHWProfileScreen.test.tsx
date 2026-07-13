@@ -9,6 +9,10 @@
  *    useUpdateChwAvailability (useApiQueries.ts) already has an onError alert
  *    but no user-facing success feedback, so this fills that gap. A failed
  *    save must NOT show the confirmation (covered separately).
+ *  - C3: the Bio field is capped at 120 characters (maxLength on the input,
+ *    plus a live "N/120" counter) — enforced here client-side; the API
+ *    schema (CHWProfileUpdate.bio, backend/app/schemas/user.py) enforces the
+ *    same cap server-side (see backend/tests/test_chw_profile_bio_length.py).
  *
  * Only the network boundary (`../../api/client`), auth context, and
  * navigation hook are mocked (Tier 2 — jsdom + react-native-web, see
@@ -195,5 +199,25 @@ describe('CHWProfileScreen — Epic C profile edits', () => {
     // moment to flush, then assert the confirmation never rendered.
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(screen.queryByText('Availability saved ✓')).toBeNull();
+  });
+
+  it('caps the Bio input at 120 characters and shows a live "N/120" counter (C3)', async () => {
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByText('Bio')).toBeTruthy());
+    fireEvent.click(screen.getByLabelText('Edit Bio'));
+
+    const input = screen.getByLabelText('Bio') as HTMLTextAreaElement;
+    expect(input.maxLength).toBe(120);
+
+    // Initial counter reflects the fixture bio's current length.
+    expect(
+      screen.getByText(`${CHW_PROFILE_FIXTURE.bio.length}/120`),
+    ).toBeTruthy();
+
+    // Counter updates live as the draft changes.
+    const nextBio = 'A shorter bio.';
+    fireEvent.change(input, { target: { value: nextBio } });
+    expect(screen.getByText(`${nextBio.length}/120`)).toBeTruthy();
   });
 });
