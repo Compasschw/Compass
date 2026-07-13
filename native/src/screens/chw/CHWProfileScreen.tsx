@@ -19,9 +19,7 @@
  *        `useChwEarnings` (earnings bottom card).
  *
  * Stubbed fields (backend ChwProfile shape does not expose them yet):
- *   - modality (in_person / virtual / hybrid)
  *   - availableDays (mon…sun chips)
- *   - serviceAreaZips (comma-separated; only zipCode is available)
  *   - additionalLanguages (ChwProfile.languages[1+] used as a proxy)
  *   - primaryLanguage (ChwProfile.languages[0] used as a proxy)
  *
@@ -134,16 +132,6 @@ const DAY_LABELS: Record<DayKey, string> = {
 };
 
 const ALL_DAYS: DayKey[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
-
-type Modality = 'in_person' | 'virtual' | 'hybrid';
-
-const MODALITY_LABELS: Record<Modality, string> = {
-  in_person: 'In Person',
-  virtual:   'Virtual',
-  hybrid:    'Hybrid',
-};
-
-const ALL_MODALITIES: Modality[] = ['in_person', 'virtual', 'hybrid'];
 
 // ─── Background check (mirrors backend _BACKGROUND_CHECK_STATUSES) ─────────────
 type BackgroundCheckStatus = 'not_started' | 'pending' | 'clear' | 'consider';
@@ -663,7 +651,6 @@ export function CHWProfileScreen(): React.JSX.Element {
   );
 
   // Stubbed fields — not yet in ChwProfile shape.
-  const [modality, setModality]       = useState<Modality>('hybrid');
   const [availableDays, setAvailableDays] = useState<DayKey[]>(['mon', 'tue', 'wed', 'thu', 'fri']);
 
   // ── Availability (working hours) — wired to GET/PUT /chw/availability ────────
@@ -672,6 +659,21 @@ export function CHWProfileScreen(): React.JSX.Element {
   const [workStart, setWorkStart] = useState('09:00');
   const [workEnd, setWorkEnd] = useState('17:00');
   const availabilityLoadedRef = useRef(false);
+
+  // Transient "Availability saved ✓" confirmation shown next to the Save
+  // Availability button. useUpdateChwAvailability already surfaces failures
+  // via its onError alert (useApiQueries.ts) — this fills the missing
+  // success-side feedback so a save doesn't look like a no-op.
+  const [availabilitySaved, setAvailabilitySaved] = useState(false);
+  const availabilitySavedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Clear any pending confirmation-hide timer on unmount to avoid setting
+  // state on an unmounted component.
+  useEffect(() => {
+    return () => {
+      if (availabilitySavedTimerRef.current) clearTimeout(availabilitySavedTimerRef.current);
+    };
+  }, []);
 
   // Load the saved windows into the editor once (days + a single hours window).
   useEffect(() => {
@@ -695,6 +697,12 @@ export function CHWProfileScreen(): React.JSX.Element {
     for (const d of availableDays) windows[d] = `${workStart}-${workEnd}`;
     try {
       await updateAvailability.mutateAsync(windows);
+      // Success feedback next to the button — fades on its own after 3s.
+      // Reset any in-flight hide-timer so back-to-back saves each get the
+      // full display duration instead of an early cutoff.
+      if (availabilitySavedTimerRef.current) clearTimeout(availabilitySavedTimerRef.current);
+      setAvailabilitySaved(true);
+      availabilitySavedTimerRef.current = setTimeout(() => setAvailabilitySaved(false), 3_000);
     } catch {
       // useUpdateChwAvailability surfaces the error via its onError alert.
     }
@@ -894,14 +902,14 @@ export function CHWProfileScreen(): React.JSX.Element {
                         onSave={(v) => handleSaveField('Phone', { phone: v })}
                       />
                       <EditableField
-                        label="Service Area ZIPs"
+                        label="ZIP Code"
                         value={profile?.zipCode ?? ''}
-                        placeholder="90033, 90031, 90032"
+                        placeholder="90033"
                         keyboardType="default"
                         isEditing={editingField === 'serviceAreaZips'}
                         onEditStart={() => setEditingField('serviceAreaZips')}
                         onEditCancel={() => setEditingField(null)}
-                        onSave={(v) => handleSaveField('Service Area ZIPs', { zipCode: v.split(',')[0]?.trim() ?? v })}
+                        onSave={(v) => handleSaveField('ZIP Code', { zipCode: v.split(',')[0]?.trim() ?? v })}
                       />
                       <EditableField
                         label="Primary Language"
@@ -954,43 +962,6 @@ export function CHWProfileScreen(): React.JSX.Element {
                         onSave={(v) => handleSaveField('Bio', { bio: v })}
                       />
 
-                      {/* Modality radio chips — stubbed (no backend field yet) */}
-                      <View style={profileStyles.chipsSection}>
-                        <Text style={profileStyles.chipsSectionLabel}>Modality</Text>
-                        <View style={chipStyles.row}>
-                          {ALL_MODALITIES.map((m) => {
-                            const isSelected = modality === m;
-                            return (
-                              <Pressable
-                                key={m}
-                                onPress={() => setModality(m)}
-                                accessibilityRole="radio"
-                                accessibilityState={{ checked: isSelected }}
-                                accessibilityLabel={MODALITY_LABELS[m]}
-                                style={[
-                                  chipStyles.chip,
-                                  isSelected
-                                    ? { backgroundColor: '#10B98120', borderColor: '#10B981' }
-                                    : chipStyles.chipInactive,
-                                ]}
-                              >
-                                <Text
-                                  style={[
-                                    chipStyles.chipText,
-                                    { color: isSelected ? '#10B981' : '#6B7280' },
-                                  ]}
-                                >
-                                  {MODALITY_LABELS[m]}
-                                </Text>
-                              </Pressable>
-                            );
-                          })}
-                        </View>
-                        <Text style={profileStyles.stubNote}>
-                          Modality preference — saved locally until backend field ships
-                        </Text>
-                      </View>
-
                       {/* Availability — wired to /chw/availability. Members can
                           only book slots inside these days + hours. */}
                       <View style={profileStyles.chipsSection}>
@@ -1027,20 +998,31 @@ export function CHWProfileScreen(): React.JSX.Element {
                           24-hour time (e.g. 09:00–17:00). Members can only book
                           slots within your available days + hours.
                         </Text>
-                        <Pressable
-                          onPress={() => void handleSaveAvailability()}
-                          disabled={updateAvailability.isPending}
-                          style={[
-                            availStyles.saveBtn,
-                            updateAvailability.isPending && { opacity: 0.6 },
-                          ]}
-                          accessibilityRole="button"
-                          accessibilityLabel="Save availability"
-                        >
-                          <Text style={availStyles.saveBtnText}>
-                            {updateAvailability.isPending ? 'Saving…' : 'Save availability'}
-                          </Text>
-                        </Pressable>
+                        <View style={availStyles.saveRow}>
+                          <Pressable
+                            onPress={() => void handleSaveAvailability()}
+                            disabled={updateAvailability.isPending}
+                            style={[
+                              availStyles.saveBtn,
+                              updateAvailability.isPending && { opacity: 0.6 },
+                            ]}
+                            accessibilityRole="button"
+                            accessibilityLabel="Save availability"
+                          >
+                            <Text style={availStyles.saveBtnText}>
+                              {updateAvailability.isPending ? 'Saving…' : 'Save availability'}
+                            </Text>
+                          </Pressable>
+                          {availabilitySaved ? (
+                            <Text
+                              style={availStyles.savedConfirmation}
+                              accessibilityRole="alert"
+                              accessibilityLiveRegion="polite"
+                            >
+                              Availability saved ✓
+                            </Text>
+                          ) : null}
+                        </View>
                       </View>
                     </View>
                   </View>
@@ -1648,7 +1630,6 @@ const availStyles = StyleSheet.create({
     color: '#6B7280',
   },
   saveBtn: {
-    marginTop: 12,
     alignSelf: 'flex-start',
     backgroundColor: '#10B981',
     paddingHorizontal: 18,
@@ -1659,5 +1640,20 @@ const availStyles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '600',
+  },
+  saveRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginTop: 12,
+  },
+  // C4: transient confirmation shown next to "Save availability" on success.
+  // Cleared automatically ~3s after a successful save (see
+  // handleSaveAvailability / availabilitySavedTimerRef).
+  savedConfirmation: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#15803d',
   },
 });
