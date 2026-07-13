@@ -4,24 +4,28 @@
  *
  * Two render variants, chosen by the caller based on viewport width:
  *
- *   'pane'  — Wide desktop (see `SDOH_PANEL_PANE_BREAKPOINT`). Renders as a
- *             fixed-width, in-flow flex column — a genuine 4th pane alongside
- *             [ThreadListPane] [ConversationPane] [MemberContextRail]. No
- *             backdrop. The thread stays visible/interactive and every rail
- *             control (including "Add Case Note") stays reachable, because
- *             this panel is a sibling of the rail, never an overlay on top of
- *             it. This is the primary, non-blocking design the feature asked
- *             for.
+ *   'pane'  — Whenever CHWMessagesScreen's member-context rail is visible
+ *             (width >= `BP_HIDE_RAIL`). Renders as a fixed-width, in-flow
+ *             flex column — a genuine 4th pane alongside [ThreadListPane]
+ *             [ConversationPane] [MemberContextRail]. No backdrop. The
+ *             thread stays visible/interactive and every rail control
+ *             (including "Add Case Note") stays reachable, because this
+ *             panel is a sibling of the rail, never an overlay on top of it.
+ *             On widths too narrow to fit all 4 columns at once
+ *             (`BP_HIDE_RAIL` <= width < `SDOH_PANEL_PANE_BREAKPOINT`),
+ *             CHWMessagesScreen temporarily collapses the (lower-priority)
+ *             thread-list pane to reclaim the room instead of falling back
+ *             to 'sheet' — see its `collapseListForSdoh`. This is the
+ *             primary, non-blocking design the feature asked for.
  *
- *   'sheet' — Narrow web / native fallback, where there usually isn't a
- *             visible rail to sit beside (see CHWMessagesScreen's
- *             `BP_HIDE_RAIL`). Renders as a dismissible, fixed-position
- *             overlay with a backdrop — the same on-brand look as
- *             `CaseNoteModal` / `OpenQuestionsDrawer`'s narrow mode. This is
- *             a deliberate, documented tradeoff: on these widths the panel
- *             temporarily covers the thread while open (tap the backdrop or
- *             the X to dismiss and return to it). There simply isn't room for
- *             a 4th column below the pane breakpoint.
+ *   'sheet' — Only when the rail itself is hidden (width < `BP_HIDE_RAIL`),
+ *             where there is no rail to sit beside in the first place.
+ *             Renders as a dismissible, fixed-position overlay with a
+ *             backdrop — the same on-brand look as `OpenQuestionsDrawer`'s
+ *             narrow mode. This is a deliberate, documented tradeoff: on
+ *             these widths the panel temporarily covers the thread while
+ *             open (tap the backdrop or the X to dismiss and return to it).
+ *             There simply isn't room for a 4th column this narrow.
  *
  * Persistence: this component owns NO answer-saving logic. Bootstrapping
  * (fetch template + start/resume the assessment) is `useAssessmentBootstrap`;
