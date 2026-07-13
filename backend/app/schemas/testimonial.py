@@ -12,6 +12,8 @@ PublicTestimonial         — stripped for the CHW Profile public display;
 AdminTestimonialView      — full row + member_name for admin moderation queue
 AdminModerateBody         — admin action body (approve | reject + optional notes)
 TestimonialSummary        — aggregate { rating_avg, rating_count } for CHW summary header
+TestimonialPrompt          — Epic B2: the single most-recent completed-but-unrated
+                            session, surfaced to the member as a rating nudge
 """
 
 from __future__ import annotations
@@ -179,4 +181,28 @@ class TestimonialSummary(BaseModel):
     )
     rating_count: int = Field(
         description="Number of approved testimonials contributing to the average.",
+    )
+
+
+class TestimonialPrompt(BaseModel):
+    """Epic B2: a single completed-but-unrated session, surfaced to the
+    member so the frontend can show a "How was your session?" star-rating
+    prompt (see GET /api/v1/testimonials/prompts).
+
+    Only ever describes ONE session — the member's single most-recent
+    completed session (within the staleness cutoff, see the router module
+    docstring) that has no Testimonial row yet. This deliberately caps the
+    signal at one prompt at a time so the member is never stacked with
+    multiple rating requests.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    session_id: uuid.UUID
+    chw_id: uuid.UUID
+    chw_name: str
+    scheduled_at: datetime | None = Field(
+        description="The session's scheduled_at timestamp, for display "
+                    "context (e.g. 'your session on Tuesday'). Nullable "
+                    "because Session.scheduled_at itself is nullable.",
     )

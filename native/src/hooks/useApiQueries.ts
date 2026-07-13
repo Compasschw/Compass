@@ -17,7 +17,13 @@ import { transformKeys, toSnakeCase } from '../utils/caseTransform';
 import { showAlert } from '../utils/showAlert';
 import { withSessionStarted, withStartedAtForSession } from '../utils/sessionStartOptimistic';
 import { getSessionAISummary, type AISummaryResponse } from '../api/sessions';
-import { getTestimonialSummary, type TestimonialSummary } from '../api/testimonials';
+import {
+  getTestimonialSummary,
+  submitTestimonial,
+  type Testimonial,
+  type TestimonialCreatePayload,
+  type TestimonialSummary,
+} from '../api/testimonials';
 
 // ─── Types (camelCase, matching what screens expect) ─────────────────────────
 
@@ -539,6 +545,12 @@ export const queryKeys = {
    * value — see GET /chws/{chw_id}/testimonials/summary.
    */
   testimonialSummary: (chwId: string) => ['chws', chwId, 'testimonials', 'summary'] as const,
+  /**
+   * Epic B2: the member's single most-recent completed-but-unrated session,
+   * if any — drives the post-session star-rating prompt on the member home
+   * screen. See GET /api/v1/testimonials/prompts.
+   */
+  testimonialPrompt: ['testimonials', 'prompts'] as const,
   /** CHW caseload journey list from GET /chw/journeys. */
   chwJourneys: ['chw', 'journeys'] as const,
   /** CHW members roster from GET /chw/members. */
@@ -879,6 +891,66 @@ export function useTestimonialSummary(chwId: string) {
     queryFn: async (): Promise<TestimonialSummary> => getTestimonialSummary(chwId),
     enabled: chwId.length > 0,
     staleTime: 60_000, // 1 min — ratings change slowly; avoid refetch storms
+  });
+}
+
+/**
+ * Epic B2: the member's single most-recent completed session that has no
+ * testimonial yet — GET /api/v1/testimonials/prompts. Drives the "How was
+ * your session?" star-rating prompt on the member home screen.
+ *
+ * `data` is `null` when there is nothing to prompt for (no unrated session,
+ * or the only unrated session aged past the backend's staleness cutoff —
+ * see PROMPT_STALE_CUTOFF_DAYS in backend/app/routers/testimonials.py).
+ * Never throws for the "nothing to show" case — that's a valid 200 response,
+ * not an error — so callers only need to branch on `data` being present.
+ */
+export interface TestimonialPrompt {
+  sessionId: string;
+  chwId: string;
+  chwName: string;
+  scheduledAt: string | null;
+}
+
+export function useTestimonialPrompt() {
+  return useQuery({
+    queryKey: queryKeys.testimonialPrompt,
+    queryFn: async (): Promise<TestimonialPrompt | null> => {
+      const raw = await api<Record<string, unknown> | null>('/testimonials/prompts');
+      if (raw === null) return null;
+      return transformKeys<TestimonialPrompt>(raw);
+    },
+    staleTime: 30_000,
+  });
+}
+
+/**
+ * Epic B2: submit the post-session star rating from the member-home prompt.
+ * Thin wrapper around the existing `submitTestimonial` API call (the SAME
+ * POST /sessions/{id}/testimonials endpoint RateChwModal uses — source
+ * stays 'session', rating stays required) so this mutation is purely
+ * additive: it does not change the endpoint's contract, only adds a second
+ * caller.
+ *
+ * On success, invalidates the prompts query so the prompt disappears (the
+ * backend's own no-testimonial-yet condition now excludes this session).
+ * Does NOT show a global alert — MemberHomeScreen owns presenting a
+ * non-blocking inline error on failure, matching the useChangePassword
+ * pattern (see its docstring for the same rationale).
+ */
+export function useSubmitTestimonial() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      sessionId,
+      payload,
+    }: {
+      sessionId: string;
+      payload: TestimonialCreatePayload;
+    }): Promise<Testimonial> => submitTestimonial(sessionId, payload),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.testimonialPrompt });
+    },
   });
 }
 

@@ -21,17 +21,30 @@ Coverage
 17. CHW JWT cannot POST a testimonial (403 — role guard)
 18. Admin key required for admin endpoints (missing key → 403)
 
+Epic B2 — GET /api/v1/testimonials/prompts
+-------------------------------------------
+19. Returns the completed, unrated session
+20. Returns null after a testimonial exists for that session
+21. Excludes sessions older than the 14-day staleness cutoff
+22. Excludes non-completed sessions (scheduled/in_progress)
+23. Member-only: CHW caller → 403
+24. Member-only: unauthenticated caller → 401
+25. Returns only the single most-recent unrated session when several exist
+26. Regression: the existing session-testimonial POST flow is unaffected
+    by the new endpoint (rating still required, still 201)
+
 All tests run against a live PostgreSQL test database via the shared conftest.
 No mocks — full request → router → ORM → commit path.
 """
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import AsyncClient
 
+from app.routers.testimonials import PROMPT_STALE_CUTOFF_DAYS
 from tests.conftest import auth_header, complete_member_signup_payload
 
 
@@ -71,9 +84,13 @@ async def _create_completed_session(
     client: AsyncClient,
     member_tokens: dict,
     chw_tokens: dict,
+    scheduled_at: datetime | None = None,
 ) -> str:
     """Create a service request, have the CHW accept it, create a session,
     then mark it completed. Returns the session UUID string.
+
+    ``scheduled_at`` defaults to "now" when omitted; callers testing the
+    Epic B2 prompt staleness cutoff pass an explicit past/future timestamp.
     """
     # Member creates a request.
     res = await client.post(
@@ -102,7 +119,7 @@ async def _create_completed_session(
         json={
             "request_id": request_id,
             "mode": "in_person",
-            "scheduled_at": datetime.now(UTC).isoformat(),
+            "scheduled_at": (scheduled_at or datetime.now(UTC)).isoformat(),
         },
         headers=auth_header(chw_tokens),
     )
@@ -735,3 +752,213 @@ async def test_moderate_unknown_testimonial_returns_404(
         headers=admin_auth_header(),
     )
     assert res.status_code == 404, res.text
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Epic B2 — GET /api/v1/testimonials/prompts
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+# ─── 19. Returns the completed, unrated session ──────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_prompt_returns_completed_unrated_session(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_tokens: dict,
+) -> None:
+    """A completed session with no testimonial yet is surfaced as a prompt."""
+    session_id = await _create_completed_session(client, member_tokens, chw_tokens)
+
+    res = await client.get(
+        "/api/v1/testimonials/prompts",
+        headers=auth_header(member_tokens),
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body is not None
+    assert body["session_id"] == session_id
+    assert body["chw_name"] == "Test CHW"
+    assert "chw_id" in body
+    assert "scheduled_at" in body
+
+
+# ─── 20. Returns null after a testimonial exists ──────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_prompt_returns_null_after_testimonial_submitted(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_tokens: dict,
+) -> None:
+    """Once the member has rated the session, it must stop being prompted."""
+    session_id = await _create_completed_session(client, member_tokens, chw_tokens)
+
+    # Confirm the prompt exists before rating.
+    res = await client.get(
+        "/api/v1/testimonials/prompts",
+        headers=auth_header(member_tokens),
+    )
+    assert res.json() is not None
+
+    # Submit the testimonial (existing flow, unchanged).
+    submit_res = await _submit_testimonial(client, member_tokens, session_id, rating=5)
+    assert submit_res.status_code == 201, submit_res.text
+
+    # Prompt must now be gone.
+    res2 = await client.get(
+        "/api/v1/testimonials/prompts",
+        headers=auth_header(member_tokens),
+    )
+    assert res2.status_code == 200, res2.text
+    assert res2.json() is None
+
+
+# ─── 21. Excludes sessions older than the 14-day cutoff ───────────────────────
+
+
+@pytest.mark.asyncio
+async def test_prompt_excludes_sessions_older_than_14_days(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_tokens: dict,
+) -> None:
+    """A completed session scheduled >14 days ago must not be prompted."""
+    stale_scheduled_at = datetime.now(UTC) - timedelta(days=PROMPT_STALE_CUTOFF_DAYS + 1)
+    await _create_completed_session(
+        client, member_tokens, chw_tokens, scheduled_at=stale_scheduled_at
+    )
+
+    res = await client.get(
+        "/api/v1/testimonials/prompts",
+        headers=auth_header(member_tokens),
+    )
+    assert res.status_code == 200, res.text
+    assert res.json() is None
+
+
+@pytest.mark.asyncio
+async def test_prompt_includes_session_just_inside_14_day_cutoff(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_tokens: dict,
+) -> None:
+    """A session scheduled just inside the cutoff (boundary) is still prompted."""
+    recent_scheduled_at = datetime.now(UTC) - timedelta(days=PROMPT_STALE_CUTOFF_DAYS - 1)
+    session_id = await _create_completed_session(
+        client, member_tokens, chw_tokens, scheduled_at=recent_scheduled_at
+    )
+
+    res = await client.get(
+        "/api/v1/testimonials/prompts",
+        headers=auth_header(member_tokens),
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body is not None
+    assert body["session_id"] == session_id
+
+
+# ─── 22. Excludes non-completed sessions ───────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_prompt_excludes_scheduled_session(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_tokens: dict,
+) -> None:
+    """A session still in 'scheduled' status must not be prompted."""
+    await _create_scheduled_session(client, member_tokens, chw_tokens)
+
+    res = await client.get(
+        "/api/v1/testimonials/prompts",
+        headers=auth_header(member_tokens),
+    )
+    assert res.status_code == 200, res.text
+    assert res.json() is None
+
+
+# ─── 23/24. Member-only gate ───────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_prompt_chw_caller_returns_403(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_tokens: dict,
+) -> None:
+    """A CHW JWT on the prompts endpoint must return 403 (role gate)."""
+    await _create_completed_session(client, member_tokens, chw_tokens)
+
+    res = await client.get(
+        "/api/v1/testimonials/prompts",
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 403, res.text
+
+
+@pytest.mark.asyncio
+async def test_prompt_unauthenticated_returns_401(client: AsyncClient) -> None:
+    """No Authorization header on the prompts endpoint must return 401."""
+    res = await client.get("/api/v1/testimonials/prompts")
+    assert res.status_code == 401, res.text
+
+
+# ─── 25. Only the single most-recent unrated session is returned ─────────────
+
+
+@pytest.mark.asyncio
+async def test_prompt_returns_only_most_recent_when_multiple_unrated(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_tokens: dict,
+) -> None:
+    """With two unrated completed sessions, only the most-recent is prompted
+    (one prompt at a time — see PROMPT_STALE_CUTOFF_DAYS docstring)."""
+    older_at = datetime.now(UTC) - timedelta(days=5)
+    newer_at = datetime.now(UTC) - timedelta(days=1)
+
+    await _create_completed_session(client, member_tokens, chw_tokens, scheduled_at=older_at)
+    newer_session_id = await _create_completed_session(
+        client, member_tokens, chw_tokens, scheduled_at=newer_at
+    )
+
+    res = await client.get(
+        "/api/v1/testimonials/prompts",
+        headers=auth_header(member_tokens),
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body is not None
+    assert body["session_id"] == newer_session_id
+
+
+# ─── 26. Regression: existing session-testimonial POST flow unaffected ───────
+
+
+@pytest.mark.asyncio
+async def test_prompt_endpoint_does_not_affect_existing_submit_flow(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_tokens: dict,
+) -> None:
+    """Adding GET /testimonials/prompts must not change the POST endpoint's
+    rating-required contract — omitting rating still 422s, and a valid
+    submission still 201s exactly as before."""
+    session_id = await _create_completed_session(client, member_tokens, chw_tokens)
+
+    # Omitting rating entirely still fails schema validation (422).
+    res_missing_rating = await client.post(
+        f"/api/v1/sessions/{session_id}/testimonials",
+        json={"text": "No rating supplied"},
+        headers=auth_header(member_tokens),
+    )
+    assert res_missing_rating.status_code == 422, res_missing_rating.text
+
+    # A valid submission still succeeds exactly as before.
+    res = await _submit_testimonial(client, member_tokens, session_id, rating=4, text="Still works")
+    assert res.status_code == 201, res.text
+    assert res.json()["rating"] == 4

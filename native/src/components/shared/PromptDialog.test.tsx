@@ -162,4 +162,92 @@ describe('PromptDialog', () => {
     const input = screen.getByLabelText('Feedback') as HTMLTextAreaElement | HTMLInputElement;
     expect(input.maxLength).toBe(120);
   });
+
+  // ── Epic B2: star-rating field variant (additive) ────────────────────────
+
+  const STAR_FIELDS: PromptDialogField[] = [
+    { key: 'rating', label: 'Your rating', type: 'star' },
+  ];
+
+  it('renders 5 stars by default for a type:"star" field', () => {
+    render(<ControlledPromptDialog onConfirm={vi.fn()} fields={STAR_FIELDS} />);
+
+    for (let i = 1; i <= 5; i += 1) {
+      expect(screen.getByLabelText(`${i} star${i === 1 ? '' : 's'}`)).toBeTruthy();
+    }
+    // No 6th star.
+    expect(screen.queryByLabelText('6 stars')).toBeNull();
+  });
+
+  it('renders a custom star count via maxStars', () => {
+    const threeStarField: PromptDialogField[] = [
+      { key: 'rating', label: 'Your rating', type: 'star', maxStars: 3 },
+    ];
+    render(<ControlledPromptDialog onConfirm={vi.fn()} fields={threeStarField} />);
+
+    expect(screen.getByLabelText('3 stars')).toBeTruthy();
+    expect(screen.queryByLabelText('4 stars')).toBeNull();
+  });
+
+  it('selects a star rating via onChangeValue and fills stars 1..N up to the selection', () => {
+    render(<ControlledPromptDialog onConfirm={vi.fn()} fields={STAR_FIELDS} />);
+
+    fireEvent.click(screen.getByLabelText('4 stars'));
+
+    // Selecting the 4th star fills stars 1-4 (fill=amber) and leaves 5 unfilled.
+    const filledColor = 'rgb(180, 83, 9)'; // tokens.amber700 (#b45309), as returned by the SVG stub
+    for (let i = 1; i <= 4; i += 1) {
+      const label = `${i} star${i === 1 ? '' : 's'}`;
+      const svg = screen.getByLabelText(label).querySelector('svg');
+      expect(svg?.getAttribute('fill')).toBe('#b45309');
+    }
+    const fifthSvg = screen.getByLabelText('5 stars').querySelector('svg');
+    expect(fifthSvg?.getAttribute('fill')).toBe('transparent');
+  });
+
+  it('submits the selected star rating through onConfirm/values (rating + optional text)', () => {
+    const onConfirm = vi.fn();
+    const fieldsWithText: PromptDialogField[] = [
+      { key: 'rating', label: 'Your rating', type: 'star' },
+      { key: 'text', label: 'Tell us more (optional)', maxLength: 120, multiline: true },
+    ];
+    render(<ControlledPromptDialog onConfirm={onConfirm} fields={fieldsWithText} />);
+
+    fireEvent.click(screen.getByLabelText('5 stars'));
+    fireEvent.change(screen.getByLabelText('Tell us more (optional)'), {
+      target: { value: 'Great session!' },
+    });
+    fireEvent.click(screen.getByLabelText('Update password')); // shared confirm button in this harness
+
+    expect(onConfirm).toHaveBeenCalledOnce();
+    // Values are owned by the caller (ControlledPromptDialog here) — verify
+    // the underlying inputs reflect what would be submitted.
+    const fifthSvg = screen.getByLabelText('5 stars').querySelector('svg');
+    expect(fifthSvg?.getAttribute('fill')).toBe('#b45309');
+    expect(screen.getByLabelText('Tell us more (optional)')).toHaveProperty(
+      'value',
+      'Great session!',
+    );
+  });
+
+  it('shows a field-level error under the star row (e.g. "Please select a rating")', () => {
+    const starFieldWithError: PromptDialogField[] = [
+      { key: 'rating', label: 'Your rating', type: 'star', errorText: 'Please select a rating.' },
+    ];
+    render(<ControlledPromptDialog onConfirm={vi.fn()} fields={starFieldWithError} />);
+
+    expect(screen.getByText('Please select a rating.')).toBeTruthy();
+  });
+
+  it('disables star buttons while submitting', () => {
+    render(<ControlledPromptDialog onConfirm={vi.fn()} fields={STAR_FIELDS} submitting />);
+
+    const star = screen.getByLabelText('3 stars');
+    expect(star.getAttribute('aria-disabled')).toBe('true');
+  });
+
+  it('does not render a star row for fields that omit type (G2/B3-compatible default)', () => {
+    render(<ControlledPromptDialog onConfirm={vi.fn()} />);
+    expect(screen.queryByRole('radiogroup')).toBeNull();
+  });
 });

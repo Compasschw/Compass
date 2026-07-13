@@ -18,6 +18,19 @@
  * exactly as before (single-line, uncapped), so Epic G2's password prompt
  * usage and tests are unaffected.
  *
+ * Epic B2 added an opt-in `type: 'star'` field variant (with `maxStars`,
+ * default 5) for the post-session rating prompt — a row of tappable
+ * `lucide-react-native` Star icons rendered instead of a TextInput. The
+ * selected count is still stored as a STRING in `values`/`onChangeValue`
+ * (e.g. `'4'`) to keep the component's single value contract; callers
+ * `Number(...)` it back out. Each star has its own accessibilityRole="radio"
+ * + accessibilityLabel ("N stars") inside an accessibilityRole="radiogroup"
+ * wrapper, and responds to a plain press (mouse click / tap / Enter-on-focus
+ * via the underlying Pressable-in-TouchableOpacity semantics on web) — no
+ * drag gesture required. Fields that omit `type` (every existing G2/B3
+ * caller) are completely unaffected — they still render as a TextInput.
+ *
+
  * Visual language matches `AppDialogProvider` (src/components/shared/
  * AppDialogProvider.tsx) — the same `showAlert()` dialog every other
  * in-app popup uses: `rgba(15, 23, 42, 0.45)` scrim, white card, emerald
@@ -60,6 +73,7 @@ import {
   type KeyboardTypeOptions,
   type TextInputProps,
 } from 'react-native';
+import { Star } from 'lucide-react-native';
 
 import { colors as tokens, radius, shadows, spacing } from '../../theme/tokens';
 
@@ -82,6 +96,20 @@ export interface PromptDialogField {
    *  Additive — omit for an uncapped field with no counter (Epic G2's
    *  password fields are unaffected). */
   maxLength?: number;
+  /**
+   * Epic B2: renders a 1-5 tappable star-rating row instead of a text
+   * input when set to `'star'`. Additive/opt-in — omit (the default) for
+   * every existing text-field usage (G2 password prompt, B3 closure-review
+   * text field), which render exactly as before.
+   *
+   * The field's value in `values`/`onChangeValue` is still a string (the
+   * component's shared value contract), holding the selected star count
+   * as `''` (unset) or `'1'`..`'5'`. Callers coerce with `Number(...)`
+   * when reading it back out for submission.
+   */
+  type?: 'text' | 'star';
+  /** Star count for the `'star'` field type. Defaults to 5. */
+  maxStars?: number;
 }
 
 export interface PromptDialogProps {
@@ -145,6 +173,49 @@ export function PromptDialog({
           <View style={styles.fields}>
             {fields.map((field) => {
               const currentValue = values[field.key] ?? '';
+
+              if (field.type === 'star') {
+                const maxStars = field.maxStars ?? 5;
+                const selected = Number(currentValue) || 0;
+                return (
+                  <View key={field.key} style={styles.field}>
+                    <Text style={styles.fieldLabel}>{field.label}</Text>
+                    <View
+                      style={styles.starRow}
+                      accessibilityRole="radiogroup"
+                      accessibilityLabel={field.label}
+                    >
+                      {Array.from({ length: maxStars }, (_, idx) => {
+                        const starValue = idx + 1;
+                        const filled = starValue <= selected;
+                        return (
+                          <TouchableOpacity
+                            key={starValue}
+                            onPress={() => onChangeValue(field.key, String(starValue))}
+                            disabled={submitting}
+                            style={styles.starButton}
+                            accessibilityRole="radio"
+                            accessibilityState={{ checked: filled, disabled: submitting }}
+                            accessibilityLabel={`${starValue} star${starValue === 1 ? '' : 's'}`}
+                            testID={`${testID ?? 'prompt-dialog'}-star-${starValue}`}
+                          >
+                            <Star
+                              size={32}
+                              color={filled ? tokens.amber700 : tokens.textSecondary}
+                              fill={filled ? tokens.amber700 : 'transparent'}
+                              strokeWidth={1.5}
+                            />
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                    {field.errorText ? (
+                      <Text style={styles.fieldErrorText}>{field.errorText}</Text>
+                    ) : null}
+                  </View>
+                );
+              }
+
               return (
                 <View key={field.key} style={styles.field}>
                   <Text style={styles.fieldLabel}>{field.label}</Text>
@@ -276,6 +347,14 @@ const styles = StyleSheet.create({
   },
   inputError: {
     borderColor: tokens.red700,
+  },
+  // ── Epic B2: star-rating field variant ──────────────────────────────────
+  starRow: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+  },
+  starButton: {
+    padding: 4,
   },
   fieldCounter: {
     fontFamily: 'PlusJakartaSans_400Regular',

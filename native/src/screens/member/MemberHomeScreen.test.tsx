@@ -104,12 +104,37 @@ let changePasswordBehavior: 'success' | 'wrong-current' | 'weak' | null = 'succe
 let changePasswordRequestBodies: Array<{ current_password: string; new_password: string }> = [];
 /** Controls what POST /sessions/schedule does for the Propose New Time flow. */
 let scheduleShouldFail = false;
+/** Epic B2: controls what GET /testimonials/prompts returns. */
+let testimonialPromptResponse: unknown = null;
+/** Epic B2: controls what POST /sessions/{id}/testimonials does for the next call. */
+let submitTestimonialBehavior: 'success' | 'error' = 'success';
+let submitTestimonialRequestBodies: Array<{ rating: number; text: string | null }> = [];
 
 function routeApi(path: string, options?: { method?: string; body?: string }): unknown {
   const method = options?.method ?? 'GET';
 
   if (path === '/member/profile' && method === 'GET') {
     return memberProfileFixture;
+  }
+  if (path === '/testimonials/prompts' && method === 'GET') {
+    return testimonialPromptResponse;
+  }
+  if (path.endsWith('/testimonials') && method === 'POST') {
+    const body = JSON.parse(options?.body ?? '{}') as { rating: number; text: string | null };
+    submitTestimonialRequestBodies.push(body);
+    if (submitTestimonialBehavior === 'error') {
+      throw new ApiError(500, 'Could not submit your rating.');
+    }
+    return {
+      id: 'testimonial-1',
+      chw_id: CHW_ID,
+      member_id: MEMBER_USER_ID,
+      session_id: (testimonialPromptResponse as { session_id?: string } | null)?.session_id ?? 'sess-rated-1',
+      rating: body.rating,
+      text: body.text,
+      status: 'pending',
+      created_at: new Date().toISOString(),
+    };
   }
   if (path.startsWith('/sessions/') && method === 'GET') {
     return sessionsResponse;
@@ -204,6 +229,9 @@ beforeEach(() => {
   changePasswordBehavior = 'success';
   changePasswordRequestBodies = [];
   scheduleShouldFail = false;
+  testimonialPromptResponse = null;
+  submitTestimonialBehavior = 'success';
+  submitTestimonialRequestBodies = [];
   mockedApi.mockReset();
   mockedApi.mockImplementation(async (path: string, options?: { method?: string; body?: string }) =>
     routeApi(path, options),
@@ -528,5 +556,141 @@ describe('MemberHomeScreen — Pending Session Requests widget', () => {
     // The widget still renders underneath/alongside the gate — the gate is a
     // sibling overlay, not something the widget can suppress or reorder.
     expect(await screen.findByLabelText(`Approve request from ${CHW_NAME}`)).toBeTruthy();
+  });
+});
+
+// ─── Post-session star-rating prompt (Epic B2) ──────────────────────────────
+//
+// Reads GET /testimonials/prompts on load; if a session is returned AND the
+// G2 password gate is not showing, renders a dismissable PromptDialog with
+// a required star field + optional 120-char text field. Submit → POST
+// /sessions/{id}/testimonials (existing endpoint). "Maybe later" dismisses
+// for this app session only (module-level Set in MemberHomeScreen.tsx — NOT
+// persisted storage), so each test below uses a DISTINCT session id to avoid
+// cross-test pollution from that module-level state persisting across tests
+// within this file's single module instance.
+
+function buildTestimonialPromptFixture(sessionId: string, overrides: Record<string, unknown> = {}) {
+  return {
+    session_id: sessionId,
+    chw_id: CHW_ID,
+    chw_name: CHW_NAME,
+    scheduled_at: '2026-06-20T10:00:00.000Z',
+    ...overrides,
+  };
+}
+
+function selectStar(count: number): void {
+  fireEvent.click(screen.getByLabelText(`${count} star${count === 1 ? '' : 's'}`));
+}
+
+describe('MemberHomeScreen — post-session star-rating prompt (Epic B2)', () => {
+  it('shows the rating prompt when GET /testimonials/prompts returns a session', async () => {
+    testimonialPromptResponse = buildTestimonialPromptFixture('sess-prompt-b2-1');
+
+    renderScreen();
+
+    expect(
+      await screen.findByText(`How was your session with ${CHW_NAME}?`),
+    ).toBeTruthy();
+    expect(screen.getByLabelText('Your rating')).toBeTruthy();
+    expect(screen.getByLabelText('Tell us more (optional)')).toBeTruthy();
+  });
+
+  it('does not show the rating prompt when GET /testimonials/prompts returns null', async () => {
+    testimonialPromptResponse = null;
+
+    renderScreen();
+
+    // Loaded-state signal: the "not matched" placeholder confirms the screen
+    // finished loading before we assert the prompt's absence.
+    await screen.findByText(/haven.t been matched with a CHW yet/i);
+    expect(screen.queryByText(/How was your session with/)).toBeNull();
+  });
+
+  it('submits the selected star rating + text to POST /sessions/{id}/testimonials', async () => {
+    const sessionId = 'sess-prompt-b2-2';
+    testimonialPromptResponse = buildTestimonialPromptFixture(sessionId);
+
+    renderScreen();
+
+    await screen.findByText(`How was your session with ${CHW_NAME}?`);
+    selectStar(5);
+    fireEvent.change(screen.getByLabelText('Tell us more (optional)'), {
+      target: { value: 'Really helpful session.' },
+    });
+    fireEvent.click(screen.getByLabelText('Submit'));
+
+    await waitFor(() => {
+      expect(submitTestimonialRequestBodies).toEqual([
+        { rating: 5, text: 'Really helpful session.' },
+      ]);
+    });
+    await waitFor(() => {
+      expect(
+        mockedApi.mock.calls.some(
+          ([path, opts]) =>
+            path === `/sessions/${sessionId}/testimonials` &&
+            (opts as { method?: string })?.method === 'POST',
+        ),
+      ).toBe(true);
+    });
+  });
+
+  it('requires a star rating before submit (does not call the API without one)', async () => {
+    testimonialPromptResponse = buildTestimonialPromptFixture('sess-prompt-b2-3');
+
+    renderScreen();
+
+    await screen.findByText(/How was your session with/);
+    fireEvent.click(screen.getByLabelText('Submit'));
+
+    expect(await screen.findByText('Please select a star rating.')).toBeTruthy();
+    expect(
+      mockedApi.mock.calls.some(([path]) => path === '/sessions/sess-prompt-b2-3/testimonials'),
+    ).toBe(false);
+  });
+
+  it('"Maybe later" dismisses the prompt without calling the submit API', async () => {
+    testimonialPromptResponse = buildTestimonialPromptFixture('sess-prompt-b2-4');
+
+    renderScreen();
+
+    await screen.findByText(`How was your session with ${CHW_NAME}?`);
+    fireEvent.click(screen.getByLabelText('Maybe later'));
+
+    await waitFor(() => {
+      expect(screen.queryByText(`How was your session with ${CHW_NAME}?`)).toBeNull();
+    });
+    expect(
+      mockedApi.mock.calls.some(([path]) => (path as string).endsWith('/testimonials')),
+    ).toBe(false);
+  });
+
+  it('surfaces a non-blocking inline error on submit failure and keeps the prompt open', async () => {
+    testimonialPromptResponse = buildTestimonialPromptFixture('sess-prompt-b2-5');
+    submitTestimonialBehavior = 'error';
+
+    renderScreen();
+
+    await screen.findByText(`How was your session with ${CHW_NAME}?`);
+    selectStar(3);
+    fireEvent.click(screen.getByLabelText('Submit'));
+
+    expect(await screen.findByText('Could not submit your rating.')).toBeTruthy();
+    // The prompt remains open — a failed submit is not fatal/blocking.
+    expect(screen.getByText(`How was your session with ${CHW_NAME}?`)).toBeTruthy();
+  });
+
+  it('never stacks the rating prompt over the G2 password gate — the gate wins', async () => {
+    memberProfileFixture = buildMemberProfileFixture({ must_change_password: true });
+    testimonialPromptResponse = buildTestimonialPromptFixture('sess-prompt-b2-6');
+
+    renderScreen();
+
+    expect(await screen.findByText('Set your password')).toBeTruthy();
+    // The rating prompt must NOT be visible while the mandatory gate is up,
+    // even though GET /testimonials/prompts returned a session to prompt.
+    expect(screen.queryByText(`How was your session with ${CHW_NAME}?`)).toBeNull();
   });
 });

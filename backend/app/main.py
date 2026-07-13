@@ -163,6 +163,9 @@ from app.routers.testimonials import (
     member_router as testimonials_member_router,
 )
 from app.routers.testimonials import (
+    prompts_router as testimonials_prompts_router,
+)
+from app.routers.testimonials import (
     public_router as testimonials_public_router,
 )
 from app.routers.transcript import router as transcript_router
@@ -212,6 +215,7 @@ app.include_router(assessments_router)
 app.include_router(testimonials_admin_router)   # /api/v1/admin/testimonials/...
 app.include_router(testimonials_member_router)  # /api/v1/sessions/{id}/testimonials
 app.include_router(testimonials_public_router)  # /api/v1/chws/{id}/testimonials[/summary]
+app.include_router(testimonials_prompts_router)  # /api/v1/testimonials/prompts (Epic B2)
 
 # ─── Resource Folder routes ────────────────────────────────────────────────────
 # Registration order matters: the static suggestion queue routes must be
