@@ -110,7 +110,13 @@ async def register_user(
                     setattr(profile, key, value)
         db.add(profile)
     elif role == "chw":
-        db.add(CHWProfile(user_id=user.id))
+        # Epic D: background_check_status starts "pending" (not the column's
+        # DB-level default "not_started") — a new CHW account immediately
+        # enters the review queue rather than sitting in an unstarted state
+        # that looks identical to "nobody has looked at this yet". Only the
+        # admin-only PATCH /admin/chws/{id}/background-check endpoint can
+        # move it forward from here.
+        db.add(CHWProfile(user_id=user.id, background_check_status="pending"))
     # Other roles (admin) don't need a profile row.
 
     if commit:

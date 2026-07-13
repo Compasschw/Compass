@@ -22,6 +22,7 @@
  * and mutation wiring, not a hand-rolled hook mock.
  */
 import React from 'react';
+import { Alert } from 'react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -86,6 +87,26 @@ const EARNINGS_FIXTURE = {
   sessions_this_week: 4,
 };
 
+/** Epic D — full 5-item checklist fixture, all missing by default (a fresh
+ * CHW). Individual tests override via mockedApi.mockImplementation. */
+const CHECKLIST_FIXTURE_ALL_MISSING = {
+  can_work: false,
+  missing: [
+    'hipaa_training',
+    'professional_service_agreement',
+    'liability_insurance',
+    'chw_certification',
+    'background_check',
+  ],
+  items: [
+    { code: 'hipaa_training', status: 'missing' },
+    { code: 'professional_service_agreement', status: 'missing' },
+    { code: 'liability_insurance', status: 'missing' },
+    { code: 'chw_certification', status: 'missing' },
+    { code: 'background_check', status: 'pending' },
+  ],
+};
+
 /** Routes the mocked `api()` calls by path/method so every hook the screen
  * fires (profile, availability, earnings, conversations for AppShell) gets a
  * sane response instead of an unhandled rejection. */
@@ -98,6 +119,7 @@ function installApiRouter(): void {
     if (path === '/chw/availability' && method === 'PUT') return AVAILABILITY_FIXTURE;
     if (path.startsWith('/chw/earnings')) return EARNINGS_FIXTURE;
     if (path.startsWith('/conversations')) return [];
+    if (path === '/credentials/checklist' && method === 'GET') return CHECKLIST_FIXTURE_ALL_MISSING;
     return {};
   });
 }
@@ -222,6 +244,135 @@ describe('CHWProfileScreen — Epic C profile edits', () => {
   });
 });
 
+describe('CHWProfileScreen — Compliance checklist (Epic D)', () => {
+  it('renders all 5 checklist items with their status chips', async () => {
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByText('Compliance')).toBeTruthy());
+
+    expect(screen.getByText('HIPAA Training')).toBeTruthy();
+    expect(screen.getByText('Professional Service Agreement')).toBeTruthy();
+    expect(screen.getByText('Professional Liability Insurance')).toBeTruthy();
+    expect(screen.getByText('CHW Certification')).toBeTruthy();
+    expect(screen.getByText('Background Check')).toBeTruthy();
+
+    // 4 "Missing" chips (the 4 document types) + 1 "Pending" chip (background check).
+    expect(screen.getAllByText('Missing').length).toBe(4);
+    expect(screen.getByText('Pending')).toBeTruthy();
+  });
+
+  it('renders verified/rejected/pending status chips correctly per item', async () => {
+    mockedApi.mockImplementation(async (path: string, init?: RequestInit) => {
+      const method = init?.method ?? 'GET';
+      if (path === '/chw/profile' && method === 'GET') return CHW_PROFILE_FIXTURE;
+      if (path === '/chw/availability' && method === 'GET') return AVAILABILITY_FIXTURE;
+      if (path.startsWith('/chw/earnings')) return EARNINGS_FIXTURE;
+      if (path.startsWith('/conversations')) return [];
+      if (path === '/credentials/checklist' && method === 'GET') {
+        return {
+          can_work: false,
+          missing: ['liability_insurance'],
+          items: [
+            { code: 'hipaa_training', status: 'verified' },
+            { code: 'professional_service_agreement', status: 'pending' },
+            { code: 'liability_insurance', status: 'rejected' },
+            { code: 'chw_certification', status: 'verified' },
+            { code: 'background_check', status: 'clear' },
+          ],
+        };
+      }
+      return {};
+    });
+
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByText('Compliance')).toBeTruthy());
+    expect(screen.getAllByText('Verified').length).toBe(2);
+    expect(screen.getByText('Rejected')).toBeTruthy();
+    expect(screen.getByText('Clear')).toBeTruthy();
+  });
+
+  it('does not show an Upload button for an already-verified item', async () => {
+    mockedApi.mockImplementation(async (path: string, init?: RequestInit) => {
+      const method = init?.method ?? 'GET';
+      if (path === '/chw/profile' && method === 'GET') return CHW_PROFILE_FIXTURE;
+      if (path === '/chw/availability' && method === 'GET') return AVAILABILITY_FIXTURE;
+      if (path.startsWith('/chw/earnings')) return EARNINGS_FIXTURE;
+      if (path.startsWith('/conversations')) return [];
+      if (path === '/credentials/checklist' && method === 'GET') {
+        return {
+          can_work: false,
+          missing: [],
+          items: [{ code: 'hipaa_training', status: 'verified' }],
+        };
+      }
+      return {};
+    });
+
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByText('Compliance')).toBeTruthy());
+    expect(screen.queryByLabelText('Upload HIPAA Training')).toBeNull();
+  });
+
+  it('shows a "Re-upload" button (not "Upload") for a rejected item', async () => {
+    mockedApi.mockImplementation(async (path: string, init?: RequestInit) => {
+      const method = init?.method ?? 'GET';
+      if (path === '/chw/profile' && method === 'GET') return CHW_PROFILE_FIXTURE;
+      if (path === '/chw/availability' && method === 'GET') return AVAILABILITY_FIXTURE;
+      if (path.startsWith('/chw/earnings')) return EARNINGS_FIXTURE;
+      if (path.startsWith('/conversations')) return [];
+      if (path === '/credentials/checklist' && method === 'GET') {
+        return {
+          can_work: false,
+          missing: ['hipaa_training'],
+          items: [{ code: 'hipaa_training', status: 'rejected' }],
+        };
+      }
+      return {};
+    });
+
+    renderScreen();
+
+    const uploadBtn = await screen.findByLabelText('Upload HIPAA Training');
+    expect(uploadBtn.textContent).toContain('Re-upload');
+  });
+
+  it('renders the guidance link for HIPAA training', async () => {
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByText('Compliance')).toBeTruthy());
+    expect(screen.getByLabelText('Complete free HIPAA training')).toBeTruthy();
+  });
+
+  it('shows a "mobile app required" alert instead of attempting upload on web', async () => {
+    const alertSpy = vi.spyOn(Alert, 'alert').mockImplementation(() => {});
+    renderScreen();
+
+    const uploadBtn = await screen.findByLabelText('Upload HIPAA Training');
+    fireEvent.click(uploadBtn);
+
+    await waitFor(() => expect(alertSpy).toHaveBeenCalled());
+    expect(alertSpy.mock.calls[0][0]).toBe('Mobile app required');
+    // No credential submit call should have been attempted.
+    expect(mockedApi).not.toHaveBeenCalledWith(
+      '/credentials/hipaa_training',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    alertSpy.mockRestore();
+  });
+
+  it('does not render the old self-editable background-check chip picker', async () => {
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByText('Compliance')).toBeTruthy());
+    // The old UI exposed radio-role chips labelled "Not Started"/"Clear"/etc.
+    // for the CHW to set their own background check status — removed because
+    // it let a CHW self-approve. Only the read-only status chip should exist.
+    expect(screen.queryByRole('radio')).toBeNull();
+  });
+});
+
 describe('CHWProfileScreen — Specializations picker (Epic C5: Housing → Utilities)', () => {
   it('offers "Utilities" as a selectable specialization chip, not "Housing"', async () => {
     renderScreen();
@@ -244,6 +395,7 @@ describe('CHWProfileScreen — Specializations picker (Epic C5: Housing → Util
       if (path === '/chw/availability' && method === 'PUT') return AVAILABILITY_FIXTURE;
       if (path.startsWith('/chw/earnings')) return EARNINGS_FIXTURE;
       if (path.startsWith('/conversations')) return [];
+      if (path === '/credentials/checklist' && method === 'GET') return CHECKLIST_FIXTURE_ALL_MISSING;
       return {};
     });
 

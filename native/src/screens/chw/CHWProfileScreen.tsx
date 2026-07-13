@@ -34,7 +34,9 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -48,14 +50,20 @@ import {
   type TextStyle,
 } from 'react-native';
 import {
+  CheckCircle2,
+  Clock,
   DollarSign,
   Download,
+  ExternalLink,
+  FileText,
   Globe,
   HelpCircle,
   Mail,
   MessageSquare,
   Shield,
   Trash2,
+  Upload,
+  XCircle,
 } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
 
@@ -67,7 +75,12 @@ import {
   useUpdateChwProfile,
   useChwEarnings,
   useDeleteAccount,
+  useChwChecklist,
+  useSubmitChecklistCredential,
+  type ChwChecklistItemCode,
+  type ChwChecklistItemStatus,
 } from '../../hooks/useApiQueries';
+import { uploadFile } from '../../api/upload';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { AppShell, PageHeader, Card, ProfilePictureEditor } from '../../components/ui';
 import { colors as tokens } from '../../theme/tokens';
@@ -142,29 +155,219 @@ const DAY_LABELS: Record<DayKey, string> = {
 
 const ALL_DAYS: DayKey[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 
-// ─── Background check (mirrors backend _BACKGROUND_CHECK_STATUSES) ─────────────
-type BackgroundCheckStatus = 'not_started' | 'pending' | 'clear' | 'consider';
+// ─── Compliance checklist (Epic D) ─────────────────────────────────────────────
+//
+// Replaces the old self-editable "Background Check" chip picker (removed —
+// a CHW could previously set their own background_check_status to "clear",
+// which is now admin-only via PATCH /admin/chws/{id}/background-check).
+//
+// Mirrors backend/app/routers/credentials.py's _CREDENTIAL_TYPE_META constants
+// and app/services/chw_compliance.py's ALL_REQUIREMENT_CODES. Single source of
+// display copy/links so ops can update wording/URLs in one place.
 
-const BACKGROUND_CHECK_OPTIONS: BackgroundCheckStatus[] = [
-  'not_started',
-  'pending',
-  'clear',
-  'consider',
+/** External link / asset placeholders — swap the real URL here only. */
+const HIPAA_TRAINING_LINK = 'https://joincompasschw.com/resources/hipaa-training';
+const LIABILITY_INSURANCE_LINK = 'https://joincompasschw.com/resources/liability-insurance';
+const CHW_ATTESTATION_FORM_LINK = 'https://joincompasschw.com/resources/chw-attestation-form';
+
+interface ChecklistItemMeta {
+  code: ChwChecklistItemCode;
+  title: string;
+  copy: string;
+  linkLabel?: string;
+  linkUrl?: string;
+  /** True for the 4 document-upload types; false for background_check
+   * (no CHW-facing upload UI — status is admin-controlled only). */
+  uploadable: boolean;
+}
+
+const CHECKLIST_ITEMS: ChecklistItemMeta[] = [
+  {
+    code: 'hipaa_training',
+    title: 'HIPAA Training',
+    copy: 'Upload your HIPAA training certificate, or complete a free HIPAA training first.',
+    linkLabel: 'Complete free HIPAA training',
+    linkUrl: HIPAA_TRAINING_LINK,
+    uploadable: true,
+  },
+  {
+    code: 'professional_service_agreement',
+    title: 'Professional Service Agreement',
+    copy: 'Please sign the Professional Service Agreement and upload.',
+    uploadable: true,
+  },
+  {
+    code: 'liability_insurance',
+    title: 'Professional Liability Insurance',
+    copy: 'Upload your professional liability insurance, or purchase a policy first.',
+    linkLabel: 'Purchase a policy',
+    linkUrl: LIABILITY_INSURANCE_LINK,
+    uploadable: true,
+  },
+  {
+    code: 'chw_certification',
+    title: 'CHW Certification',
+    copy: 'Upload your CHW certificate, or download the Attestation Form and fill it out before uploading it.',
+    linkLabel: 'Download the Attestation Form',
+    linkUrl: CHW_ATTESTATION_FORM_LINK,
+    uploadable: true,
+  },
+  {
+    code: 'background_check',
+    title: 'Background Check',
+    copy: 'Your background check is reviewed by Compass. No action is needed from you unless we reach out.',
+    uploadable: false,
+  },
 ];
 
-const BACKGROUND_CHECK_LABELS: Record<BackgroundCheckStatus, string> = {
-  not_started: 'Not Started',
-  pending:     'Pending',
-  clear:       'Clear',
-  consider:    'Consider',
+/** Status chip copy/colour, keyed by the raw status string returned by the
+ * backend (shared across both the 4 document-upload states and the 4
+ * background_check states — the two enums don't overlap in value). */
+const CHECKLIST_STATUS_META: Record<
+  ChwChecklistItemStatus,
+  { label: string; color: string; bg: string; Icon: typeof CheckCircle2 }
+> = {
+  missing:     { label: 'Missing',     color: '#6B7280', bg: '#F3F4F6', Icon: FileText },
+  pending:     { label: 'Pending',     color: '#F59E0B', bg: '#FFFBEB', Icon: Clock },
+  verified:    { label: 'Verified',    color: '#10B981', bg: '#ECFDF5', Icon: CheckCircle2 },
+  rejected:    { label: 'Rejected',    color: '#EF4444', bg: '#FEF2F2', Icon: XCircle },
+  not_started: { label: 'Not Started', color: '#6B7280', bg: '#F3F4F6', Icon: FileText },
+  clear:       { label: 'Clear',       color: '#10B981', bg: '#ECFDF5', Icon: CheckCircle2 },
+  consider:    { label: 'Consider',    color: '#EF4444', bg: '#FEF2F2', Icon: XCircle },
 };
 
-const BACKGROUND_CHECK_COLORS: Record<BackgroundCheckStatus, string> = {
-  not_started: '#6B7280', // gray
-  pending:     '#F59E0B', // amber
-  clear:       '#10B981', // green
-  consider:    '#EF4444', // red
-};
+interface ChecklistItemRowProps {
+  meta: ChecklistItemMeta;
+  status: ChwChecklistItemStatus;
+  onUpload: (code: Exclude<ChwChecklistItemCode, 'background_check'>) => void;
+  uploading: boolean;
+}
+
+function ChecklistItemRow({
+  meta,
+  status,
+  onUpload,
+  uploading,
+}: ChecklistItemRowProps): React.JSX.Element {
+  const statusMeta = CHECKLIST_STATUS_META[status];
+  const StatusIcon = statusMeta.Icon;
+  const canUpload = meta.uploadable && status !== 'verified';
+
+  return (
+    <View style={checklistStyles.row}>
+      <View style={checklistStyles.rowHeader}>
+        <Text style={checklistStyles.title}>{meta.title}</Text>
+        <View
+          style={[checklistStyles.statusChip, { backgroundColor: statusMeta.bg }]}
+          accessibilityLabel={`${meta.title} status: ${statusMeta.label}`}
+        >
+          <StatusIcon size={12} color={statusMeta.color} />
+          <Text style={[checklistStyles.statusChipText, { color: statusMeta.color }]}>
+            {statusMeta.label}
+          </Text>
+        </View>
+      </View>
+      <Text style={checklistStyles.copy}>{meta.copy}</Text>
+      <View style={checklistStyles.actions}>
+        {meta.linkUrl != null && meta.linkLabel != null && (
+          <Pressable
+            onPress={() => void Linking.openURL(meta.linkUrl!).catch(() => null)}
+            accessibilityRole="link"
+            accessibilityLabel={meta.linkLabel}
+            style={checklistStyles.linkButton}
+          >
+            <ExternalLink size={12} color="#2563EB" />
+            <Text style={checklistStyles.linkText}>{meta.linkLabel}</Text>
+          </Pressable>
+        )}
+        {canUpload && (
+          <Pressable
+            onPress={() => onUpload(meta.code as Exclude<ChwChecklistItemCode, 'background_check'>)}
+            disabled={uploading}
+            accessibilityRole="button"
+            accessibilityLabel={`Upload ${meta.title}`}
+            style={checklistStyles.uploadButton}
+          >
+            {uploading ? (
+              <ActivityIndicator size="small" color="#10B981" />
+            ) : (
+              <>
+                <Upload size={12} color="#10B981" />
+                <Text style={checklistStyles.uploadButtonText}>
+                  {status === 'missing' ? 'Upload' : 'Re-upload'}
+                </Text>
+              </>
+            )}
+          </Pressable>
+        )}
+      </View>
+    </View>
+  );
+}
+
+const checklistStyles = StyleSheet.create({
+  row: {
+    paddingVertical:   14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+    gap:               6,
+  } as ViewStyle,
+  rowHeader: {
+    flexDirection:  'row',
+    alignItems:     'center',
+    justifyContent: 'space-between',
+    gap:            8,
+  } as ViewStyle,
+  title: {
+    fontSize:   14,
+    fontWeight: '600',
+    color:      '#111827',
+    flex:       1,
+  } as TextStyle,
+  statusChip: {
+    flexDirection:     'row',
+    alignItems:        'center',
+    gap:               4,
+    paddingHorizontal: 8,
+    paddingVertical:   3,
+    borderRadius:      999,
+  } as ViewStyle,
+  statusChipText: {
+    fontSize:   11,
+    fontWeight: '700',
+  } as TextStyle,
+  copy: {
+    fontSize:   12,
+    color:      '#6B7280',
+    lineHeight: 17,
+  } as TextStyle,
+  actions: {
+    flexDirection: 'row',
+    alignItems:    'center',
+    gap:           16,
+    marginTop:     2,
+  } as ViewStyle,
+  linkButton: {
+    flexDirection: 'row',
+    alignItems:    'center',
+    gap:           4,
+  } as ViewStyle,
+  linkText: {
+    fontSize:   12,
+    fontWeight: '600',
+    color:      '#2563EB',
+  } as TextStyle,
+  uploadButton: {
+    flexDirection: 'row',
+    alignItems:    'center',
+    gap:           4,
+  } as ViewStyle,
+  uploadButtonText: {
+    fontSize:   12,
+    fontWeight: '700',
+    color:      '#10B981',
+  } as TextStyle,
+});
 
 // ─── TabBar ───────────────────────────────────────────────────────────────────
 
@@ -659,6 +862,8 @@ export function CHWProfileScreen(): React.JSX.Element {
   const profileQuery = useChwProfile();
   const updateProfile = useUpdateChwProfile();
   const earningsQuery = useChwEarnings();
+  const checklistQuery = useChwChecklist();
+  const submitChecklistCredential = useSubmitChecklistCredential();
 
   const chwInitials = (userName ?? 'C')
     .split(' ')
@@ -774,6 +979,59 @@ export function CHWProfileScreen(): React.JSX.Element {
       }
     },
     [updateProfile],
+  );
+
+  // ── Compliance checklist upload (Epic D) ─────────────────────────────────
+  //
+  // Native-only, mirroring CredentialUploadModal's documented constraint: the
+  // presigned-PUT + FormData flow has inconsistent CORS behaviour on web and
+  // has not been validated end-to-end there, so web users see a "use the
+  // mobile app" message instead of a broken upload attempt.
+  const [uploadingChecklistCode, setUploadingChecklistCode] = useState<
+    Exclude<ChwChecklistItemCode, 'background_check'> | null
+  >(null);
+
+  const handleUploadChecklistItem = useCallback(
+    async (code: Exclude<ChwChecklistItemCode, 'background_check'>) => {
+      if (Platform.OS === 'web') {
+        Alert.alert(
+          'Mobile app required',
+          'Document uploads must be done from the iOS or Android app. Please open the Compass CHW app on your phone to upload this document.',
+        );
+        return;
+      }
+
+      setUploadingChecklistCode(code);
+      try {
+        const DocumentPicker = await import('expo-document-picker');
+        const result = await DocumentPicker.getDocumentAsync({
+          type: ['application/pdf'],
+          copyToCacheDirectory: true,
+          multiple: false,
+        });
+        if (result.canceled) return;
+
+        const asset = result.assets[0];
+        if (asset == null) return;
+
+        const s3Key = await uploadFile(
+          {
+            uri: asset.uri,
+            name: asset.name,
+            type: asset.mimeType ?? 'application/pdf',
+            sizeBytes: asset.size ?? undefined,
+          },
+          'credential',
+        );
+
+        await submitChecklistCredential.mutateAsync({ type: code, s3Key });
+      } catch {
+        Alert.alert('Upload failed', 'We could not upload that file. Please try again.');
+      } finally {
+        setUploadingChecklistCode(null);
+      }
+    },
+    [submitChecklistCredential],
   );
 
   /**
@@ -1074,68 +1332,35 @@ export function CHWProfileScreen(): React.JSX.Element {
                     />
                   </View>
 
-                  {/* Compliance — HIPAA training, certification, background check */}
+                  {/* Compliance checklist (Epic D) — 5 items: 4 CHW-uploadable
+                      documents + background_check (admin-controlled, read-only
+                      here). Replaces the old self-editable HIPAA
+                      toggle/certification field/background-check chips —
+                      those let a CHW mark themselves "clear" on a background
+                      check, which is now admin-only via
+                      PATCH /admin/chws/{id}/background-check. */}
                   <View style={profileStyles.specializationsSection}>
                     <Text style={profileStyles.formTitle}>Compliance</Text>
-                    <ToggleRow
-                      label="HIPAA training completed"
-                      description="Confirms you have completed required HIPAA privacy & security training."
-                      value={profile?.hipaaTrainingCompleted ?? false}
-                      onValueChange={(v) =>
-                        void handleSaveField('HIPAA Training', { hipaaTrainingCompleted: v })
-                      }
-                    />
-                    <EditableField
-                      label="CHW Certification"
-                      value={profile?.chwCertification ?? ''}
-                      placeholder="e.g. California CHW Certification #12345"
-                      isEditing={editingField === 'chwCertification'}
-                      onEditStart={() => setEditingField('chwCertification')}
-                      onEditCancel={() => setEditingField(null)}
-                      onSave={(v) =>
-                        handleSaveField('CHW Certification', {
-                          chwCertification: v.trim() || null,
-                        })
-                      }
-                    />
-                    <View style={profileStyles.chipsSection}>
-                      <Text style={profileStyles.chipsSectionLabel}>Background Check</Text>
-                      <View style={chipStyles.row}>
-                        {BACKGROUND_CHECK_OPTIONS.map((status) => {
-                          const isSelected =
-                            (profile?.backgroundCheckStatus ?? 'not_started') === status;
-                          const color = BACKGROUND_CHECK_COLORS[status];
-                          return (
-                            <Pressable
-                              key={status}
-                              onPress={() =>
-                                void handleSaveField('Background Check', {
-                                  backgroundCheckStatus: status,
-                                })
-                              }
-                              accessibilityRole="radio"
-                              accessibilityState={{ checked: isSelected }}
-                              accessibilityLabel={BACKGROUND_CHECK_LABELS[status]}
-                              style={[
-                                chipStyles.chip,
-                                isSelected
-                                  ? { backgroundColor: `${color}20`, borderColor: color }
-                                  : chipStyles.chipInactive,
-                              ]}
-                            >
-                              <Text
-                                style={[
-                                  chipStyles.chipText,
-                                  { color: isSelected ? color : '#6B7280' },
-                                ]}
-                              >
-                                {BACKGROUND_CHECK_LABELS[status]}
-                              </Text>
-                            </Pressable>
-                          );
-                        })}
-                      </View>
-                    </View>
+                    {checklistQuery.isLoading ? (
+                      <ActivityIndicator size="small" color="#10B981" />
+                    ) : checklistQuery.isError ? (
+                      <Text style={checklistStyles.copy}>
+                        Could not load your compliance checklist. Pull to refresh to try again.
+                      </Text>
+                    ) : (
+                      CHECKLIST_ITEMS.map((meta) => {
+                        const item = checklistQuery.data?.items?.find((i) => i.code === meta.code);
+                        return (
+                          <ChecklistItemRow
+                            key={meta.code}
+                            meta={meta}
+                            status={item?.status ?? 'missing'}
+                            onUpload={(code) => void handleUploadChecklistItem(code)}
+                            uploading={uploadingChecklistCode === meta.code}
+                          />
+                        );
+                      })
+                    )}
                   </View>
                 </>
               )}

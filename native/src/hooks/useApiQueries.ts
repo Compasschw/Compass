@@ -537,6 +537,8 @@ export const queryKeys = {
   /** Full rich member profile for the CHW Member Profile screen. */
   chwMemberDetail: (memberId: string) => ['chw', 'members', memberId, 'detail'] as const,
   chwMapData: ['chw', 'map-data'] as const,
+  /** CHW compliance checklist from GET /credentials/checklist (Epic D). */
+  chwChecklist: ['chw', 'checklist'] as const,
   /** Public-style CHW profile for the member-facing CHW Profile screen. */
   memberFacingCHWProfile: (chwId: string) => ['member', 'chws', chwId] as const,
   /**
@@ -715,6 +717,98 @@ export function useChwProfile() {
     queryFn: async () => {
       const raw = await api<unknown>('/chw/profile');
       return transformKeys<ChwProfile>(raw);
+    },
+  });
+}
+
+// ─── CHW compliance checklist (Epic D) ─────────────────────────────────────────
+
+/** One of the 5 compliance checklist requirement codes. */
+export type ChwChecklistItemCode =
+  | 'hipaa_training'
+  | 'professional_service_agreement'
+  | 'liability_insurance'
+  | 'chw_certification'
+  | 'background_check';
+
+/**
+ * Status of a single checklist item.
+ * The 4 document types use: missing | pending | verified | rejected.
+ * background_check uses its own state machine: not_started | pending | clear | consider.
+ * Both are surfaced through the same `status` string field — the UI maps by
+ * `code` to know which label set applies (see CHW_CHECKLIST_STATUS_LABELS).
+ */
+export type ChwChecklistItemStatus =
+  | 'missing'
+  | 'pending'
+  | 'verified'
+  | 'rejected'
+  | 'not_started'
+  | 'clear'
+  | 'consider';
+
+export interface ChwChecklistItem {
+  code: ChwChecklistItemCode;
+  status: ChwChecklistItemStatus;
+}
+
+/** GET /credentials/checklist response — full 5-item compliance checklist. */
+export interface ChwChecklist {
+  canWork: boolean;
+  missing: string[];
+  items: ChwChecklistItem[];
+}
+
+/**
+ * The authenticated CHW's full compliance checklist (Epic D) — powers both
+ * the CHWProfileScreen checklist section and the CHWDashboardScreen banner.
+ * Scoped to the CHW role only (backend 403s a member/admin caller), so this
+ * hook should only be mounted from CHW-facing screens.
+ */
+export function useChwChecklist() {
+  return useQuery({
+    queryKey: queryKeys.chwChecklist,
+    queryFn: async () => {
+      const raw = await api<unknown>('/credentials/checklist');
+      return transformKeys<ChwChecklist>(raw);
+    },
+  });
+}
+
+/**
+ * Upsert the authenticated CHW's document for one of the 4 upload-based
+ * checklist types (hipaa_training, professional_service_agreement,
+ * liability_insurance, chw_certification — NOT background_check, which has
+ * no CHW-facing write path). Always resets status to "pending" server-side.
+ *
+ * NOTE — this is the checklist (Credential table) upsert, POST
+ * /credentials/{type}. It is a DIFFERENT endpoint from the older
+ * `useSubmitCredential` (POST /credentials/validate, the
+ * CHWCredentialValidation/degree-program flow) already defined above in
+ * this file — the two are unrelated and both are kept.
+ *
+ * Call AFTER the presigned-URL S3 PUT completes (mirrors
+ * useUploadProfilePicture's flow, and app/api/upload.ts's uploadFile
+ * helper) — this hook is the final "attach s3_key to the checklist row"
+ * step, not the upload itself.
+ */
+export function useSubmitChecklistCredential() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      type,
+      s3Key,
+    }: {
+      type: Exclude<ChwChecklistItemCode, 'background_check'>;
+      s3Key: string;
+    }) => {
+      await api(`/credentials/${type}`, {
+        method: 'POST',
+        body: JSON.stringify({ s3_key: s3Key }),
+      });
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.chwChecklist });
     },
   });
 }

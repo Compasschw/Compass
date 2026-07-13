@@ -26,7 +26,7 @@
  * chip — this is a perfect match. No primitive was modified.
  */
 
-import React, { useMemo, useCallback, useState } from 'react';
+import React, { useMemo, useCallback, useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -39,6 +39,7 @@ import {
   type ViewStyle,
   type TextStyle,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import {
@@ -51,6 +52,7 @@ import {
   ClipboardList,
   Search,
   UserPlus,
+  X,
 } from 'lucide-react-native';
 
 import { colors as tokens, spacing, radius, numerals } from '../../theme/tokens';
@@ -64,6 +66,7 @@ import {
   useCHWIntake,
   useChwProfile,
   useTestimonialSummary,
+  useChwChecklist,
   type SessionData,
   type ServiceRequestData,
   type ChwClaim,
@@ -428,6 +431,93 @@ function ActivityRow({ item }: { item: ActivityItem }): React.JSX.Element {
   );
 }
 
+// ─── Compliance banner (Epic D) ─────────────────────────────────────────────
+//
+// Shown when the CHW's compliance checklist (GET /credentials/checklist) is
+// incomplete. Dismissible for the current day only — persisted in
+// AsyncStorage as an ISO date string; the banner reappears automatically on
+// the next calendar day (or next app open on a new day) even if dismissed
+// today, so an incomplete CHW is nudged repeatedly rather than only once
+// ever. This mirrors the "reappears next day" behavior called out in the
+// epic without needing a backend-tracked dismissal state.
+
+const COMPLIANCE_BANNER_DISMISSED_KEY = 'chw_compliance_banner_dismissed_date';
+
+/** Plain-language label for each machine-readable missing-requirement code
+ * (mirrors app.services.chw_compliance's code list). */
+const MISSING_ITEM_LABELS: Record<string, string> = {
+  profile_incomplete: 'Complete your profile (name, phone, ZIP code)',
+  bio_missing_or_too_long: 'Add a short bio (120 characters or fewer)',
+  hipaa_training: 'Upload your HIPAA training certificate',
+  professional_service_agreement: 'Sign and upload your Professional Service Agreement',
+  liability_insurance: 'Upload your professional liability insurance',
+  chw_certification: 'Upload your CHW certification',
+  background_check: 'Your background check is still in review',
+};
+
+function missingItemLabel(code: string): string {
+  return MISSING_ITEM_LABELS[code] ?? code;
+}
+
+function todayDateString(): string {
+  return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+}
+
+interface ComplianceBannerProps {
+  missing: string[];
+  onOpenProfile: () => void;
+}
+
+function ComplianceBanner({ missing, onOpenProfile }: ComplianceBannerProps): React.JSX.Element | null {
+  const [dismissedToday, setDismissedToday] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void AsyncStorage.getItem(COMPLIANCE_BANNER_DISMISSED_KEY).then((stored) => {
+      if (!cancelled) setDismissedToday(stored === todayDateString());
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleDismiss = useCallback(() => {
+    setDismissedToday(true);
+    void AsyncStorage.setItem(COMPLIANCE_BANNER_DISMISSED_KEY, todayDateString());
+  }, []);
+
+  if (missing.length === 0 || dismissedToday) return null;
+
+  return (
+    <View style={styles.complianceBanner} accessibilityRole="alert">
+      <View style={styles.complianceBannerIconWrap}>
+        <AlertTriangle size={18} color={tokens.amber700} />
+      </View>
+      <View style={styles.complianceBannerBody}>
+        <Text style={styles.complianceBannerTitle}>Finish your compliance checklist</Text>
+        <Text style={styles.complianceBannerText}>
+          {missing.map(missingItemLabel).join(' · ')}
+        </Text>
+        <TouchableOpacity
+          onPress={onOpenProfile}
+          accessibilityRole="button"
+          accessibilityLabel="Go to compliance checklist"
+        >
+          <Text style={styles.complianceBannerLink}>Go to Profile</Text>
+        </TouchableOpacity>
+      </View>
+      <TouchableOpacity
+        onPress={handleDismiss}
+        accessibilityRole="button"
+        accessibilityLabel="Dismiss compliance reminder for today"
+        style={styles.complianceBannerDismiss}
+      >
+        <X size={16} color={tokens.textSecondary} />
+      </TouchableOpacity>
+    </View>
+  );
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export function CHWDashboardScreen(): React.JSX.Element {
@@ -464,6 +554,9 @@ export function CHWDashboardScreen(): React.JSX.Element {
   // Real "member satisfaction" — avg + count of this CHW's APPROVED
   // Testimonial rows. Replaces the previous hardcoded "4.9" SnapshotBox.
   const testimonialSummaryQuery = useTestimonialSummary(chwProfileQuery.data?.userId ?? '');
+  // Compliance checklist (Epic D) — drives the "Finish your compliance
+  // checklist" banner below the greeting row.
+  const checklistQuery = useChwChecklist();
 
   const isLoading =
     sessionsQuery.isLoading ||
@@ -707,6 +800,14 @@ export function CHWDashboardScreen(): React.JSX.Element {
             </PressableCard>
           </View>
         </View>
+
+        {/* ── Compliance banner (Epic D) ──────────────────────────────────── */}
+        {checklistQuery.data != null && (
+          <ComplianceBanner
+            missing={checklistQuery.data.missing}
+            onOpenProfile={() => navigation.navigate('Profile' as never)}
+          />
+        )}
 
         {/* ── KPI row — 4 tiles ───────────────────────────────────────────── */}
         {/* StaggerList cascades the 4 stat tiles in on initial mount. */}
@@ -1034,6 +1135,45 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color:      '#fff',
   } as TextStyle,
+
+  // ── Compliance banner (Epic D) ────────────────────────────────────────────
+  complianceBanner: {
+    flexDirection:     'row',
+    alignItems:        'flex-start',
+    gap:               spacing.md,
+    backgroundColor:   '#FFFBEB',
+    borderWidth:       1,
+    borderColor:       '#FDE68A',
+    borderRadius:      radius.lg,
+    padding:           spacing.md,
+    marginBottom:      spacing.xxl,
+  } as ViewStyle,
+  complianceBannerIconWrap: {
+    marginTop: 2,
+  } as ViewStyle,
+  complianceBannerBody: {
+    flex: 1,
+    gap:  4,
+  } as ViewStyle,
+  complianceBannerTitle: {
+    fontSize:   14,
+    fontWeight: '700',
+    color:      '#92400E',
+  } as TextStyle,
+  complianceBannerText: {
+    fontSize:   12,
+    color:      '#92400E',
+    lineHeight: 17,
+  } as TextStyle,
+  complianceBannerLink: {
+    fontSize:   12,
+    fontWeight: '700',
+    color:      '#B45309',
+    marginTop:  2,
+  } as TextStyle,
+  complianceBannerDismiss: {
+    padding: 4,
+  } as ViewStyle,
 
   // ── KPI row ────────────────────────────────────────────────────────────────
   kpiRow: {
