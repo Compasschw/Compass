@@ -5169,3 +5169,89 @@ export function useMemberDocumentDownloadUrl(docId: string | null, options?: { e
     gcTime: 0,
   });
 }
+
+// ─── Member Chat Attachments (QA item ②: Documents repository) ────────────────
+
+/**
+ * Shape of a single chat file attachment, from
+ * GET /chw/members/{memberId}/attachments.
+ *
+ * `id` is the owning Message.id (not the FileAttachment row id) — it's what
+ * the message attachment-url download endpoint expects. There is no
+ * `documentType`: chat attachments are never categorized by the CHW
+ * upload-picker taxonomy (id/income/address/medical/other); the "From Chat"
+ * filter chip in the repository view identifies them structurally instead.
+ */
+export interface MemberChatAttachmentData {
+  id: string;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+  createdAt: string;
+}
+
+/** Paginated envelope from GET /chw/members/{memberId}/attachments. */
+export interface MemberChatAttachmentListData {
+  items: MemberChatAttachmentData[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+/**
+ * Fetch paginated chat file attachments the calling CHW's conversation with
+ * a member contains. Additive sibling to useMemberDocuments — the CHW
+ * Documents repository view merges both sources client-side.
+ *
+ * Query key: ['chw', 'members', memberId, 'attachments']
+ */
+export function useMemberChatAttachments(memberId: string, page = 1, pageSize = 50) {
+  return useQuery({
+    queryKey: ['chw', 'members', memberId, 'attachments', page, pageSize],
+    queryFn: async () => {
+      if (!memberId) {
+        return { items: [], total: 0, page: 1, pageSize } as MemberChatAttachmentListData;
+      }
+      const raw = await api<unknown>(
+        `/chw/members/${memberId}/attachments?page=${page}&page_size=${pageSize}`,
+      );
+      return transformKeys<MemberChatAttachmentListData>(raw);
+    },
+    enabled: !!memberId,
+  });
+}
+
+/** Shape returned by GET /conversations/messages/{messageId}/attachment-url. */
+export interface MessageAttachmentDownloadUrlData {
+  url: string;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+  expiresInSeconds: number;
+}
+
+/**
+ * Lazily fetch a presigned download URL for a chat message's attachment.
+ * Mirrors useMemberDocumentDownloadUrl's disabled-by-default / no-cache
+ * pattern, but hits the conversations router's existing download endpoint
+ * (GET /conversations/messages/{messageId}/attachment-url) instead of the
+ * member-documents one — chat attachments have no MemberDocument row.
+ *
+ * The presigned URL expires in 5 minutes; do NOT cache it indefinitely.
+ */
+export function useMessageAttachmentDownloadUrl(
+  messageId: string | null,
+  options?: { enabled?: boolean },
+) {
+  return useQuery({
+    queryKey: ['conversations', 'messages', 'attachment-url', messageId],
+    queryFn: async () => {
+      if (!messageId) throw new Error('messageId is required');
+      const raw = await api<unknown>(`/conversations/messages/${messageId}/attachment-url`);
+      return transformKeys<MessageAttachmentDownloadUrlData>(raw);
+    },
+    enabled: (options?.enabled ?? false) && !!messageId,
+    staleTime: 0,
+    gcTime: 0,
+  });
+}
