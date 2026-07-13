@@ -11,6 +11,7 @@ from app.dependencies import get_current_user, require_role
 from app.models.flag_note import FlagNote
 from app.schemas.followup import RoadmapItemResponse
 from app.schemas.member import (
+    AssignedCHWResponse,
     CHWMemberFacingProfile,
     FlagNoteCreate,
     FlagNoteResponse,
@@ -109,6 +110,58 @@ async def update_profile(data: MemberProfileUpdate, current_user=Depends(require
     await db.commit()
     await db.refresh(profile)
     return _build_member_profile_response(profile, current_user)
+
+@router.get("/chw", response_model=AssignedCHWResponse | None)
+async def get_assigned_chw(
+    current_user=Depends(require_role("member")), db: AsyncSession = Depends(get_db)
+) -> AssignedCHWResponse | None:
+    """Return the member's currently-matched CHW, or null when unmatched.
+
+    Fixes Epic G1: the member-home "Your CHW" hero previously derived the
+    assigned CHW from the most-recent SESSION (``chwName``/``chwId`` on
+    ``SessionData``), so a member with a CHW match but zero sessions yet
+    (e.g. one created via CHW-initiated onboarding, ``POST /chw/members``,
+    which establishes the match via a ``ServiceRequest`` immediately but
+    schedules no session) incorrectly showed "You haven't been matched with
+    a CHW yet". This endpoint reads the SAME relationship column
+    (``ServiceRequest.matched_chw_id``) that ``create_chw_member`` writes and
+    the CHW Members roster's relationship gate reads, so it's authoritative
+    regardless of session history.
+
+    Selection: the most recent (by ``created_at``) ServiceRequest belonging
+    to this member with a non-null ``matched_chw_id`` — matching how a
+    "current" match is determined elsewhere (e.g. the CHW roster's own
+    relationship gate). Passing/declining a request clears
+    ``matched_chw_id`` back to null (see ``routers/requests.py``), so a
+    passed-on request never resurfaces here.
+
+    Returns:
+        200 with {id, name} of the matched CHW, or 200 with `null` when the
+        member has no matched request, or the matched CHW's account was
+        deleted (defensive — should not happen in practice; deletion clears
+        the relationship elsewhere, but we guard here rather than 500 on a
+        dangling FK read).
+    """
+    from app.models.request import ServiceRequest
+    from app.models.user import User
+
+    result = await db.execute(
+        select(ServiceRequest)
+        .where(ServiceRequest.member_id == current_user.id)
+        .where(ServiceRequest.matched_chw_id.is_not(None))
+        .order_by(ServiceRequest.created_at.desc())
+        .limit(1)
+    )
+    matched_request = result.scalars().first()
+    if matched_request is None:
+        return None
+
+    chw_user = await db.get(User, matched_request.matched_chw_id)
+    if chw_user is None or chw_user.deleted_at is not None:
+        return None
+
+    return AssignedCHWResponse(id=chw_user.id, name=chw_user.name)
+
 
 @router.get("/rewards")
 async def get_rewards(current_user=Depends(require_role("member")), db: AsyncSession = Depends(get_db)):

@@ -243,6 +243,7 @@ __all__ = [
     "create_tokens",
     "store_refresh_token",
     "revoke_refresh_token",
+    "mark_first_login",
     "date",
 ]
 
@@ -262,6 +263,29 @@ async def authenticate_user(db: AsyncSession, email: str, password: str):
     if not user.is_active:
         return None
     return user
+
+
+def mark_first_login(user) -> None:
+    """Stamp ``user.first_login_at`` with NOW(UTC) the first time this user is
+    successfully authenticated — idempotent (a no-op once already set).
+
+    Called from every path that mints tokens for a user (self-service
+    ``/auth/register`` auto-login, ``/auth/login``, and OAuth sign-in in
+    ``routers/auth.py``). Deliberately NOT called from
+    ``register_user``/``create_chw_member`` — a CHW provisioning a member's
+    account on their behalf is not the *member* signing in; that member must
+    still authenticate themselves (via ``/auth/login`` with the temp
+    password) before ``first_login_at`` is set. This is what drives the CHW
+    Members-page status rule (Epic G3): a CHW-created member stays 'inactive'
+    until they do so.
+
+    This only mutates the in-memory ORM attribute — it does not commit. Every
+    call site below is immediately followed by ``store_refresh_token``, which
+    commits the session, so the dirty attribute rides along on that same
+    transaction with no extra round-trip.
+    """
+    if user.first_login_at is None:
+        user.first_login_at = datetime.now(UTC)
 
 
 def create_tokens(user) -> tuple[str, str]:

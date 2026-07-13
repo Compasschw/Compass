@@ -17,6 +17,7 @@ from app.services.auth_service import (
 from app.services.auth_service import (
     authenticate_user,
     create_tokens,
+    mark_first_login,
     register_user,
     revoke_refresh_token,
     store_refresh_token,
@@ -128,6 +129,11 @@ async def register(
     )
     if user is None:
         raise HTTPException(status_code=400, detail="Email already registered")
+    # Self-service registration returns tokens immediately (auto-login) — this
+    # IS the user's first successful authentication, so it counts as their
+    # first login. (CHW-initiated member creation does NOT call this endpoint
+    # and does NOT get this treatment — see mark_first_login's docstring.)
+    mark_first_login(user)
     access, refresh = create_tokens(user)
     await store_refresh_token(db, user.id, refresh)
 
@@ -148,6 +154,7 @@ async def login(request: Request, data: LoginRequest, db: Annotated[AsyncSession
     user = await authenticate_user(db, data.email, data.password)
     if user is None:
         raise HTTPException(status_code=401, detail="Invalid email or password")
+    mark_first_login(user)
     access, refresh = create_tokens(user)
     await store_refresh_token(db, user.id, refresh)
     return TokenResponse(access_token=access, refresh_token=refresh, role=user.role, name=user.name)
@@ -252,6 +259,10 @@ async def _handle_oauth_signin(
             if existing_profile is not None and not existing_profile.onboarding_complete:
                 needs_onboarding = True
 
+    # OAuth sign-in/sign-up mints tokens directly (no separate /auth/login
+    # call) — this is the user's first successful authentication just like
+    # self-service register's auto-login.
+    mark_first_login(user)
     access, refresh = create_tokens(user)
     await store_refresh_token(db, user.id, refresh)
     return OAuthTokenResponse(

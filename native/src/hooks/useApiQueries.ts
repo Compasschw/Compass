@@ -434,9 +434,14 @@ export interface MembersRosterItem {
   dateOfBirth?: string | null;
   /** Last 4 of medi_cal_id formatted '...XXXX'. '—' when absent. */
   maskedId: string;
+  /** Full (unmasked) Medi-Cal CIN. Decision locked (H1): shown to the owning,
+   *  relationship-gated CHW for their own members only. Null when not recorded. */
+  mediCalId: string | null;
   /** Up to 2 uppercase initials for the avatar circle. */
   avatarInitials: string;
-  /** 'active' = session in last 30d OR open/accepted request. */
+  /** 'inactive' when the member has never signed in (first login not yet
+   *  recorded — Epic G3); otherwise 'active' = session in last 30d OR
+   *  open/accepted request. */
   status: 'active' | 'inactive';
   /** Always null in v1 — no clinical risk model yet. */
   risk: null;
@@ -448,6 +453,8 @@ export interface MembersRosterItem {
   lastContactAt: string | null;
   /** Primary vertical of the most recent active ServiceRequest. */
   topNeed: string | null;
+  /** ISO timestamp the account was created (H1 "Account created" column). */
+  createdAt: string;
 }
 
 // ─── Case Notes types ────────────────────────────────────────────────────────
@@ -491,6 +498,8 @@ export const queryKeys = {
   chwProfile: ['chw', 'profile'] as const,
   memberProfile: ['member', 'profile'] as const,
   memberRewards: ['member', 'rewards'] as const,
+  /** Member's currently-matched CHW from GET /member/chw (Epic G1). */
+  memberAssignedChw: ['member', 'chw'] as const,
   chwBrowse: (vertical?: string) => ['chw', 'browse', vertical ?? 'all'] as const,
   conversations: ['conversations'] as const,
   /**
@@ -686,6 +695,36 @@ export function useMemberProfile() {
     queryFn: async () => {
       const raw = await api<unknown>('/member/profile');
       return transformKeys<MemberProfile>(raw);
+    },
+  });
+}
+
+/**
+ * The member's currently-matched CHW, or null when unmatched.
+ * Matches backend AssignedCHWResponse (GET /api/v1/member/chw).
+ */
+export interface AssignedCHW {
+  id: string;
+  name: string;
+}
+
+/**
+ * Epic G1 fix: derive the member-home "Your CHW" hero from the SAME
+ * relationship column (`ServiceRequest.matched_chw_id`) the CHW roster and
+ * `create_chw_member` use, instead of from session history. A CHW-created
+ * member has no sessions yet, so a session-derived assigned-CHW incorrectly
+ * showed "not matched" even though the CHW had already established the
+ * relationship. Callers should treat this as authoritative and only fall
+ * back to session-derived data if this endpoint has no match AND a session
+ * still carries CHW info (defensive — should be rare/never in practice).
+ */
+export function useAssignedCHW() {
+  return useQuery({
+    queryKey: queryKeys.memberAssignedChw,
+    queryFn: async () => {
+      const raw = await api<unknown>('/member/chw');
+      if (raw === null || raw === undefined) return null;
+      return transformKeys<AssignedCHW>(raw);
     },
   });
 }

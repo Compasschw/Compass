@@ -3,10 +3,12 @@
 HIPAA minimum-necessary enforcement (45 CFR §164.514(d)):
 - CHWMemberProfileView exposes ONLY the fields a CHW needs for care delivery.
 - CHWMemberProfileDetail exposes the full rich profile for the member profile screen.
-- MembersRosterItem exposes the minimum set needed for the roster table.
-- Explicitly excluded: medi_cal_id (raw), insurance_provider, full session notes,
-  session summaries, diagnosis codes, raw transcripts, and session data from
-  other CHWs.
+- MembersRosterItem exposes the minimum set needed for the roster table, PLUS
+  the full (unmasked) medi_cal_id — decision locked (H1): the owning,
+  relationship-gated CHW may see their own member's full CIN.
+- Explicitly excluded (all CHW-facing schemas except where noted above):
+  insurance_provider, full session notes, session summaries, diagnosis codes,
+  raw transcripts, and session data from other CHWs.
 - Session history visible to the CHW is limited to sessions WHERE
   session.chw_id == current_user.id.
 
@@ -504,11 +506,20 @@ class MembersRosterItem(BaseModel):
       relationship-gated CHW for their own caseload; consistent with
       CHWMemberProfileDetail which already exposes DOB to the same audience.
     - masked_id: last 4 chars of medi_cal_id only — enough for verbal verification.
+    - medi_cal_id: FULL CIN. Decision locked (Akram, H1): exposed to the
+      relationship-gated OWNING CHW for their own caseload only (this endpoint
+      is already gated to "members this CHW has a relationship with" — see
+      the module-level relationship-gate docstring above). Matches the
+      existing precedent of CHWMemberProfileDetail.medi_cal_id. Still masked
+      everywhere else in the product.
     - avatar_initials: derived from display_name; no additional PHI.
     - risk: always null in v1 (no clinical model yet).
     - top_need: primary vertical of the most recent active ServiceRequest.
+    - created_at: account-created date (User.created_at) — administrative
+      metadata, not clinical PHI; included for the Members-page "Account
+      created" column (H1).
 
-    Excluded: raw medi_cal_id, phone, insurance_provider, notes, transcripts.
+    Excluded: phone, insurance_provider, notes, transcripts.
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -531,12 +542,17 @@ class MembersRosterItem(BaseModel):
     masked_id: str
     """Last 4 characters of medi_cal_id, formatted '...XXXX'. '—' when absent."""
 
+    medi_cal_id: str | None = None
+    """Full Medi-Cal CIN, unmasked. Decision locked (H1): shown to the owning,
+    relationship-gated CHW for their own members only. Null when not recorded."""
+
     avatar_initials: str
     """Up to 2 uppercase initials derived from display_name."""
 
     status: Literal["active", "inactive"]
-    """'active' = session in last 30 days OR open/accepted ServiceRequest.
-    'inactive' otherwise."""
+    """'inactive' when the member has never signed in (User.first_login_at is
+    NULL — Epic G3). Once first_login_at is set: 'active' = session in last 30
+    days OR open/accepted ServiceRequest; 'inactive' otherwise."""
 
     risk: None
     """Always null in v1 — no clinical risk model yet. UI hides the chip when null."""
@@ -552,6 +568,10 @@ class MembersRosterItem(BaseModel):
 
     top_need: str | None
     """Primary vertical of the most recent active ServiceRequest. Null if none."""
+
+    created_at: datetime
+    """Account-created date (User.created_at). H1: rendered as the Members-page
+    'Account created' column."""
 
 
 # ─── CHW Map Data ─────────────────────────────────────────────────────────────

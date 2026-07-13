@@ -73,6 +73,7 @@ import {
   useMemberProfile,
   useMemberJourneys,
   useRequests,
+  useAssignedCHW,
   type MemberJourneyResponse,
   type SessionData,
 } from '../../hooks/useApiQueries';
@@ -315,10 +316,11 @@ function UpcomingSessionRow({ session }: UpcomingSessionRowProps): React.JSX.Ele
 export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.JSX.Element {
   const { userName } = useAuth();
 
-  const sessionsQuery = useSessions();
-  const profileQuery  = useMemberProfile();
-  const roadmapQuery  = useMemberRoadmap();
-  const requestsQuery = useRequests();
+  const sessionsQuery     = useSessions();
+  const profileQuery      = useMemberProfile();
+  const roadmapQuery      = useMemberRoadmap();
+  const requestsQuery     = useRequests();
+  const assignedCHWQuery  = useAssignedCHW();
 
   // useMemberJourneys requires the member's User UUID (not the Members row PK).
   // We wait for profileQuery to resolve before enabling it, so memberId is '':
@@ -332,6 +334,7 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
     roadmapQuery.refetch,
     requestsQuery.refetch,
     journeysQuery.refetch,
+    assignedCHWQuery.refetch,
   ]);
 
   const allSessions  = sessionsQuery.data ?? [];
@@ -339,16 +342,31 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
   const roadmap      = roadmapQuery.data ?? [];
   const allRequests  = requestsQuery.data ?? [];
 
-  // ── Assigned CHW — derived from sessions (most-recent session with a chwName).
-  // Sessions carry `chwName` and `chwId` joined server-side. A member with no
-  // sessions yet has no assigned CHW; we render a placeholder in that case.
-  const assignedCHW = useMemo<{ name: string; chwId: string } | null>(() => {
+  // ── Assigned CHW (Epic G1 fix) ───────────────────────────────────────────
+  // Primary source: GET /member/chw, which reads ServiceRequest.matched_chw_id
+  // — the SAME relationship column create_chw_member writes. This is
+  // authoritative regardless of session history, so a CHW-created member with
+  // zero sessions yet still shows as matched.
+  //
+  // Fallback: the OLD session-derived heuristic (most-recent session with a
+  // chwName/chwId), kept only for defensive coverage of an edge case the
+  // backend endpoint shouldn't be able to produce (a session exists with CHW
+  // info but no matched ServiceRequest links them) — never expected in
+  // practice, but cheap insurance against a false "not matched" regression.
+  const sessionDerivedCHW = useMemo<{ name: string; chwId: string } | null>(() => {
     const sessionWithCHW = [...allSessions]
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
       .find((s) => !!s.chwName && !!s.chwId);
     if (!sessionWithCHW) return null;
     return { name: sessionWithCHW.chwName!, chwId: sessionWithCHW.chwId };
   }, [allSessions]);
+
+  const assignedCHW = useMemo<{ name: string; chwId: string } | null>(() => {
+    if (assignedCHWQuery.data) {
+      return { name: assignedCHWQuery.data.name, chwId: assignedCHWQuery.data.id };
+    }
+    return sessionDerivedCHW;
+  }, [assignedCHWQuery.data, sessionDerivedCHW]);
 
   const firstName      = (userName ?? profile?.userId ?? 'there').split(' ')[0];
   const rewardsBalance = profile?.rewardsBalance ?? 0;

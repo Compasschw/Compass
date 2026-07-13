@@ -101,6 +101,32 @@ class CHWMemberFacingProfile(BaseModel):
     back to initials."""
 
 
+# ── Assigned CHW (G1) ──────────────────────────────────────────────────────────
+
+
+class AssignedCHWResponse(BaseModel):
+    """Response body for GET /api/v1/member/chw.
+
+    Minimal identity of the member's currently-matched CHW, derived from
+    ``ServiceRequest.matched_chw_id`` (the SAME relationship column
+    ``create_chw_member`` writes and the CHW Members roster reads) rather than
+    from session history. Fixes Epic G1: a CHW-created member has no sessions
+    yet, so a session-derived "assigned CHW" incorrectly showed as unmatched
+    even though ``create_chw_member`` had already established the match.
+
+    The member-home screen should treat this as authoritative and only need
+    session data for anything session-specific (upcoming appointment, etc).
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    """The matched CHW's User.id."""
+
+    name: str
+    """The matched CHW's display name."""
+
+
 # ── Services Consent schemas (T03) ────────────────────────────────────────────
 
 _VALID_CONSENT_STATUSES = frozenset({"consent_to_services", "refuse_services"})
