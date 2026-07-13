@@ -178,6 +178,78 @@ describe('ActiveSessionBadge', () => {
     );
   });
 
+  it('renders a drag handle so the badge can be repositioned off the Complete Session control', () => {
+    renderBadge([
+      conv({
+        id: 'c1',
+        activeSessionId: 'sess-1',
+        activeSessionStartedAt: '2026-07-11T09:00:00.000Z',
+        memberName: 'Rosa Gutierrez',
+      }),
+    ]);
+
+    const handle = screen.getByTestId('active-session-badge-drag-handle');
+    expect(handle).toBeTruthy();
+    expect(handle.getAttribute('aria-label')).toBe('Drag to move active session badge');
+  });
+
+  it('moves the badge (and persists the offset) when the drag handle is dragged vertically', () => {
+    window.localStorage.removeItem('compass:activeSessionBadge:dragOffsetY');
+    renderBadge([
+      conv({
+        id: 'c1',
+        activeSessionId: 'sess-1',
+        activeSessionStartedAt: '2026-07-11T09:00:00.000Z',
+        memberName: 'Rosa Gutierrez',
+      }),
+    ]);
+
+    const badge = screen.getByTestId('active-session-badge');
+    const handle = screen.getByTestId('active-session-badge-drag-handle');
+
+    // Badge starts undragged — no translateY applied yet.
+    expect(badge.style.transform || '').not.toMatch(/translateY\((?!0)/);
+
+    fireEvent.mouseDown(handle, { clientX: 40, clientY: 100 });
+    fireEvent.mouseMove(document, { clientX: 40, clientY: 140 }); // drag down 40px
+    fireEvent.mouseUp(document, { clientX: 40, clientY: 140 });
+
+    // The badge is anchored `bottom: 24` with an 8px edge margin, so a 40px
+    // downward drag clamps at the max allowed offset (24 - 8 = 16) rather
+    // than passing straight through — this also proves the viewport clamp
+    // is live, not just that *some* transform got applied.
+    expect(badge.style.transform).toContain('translateY(16px)');
+    expect(window.localStorage.getItem('compass:activeSessionBadge:dragOffsetY')).toBe('16');
+  });
+
+  it('clamps an upward drag so the badge cannot be dragged above the top of the viewport', () => {
+    window.localStorage.removeItem('compass:activeSessionBadge:dragOffsetY');
+    renderBadge([
+      conv({
+        id: 'c1',
+        activeSessionId: 'sess-1',
+        activeSessionStartedAt: '2026-07-11T09:00:00.000Z',
+        memberName: 'Rosa Gutierrez',
+      }),
+    ]);
+
+    const badge = screen.getByTestId('active-session-badge');
+    const handle = screen.getByTestId('active-session-badge-drag-handle');
+
+    // Drag far past the top of a jsdom-default (768px) viewport — should
+    // clamp rather than pushing the badge off-screen.
+    fireEvent.mouseDown(handle, { clientX: 40, clientY: 600 });
+    fireEvent.mouseMove(document, { clientX: 40, clientY: -5000 });
+    fireEvent.mouseUp(document, { clientX: 40, clientY: -5000 });
+
+    const match = /translateY\((-?\d+(?:\.\d+)?)px\)/.exec(badge.style.transform || '');
+    expect(match).not.toBeNull();
+    const appliedOffset = Number(match?.[1]);
+    // Never further up than DEFAULT_BOTTOM_OFFSET(24) - (windowHeight - estimatedHeight - margin).
+    expect(appliedOffset).toBeGreaterThan(-5000);
+    expect(appliedOffset).toBeLessThanOrEqual(16);
+  });
+
   it('clears the tick interval on unmount (no leaked timers)', () => {
     const clearIntervalSpy = vi.spyOn(global, 'clearInterval');
     const { unmount } = renderBadge([
