@@ -36,9 +36,21 @@ from app.models.journeys import (
 from app.services.journey_seeds import STANDARD_STEPS
 
 # ── Canonical resource-need slug → journey template label ─────────────────────
-
+#
+# Epic C5: 'housing' is GRANDFATHERED here, not removed. This map drives
+# reconcile_member_journeys_to_needs, which is invoked on every resource-needs
+# save (PATCH /chw/members/{id}/resource-needs) — including a legacy save that
+# still carries 'housing' in its needs list (see schemas/chw.py
+# _RESOURCE_NEED_VALUES for why that value keeps round-tripping). Dropping
+# 'housing' here would cause reconcile_member_journeys_to_needs to silently
+# drop it from target_labels (it's filtered out by "if slug in
+# RESOURCE_NEED_LABELS"), which would ABANDON the member's existing Housing
+# journey on their very next unrelated resource-needs edit — exactly the kind
+# of silent data loss grandfathering is meant to prevent. 'utilities' is added
+# as the new canonical mapping for the replacement vertical.
 RESOURCE_NEED_LABELS: dict[str, str] = {
     "housing": "Housing",
+    "utilities": "Utilities",
     "transportation": "Transportation",
     "food": "Food Security",
     "mental_health": "Mental Health",
@@ -50,6 +62,7 @@ RESOURCE_NEED_LABELS: dict[str, str] = {
 # re-deriving them at runtime.  Unknown labels fall back to _slugify + defaults.
 _LABEL_TO_SLUG: dict[str, str] = {
     "Housing": "housing",
+    "Utilities": "utilities",
     "Transportation": "transportation",
     "Food Security": "food_security",
     "Mental Health": "mental_health",
@@ -59,6 +72,7 @@ _LABEL_TO_SLUG: dict[str, str] = {
 
 _LABEL_TO_CATEGORY_ICON: dict[str, tuple[str, str]] = {
     "Housing": ("housing", "home"),
+    "Utilities": ("utilities", "zap"),
     "Transportation": ("transportation", "bus"),
     "Food Security": ("food", "utensils"),
     "Mental Health": ("mental_health", "brain"),

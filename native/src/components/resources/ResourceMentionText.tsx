@@ -113,8 +113,12 @@ export interface ResourceMentionTextProps {
 
 // ─── Category display helpers (same as ResourceMentionInput) ──────────────────
 
+// Epic C5: 'housing' is grandfathered — kept so an @-mentioned resource still
+// categorized 'housing' renders its correct colour. 'utilities' is its
+// replacement. This is a read-only rendering map (no picker here).
 const _CATEGORY_COLORS: Record<string, string> = {
   housing: '#3B82F6',
+  utilities: '#F97316',
   food: '#F59E0B',
   mental_health: '#8B5CF6',
   rehab: '#EF4444',

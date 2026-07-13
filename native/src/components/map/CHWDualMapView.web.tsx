@@ -5,8 +5,9 @@
  *  1. Member layer — ZIP-centroid pins in brand sage green. PHI-minimised:
  *     display name is first initial only ("J."). Tapping opens the member
  *     bottom sheet → CHWMemberProfileScreen.
- *  2. Resource layer — precise-location pins coloured by category (housing=blue,
- *     food=amber, mental_health=violet, transportation=teal, healthcare=cyan, employment=indigo). Tapping
+ *  2. Resource layer — precise-location pins coloured by category (utilities=orange,
+ *     food=amber, mental_health=violet, transportation=teal, healthcare=cyan, employment=indigo;
+ *     housing=blue also still renders for legacy-categorized resources — see Epic C5). Tapping
  *     opens the resource bottom sheet → "Get Directions" deep-link.
  *
  * The `layerFilter` prop (driven by the segmented control in CHWMapScreen)

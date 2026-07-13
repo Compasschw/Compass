@@ -116,8 +116,12 @@ const ALL_LANGUAGES: string[] = [
   'Korean',
 ];
 
+// Epic C5: offered "Primary Need" options — 'housing' is intentionally
+// excluded here (grandfathered, not newly selectable; see lib/verticals.ts).
+// A member whose saved primaryNeed is still 'housing' keeps rendering via
+// verticalLabels (data/mock.ts), which retains the 'housing' entry.
 const ALL_VERTICALS: Vertical[] = [
-  'housing',
+  'utilities',
   'transportation',
   'food',
   'mental_health',

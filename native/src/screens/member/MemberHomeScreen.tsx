@@ -50,6 +50,7 @@ import {
   Bus,
   Briefcase,
   Home,
+  Lightbulb,
   ListChecks,
   MessageSquare,
   Route,
@@ -196,11 +197,24 @@ function resolveJourneyCategoryTokens(slug: string): JourneyCategoryTokens {
     slug === 'rent_payment_assistance' ||
     slug === 'utility_support'
   ) {
+    // Grandfathered — includes the legacy 'housing' canonical-journey slug
+    // (see journey_reconciler.py _LABEL_TO_SLUG) alongside the pre-existing
+    // sub-pathway slugs so an existing Housing journey keeps its icon/colour.
     return {
       iconBg: tokens.blue100,
       iconColor: tokens.blue700,
       pillVariant: 'blue',
       Icon: Home,
+    };
+  }
+  if (slug === 'utilities') {
+    // New canonical-journey slug (journey_reconciler.py _LABEL_TO_SLUG),
+    // created on demand when a member's resource needs include 'utilities'.
+    return {
+      iconBg: tokens.amber100,
+      iconColor: tokens.amber700,
+      pillVariant: 'amber',
+      Icon: Lightbulb,
     };
   }
   if (
@@ -252,7 +266,10 @@ function resolveJourneySubtitle(journey: MemberJourneyResponse): string {
 function VerticalIcon({ vertical }: { vertical: Vertical }): React.JSX.Element {
   switch (vertical) {
     case 'housing':
+      // Grandfathered — historical rows still render the Home icon.
       return <Home size={20} color={tokens.primary} strokeWidth={2} accessibilityLabel="Housing vertical" />;
+    case 'utilities':
+      return <Lightbulb size={20} color={tokens.primary} strokeWidth={2} accessibilityLabel="Utilities vertical" />;
     case 'transportation':
       return <Bus size={20} color={tokens.primary} strokeWidth={2} accessibilityLabel="Transportation vertical" />;
     case 'food':

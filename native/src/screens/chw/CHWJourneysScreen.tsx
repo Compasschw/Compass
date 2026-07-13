@@ -607,6 +607,7 @@ const journeyCardStyles = StyleSheet.create({
   } as ViewStyle,
 
   iconBg_housing:      { backgroundColor: colors.red100     } as ViewStyle,
+  iconBg_utilities:    { backgroundColor: colors.amber100    } as ViewStyle,
   iconBg_food:         { backgroundColor: colors.orange100   } as ViewStyle,
   iconBg_mental_health:{ backgroundColor: colors.purple100   } as ViewStyle,
   iconBg_healthcare:   { backgroundColor: colors.emerald100  } as ViewStyle,

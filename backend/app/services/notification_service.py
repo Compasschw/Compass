@@ -162,9 +162,14 @@ async def notify_match_proposed(
         vertical: Service vertical string (e.g. "housing") — generic enough
             to include in the body without exposing PHI.
     """
-    # Map raw vertical slugs to human-friendly labels
+    # Map raw vertical slugs to human-friendly labels.
+    # Epic C5: 'housing' is grandfathered — kept so a notification about an
+    # existing housing-vertical request still renders a friendly label rather
+    # than falling through to the raw-slug fallback below. 'utilities' is
+    # added as the new mapping for the replacement vertical.
     vertical_label_map: dict[str, str] = {
         "housing": "housing",
+        "utilities": "utilities",
         "transportation": "transportation",
         "food": "food access",
         "mental_health": "mental health",

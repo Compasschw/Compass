@@ -5,7 +5,10 @@
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type UserRole = 'chw' | 'member' | 'admin';
-export type Vertical = 'housing' | 'transportation' | 'food' | 'mental_health' | 'healthcare' | 'employment';
+// Epic C5: 'housing' is grandfathered (kept for historical rows — see
+// lib/verticals.ts for the full policy). 'utilities' is its replacement as a
+// newly selectable vertical.
+export type Vertical = 'housing' | 'utilities' | 'transportation' | 'food' | 'mental_health' | 'healthcare' | 'employment';
 export type SessionStatus = 'scheduled' | 'in_progress' | 'completed' | 'cancelled';
 export type RequestStatus = 'open' | 'matched' | 'completed' | 'cancelled';
 export type Urgency = 'routine' | 'soon' | 'urgent';
@@ -499,7 +502,10 @@ export const earningsSummary: EarningsSummary = {
  * @deprecated Import VERTICAL_LABEL or verticalLabel() from lib/verticals.ts.
  */
 export const verticalLabels: Record<Vertical, string> = {
+  // housing is grandfathered — no longer selectable, but historical rows
+  // must still render "Housing". See lib/verticals.ts for the full policy.
   housing: 'Housing',
+  utilities: 'Utilities',
   transportation: 'Transportation',
   food: 'Food Security',
   mental_health: 'Mental Health',

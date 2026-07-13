@@ -31,8 +31,11 @@ interface BadgeTokens {
   text: string;
 }
 
+// Epic C5: 'housing' is grandfathered — kept so a legacy housing-tagged badge
+// still renders its original colour; 'utilities' is its replacement.
 const verticalTokens: Record<Vertical, BadgeTokens> = {
   housing:       { bg: '#FEF3C7', text: '#92400E' }, // amber-100 / amber-800
+  utilities:     { bg: '#FFEDD5', text: '#9A3412' }, // orange-100 / orange-800
   transportation:{ bg: '#CCFBF1', text: '#115E59' }, // teal-100 / teal-800
   food:          { bg: '#FFEDD5', text: '#9A3412' }, // orange-100 / orange-800
   mental_health: { bg: '#FCE7F3', text: '#9D174D' }, // pink-100 / pink-800
@@ -70,6 +73,7 @@ const billingStatusTokens: Record<string, BadgeTokens> = {
 
 const verticalLabels: Record<Vertical, string> = {
   housing:        'Housing',
+  utilities:      'Utilities',
   transportation: 'Transportation',
   food:           'Food Security',
   mental_health:  'Mental Health',

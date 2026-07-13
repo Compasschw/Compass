@@ -31,6 +31,7 @@ import {
   Share2,
   ExternalLink,
   Home,
+  Zap,
   Utensils,
   Brain,
   Stethoscope,
@@ -50,12 +51,18 @@ import { useAuth } from '../../context/AuthContext';
 import { useChwResources, type ChwResourceItem } from '../../hooks/useApiQueries';
 
 // ─── Icon-circle bg colours per category ─────────────────────────────────────
-// Mirrors the live API enum (housing | food | mental_health | rehab |
-// healthcare | legal | transportation | other) so every resource gets a
-// distinct, recognisable colour treatment instead of collapsing to one tone.
+// Mirrors the live API enum (housing | utilities | food | mental_health |
+// rehab | healthcare | legal | transportation | other) so every resource gets
+// a distinct, recognisable colour treatment instead of collapsing to one tone.
+//
+// Epic C5: 'housing' stays in every Record below — a resource an admin
+// categorized as Housing before this change must still render its icon,
+// colour, and pill label. Only the FILTER CHIP list (`categories`, derived
+// from CATEGORY_LABELS further below) excludes it as a NEW filter selection.
 
 const CATEGORY_ICON_BG: Record<Exclude<ResourceCategory, 'all'>, string> = {
   housing:        colors.red100,
+  utilities:      colors.amber100,
   food:           colors.orange100,
   mental_health:  colors.purple100,
   rehab:          colors.rose100,
@@ -67,6 +74,7 @@ const CATEGORY_ICON_BG: Record<Exclude<ResourceCategory, 'all'>, string> = {
 
 const CATEGORY_ICON_COLOR: Record<Exclude<ResourceCategory, 'all'>, string> = {
   housing:        colors.red700,
+  utilities:      colors.amber800,
   food:           colors.orange700,
   mental_health:  colors.purple700,
   rehab:          colors.rose700,
@@ -78,9 +86,12 @@ const CATEGORY_ICON_COLOR: Record<Exclude<ResourceCategory, 'all'>, string> = {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+// Epic C5: 'housing' is grandfathered (kept so existing housing-categorized
+// resources still type-check and render); 'utilities' is its replacement.
 type ResourceCategory =
   | 'all'
   | 'housing'
+  | 'utilities'
   | 'food'
   | 'mental_health'
   | 'rehab'
@@ -107,6 +118,7 @@ interface Resource {
 const CATEGORY_LABELS: Record<ResourceCategory, string> = {
   all:            'All',
   housing:        'Housing',
+  utilities:      'Utilities',
   food:           'Food',
   mental_health:  'Mental Health',
   rehab:          'Recovery',
@@ -121,6 +133,7 @@ const CATEGORY_PILL: Record<
   'red' | 'amber' | 'purple' | 'emerald' | 'blue' | 'gray'
 > = {
   housing:        'red',
+  utilities:      'amber',
   food:           'amber',
   mental_health:  'purple',
   rehab:          'amber',
@@ -138,6 +151,7 @@ const CategoryIcon: React.FC<{ category: Exclude<ResourceCategory, 'all'>; size?
   const color = iconColor ?? colors.textSecondary;
   switch (category) {
     case 'housing':        return <Home size={size} color={color} />;
+    case 'utilities':      return <Zap size={size} color={color} />;
     case 'food':           return <Utensils size={size} color={color} />;
     case 'mental_health':  return <Brain size={size} color={color} />;
     case 'rehab':          return <LifeBuoy size={size} color={color} />;
@@ -307,7 +321,15 @@ export function CHWResourcesScreen(): React.JSX.Element {
   }, [allResources, query]);
 
   const pinnedCount = 0; // Pinning persisted server-side ships in v1.1.
-  const categories = Object.keys(CATEGORY_LABELS) as ResourceCategory[];
+  // Epic C5: 'housing' is excluded from the offered filter chips (grandfathered,
+  // not a new selection) — a CHW can no longer filter BY "Housing" from this
+  // bar, matching the removal of 'housing' from every other new-selection
+  // surface. Any resource still catalogued under 'housing' remains fully
+  // searchable via the free-text query and still renders its category pill
+  // correctly (CATEGORY_LABELS/CATEGORY_PILL/CategoryIcon all keep 'housing').
+  const categories = (Object.keys(CATEGORY_LABELS) as ResourceCategory[]).filter(
+    (c) => c !== 'housing',
+  );
 
   const userInitials = (userName ?? 'CHW')
     .split(' ')

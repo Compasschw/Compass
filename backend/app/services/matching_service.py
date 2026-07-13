@@ -49,7 +49,12 @@ INTAKE_SPECIALIZATION_TO_VERTICALS: dict[str, set[str]] = {
     "chronic_disease": {"healthcare"},
     "behavioral_health": {"mental_health"},
     "maternal_child": {"healthcare"},
-    "housing_social": {"housing", "food", "transportation", "employment"},
+    # Epic C5: 'housing' is grandfathered (keeps a CHW who intake-selected
+    # "Housing & social services navigation" still matched to a member's
+    # legacy housing-vertical request); 'utilities' is added as the new
+    # matching vertical for the same specialization, since utility-bill
+    # assistance is squarely within "housing & social services navigation".
+    "housing_social": {"housing", "utilities", "food", "transportation", "employment"},
     "cancer_prevention": {"healthcare"},
 }
 

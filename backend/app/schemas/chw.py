@@ -423,7 +423,19 @@ class MemberDemographicsUpdate(BaseModel):
 
 
 # Known resource-need verticals (mirrors native/src/data/mock.ts verticalLabels).
-_RESOURCE_NEED_VALUES = {"housing", "transportation", "food", "food_security", "mental_health", "healthcare", "employment"}
+#
+# Epic C5: this is a WRITE-side validator for PATCH /chw/members/{id}/resource-needs,
+# but that endpoint is a full-state re-save, not an incremental diff — the CHW
+# app (EditResourceNeedsModal in CHWMemberProfileScreen.tsx) hydrates its
+# selection from the member's EXISTING `resource_needs` on modal open and
+# always resubmits the full array on Save. A member with a pre-existing
+# 'housing' need would therefore 422 on their very next unrelated
+# resource-needs save if 'housing' were removed here. 'housing' MUST stay
+# accepted for that reason — it is intentionally NOT offered by the frontend
+# picker (RESOURCE_NEED_OPTIONS in CHWMemberProfileScreen.tsx no longer lists
+# it), so no CHW can newly select it; this set only needs to keep validating
+# what a legacy round-trip resubmits. 'utilities' is the new replacement value.
+_RESOURCE_NEED_VALUES = {"housing", "utilities", "transportation", "food", "food_security", "mental_health", "healthcare", "employment"}
 
 
 class ResourceNeedsUpdate(BaseModel):

@@ -3054,8 +3054,10 @@ export function useReopenMember(memberId: string) {
  * Edit a member's resource needs from the CHW Member Profile (Resource Needs
  * pencil). PATCH /api/v1/chw/members/{member_id}/resource-needs.
  *
- * `needs` is a selection-ordered list of resource categories ('housing' | 'transportation'
- * | 'food' | 'mental_health' | 'healthcare'). `levels` is a list of
+ * `needs` is a selection-ordered list of resource categories ('utilities' | 'transportation'
+ * | 'food' | 'mental_health' | 'healthcare' | 'employment'). 'housing' is also still
+ * accepted server-side for legacy/grandfathered member data (Epic C5) but is no
+ * longer offered as a new selection. `levels` is a list of
  * `{ slug, level }` pairs — slugs are string values (immune to key-casing
  * transforms), matching the new API contract.
  * Invalidates the member-detail query so the card refreshes.

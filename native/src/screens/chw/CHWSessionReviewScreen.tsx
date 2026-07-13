@@ -116,7 +116,10 @@ const OWNER_LABELS: Record<FollowupOwner, string> = {
 };
 
 const VERTICAL_LABELS: Record<FollowupVertical, string> = {
+  // housing is grandfathered — a followup on a legacy session may still
+  // carry it; utilities is its replacement.
   housing:        'Housing',
+  utilities:      'Utilities',
   food:           'Food Security',
   mental_health:  'Mental Health',
   transportation: 'Transportation',

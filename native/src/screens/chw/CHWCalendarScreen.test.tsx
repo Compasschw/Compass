@@ -517,31 +517,36 @@ describe('CHWCalendarScreen — Schedule Session Resource Needs multi-select (Ep
     expect(screen.queryByText('Notes (optional)')).toBeNull();
     expect(screen.queryByLabelText('Session notes')).toBeNull();
 
-    // Chips for every vertical render as checkboxes (role="checkbox",
+    // Chips for every SELECTABLE vertical render as checkboxes (role="checkbox",
     // accessibilityState={{checked}} on the real component — asserted here
     // via the visible "✓" marker, since react-native-web's jsdom test
     // rendering doesn't surface accessibilityState as an aria-checked
     // attribute). Unchecked by default: no checkmark yet.
-    const housingChip = screen.getByLabelText('Housing');
-    expect(housingChip.getAttribute('role')).toBe('checkbox');
-    expect(housingChip.textContent).not.toContain('✓');
+    //
+    // Epic C5: 'Housing' is grandfathered — no longer offered as a NEW
+    // selection here (VERTICAL_PICKER_OPTIONS excludes it); 'Utilities'
+    // replaces it.
+    const utilitiesChip = screen.getByLabelText('Utilities');
+    expect(utilitiesChip.getAttribute('role')).toBe('checkbox');
+    expect(utilitiesChip.textContent).not.toContain('✓');
     expect(screen.getByLabelText('Food Security')).toBeTruthy();
     expect(screen.getByLabelText('Transportation')).toBeTruthy();
+    expect(screen.queryByLabelText('Housing')).toBeNull();
   });
 
   it('submits selected chips as resource_needs, and toggling off removes them', async () => {
     renderScreen();
     await openScheduleModalWithMember();
 
-    const housingChip = screen.getByLabelText('Housing');
+    const utilitiesChip = screen.getByLabelText('Utilities');
     const foodChip = screen.getByLabelText('Food Security');
 
-    fireEvent.click(housingChip);
+    fireEvent.click(utilitiesChip);
     fireEvent.click(foodChip);
-    expect(housingChip.textContent).toContain('✓');
+    expect(utilitiesChip.textContent).toContain('✓');
     expect(foodChip.textContent).toContain('✓');
 
-    // Toggle Food back off before submitting — only Housing should ship.
+    // Toggle Food back off before submitting — only Utilities should ship.
     fireEvent.click(foodChip);
     expect(foodChip.textContent).not.toContain('✓');
 
@@ -553,7 +558,7 @@ describe('CHWCalendarScreen — Schedule Session Resource Needs multi-select (Ep
 
     const [, options] = mockedApi.mock.calls.find(([path]) => path === '/sessions/schedule')!;
     const body = JSON.parse((options as { body: string }).body);
-    expect(body.resource_needs).toEqual(['housing']);
+    expect(body.resource_needs).toEqual(['utilities']);
     // The modal no longer collects notes at all — the mutation hook still
     // sends the legacy `notes` key (payload.notes defaults to null) for
     // backward compatibility with the still-present DB column, but nothing

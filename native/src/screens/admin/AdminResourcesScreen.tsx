@@ -66,8 +66,14 @@ import { typography } from '../../theme/typography';
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
+// Epic C5: 'housing' is intentionally excluded — grandfathered, not newly
+// selectable. A resource whose saved category is still 'housing' keeps
+// rendering correctly (Resource.category is typed to admit it, and the
+// backend keeps validating it — see schemas/resource.py) but this picker,
+// used by BOTH the create and edit forms, must never offer it again so an
+// admin can't re-tag a resource back into Housing. 'utilities' replaces it.
 const CATEGORIES: Array<{ key: ResourceCategory; label: string }> = [
-  { key: 'housing', label: 'Housing' },
+  { key: 'utilities', label: 'Utilities' },
   { key: 'food', label: 'Food' },
   { key: 'mental_health', label: 'Mental Health' },
   { key: 'rehab', label: 'Rehab' },
@@ -76,6 +82,22 @@ const CATEGORIES: Array<{ key: ResourceCategory; label: string }> = [
   { key: 'transportation', label: 'Transportation' },
   { key: 'other', label: 'Other' },
 ];
+
+// Grandfathered display labels for categories no longer offered by
+// CATEGORIES above, so a legacy resource still shows a proper capitalized
+// label ("Housing") in the catalog list rather than falling back to the raw
+// lowercase wire value.
+const GRANDFATHERED_CATEGORY_LABELS: Partial<Record<ResourceCategory, string>> = {
+  housing: 'Housing',
+};
+
+function categoryLabel(category: ResourceCategory): string {
+  return (
+    CATEGORIES.find((c) => c.key === category)?.label ??
+    GRANDFATHERED_CATEGORY_LABELS[category] ??
+    category
+  );
+}
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -613,7 +635,7 @@ export function AdminResourcesScreen(): React.JSX.Element {
                       )}
                     </View>
                     <Text style={s.resourceCategory}>
-                      {CATEGORIES.find((c) => c.key === resource.category)?.label ?? resource.category}
+                      {categoryLabel(resource.category)}
                     </Text>
                     {resource.phone ? (
                       <Text style={s.resourcePhone}>{resource.phone}</Text>

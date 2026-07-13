@@ -19,8 +19,21 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # ─── Enums (mirrored from models/resource.py) ─────────────────────────────────
 
+# Epic C5: 'housing' is GRANDFATHERED here, not removed. ResourceUpdate.category
+# is used by a read-then-full-resave admin edit form (AdminResourcesScreen.tsx
+# resourceToForm() seeds `category` from the existing resource; the edit form
+# always resends the full category on save, even when the admin only touched
+# an unrelated field) — so an existing housing-categorized resource must keep
+# validating on every edit, not just at creation time. The admin CategoryPicker
+# (native/src/screens/admin/AdminResourcesScreen.tsx CATEGORIES) no longer
+# offers 'housing' for NEW selection; 'utilities' is its replacement there.
+# ResourceCreate also uses this same Literal (its form always starts at
+# category: 'other', so 'housing' is unreachable from that path in practice,
+# but a shared type keeps Create/Update in sync and is easier to reason about
+# than gate-per-call-site).
 ResourceCategory = Literal[
     "housing",
+    "utilities",
     "food",
     "mental_health",
     "rehab",

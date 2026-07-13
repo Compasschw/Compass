@@ -90,6 +90,21 @@ STANDARD_STEPS: list[dict] = [
 # Template-specific step descriptions can be added in a future enhancement
 # without altering the canonical 6-step structure.
 
+# Epic C5 note: these are pre-built JOURNEY TEMPLATES (a richer catalog than
+# the 6-vertical resource-need taxonomy — e.g. "Rent Payment Assistance" and
+# "Utility Support" both already exist as distinct housing-category templates
+# below), listed unrestricted via GET /journeys/templates with no code-level
+# "selectable verticals" gate (unlike CHWMemberProfileScreen's Resource Needs
+# picker or the member request form). The 'housing' template slug is
+# INTENTIONALLY preserved, not removed: a CHW manually assigning a pre-built
+# journey pathway to a member is a distinct action from tagging a NEW resource
+# need/vertical, and "Housing" (the pathway — eviction prevention, shelter
+# placement, etc.) remains a legitimate, ongoing case type distinct from a
+# utility-bill-assistance case. Utility-bill assistance is already covered by
+# the existing "Utility Support" template below (category="housing", since
+# utility assistance historically nested under the housing/economic template
+# grouping) — no new template was added here because one already existed
+# pre-Epic-C5 covering this need.
 _TEMPLATES: list[dict] = [
     # ── Existing 4 (slugs preserved) ───────────────────────────────────────────
     {

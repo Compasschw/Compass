@@ -6,6 +6,18 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.models.enums import SessionMode, Urgency, Vertical
 
 # All valid vertical string values — used for cross-field validation.
+#
+# Epic C5 note: this intentionally stays the FULL Vertical enum (including the
+# grandfathered 'housing') rather than a selectable-only subset. Unlike the
+# frontend picker (which only offers SELECTABLE_VERTICALS from
+# native/src/lib/verticals.ts), the backend does not enforce "new selection"
+# restrictions on this endpoint — tightening it would reject legitimate
+# pre-existing integration/API callers and break existing test coverage
+# (test_pre_epic_l_session_without_resource_needs_still_serializes posts
+# `"vertical": "housing"` to POST /requests/ and expects 201). UI-level
+# steering (removing Housing from the picker) is the enforcement point here,
+# matching the same pattern already used for Epic L's
+# ScheduleSessionRequest.resource_needs.
 _VALID_VERTICALS: frozenset[str] = frozenset(v.value for v in Vertical)
 
 

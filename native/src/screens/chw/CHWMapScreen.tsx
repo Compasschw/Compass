@@ -5,8 +5,10 @@
  *  - Members layer: ZIP-centroid pins (PHI-safe) for members the CHW has had
  *    at least one session with. Tapping opens a bottom sheet → "Open Profile".
  *  - Resources layer: precise-location pins for LA-area community resources
- *    by category (housing, food, mental_health, transportation, healthcare, employment). Tapping
- *    opens a bottom sheet → "Get Directions" (opens native maps app).
+ *    by category (utilities, food, mental_health, transportation, healthcare,
+ *    employment; 'housing' also still renders for legacy-categorized
+ *    resources — see Epic C5). Tapping opens a bottom sheet → "Get
+ *    Directions" (opens native maps app).
  *
  * A segmented control at the top lets the CHW toggle: Members / Resources / Both.
  *

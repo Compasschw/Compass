@@ -251,7 +251,10 @@ function VerticalIconComponent({
   const iconColor = VERTICAL_COLORS[vertical];
   switch (vertical) {
     case 'housing':
+      // Grandfathered — historical sessions still render the Home icon.
       return <Home size={size} color={iconColor} />;
+    case 'utilities':
+      return <Lightbulb size={size} color={iconColor} />;
     case 'transportation':
       return <Bus size={size} color={iconColor} />;
     case 'food':

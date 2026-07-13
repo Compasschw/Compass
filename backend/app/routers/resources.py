@@ -73,10 +73,20 @@ chw_router = APIRouter(prefix="/api/v1/chw/resources", tags=["resources-chw"])
 admin_router = APIRouter(prefix="/api/v1/admin/resources", tags=["resources-admin"])
 
 # ─── Allowed category values ───────────────────────────────────────────────────
+#
+# Epic C5: 'housing' is GRANDFATHERED — kept so search_resources/admin_list_resources
+# can still filter by category="housing" (existing housing-categorized
+# resources must remain findable) and so admin_approve_suggestion's
+# category-fallback logic doesn't reject a suggestion whose proposed_resource
+# already carries "housing" (a CHW-submitted suggestion is free-form JSON; see
+# ResourceSuggestionCreate). 'utilities' is the replacement offered for NEW
+# resource categorization (see ResourceCategory in schemas/resource.py and
+# the admin CategoryPicker on the frontend, which no longer lists 'housing').
 
 _VALID_CATEGORIES = frozenset(
     {
         "housing",
+        "utilities",
         "food",
         "mental_health",
         "rehab",
