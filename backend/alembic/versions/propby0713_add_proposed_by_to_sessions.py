@@ -27,7 +27,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "propby0713"
-down_revision: str | None = "sdohskip0713"
+down_revision: str | None = "b3cr0713"
 branch_labels = None
 depends_on = None
 
