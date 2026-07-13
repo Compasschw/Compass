@@ -680,11 +680,10 @@ async def list_admin_chws(
 #
 # CHWProfile.background_check_status is one of "not_started" | "pending" |
 # "clear" | "consider". Only this admin endpoint may move a CHW into "clear"
-# or "consider" — there is deliberately no CHW-facing way to set this value
-# (PATCH /chw/profile's background_check_status field is a separate,
-# pre-existing gap tracked out-of-scope for this change; see the Epic D
-# completion report). Kept in sync with the identical set enforced in
-# app/routers/chw.py::_BACKGROUND_CHECK_STATUSES.
+# or "consider" — there is deliberately no CHW-facing way to set this value:
+# the self-write path (PATCH /chw/profile) was closed in the Epic D
+# integration by removing the compliance fields from CHWProfileUpdate
+# (schemas/user.py), so this endpoint is now the single writer.
 _BACKGROUND_CHECK_STATUSES = {"not_started", "pending", "clear", "consider"}
 
 

@@ -28,6 +28,7 @@ from uuid import UUID
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
 
 import app.config as _app_config_module
 from app.models.credential import Credential
@@ -406,3 +407,86 @@ class TestDefaultFlagValue:
         # dependency) confirms the class-level default independent of
         # whatever .env/environment this test run happens to have.
         assert Settings.model_fields["chw_work_gate_enabled"].default is False
+
+
+# ─── Self-write lockdown (the gate's integrity depends on it) ─────────────────
+#
+# Before Epic D's integration, PATCH/PUT /chw/profile accepted
+# background_check_status / hipaa_training_completed / chw_certification from
+# the CHW's own payload — meaning a CHW could self-write "clear" and bypass
+# chw_can_work entirely. The fields were removed from CHWProfileUpdate; these
+# tests pin that the values can no longer reach the DB from the self-service
+# route (pydantic drops the unknown keys, the rest of the update still works).
+
+
+@pytest.mark.asyncio
+async def test_chw_cannot_self_clear_background_check_via_profile_update(
+    client: AsyncClient, chw_tokens: dict
+):
+    chw_id = _user_id(chw_tokens)
+
+    res = await client.put(
+        "/api/v1/chw/profile",
+        json={
+            "bio": "Legit bio update.",
+            "background_check_status": "clear",
+            "hipaa_training_completed": True,
+            "chw_certification": "SELF-ATTESTED-999",
+        },
+        headers=auth_header(chw_tokens),
+    )
+    # The request itself succeeds (unknown fields are ignored, the legitimate
+    # bio edit applies) — but none of the compliance fields may change.
+    assert res.status_code == 200, res.text
+
+    async with _test_session_factory() as session:
+        result = await session.execute(
+            select(CHWProfile).where(CHWProfile.user_id == UUID(chw_id))
+        )
+        profile = result.scalar_one()
+        assert profile.bio == "Legit bio update."
+        assert profile.background_check_status != "clear", (
+            "CHW must NOT be able to self-write background_check_status "
+            "via the profile route — that bypasses the work gate"
+        )
+        assert profile.hipaa_training_completed is not True
+        assert profile.chw_certification != "SELF-ATTESTED-999"
+
+
+@pytest.mark.asyncio
+async def test_self_cleared_payload_does_not_unlock_the_work_gate(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, monkeypatch
+):
+    """End-to-end: even after POSTing a 'clear' payload to the profile route,
+    the gate still blocks (flag ON) — proving the bypass is closed at the
+    behavior level, not just the column level."""
+    monkeypatch.setattr(
+        _app_config_module.settings, "chw_work_gate_enabled", True
+    )
+
+    await client.put(
+        "/api/v1/chw/profile",
+        json={"background_check_status": "clear"},
+        headers=auth_header(chw_tokens),
+    )
+
+    res = await client.post(
+        "/api/v1/requests/",
+        json={
+            "vertical": "food",
+            "urgency": "routine",
+            "description": "gate bypass attempt check",
+            "preferred_mode": "in_person",
+        },
+        headers=auth_header(member_tokens),
+    )
+    assert res.status_code == 201, res.text
+    request_id = res.json()["id"]
+
+    res = await client.patch(
+        f"/api/v1/requests/{request_id}/accept", headers=auth_header(chw_tokens)
+    )
+    assert res.status_code == 403, (
+        f"Gate must still block after a self-clear attempt, got {res.status_code}: {res.text}"
+    )
+    assert res.json()["detail"]["code"] == "onboarding_incomplete"
