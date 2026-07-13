@@ -8749,7 +8749,16 @@ const sectionCardStyles = StyleSheet.create({
 export function CHWMemberProfileScreen(): React.JSX.Element {
   const route = useRoute<MemberProfileRouteProp>();
   const navigation = useNavigation<MemberProfileNavProp>();
-  const { memberId } = route.params;
+  const { memberId, backLabel, backTo } = route.params;
+
+  // Epic S — dynamic "Back to …" link. Callers (CHWMembersScreen,
+  // CHWMapScreen, CHWDashboardScreen, …) pass where the CHW came from via
+  // `backLabel`/`backTo`; absent/blank values fall back to the screen's
+  // original hard-wired behavior ("Back to Members" → CHWMembers tab) so
+  // any entry path that hasn't been updated yet (or is missing params for
+  // any other reason) keeps working exactly as before.
+  const resolvedBackLabel = backLabel && backLabel.trim().length > 0 ? backLabel : 'Members';
+  const resolvedBackTo = backTo && backTo.trim().length > 0 ? backTo : 'CHWMembers';
 
   const { width: windowWidth } = useWindowDimensions();
 
@@ -8982,19 +8991,21 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                 <TouchableOpacity
                   style={s.backLinkWeb}
                   // MemberProfile is pushed inside SessionsStack, so goBack()
-                  // lands on Messages. "Back to Members" must navigate to the
-                  // CHWMembers tab explicitly (navigate bubbles up to the parent
-                  // tab navigator that owns it).
+                  // would land on Messages regardless of where the CHW
+                  // actually came from. Navigate explicitly to the resolved
+                  // origin instead (navigate bubbles up to the parent tab
+                  // navigator that owns that route) — defaults to the
+                  // CHWMembers tab when no origin was passed in.
                   onPress={() =>
                     (navigation as unknown as { navigate: (name: string) => void }).navigate(
-                      'CHWMembers',
+                      resolvedBackTo,
                     )
                   }
                   accessibilityRole="button"
-                  accessibilityLabel="Back to members"
+                  accessibilityLabel={`Back to ${resolvedBackLabel}`}
                 >
                   <ArrowLeft size={16} color={tokens.primary} />
-                  <Text style={s.backLinkText}>Back to Members</Text>
+                  <Text style={s.backLinkText}>Back to {resolvedBackLabel}</Text>
                 </TouchableOpacity>
                 <PageHeader
                   title={displayName}

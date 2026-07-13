@@ -71,7 +71,6 @@ import {
 import { useRefreshControl } from '../../hooks/useRefreshControl';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
-import { PressableMember } from '../../components/shared/PressableMember';
 import { AddMemberModal } from './AddMemberModal';
 
 import {
@@ -302,6 +301,59 @@ function Avatar({ name }: { name: string }): React.JSX.Element {
   );
 }
 
+/**
+ * Dashboard-scoped member-profile link (Epic S — dynamic "Back to …").
+ *
+ * Mirrors the tap target and accessibility semantics of the shared
+ * `components/shared/PressableMember`, but additionally passes
+ * `backLabel`/`backTo` route params so a CHW who opens a member from
+ * Today's Schedule sees "Back to Dashboard" on the profile and returns
+ * here. The shared PressableMember component doesn't support those params
+ * yet — it's also used by CHWMessagesScreen (owned by concurrent work on
+ * this epic) and CHWJourneysScreen, both outside this change's file
+ * cluster, so extending it is deliberately left for a follow-up rather
+ * than risking a shared-file collision. This local wrapper is scoped to
+ * this screen only.
+ *
+ * TODO(Epic S follow-up, no tracked issue yet): once the concurrent
+ * CHWMessagesScreen work lands, add optional `backLabel`/`backTo` props to
+ * `PressableMember` itself and delete this duplicate.
+ */
+function DashboardMemberLink({
+  memberId,
+  displayName,
+  enabled = true,
+  children,
+}: {
+  memberId: string;
+  displayName: string;
+  enabled?: boolean;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  const navigation = useNavigation<any>();
+
+  const handlePress = useCallback(() => {
+    navigation.navigate('SessionsStack', {
+      screen: 'MemberProfile',
+      params: { memberId, backLabel: 'Dashboard', backTo: 'Dashboard' },
+    });
+  }, [navigation, memberId]);
+
+  if (!enabled || !memberId) {
+    return <View>{children}</View>;
+  }
+
+  return (
+    <TouchableOpacity
+      onPress={handlePress}
+      accessibilityRole="link"
+      accessibilityLabel={`Open ${displayName}'s profile`}
+    >
+      {children}
+    </TouchableOpacity>
+  );
+}
+
 /** One row in the Today's Schedule list. */
 function ScheduleRow({
   session,
@@ -328,23 +380,23 @@ function ScheduleRow({
       </View>
 
       {/* Avatar — taps to MemberProfile (RN's deepest-pressable wins inside the row's TouchableOpacity). */}
-      <PressableMember
+      <DashboardMemberLink
         memberId={session.memberId ?? ''}
         displayName={name}
         enabled={!!session.memberId}
       >
         <Avatar name={name} />
-      </PressableMember>
+      </DashboardMemberLink>
 
       {/* Info — only the member name is pressable; subtitle is informational. */}
       <View style={styles.scheduleInfo}>
-        <PressableMember
+        <DashboardMemberLink
           memberId={session.memberId ?? ''}
           displayName={name}
           enabled={!!session.memberId}
         >
           <Text style={styles.scheduleNameText}>{name}</Text>
-        </PressableMember>
+        </DashboardMemberLink>
         <Text style={styles.scheduleMetaText}>
           {session.vertical}
           {session.mode != null ? ` · ${MODE_LABELS[session.mode] ?? session.mode}` : ''}

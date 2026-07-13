@@ -695,7 +695,9 @@ export function CHWMapScreen(): React.JSX.Element {
         // throw at runtime — the catch block logs it and shows a toast.
         (navigation as any).navigate('SessionsStack', {
           screen: 'MemberProfile',
-          params: { memberId },
+          // Epic S: origin so the profile's web back-link reads "Back to
+          // Map" and returns to this screen.
+          params: { memberId, backLabel: 'Map', backTo: 'Map' },
         });
       } catch (err) {
         // eslint-disable-next-line no-console

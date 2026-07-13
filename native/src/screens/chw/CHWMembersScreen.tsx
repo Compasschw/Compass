@@ -795,7 +795,9 @@ export function CHWMembersScreen(): React.JSX.Element {
   const handleMemberPress = (memberId: string) => {
     (navigation as any).navigate('SessionsStack', {
       screen: 'MemberProfile',
-      params: { memberId },
+      // Epic S: origin so the profile's web back-link reads "Back to
+      // Members" and returns to this roster.
+      params: { memberId, backLabel: 'Members', backTo: 'CHWMembers' },
     });
   };
 
