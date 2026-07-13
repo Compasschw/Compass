@@ -856,6 +856,7 @@ async def create_chw_member(
     from app.models.request import ServiceRequest
     from app.services.auth_service import append_new_member_to_csv, register_user
     from app.services.session_lookup import find_or_create_conversation_for_pair
+    from app.services.signup_confirmations import send_signup_confirmations
 
     # ── Create the member User + MemberProfile (reuses signup provisioning) ──
     # register_user handles the duplicate-email guard (returns None), phone
@@ -931,6 +932,11 @@ async def create_chw_member(
     # Best-effort/non-blocking: a CSV/S3 failure never fails this request,
     # and the export is gated + idempotent (see append_new_member_to_csv).
     background_tasks.add_task(append_new_member_to_csv, member.id)
+
+    # Best-effort signup confirmation email + (if already SMS-eligible) SMS
+    # for the newly-created member, same guarantee as /auth/register — a
+    # slow/down SES or Vonage never fails this request (Epic A).
+    background_tasks.add_task(send_signup_confirmations, member.id)
 
     return CHWCreateMemberResponse(
         id=member.id,

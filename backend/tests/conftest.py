@@ -26,6 +26,20 @@ os.environ.setdefault(
 )
 os.environ.setdefault("ADMIN_KEY", "test-admin-key-for-pytest-1234")
 
+# Epic A (signup confirmation email/SMS): use the no-op email provider in
+# tests so the suite's many /auth/register, /auth/oauth/*, and /chw/members
+# calls (each now schedules a best-effort confirmation-email background
+# task) never fire a real outbound AWS SES API call. SES is a BAA-covered
+# production resource — hammering it with hundreds of test-run emails per
+# suite run would add real latency/flakiness (network dependency) and risk
+# tripping AWS sending-quota/abuse detection. Tests that specifically want
+# to exercise the real SES-backed path (e.g. asserting EmailMessage
+# contents) monkeypatch/patch the relevant send function directly instead
+# of relying on this env var. Vonage SMS needs no equivalent override — it
+# already no-ops safely via VonageSmsMessagesClient.is_configured() when
+# unconfigured (the default in tests), per its stub-mode docstring.
+os.environ.setdefault("EMAIL_PROVIDER", "noop")
+
 import pytest  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402
 from sqlalchemy import text  # noqa: E402
