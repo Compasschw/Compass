@@ -45,7 +45,8 @@ vi.mock('@react-navigation/native', () => ({
 }));
 
 import { api } from '../../api/client';
-import { CHWCalendarScreen } from './CHWCalendarScreen';
+import type { SessionData } from '../../hooks/useApiQueries';
+import { CHWCalendarScreen, deriveBadgeStatus } from './CHWCalendarScreen';
 
 const mockedApi = api as unknown as ReturnType<typeof vi.fn>;
 
@@ -157,10 +158,67 @@ const completedSessionFixture = {
   member_name: MEMBER_NAME_2,
 };
 
+// ─── Fixtures for N1 (cancelled sessions vanish from the grid) and O1
+// (truthful status tags — no auto-"Missed") ────────────────────────────────
+//
+// Both use "today" offsets for the same Day-view-bucketing reason as above.
+
+const CANCELLED_SESSION_ID = 'sess-cancelled-1';
+const MEMBER_ID_3 = 'member-3';
+const MEMBER_NAME_3 = 'Priya Nair';
+
+const cancelledStart = new Date(Date.now() + 1 * 60 * 60 * 1000); // +1h, today
+const cancelledEnd = new Date(cancelledStart.getTime() + 60 * 60 * 1000);
+
+/** A session the CHW Removed — status flips to 'cancelled' by useCancelSession. */
+const cancelledSessionFixture = {
+  id: CANCELLED_SESSION_ID,
+  request_id: 'req-5',
+  chw_id: CHW_ID,
+  member_id: MEMBER_ID_3,
+  vertical: 'housing',
+  status: 'cancelled',
+  mode: 'in_person',
+  scheduled_at: cancelledStart.toISOString(),
+  scheduled_end_at: cancelledEnd.toISOString(),
+  scheduling_status: null,
+  created_at: '2026-07-01T00:00:00.000Z',
+  chw_name: 'Test CHW',
+  member_name: MEMBER_NAME_3,
+};
+
+const PAST_SCHEDULED_SESSION_ID = 'sess-past-scheduled-1';
+const MEMBER_ID_4 = 'member-4';
+const MEMBER_NAME_4 = 'Sam Okafor';
+
+const pastScheduledStart = new Date(Date.now() - 5 * 60 * 60 * 1000); // -5h, today
+const pastScheduledEnd = new Date(pastScheduledStart.getTime() + 60 * 60 * 1000);
+
+/** A confirmed session whose time passed but the CHW never began it —
+ *  stays `status: 'scheduled'`. Must NOT be auto-labeled "Missed" (O1). */
+const pastScheduledSessionFixture = {
+  id: PAST_SCHEDULED_SESSION_ID,
+  request_id: 'req-6',
+  chw_id: CHW_ID,
+  member_id: MEMBER_ID_4,
+  vertical: 'housing',
+  status: 'scheduled',
+  mode: 'in_person',
+  scheduled_at: pastScheduledStart.toISOString(),
+  scheduled_end_at: pastScheduledEnd.toISOString(),
+  scheduling_status: 'confirmed',
+  created_at: '2026-07-01T00:00:00.000Z',
+  chw_name: 'Test CHW',
+  member_name: MEMBER_NAME_4,
+};
+
 // ─── API router — the sole network boundary ──────────────────────────────────
 
 let scheduleShouldFail = false;
 let startShouldFail = false;
+/** Extra session rows layered onto the base '/sessions/' GET response, reset
+ *  to [] in the top-level beforeEach — individual describe blocks opt in. */
+let additionalSessionFixtures: unknown[] = [];
 
 function routeApi(path: string, options?: { method?: string; body?: string }): unknown {
   const method = options?.method ?? 'GET';
@@ -211,7 +269,12 @@ function routeApi(path: string, options?: { method?: string; body?: string }): u
   }
 
   if (path === '/sessions/' && method === 'GET') {
-    return [pendingSessionFixture, confirmedSessionFixture, completedSessionFixture];
+    return [
+      pendingSessionFixture,
+      confirmedSessionFixture,
+      completedSessionFixture,
+      ...additionalSessionFixtures,
+    ];
   }
 
   if (path === '/chw/members' && method === 'GET') {
@@ -248,6 +311,7 @@ async function openProposeModal(): Promise<void> {
 beforeEach(() => {
   scheduleShouldFail = false;
   startShouldFail = false;
+  additionalSessionFixtures = [];
   mockNavigate.mockClear();
   mockedApi.mockReset();
   mockedApi.mockImplementation(async (path: string, options?: { method?: string; body?: string }) =>
@@ -499,5 +563,134 @@ describe('CHWCalendarScreen — Session Details modal actions', () => {
       ).toBe(true);
     });
     confirmSpy.mockRestore();
+  });
+});
+
+/**
+ * N1 — a session the CHW Removed (status flips to `cancelled` via
+ * useCancelSession) must vanish from the calendar grid entirely: it should
+ * render as neither a Week/Day session card nor count toward a Month
+ * day-cell's session badge. This is `groupSessionsByDate` excluding
+ * `cancelled`/`cancelled_no_consent` rows before the grid ever sees them.
+ */
+describe('CHWCalendarScreen — removed sessions vanish from the calendar (N1)', () => {
+  beforeEach(() => {
+    additionalSessionFixtures = [cancelledSessionFixture];
+  });
+
+  it('does not render a cancelled session as a card in Day view', async () => {
+    renderScreen();
+    fireEvent.click(await screen.findByLabelText('day view'));
+
+    // Control: a non-cancelled same-day session still renders, proving the
+    // day's data actually loaded (a false negative here would otherwise make
+    // the "cancelled card absent" assertion below meaningless).
+    await screen.findByLabelText(new RegExp(`^Session with ${MEMBER_NAME} at`));
+
+    expect(
+      screen.queryByLabelText(new RegExp(`^Session with ${MEMBER_NAME_3} at`)),
+    ).toBeNull();
+  });
+
+  it('excludes the cancelled session from the Month view day-cell session count', async () => {
+    renderScreen();
+    fireEvent.click(await screen.findByLabelText('month view'));
+
+    // Today has 2 non-cancelled sessions (the Session-Details-modal
+    // confirmed + completed fixtures). The 3rd, cancelled fixture must not
+    // push today's badge count to 3.
+    await waitFor(() => {
+      expect(screen.getByLabelText(/, 2 sessions$/)).toBeTruthy();
+    });
+    expect(screen.queryByLabelText(/, 3 sessions?$/)).toBeNull();
+  });
+});
+
+/**
+ * O1 — the status tag must reflect the session's REAL status. Covers both
+ * the pure `deriveBadgeStatus` mapping directly (fast, exhaustive) and one
+ * rendered-UI assertion tying it back to the actual Session Details modal.
+ */
+describe('CHWCalendarScreen — deriveBadgeStatus truthful status tags (O1)', () => {
+  const now = new Date('2026-07-12T18:00:00.000Z');
+
+  /** Builds a minimal-but-valid SessionData row with the given overrides. */
+  function makeSession(overrides: Partial<SessionData>): SessionData {
+    return {
+      id: 's-1',
+      requestId: 'r-1',
+      chwId: CHW_ID,
+      memberId: MEMBER_ID,
+      vertical: 'housing',
+      mode: 'in_person',
+      status: 'scheduled',
+      scheduledAt: '2026-07-12T15:00:00.000Z',
+      createdAt: '2026-07-01T00:00:00.000Z',
+      ...overrides,
+    };
+  }
+
+  it('maps completed → "Completed"', () => {
+    expect(deriveBadgeStatus(makeSession({ status: 'completed' }), now)).toBe('Completed');
+  });
+
+  it('maps cancelled → "Cancelled"', () => {
+    expect(deriveBadgeStatus(makeSession({ status: 'cancelled' }), now)).toBe('Cancelled');
+  });
+
+  it('maps cancelled_no_consent → "Cancelled"', () => {
+    expect(deriveBadgeStatus(makeSession({ status: 'cancelled_no_consent' }), now)).toBe('Cancelled');
+  });
+
+  it('maps a still-pending scheduling request → "Pending"', () => {
+    expect(
+      deriveBadgeStatus(makeSession({ status: 'scheduled', schedulingStatus: 'pending' }), now),
+    ).toBe('Pending');
+  });
+
+  it('maps an upcoming confirmed session → "Confirmed"', () => {
+    const future = new Date(now.getTime() + 60 * 60 * 1000).toISOString();
+    expect(
+      deriveBadgeStatus(makeSession({ status: 'scheduled', scheduledAt: future }), now),
+    ).toBe('Confirmed');
+  });
+
+  it('does NOT auto-label a past-but-never-started scheduled session "Missed" — stays "Confirmed"', () => {
+    const past = new Date(now.getTime() - 60 * 60 * 1000).toISOString();
+    expect(
+      deriveBadgeStatus(makeSession({ status: 'scheduled', scheduledAt: past }), now),
+    ).toBe('Confirmed');
+  });
+
+  it('never produces a "Missed" tag for any known status — the auto-Missed rule is gone', () => {
+    const statuses = [
+      'scheduled',
+      'in_progress',
+      'awaiting_documentation',
+      'completed',
+      'cancelled',
+      'cancelled_no_consent',
+    ];
+    for (const status of statuses) {
+      const past = new Date(now.getTime() - 60 * 60 * 1000).toISOString();
+      expect(deriveBadgeStatus(makeSession({ status, scheduledAt: past }), now)).not.toBe('Missed');
+    }
+  });
+
+  it('renders "Confirmed" (never "Missed") for a session whose time passed but was never started', async () => {
+    additionalSessionFixtures = [pastScheduledSessionFixture];
+    renderScreen();
+
+    fireEvent.click(await screen.findByLabelText('day view'));
+    const card = await screen.findByLabelText(new RegExp(`^Session with ${MEMBER_NAME_4} at`));
+    fireEvent.click(card);
+    await screen.findByText('Session Details');
+
+    // The card's own inline badge (Day view) AND the modal's status badge
+    // both read "Confirmed" — asserting "at least one" avoids over-coupling
+    // to how many badges happen to be on screen, while still proving the
+    // real status renders and "Missed" never does.
+    expect(screen.getAllByText('Confirmed').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Missed')).toBeNull();
   });
 });

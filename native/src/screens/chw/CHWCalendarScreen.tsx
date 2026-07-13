@@ -101,22 +101,28 @@ type SessionMode = 'in_person' | 'virtual' | 'phone';
 
 // ─── Status badge helpers ─────────────────────────────────────────────────────
 
-type SessionBadgeStatus = 'Confirmed' | 'Pending' | 'Completed' | 'Missed';
+export type SessionBadgeStatus = 'Confirmed' | 'Pending' | 'Completed' | 'Cancelled';
 
 /**
- * Derives a display status badge from a SessionData row.
+ * Derives a display status badge from a SessionData row, reflecting the
+ * session's REAL status — no inferred/hardcoded "Missed."
  *
  * Priority:
- *  1. completed  → "Completed"
- *  2. cancelled* → "Missed"
- *  3. past scheduled (scheduledAt < now && status === 'scheduled') → "Missed"
- *  4. schedulingStatus 'pending' → "Pending"
- *  5. default → "Confirmed"
+ *  1. completed → "Completed"
+ *  2. cancelled/cancelled_no_consent (CHW or member cancelled/removed it) → "Cancelled"
+ *  3. schedulingStatus 'pending' (awaiting Confirm/Decline) → "Pending"
+ *  4. default (scheduled — upcoming OR past-but-never-started) → "Confirmed"
+ *
+ * A past session that stayed `scheduled` (the CHW never began it) is
+ * intentionally still "Confirmed" here rather than "Missed" — a true no-show
+ * "Missed" tag requires a distinct signal (Epic O2, not yet built) that the
+ * CHW actually began the session and the member failed to attend. Silently
+ * relabeling every past-and-not-started session as "Missed" was misleading
+ * (e.g. documentation submitted late, or the row hasn't refreshed yet).
  */
-function deriveBadgeStatus(session: SessionData, now: Date): SessionBadgeStatus {
+export function deriveBadgeStatus(session: SessionData, now: Date): SessionBadgeStatus {
   if (session.status === 'completed') return 'Completed';
-  if (session.status === 'cancelled' || session.status === 'cancelled_no_consent') return 'Missed';
-  if (session.status === 'scheduled' && new Date(session.scheduledAt) < now) return 'Missed';
+  if (session.status === 'cancelled' || session.status === 'cancelled_no_consent') return 'Cancelled';
   if (session.schedulingStatus === 'pending') return 'Pending';
   return 'Confirmed';
 }
@@ -125,7 +131,7 @@ const BADGE_COLORS: Record<SessionBadgeStatus, { bg: string; text: string; borde
   Confirmed: { bg: '#DCFCE7', text: '#15803D', border: '#BBF7D0' },
   Pending: { bg: '#FEF9C3', text: '#A16207', border: '#FDE68A' },
   Completed: { bg: '#F3F4F6', text: '#374151', border: '#E5E7EB' },
-  Missed: { bg: '#FEE2E2', text: '#B91C1C', border: '#FECACA' },
+  Cancelled: { bg: '#FEE2E2', text: '#B91C1C', border: '#FECACA' },
 };
 
 // ─── Icon helpers ─────────────────────────────────────────────────────────────
@@ -283,10 +289,18 @@ function toISODateTimeLocal(date: Date): string {
 
 /**
  * Groups SessionData[] by their local calendar date key (YYYY-MM-DD).
+ *
+ * Removed/cancelled sessions (`cancelled` and `cancelled_no_consent`) are
+ * excluded entirely — once a CHW confirms "Yes, Remove" on a scheduled
+ * session, it must vanish from the calendar grid (week/day cards AND the
+ * month-view day-cell count both read from this map), not linger as a
+ * dangling entry. This is distinct from a past session that stayed
+ * `scheduled` (never started) — that one is NOT cancelled and still renders.
  */
 function groupSessionsByDate(sessions: SessionData[]): Map<string, SessionData[]> {
   const map = new Map<string, SessionData[]>();
   for (const session of sessions) {
+    if (session.status === 'cancelled' || session.status === 'cancelled_no_consent') continue;
     const d = new Date(session.scheduledAt);
     const key = toDateKey(d.getFullYear(), d.getMonth(), d.getDate());
     const bucket = map.get(key) ?? [];
@@ -884,7 +898,7 @@ function SessionDetailsModal({
   // still awaiting approval — that keeps its existing Confirm/Decline row +
   // Open Member Profile below, unchanged) gets the Begin Session / Propose
   // New Time / Remove action row instead of the plain Open Member Profile
-  // button. Missed/completed/cancelled sessions are unaffected.
+  // button. Past-scheduled/completed/cancelled sessions are unaffected.
   const isConfirmedUpcoming =
     session.status === 'scheduled' && new Date(session.scheduledAt) >= now && !isPending;
 
@@ -933,7 +947,7 @@ function SessionDetailsModal({
                 <View style={[detailModalStyles.statusBadge, { backgroundColor: badgeStyle.bg, borderColor: badgeStyle.border }]}>
                   {badge === 'Confirmed' ? (
                     <CheckCircle size={12} color={badgeStyle.text} />
-                  ) : badge === 'Missed' ? (
+                  ) : badge === 'Cancelled' ? (
                     <AlertCircle size={12} color={badgeStyle.text} />
                   ) : null}
                   <Text style={[detailModalStyles.statusText, { color: badgeStyle.text }]}>{badge}</Text>
