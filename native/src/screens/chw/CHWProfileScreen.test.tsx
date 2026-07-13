@@ -5,9 +5,10 @@
  *  - C1: the "Modality" section is fully removed (no stray chips/labels).
  *  - C2: the ZIP field label reads "ZIP Code" (was "Service Area ZIPs").
  *  - C4: saving availability shows an inline "Availability saved ✓"
- *    confirmation next to the Save availability button — useUpdateChwAvailability
- *    (useApiQueries.ts) already has an onError alert but no user-facing
- *    success feedback, so this fills that gap.
+ *    confirmation next to the Save availability button on success —
+ *    useUpdateChwAvailability (useApiQueries.ts) already has an onError alert
+ *    but no user-facing success feedback, so this fills that gap. A failed
+ *    save must NOT show the confirmation (covered separately).
  *
  * Only the network boundary (`../../api/client`), auth context, and
  * navigation hook are mocked (Tier 2 — jsdom + react-native-web, see
@@ -157,5 +158,42 @@ describe('CHWProfileScreen — Epic C profile edits', () => {
     );
 
     await waitFor(() => expect(screen.getByText('Availability saved ✓')).toBeTruthy());
+  });
+
+  it('does not show the confirmation when Save availability fails (C4 error path)', async () => {
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByLabelText('Save availability')).toBeTruthy());
+    expect(screen.queryByText('Availability saved ✓')).toBeNull();
+
+    // Re-route the PUT to reject — everything else stays on the happy-path
+    // fixtures so unrelated hooks (profile, earnings, conversations) don't
+    // start throwing on an incidental refetch.
+    mockedApi.mockImplementation(async (path: string, init?: RequestInit) => {
+      const method = init?.method ?? 'GET';
+      if (path === '/chw/availability' && method === 'PUT') {
+        throw new Error('Network error');
+      }
+      if (path === '/chw/profile' && method === 'GET') return CHW_PROFILE_FIXTURE;
+      if (path === '/chw/availability' && method === 'GET') return AVAILABILITY_FIXTURE;
+      if (path.startsWith('/chw/earnings')) return EARNINGS_FIXTURE;
+      if (path.startsWith('/conversations')) return [];
+      return {};
+    });
+
+    fireEvent.click(screen.getByLabelText('Save availability'));
+
+    await waitFor(() =>
+      expect(mockedApi).toHaveBeenCalledWith(
+        '/chw/availability',
+        expect.objectContaining({ method: 'PUT' }),
+      ),
+    );
+
+    // The mutation's onError alert (useApiQueries.ts) fires instead of the
+    // local success-confirmation state — give any pending state update a
+    // moment to flush, then assert the confirmation never rendered.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.queryByText('Availability saved ✓')).toBeNull();
   });
 });
