@@ -9,7 +9,13 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+# Placeholder answer_value/answer_label written when a question is skipped
+# (Epic W2). Kept as a private constant so the router and any future caller
+# stay in lockstep — never hand-typed in more than one place.
+SKIPPED_ANSWER_VALUE = "skipped"
+SKIPPED_ANSWER_LABEL = "Skipped"
 
 # ---------------------------------------------------------------------------
 # Request schemas
@@ -54,17 +60,33 @@ class AssessmentResponseCreate(BaseModel):
         min_length=1,
         max_length=500,
     )
-    answer_value: str = Field(
-        ...,
-        description="The selected option key (e.g. 'yes', 'no', 'own_or_rent_stable').",
-        min_length=1,
+    answer_value: str | None = Field(
+        default=None,
+        description=(
+            "The selected option key (e.g. 'yes', 'no', 'own_or_rent_stable'). "
+            "Required unless skipped=True, in which case it defaults to "
+            f"'{SKIPPED_ANSWER_VALUE}' if omitted."
+        ),
         max_length=500,
     )
-    answer_label: str = Field(
-        ...,
-        description="Snapshot of the human-readable label at capture time.",
-        min_length=1,
+    answer_label: str | None = Field(
+        default=None,
+        description=(
+            "Snapshot of the human-readable label at capture time. "
+            "Required unless skipped=True, in which case it defaults to "
+            f"'{SKIPPED_ANSWER_LABEL}' if omitted."
+        ),
         max_length=500,
+    )
+    skipped: bool = Field(
+        default=False,
+        description=(
+            "Epic W2 — True when the CHW tapped 'Skip' for this question "
+            "instead of selecting an answer. A skipped response is distinct "
+            "from both a real answer (skipped=False) and an unanswered "
+            "question (no row at all). Skipped responses still count toward "
+            "the 'X of 39' progress total."
+        ),
     )
     category: str = Field(
         ...,
@@ -90,6 +112,31 @@ class AssessmentResponseCreate(BaseModel):
         ),
     )
 
+    @model_validator(mode="after")
+    def _validate_answer_fields_for_skip_state(self) -> AssessmentResponseCreate:
+        """Enforce the skipped/answered contract.
+
+        - skipped=False (default): answer_value and answer_label are REQUIRED
+          and must be non-empty — identical to the pre-Epic-W2 contract, so
+          every existing caller/test continues to work unmodified.
+        - skipped=True: answer_value/answer_label are OPTIONAL. If the client
+          omits them, they default to the reserved placeholder
+          ('skipped'/'Skipped') rather than being left null, so downstream
+          readers of this table never have to special-case NULL.
+        """
+        if self.skipped:
+            if not self.answer_value:
+                self.answer_value = SKIPPED_ANSWER_VALUE
+            if not self.answer_label:
+                self.answer_label = SKIPPED_ANSWER_LABEL
+            return self
+
+        if not self.answer_value or not self.answer_value.strip():
+            raise ValueError("answer_value is required when skipped is False.")
+        if not self.answer_label or not self.answer_label.strip():
+            raise ValueError("answer_label is required when skipped is False.")
+        return self
+
 
 # ---------------------------------------------------------------------------
 # Response schemas
@@ -105,6 +152,7 @@ class AssessmentResponseOut(BaseModel):
     question_text: str
     answer_value: str
     answer_label: str
+    skipped: bool
     category: str
     subcategory: str
     tags: list[str]

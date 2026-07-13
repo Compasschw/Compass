@@ -7,18 +7,34 @@
  *   "Section 3 of 17 · 11 of 39 questions"
  * - Per-answer save: tapping an option POSTs the response immediately
  *   (optimistic UI — the option shows as selected instantly)
+ * - Per-question Skip (Epic W2): every question also renders a "Skip this
+ *   question" affordance. Tapping it persists a response with
+ *   `skipped: true` — distinct from both a real answer and an unanswered
+ *   question — via the same per-answer POST + optimistic-UI + retry path as
+ *   a normal answer. A skipped question counts toward the "X of 39" progress
+ *   total exactly like an answered one.
+ * - Partial save + resume (Epic W3): `initialAnswers` seeds the form's local
+ *   answer state on mount so reopening an in-progress assessment shows prior
+ *   answers AND prior skips already selected, not a blank form. The actual
+ *   per-answer persistence this hydrates from already happened on a previous
+ *   visit — this prop only affects the initial render, never triggers a POST.
  * - On POST failure: toast "Couldn't save — tap to retry" with retry tap
- * - "Pause for now" button — leaves assessment in_progress; CHW can resume next session
+ *   (works identically for a failed answer or a failed skip)
+ * - "Save & Close" button — persists nothing new itself (every answer/skip is
+ *   already saved the moment it's tapped); it simply leaves the assessment
+ *   in_progress and hands control back to the caller so the CHW can stop and
+ *   resume later. No API call.
  * - "Done" button at the last section — calls /complete
  * - "Next" / "Back" navigation between sections
  * - Mobile + web responsive (max-width capped at 640px on wide screens)
  *
  * Props
  * -----
- * assessmentId  — UUID of the in_progress assessment
- * template      — full template dict from the API
- * onComplete    — called when the CHW taps Done and /complete succeeds
- * onPause       — called when the CHW taps "Pause for now" (no API call — stays in_progress)
+ * assessmentId    — UUID of the in_progress assessment
+ * template        — full template dict from the API
+ * onComplete      — called when the CHW taps Done and /complete succeeds
+ * onPause         — called when the CHW taps "Save & Close" (no API call — stays in_progress)
+ * initialAnswers  — optional prior answers/skips to hydrate on mount (resume support)
  *
  * HIPAA: question text and answer values are PHI-adjacent. They are never
  * logged. Error toasts do NOT include question or answer content.
@@ -38,7 +54,7 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
-import { CheckCircle, Circle, ChevronLeft, ChevronRight, PauseCircle } from 'lucide-react-native';
+import { CheckCircle, Circle, ChevronLeft, ChevronRight, Save, SkipForward } from 'lucide-react-native';
 import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { colors } from '../../theme/colors';
@@ -91,7 +107,21 @@ interface LocalAnswer {
   questionId: string;
   value: string;
   label: string;
+  /** Epic W2 — true if this answer was recorded via "Skip", not a real selection. */
+  skipped: boolean;
   saveState: AnswerSaveState;
+}
+
+/**
+ * A prior answer (or skip) to hydrate into the form on mount — Epic W3
+ * resume support. Shape matches the persisted response, trimmed to just
+ * what the form needs to seed local state.
+ */
+export interface AssessmentFormInitialAnswer {
+  questionId: string;
+  value: string;
+  label: string;
+  skipped: boolean;
 }
 
 interface AssessmentFormProps {
@@ -99,22 +129,38 @@ interface AssessmentFormProps {
   template: Template;
   onComplete: () => void;
   onPause: () => void;
+  /** Prior answers/skips to seed the form with on mount (Epic W3 resume). */
+  initialAnswers?: AssessmentFormInitialAnswer[];
 }
 
+/** Sentinel value/label written for a skipped question (Epic W2). Mirrors the
+ * backend's reserved placeholder (see backend/app/schemas/assessment.py) —
+ * sent explicitly rather than relying on the server default so the contract
+ * is self-documenting end-to-end. */
+const SKIP_SENTINEL = { value: 'skipped', label: 'Skipped' } as const;
+
 // ─── API helpers ──────────────────────────────────────────────────────────────
+
+interface AnswerSelection {
+  value: string;
+  label: string;
+  /** Epic W2 — true when this POST represents a "Skip" tap, not a real answer. */
+  skipped: boolean;
+}
 
 async function postResponse(
   assessmentId: string,
   question: TemplateQuestion,
-  option: TemplateOption,
+  selection: AnswerSelection,
 ): Promise<void> {
   await api(`/assessments/${assessmentId}/responses`, {
     method: 'POST',
     body: JSON.stringify({
       question_id: question.id,
       question_text: question.text,
-      answer_value: option.value,
-      answer_label: option.label,
+      answer_value: selection.value,
+      answer_label: selection.label,
+      skipped: selection.skipped,
       category: question.category,
       subcategory: question.subcategory,
       tags: question.tags,
@@ -168,6 +214,7 @@ export function AssessmentForm({
   template,
   onComplete,
   onPause,
+  initialAnswers,
 }: AssessmentFormProps): React.ReactElement {
   const { width } = useWindowDimensions();
   const qc = useQueryClient();
@@ -187,7 +234,24 @@ export function AssessmentForm({
   const totalQuestions = template.total_questions;
 
   const [sectionIndex, setSectionIndex] = useState<number>(0);
-  const [answers, setAnswers] = useState<Map<string, LocalAnswer>>(new Map());
+  // Epic W3 — seed prior answers/skips on mount. This runs once: callers are
+  // documented to mount a fresh AssessmentForm instance per assessment (see
+  // useAssessmentBootstrap's header comment), so initialAnswers never changes
+  // mid-lifetime and re-seeding on every render would be wrong (it would
+  // stomp in-flight local edits with stale server state).
+  const [answers, setAnswers] = useState<Map<string, LocalAnswer>>(() => {
+    const seeded = new Map<string, LocalAnswer>();
+    for (const prior of initialAnswers ?? []) {
+      seeded.set(prior.questionId, {
+        questionId: prior.questionId,
+        value: prior.value,
+        label: prior.label,
+        skipped: prior.skipped,
+        saveState: 'saved',
+      });
+    }
+    return seeded;
+  });
   const [retryQid, setRetryQid] = useState<string | null>(null);
   const [isCompleting, setIsCompleting] = useState<boolean>(false);
   const scrollRef = useRef<ScrollView>(null);
@@ -215,21 +279,24 @@ export function AssessmentForm({
 
   const absoluteQuestionOffset = answeredBeforeSection;
 
-  // ── Answer selection with optimistic UI ────────────────────────────────────
+  // ── Answer / Skip submission with optimistic UI ─────────────────────────────
 
-  const handleSelectOption = useCallback(
-    async (question: TemplateQuestion, option: TemplateOption) => {
-      const prev = answers.get(question.id);
-      // If tapping the same option that is already saved, no-op
-      if (prev?.value === option.value && prev?.saveState === 'saved') return;
-
-      // Optimistic update — show as selected immediately
+  /**
+   * Shared submit path for both a real answer and a "Skip" tap — identical
+   * optimistic-UI + POST + retry-on-failure behavior either way, so a
+   * skipped question gets exactly the same reliability guarantees as an
+   * answered one.
+   */
+  const submitAnswer = useCallback(
+    async (question: TemplateQuestion, selection: AnswerSelection) => {
+      // Optimistic update — show as selected/skipped immediately
       setAnswers((prev) => {
         const next = new Map(prev);
         next.set(question.id, {
           questionId: question.id,
-          value: option.value,
-          label: option.label,
+          value: selection.value,
+          label: selection.label,
+          skipped: selection.skipped,
           saveState: 'saving',
         });
         return next;
@@ -237,7 +304,7 @@ export function AssessmentForm({
       setRetryQid(null);
 
       try {
-        await postResponse(assessmentId, question, option);
+        await postResponse(assessmentId, question, selection);
         setAnswers((prev) => {
           const next = new Map(prev);
           const existing = next.get(question.id);
@@ -258,7 +325,28 @@ export function AssessmentForm({
         setRetryQid(question.id);
       }
     },
-    [assessmentId, answers],
+    [assessmentId],
+  );
+
+  const handleSelectOption = useCallback(
+    (question: TemplateQuestion, option: TemplateOption) => {
+      const prev = answers.get(question.id);
+      // If tapping the same option that is already saved (and it wasn't a
+      // skip), no-op.
+      if (!prev?.skipped && prev?.value === option.value && prev?.saveState === 'saved') return;
+      void submitAnswer(question, { value: option.value, label: option.label, skipped: false });
+    },
+    [answers, submitAnswer],
+  );
+
+  const handleSkipQuestion = useCallback(
+    (question: TemplateQuestion) => {
+      const prev = answers.get(question.id);
+      // Already skipped and saved — repeat taps are a no-op.
+      if (prev?.skipped && prev.saveState === 'saved') return;
+      void submitAnswer(question, { ...SKIP_SENTINEL, skipped: true });
+    },
+    [answers, submitAnswer],
   );
 
   const handleRetry = useCallback(() => {
@@ -267,12 +355,17 @@ export function AssessmentForm({
     const question = template.questions.find((q) => q.id === retryQid);
     if (!answer || !question) return;
 
+    setRetryQid(null);
+
+    if (answer.skipped) {
+      handleSkipQuestion(question);
+      return;
+    }
+
     const option = question.options.find((o) => o.value === answer.value);
     if (!option) return;
-
-    setRetryQid(null);
-    void handleSelectOption(question, option);
-  }, [retryQid, answers, template.questions, handleSelectOption]);
+    handleSelectOption(question, option);
+  }, [retryQid, answers, template.questions, handleSelectOption, handleSkipQuestion]);
 
   // ── Navigation ─────────────────────────────────────────────────────────────
 
@@ -339,6 +432,9 @@ export function AssessmentForm({
             ]}
           />
         </View>
+        <Text style={styles.progressHelperText}>
+          Answers save automatically — tap Save &amp; Close anytime to pause and resume later.
+        </Text>
       </View>
 
       {/* Section title */}
@@ -377,7 +473,10 @@ export function AssessmentForm({
 
               <View style={styles.optionsContainer}>
                 {question.options.map((option) => {
-                  const isSelected = answer?.value === option.value;
+                  // A skipped answer must never visually collide with a real
+                  // option, even if a template option's value happened to
+                  // equal the skip sentinel — `skipped` is authoritative.
+                  const isSelected = !answer?.skipped && answer?.value === option.value;
                   const isSaving = isSelected && answer?.saveState === 'saving';
                   const isError = isSelected && answer?.saveState === 'error';
                   return (
@@ -413,6 +512,39 @@ export function AssessmentForm({
                     </TouchableOpacity>
                   );
                 })}
+
+                {/* Epic W2 — per-question Skip. Distinct row, deliberately
+                    quieter styling than a real option so it doesn't read as
+                    an equally-weighted answer choice. */}
+                {(() => {
+                  const isSkipped = answer?.skipped === true;
+                  const isSkipSaving = isSkipped && answer?.saveState === 'saving';
+                  const isSkipError = isSkipped && answer?.saveState === 'error';
+                  return (
+                    <TouchableOpacity
+                      onPress={() => handleSkipQuestion(question)}
+                      style={[
+                        styles.skipRow,
+                        isSkipped && styles.skipRowActive,
+                        isSkipError && styles.optionRowError,
+                      ]}
+                      accessibilityRole="button"
+                      accessibilityLabel="Skip this question"
+                      accessibilityState={{ selected: isSkipped }}
+                    >
+                      <View style={styles.optionIconWrapper}>
+                        {isSkipSaving ? (
+                          <ActivityIndicator size="small" color={colors.mutedForeground} />
+                        ) : (
+                          <SkipForward size={16} color={isSkipped ? colors.foreground : colors.mutedForeground} />
+                        )}
+                      </View>
+                      <Text style={[styles.skipLabel, isSkipped && styles.skipLabelActive]}>
+                        {isSkipped ? 'Skipped' : 'Skip this question'}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })()}
               </View>
             </View>
           );
@@ -434,15 +566,18 @@ export function AssessmentForm({
             </Text>
           </TouchableOpacity>
 
-          {/* Pause */}
+          {/* Save & Close (Epic W3) — explicit "stop here, resume later" affordance.
+              Every answer/skip is already persisted the instant it's tapped;
+              this button makes that guarantee visible and hands control back
+              to the caller (no API call — the assessment stays in_progress). */}
           <TouchableOpacity
             onPress={onPause}
             style={styles.pauseButton}
             accessibilityRole="button"
-            accessibilityLabel="Pause assessment for now"
+            accessibilityLabel="Save and close assessment"
           >
-            <PauseCircle size={16} color={colors.mutedForeground} />
-            <Text style={styles.pauseButtonText}>Pause for now</Text>
+            <Save size={16} color={colors.mutedForeground} />
+            <Text style={styles.pauseButtonText}>Save &amp; Close</Text>
           </TouchableOpacity>
 
           {/* Next or Done */}
@@ -517,6 +652,12 @@ const styles = StyleSheet.create({
     height: '100%',
     backgroundColor: colors.primary,
     borderRadius: 2,
+  },
+  progressHelperText: {
+    fontSize: 11,
+    color: colors.mutedForeground,
+    marginTop: 6,
+    lineHeight: 15,
   },
 
   // Section header
@@ -631,6 +772,36 @@ const styles = StyleSheet.create({
   optionLabelSelected: {
     fontWeight: '600',
     color: colors.primary,
+  },
+
+  // Skip row (Epic W2) — deliberately quieter than a real option: dashed
+  // border, muted colors, so it doesn't read as an equally-weighted choice.
+  skipRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: colors.border,
+    backgroundColor: 'transparent',
+    marginTop: 2,
+  },
+  skipRowActive: {
+    borderStyle: 'solid',
+    borderColor: colors.mutedForeground,
+    backgroundColor: colors.muted,
+  },
+  skipLabel: {
+    flex: 1,
+    fontSize: 13,
+    color: colors.mutedForeground,
+    lineHeight: 18,
+  },
+  skipLabelActive: {
+    fontWeight: '600',
+    color: colors.foreground,
   },
 
   // Navigation row

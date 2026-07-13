@@ -9,12 +9,26 @@
  * which is the single source of truth for that logic and is reused unmodified
  * by every caller of this hook — this file must never duplicate it.
  *
+ * Epic W3 (partial save + resume): the start/resume endpoint is idempotent —
+ * when an in_progress assessment already exists for this session's member +
+ * template, the backend returns that SAME assessment (HTTP 200) with its
+ * prior `responses` included (both real answers and Epic-W2 skips). This
+ * hook reduces that array down to the latest response per question_id (a
+ * question may have been re-answered) and exposes it as `initialAnswers`,
+ * which `InlineSdohPanel` passes straight into `AssessmentForm`'s
+ * `initialAnswers` prop to hydrate the form on reopen instead of showing a
+ * blank questionnaire.
+ *
  * Used by `InlineSdohPanel` (the in-Messages panel). The legacy full-screen
  * `CHWMemberAssessmentScreen` keeps its own historical bootstrap code path —
- * see that file's header comment for why it was left untouched.
+ * see that file's header comment for why it was left untouched (it does not
+ * currently wire resume hydration).
  *
  * HIPAA: no PHI (question/answer content) is fetched or logged here — only
- * template metadata and assessment/session identifiers.
+ * template metadata and assessment/session identifiers. `initialAnswers`
+ * does flow PHI-adjacent answer values into React state (same as
+ * `AssessmentForm` already does for freshly-typed answers) but, per the
+ * existing HIPAA contract, none of it is ever logged.
  */
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -57,21 +71,73 @@ export interface AssessmentTemplate {
   questions: AssessmentTemplateQuestion[];
 }
 
+/** Mirrors backend AssessmentResponseOut (see app/schemas/assessment.py). */
+interface AssessmentResponseHydration {
+  id: string;
+  question_id: string;
+  answer_value: string;
+  answer_label: string;
+  skipped: boolean;
+  captured_at: string;
+}
+
 interface StartOrResumeAssessmentResponse {
   id: string;
   status: string;
   template_id: string;
   session_id: string;
   member_id: string;
+  /**
+   * Present (and populated) on the idempotent "resume" branch — the
+   * backend's `_load_responses` call — but absent/empty on a freshly
+   * created (201) assessment. Ordered by captured_at ascending.
+   */
+  responses?: AssessmentResponseHydration[];
 }
 
 export type AssessmentBootstrapState = 'loading' | 'ready' | 'error';
+
+/** A prior answer/skip to seed AssessmentForm with on reopen (Epic W3). */
+export interface AssessmentInitialAnswer {
+  questionId: string;
+  value: string;
+  label: string;
+  skipped: boolean;
+}
 
 export interface UseAssessmentBootstrapResult {
   state: AssessmentBootstrapState;
   template: AssessmentTemplate | undefined;
   assessmentId: string | null;
   errorMessage: string | null;
+  /**
+   * Prior answers/skips for this assessment, one entry per question_id (the
+   * LATEST response wins if a question was answered more than once — same
+   * "current answer" semantics used elsewhere for this table). Empty array
+   * for a brand-new assessment.
+   */
+  initialAnswers: AssessmentInitialAnswer[];
+}
+
+/**
+ * Reduce the raw (potentially re-answered) response history down to one
+ * entry per question_id, keeping the latest by captured_at. `responses` is
+ * already ordered captured_at ascending by the backend, so a plain
+ * left-to-right reduce naturally keeps "last wins".
+ */
+function toInitialAnswers(
+  responses: AssessmentResponseHydration[] | undefined,
+): AssessmentInitialAnswer[] {
+  const byQuestionId = new Map<string, AssessmentInitialAnswer>();
+  for (const r of responses ?? []) {
+    byQuestionId.set(r.question_id, {
+      questionId: r.question_id,
+      value: r.answer_value,
+      label: r.answer_label,
+      skipped: r.skipped,
+    });
+  }
+  return Array.from(byQuestionId.values());
 }
 
 // ─── API calls ────────────────────────────────────────────────────────────────
@@ -100,6 +166,7 @@ export function useAssessmentBootstrap(sessionId: string): UseAssessmentBootstra
   const [assessmentId, setAssessmentId] = useState<string | null>(null);
   const [startError, setStartError] = useState<string | null>(null);
   const [starting, setStarting] = useState<boolean>(true);
+  const [initialAnswers, setInitialAnswers] = useState<AssessmentInitialAnswer[]>([]);
 
   const {
     data: template,
@@ -123,6 +190,7 @@ export function useAssessmentBootstrap(sessionId: string): UseAssessmentBootstra
       .then((assessment) => {
         if (cancelled) return;
         setAssessmentId(assessment.id);
+        setInitialAnswers(toInitialAnswers(assessment.responses));
         setStarting(false);
       })
       .catch(() => {
@@ -148,5 +216,5 @@ export function useAssessmentBootstrap(sessionId: string): UseAssessmentBootstra
       ? 'loading'
       : 'ready';
 
-  return { state, template, assessmentId, errorMessage };
+  return { state, template, assessmentId, errorMessage, initialAnswers };
 }

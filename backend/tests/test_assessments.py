@@ -34,6 +34,20 @@ Coverage
    - 404 when no completed assessment exists
    - 403 for member caller
 
+6. Epic W2 — per-question Skip
+   - skipped=true persists distinctly from a real answer (skipped=false) and
+     from an unanswered question (no row at all)
+   - skipped=true defaults answer_value/answer_label to the reserved
+     placeholder when the client omits them
+   - skipped=false (default) still requires answer_value/answer_label — 422
+     otherwise (pre-existing contract, unchanged)
+
+7. Epic W3 — partial save + resume hydration
+   - The idempotent "start/resume" call (POST .../assessments, existing
+     in_progress row) returns prior responses, including skipped ones, so the
+     CHW's device can hydrate previously-saved + previously-skipped state on
+     reopen.
+
 Each test runs against a real PostgreSQL test database (same conftest as all
 other tests). No mocks — full request → router → ORM → commit path.
 """
@@ -768,3 +782,215 @@ async def test_per_answer_timestamps_are_independent(
     assert rows[0].question_id == "housing_situation"
     assert rows[1].question_id == "food_insecurity"
     assert rows[2].question_id == "transportation_barrier"
+
+
+# ─── 6. Epic W2 — per-question Skip ───────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_skip_response_defaults_placeholder_answer_fields(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_tokens: dict,
+) -> None:
+    """skipped=true with no answer_value/answer_label defaults to the
+    reserved placeholder ('skipped'/'Skipped') and persists skipped=True."""
+    request_id = await _create_request_and_accept(client, member_tokens, chw_tokens)
+    session_id = await _create_session(client, chw_tokens, request_id)
+    body, _ = await _start_assessment(client, chw_tokens, session_id)
+    assessment_id = body["id"]
+
+    res = await client.post(
+        f"/api/v1/assessments/{assessment_id}/responses",
+        json={
+            "question_id": "housing_situation",
+            "question_text": "What best describes your current housing situation?",
+            "category": "sdoh",
+            "subcategory": "housing",
+            "tags": ["SDOH"],
+            "skipped": True,
+        },
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 201, res.text
+    data = res.json()
+    assert data["skipped"] is True
+    assert data["answer_value"] == "skipped"
+    assert data["answer_label"] == "Skipped"
+
+
+@pytest.mark.asyncio
+async def test_skipped_response_distinct_from_answered_and_unanswered(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_tokens: dict,
+) -> None:
+    """A skipped question, an answered question, and an unanswered question
+    must all be distinguishable from one another via the DB row set."""
+    request_id = await _create_request_and_accept(client, member_tokens, chw_tokens)
+    session_id = await _create_session(client, chw_tokens, request_id)
+    body, _ = await _start_assessment(client, chw_tokens, session_id)
+    assessment_id = body["id"]
+
+    # Q1 — answered normally.
+    res1 = await client.post(
+        f"/api/v1/assessments/{assessment_id}/responses",
+        json=_SAMPLE_RESPONSE_BODY,
+        headers=auth_header(chw_tokens),
+    )
+    assert res1.status_code == 201, res1.text
+
+    # Q2 — explicitly skipped.
+    res2 = await client.post(
+        f"/api/v1/assessments/{assessment_id}/responses",
+        json={
+            "question_id": "food_insecurity",
+            "question_text": "Were you ever worried that food would run out?",
+            "category": "sdoh",
+            "subcategory": "food_access",
+            "tags": ["SDOH"],
+            "skipped": True,
+        },
+        headers=auth_header(chw_tokens),
+    )
+    assert res2.status_code == 201, res2.text
+
+    # Q3 — never touched at all (unanswered).
+
+    async with _db_factory() as db:
+        result = await db.execute(
+            select(MemberAssessmentResponse).where(
+                MemberAssessmentResponse.assessment_id == UUID(assessment_id),
+            )
+        )
+        rows = {r.question_id: r for r in result.scalars().all()}
+
+    assert set(rows.keys()) == {"housing_situation", "food_insecurity"}
+    assert rows["housing_situation"].skipped is False
+    assert rows["housing_situation"].answer_value == "own_or_rent_stable"
+    assert rows["food_insecurity"].skipped is True
+    assert rows["food_insecurity"].answer_value == "skipped"
+    # Unanswered — "transportation_barrier" — has no row at all, which is the
+    # third, distinct state from both answered and skipped.
+    assert "transportation_barrier" not in rows
+
+
+@pytest.mark.asyncio
+async def test_non_skipped_response_still_requires_answer_value(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_tokens: dict,
+) -> None:
+    """skipped=false (the default) preserves the pre-Epic-W2 contract:
+    answer_value/answer_label are still required — 422 if omitted."""
+    request_id = await _create_request_and_accept(client, member_tokens, chw_tokens)
+    session_id = await _create_session(client, chw_tokens, request_id)
+    body, _ = await _start_assessment(client, chw_tokens, session_id)
+    assessment_id = body["id"]
+
+    res = await client.post(
+        f"/api/v1/assessments/{assessment_id}/responses",
+        json={
+            "question_id": "housing_situation",
+            "question_text": "What best describes your current housing situation?",
+            "category": "sdoh",
+            "subcategory": "housing",
+            "tags": [],
+            # answer_value/answer_label omitted, skipped defaults to False.
+        },
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_skipped_response_counts_in_response_list_length(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_tokens: dict,
+) -> None:
+    """A skipped response is a real row in the responses list — the client
+    computes 'X of 39' progress from len(responses), so a skip must count."""
+    request_id = await _create_request_and_accept(client, member_tokens, chw_tokens)
+    session_id = await _create_session(client, chw_tokens, request_id)
+    body, _ = await _start_assessment(client, chw_tokens, session_id)
+    assessment_id = body["id"]
+
+    await client.post(
+        f"/api/v1/assessments/{assessment_id}/responses",
+        json={
+            "question_id": "housing_situation",
+            "question_text": "What best describes your current housing situation?",
+            "category": "sdoh",
+            "subcategory": "housing",
+            "tags": [],
+            "skipped": True,
+        },
+        headers=auth_header(chw_tokens),
+    )
+
+    res = await client.post(
+        f"/api/v1/assessments/{assessment_id}/complete",
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 200, res.text
+    assert len(res.json()["responses"]) == 1
+    assert res.json()["responses"][0]["skipped"] is True
+
+
+# ─── 7. Epic W3 — partial save + resume hydration ─────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_resume_hydrates_prior_answered_and_skipped_responses(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_tokens: dict,
+) -> None:
+    """Reopening an in-progress assessment (idempotent start/resume) must
+    return prior responses — including skipped ones — so the client can
+    seed selected/skipped state on the form. This is a regression test: on
+    pre-Epic-W2 code the 'skipped' key does not round-trip through the API
+    at all, so this assertion fails on the old code.
+    """
+    request_id = await _create_request_and_accept(client, member_tokens, chw_tokens)
+    session_id = await _create_session(client, chw_tokens, request_id)
+
+    body1, code1 = await _start_assessment(client, chw_tokens, session_id)
+    assert code1 == 201
+    assessment_id = body1["id"]
+
+    # Answer one question normally.
+    await client.post(
+        f"/api/v1/assessments/{assessment_id}/responses",
+        json=_SAMPLE_RESPONSE_BODY,
+        headers=auth_header(chw_tokens),
+    )
+    # Skip another question.
+    await client.post(
+        f"/api/v1/assessments/{assessment_id}/responses",
+        json={
+            "question_id": "food_insecurity",
+            "question_text": "Were you ever worried that food would run out?",
+            "category": "sdoh",
+            "subcategory": "food_access",
+            "tags": ["SDOH"],
+            "skipped": True,
+        },
+        headers=auth_header(chw_tokens),
+    )
+
+    # Simulate the CHW closing and reopening the panel: the bootstrap flow
+    # calls start/resume again for the same session, which must idempotently
+    # return the SAME assessment with its responses hydrated (200, not 201).
+    body2, code2 = await _start_assessment(client, chw_tokens, session_id)
+    assert code2 == 200
+    assert body2["id"] == assessment_id
+    assert body2["status"] == "in_progress"
+
+    responses_by_qid = {r["question_id"]: r for r in body2["responses"]}
+    assert set(responses_by_qid.keys()) == {"housing_situation", "food_insecurity"}
+    assert responses_by_qid["housing_situation"]["skipped"] is False
+    assert responses_by_qid["housing_situation"]["answer_value"] == "own_or_rent_stable"
+    assert responses_by_qid["food_insecurity"]["skipped"] is True
+    assert responses_by_qid["food_insecurity"]["answer_value"] == "skipped"

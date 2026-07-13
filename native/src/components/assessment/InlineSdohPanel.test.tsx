@@ -172,11 +172,11 @@ describe('InlineSdohPanel', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('"Pause for now" closes the panel without completing the assessment', async () => {
+  it('"Save & Close" closes the panel without completing the assessment', async () => {
     const { onClose } = renderPanel();
     await screen.findByText('Do you have stable housing?', {}, { timeout: 3000 });
 
-    fireEvent.click(screen.getByLabelText('Pause assessment for now'));
+    fireEvent.click(screen.getByLabelText('Save and close assessment'));
 
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(mockedApi).not.toHaveBeenCalledWith(
@@ -203,5 +203,70 @@ describe('InlineSdohPanel', () => {
     await screen.findByText('Something went wrong', {}, { timeout: 3000 });
     fireEvent.click(screen.getByLabelText('Close SDOH panel'));
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it('skipping a question calls the persistence hook with skipped:true and advances progress', async () => {
+    renderPanel();
+    await screen.findByText('Do you have stable housing?', {}, { timeout: 3000 });
+
+    fireEvent.click(screen.getByLabelText('Skip this question'));
+
+    await waitFor(() => {
+      expect(mockedApi).toHaveBeenCalledWith(
+        `/assessments/${ASSESSMENT_ID}/responses`,
+        expect.objectContaining({ method: 'POST' }),
+      );
+    });
+
+    const call = mockedApi.mock.calls.find(
+      (args: unknown[]) => args[0] === `/assessments/${ASSESSMENT_ID}/responses`,
+    );
+    const payload = JSON.parse((call as [string, { body: string }])[1].body);
+    expect(payload).toMatchObject({
+      question_id: 'q1',
+      answer_value: 'skipped',
+      answer_label: 'Skipped',
+      skipped: true,
+    });
+
+    // total_questions is 1 in this fixture — a single skip completes progress.
+    expect(screen.getByText(/1 of 1 questions/)).toBeTruthy();
+  });
+
+  it('Epic W3: reopening the panel hydrates a prior skip from the resume payload', async () => {
+    mockedApi.mockImplementation(async (path: string, options?: { method?: string }) => {
+      const method = options?.method ?? 'GET';
+      if (path === '/assessment-templates/compass_member_v1') return templateFixture;
+      if (path === `/sessions/${SESSION_ID}/assessments` && method === 'POST') {
+        // Idempotent resume branch: the backend returns the SAME in_progress
+        // assessment with its prior responses included.
+        return {
+          ...startAssessmentFixture,
+          responses: [
+            {
+              id: 'resp-1',
+              question_id: 'q1',
+              answer_value: 'skipped',
+              answer_label: 'Skipped',
+              skipped: true,
+              captured_at: '2026-07-01T10:00:00Z',
+            },
+          ],
+        };
+      }
+      throw new Error(`Unhandled api() call: ${method} ${path}`);
+    });
+
+    renderPanel();
+    await screen.findByText('Do you have stable housing?', {}, { timeout: 3000 });
+
+    // Hydrated from the resume payload — shows as skipped immediately, with
+    // progress already at 1 of 1, and with no additional POST issued for it.
+    await screen.findByText('Skipped');
+    expect(screen.getByText(/1 of 1 questions/)).toBeTruthy();
+    expect(mockedApi).not.toHaveBeenCalledWith(
+      `/assessments/${ASSESSMENT_ID}/responses`,
+      expect.anything(),
+    );
   });
 });
