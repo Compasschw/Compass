@@ -57,7 +57,19 @@ class Session(Base):
     duration_minutes: Mapped[int | None] = mapped_column(Integer)
     suggested_units: Mapped[int | None] = mapped_column(Integer)
     units_billed: Mapped[int | None] = mapped_column(Integer)
+    # Free-text notes column — retained for backward compatibility with legacy
+    # rows and any future re-introduction; the CHW "Schedule Session" form no
+    # longer writes to it (Epic L replaced it with the structured
+    # `resource_needs` field below). Do NOT drop — dropping would both lose
+    # historical CHW-authored notes and break any row still carrying one.
     notes: Mapped[str | None] = mapped_column(Text)
+    # Epic L — structured replacement for the old free-text Notes field on the
+    # CHW "Schedule Session" form. Stores the subset of `Vertical` enum values
+    # (see app.models.enums.Vertical) the CHW flagged as this session's
+    # resource needs (e.g. ["housing", "food"]). NULL/empty for sessions
+    # scheduled before this field existed or where none were selected — the
+    # frontend must treat both as "no resource needs selected".
+    resource_needs: Mapped[list[str] | None] = mapped_column(ARRAY(String), nullable=True)
     gross_amount: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     net_amount: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     # Set when the member affirmatively consents to call recording —
