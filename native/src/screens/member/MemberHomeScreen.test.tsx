@@ -65,6 +65,35 @@ function buildMemberProfileFixture(overrides: Record<string, unknown> = {}) {
   };
 }
 
+// ─── Pending Session Requests widget fixtures ───────────────────────────────
+// (CHW_ID / CHW_NAME reused from the Epic G1 fixtures above.)
+
+const CHW_PROPOSED_SESSION_ID = 'sess-pending-chw-proposed-1';
+const NEW_SESSION_ID = 'sess-new-1';
+
+const scheduledStart = new Date();
+scheduledStart.setDate(scheduledStart.getDate() + 3);
+scheduledStart.setHours(14, 0, 0, 0); // 2:00 PM local
+const scheduledEnd = new Date(scheduledStart.getTime() + 60 * 60 * 1000);
+
+/** A pending session the CHW proposed — must appear in the dashboard widget. */
+const chwProposedSessionFixture = {
+  id: CHW_PROPOSED_SESSION_ID,
+  request_id: 'req-1',
+  chw_id: CHW_ID,
+  member_id: MEMBER_USER_ID,
+  vertical: 'housing',
+  status: 'scheduled',
+  mode: 'in_person',
+  scheduled_at: scheduledStart.toISOString(),
+  scheduled_end_at: scheduledEnd.toISOString(),
+  scheduling_status: 'pending',
+  proposed_by: 'chw',
+  created_at: '2026-07-01T00:00:00.000Z',
+  chw_name: CHW_NAME,
+  member_name: 'Test Member',
+};
+
 // ─── API router — the sole network boundary ──────────────────────────────────
 
 let assignedChwResponse: unknown = null;
@@ -73,6 +102,8 @@ let memberProfileFixture: Record<string, unknown> = buildMemberProfileFixture();
 /** Controls what POST /auth/change-password does for the next call. */
 let changePasswordBehavior: 'success' | 'wrong-current' | 'weak' | null = 'success';
 let changePasswordRequestBodies: Array<{ current_password: string; new_password: string }> = [];
+/** Controls what POST /sessions/schedule does for the Propose New Time flow. */
+let scheduleShouldFail = false;
 
 function routeApi(path: string, options?: { method?: string; body?: string }): unknown {
   const method = options?.method ?? 'GET';
@@ -113,6 +144,34 @@ function routeApi(path: string, options?: { method?: string; body?: string }): u
     memberProfileFixture = buildMemberProfileFixture({ must_change_password: false });
     return { detail: 'Password updated successfully', must_change_password: false };
   }
+  if (path === '/sessions/schedule' && method === 'POST') {
+    if (scheduleShouldFail) {
+      throw new Error('Network error');
+    }
+    const body = options?.body ? JSON.parse(options.body) : {};
+    return {
+      id: NEW_SESSION_ID,
+      request_id: 'req-new',
+      chw_id: body.chw_id,
+      member_id: MEMBER_USER_ID,
+      vertical: 'housing',
+      status: 'scheduled',
+      mode: body.mode,
+      scheduled_at: body.scheduled_at,
+      scheduled_end_at: body.scheduled_end_at,
+      scheduling_status: body.scheduling_status,
+      proposed_by: 'member',
+      created_at: new Date().toISOString(),
+      chw_name: CHW_NAME,
+      member_name: 'Test Member',
+    };
+  }
+  if (path === `/sessions/${CHW_PROPOSED_SESSION_ID}/confirm` && method === 'PATCH') {
+    return { ...chwProposedSessionFixture, scheduling_status: 'confirmed' };
+  }
+  if (path === `/sessions/${CHW_PROPOSED_SESSION_ID}/decline` && method === 'PATCH') {
+    return { ...chwProposedSessionFixture, status: 'cancelled', scheduling_status: null };
+  }
 
   throw new Error(`Unhandled api() call in MemberHomeScreen test: ${method} ${path}`);
 }
@@ -144,6 +203,7 @@ beforeEach(() => {
   memberProfileFixture = buildMemberProfileFixture();
   changePasswordBehavior = 'success';
   changePasswordRequestBodies = [];
+  scheduleShouldFail = false;
   mockedApi.mockReset();
   mockedApi.mockImplementation(async (path: string, options?: { method?: string; body?: string }) =>
     routeApi(path, options),
@@ -312,5 +372,161 @@ describe('MemberHomeScreen — first-login password change (Epic G2)', () => {
 
     expect(await screen.findByText('Passwords do not match.')).toBeTruthy();
     expect(changePasswordRequestBodies).toEqual([]);
+  });
+});
+
+// ─── Pending Session Requests dashboard widget ──────────────────────────────
+//
+// Reciprocal of CHWCalendarScreen's "Pending Session Requests" widget — a
+// member sees CHW-proposed pending sessions here too, reusing the SAME
+// useConfirmSession/useDeclineSession/useScheduleSession mutations the CHW
+// side uses (see MemberPendingRequestsList.tsx). The widget is mounted right
+// after PageHeader, ABOVE the "Your CHW" hero — a sibling to the G2 password
+// gate (which renders as an independent overlay outside AppShell), so it
+// must never affect whether/when that gate shows.
+
+async function openProposeModal(): Promise<void> {
+  const proposeBtn = await screen.findByLabelText(`Propose new time for ${CHW_NAME}`);
+  fireEvent.click(proposeBtn);
+  await screen.findByLabelText('Propose new time'); // submit button, proves the modal opened
+}
+
+describe('MemberHomeScreen — Pending Session Requests widget', () => {
+  it('renders a CHW-proposed pending request with all 3 actions (Approve / Decline / Propose New Time)', async () => {
+    sessionsResponse = [chwProposedSessionFixture];
+
+    renderScreen();
+
+    expect(await screen.findByLabelText(`Approve request from ${CHW_NAME}`)).toBeTruthy();
+    expect(screen.getByLabelText(`Decline request from ${CHW_NAME}`)).toBeTruthy();
+    expect(screen.getByLabelText(`Propose new time for ${CHW_NAME}`)).toBeTruthy();
+  });
+
+  it('does NOT show a member-proposed pending request (proposedBy: "member")', async () => {
+    sessionsResponse = [
+      {
+        ...chwProposedSessionFixture,
+        id: 'sess-pending-member-proposed-1',
+        proposed_by: 'member',
+      },
+    ];
+
+    renderScreen();
+
+    // Loaded state confirmed via the session-derived "Your CHW" hero (the
+    // fixture still carries chwName/chwId, so the hero shows the CHW even
+    // though the pending widget must render nothing for this session).
+    await screen.findAllByText(CHW_NAME);
+    expect(screen.queryByLabelText(`Approve request from ${CHW_NAME}`)).toBeNull();
+    expect(screen.queryByText(/Pending Session Requests/)).toBeNull();
+  });
+
+  it('does NOT show a legacy pending request with no proposedBy field (safe-default exclusion)', async () => {
+    const { proposed_by: _proposedBy, ...legacyFixture } = chwProposedSessionFixture as Record<
+      string,
+      unknown
+    >;
+    sessionsResponse = [{ ...legacyFixture, id: 'sess-pending-legacy-1' }];
+
+    renderScreen();
+
+    await screen.findAllByText(CHW_NAME);
+    expect(screen.queryByLabelText(`Approve request from ${CHW_NAME}`)).toBeNull();
+    expect(screen.queryByText(/Pending Session Requests/)).toBeNull();
+  });
+
+  it('Approve fires the confirm mutation against PATCH /sessions/{id}/confirm', async () => {
+    sessionsResponse = [chwProposedSessionFixture];
+    renderScreen();
+
+    fireEvent.click(await screen.findByLabelText(`Approve request from ${CHW_NAME}`));
+
+    await waitFor(() => {
+      expect(
+        mockedApi.mock.calls.some(
+          ([path, opts]) =>
+            path === `/sessions/${CHW_PROPOSED_SESSION_ID}/confirm` &&
+            (opts as { method?: string })?.method === 'PATCH',
+        ),
+      ).toBe(true);
+    });
+  });
+
+  it('Decline shows an on-brand confirm dialog first, and only calls the API after confirming', async () => {
+    sessionsResponse = [chwProposedSessionFixture];
+    renderScreen();
+
+    fireEvent.click(await screen.findByLabelText(`Decline request from ${CHW_NAME}`));
+
+    const confirmBtn = await screen.findByLabelText('Yes, decline request');
+    expect(
+      mockedApi.mock.calls.some(([path]) => path === `/sessions/${CHW_PROPOSED_SESSION_ID}/decline`),
+    ).toBe(false);
+
+    fireEvent.click(confirmBtn);
+
+    await waitFor(() => {
+      expect(
+        mockedApi.mock.calls.some(
+          ([path, opts]) =>
+            path === `/sessions/${CHW_PROPOSED_SESSION_ID}/decline` &&
+            (opts as { method?: string })?.method === 'PATCH',
+        ),
+      ).toBe(true);
+    });
+  });
+
+  it('Propose New Time books the new session BEFORE declining the old one (never the reverse)', async () => {
+    sessionsResponse = [chwProposedSessionFixture];
+    renderScreen();
+    await openProposeModal();
+
+    fireEvent.click(screen.getByLabelText('Propose new time'));
+
+    await waitFor(() => {
+      expect(mockedApi.mock.calls.some(([path]) => path === '/sessions/schedule')).toBe(true);
+    });
+    await waitFor(() => {
+      expect(
+        mockedApi.mock.calls.some(([path]) => path === `/sessions/${CHW_PROPOSED_SESSION_ID}/decline`),
+      ).toBe(true);
+    });
+
+    const scheduleCallIndex = mockedApi.mock.calls.findIndex(([path]) => path === '/sessions/schedule');
+    const declineCallIndex = mockedApi.mock.calls.findIndex(
+      ([path]) => path === `/sessions/${CHW_PROPOSED_SESSION_ID}/decline`,
+    );
+    expect(scheduleCallIndex).toBeGreaterThanOrEqual(0);
+    expect(declineCallIndex).toBeGreaterThan(scheduleCallIndex);
+  });
+
+  it('does NOT decline the original session when the new booking fails', async () => {
+    sessionsResponse = [chwProposedSessionFixture];
+    scheduleShouldFail = true;
+    renderScreen();
+    await openProposeModal();
+
+    fireEvent.click(screen.getByLabelText('Propose new time'));
+
+    await waitFor(() => {
+      expect(mockedApi.mock.calls.some(([path]) => path === '/sessions/schedule')).toBe(true);
+    });
+
+    expect(
+      mockedApi.mock.calls.some(([path]) => path === `/sessions/${CHW_PROPOSED_SESSION_ID}/decline`),
+    ).toBe(false);
+    expect(screen.getByLabelText('Propose new time')).toBeTruthy();
+  });
+
+  it('does not affect the G2 must-change-password gate — the prompt still shows when required, alongside the widget', async () => {
+    memberProfileFixture = buildMemberProfileFixture({ must_change_password: true });
+    sessionsResponse = [chwProposedSessionFixture];
+
+    renderScreen();
+
+    expect(await screen.findByText('Set your password')).toBeTruthy();
+    // The widget still renders underneath/alongside the gate — the gate is a
+    // sibling overlay, not something the widget can suppress or reorder.
+    expect(await screen.findByLabelText(`Approve request from ${CHW_NAME}`)).toBeTruthy();
   });
 });

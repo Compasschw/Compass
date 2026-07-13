@@ -2484,11 +2484,21 @@ export function CHWCalendarScreen(): React.JSX.Element {
   const allMembers = rawMembers ?? [];
 
   // Member-requested sessions awaiting this CHW's approval → shown as a list
-  // above the calendar (soonest first).
+  // above the calendar (soonest first). Excludes the CHW's OWN proposals
+  // (proposedBy === 'chw') — those are awaiting the MEMBER's approval, not
+  // this CHW's, so they'd otherwise show up in the CHW's own approval queue.
+  // Legacy rows with proposedBy null/undefined (scheduled before this field
+  // existed) CONTINUE to show here — today's behavior preserved, since the
+  // initiator is unknown and the CHW has always been able to act on them.
   const pendingRequests = useMemo(
     () =>
       allSessions
-        .filter((s) => s.status === 'scheduled' && s.schedulingStatus === 'pending')
+        .filter(
+          (s) =>
+            s.status === 'scheduled' &&
+            s.schedulingStatus === 'pending' &&
+            s.proposedBy !== 'chw',
+        )
         .sort(
           (a, b) =>
             new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime(),

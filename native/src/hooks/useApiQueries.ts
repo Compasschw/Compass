@@ -34,6 +34,13 @@ export interface SessionData {
   scheduledEndAt?: string | null;
   /** CHW's Confirmed/Pending choice for a scheduled appointment. */
   schedulingStatus?: 'confirmed' | 'pending' | null;
+  /**
+   * Which party proposed this session's time — drives the "initiator
+   * inversion" rule for who may confirm/decline a pending request (only the
+   * party who did NOT propose it can act). `null`/undefined marks a legacy
+   * row scheduled before this field existed, whose initiator is unknown.
+   */
+  proposedBy?: 'chw' | 'member' | null;
   startedAt?: string;
   endedAt?: string;
   durationMinutes?: number;
@@ -1204,7 +1211,16 @@ export function useStartSession() {
   });
 }
 
-/** CHW confirms a member-requested (pending) session → scheduling_status confirmed. */
+/**
+ * Confirms a pending session request → scheduling_status confirmed.
+ * PATCH /sessions/{id}/confirm.
+ *
+ * Used by BOTH roles: a CHW confirming a member-requested pending session, and
+ * a member confirming a CHW-proposed pending session. The backend accepts
+ * either the owning CHW or the participant member as caller, gated by the
+ * "initiator inversion" rule — only the party who did NOT propose the
+ * session's time (`proposed_by`) may confirm it.
+ */
 export function useConfirmSession() {
   const qc = useQueryClient();
   return useMutation({
@@ -1221,7 +1237,17 @@ export function useConfirmSession() {
   });
 }
 
-/** CHW declines a member-requested (pending) session → status cancelled. */
+/**
+ * Declines a pending session request → status cancelled.
+ * PATCH /sessions/{id}/decline.
+ *
+ * Used by BOTH roles: a CHW declining a member-requested pending session, and
+ * a member declining a CHW-proposed pending session (including the "Propose
+ * New Time" reschedule flow's decline-the-old-request step on both sides).
+ * The backend accepts either the owning CHW or the participant member as
+ * caller, gated by the "initiator inversion" rule — only the party who did
+ * NOT propose the session's time (`proposed_by`) may decline it.
+ */
 export function useDeclineSession() {
   const qc = useQueryClient();
   return useMutation({

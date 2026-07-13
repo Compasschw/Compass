@@ -263,6 +263,71 @@ const resourceNeedsSessionFixture = {
   member_name: MEMBER_NAME_5,
 };
 
+// ─── proposedBy fixtures (initiator-inversion filter) ────────────────────────
+//
+// pendingSessionFixture above has no proposed_by field at all — that's the
+// legacy case (pre-existing rows scheduled before this field existed) and
+// must CONTINUE to show in the CHW's approval queue. These two extra fixtures
+// cover the CHW-proposed (excluded) and member-proposed (included,
+// unaffected) cases.
+
+const CHW_PROPOSED_SESSION_ID = 'sess-pending-chw-proposed-1';
+const MEMBER_ID_6 = 'member-6';
+const MEMBER_NAME_6 = 'Elena Cruz';
+
+const chwProposedStart = new Date();
+chwProposedStart.setDate(chwProposedStart.getDate() + 4);
+chwProposedStart.setHours(11, 0, 0, 0);
+const chwProposedEnd = new Date(chwProposedStart.getTime() + 60 * 60 * 1000);
+
+/** A pending session THIS CHW proposed (e.g. via "Propose New Time") — awaits
+ *  the MEMBER's approval, so it must NOT appear in the CHW's own queue. */
+const chwProposedSessionFixture = {
+  id: CHW_PROPOSED_SESSION_ID,
+  request_id: 'req-8',
+  chw_id: CHW_ID,
+  member_id: MEMBER_ID_6,
+  vertical: 'housing',
+  status: 'scheduled',
+  mode: 'in_person',
+  scheduled_at: chwProposedStart.toISOString(),
+  scheduled_end_at: chwProposedEnd.toISOString(),
+  scheduling_status: 'pending',
+  proposed_by: 'chw',
+  created_at: '2026-07-01T00:00:00.000Z',
+  chw_name: 'Test CHW',
+  member_name: MEMBER_NAME_6,
+};
+
+const MEMBER_PROPOSED_SESSION_ID = 'sess-pending-member-proposed-1';
+const MEMBER_ID_7 = 'member-7';
+const MEMBER_NAME_7 = 'Farid Haidari';
+
+const memberProposedStart = new Date();
+memberProposedStart.setDate(memberProposedStart.getDate() + 5);
+memberProposedStart.setHours(13, 0, 0, 0);
+const memberProposedEnd = new Date(memberProposedStart.getTime() + 60 * 60 * 1000);
+
+/** A pending session the MEMBER proposed — explicitly proposed_by: 'member'.
+ *  Must remain visible/actionable in the CHW's queue, unaffected by the
+ *  proposedBy !== 'chw' filter change. */
+const memberProposedSessionFixture = {
+  id: MEMBER_PROPOSED_SESSION_ID,
+  request_id: 'req-9',
+  chw_id: CHW_ID,
+  member_id: MEMBER_ID_7,
+  vertical: 'housing',
+  status: 'scheduled',
+  mode: 'in_person',
+  scheduled_at: memberProposedStart.toISOString(),
+  scheduled_end_at: memberProposedEnd.toISOString(),
+  scheduling_status: 'pending',
+  proposed_by: 'member',
+  created_at: '2026-07-01T00:00:00.000Z',
+  chw_name: 'Test CHW',
+  member_name: MEMBER_NAME_7,
+};
+
 // ─── API router — the sole network boundary ──────────────────────────────────
 
 let scheduleShouldFail = false;
@@ -487,6 +552,40 @@ describe('CHWCalendarScreen — Pending Session Requests "Propose New Time"', ()
 
     // The modal stays open (not silently closed) so the CHW can retry.
     expect(screen.getByLabelText('Propose new time')).toBeTruthy();
+  });
+});
+
+describe('CHWCalendarScreen — Pending Session Requests proposedBy filter (initiator inversion)', () => {
+  it('excludes a pending session this CHW proposed (proposedBy: "chw") from the approval queue', async () => {
+    additionalSessionFixtures = [chwProposedSessionFixture];
+    renderScreen();
+
+    // A legacy/unaffected pending request renders normally...
+    await screen.findByLabelText(`Approve request from ${MEMBER_NAME}`);
+    // ...but the CHW's own proposal must never appear as something for the
+    // CHW to approve/decline/re-propose against themselves. (The underlying
+    // session still renders elsewhere on the calendar grid as a normal
+    // session card, so this only asserts absence from the approval-queue
+    // actions, not a global absence of the member's name.)
+    expect(screen.queryByLabelText(`Approve request from ${MEMBER_NAME_6}`)).toBeNull();
+    expect(screen.queryByLabelText(`Decline request from ${MEMBER_NAME_6}`)).toBeNull();
+    expect(screen.queryByLabelText(`Propose new time for ${MEMBER_NAME_6}`)).toBeNull();
+  });
+
+  it('still shows a legacy pending session with no proposedBy field (undefined) — preserves today\'s behavior', async () => {
+    // pendingSessionFixture (the base fixture) has no proposed_by key at all.
+    renderScreen();
+
+    expect(await screen.findByLabelText(`Approve request from ${MEMBER_NAME}`)).toBeTruthy();
+    expect(await screen.findByLabelText(`Decline request from ${MEMBER_NAME}`)).toBeTruthy();
+  });
+
+  it('still shows a member-proposed pending session (proposedBy: "member") — unaffected by the filter', async () => {
+    additionalSessionFixtures = [memberProposedSessionFixture];
+    renderScreen();
+
+    expect(await screen.findByLabelText(`Approve request from ${MEMBER_NAME_7}`)).toBeTruthy();
+    expect(await screen.findByLabelText(`Decline request from ${MEMBER_NAME_7}`)).toBeTruthy();
   });
 });
 

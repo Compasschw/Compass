@@ -61,6 +61,11 @@ class Session(Base):
     # "confirmed" | "pending" | None. Separate from the lifecycle `status` above;
     # Completed/Missed calendar badges derive from the lifecycle, not this field.
     scheduling_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # 'chw' | 'member' | None (legacy rows). Records who proposed this session's
+    # current scheduled time — drives which side's pending-approval widget shows
+    # it (see routers/sessions.py schedule_session, and the CHWCalendarScreen /
+    # MemberCalendarScreen pending filters on the frontend).
+    proposed_by: Mapped[str | None] = mapped_column(String(10), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     duration_minutes: Mapped[int | None] = mapped_column(Integer)
