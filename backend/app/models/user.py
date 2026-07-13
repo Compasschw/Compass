@@ -32,6 +32,17 @@ class User(Base):
     # presence in the UI (e.g. a member's "Active" pill when active < 10 min ago).
     last_active_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # Timestamp of the user's FIRST successful authentication (self-service
+    # /auth/register auto-login, /auth/login, or OAuth sign-in) — NULL until then.
+    # Distinct from `last_active_at` (which tracks ongoing presence): this is a
+    # one-time "has this person ever actually signed in" signal. Introduced for
+    # the CHW Members-page status rule (a CHW-created member — who only holds a
+    # temp password handed to them out-of-band — must be shown 'inactive' until
+    # they actually sign in themselves, not merely because the CHW provisioned
+    # the account). See routers/auth.py (register/login/oauth) for write sites
+    # and routers/chw.py list_chw_members for the read site.
+    first_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     # ── Account-deletion fields (soft-delete + HIPAA 6-year retention) ──────────
     # Populated by AccountDeletionService. A non-null deleted_at means the account
     # has been soft-deleted and all PII anonymised. The row is intentionally kept

@@ -123,6 +123,20 @@ function formatShortDate(isoString: string | null): string {
 }
 
 /**
+ * Returns a full formatted date string including year, e.g. "May 9, 2026".
+ * Used for the H1 "Account created" column — unlike `formatShortDate` (used
+ * for recency-scoped sub-labels), a created date needs the year since it can
+ * be far in the past.
+ */
+function formatCreatedDate(isoString: string): string {
+  return new Date(isoString).toLocaleDateString('en-US', {
+    month: 'short',
+    day:   'numeric',
+    year:  'numeric',
+  });
+}
+
+/**
  * Returns true when a member's last contact is more than OVERDUE_THRESHOLD_DAYS
  * days ago (or they have never been contacted).
  */
@@ -373,6 +387,17 @@ function MemberTableRow({ item, onPress }: RowProps): React.JSX.Element {
         )}
       </View>
 
+      {/* Account Created (H1) */}
+      <View style={rowStyles.cell}>
+        <Text style={rowStyles.lastContact}>{formatCreatedDate(item.createdAt)}</Text>
+      </View>
+
+      {/* CIN — full, unmasked (H1). Decision locked: shown to the owning CHW
+          for their own members only; this endpoint is relationship-gated. */}
+      <View style={rowStyles.cell}>
+        <Text style={rowStyles.lastContact}>{item.mediCalId ?? '—'}</Text>
+      </View>
+
       {/* Chevron */}
       <View style={[rowStyles.cell, rowStyles.chevronCell]}>
         <ChevronRight size={16} color="#D1D5DB" />
@@ -518,6 +543,13 @@ function MemberCard({ item, onPress }: MemberCardProps): React.JSX.Element {
           <Text style={cardStyles.overdueTag}>Overdue</Text>
         )}
       </View>
+
+      {/* H1: account-created date + full CIN (mobile parity with the web table's
+          new columns). Full CIN is intentionally unmasked here — decision
+          locked, shown to the owning CHW for their own members only. */}
+      <Text style={cardStyles.metaLine}>
+        Joined {formatCreatedDate(item.createdAt)} · CIN {item.mediCalId ?? '—'}
+      </Text>
     </PressableCard>
   );
 }
@@ -561,6 +593,12 @@ const cardStyles = StyleSheet.create({
   journeyLine: {
     fontSize:  12,
     color:     colors.textSecondary,
+    marginTop: spacing.xs,
+  } as TextStyle,
+
+  metaLine: {
+    fontSize:  11,
+    color:     colors.textMuted,
     marginTop: spacing.xs,
   } as TextStyle,
 
@@ -895,11 +933,13 @@ export function CHWMembersScreen(): React.JSX.Element {
           <View style={styles.tableHead}>
             {(
               [
-                { label: 'Member',         flex: 2 },
-                { label: 'Status',         flex: 1 },
-                { label: 'Top Need',       flex: 1 },
-                { label: 'Last Contact',   flex: 1 },
-                { label: '',               flex: 0, width: 48 },
+                { label: 'Member',          flex: 2 },
+                { label: 'Status',          flex: 1 },
+                { label: 'Top Need',        flex: 1 },
+                { label: 'Last Contact',    flex: 1 },
+                { label: 'Account Created', flex: 1 },
+                { label: 'CIN',             flex: 1 },
+                { label: '',                flex: 0, width: 48 },
               ] as const
             ).map((col) => (
               <View

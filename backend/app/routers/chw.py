@@ -690,9 +690,16 @@ async def list_chw_members(
             )
 
         # masked_id: last 4 chars of decrypted medi_cal_id.
+        # medi_cal_id (H1): FULL CIN, unmasked. Decision locked (Akram) — the
+        # owning, relationship-gated CHW may see their own member's full CIN
+        # for billing verification / identity confirmation on calls, matching
+        # the precedent already set by CHWMemberProfileDetail.medi_cal_id. This
+        # endpoint is already relationship-gated (Step 1 above), so no
+        # additional authorization is needed to add this field.
         masked_id: str = "—"
+        full_cin: str | None = member_profile.medi_cal_id or None  # EncryptedString decrypts on access
         if member_profile.medi_cal_id:
-            raw_id: str = member_profile.medi_cal_id  # EncryptedString decrypts on access
+            raw_id: str = member_profile.medi_cal_id
             if len(raw_id) >= 4:
                 masked_id = f"...{raw_id[-4:]}"
             elif raw_id:
@@ -702,11 +709,18 @@ async def list_chw_members(
         name_parts = (member_user.name or "").strip().split()
         initials = "".join(p[0].upper() for p in name_parts if p)[:2] or "?"
 
-        # Status: active if session in last 30 days OR open/accepted request.
+        # Status (Epic G3): a member who has NEVER signed in (first_login_at is
+        # NULL) is always 'inactive' — this is what fixes the CHW-created-member
+        # case, where the CHW provisioned the account and handed the member a
+        # temp password out-of-band, but the member hasn't logged in yet. Once
+        # they HAVE signed in at least once, status reflects ordinary activity:
+        # active if session in last 30 days OR open/accepted request.
         has_recent_session = (recent_30_by_member.get(member_id) or 0) > 0
         has_active_request = member_id in active_request_by_member
         status: Literal["active", "inactive"] = (
-            "active" if (has_recent_session or has_active_request) else "inactive"
+            "inactive"
+            if member_user.first_login_at is None
+            else ("active" if (has_recent_session or has_active_request) else "inactive")
         )
 
         # Engagement bucket from 60-day session count.
@@ -753,6 +767,7 @@ async def list_chw_members(
                 age=age,
                 date_of_birth=dob,
                 masked_id=masked_id,
+                medi_cal_id=full_cin,
                 avatar_initials=initials,
                 status=status,
                 risk=None,
@@ -760,6 +775,7 @@ async def list_chw_members(
                 active_journey=active_journey_info,
                 last_contact_at=last_contact_at,
                 top_need=top_need,
+                created_at=member_user.created_at,
             )
         )
 
