@@ -52,7 +52,8 @@ from app.models.conversation import Conversation, Message
 from app.models.user import MemberProfile, User
 from app.services.communication_touch_log import CommunicationTouch, TouchKind
 from app.services.vonage_sms import SmsSendResult
-from tests.conftest import auth_header, test_session as _test_session_factory
+from tests.conftest import auth_header
+from tests.conftest import test_session as _test_session_factory
 
 _VONAGE_SECRET = "test-vonage-sms-signature-secret-for-pytest"
 
@@ -792,10 +793,10 @@ async def test_inbound_sms_missing_signature_returns_401_when_secret_configured(
     """When vonage_signature_secret IS configured, a webhook with no
     Authorization header must be rejected — mirrors the voice webhook
     signature tests in tests/test_wave_a1_security.py."""
-    import app.config as _app_cfg
     from httpx import ASGITransport
     from httpx import AsyncClient as _AsyncClient
 
+    import app.config as _app_cfg
     from app.main import app as _app
 
     original = _app_cfg.settings
@@ -825,10 +826,10 @@ async def test_inbound_sms_missing_signature_returns_401_when_secret_configured(
 
 @pytest.mark.asyncio
 async def test_inbound_sms_forged_signature_returns_401():
-    import app.config as _app_cfg
     from httpx import ASGITransport
     from httpx import AsyncClient as _AsyncClient
 
+    import app.config as _app_cfg
     from app.main import app as _app
 
     original = _app_cfg.settings
