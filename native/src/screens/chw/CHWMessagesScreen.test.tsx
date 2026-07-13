@@ -182,7 +182,24 @@ function routeApi(path: string, options?: { method?: string; body?: string }): u
   }
 
   if (path.startsWith('/conversations/')) {
-    return [conversationFixture];
+    // Mirrors what the real backend does once a mutation ends the active
+    // session (abort/no-show/complete's documentation submit): the
+    // conversation's active_session_id clears so a subsequent GET (triggered
+    // by the mutation's `queryKeys.conversations` invalidation) reflects a
+    // bare, no-active-session conversation — the signal `canBeginNewSession`
+    // gates on. Sessions ended via `/end` (Complete's first step) are NOT yet
+    // terminal (`awaiting_documentation` isn't in TERMINAL_SESSION_STATUSES),
+    // so only fully-terminal statuses clear it here.
+    const isSessionTerminal =
+      currentSessionStatus === 'cancelled' ||
+      currentSessionStatus === 'cancelled_no_consent' ||
+      currentSessionStatus === 'no_show' ||
+      currentSessionStatus === 'completed';
+    return [
+      isSessionTerminal
+        ? { ...conversationFixture, session_id: null, active_session_id: null, active_session_started_at: null }
+        : conversationFixture,
+    ];
   }
 
   if (path === `/sessions/${SESSION_ID}/assessments` && method === 'POST') {
@@ -736,7 +753,7 @@ describe('CHWMessagesScreen — Cancel / Missed Session actions (Epic P + O2)', 
     });
   });
 
-  it('after Cancel Session succeeds, the rail shows the read-only Cancelled note (badge/timer state cleared)', async () => {
+  it('after Cancel Session succeeds, the rail clears the destructive-session state (badge/timer gone, no longer showing Complete Session)', async () => {
     await openEndConfirmPanel();
 
     fireEvent.click(screen.getByLabelText('Cancel session (abort)'));
@@ -748,16 +765,23 @@ describe('CHWMessagesScreen — Cancel / Missed Session actions (Epic P + O2)', 
       );
     });
 
-    await screen.findByText('Session cancelled');
-    // Rail-scoped: the ActiveSessionBadge's own "Complete session" button
-    // reads off a separate query (useConversations, not useSession) that
-    // this test's mock doesn't reflect the mutation into — its clearing
-    // behavior is covered independently in ActiveSessionBadge.test.tsx.
+    // The `cancelled` status is real and briefly reachable via useSession,
+    // but — now that the abort mutation also invalidates `queryKeys
+    // .conversations` (the fix under test) — the conversations refetch that
+    // clears `activeSessionId` can land in the same act() flush, so the
+    // terminal "Session cancelled" note is not a reliably observable
+    // intermediate state here (see the dedicated recovery test below, which
+    // covers the full Begin-Session-reset behavior this note is a step
+    // toward). What IS guaranteed and asserted: the destructive action
+    // fired, and the rail no longer shows a "Complete session" button for
+    // the now-ended session.
     const rail = within(screen.getByLabelText('Member context'));
-    expect(rail.queryByLabelText('Complete session')).toBeNull();
+    await waitFor(() => {
+      expect(rail.queryByLabelText('Complete session')).toBeNull();
+    });
   });
 
-  it('after Missed Session succeeds, the rail shows the read-only Missed note (badge/timer state cleared)', async () => {
+  it('after Missed Session succeeds, the rail clears the destructive-session state (badge/timer gone, no longer showing Complete Session)', async () => {
     await openEndConfirmPanel();
 
     fireEvent.click(screen.getByLabelText('Mark session missed (no-show)'));
@@ -769,9 +793,61 @@ describe('CHWMessagesScreen — Cancel / Missed Session actions (Epic P + O2)', 
       );
     });
 
-    await screen.findByText('Missed — member did not attend');
     const rail = within(screen.getByLabelText('Member context'));
-    expect(rail.queryByLabelText('Complete session')).toBeNull();
+    await waitFor(() => {
+      expect(rail.queryByLabelText('Complete session')).toBeNull();
+    });
+  });
+
+  // ── Regression: Begin Session must reset without a manual refresh ──────────
+  //
+  // This is the actual bug under test: does the rail recover to "Begin
+  // Session" so the CHW can immediately start a new session with the same
+  // member, or does it stay stuck until a manual page reload? That
+  // transition is driven by useSessionHook re-keying off
+  // `conv.activeSessionId` once the conversations query refetches with
+  // `active_session_id: null` — which only happens if the mutation
+  // invalidates `queryKeys.conversations` (not just `queryKeys.sessions`).
+  // These tests assert that full recovery, relying ONLY on the mutations'
+  // own onSuccess invalidation (this file's mocked `/conversations/` route
+  // reflects `currentSessionStatus`, mirroring the real backend) — no manual
+  // refetch/reload call anywhere in the test.
+  it('after Missed Session succeeds, Begin Session reappears in the rail without a manual refresh', async () => {
+    await openEndConfirmPanel();
+
+    fireEvent.click(screen.getByLabelText('Mark session missed (no-show)'));
+
+    await waitFor(() => {
+      expect(mockedApi).toHaveBeenCalledWith(
+        `/sessions/${SESSION_ID}/no-show`,
+        expect.objectContaining({ method: 'PATCH' }),
+      );
+    });
+
+    // Purely from the conversations-query invalidation the mutation itself
+    // triggers (no test-driven refetch call), the rail must recover to a
+    // fresh "Begin Session" — proving the CHW can start a new session with
+    // this member immediately, matching Complete Session's behavior.
+    const rail = within(screen.getByLabelText('Member context'));
+    expect(await rail.findByLabelText('Begin session')).toBeTruthy();
+    expect(rail.queryByText('Missed — member did not attend')).toBeNull();
+  });
+
+  it('after Cancel Session succeeds, Begin Session reappears in the rail without a manual refresh', async () => {
+    await openEndConfirmPanel();
+
+    fireEvent.click(screen.getByLabelText('Cancel session (abort)'));
+
+    await waitFor(() => {
+      expect(mockedApi).toHaveBeenCalledWith(
+        `/sessions/${SESSION_ID}/abort`,
+        expect.objectContaining({ method: 'PATCH' }),
+      );
+    });
+
+    const rail = within(screen.getByLabelText('Member context'));
+    expect(await rail.findByLabelText('Begin session')).toBeTruthy();
+    expect(rail.queryByText('Session cancelled')).toBeNull();
   });
 });
 
@@ -848,8 +924,14 @@ describe('CHWMessagesScreen — Member Profile links pass backLabel "Messages" (
     // The conversation header wraps the avatar, the name, AND the explicit
     // "Open Profile" button in their own PressableMember, all sharing this
     // same accessibility label — click any one; they all resolve to the same
-    // navigation call under test here.
-    const profileLinks = screen.getAllByLabelText("Open Rosa Gutierrez's profile");
+    // navigation call under test here. findAll (not getAll): under CI load
+    // the header PressableMembers can mount a tick after the name text
+    // resolves, which flaked this test in slower parallel runs.
+    const profileLinks = await screen.findAllByLabelText(
+      "Open Rosa Gutierrez's profile",
+      {},
+      { timeout: 3000 },
+    );
     expect(profileLinks.length).toBeGreaterThanOrEqual(1);
     fireEvent.click(profileLinks[0]);
 
@@ -863,8 +945,9 @@ describe('CHWMessagesScreen — Member Profile links pass backLabel "Messages" (
     renderScreen();
     await screen.findByText('Rosa Gutierrez', {}, { timeout: 3000 });
 
-    const rail = within(screen.getByLabelText('Member context'));
-    fireEvent.click(rail.getByLabelText("Open Rosa Gutierrez's profile"));
+    // findBy variants for the same CI-load reason as the header test above.
+    const rail = within(await screen.findByLabelText('Member context', {}, { timeout: 3000 }));
+    fireEvent.click(await rail.findByLabelText("Open Rosa Gutierrez's profile", {}, { timeout: 3000 }));
 
     expect(mockNavigate).toHaveBeenCalledWith('SessionsStack', {
       screen: 'MemberProfile',

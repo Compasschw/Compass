@@ -1650,6 +1650,20 @@ export function useEndSession() {
  * Invalidates the same query the sibling `/end` mutation does — the sessions
  * cache — so the rail's live session status (fetched via useSession) picks up
  * the terminal `cancelled` status and swaps to the read-only status note.
+ *
+ * ALSO invalidates `queryKeys.conversations` (unlike `/end`): abort is a
+ * terminal action with no follow-up documentation step, so this is the only
+ * place the conversation's `activeSessionId` gets cleared server-side.
+ * `queryKeys.conversations` (bare `['conversations']`) is a PREFIX of the
+ * `conversationList(includeArchived)` keys the conversations query actually
+ * runs under (`['conversations', { includeArchived }]`), so this one
+ * invalidation call covers both list variants — react-query's default
+ * `invalidateQueries` matching is prefix-based. Without this, the Messages
+ * rail's "Begin Session" gating (`canBeginNewSession` = `conv.activeSessionId
+ * === null`) and `useActiveChwSession` (the persistent ActiveSessionBadge's
+ * source of truth) both keep reading the stale, still-set `activeSessionId`
+ * until an unrelated refetch happens to land — requiring a manual page
+ * refresh before the CHW can start a new session with the same member.
  */
 export function useAbortSession() {
   const qc = useQueryClient();
@@ -1662,6 +1676,7 @@ export function useAbortSession() {
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.sessions });
+      void qc.invalidateQueries({ queryKey: queryKeys.conversations });
     },
     onError: (error: Error) => {
       showAlert('Could not cancel session', error?.message ?? 'Please try again.');
@@ -1690,6 +1705,15 @@ export function useAbortSession() {
  * useSession) and ActiveSessionBadge (fetched via useActiveChwSession, which
  * derives from the same conversations/sessions data) both pick up the
  * terminal `no_show` status and the badge/timer disappear.
+ *
+ * ALSO invalidates `queryKeys.conversations`, for the same reason
+ * `useAbortSession` does (see its docstring): a no-show is terminal with no
+ * follow-up documentation step, so this is the only place the conversation's
+ * `activeSessionId` clears server-side. Without it, the Messages rail's
+ * "Begin Session" gating and `useActiveChwSession` both keep reading the
+ * stale `activeSessionId` until an unrelated refetch happens to land,
+ * blocking the CHW from starting a new session with the same member without
+ * a manual page refresh.
  */
 export function useMarkSessionNoShow() {
   const qc = useQueryClient();
@@ -1702,6 +1726,7 @@ export function useMarkSessionNoShow() {
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.sessions });
+      void qc.invalidateQueries({ queryKey: queryKeys.conversations });
     },
     onError: (error: Error) => {
       showAlert('Could not mark session missed', error?.message ?? 'Please try again.');
