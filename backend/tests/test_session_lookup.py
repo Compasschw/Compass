@@ -304,8 +304,8 @@ async def test_find_or_create_enforces_unique_constraint() -> None:
 @pytest.mark.asyncio
 async def test_create_followup_session_clones_billing_lineage() -> None:
     """A completed prior Session exists; create_followup_session mints a new
-    in_progress Session that inherits request_id, vertical, and mode, with
-    started_at stamped and conversation_id matching."""
+    Session that inherits request_id, vertical, and mode, with conversation_id
+    matching."""
     async with test_session() as db:
         chw, member, req = await _seed_pair(db)
         conv = Conversation(chw_id=chw.id, member_id=member.id)
@@ -333,9 +333,42 @@ async def test_create_followup_session_clones_billing_lineage() -> None:
         assert new_session.request_id == req.id
         assert new_session.vertical == "health"
         assert new_session.mode == "phone"
-        assert new_session.status == "in_progress"
-        assert new_session.started_at is not None
         assert new_session.conversation_id == conv.id
+
+
+@pytest.mark.asyncio
+async def test_create_followup_session_does_not_auto_start() -> None:
+    """Epic U regression: minting a followup Session for a fresh call must NOT
+    start it. Begin Session (PATCH /sessions/{id}/start) is the only trigger
+    that may set status='in_progress' / stamp started_at — a call landing on
+    a conversation whose prior session is already documented used to mint
+    (and silently start) a brand-new billable session, starting the timer
+    without the CHW ever tapping Begin Session. Fails on the pre-fix code,
+    which set status='in_progress' and started_at=now() here."""
+    async with test_session() as db:
+        chw, member, req = await _seed_pair(db)
+        conv = Conversation(chw_id=chw.id, member_id=member.id)
+        db.add(conv)
+        await db.flush()
+
+        prior = Session(
+            request_id=req.id,
+            chw_id=chw.id,
+            member_id=member.id,
+            vertical="health",
+            mode="phone",
+            status="completed",
+            conversation_id=conv.id,
+        )
+        db.add(prior)
+        await db.flush()
+
+        new_session = await create_followup_session(
+            db, conversation=conv, chw_user=chw, member_user=member
+        )
+
+        assert new_session.status == "scheduled"
+        assert new_session.started_at is None
 
 
 @pytest.mark.asyncio

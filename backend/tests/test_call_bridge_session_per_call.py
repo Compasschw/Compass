@@ -167,14 +167,17 @@ async def test_call_bridge_creates_new_session_when_flag_on_and_prior_completed(
     client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Flag ON + prior Session is completed → a brand-new in_progress Session
-    is minted and returned in the response body.
+    """Flag ON + prior Session is completed → a brand-new Session is minted
+    and returned in the response body, but the call does NOT start it
+    (Epic U: only Begin Session may flip status/started_at).
 
     Assert:
     - HTTP 200
     - response body["session_id"] is a NEW UUID (≠ prior session id)
     - DB has exactly 2 Sessions on the same conversation_id
-    - exactly 1 of those Sessions has status="in_progress"
+    - the new Session is left at the default "scheduled" (not started) status
+    - zero Sessions on the conversation are "in_progress" — placing the call
+      must not start a session or its billing timer
     """
     monkeypatch.setattr(_app_config_module.settings, "session_per_call_enabled", True)
 
@@ -217,11 +220,22 @@ async def test_call_bridge_creates_new_session_when_flag_on_and_prior_completed(
     assert len(all_sessions) == 2, (
         f"Expected 2 Sessions on conversation, found {len(all_sessions)}"
     )
+    # Epic U: the call must not start a session — the freshly-minted row
+    # stays "scheduled" with started_at unset until Begin Session is tapped.
     in_progress = [s for s in all_sessions if s.status == "in_progress"]
-    assert len(in_progress) == 1, (
-        f"Expected exactly 1 in_progress Session, found {len(in_progress)}"
+    assert len(in_progress) == 0, (
+        f"Expected 0 in_progress Sessions (call must not auto-start), "
+        f"found {len(in_progress)}"
     )
-    assert in_progress[0].id == returned_session_id
+    by_id = {s.id: s for s in all_sessions}
+    new_session = by_id[returned_session_id]
+    assert new_session.status == "scheduled", (
+        f"Expected the new Session to be left unstarted ('scheduled'), "
+        f"got status={new_session.status!r}"
+    )
+    assert new_session.started_at is None, (
+        "Expected started_at to remain unset — only Begin Session may stamp it"
+    )
 
 
 @pytest.mark.asyncio
@@ -423,7 +437,9 @@ async def test_call_bridge_mints_fresh_when_active_has_documentation(
     their perspective even though Session.status is still in_progress.
     Call-bridge must complete the prior Session and mint a fresh one for
     THIS call, so the 2nd same-thread doc submit lands on the new Session
-    instead of 409'ing on the prior doc. (#193 same-thread heal.)
+    instead of 409'ing on the prior doc. (#193 same-thread heal.) The
+    freshly-minted Session itself must NOT be auto-started (Epic U) — the
+    CHW still has to tap Begin Session on it.
     """
     monkeypatch.setattr(_app_config_module.settings, "session_per_call_enabled", True)
 
@@ -473,4 +489,10 @@ async def test_call_bridge_mints_fresh_when_active_has_documentation(
         assert by_id[prior_session_id].status == "completed", (
             "Prior Session should be auto-completed by the heal"
         )
-        assert by_id[returned_session_id].status == "in_progress"
+        # Epic U: the fresh Session minted for this call must NOT be
+        # auto-started — it stays "scheduled" until Begin Session is tapped.
+        assert by_id[returned_session_id].status == "scheduled", (
+            f"Expected the newly-minted Session to be left unstarted, "
+            f"got status={by_id[returned_session_id].status!r}"
+        )
+        assert by_id[returned_session_id].started_at is None

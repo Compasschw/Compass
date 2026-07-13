@@ -431,13 +431,20 @@ async def list_member_journeys(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[MemberJourneyResponse]:
-    """Return all MemberJourneys for a member, with full step-state detail.
+    """Return all non-abandoned MemberJourneys for a member, with full step-state detail.
 
     Authorization:
       - CHW callers: must have an active relationship (Session or matched
         ServiceRequest) with the member. Returns 403 otherwise.
       - Member callers: can only read their own journeys. Returns 403 if
         member_id != current_user.id.
+
+    Excludes journeys with status='abandoned' (CHW-removed journeys) so a
+    removed journey never leaks back to the member or CHW view — the data
+    layer is the source of truth for "removed," not the frontend's status
+    filter. See Epic R: a stale "Mental Health" journey was visible on the
+    member side after the CHW removed all resource needs because this query
+    returned abandoned rows and relied on the FE to hide them.
     """
     if current_user.role == "chw":
         await _assert_chw_member_relationship(current_user.id, member_id, db)
@@ -452,6 +459,7 @@ async def list_member_journeys(
     journeys_result = await db.execute(
         select(MemberJourney)
         .where(MemberJourney.member_id == member_id)
+        .where(MemberJourney.status != "abandoned")
         .order_by(MemberJourney.created_at.desc())
     )
     journeys = journeys_result.scalars().all()

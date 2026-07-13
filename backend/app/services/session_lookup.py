@@ -190,10 +190,20 @@ async def create_followup_session(
     chw_user: User,
     member_user: User,
 ) -> Session:
-    """Mint a new in_progress Session for a fresh call in an existing conversation.
+    """Mint a new, NOT-YET-STARTED Session for a fresh call in an existing conversation.
 
     Billing lineage (request_id, vertical, mode) is cloned from the most
     recent prior Session so that billing claims chain correctly.
+
+    Epic U (call ≠ session start): this helper used to also stamp the new row
+    ``status="in_progress"`` / ``started_at=now()`` — i.e. placing a call
+    silently started the session and its billing timer. ``PATCH
+    /sessions/{id}/start`` (Begin Session) must be the single, universal
+    trigger for that transition, so the row is left at the model defaults
+    (``status="scheduled"``, ``started_at=None``) here. The CHW still has to
+    hit Begin Session on the newly-minted row before Complete/Abort or the
+    timer badge will treat it as active — that's intentional, not an
+    oversight.
 
     Raises:
         ValueError: If the conversation already has an active (in_progress)
@@ -209,7 +219,8 @@ async def create_followup_session(
         member_user: User object for the member; must have an ``id`` attribute.
 
     Returns:
-        The newly-flushed in_progress Session.
+        The newly-flushed Session, in its default ``scheduled`` (not-started)
+        state.
     """
     active = await get_active_session_for_conversation(db, conversation.id)
     if active is not None:
@@ -232,14 +243,16 @@ async def create_followup_session(
             "ServiceRequest→accept→start flow instead."
         )
 
+    # NOTE: status/started_at are intentionally left unset (model defaults:
+    # status="scheduled", started_at=None). Only PATCH /sessions/{id}/start
+    # (Begin Session) may flip a session to in_progress + stamp started_at —
+    # see the module-level docstring on Epic U above.
     new_session = Session(
         request_id=prior.request_id,
         chw_id=chw_user.id,
         member_id=member_user.id,
         vertical=prior.vertical,
         mode=prior.mode,
-        status="in_progress",
-        started_at=datetime.now(UTC),
         conversation_id=conversation.id,
     )
     db.add(new_session)
