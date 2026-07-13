@@ -84,19 +84,26 @@ export function formatIsoForSessionDateTimeInput(iso: string | null | undefined)
 /**
  * Auto-derive the units-to-bill from a session's total duration.
  *
- * Founder-set bracket (2026-05-07) — must match the backend
+ * Founder-set 16-minute-floor bracket (2026-07-13, supersedes the
+ * 2026-05-07 bracket) — must match the backend
  * ``app.services.billing_service.calculate_units`` exactly:
  *
- *   - ≤ 45 min  → 1 unit
- *   - 45–75 min → 2 units
- *   - 75–105 min → 3 units
- *   - > 105 min → 4 units (Medi-Cal daily cap)
+ *   - < 16 min   → 0 units (NOT billable — no claim may be filed)
+ *   - 16–45 min  → 1 unit
+ *   - 46–75 min  → 2 units
+ *   - 76–105 min → 3 units
+ *   - ≥ 106 min  → 4 units (Medi-Cal daily cap)
  *
- * Returns 1 when the duration is missing so the schema's ``ge=1`` constraint
- * is honored and the CHW always gets credit for the visit.
+ * Returns 0 when the duration is missing — an unknown duration must never be
+ * presented to the CHW as billable. The DocumentationModal shows a
+ * not-billable notice and blocks submission for billing whenever this
+ * returns 0 (see ``UnitsLine`` in DocumentationModal.tsx); the backend's
+ * ``validate_claim`` independently rejects a computed 0 with a 422, so a
+ * <16-minute claim can never be filed even if the FE gate were bypassed.
  */
 export function computeUnitsFromDuration(durationMinutes: number | null | undefined): number {
-  if (durationMinutes == null || durationMinutes <= 45) return 1;
+  if (durationMinutes == null || durationMinutes < 16) return 0;
+  if (durationMinutes <= 45) return 1;
   if (durationMinutes <= 75) return 2;
   if (durationMinutes <= 105) return 3;
   return 4;
@@ -111,7 +118,7 @@ export type SessionTimesError = 'invalid_start' | 'invalid_end' | 'end_before_st
 export interface SessionTimesUnitsResult {
   /** Whole-minute duration between start and end, or null when either input is missing/invalid. */
   durationMinutes: number | null;
-  /** Units-to-bill derived from durationMinutes (see computeUnitsFromDuration; 1 when duration is unavailable). */
+  /** Units-to-bill derived from durationMinutes (see computeUnitsFromDuration; 0 — not billable — when duration is unavailable). */
   units: number;
   /** Null when both times are present, parseable, and end > start. */
   error: SessionTimesError;
@@ -145,4 +152,18 @@ export function computeUnitsFromTimes(
   }
   const durationMinutes = Math.round((endMs - startMs) / 60_000);
   return { durationMinutes, units: computeUnitsFromDuration(durationMinutes), error: null };
+}
+
+/** Minimum whole-minute session duration that earns any billable units (Q2, 2026-07-13). */
+export const MIN_BILLABLE_DURATION_MINUTES = 16;
+
+/**
+ * True when the computed units are 0 — i.e. the session is below the
+ * 16-minute billable floor (or duration is unavailable). Centralizes the
+ * "not billable" check so DocumentationModal's notice/gate and any future
+ * caller agree on the exact condition rather than re-deriving `units === 0`
+ * inline in multiple places.
+ */
+export function isBelowBillableFloor(units: number): boolean {
+  return units === 0;
 }

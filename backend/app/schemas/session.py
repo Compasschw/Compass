@@ -142,7 +142,13 @@ class SessionDocumentationSubmit(BaseModel):
     # duration via app.services.billing_service.calculate_units to prevent
     # CHW upcoding. The field is accepted (with the ge/le bounds) for legacy
     # clients but the value is overwritten server-side at submission.
-    units_to_bill: int | None = Field(default=None, ge=1, le=4)
+    # Lower bound is 0 (not 1) as of the 2026-07-13 16-minute-floor bracket:
+    # a <16min session computes to 0 units (not billable), and the frontend
+    # sends that 0 through rather than omitting the field — the schema must
+    # accept it so the request reaches submit_documentation's
+    # validate_claim() check (which rejects 0 with a clear "not billable"
+    # message) instead of failing an opaque 422 here at the schema layer.
+    units_to_bill: int | None = Field(default=None, ge=0, le=4)
     # Number of Medi-Cal members served in this session (1 = individual).
     members_served: int = Field(default=1, ge=1, le=50)
 

@@ -14,13 +14,16 @@ from app.services.billing_service import (
 
 
 class TestCalculateUnits:
-    """Founder-set unit bracket (2026-05-07): the first unit covers up to 45
-    minutes, then every additional 30 minutes earns one more, capped at the
-    Medi-Cal daily maximum of 4 units."""
+    """Founder-set 16-minute-floor unit bracket (2026-07-13, supersedes the
+    2026-05-07 bracket): sessions under 16 minutes are NOT billable (0 units,
+    no claim), then units step up every 30 minutes, capped at the Medi-Cal
+    daily maximum of 4 units."""
 
     @pytest.mark.parametrize("duration,expected", [
-        (0, 1),      # very short session still earns the minimum 1 unit
-        (15, 1),
+        (0, 0),      # not billable
+        (10, 0),
+        (15, 0),     # boundary — 15 exact stays not-billable
+        (16, 1),     # boundary — 16 exact crosses into billable
         (30, 1),
         (45, 1),     # boundary — 45 exact stays at 1
         (46, 2),     # > 45 → 2
@@ -36,15 +39,17 @@ class TestCalculateUnits:
     def test_unit_brackets(self, duration, expected):
         assert calculate_units(duration) == expected
 
-    def test_none_duration_defaults_to_one(self):
-        """Missing duration defaults to 1 unit so the schema's ge=1 holds."""
-        assert calculate_units(None) == 1
+    def test_none_duration_returns_zero(self):
+        """Missing duration must never be assumed billable — returns 0
+        (not-billable), matching the <16min branch, so a claim is never
+        silently created from unknown/absent duration data."""
+        assert calculate_units(None) == 0
 
-    def test_negative_duration_returns_one(self):
-        """Defensive: negative durations are treated as the minimum 1 unit
-        rather than 0 — the documented session still happened, and the
-        SessionDocumentationSubmit schema requires units_to_bill >= 1."""
-        assert calculate_units(-5) == 1
+    def test_negative_duration_returns_zero(self):
+        """Defensive: negative durations (bad clock data) are treated as
+        not-billable (0), same as any other sub-16-minute value, rather than
+        floored to a false minimum of 1 unit."""
+        assert calculate_units(-5) == 0
 
 
 class TestCalculateEarnings:
@@ -95,8 +100,19 @@ class TestValidateClaim:
         assert any("Units" in e for e in errors)
 
     def test_zero_units_fails(self):
+        """0 units is the 16-minute-floor 'not billable' outcome — must be
+        rejected with a message that explains why (not the generic
+        out-of-range message), so the CHW sees a clear reason at submit."""
         errors = validate_claim(["Z59.1"], "98960", 0)
-        assert any("Units" in e for e in errors)
+        assert any("not billable" in e for e in errors)
+
+    def test_units_above_cap_still_uses_generic_range_message(self):
+        """Out-of-range units that are NOT the 0/not-billable case (e.g. a
+        corrupted/out-of-bounds value above the cap) still get the generic
+        1-4 range message, distinct from the 0-units message above."""
+        errors = validate_claim(["Z59.1"], "98960", MAX_UNITS_PER_DAY + 1)
+        assert any("Units must be" in e for e in errors)
+        assert not any("not billable" in e for e in errors)
 
     def test_frontend_picker_codes_all_valid(self):
         """Every ICD-10 code the CHW can pick in the app must pass validation.

@@ -5,13 +5,20 @@ import {
   computeUnitsFromTimes,
   formatIsoForSessionDateTimeInput,
   formatSessionDateTimeInput,
+  isBelowBillableFloor,
   parseSessionDateTimeInputToIso,
 } from './sessionDocumentation';
 
 describe('computeUnitsFromDuration', () => {
-  it('returns 1 unit at and below the 45-minute bracket boundary', () => {
-    expect(computeUnitsFromDuration(0)).toBe(1);
-    expect(computeUnitsFromDuration(1)).toBe(1);
+  it('returns 0 units (not billable) below the 16-minute floor', () => {
+    expect(computeUnitsFromDuration(0)).toBe(0);
+    expect(computeUnitsFromDuration(1)).toBe(0);
+    expect(computeUnitsFromDuration(15)).toBe(0);
+  });
+
+  it('returns 1 unit at the 16-minute floor through 45 minutes', () => {
+    expect(computeUnitsFromDuration(16)).toBe(1);
+    expect(computeUnitsFromDuration(30)).toBe(1);
     expect(computeUnitsFromDuration(45)).toBe(1);
   });
 
@@ -33,13 +40,38 @@ describe('computeUnitsFromDuration', () => {
     expect(computeUnitsFromDuration(10_000)).toBe(4);
   });
 
-  it('defaults to 1 unit when duration is missing (schema ge=1 floor)', () => {
-    expect(computeUnitsFromDuration(null)).toBe(1);
-    expect(computeUnitsFromDuration(undefined)).toBe(1);
+  it('returns 0 (not billable) when duration is missing — never assumed billable', () => {
+    expect(computeUnitsFromDuration(null)).toBe(0);
+    expect(computeUnitsFromDuration(undefined)).toBe(0);
   });
 
-  it('treats a negative duration the same as "at/below 45" (1 unit)', () => {
-    expect(computeUnitsFromDuration(-10)).toBe(1);
+  it('treats a negative duration the same as any other sub-16-minute value (0 units)', () => {
+    expect(computeUnitsFromDuration(-10)).toBe(0);
+  });
+
+  it('exact boundary matrix', () => {
+    const cases: Array<[number, number]> = [
+      [15, 0],
+      [16, 1],
+      [45, 1],
+      [46, 2],
+      [75, 2],
+      [76, 3],
+      [105, 3],
+      [106, 4],
+      [10_000, 4],
+    ];
+    for (const [minutes, expectedUnits] of cases) {
+      expect(computeUnitsFromDuration(minutes)).toBe(expectedUnits);
+    }
+  });
+});
+
+describe('isBelowBillableFloor', () => {
+  it('is true only for 0 units', () => {
+    expect(isBelowBillableFloor(0)).toBe(true);
+    expect(isBelowBillableFloor(1)).toBe(false);
+    expect(isBelowBillableFloor(4)).toBe(false);
   });
 });
 
@@ -108,6 +140,8 @@ describe('computeUnitsFromTimes', () => {
   it('brackets duration into units exactly like computeUnitsFromDuration', () => {
     const start = new Date(2026, 6, 12, 9, 0, 0).toISOString();
     const cases: Array<[number, number]> = [
+      [15, 0],
+      [16, 1],
       [45, 1],
       [46, 2],
       [75, 2],
@@ -125,7 +159,7 @@ describe('computeUnitsFromTimes', () => {
     const end = new Date(2026, 6, 12, 9, 50, 0).toISOString();
     expect(computeUnitsFromTimes(null, end)).toEqual({
       durationMinutes: null,
-      units: 1,
+      units: 0,
       error: 'invalid_start',
     });
     expect(computeUnitsFromTimes('not-a-date', end).error).toBe('invalid_start');
@@ -135,7 +169,7 @@ describe('computeUnitsFromTimes', () => {
     const start = new Date(2026, 6, 12, 9, 0, 0).toISOString();
     expect(computeUnitsFromTimes(start, null)).toEqual({
       durationMinutes: null,
-      units: 1,
+      units: 0,
       error: 'invalid_end',
     });
     expect(computeUnitsFromTimes(start, 'not-a-date').error).toBe('invalid_end');
@@ -149,11 +183,21 @@ describe('computeUnitsFromTimes', () => {
     expect(computeUnitsFromTimes(start, sameTime).error).toBe('end_before_start');
     expect(computeUnitsFromTimes(start, before).error).toBe('end_before_start');
     // Duration/units are not trusted when the pair is invalid — units falls
-    // back to the 1-unit floor rather than reporting a negative duration.
+    // back to the not-billable (0) floor rather than reporting a negative duration.
     expect(computeUnitsFromTimes(start, before)).toEqual({
       durationMinutes: null,
-      units: 1,
+      units: 0,
       error: 'end_before_start',
+    });
+  });
+
+  it('returns 0 units (not billable) for a valid pair under the 16-minute floor', () => {
+    const start = new Date(2026, 6, 12, 9, 0, 0).toISOString();
+    const end = new Date(2026, 6, 12, 9, 10, 0).toISOString();
+    expect(computeUnitsFromTimes(start, end)).toEqual({
+      durationMinutes: 10,
+      units: 0,
+      error: null,
     });
   });
 });
