@@ -129,4 +129,37 @@ describe('PromptDialog', () => {
     const confirmButton = screen.getByLabelText('Update password');
     expect(confirmButton.getAttribute('aria-disabled')).toBe('true');
   });
+
+  // ── Epic B3: maxLength + live counter (additive props) ──────────────────
+
+  it('renders no counter when a field omits maxLength (default, G2-compatible)', () => {
+    render(<ControlledPromptDialog onConfirm={vi.fn()} />);
+    // Neither password field sets maxLength — no "N/max" text anywhere.
+    expect(screen.queryByText(/^\d+\/\d+$/)).toBeNull();
+  });
+
+  it('renders a live "N/max" counter for a field with maxLength set', () => {
+    const fieldsWithCounter: PromptDialogField[] = [
+      { key: 'feedback', label: 'Feedback', maxLength: 120, multiline: true },
+    ];
+    render(<ControlledPromptDialog onConfirm={vi.fn()} fields={fieldsWithCounter} />);
+
+    expect(screen.getByText('0/120')).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('Feedback'), {
+      target: { value: 'Great CHW, very helpful!' },
+    });
+
+    expect(screen.getByText('24/120')).toBeTruthy();
+  });
+
+  it('caps input at maxLength via the native maxLength attribute', () => {
+    const fieldsWithCounter: PromptDialogField[] = [
+      { key: 'feedback', label: 'Feedback', maxLength: 120, multiline: true },
+    ];
+    render(<ControlledPromptDialog onConfirm={vi.fn()} fields={fieldsWithCounter} />);
+
+    const input = screen.getByLabelText('Feedback') as HTMLTextAreaElement | HTMLInputElement;
+    expect(input.maxLength).toBe(120);
+  });
 });

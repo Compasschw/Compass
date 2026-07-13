@@ -23,7 +23,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../api/client', async (importOriginal) => {
@@ -106,11 +106,35 @@ const memberDetailFixture = {
   closed_at: null,
 };
 
-function routeApi(path: string, options?: { method?: string }): unknown {
+// Mutable per-test override for the closure-review POST — lets individual
+// tests simulate success (default) vs. failure without a new mock harness.
+let closureReviewResponder: (body: unknown) => unknown = () => ({
+  id: 'testimonial-b3-1',
+  member_id: MEMBER_ID,
+  chw_id: 'chw-1',
+  text: 'ok',
+  status: 'pending',
+  source: 'account_closure',
+  created_at: '2026-07-13T00:00:00Z',
+});
+
+function routeApi(path: string, options?: { method?: string; body?: string }): unknown {
   const method = options?.method ?? 'GET';
 
   if (path === `/chw/members/${MEMBER_ID}` && method === 'GET') {
     return memberDetailFixture;
+  }
+  if (path === `/chw/members/${MEMBER_ID}/close` && method === 'POST') {
+    return {
+      member_id: MEMBER_ID,
+      closure_status: 'closed_successful',
+      closure_reason: 'successfully_completed',
+      closed_at: '2026-07-13T00:00:00Z',
+    };
+  }
+  if (path === `/chw/members/${MEMBER_ID}/closure-review` && method === 'POST') {
+    const body = options?.body ? JSON.parse(options.body) : {};
+    return closureReviewResponder(body);
   }
   if (path === `/chw/members/${MEMBER_ID}/assessments/latest` && method === 'GET') {
     throw Object.assign(new Error('Not Found'), { status: 404 });
@@ -177,8 +201,17 @@ beforeEach(() => {
   routeParams = { memberId: MEMBER_ID };
   mockNavigate.mockClear();
   mockedApi.mockReset();
-  mockedApi.mockImplementation(async (path: string, options?: { method?: string }) =>
-    routeApi(path, options),
+  closureReviewResponder = () => ({
+    id: 'testimonial-b3-1',
+    member_id: MEMBER_ID,
+    chw_id: 'chw-1',
+    text: 'ok',
+    status: 'pending',
+    source: 'account_closure',
+    created_at: '2026-07-13T00:00:00Z',
+  });
+  mockedApi.mockImplementation(
+    async (path: string, options?: { method?: string; body?: string }) => routeApi(path, options),
   );
 });
 
@@ -232,5 +265,138 @@ describe('CHWMemberProfileScreen — dynamic "Back to …" link (Epic S)', () =>
 
     backLink.click();
     expect(mockNavigate).toHaveBeenCalledWith('Dashboard');
+  });
+});
+
+// ─── Epic B3: post-close member review capture ────────────────────────────────
+
+/** Drives the Confirm Close modal to completion: opens it, picks a status +
+ * reason, and clicks Confirm. Returns once the close POST has resolved and
+ * the modal has dismissed (i.e. right as the closure-review prompt should
+ * appear).
+ */
+async function closeMemberViaModal(): Promise<void> {
+  fireEvent.click(screen.getByLabelText(`Close ${MEMBER_NAME}`));
+
+  fireEvent.click(screen.getByLabelText('Status: Select Status…'));
+  fireEvent.click(screen.getByLabelText('Closed - Successful'));
+
+  fireEvent.click(screen.getByLabelText('Reason: Select Reason…'));
+  fireEvent.click(screen.getByLabelText('Successfully Completed'));
+
+  fireEvent.click(screen.getByLabelText('Confirm close'));
+
+  await waitFor(() =>
+    expect(mockedApi).toHaveBeenCalledWith(
+      `/chw/members/${MEMBER_ID}/close`,
+      expect.objectContaining({ method: 'POST' }),
+    ),
+  );
+}
+
+describe('CHWMemberProfileScreen — post-close parting feedback prompt (Epic B3)', () => {
+  it('shows the closure-review prompt with a 120-char-capped field after a successful close', async () => {
+    renderScreen();
+    await waitFor(() => expect(screen.getByText(MEMBER_NAME)).toBeTruthy());
+
+    await closeMemberViaModal();
+
+    await waitFor(() =>
+      expect(
+        screen.getByLabelText(
+          "Member's parting feedback about their experience with their CHW — optional",
+        ),
+      ).toBeTruthy(),
+    );
+    expect(screen.getByLabelText('Save feedback')).toBeTruthy();
+    expect(screen.getByLabelText('Skip')).toBeTruthy();
+
+    const field = screen.getByLabelText(
+      "Member's parting feedback about their experience with their CHW — optional",
+    ) as HTMLTextAreaElement;
+    expect(field.maxLength).toBe(120);
+  });
+
+  it('Save posts the entered text to the closure-review endpoint and dismisses the prompt', async () => {
+    renderScreen();
+    await waitFor(() => expect(screen.getByText(MEMBER_NAME)).toBeTruthy());
+
+    await closeMemberViaModal();
+
+    const field = await screen.findByLabelText(
+      "Member's parting feedback about their experience with their CHW — optional",
+    );
+    fireEvent.change(field, { target: { value: 'My CHW was wonderful.' } });
+    fireEvent.click(screen.getByLabelText('Save feedback'));
+
+    await waitFor(() =>
+      expect(mockedApi).toHaveBeenCalledWith(
+        `/chw/members/${MEMBER_ID}/closure-review`,
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ text: 'My CHW was wonderful.' }),
+        }),
+      ),
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.queryByLabelText(
+          "Member's parting feedback about their experience with their CHW — optional",
+        ),
+      ).toBeNull(),
+    );
+  });
+
+  it('Skip closes the prompt without ever calling the closure-review endpoint', async () => {
+    renderScreen();
+    await waitFor(() => expect(screen.getByText(MEMBER_NAME)).toBeTruthy());
+
+    await closeMemberViaModal();
+
+    await screen.findByLabelText(
+      "Member's parting feedback about their experience with their CHW — optional",
+    );
+    fireEvent.click(screen.getByLabelText('Skip'));
+
+    await waitFor(() =>
+      expect(
+        screen.queryByLabelText(
+          "Member's parting feedback about their experience with their CHW — optional",
+        ),
+      ).toBeNull(),
+    );
+    expect(mockedApi).not.toHaveBeenCalledWith(
+      `/chw/members/${MEMBER_ID}/closure-review`,
+      expect.anything(),
+    );
+  });
+
+  it('shows a non-blocking inline error on a failed save, without re-opening/blocking the (already closed) member', async () => {
+    closureReviewResponder = () => {
+      throw Object.assign(new Error('Internal Server Error'), { status: 500 });
+    };
+    renderScreen();
+    await waitFor(() => expect(screen.getByText(MEMBER_NAME)).toBeTruthy());
+
+    await closeMemberViaModal();
+
+    const field = await screen.findByLabelText(
+      "Member's parting feedback about their experience with their CHW — optional",
+    );
+    fireEvent.change(field, { target: { value: 'Feedback that will fail to save' } });
+    fireEvent.click(screen.getByLabelText('Save feedback'));
+
+    await waitFor(() =>
+      expect(screen.getByText('Could not save feedback. You can retry or skip.')).toBeTruthy(),
+    );
+    // The prompt stays open (not blocking navigation/other actions) so the
+    // CHW can retry or skip — it does NOT re-trigger or undo the close.
+    expect(
+      screen.getByLabelText(
+        "Member's parting feedback about their experience with their CHW — optional",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByLabelText('Skip')).toBeTruthy();
   });
 });

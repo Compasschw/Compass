@@ -109,6 +109,7 @@ import { colors as tokens, numerals, radius } from '../../theme/tokens';
 import { api } from '../../api/client';
 import { transformKeys } from '../../utils/caseTransform';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
+import { PromptDialog } from '../../components/shared/PromptDialog';
 import { ProfileContactButtons } from '../../components/comms/ProfileContactButtons';
 import type { CHWSessionsStackParamList } from '../../navigation/CHWTabNavigator';
 
@@ -137,6 +138,7 @@ import {
   useUpdateMemberResourceNeeds,
   useCloseMember,
   useReopenMember,
+  useSubmitClosureReview,
   useFlagNote,
   useCreateFlagNote,
   useDeleteFlagNote,
@@ -8864,6 +8866,58 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
     });
   }, [reopenMember]);
 
+  // ── Closure review prompt (Epic B3) ─────────────────────────────────────────
+  // Shown once, immediately after a successful close-member action. Entirely
+  // separate from the close mutation above: the member's case is already
+  // closed by the time this renders, so a failed/skipped review can never
+  // block or undo the close — it just never gets recorded.
+  const [closureReviewOpen, setClosureReviewOpen] = useState(false);
+  const [closureReviewValues, setClosureReviewValues] = useState<Record<string, string>>({});
+  const [closureReviewError, setClosureReviewError] = useState<string | null>(null);
+  const submitClosureReview = useSubmitClosureReview(memberId);
+
+  const closureReviewFields = useMemo(
+    () => [
+      {
+        key: 'text',
+        label: "Member's parting feedback about their experience with their CHW — optional",
+        placeholder: 'What did the member share about their experience?',
+        multiline: true,
+        maxLength: 120,
+      },
+    ],
+    [],
+  );
+
+  const handleSaveClosureReview = useCallback(() => {
+    const text = (closureReviewValues.text ?? '').trim();
+    if (!text) {
+      // Nothing typed — treat Save the same as Skip rather than erroring.
+      setClosureReviewOpen(false);
+      setClosureReviewValues({});
+      setClosureReviewError(null);
+      return;
+    }
+    setClosureReviewError(null);
+    submitClosureReview.mutate(text, {
+      onSuccess: () => {
+        setClosureReviewOpen(false);
+        setClosureReviewValues({});
+      },
+      onError: () => {
+        // Non-blocking: the member is already closed. Surface an inline
+        // error with the dialog still open so the CHW can retry or skip.
+        setClosureReviewError('Could not save feedback. You can retry or skip.');
+      },
+    });
+  }, [closureReviewValues, submitClosureReview]);
+
+  const handleSkipClosureReview = useCallback(() => {
+    setClosureReviewOpen(false);
+    setClosureReviewValues({});
+    setClosureReviewError(null);
+  }, []);
+
   // Journeys data used both by ResourceNeedsColumn and AddJourneyModal dedup guard.
   const { data: journeysForModal } = useMemberJourneys(memberId);
   const existingActiveSlugs = useMemo<Set<string>>(
@@ -9423,11 +9477,41 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
             closeMember.mutate(
               { status, reason },
               {
-                onSuccess: () => setCloseMemberOpen(false),
+                onSuccess: () => {
+                  setCloseMemberOpen(false);
+                  // Epic B3: offer the optional parting-feedback capture
+                  // immediately after a successful close. The close itself
+                  // is already complete and committed at this point.
+                  setClosureReviewValues({});
+                  setClosureReviewError(null);
+                  setClosureReviewOpen(true);
+                },
                 onError: () => Alert.alert('Could not close member', 'Please try again.'),
               },
             );
           }}
+        />
+
+        {/* ── Post-close parting feedback prompt (Epic B3) ──
+          *  Rendered as a sibling of CloseMemberModal so it appears
+          *  immediately after that modal dismisses. Skippable — omitting
+          *  onCancel would make it mandatory, which this explicitly is not. */}
+        <PromptDialog
+          visible={closureReviewOpen}
+          title="Member feedback"
+          message="Optional: share what the member said about their experience with their CHW."
+          fields={closureReviewFields}
+          values={closureReviewValues}
+          onChangeValue={(key, value) =>
+            setClosureReviewValues((prev) => ({ ...prev, [key]: value }))
+          }
+          onConfirm={handleSaveClosureReview}
+          onCancel={handleSkipClosureReview}
+          confirmLabel="Save feedback"
+          cancelLabel="Skip"
+          submitting={submitClosureReview.isPending}
+          errorText={closureReviewError}
+          testID="closure-review-prompt"
         />
 
         {/* ── Uploaded Documents modal ── */}

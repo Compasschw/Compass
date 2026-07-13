@@ -12,6 +12,22 @@ Design decisions
   flows), but the current POST endpoint always supplies session_id and gates
   on session ownership + completed status.
 
+- ``source`` (Epic B3) distinguishes WHERE a testimonial originated:
+  'session' (the original member-initiated, session-scoped rating flow) vs.
+  'account_closure' (CHW-facilitated parting feedback captured when a CHW
+  closes a member's case — the member usually isn't logged in at that point,
+  so a CHW relays it via POST /chw/members/{id}/closure-review). NOT NULL
+  with a server default of 'session' so every pre-B3 row backfills correctly
+  without a data migration pass. session_id stays NULL for closure-sourced
+  rows since there is no specific session being rated.
+
+- ``rating`` is nullable (Epic B3) to support closure-sourced reviews, which
+  are text-only ("Member's parting feedback... — optional", 120 chars, no
+  star rating collected in that flow). The session-scoped POST endpoint
+  keeps rating REQUIRED at the Pydantic schema layer (TestimonialCreate);
+  only the DB column relaxed to nullable, gated by the CHECK constraint
+  below so a rating, when present, must still be within 1..5.
+
 - status transitions: pending → approved | rejected.
   Once approved or rejected, re-moderation is not blocked at the DB level but
   the router can enforce idempotency as needed.
@@ -34,6 +50,8 @@ Indexes
 -------
   - (chw_id, status) — public profile page fetches approved testimonials for a CHW
   - (created_at)     — moderation queue ordering (newest first)
+  - (source)         — Epic B3: filtering/reporting closure-sourced reviews
+                        separately from session ratings
 """
 
 import uuid
@@ -57,11 +75,19 @@ from app.database import Base
 
 
 class Testimonial(Base):
-    """A member-authored rating and review of a CHW, submitted after a session.
+    """A member-authored rating and/or review of a CHW.
+
+    Two sources feed this table (see ``source`` column):
+
+    1. ``session``          — the original flow: a member rates a CHW after a
+       completed session (rating required, session_id populated).
+    2. ``account_closure``  — Epic B3: a CHW relays the member's parting
+       feedback while closing the member's case (text-only, rating optional,
+       session_id NULL — see POST /chw/members/{id}/closure-review).
 
     Lifecycle
     ---------
-    1. Member POSTs after a completed session → status = 'pending'.
+    1. Row created (either source) → status = 'pending'.
     2. Admin reviews the pending queue.
     3. Admin approves → status = 'approved'; row becomes publicly visible.
     4. Admin rejects → status = 'rejected'; row hidden from public view.
@@ -96,17 +122,29 @@ class Testimonial(Base):
         UUID(as_uuid=True), ForeignKey("sessions.id"), nullable=True
     )
 
-    # Star rating: 1 (lowest) to 5 (highest). Enforced at both schema (Pydantic
-    # ge/le validators) and DB (CHECK constraint) layers.
-    rating: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Star rating: 1 (lowest) to 5 (highest). NULLABLE (Epic B3) to support
+    # text-only account-closure reviews. The session-scoped POST endpoint
+    # keeps rating required at the Pydantic schema layer regardless — this
+    # column is nullable purely so the closure-review path can omit it.
+    # When present, the CHECK constraint below still enforces the 1..5 range.
+    rating: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
-    # Free-text body. Max 500 chars enforced at the Pydantic schema level.
+    # Free-text body. Max 500 chars enforced at the Pydantic schema level
+    # (session path) / 120 chars (closure-review path, TestimonialClosureCreate).
     text: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Moderation lifecycle: pending | approved | rejected.
     # VARCHAR(20) + CHECK constraint avoids a Postgres enum type migration.
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default="pending"
+    )
+
+    # Origin of this testimonial (Epic B3): 'session' | 'account_closure'.
+    # VARCHAR(20) + CHECK constraint, same pattern as `status`, to avoid a
+    # Postgres enum type migration. Defaults to 'session' so the migration
+    # backfills every pre-existing row correctly with zero data migration.
+    source: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="session"
     )
 
     # Nullable: only populated if the admin who moderates has a User row.
@@ -129,10 +167,18 @@ class Testimonial(Base):
     __table_args__ = (
         # A member can only submit one testimonial per session.
         # Multiple testimonials for the same CHW across different sessions are allowed.
+        # NOTE: session_id is NULL for every account_closure-sourced row, and
+        # Postgres treats NULL as distinct in a UNIQUE constraint, so multiple
+        # closure reviews for the same member do not collide here.
         UniqueConstraint("member_id", "session_id", name="uq_testimonials_member_session"),
 
         # DB-level rating range guard (belt-and-suspenders with Pydantic validation).
-        CheckConstraint("rating >= 1 AND rating <= 5", name="ck_testimonials_rating_range"),
+        # Rating is nullable (Epic B3 closure reviews) — the range check only
+        # applies when a rating IS present.
+        CheckConstraint(
+            "rating IS NULL OR (rating >= 1 AND rating <= 5)",
+            name="ck_testimonials_rating_range",
+        ),
 
         # DB-level status guard.
         CheckConstraint(
@@ -140,9 +186,18 @@ class Testimonial(Base):
             name="ck_testimonials_status",
         ),
 
+        # DB-level source guard (Epic B3).
+        CheckConstraint(
+            "source IN ('session', 'account_closure')",
+            name="ck_testimonials_source",
+        ),
+
         # Composite index: CHW profile page fetches approved testimonials for a CHW.
         Index("ix_testimonials_chw_status", "chw_id", "status"),
 
         # Single-column index: moderation queue orders by newest first.
         Index("ix_testimonials_created_at", "created_at"),
+
+        # Single-column index: Epic B3 filtering/reporting by source.
+        Index("ix_testimonials_source", "source"),
     )
