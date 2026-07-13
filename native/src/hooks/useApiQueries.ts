@@ -3436,6 +3436,34 @@ export function useDeleteAccount() {
   });
 }
 
+// ─── Account deactivation ─────────────────────────────────────────────────────
+
+/**
+ * Mutation that calls POST /member/account/deactivate.
+ *
+ * Member-only. Unlike account deletion, deactivation is reversible — the
+ * member's data is retained and the account can be reactivated by
+ * contacting support. No request body is sent.
+ *
+ * The server responds 204 No Content on success. As with `useDeleteAccount`,
+ * the caller is responsible for clearing local auth state and routing away
+ * (e.g. via `clearAfterDeletion()`) since a deactivated account can no
+ * longer authenticate.
+ *
+ * Usage:
+ *   const deactivateAccount = useDeactivateAccount();
+ *   await deactivateAccount.mutateAsync();
+ */
+export function useDeactivateAccount() {
+  return useMutation({
+    mutationFn: async (): Promise<void> => {
+      await api<void>('/member/account/deactivate', {
+        method: 'POST',
+      });
+    },
+  });
+}
+
 // ─── Transcript Export ───────────────────────────────────────────────────────
 
 /**

@@ -1,20 +1,33 @@
-"""Tests for the HIPAA-critical member account deletion flow.
+"""Tests for the HIPAA-critical member account HARD-deletion flow.
 
-Covers DELETE /api/v1/member/account (implemented inline in member.py router).
+Covers DELETE /api/v1/auth/users/me (implemented in app/services/account_deletion.py,
+called from app/routers/auth.py::delete_account). This is the SOLE surviving
+account-deletion endpoint — the previous parallel implementation at
+DELETE /api/v1/member/account has been deleted outright (Epic E4, 2026-07
+founder decision: hard-delete supersedes the prior soft-delete/anonymize design).
 
-Policy under test: soft-delete + PHI pseudonymisation
-- User row is kept for Medi-Cal 7-year retention (22 CCR §51476); PII is
-  overwritten with deterministic sentinel values so remaining foreign-key
-  references in SessionRequest / BillingClaim / AuditLog remain valid but
-  non-identifying.
-- MemberProfile PHI fields (medi_cal_id, insurance_provider, zip_code,
-  latitude, longitude) are nulled out.
-- All RefreshTokens for the user are revoked, not hard-deleted, so
-  subsequent /auth/refresh calls fail cleanly with 401.
-- is_active=False + empty password_hash prevents any further login.
+Policy under test: TRUE hard delete, users row scrubbed in place
+- The `users` row is KEPT (never a literal `DELETE FROM users`) only because
+  wellness_points_ledger / reward_redemptions carry an ondelete=RESTRICT FK
+  AND have UPDATE/DELETE fully REVOKEd from the app DB role — see
+  account_deletion.py's module docstring for the full explanation. Every
+  PII-identifying column on that row is scrubbed to a random, non-identifying
+  sentinel.
+- MemberProfile and every other member-owned PHI table (case notes, flag
+  notes, documents, sessions, messages, conversations, assessments,
+  journeys, service requests, reward transactions, testimonials, twilio
+  proxy sessions, etc.) are HARD-DELETED — rows are gone, not soft-deleted.
+- RefreshTokens are HARD-DELETED (not merely revoked) — the parent row has
+  no PII left, so keeping revoked tokens around serves no purpose.
+- The original email is freed immediately for re-registration (fresh
+  uuid4-based sentinel, never deterministic from user id).
+- is_active=False + role="deleted" + empty password_hash prevents any
+  further login or role-gated access.
 
-A regression in this flow is a HIPAA confidentiality boundary failure.
-These tests must remain green before any refactor touches member.py,
+A regression in this flow is a HIPAA confidentiality boundary failure OR a
+silent-data-retention failure (the founder's product decision requires data
+to actually be gone, not merely hidden). These tests must remain green
+before any refactor touches auth.py's delete_account handler,
 account_deletion.py, or the User / MemberProfile / RefreshToken models.
 """
 
@@ -28,9 +41,10 @@ from sqlalchemy import select
 from app.models.auth import RefreshToken
 from app.models.user import MemberProfile, User
 from app.services.s3_phi_cleanup import PhiCleanupResult
-from tests.conftest import auth_header, test_session as _test_session_factory
+from tests.conftest import auth_header, complete_member_signup_payload
+from tests.conftest import test_session as _test_session_factory
 
-_DELETE_URL = "/api/v1/member/account"
+_DELETE_URL = "/api/v1/auth/users/me"
 _MEMBER_EMAIL = "testmember@example.com"
 _MEMBER_PASSWORD = "testpass123"
 
@@ -55,18 +69,27 @@ def _stub_s3_phi_cleanup():
 # ---------------------------------------------------------------------------
 
 
-async def _login(client: AsyncClient, email: str, password: str) -> dict:
+async def _login(client: AsyncClient, email: str, password: str):
     """Return a fresh token dict from /auth/login."""
-    res = await client.post(
+    return await client.post(
         "/api/v1/auth/login",
         json={"email": email, "password": password},
     )
-    return res
 
 
-async def _delete_account(client: AsyncClient, tokens: dict) -> object:
-    """Issue DELETE /api/v1/member/account with the given bearer token."""
-    return await client.delete(_DELETE_URL, headers=auth_header(tokens))
+async def _delete_account(client: AsyncClient, tokens: dict):
+    """Issue DELETE /api/v1/auth/users/me with the given bearer token.
+
+    The endpoint's request body (_DeleteAccountBody) has one optional field
+    (`password`), so httpx needs `request()` to send a JSON body on DELETE —
+    a plain `client.delete()` call cannot carry a body.
+    """
+    return await client.request(
+        "DELETE",
+        _DELETE_URL,
+        json={},
+        headers=auth_header(tokens),
+    )
 
 
 async def _fetch_user(user_id: uuid.UUID) -> User | None:
@@ -115,39 +138,38 @@ class TestDeleteAccountAuthGuards:
     """Verify the endpoint rejects unauthenticated and wrong-role callers.
 
     These are hard security boundaries — the endpoint must never be reachable
-    without a valid member JWT.
+    without a valid JWT belonging to the account owner.
     """
 
     async def test_delete_without_auth_header_is_rejected(self, client: AsyncClient):
-        """No Authorization header -> 401 or 403.
-
-        FastAPI's HTTPBearer scheme returns 403 when the header is absent
-        and 401 when a token is present but invalid.  Both are hard rejects.
-        """
-        res = await client.delete(_DELETE_URL)
+        """No Authorization header -> 401 or 403."""
+        res = await client.request("DELETE", _DELETE_URL, json={})
         assert res.status_code in (401, 403), (
             f"Expected 401/403 for unauthenticated DELETE, got {res.status_code}"
         )
 
     async def test_delete_with_invalid_token_is_rejected(self, client: AsyncClient):
         """A garbage Bearer token must not reach the handler."""
-        res = await client.delete(
+        res = await client.request(
+            "DELETE",
             _DELETE_URL,
+            json={},
             headers={"Authorization": "Bearer this.is.not.a.valid.jwt"},
         )
         assert res.status_code in (401, 403)
 
-    async def test_delete_as_chw_role_is_rejected(
+    async def test_delete_as_chw_role_is_permitted_for_the_chws_own_account(
         self, client: AsyncClient, chw_tokens: dict
     ):
-        """A CHW JWT must not satisfy require_role('member').
-
-        The deletion endpoint is gated on role='member'.  Allowing a CHW to
-        hit it would either delete the wrong account or expose an IDOR vector.
+        """DELETE /auth/users/me is role-agnostic (any authenticated user may
+        delete their OWN account) — unlike the removed member-only
+        /member/account endpoint. A CHW hitting this URL deletes the CHW's
+        own account, not a member's; this is not a privilege-escalation path
+        because current_user is always resolved from the caller's own JWT.
         """
         res = await _delete_account(client, chw_tokens)
-        assert res.status_code == 403, (
-            f"CHW role must be rejected with 403, got {res.status_code}"
+        assert res.status_code == 204, (
+            f"A CHW deleting their own account must succeed, got {res.status_code}: {res.text}"
         )
 
 
@@ -162,12 +184,6 @@ class TestDeleteAccountResponse:
     async def test_successful_delete_returns_204(
         self, client: AsyncClient, member_tokens: dict
     ):
-        """DELETE /account must return 204 No Content on success.
-
-        204 signals to the client that the request succeeded and there is no
-        response body to parse — important for mobile clients that check
-        status codes to drive post-deletion navigation.
-        """
         res = await _delete_account(client, member_tokens)
         assert res.status_code == 204, (
             f"Expected 204 No Content, got {res.status_code}: {res.text}"
@@ -176,7 +192,6 @@ class TestDeleteAccountResponse:
     async def test_successful_delete_has_empty_body(
         self, client: AsyncClient, member_tokens: dict
     ):
-        """204 response must carry no body — not even an empty JSON object."""
         res = await _delete_account(client, member_tokens)
         assert res.content == b"", (
             f"204 response body must be empty, got: {res.content!r}"
@@ -184,22 +199,40 @@ class TestDeleteAccountResponse:
 
 
 # ---------------------------------------------------------------------------
-# PHI scrubbing — User model fields
+# users row — scrubbed-in-place tombstone
 # ---------------------------------------------------------------------------
 
 
-class TestDeleteAccountUserPhi:
-    """Verify every PII field on the User row is overwritten after deletion.
-
-    Each assertion below maps directly to a HIPAA-covered identifier as
-    defined in 45 CFR §164.514(b)(2). A regression on any of these is a
-    potential PHI disclosure.
+class TestDeleteAccountUserRowTombstone:
+    """Verify the users row is kept (never a literal DELETE FROM users) but
+    every PII-identifying column is scrubbed to a non-identifying sentinel.
     """
+
+    async def test_user_row_still_exists_with_same_id(
+        self, client: AsyncClient, member_tokens: dict
+    ):
+        """The row must survive deletion — see account_deletion.py module
+        docstring for why (wellness_points_ledger / reward_redemptions RESTRICT)."""
+        user_id = _extract_user_id(member_tokens)
+        await _delete_account(client, member_tokens)
+
+        user = await _fetch_user(user_id)
+        assert user is not None, "users row must be kept (scrub-in-place, not literal DELETE)"
+        assert user.id == user_id
+
+    async def test_user_role_is_set_to_deleted_sentinel(
+        self, client: AsyncClient, member_tokens: dict
+    ):
+        user_id = _extract_user_id(member_tokens)
+        await _delete_account(client, member_tokens)
+
+        user = await _fetch_user(user_id)
+        assert user is not None
+        assert user.role == "deleted", f"role must be 'deleted', got: {user.role!r}"
 
     async def test_user_is_marked_inactive(
         self, client: AsyncClient, member_tokens: dict
     ):
-        """is_active must be False so the account cannot be used for anything."""
         user_id = _extract_user_id(member_tokens)
         await _delete_account(client, member_tokens)
 
@@ -207,61 +240,56 @@ class TestDeleteAccountUserPhi:
         assert user is not None
         assert user.is_active is False, "is_active must be False after deletion"
 
-    async def test_user_name_is_pseudonymised(
+    async def test_user_name_is_generic_sentinel(
         self, client: AsyncClient, member_tokens: dict
     ):
-        """name must be replaced with the deterministic 'deleted-user-<id>' sentinel."""
         user_id = _extract_user_id(member_tokens)
         await _delete_account(client, member_tokens)
 
         user = await _fetch_user(user_id)
         assert user is not None
-        assert user.name == f"deleted-user-{user_id}", (
-            f"name must be pseudonymised, got: {user.name!r}"
-        )
+        assert user.name == "Deleted User", f"name must be generic sentinel, got: {user.name!r}"
 
-    async def test_user_email_is_pseudonymised(
+    async def test_user_email_is_randomised_not_deterministic(
         self, client: AsyncClient, member_tokens: dict
     ):
-        """email must be replaced with a non-routable sentinel that encodes the user id.
-
-        The email column has a UNIQUE constraint, so the pseudonym must be
-        deterministic (based on user.id) to allow deletion of multiple accounts
-        without collisions.
+        """email must be a FRESH random uuid4-based sentinel — NOT the old
+        deterministic f"deleted-{user_id}@..." pattern, and must not contain
+        any substring of the original email. Determinism was the pre-fix bug:
+        it made the scrubbed row still linkable back to the account, and (per
+        the new policy) it also matters that colliding values are essentially
+        impossible even across many deletions.
         """
         user_id = _extract_user_id(member_tokens)
         await _delete_account(client, member_tokens)
 
         user = await _fetch_user(user_id)
         assert user is not None
-        # The router uses f"deleted-user-{user.id}@deleted.invalid"
-        assert user.email == f"deleted-user-{user_id}@deleted.invalid", (
-            f"email must be pseudonymised, got: {user.email!r}"
+        assert user.email != f"deleted-{user_id}@deleted.compasschw.local", (
+            "email must NOT be the old deterministic-from-user-id pattern"
         )
-        assert _MEMBER_EMAIL not in user.email, (
-            "Original email must not appear anywhere in the pseudonymised value"
+        assert str(user_id) not in user.email, (
+            "email must not encode the user id — must be a fresh random uuid4"
         )
+        assert "@example.com" not in user.email, (
+            "Original email domain must not appear in the scrubbed value"
+        )
+        assert user.email.endswith("@deleted.compasschw.local")
 
-    async def test_user_phone_is_nulled(
+    async def test_user_phone_and_phone_verified_at_are_nulled(
         self, client: AsyncClient, member_tokens: dict
     ):
-        """phone (a HIPAA direct identifier) must be set to NULL."""
         user_id = _extract_user_id(member_tokens)
         await _delete_account(client, member_tokens)
 
         user = await _fetch_user(user_id)
         assert user is not None
-        assert user.phone is None, f"phone must be None after deletion, got: {user.phone!r}"
+        assert user.phone is None
+        assert user.phone_verified_at is None
 
     async def test_user_password_hash_is_cleared(
         self, client: AsyncClient, member_tokens: dict
     ):
-        """password_hash must be set to an empty string to prevent future logins.
-
-        An empty string is intentional — bcrypt will never produce an empty
-        hash, so any verify() call against it returns False without a timing
-        side-channel.
-        """
         user_id = _extract_user_id(member_tokens)
         await _delete_account(client, member_tokens)
 
@@ -271,112 +299,90 @@ class TestDeleteAccountUserPhi:
             f"password_hash must be empty string, got: {user.password_hash!r}"
         )
 
-
-# ---------------------------------------------------------------------------
-# PHI scrubbing — MemberProfile fields
-# ---------------------------------------------------------------------------
-
-
-class TestDeleteAccountMemberProfilePhi:
-    """Verify every PHI field on MemberProfile is nulled after deletion.
-
-    medi_cal_id is AES-256-GCM encrypted at rest (EncryptedString column) and
-    is a HIPAA-covered unique identifier.  The remaining fields (zip_code,
-    lat/lon, insurance_provider) are quasi-identifiers that can re-identify
-    the member when combined.
-    """
-
-    async def _register_member_with_profile(
-        self, client: AsyncClient
-    ) -> tuple[dict, uuid.UUID]:
-        """Register a fresh member, seed a MemberProfile with PHI, return (tokens, user_id).
-
-        Registration via /auth/register creates only the User row. The
-        MemberProfile row is normally seeded by the onboarding flow, which we
-        bypass here by inserting the row directly via the ORM with sentinel
-        PHI values that we can later assert have been nulled out.
-        """
-        reg_res = await client.post(
-            "/api/v1/auth/register",
-            json={
-                "email": "phi-member@example.com",
-                "password": "testpass123",
-                "name": "PHI Test Member",
-                "role": "member",
-                "terms_accepted": True,
-                "communications_consent": True,
-                "phone": "+13105550101",
-                "date_of_birth": "1990-03-15",
-                "gender": "Male",
-                "insurance_company": "Health Net",
-                "medi_cal_id": "98765432B",
-                "address_line1": "2 Test Ave",
-                "city": "Los Angeles",
-                "state": "CA",
-                "zip_code": "90001",
-            },
-        )
-        assert reg_res.status_code == 201, reg_res.text
-        tokens = reg_res.json()
-        user_id = _extract_user_id(tokens)
-
-        # Populate the auto-created MemberProfile (signup-time provisioning
-        # added in Phase 1A) with PHI directly via the ORM so we have
-        # something to assert against after the deletion scrubs it.
-        from sqlalchemy import select as _select
-        async with _test_session_factory() as db:
-            existing = await db.execute(
-                _select(MemberProfile).where(MemberProfile.user_id == user_id)
-            )
-            profile = existing.scalar_one()
-            profile.zip_code = "90210"
-            profile.insurance_provider = "Blue Shield"
-            profile.medi_cal_id = "MCAL-12345678"
-            profile.latitude = 34.0901
-            profile.longitude = -118.4065
-            await db.commit()
-        return tokens, user_id
-
-    async def test_member_profile_phi_fields_are_nulled(self, client: AsyncClient):
-        """medi_cal_id, insurance_provider, zip_code, latitude, longitude -> None.
-
-        All five are PHI or quasi-identifiers.  None of them should survive
-        the deletion scrub.
-        """
-        tokens, user_id = await self._register_member_with_profile(client)
-        await _delete_account(client, tokens)
-
-        profile = await _fetch_member_profile(user_id)
-        assert profile is not None, (
-            "MemberProfile row must be retained (FK anchor for session history)"
-        )
-        assert profile.medi_cal_id is None, "medi_cal_id must be None after deletion"
-        assert profile.insurance_provider is None, (
-            "insurance_provider must be None after deletion"
-        )
-        assert profile.zip_code is None, "zip_code must be None after deletion"
-        assert profile.latitude is None, "latitude must be None after deletion"
-        assert profile.longitude is None, "longitude must be None after deletion"
-
-
-# ---------------------------------------------------------------------------
-# Token revocation
-# ---------------------------------------------------------------------------
-
-
-class TestDeleteAccountTokenRevocation:
-    """Verify all refresh tokens are revoked (not hard-deleted) by the router.
-
-    The router sets revoked=True on active RefreshToken rows.  Rows must be
-    retained so that /auth/refresh calls with old tokens return 401 (not 404),
-    giving the client a clean, unambiguous error instead of a confusing
-    'token not found' path.
-    """
-
-    async def test_all_refresh_tokens_are_revoked(
+    async def test_user_profile_picture_url_is_nulled(
         self, client: AsyncClient, member_tokens: dict
     ):
-        """Every RefreshToken for the user must have revoked=True after deletion."""
+        user_id = _extract_user_id(member_tokens)
+        await _delete_account(client, member_tokens)
+
+        user = await _fetch_user(user_id)
+        assert user is not None
+        assert user.profile_picture_url is None
+
+
+# ---------------------------------------------------------------------------
+# Original email freed for immediate re-registration
+# ---------------------------------------------------------------------------
+
+
+class TestDeleteAccountEmailFreedForReRegistration:
+    """The original email must be immediately re-registerable — this is the
+    direct product consequence of the email sentinel being randomised
+    instead of left/derived from the original address.
+    """
+
+    async def test_original_email_immediately_reregisterable(
+        self, client: AsyncClient, member_tokens: dict
+    ):
+        await _delete_account(client, member_tokens)
+
+        payload = complete_member_signup_payload(email=_MEMBER_EMAIL, name="Re Registered")
+        res = await client.post("/api/v1/auth/register", json=payload)
+        assert res.status_code == 201, (
+            f"Original email must be re-registerable immediately after hard "
+            f"delete, got {res.status_code}: {res.text}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# MemberProfile — hard deleted (behavior change from the old soft-delete test)
+# ---------------------------------------------------------------------------
+
+
+class TestDeleteAccountMemberProfileHardDeleted:
+    """MemberProfile is now HARD-DELETED, not scrubbed-in-place.
+
+    Prior contract (soft-delete era): the row was retained with PHI fields
+    nulled out. New contract (hard-delete, Epic E4): the row is gone
+    entirely — member-owned PHI has no retention requirement once the
+    parent users row is already tombstoned, so there is no reason to keep
+    an empty profile shell around.
+    """
+
+    async def test_member_profile_row_is_gone(
+        self, client: AsyncClient, member_tokens: dict
+    ):
+        user_id = _extract_user_id(member_tokens)
+        await _delete_account(client, member_tokens)
+
+        profile = await _fetch_member_profile(user_id)
+        assert profile is None, (
+            "MemberProfile row must be HARD-DELETED after account deletion "
+            "(behavior change from the old soft-delete/scrub contract)"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Token revocation — HARD DELETED (behavior change from the old test)
+# ---------------------------------------------------------------------------
+
+
+class TestDeleteAccountTokensHardDeleted:
+    """RefreshTokens are now HARD-DELETED, not merely revoked.
+
+    Prior contract: rows were retained with revoked=True so /auth/refresh
+    could return a clean 401 for a "found but revoked" token. New contract:
+    since the parent users row carries no PII anymore, there is no
+    confidentiality reason to keep old token rows around at all — and the
+    founder's hard-delete decision applies to every member-owned row, not
+    just PHI-labeled ones. /auth/refresh must still return 401 for a
+    pre-deletion token, just via a "not found" lookup instead of a
+    "found but revoked" one.
+    """
+
+    async def test_all_refresh_tokens_are_hard_deleted(
+        self, client: AsyncClient, member_tokens: dict
+    ):
         user_id = _extract_user_id(member_tokens)
 
         # Issue a second refresh so the user has more than one token in flight.
@@ -388,14 +394,9 @@ class TestDeleteAccountTokenRevocation:
         await _delete_account(client, member_tokens)
 
         tokens = await _fetch_refresh_tokens(user_id)
-        assert len(tokens) > 0, (
-            "RefreshToken rows must be retained (soft-revoke, not hard-delete) "
-            "so subsequent /auth/refresh returns 401 rather than 404"
-        )
-        non_revoked = [t for t in tokens if not t.revoked]
-        assert non_revoked == [], (
-            f"Found {len(non_revoked)} non-revoked token(s) after deletion — "
-            "all must be revoked to prevent session continuation"
+        assert tokens == [], (
+            f"RefreshToken rows must be HARD-DELETED after account deletion, "
+            f"found {len(tokens)} remaining"
         )
 
 
@@ -407,7 +408,7 @@ class TestDeleteAccountTokenRevocation:
 class TestDeleteAccountPostDeletionCredentials:
     """Verify that deleted account credentials cannot be used after deletion.
 
-    These are the attacker-path tests: if PHI scrubbing works but the auth
+    These are the attacker-path tests: if the row-scrub works but the auth
     endpoints still accept the old credentials, the access-control boundary
     has failed.
     """
@@ -417,11 +418,9 @@ class TestDeleteAccountPostDeletionCredentials:
     ):
         """Login with the pre-deletion email+password must return 401.
 
-        Two reasons this must fail:
-        1. password_hash is set to '' — bcrypt verify returns False.
-        2. is_active=False — even a correct hash would be rejected.
-
-        Either guard alone is sufficient; both together are belt-and-suspenders.
+        Multiple independent guards: password_hash == '' (bcrypt never
+        matches), is_active=False, AND the email itself no longer resolves
+        to any row (it was overwritten) — any one alone is sufficient.
         """
         await _delete_account(client, member_tokens)
 
@@ -431,13 +430,12 @@ class TestDeleteAccountPostDeletionCredentials:
             f"{login_res.text}"
         )
 
-    async def test_refresh_with_revoked_token_fails_after_delete(
+    async def test_refresh_with_pre_deletion_token_fails_cleanly_after_delete(
         self, client: AsyncClient, member_tokens: dict
     ):
-        """Using the pre-deletion refresh token after account deletion must return 401.
-
-        The revoked=True flag on the RefreshToken row is the guard.  A
-        regression here means a deleted user can silently maintain a session.
+        """Using the pre-deletion refresh token after account deletion must
+        return 401 — via a clean 'not found' lookup (the row is hard-deleted,
+        not merely revoked), never a crash.
         """
         original_refresh_token = member_tokens["refresh_token"]
         await _delete_account(client, member_tokens)
@@ -447,19 +445,14 @@ class TestDeleteAccountPostDeletionCredentials:
             json={"refresh_token": original_refresh_token},
         )
         assert refresh_res.status_code == 401, (
-            f"Refresh with revoked token must return 401, got {refresh_res.status_code}: "
-            f"{refresh_res.text}"
+            f"Refresh with a hard-deleted token must return 401 cleanly, "
+            f"got {refresh_res.status_code}: {refresh_res.text}"
         )
 
     async def test_access_profile_with_original_token_fails_after_delete(
         self, client: AsyncClient, member_tokens: dict
     ):
-        """The original access token must not grant access to /member/profile.
-
-        The access token is a short-lived JWT.  Once is_active=False, the
-        require_role dependency must reject it.  This verifies that the
-        dependency checks is_active on every request, not just at login.
-        """
+        """The original access token must not grant access to /member/profile."""
         await _delete_account(client, member_tokens)
 
         profile_res = await client.get(
@@ -480,26 +473,16 @@ class TestDeleteAccountPostDeletionCredentials:
 class TestDeleteAccountIdempotency:
     """Verify that attempting to delete an already-deleted account is handled safely.
 
-    The first DELETE deactivates the account and revokes the bearer token's
-    session.  The second DELETE arrives with the same (now-invalidated) access
-    token.  The system must not crash — it must return a clean auth error.
-
-    Note: the router does not implement a separate idempotency guard (unlike
-    account_deletion.py which checks deleted_at).  The second call fails at
-    the require_role dependency because is_active=False, so the handler body
-    is never reached.  This is acceptable — the net result (no state mutation,
-    clean HTTP error) is what matters.
+    The first DELETE deactivates + hard-deletes PHI and hard-deletes the
+    bearer token's session. The second DELETE arrives with the same
+    (now-nonexistent) access token. The system must not crash — it must
+    return a clean auth error, because is_active=False blocks
+    get_current_user before the handler body ever runs.
     """
 
     async def test_second_delete_does_not_crash(
         self, client: AsyncClient, member_tokens: dict
     ):
-        """A second DELETE with the same token must return 401/403, not 500.
-
-        After the first delete, is_active=False, so require_role('member')
-        will reject the stale access token before the handler executes.
-        The important invariant: no unhandled exception, no 5xx.
-        """
         first_res = await _delete_account(client, member_tokens)
         assert first_res.status_code == 204, (
             f"First delete must succeed with 204, got {first_res.status_code}"
@@ -524,9 +507,7 @@ class TestDeleteAccountIdempotency:
         await _delete_account(client, member_tokens)
 
         async with _test_session_factory() as db:
-            result = await db.execute(
-                select(User).where(User.id == user_id)
-            )
+            result = await db.execute(select(User).where(User.id == user_id))
             rows = list(result.scalars().all())
 
         assert len(rows) == 1, (

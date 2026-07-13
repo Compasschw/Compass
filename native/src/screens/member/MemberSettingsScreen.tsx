@@ -6,12 +6,18 @@
  *   - Main card with underline-style tab strip (Profile / Notifications /
  *     Privacy & Security / Language / Help). Profile is the default tab.
  *   - Below the main card: 2-column grid of always-visible cards —
- *     left: Privacy & Security summary (4 toggles + Download data + Delete);
+ *     left: Privacy & Security summary (4 toggles + Deactivate + Delete);
  *     right: Need help? (3 contact buttons).
  *
  * Field-level editing is inline: each profile row shows label + value + an
  * "Edit" link. Tapping Edit converts that one row into a TextInput plus
  * Save / Cancel actions. Avoids the previous all-or-nothing form pattern.
+ *
+ * Account deactivation (reversible, `useDeactivateAccount`) and deletion
+ * (permanent, `useDeleteAccount` via the shared `DeleteAccountModal`
+ * 3-step flow) both use on-brand confirm UI — never `window.confirm` or
+ * bare `Alert.alert` — and both end by calling `clearAfterDeletion()` since
+ * neither a deactivated nor a deleted account can re-authenticate locally.
  *
  * Data: `useMemberProfile` (read), `useUpdateMemberProfile` (write).
  */
@@ -20,7 +26,6 @@ import React, { useCallback, useState } from 'react';
 import {
   Alert,
   Linking,
-  Platform,
   Pressable,
   ScrollView,
   StatusBar,
@@ -33,13 +38,13 @@ import {
   type TextStyle,
 } from 'react-native';
 import {
-  Download,
   Globe,
   HelpCircle,
   Mail,
   MessageSquare,
   Phone,
   Shield,
+  ShieldOff,
   Trash2,
 } from 'lucide-react-native';
 
@@ -48,10 +53,13 @@ import {
   useMemberProfile,
   useUpdateMemberProfile,
   useDeleteAccount,
+  useDeactivateAccount,
 } from '../../hooks/useApiQueries';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { AppShell, PageHeader, Card, ProfilePictureEditor } from '../../components/ui';
+import { DeleteAccountModal } from '../../components/profile/DeleteAccountModal';
 import { colors as tokens } from '../../theme/tokens';
+import { confirmAsync } from '../../utils/confirm';
 
 // ─── Types & constants ────────────────────────────────────────────────────────
 
@@ -440,6 +448,7 @@ const contactStyles = StyleSheet.create({
 export function MemberSettingsScreen(): React.JSX.Element {
   const { userName, logout, clearAfterDeletion } = useAuth();
   const deleteAccount = useDeleteAccount();
+  const deactivateAccount = useDeactivateAccount();
   const profileQuery = useMemberProfile();
   const updateProfile = useUpdateMemberProfile();
 
@@ -464,6 +473,13 @@ export function MemberSettingsScreen(): React.JSX.Element {
 
   const profile = profileQuery.data;
 
+  // ── Delete account (on-brand 3-step modal — shared with MemberProfileScreen) ──
+  const [isDeleteModalVisible, setIsDeleteModalVisible] = useState(false);
+  const [deleteErrorMessage, setDeleteErrorMessage] = useState<string | null>(null);
+
+  // ── Deactivate account (reversible — lighter-weight single confirm) ──────────
+  const [isDeactivating, setIsDeactivating] = useState(false);
+
   const handleSaveField = useCallback(
     async (field: string, payload: Record<string, unknown>) => {
       try {
@@ -476,54 +492,58 @@ export function MemberSettingsScreen(): React.JSX.Element {
     [updateProfile],
   );
 
-  const handleDeleteAccount = useCallback(() => {
-    // Two-step branching by platform: native shows Alert.alert (which has
-    // synchronous Yes/No buttons), web uses window.confirm because RN-web's
-    // Alert.alert doesn't render Yes/No buttons reliably.  Both paths end
-    // in the same delete-then-clear-then-Landing sequence.
-    const proceed = (): void => {
-      void (async () => {
-        try {
-          await deleteAccount.mutateAsync(undefined);
-          // On success, clear local auth state without setting
-          // hasJustSignedOut — that flag steers the next render to Login,
-          // but the deleted account can't log back in.  clearAfterDeletion
-          // lands the user on the marketing Landing page instead.
-          await clearAfterDeletion();
-        } catch (err) {
-          const message =
-            err instanceof Error && err.message
-              ? err.message
-              : 'Could not delete your account. Please try again or contact support.';
-          if (Platform.OS === 'web' && typeof window !== 'undefined') {
-            window.alert(message);
-          } else {
-            Alert.alert('Deletion failed', message);
-          }
-        }
-      })();
-    };
+  const handleDeleteAccountConfirm = useCallback(
+    async (password: string) => {
+      setDeleteErrorMessage(null);
+      try {
+        await deleteAccount.mutateAsync({ password });
+        setIsDeleteModalVisible(false);
+        // On success, clear local auth state without setting
+        // hasJustSignedOut — that flag steers the next render to Login,
+        // but the deleted account can't log back in.  clearAfterDeletion
+        // lands the user on the marketing Landing page instead.
+        await clearAfterDeletion();
+      } catch (err: unknown) {
+        const message =
+          err != null &&
+          typeof err === 'object' &&
+          'detail' in err &&
+          typeof (err as { detail: unknown }).detail === 'string'
+            ? (err as { detail: string }).detail
+            : 'Something went wrong. Please try again.';
+        setDeleteErrorMessage(message);
+        throw err;
+      }
+    },
+    [deleteAccount, clearAfterDeletion],
+  );
 
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      const confirmed = window.confirm(
-        'Are you sure you want to delete this account?',
-      );
-      if (confirmed) proceed();
-      return;
+  const handleDeactivateAccount = useCallback(async () => {
+    const confirmed = await confirmAsync({
+      title: 'Deactivate your account?',
+      message:
+        'Your account will be deactivated and you’ll be signed out. This is reversible — your data is retained, and you can contact support any time to reactivate.',
+      confirmText: 'Deactivate',
+      destructive: true,
+    });
+    if (!confirmed) return;
+
+    setIsDeactivating(true);
+    try {
+      await deactivateAccount.mutateAsync();
+      // Deactivation blocks the session server-side, so clear local auth
+      // state the same way account deletion does.
+      await clearAfterDeletion();
+    } catch (err) {
+      const message =
+        err instanceof Error && err.message
+          ? err.message
+          : 'Could not deactivate your account. Please try again or contact support.';
+      Alert.alert('Deactivation failed', message);
+    } finally {
+      setIsDeactivating(false);
     }
-    Alert.alert(
-      'Delete account',
-      'Are you sure you want to delete this account?',
-      [
-        { text: 'No', style: 'cancel' },
-        { text: 'Yes', style: 'destructive', onPress: proceed },
-      ],
-    );
-  }, [deleteAccount, clearAfterDeletion]);
-
-  const handleDownloadData = useCallback(() => {
-    Alert.alert('Data export', 'We will email a copy of your data to you within 24 hours.');
-  }, []);
+  }, [deactivateAccount, clearAfterDeletion]);
 
   const handleLogout = useCallback(() => {
     Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
@@ -792,20 +812,24 @@ export function MemberSettingsScreen(): React.JSX.Element {
               </View>
 
               <Pressable
-                onPress={handleDownloadData}
+                onPress={() => void handleDeactivateAccount()}
+                disabled={isDeactivating}
                 accessibilityRole="button"
-                accessibilityLabel="Download all my data"
+                accessibilityLabel="Deactivate my account"
                 style={({ pressed, hovered }: { pressed: boolean; hovered?: boolean }) => [
                   pageStyles.outlineBtn,
                   (pressed || hovered) && pageStyles.outlineBtnHover,
+                  isDeactivating && { opacity: 0.6 },
                 ]}
               >
-                <Download size={16} color="#374151" />
-                <Text style={pageStyles.outlineBtnText}>Download all my data</Text>
+                <ShieldOff size={16} color="#B45309" />
+                <Text style={pageStyles.outlineBtnText}>
+                  {isDeactivating ? 'Deactivating…' : 'Deactivate my account'}
+                </Text>
               </Pressable>
 
               <Pressable
-                onPress={handleDeleteAccount}
+                onPress={() => setIsDeleteModalVisible(true)}
                 accessibilityRole="button"
                 accessibilityLabel="Delete my account"
                 style={({ pressed }: { pressed: boolean }) => [
@@ -884,6 +908,13 @@ export function MemberSettingsScreen(): React.JSX.Element {
           </View>
         </View>
       </ScrollView>
+
+      <DeleteAccountModal
+        visible={isDeleteModalVisible}
+        onClose={() => setIsDeleteModalVisible(false)}
+        onConfirm={handleDeleteAccountConfirm}
+        errorMessage={deleteErrorMessage}
+      />
     </AppShell>
   );
 }
