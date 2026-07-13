@@ -352,3 +352,101 @@ async def test_session_testimonial_still_requires_rating(
     )
     assert res.status_code == 201, res.text
     assert res.json()["rating"] == 5
+
+
+# ─── 10. Admin-key caller — chw_id fallback resolution ────────────────────────
+#
+# An admin-key caller has no user row, so the endpoint resolves the chw_id to
+# attribute the review to: most-recent session first, then most-recent matched
+# service request, then 404 when the member has never had a CHW. These three
+# tests exist to pin that fallback chain (it was the uncovered branch that
+# tripped the diff-coverage gate).
+
+
+def _admin_headers() -> dict:
+    import os
+
+    admin_key = os.environ.get("ADMIN_KEY", "test-admin-key-for-pytest-1234")
+    return {"Authorization": f"Bearer {admin_key}"}
+
+
+@pytest.mark.asyncio
+async def test_admin_key_attributes_review_via_most_recent_session(
+    client: AsyncClient, member_tokens: dict, chw_tokens: dict
+):
+    """Admin caller + member with a session → chw_id resolved from the session."""
+    # Inline the relationship setup so we keep the request_id for session
+    # creation (the shared helper only returns the member id).
+    res = await client.post(
+        "/api/v1/requests/",
+        json={
+            "vertical": "housing",
+            "urgency": "routine",
+            "description": "Need help",
+            "preferred_mode": "in_person",
+        },
+        headers=auth_header(member_tokens),
+    )
+    assert res.status_code == 201, res.text
+    request_id = res.json()["id"]
+    res = await client.patch(
+        f"/api/v1/requests/{request_id}/accept",
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 200, res.text
+    member_id = _member_id(member_tokens)
+
+    # Create a session so the session-first branch resolves.
+    res = await client.post(
+        "/api/v1/sessions/",
+        json={
+            "request_id": request_id,
+            "scheduled_at": "2026-07-20T10:00:00Z",
+            "mode": "phone",
+        },
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 201, res.text
+    session_chw_id = res.json()["chw_id"]
+
+    res = await client.post(
+        f"/api/v1/chw/members/{member_id}/closure-review",
+        json={"text": "Captured by admin on the CHW's behalf."},
+        headers=_admin_headers(),
+    )
+    assert res.status_code == 201, res.text
+    assert res.json()["chw_id"] == session_chw_id
+
+
+@pytest.mark.asyncio
+async def test_admin_key_falls_back_to_matched_request_when_no_session(
+    client: AsyncClient, member_tokens: dict, chw_tokens: dict
+):
+    """Admin caller + member with a matched request but NO session → chw_id
+    resolved from ServiceRequest.matched_chw_id (the second fallback)."""
+    member_id = await _establish_relationship(client, member_tokens, chw_tokens)
+
+    res = await client.post(
+        f"/api/v1/chw/members/{member_id}/closure-review",
+        json={"text": "Request-matched fallback attribution."},
+        headers=_admin_headers(),
+    )
+    assert res.status_code == 201, res.text
+    assert res.json()["chw_id"] is not None
+
+
+@pytest.mark.asyncio
+async def test_admin_key_404_when_member_has_no_chw_relationship(
+    client: AsyncClient, member_tokens: dict
+):
+    """Admin caller + member with no session AND no matched request → 404
+    (nothing to attribute the review to; admins bypass the relationship gate,
+    so this is the branch that catches it)."""
+    member_id = _member_id(member_tokens)
+
+    res = await client.post(
+        f"/api/v1/chw/members/{member_id}/closure-review",
+        json={"text": "No CHW ever linked."},
+        headers=_admin_headers(),
+    )
+    assert res.status_code == 404, res.text
