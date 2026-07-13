@@ -20,6 +20,37 @@ vi.mock('expo-sharing', () => ({
   isAvailableAsync: vi.fn(async () => false),
   shareAsync: vi.fn(async () => undefined),
 }));
+// Epic K (mobile web polish): CHWSessionsScreen.test.tsx is the first test
+// to render a screen that pulls in SessionChat.tsx → expo-image-picker /
+// expo-document-picker (message attachment pickers), which — same as
+// expo-secure-store/expo-sharing above — can't initialize under jsdom
+// (they expect the native runtime) and crash the whole suite file with
+// "Cannot read properties of undefined (reading 'EventEmitter')" via
+// expo-modules-core. Stub both with no-op async pickers.
+vi.mock('expo-image-picker', () => ({
+  requestMediaLibraryPermissionsAsync: vi.fn(async () => ({ status: 'denied', granted: false })),
+  launchImageLibraryAsync: vi.fn(async () => ({ canceled: true, assets: null })),
+  MediaTypeOptions: { Images: 'Images' },
+}));
+vi.mock('expo-document-picker', () => ({
+  getDocumentAsync: vi.fn(async () => ({ canceled: true, assets: null })),
+}));
+// Epic K (mobile web polish): same as expo-image-picker/expo-document-picker
+// above — useSessionTranscription.ts (pulled in transitively by
+// SessionChat.tsx → SessionChatWithFollowup.tsx, rendered by
+// CHWSessionsScreen's web in-progress-session pane) imports expo-audio for
+// native mic capture, which can't initialize under jsdom.
+vi.mock('expo-audio', () => ({
+  requestRecordingPermissionsAsync: vi.fn(async () => ({ status: 'denied', granted: false })),
+  setAudioModeAsync: vi.fn(async () => undefined),
+}));
+vi.mock('expo-audio/build/AudioModule', () => ({
+  default: { AudioRecorder: vi.fn() },
+}));
+vi.mock('expo-audio/build/RecordingConstants', () => ({
+  IOSOutputFormat: { LINEARPCM: 'lpcm' },
+  AudioQuality: { MAX: 127 },
+}));
 
 // lucide-react-native's compiled bundle does a bare `import ... from
 // 'react-native'` internally. Vitest treats node_modules packages as
