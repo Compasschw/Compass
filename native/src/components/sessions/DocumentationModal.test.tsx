@@ -1,11 +1,19 @@
 /**
- * Component test for DocumentationModal — proves the 2026-07-12 redesign:
+ * Component test for DocumentationModal — proves both the 2026-07-12
+ * redesign and the 2026-07-13 "modal v2" redesign (Epics Q1-Q3):
  *  - Members Served / Member Goals Discussed / Resources Referred /
  *    Follow-Up Needed / AI Summary are gone from the rendered form.
- *  - Session Start / Session End are CHW-editable, pre-filled from
- *    `sessionStartedAt` / `sessionEndedAt`.
- *  - Units to Bill recomputes live as the CHW edits Session End.
- *  - Submit stays disabled while End <= Start (and re-enables once fixed).
+ *  - Q1: Session Start / Session End render at the BOTTOM of the form
+ *    (after Your Notes), CHW-editable, pre-filled from
+ *    `sessionStartedAt` / `sessionEndedAt`. The old Gross/Net/Rate
+ *    "Units to Bill" card is gone — replaced by a plain inline "Units: N"
+ *    line with no revenue/rate display.
+ *  - Q2: a session under 16 minutes shows a not-billable notice and
+ *    blocks submit entirely — the CHW can never file a <16-minute claim.
+ *  - Q3: Diagnosis Codes render grouped by resource-need vertical
+ *    (Housing, Utilities, Food Security, Transportation, Mental Health,
+ *    Healthcare, Employment, Others) instead of the old ICD-10 taxonomy
+ *    categories.
  *
  * No `memberId` prop is passed in these tests, so `useCaseNotes` (the one
  * network-backed hook DocumentationModal still calls) stays disabled — see
@@ -47,6 +55,7 @@ import { DocumentationModal, type DocumentationModalProps } from './Documentatio
 // that string is what the assertions below match against.
 const START_ISO = new Date(2026, 6, 12, 9, 0, 0).toISOString(); // "07/12/2026 09:00"
 const END_ISO_50MIN = new Date(2026, 6, 12, 9, 50, 0).toISOString(); // "07/12/2026 09:50" (50 min → 2 units)
+const END_ISO_10MIN = new Date(2026, 6, 12, 9, 10, 0).toISOString(); // "07/12/2026 09:10" (10 min → 0 units, not billable)
 
 function renderModal(overrides: Partial<DocumentationModalProps> = {}) {
   const qc = new QueryClient({
@@ -78,9 +87,22 @@ function setDateTimeField(label: string, value: string): void {
   fireEvent.change(screen.getByLabelText(label), { target: { value } });
 }
 
-/** Expands the "Counseling & Wellness" Z-code category and selects Z71.89. */
+/**
+ * Reads the inline "Units: N" line's value specifically — distinct from
+ * `getByExactText`, which would ambiguously also match a diagnosis-code
+ * group's "N selected" count badge (also rendered as bare digit text).
+ * Locates the "Units:" label and reads its sibling's text.
+ */
+function getUnitsLineValue(): string {
+  const label = screen.getByText('Units:');
+  const row = label.parentElement;
+  if (!row) throw new Error('Units: label has no parent row');
+  return row.textContent?.replace('Units:', '').trim() ?? '';
+}
+
+/** Expands the "Mental Health" vertical group and selects Z71.89 (Q3 regrouping). */
 function selectADiagnosisCode(): void {
-  fireEvent.click(screen.getByLabelText('Counseling & Wellness'));
+  fireEvent.click(screen.getByLabelText('Mental Health'));
   fireEvent.click(
     screen.getByLabelText('Z71.89: Other specified counseling'),
   );
@@ -108,19 +130,46 @@ describe('DocumentationModal — redesigned sections', () => {
     expect(screen.queryByText('AI Summary')).toBeNull();
   });
 
-  it('keeps Diagnosis Codes, Procedure, Your Notes, Session Time, and Units to Bill', () => {
+  it('keeps Diagnosis Codes, Procedure, Your Notes, and Session Time', () => {
     renderModal();
 
     expect(screen.getByText('Diagnosis Codes (Z-Codes)')).toBeTruthy();
     expect(screen.getByText('Procedure and Modifiers')).toBeTruthy();
     expect(screen.getByText('Your Notes')).toBeTruthy();
     expect(screen.getByText('Session Time')).toBeTruthy();
-    expect(screen.getByText('Units to Bill')).toBeTruthy();
+  });
+
+  it('Q1: removes the old Gross/Net/Rate "Units to Bill" card entirely', () => {
+    renderModal({ sessionStartedAt: START_ISO, sessionEndedAt: END_ISO_50MIN });
+
+    // The old section had its own "Units to Bill" SectionHeader — gone now,
+    // replaced by a plain inline "Units:" line (asserted below).
+    expect(screen.queryByText('Units to Bill')).toBeNull();
+    expect(screen.queryByText('Gross')).toBeNull();
+    expect(screen.queryByText('Net (85%)')).toBeNull();
+    expect(screen.queryByText('Rate')).toBeNull();
+    expect(screen.queryByText(/\/unit/)).toBeNull();
   });
 });
 
-describe('DocumentationModal — Session Start/End + live Units to Bill', () => {
-  it('pre-fills Session Start/End from props and shows the derived unit count', () => {
+describe('DocumentationModal — Q1: Session Time at the bottom + inline units line', () => {
+  it('renders Session Time AFTER Your Notes (bottom of the form)', () => {
+    const { container } = renderModal({
+      sessionStartedAt: START_ISO,
+      sessionEndedAt: END_ISO_50MIN,
+    });
+
+    const notesHeading = screen.getByText('Your Notes');
+    const sessionTimeHeading = screen.getByText('Session Time');
+
+    // DOM order: Your Notes must appear before Session Time.
+    const position = notesHeading.compareDocumentPosition(sessionTimeHeading);
+    // Node.DOCUMENT_POSITION_FOLLOWING === 4 — sessionTimeHeading follows notesHeading.
+    expect(position & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(container).toBeTruthy();
+  });
+
+  it('pre-fills Session Start/End from props and shows the inline computed units line', () => {
     renderModal({ sessionStartedAt: START_ISO, sessionEndedAt: END_ISO_50MIN });
 
     const startInput = screen.getByLabelText('Session start date and time') as HTMLInputElement;
@@ -128,8 +177,9 @@ describe('DocumentationModal — Session Start/End + live Units to Bill', () => 
     expect(startInput.value).toBe('07/12/2026 09:00');
     expect(endInput.value).toBe('07/12/2026 09:50');
 
-    // 50-minute duration falls in the 45–75 min bracket → 2 units.
-    expect(getByExactText('2 units')).toBeTruthy();
+    // 50-minute duration falls in the 46–75 min bracket → 2 units.
+    expect(getUnitsLineValue()).toBe('2');
+    expect(screen.getByText('Units:')).toBeTruthy();
   });
 
   it('leaves both fields blank when sessionStartedAt/sessionEndedAt are not provided', () => {
@@ -141,16 +191,116 @@ describe('DocumentationModal — Session Start/End + live Units to Bill', () => 
     expect(endInput.value).toBe('');
   });
 
-  it('recomputes Units to Bill live as the CHW edits Session End', () => {
+  it('recomputes the units line live as the CHW edits Session End', () => {
     renderModal({ sessionStartedAt: START_ISO, sessionEndedAt: END_ISO_50MIN });
 
-    expect(getByExactText('2 units')).toBeTruthy();
+    expect(getUnitsLineValue()).toBe('2');
 
     // Push the end time out to a 90-minute duration → 3-unit bracket.
     setDateTimeField('Session end date and time', '07/12/2026 10:30');
 
-    expect(getByExactText('3 units')).toBeTruthy();
-    expect(screen.queryByText('2 units')).toBeNull();
+    expect(getUnitsLineValue()).toBe('3');
+  });
+});
+
+describe('DocumentationModal — Q2: 16-minute billable floor', () => {
+  it('shows the not-billable notice for a sub-16-minute session', () => {
+    renderModal({ sessionStartedAt: START_ISO, sessionEndedAt: END_ISO_10MIN });
+
+    expect(
+      screen.getByText('Under 16 minutes — not billable; no claim will be filed.'),
+    ).toBeTruthy();
+    // No "Units:" line while below the floor — the notice replaces it.
+    expect(screen.queryByText('Units:')).toBeNull();
+  });
+
+  it('blocks submit for a sub-16-minute session even with notes/diagnosis/procedure filled in', () => {
+    renderModal({ sessionStartedAt: START_ISO, sessionEndedAt: END_ISO_10MIN });
+
+    selectADiagnosisCode();
+    fillNotes('Brief check-in, member was in a hurry.');
+
+    const submit = screen.getByLabelText('Submit documentation and billing');
+    expect(submit.getAttribute('aria-disabled')).toBe('true');
+    expect(
+      screen.getByText(
+        'Session is under 16 minutes and is not billable — no claim can be filed.',
+      ),
+    ).toBeTruthy();
+  });
+
+  it('re-enables submit once the session is extended past the 16-minute floor', () => {
+    renderModal({ sessionStartedAt: START_ISO, sessionEndedAt: END_ISO_10MIN });
+
+    selectADiagnosisCode();
+    fillNotes('Brief check-in, member was in a hurry.');
+
+    const submit = screen.getByLabelText('Submit documentation and billing');
+    expect(submit.getAttribute('aria-disabled')).toBe('true');
+
+    // Extend to exactly the 16-minute floor boundary → billable (1 unit).
+    setDateTimeField('Session end date and time', '07/12/2026 09:16');
+
+    expect(submit.getAttribute('aria-disabled')).not.toBe('true');
+    expect(getUnitsLineValue()).toBe('1');
+  });
+
+  it('a 15-minute session (one minute under the floor) stays not billable', () => {
+    renderModal({ sessionStartedAt: START_ISO, sessionEndedAt: new Date(2026, 6, 12, 9, 15, 0).toISOString() });
+
+    expect(
+      screen.getByText('Under 16 minutes — not billable; no claim will be filed.'),
+    ).toBeTruthy();
+  });
+});
+
+describe('DocumentationModal — Q3: diagnosis codes grouped by resource-need vertical', () => {
+  it('renders vertical group headers instead of the old ICD-10 taxonomy categories', () => {
+    renderModal();
+
+    // New vertical groupings present.
+    expect(screen.getByText('Housing')).toBeTruthy();
+    expect(screen.getByText('Utilities')).toBeTruthy();
+    expect(screen.getByText('Food Security')).toBeTruthy();
+    expect(screen.getByText('Mental Health')).toBeTruthy();
+    expect(screen.getByText('Healthcare')).toBeTruthy();
+    expect(screen.getByText('Employment')).toBeTruthy();
+
+    // Old category labels are gone.
+    expect(screen.queryByText('Counseling & Wellness')).toBeNull();
+    expect(screen.queryByText('Housing & Economic')).toBeNull();
+    expect(screen.queryByText('Health Access & Literacy')).toBeNull();
+    expect(screen.queryByText('Behavioral')).toBeNull();
+    expect(screen.queryByText('Legal Circumstances')).toBeNull();
+  });
+
+  it('groups a housing-coded example (Z59.00 Homelessness) under the Housing group', () => {
+    renderModal();
+
+    fireEvent.click(screen.getByLabelText('Housing'));
+    expect(
+      screen.getByLabelText('Z59.00: Homelessness, unspecified'),
+    ).toBeTruthy();
+  });
+
+  it('groups a utilities-coded example (Z59.861) under the Utilities group', () => {
+    renderModal();
+
+    fireEvent.click(screen.getByLabelText('Utilities'));
+    expect(
+      screen.getByLabelText('Z59.861: Financial insecurity, difficulty paying for utilities'),
+    ).toBeTruthy();
+  });
+
+  it('selecting a code in one group updates that group\'s selected-count badge', () => {
+    renderModal();
+
+    fireEvent.click(screen.getByLabelText('Housing'));
+    fireEvent.click(screen.getByLabelText('Z59.00: Homelessness, unspecified'));
+
+    // Badge text is the count "1" rendered inside the (now re-labeled,
+    // still-accessible) group header button.
+    expect(screen.getByLabelText('Housing, 1 selected')).toBeTruthy();
   });
 });
 

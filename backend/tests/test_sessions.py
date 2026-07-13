@@ -98,9 +98,17 @@ async def test_documentation_duplicate_rejected(client: AsyncClient, chw_tokens,
     await client.patch(f"/api/v1/sessions/{session_id}/start", headers=auth_header(chw_tokens))
     await client.patch(f"/api/v1/sessions/{session_id}/complete", headers=auth_header(chw_tokens))
 
+    # Explicit session_start_time/session_end_time (30min, >=16min-floor
+    # billable — see billing_service.calculate_units) rather than relying on
+    # the server-tracked start/complete duration, which in a fast test run
+    # is ~0 minutes and would now 422 as not-billable under the 16-minute
+    # floor (2026-07-13). This test is about duplicate-submission rejection,
+    # not the units bracket, so it supplies an unambiguously billable window.
     doc_payload = {
         "summary": "Helped with housing", "diagnosis_codes": ["Z59.1"],
         "procedure_code": "98960", "units_to_bill": 2,
+        "session_start_time": "2026-04-10T10:00:00Z",
+        "session_end_time": "2026-04-10T10:30:00Z",
     }
 
     res = await client.post(f"/api/v1/sessions/{session_id}/documentation", json=doc_payload, headers=auth_header(chw_tokens))
@@ -130,12 +138,19 @@ async def test_documentation_completes_awaiting_session(
     assert res.status_code == 200
     assert res.json()["status"] == "awaiting_documentation"
 
-    # Submit documentation → should complete the session.
+    # Submit documentation → should complete the session. Explicit
+    # session_start_time/session_end_time (30min, >=16min-floor billable)
+    # rather than relying on the server-tracked duration, which in a fast
+    # test run is ~0 minutes and would now 422 as not-billable under the
+    # 16-minute floor (2026-07-13) — this test is about the status
+    # transition, not the units bracket.
     doc_payload = {
         "summary": "Helped with housing",
         "diagnosis_codes": ["Z59.1"],
         "procedure_code": "98960",
         "units_to_bill": 1,
+        "session_start_time": "2026-06-10T10:00:00Z",
+        "session_end_time": "2026-06-10T10:30:00Z",
     }
     res = await client.post(
         f"/api/v1/sessions/{session_id}/documentation",

@@ -63,20 +63,32 @@ VALID_CPT_CODES = ["98960", "98961", "98962"]
 def calculate_units(duration_minutes: int | None) -> int:
     """Return the number of billable Medi-Cal units for a given session duration.
 
-    Per the founder-set bracket (2026-05-07): the first unit covers up to 45
-    minutes, then every additional 30 minutes earns one more unit, capped at
-    4 (the daily Medi-Cal cap):
+    Per the founder-set 16-minute-floor bracket (2026-07-13, supersedes the
+    2026-05-07 bracket): sessions under 16 minutes are NOT billable at all
+    (0 units — no claim may be filed), then units step up every 30 minutes,
+    capped at 4 (the daily Medi-Cal cap):
 
-      - ≤ 45 min  → 1 unit   (covers any session up to 45 minutes)
-      - 45–75 min → 2 units  (> 45)
-      - 75–105 min → 3 units (> 75)
-      - > 105 min → 4 units  (capped at MAX_UNITS_PER_DAY)
+      - < 16 min   → 0 units  (NOT billable — no claim)
+      - 16–45 min  → 1 unit
+      - 46–75 min  → 2 units
+      - 76–105 min → 3 units
+      - ≥ 106 min  → 4 units  (capped at MAX_UNITS_PER_DAY)
 
     A missing duration (None — should not happen for a documented session, but
-    defends against bad data) returns 1 so the schema's ``ge=1`` constraint
-    is honored and the CHW still gets credit for the visit.
+    defends against bad data) returns 0, matching the "not billable" branch:
+    an unknown duration must never be assumed billable. A negative duration
+    (bad clock data) is likewise treated as 0/not-billable rather than
+    silently floored to 1 unit — see ``test_negative_duration_returns_zero``.
+
+    ``validate_claim`` rejects a computed 0-unit count (``units < 1``) before
+    any ``BillingClaim`` row is created, so the anti-upcoding /
+    anti-under-16-minute-billing guarantee is enforced at the single call
+    site in ``routers.sessions.submit_documentation`` without any router
+    changes: a <16min submission always 422s there.
     """
-    if duration_minutes is None or duration_minutes <= 45:
+    if duration_minutes is None or duration_minutes < 16:
+        return 0
+    if duration_minutes <= 45:
         return 1
     if duration_minutes <= 75:
         return 2
@@ -86,13 +98,28 @@ def calculate_units(duration_minutes: int | None) -> int:
 
 
 def validate_claim(diagnosis_codes: list[str], procedure_code: str, units: int) -> list[str]:
+    """Validate a claim's codes and computed units before persisting it.
+
+    ``units == 0`` is the 16-minute-floor "not billable" outcome from
+    ``calculate_units`` — reject with a purpose-specific message (distinct
+    from the generic out-of-range message) so the 422 the CHW sees at
+    ``routers.sessions.submit_documentation`` clearly explains *why*: the
+    session was too short to bill, not that they picked an invalid number.
+    This is the sole enforcement point that a <16-minute session can never
+    result in a ``BillingClaim`` row — no router change needed.
+    """
     errors = []
     for code in diagnosis_codes:
         if code not in VALID_ICD10_CODES:
             errors.append(f"Invalid ICD-10 code: {code}")
     if procedure_code not in VALID_CPT_CODES:
         errors.append(f"Invalid CPT code: {procedure_code}")
-    if units < 1 or units > MAX_UNITS_PER_DAY:
+    if units == 0:
+        errors.append(
+            "Session is under 16 minutes and is not billable under Medi-Cal "
+            "rules — no claim can be filed for this duration."
+        )
+    elif units < 1 or units > MAX_UNITS_PER_DAY:
         errors.append(f"Units must be 1-{MAX_UNITS_PER_DAY}, got {units}")
     return errors
 

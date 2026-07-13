@@ -70,6 +70,14 @@ async def _documented_session(
             "diagnosis_codes": ["Z59.1"],
             "procedure_code": "98960",
             "units_to_bill": 2,
+            # Explicit session_start_time/session_end_time (30min,
+            # >=16min-floor billable — see billing_service.calculate_units)
+            # rather than relying on the server-tracked start/complete
+            # duration, which in a fast test run is ~0 minutes and would now
+            # 422 as not-billable under the 16-minute floor (2026-07-13).
+            # This helper is about documentation/notes behavior, not units.
+            "session_start_time": "2026-04-10T10:00:00Z",
+            "session_end_time": "2026-04-10T10:30:00Z",
         },
         headers=auth_header(chw_tokens),
     )

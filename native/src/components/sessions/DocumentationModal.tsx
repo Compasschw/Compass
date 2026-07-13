@@ -5,21 +5,40 @@
  * (Card, SectionHeader). Legacy beige/cream theme/colors palette removed.
  *
  * Sections (in render order):
- *  - Session Time: CHW-editable Session Start / Session End (MM/DD/YYYY HH:MM,
- *    24hr) — pre-filled from sessionStartedAt/sessionEndedAt when known
- *  - Diagnosis Codes (Z-Codes): expandable categories with tap-to-select codes
+ *  - Diagnosis Codes (Z-Codes): grouped by resource-need vertical (Housing,
+ *    Utilities, Food Security, Transportation, Mental Health, Healthcare,
+ *    Employment, Others) — tap-to-select codes, same chip-group visual
+ *    language as the Resource Needs picker elsewhere in the app.
  *  - Procedure Code: picker from procedureCodes mock data
  *  - Session Notes: multiline TextInput (2000 char limit with counter)
- *  - Units to Bill: read-only billing summary, derived live from the edited
- *    Session Start/End times (StatTile-style 3-column layout) — bottom of
- *    the form, immediately above Submit
+ *  - Session Time: CHW-editable Session Start / Session End (MM/DD/YYYY HH:MM,
+ *    24hr) — pre-filled from sessionStartedAt/sessionEndedAt when known —
+ *    plus a simple inline computed-units line ("Units: N"), or a not-billable
+ *    notice when the session is under the 16-minute floor. Bottom of the
+ *    form, immediately above Submit. NO revenue/rate breakdown is shown here
+ *    (the old Gross/Net/Rate UnitsSummary card is gone — see Q1, 2026-07-13).
  *  - Submit Documentation button
  *
  * 2026-07-12 redesign: Members Served, Member Goals Discussed, Resources
  * Referred, Follow-Up Needed, and AI Summary were removed (backend schema
  * defaults them); Session Start/End replace session duration as the
- * units-to-bill driver. See src/utils/sessionDocumentation.ts for the pure
- * parsing/bracket math.
+ * units-to-bill driver.
+ *
+ * 2026-07-13 "modal v2" redesign (Epics Q1-Q3):
+ *  - Q1: Session Time moved to the bottom of the form (was at the top); the
+ *    Gross/Net/Rate UnitsSummary card is deleted in favor of a plain inline
+ *    "Units: N" line.
+ *  - Q2: 16-minute billable floor — a session under 16 minutes computes to
+ *    0 units and is NOT billable. Submission is BLOCKED for billing in that
+ *    case (see `isBelowBillableFloor` gating in `isValid` below) — matches
+ *    the backend's `validate_claim` rejecting a computed 0-unit claim, so
+ *    the CHW can never file a <16-minute claim from either side.
+ *  - Q3: Diagnosis Codes re-grouped from ICD-10 taxonomy categories
+ *    (counseling/housing_economic/health_access/behavioral/legal) to the
+ *    resource-need verticals used elsewhere in the app, via
+ *    `data/diagnosisVerticalMap.ts`.
+ *
+ * See src/utils/sessionDocumentation.ts for the pure parsing/bracket math.
  */
 
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
@@ -41,29 +60,34 @@ import {
   ChevronRight,
   Check,
   FileText,
-  DollarSign,
+  AlertTriangle,
 } from 'lucide-react-native';
 import { ResourceMentionInput } from '../resources/ResourceMentionInput';
 
-import { colors as tokens, numerals, spacing, radius, shadows } from '../../theme/tokens';
+import { colors as tokens, spacing, radius, shadows } from '../../theme/tokens';
 import { typography } from '../../theme/typography';
 import { Card, SectionHeader } from '../ui';
 import { useCaseNotes } from '../../hooks/useApiQueries';
 import {
   diagnosisCodes,
   procedureCodes,
-  zCodeCategoryLabels,
-  type ZCodeCategory,
   type SessionDocumentation,
-  MEDI_CAL_RATE,
-  NET_PAYOUT_RATE,
-  formatCurrency,
 } from '../../data/mock';
+import {
+  DIAGNOSIS_VERTICAL_GROUPS,
+  diagnosisCodeGroup,
+  diagnosisGroupColor,
+  diagnosisGroupEmoji,
+  diagnosisGroupLabel,
+  type DiagnosisVerticalGroup,
+} from '../../data/diagnosisVerticalMap';
 import {
   computeUnitsFromDuration,
   computeUnitsFromTimes,
   formatIsoForSessionDateTimeInput,
   formatSessionDateTimeInput,
+  isBelowBillableFloor,
+  MIN_BILLABLE_DURATION_MINUTES,
   parseSessionDateTimeInputToIso,
 } from '../../utils/sessionDocumentation';
 
@@ -109,20 +133,19 @@ export interface DocumentationModalProps {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const Z_CODE_CATEGORIES: ZCodeCategory[] = [
-  'counseling',
-  'housing_economic',
-  'health_access',
-  'behavioral',
-  'legal',
-];
-
 // Session Notes cap. Roomy enough to hold this session's case notes (pre-filled
 // for review/editing) plus the CHW's edits; the backend `summary` column is
 // unbounded Text, so this is a UI guardrail only.
 const NOTES_MAX = 2000;
 
 // ─── DiagnosisCodeSection ─────────────────────────────────────────────────────
+//
+// Q3 (2026-07-13): grouped by resource-need vertical (data/diagnosisVerticalMap.ts)
+// rather than the old ICD-10 taxonomy categories (counseling/housing_economic/
+// health_access/behavioral/legal). Same expand/collapse-per-group interaction
+// as before; only the grouping key, labels, and accent color changed — the
+// chip-group visual language (colored accent, emoji, checkmark) matches the
+// Resource Needs picker elsewhere in the app (see CHWCalendarScreen.tsx).
 
 interface DiagnosisCodeSectionProps {
   selectedCodes: string[];
@@ -133,26 +156,26 @@ function DiagnosisCodeSection({
   selectedCodes,
   onToggle,
 }: DiagnosisCodeSectionProps): React.JSX.Element {
-  const [expandedCategories, setExpandedCategories] = useState<Set<ZCodeCategory>>(new Set());
+  const [expandedGroups, setExpandedGroups] = useState<Set<DiagnosisVerticalGroup>>(new Set());
 
-  const codesByCategory = useMemo(() => {
-    const map = new Map<ZCodeCategory, typeof diagnosisCodes>();
-    for (const category of Z_CODE_CATEGORIES) {
+  const codesByGroup = useMemo(() => {
+    const map = new Map<DiagnosisVerticalGroup, typeof diagnosisCodes>();
+    for (const group of DIAGNOSIS_VERTICAL_GROUPS) {
       map.set(
-        category,
-        diagnosisCodes.filter((d) => d.category === category && !d.isArchived),
+        group,
+        diagnosisCodes.filter((d) => !d.isArchived && diagnosisCodeGroup(d.code) === group),
       );
     }
     return map;
   }, []);
 
-  function toggleCategory(category: ZCodeCategory): void {
-    setExpandedCategories((prev) => {
+  function toggleGroup(group: DiagnosisVerticalGroup): void {
+    setExpandedGroups((prev) => {
       const next = new Set(prev);
-      if (next.has(category)) {
-        next.delete(category);
+      if (next.has(group)) {
+        next.delete(group);
       } else {
-        next.add(category);
+        next.add(group);
       }
       return next;
     });
@@ -162,26 +185,37 @@ function DiagnosisCodeSection({
     <View style={sh.section}>
       <SectionHeader title="Diagnosis Codes (Z-Codes)" marginBottom={spacing.md} />
 
-      {Z_CODE_CATEGORIES.map((category) => {
-        const codes = codesByCategory.get(category) ?? [];
-        const isExpanded = expandedCategories.has(category);
-        const selectedInCategory = codes.filter((c) => selectedCodes.includes(c.code)).length;
+      {DIAGNOSIS_VERTICAL_GROUPS.map((group) => {
+        const codes = codesByGroup.get(group) ?? [];
+        // Groups with zero codes in the current picker catalog (e.g. no
+        // active code currently maps to this vertical) are hidden rather
+        // than rendered as an empty, always-collapsed card.
+        if (codes.length === 0) return null;
+
+        const isExpanded = expandedGroups.has(group);
+        const selectedInGroup = codes.filter((c) => selectedCodes.includes(c.code)).length;
+        const groupLabel = diagnosisGroupLabel(group);
+        const groupColor = diagnosisGroupColor(group);
+        const groupEmoji = diagnosisGroupEmoji(group);
 
         return (
-          <Card key={category} style={sh.categoryCard}>
+          <Card key={group} style={sh.categoryCard}>
             <TouchableOpacity
               style={sh.categoryHeader}
-              onPress={() => toggleCategory(category)}
+              onPress={() => toggleGroup(group)}
               accessibilityRole="button"
               accessibilityState={{ expanded: isExpanded }}
-              accessibilityLabel={`${zCodeCategoryLabels[category]}${selectedInCategory > 0 ? `, ${selectedInCategory} selected` : ''}`}
+              accessibilityLabel={`${groupLabel}${selectedInGroup > 0 ? `, ${selectedInGroup} selected` : ''}`}
               activeOpacity={0.7}
             >
-              <Text style={sh.categoryLabel}>{zCodeCategoryLabels[category]}</Text>
+              <View style={sh.categoryLabelRow}>
+                <Text style={sh.categoryEmoji}>{groupEmoji}</Text>
+                <Text style={sh.categoryLabel}>{groupLabel}</Text>
+              </View>
               <View style={sh.categoryRightRow}>
-                {selectedInCategory > 0 && (
-                  <View style={sh.categoryBadge}>
-                    <Text style={sh.categoryBadgeText}>{selectedInCategory}</Text>
+                {selectedInGroup > 0 && (
+                  <View style={[sh.categoryBadge, { backgroundColor: groupColor }]}>
+                    <Text style={sh.categoryBadgeText}>{selectedInGroup}</Text>
                   </View>
                 )}
                 {isExpanded ? (
@@ -199,18 +233,31 @@ function DiagnosisCodeSection({
                   return (
                     <TouchableOpacity
                       key={code.code}
-                      style={[sh.codeRow, isSelected && sh.codeRowSelected]}
+                      style={[
+                        sh.codeRow,
+                        isSelected && { backgroundColor: `${groupColor}1A` },
+                      ]}
                       onPress={() => onToggle(code.code)}
                       accessibilityRole="checkbox"
                       accessibilityState={{ checked: isSelected }}
                       accessibilityLabel={`${code.code}: ${code.description}`}
                       activeOpacity={0.7}
                     >
-                      <View style={[sh.codeCheckbox, isSelected && sh.codeCheckboxChecked]}>
+                      <View
+                        style={[
+                          sh.codeCheckbox,
+                          isSelected && { borderColor: groupColor, backgroundColor: groupColor },
+                        ]}
+                      >
                         {isSelected && <Check size={9} color="#FFFFFF" strokeWidth={3} />}
                       </View>
                       <View style={{ flex: 1, gap: 2 }}>
-                        <Text style={[sh.codeText, isSelected && sh.codeTextSelected]}>
+                        <Text
+                          style={[
+                            sh.codeText,
+                            isSelected && { color: groupColor },
+                          ]}
+                        >
                           {code.code}
                         </Text>
                         <Text style={sh.codeDesc}>{code.description}</Text>
@@ -242,6 +289,15 @@ const sh = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
     backgroundColor: tokens.cardBg,
+  },
+  categoryLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    flex: 1,
+  },
+  categoryEmoji: {
+    fontSize: 14,
   },
   categoryLabel: {
     ...typography.bodySm,
@@ -281,9 +337,9 @@ const sh = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: tokens.cardBorder,
   },
-  codeRowSelected: {
-    backgroundColor: tokens.emerald100,
-  },
+  // Selected-row/checkbox/text accent colors are the group's vertical color,
+  // applied inline (see diagnosisGroupColor()) rather than a single static
+  // "selected" style — each vertical group has a different accent.
   codeCheckbox: {
     width: 16,
     height: 16,
@@ -296,17 +352,10 @@ const sh = StyleSheet.create({
     marginTop: 2,
     flexShrink: 0,
   },
-  codeCheckboxChecked: {
-    borderColor: tokens.primary,
-    backgroundColor: tokens.primary,
-  },
   codeText: {
     ...typography.bodySm,
     fontWeight: '700',
     color: tokens.textPrimary,
-  },
-  codeTextSelected: {
-    color: tokens.primary,
   },
   codeDesc: {
     ...typography.label,
@@ -466,122 +515,71 @@ const pc = StyleSheet.create({
   },
 });
 
-// ─── UnitsSummary (read-only, derived from session duration) ─────────────────
+// ─── UnitsLine (Q1: replaces the old Gross/Net/Rate UnitsSummary card) ────────
+//
+// A single inline computed-units line, no revenue/rate display — the CHW
+// sees only the unit count (or the not-billable notice below the 16-minute
+// floor), not a dollar breakdown. Rendered inside SessionTimesSection, at
+// the bottom of the form.
 
-interface UnitsSummaryProps {
-  /** Auto-computed units from session duration. Always 1–4. */
+interface UnitsLineProps {
+  /** Auto-computed units from session duration. 0 means not billable. */
   value: number;
-  /** Total session duration in minutes (for the rate-explanation footnote). */
-  durationMinutes: number | null | undefined;
 }
 
-/**
- * Read-only billing summary. The units value is derived authoritatively from
- * the session's duration (see ``computeUnitsFromDuration``) so CHWs cannot
- * upcode at the form. The server recomputes from the same bracket and ignores
- * any client-sent units.
- *
- * Layout: hero unit count above a 3-column Gross / Net / Rate stat row.
- */
-function UnitsSummary({ value, durationMinutes }: UnitsSummaryProps): React.JSX.Element {
-  const grossAmount = value * MEDI_CAL_RATE;
-  const netAmount = grossAmount * NET_PAYOUT_RATE;
-  const durationLabel =
-    durationMinutes != null ? `${durationMinutes} min session` : 'Session duration unavailable';
+function UnitsLine({ value }: UnitsLineProps): React.JSX.Element {
+  if (isBelowBillableFloor(value)) {
+    return (
+      <View style={ul.notBillableBanner} accessibilityRole="alert">
+        <AlertTriangle size={16} color={tokens.red700} />
+        <Text style={ul.notBillableText}>
+          Under {MIN_BILLABLE_DURATION_MINUTES} minutes — not billable; no claim will be filed.
+        </Text>
+      </View>
+    );
+  }
 
   return (
-    <View style={sh.section}>
-      <SectionHeader title="Units to Bill" marginBottom={spacing.md} />
-
-      {/* Hero unit count */}
-      <Card style={us.heroCard}>
-        <View style={us.heroInner}>
-          <View style={[us.iconBadge, { backgroundColor: tokens.emerald100 }]}>
-            <DollarSign size={18} color={tokens.emerald700} />
-          </View>
-          <View style={us.heroText}>
-            <Text style={[us.heroValue, numerals.tabular]}>
-              {value} {value === 1 ? 'unit' : 'units'}
-            </Text>
-            <Text style={us.heroFootnote}>Auto-calculated · {durationLabel}</Text>
-          </View>
-        </View>
-      </Card>
-
-      {/* 3-column billing stat tiles */}
-      <View style={us.statRow}>
-        <Card style={us.statCell}>
-          <Text style={us.statLabel}>Gross</Text>
-          <Text style={[us.statValue, numerals.tabular]}>{formatCurrency(grossAmount)}</Text>
-        </Card>
-        <Card style={us.statCell}>
-          <Text style={us.statLabel}>Net (85%)</Text>
-          <Text style={[us.statValue, { color: tokens.primary }, numerals.tabular]}>{formatCurrency(netAmount)}</Text>
-        </Card>
-        <Card style={us.statCell}>
-          <Text style={us.statLabel}>Rate</Text>
-          <Text style={[us.statValue, numerals.tabular]}>{formatCurrency(MEDI_CAL_RATE)}/unit</Text>
-        </Card>
-      </View>
+    <View style={ul.row}>
+      <Text style={ul.label}>Units:</Text>
+      <Text style={ul.value}>{value}</Text>
     </View>
   );
 }
 
-const us = StyleSheet.create({
-  heroCard: {
-    padding: spacing.lg,
-    marginBottom: spacing.sm,
-  },
-  heroInner: {
+const ul = StyleSheet.create({
+  row: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-  },
-  iconBadge: {
-    width: 40,
-    height: 40,
-    borderRadius: radius.lg,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  heroText: {
-    flex: 1,
-    gap: 2,
-  },
-  heroValue: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: tokens.textPrimary,
-    lineHeight: 28,
-  },
-  heroFootnote: {
-    ...typography.label,
-    letterSpacing: 0,
-    color: tokens.textMuted,
-    fontStyle: 'italic',
-  },
-  statRow: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-  },
-  statCell: {
-    flex: 1,
-    padding: spacing.md,
-    alignItems: 'center',
+    alignItems: 'baseline',
     gap: spacing.xs,
+    paddingHorizontal: spacing.xs,
+    marginTop: spacing.sm,
   },
-  statLabel: {
-    ...typography.label,
-    letterSpacing: 0.3,
+  label: {
+    ...typography.bodySm,
     color: tokens.textSecondary,
-    textAlign: 'center',
   },
-  statValue: {
-    fontSize: 15,
+  value: {
+    ...typography.bodySm,
     fontWeight: '700',
     color: tokens.textPrimary,
-    textAlign: 'center',
+  },
+  notBillableBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+    padding: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: tokens.red100,
+    borderWidth: 1,
+    borderColor: tokens.red700,
+  },
+  notBillableText: {
+    ...typography.bodySm,
+    color: tokens.red700,
+    flex: 1,
+    fontWeight: '600',
   },
 });
 
@@ -596,14 +594,18 @@ interface SessionTimesSectionProps {
   /** Inline validation message shown under each field; null hides it. */
   startError: string | null;
   endError: string | null;
+  /** Live computed units (0 = not billable) — rendered as the inline UnitsLine below the fields (Q1). */
+  unitsToBill: number;
 }
 
 /**
- * CHW-editable Session Start / Session End fields. Pre-filled from
- * ``sessionStartedAt`` / ``sessionEndedAt`` when the caller has them, but
- * always editable — the CHW is the source of truth for the actual times
- * worked, and Units to Bill (rendered at the bottom of the form) is derived
- * live from whatever is entered here via ``computeUnitsFromTimes``.
+ * CHW-editable Session Start / Session End fields, plus the live computed
+ * units line — rendered together at the BOTTOM of the form (Q1, 2026-07-13;
+ * previously Session Time was at the top and Units to Bill was its own
+ * Gross/Net/Rate card further down). Pre-filled from ``sessionStartedAt`` /
+ * ``sessionEndedAt`` when the caller has them, but always editable — the CHW
+ * is the source of truth for the actual times worked, and the units line
+ * recomputes live from whatever is entered here via ``computeUnitsFromTimes``.
  *
  * Free-text "MM/DD/YYYY HH:MM" (24-hour clock) input with digit-only
  * auto-formatting, mirroring the DOB field in AddMemberModal.tsx — see
@@ -619,6 +621,7 @@ function SessionTimesSection({
   onEndChange,
   startError,
   endError,
+  unitsToBill,
 }: SessionTimesSectionProps): React.JSX.Element {
   return (
     <View style={sh.section}>
@@ -655,8 +658,12 @@ function SessionTimesSection({
         </View>
       </Card>
       <Text style={st.hint}>
-        24-hour clock, e.g. 07/12/2026 14:30. Used to auto-calculate Units to Bill below.
+        24-hour clock, e.g. 07/12/2026 14:30. Used to auto-calculate units below.
       </Text>
+
+      {/* Q1: inline computed-units line (or not-billable notice) — replaces
+          the old separate "Units to Bill" Gross/Net/Rate card. */}
+      <UnitsLine value={unitsToBill} />
     </View>
   );
 }
@@ -824,7 +831,6 @@ export function DocumentationModal({
   // sensible starting number. Once both times are valid, they're authoritative.
   const unitsToBill =
     timesResult.durationMinutes != null ? timesResult.units : computeUnitsFromDuration(durationMinutes);
-  const effectiveDurationMinutes = timesResult.durationMinutes ?? durationMinutes ?? null;
 
   const startError: string | null =
     sessionStartInput.length > 0 && timesResult.error === 'invalid_start'
@@ -837,11 +843,22 @@ export function DocumentationModal({
       ? 'Session end must be after session start.'
       : null;
 
+  // Q2 (16-minute billable floor): a session under 16 minutes computes to 0
+  // units and is NOT billable. The CHW must never be able to file a
+  // <16-minute claim — block submit entirely rather than allowing a
+  // documentation-without-billing path, matching the backend's
+  // validate_claim() rejecting a computed 0-unit claim with a 422 (see
+  // billing_service.py). Only evaluated once both times are otherwise valid
+  // (timesResult.error === null) so the "not billable" message doesn't
+  // compete with the "enter a valid time" messages above.
+  const isBelowFloor = timesResult.error === null && isBelowBillableFloor(unitsToBill);
+
   const isValid =
     selectedDiagnosisCodes.length > 0 &&
     selectedProcedureCode.length > 0 &&
     chwNotes.trim().length > 0 &&
-    timesResult.error === null;
+    timesResult.error === null &&
+    !isBelowFloor;
 
   const toggleDiagnosisCode = useCallback((code: string): void => {
     setSelectedDiagnosisCodes((prev) =>
@@ -1035,17 +1052,7 @@ export function DocumentationModal({
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          {/* Session Start / Session End — drives Units to Bill below */}
-          <SessionTimesSection
-            startValue={sessionStartInput}
-            endValue={sessionEndInput}
-            onStartChange={setSessionStartInput}
-            onEndChange={setSessionEndInput}
-            startError={startError}
-            endError={endError}
-          />
-
-          {/* Diagnosis codes */}
+          {/* Diagnosis codes — grouped by resource-need vertical (Q3) */}
           <DiagnosisCodeSection
             selectedCodes={selectedDiagnosisCodes}
             onToggle={toggleDiagnosisCode}
@@ -1092,8 +1099,19 @@ export function DocumentationModal({
             </Card>
           </View>
 
-          {/* Units to bill — bottom of the form, immediately above Submit */}
-          <UnitsSummary value={unitsToBill} durationMinutes={effectiveDurationMinutes} />
+          {/* Q1: Session Start / Session End + inline computed-units line —
+              bottom of the form, immediately above Submit. Replaces the old
+              top-of-form placement and the separate Gross/Net/Rate
+              UnitsSummary card. */}
+          <SessionTimesSection
+            startValue={sessionStartInput}
+            endValue={sessionEndInput}
+            onStartChange={setSessionStartInput}
+            onEndChange={setSessionEndInput}
+            startError={startError}
+            endError={endError}
+            unitsToBill={unitsToBill}
+          />
         </ScrollView>
 
         {/* ── Fixed footer ──────────────────────────────────────────────────── */}
@@ -1104,12 +1122,16 @@ export function DocumentationModal({
                 ? 'Select at least one diagnosis code to submit.'
                 : !selectedProcedureCode
                 ? 'Select a procedure code to submit.'
+                : chwNotes.trim().length === 0
+                ? 'Your notes are required before submitting.'
                 : timesResult.error === 'invalid_start'
                 ? 'Enter a valid session start time (MM/DD/YYYY HH:MM).'
                 : timesResult.error === 'invalid_end'
                 ? 'Enter a valid session end time (MM/DD/YYYY HH:MM).'
                 : timesResult.error === 'end_before_start'
                 ? 'Session end must be after session start.'
+                : isBelowFloor
+                ? `Session is under ${MIN_BILLABLE_DURATION_MINUTES} minutes and is not billable — no claim can be filed.`
                 : 'Your notes are required before submitting.'}
             </Text>
           )}

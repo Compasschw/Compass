@@ -302,6 +302,14 @@ async def test_documentation_persists_ai_summary_fields(
         "diagnosis_codes": ["Z59.7"],  # Z59.7 = food insecurity (valid code)
         "procedure_code": "98960",
         "units_to_bill": 1,
+        # Explicit session_start_time/session_end_time (30min, >=16min-floor
+        # billable — see billing_service.calculate_units) rather than relying
+        # on the server-tracked start/complete duration, which in a fast test
+        # run is ~0 minutes and would now 422 as not-billable under the
+        # 16-minute floor (2026-07-13). This test is about ai_summary
+        # persistence, not the units bracket.
+        "session_start_time": "2026-06-01T10:00:00Z",
+        "session_end_time": "2026-06-01T10:30:00Z",
         # AI summary provenance — frontend passes through from POST /ai-summary.
         "ai_summary": "The member expressed concerns about food insecurity. "
                       "The CHW referred them to the local food bank programme "
@@ -378,6 +386,10 @@ async def test_documentation_persists_without_ai_summary(
         "diagnosis_codes": ["Z13.89"],
         "procedure_code": "98960",
         "units_to_bill": 1,
+        # Explicit >=16min-floor billable window — see comment in
+        # test_documentation_persists_ai_summary_fields above.
+        "session_start_time": "2026-06-02T10:00:00Z",
+        "session_end_time": "2026-06-02T10:30:00Z",
         # No ai_summary fields — old client behaviour.
     }
 
