@@ -29,10 +29,15 @@
  *
  * Persistence: this component owns NO answer-saving logic. Bootstrapping
  * (fetch template + start/resume the assessment) is `useAssessmentBootstrap`;
- * per-answer save + completion is `AssessmentForm`, reused completely
- * unmodified — both are the same single source of truth the old full-screen
- * `CHWMemberAssessmentScreen` used, so answers still land in the exact same
- * place and still surface in the member profile's Screening Results.
+ * per-answer save + completion is `AssessmentForm` — both are the same
+ * single source of truth the old full-screen `CHWMemberAssessmentScreen`
+ * used, so answers still land in the exact same place and still surface in
+ * the member profile's Screening Results. `AssessmentForm` additionally
+ * takes an `initialAnswers` prop (unused by anything until now); this panel
+ * is the first caller to pass it, seeded from `useAssessmentBootstrap`'s
+ * resume hydration (Epic W3) — reopening this panel on an in-progress
+ * assessment shows prior answers AND prior per-question skips (Epic W2)
+ * already selected, not a blank form.
  *
  * On-brand styling: emerald primary / card tokens from `theme/tokens`,
  * matching `DocumentationModal`'s in-app confirm/success panels and
@@ -136,7 +141,7 @@ interface SdohBootstrapBodyProps {
 }
 
 function SdohBootstrapBody({ sessionId, onComplete, onPause }: SdohBootstrapBodyProps): React.JSX.Element {
-  const { state, template, assessmentId, errorMessage } = useAssessmentBootstrap(sessionId);
+  const { state, template, assessmentId, errorMessage, initialAnswers } = useAssessmentBootstrap(sessionId);
 
   if (state === 'loading') {
     return (
@@ -172,6 +177,10 @@ function SdohBootstrapBody({ sessionId, onComplete, onPause }: SdohBootstrapBody
       assessmentId={assessmentId as string}
       onComplete={onComplete}
       onPause={onPause}
+      // Epic W3 — hydrates prior answers/skips so reopening this panel for
+      // an in-progress assessment shows previously-saved state instead of a
+      // blank form.
+      initialAnswers={initialAnswers}
     />
   );
 }

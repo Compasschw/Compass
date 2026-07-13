@@ -17,7 +17,10 @@ POST /api/v1/assessments/{assessment_id}/responses
     Append a single response row. Per-answer persistence — each call
     saves exactly one answer. Multiple responses to the same question_id
     are allowed (creates new rows, not updates). ``captured_at`` defaults
-    to server UTC if not provided.
+    to server UTC if not provided. Set ``skipped: true`` (Epic W2) to record
+    that the CHW explicitly skipped the question rather than answering it —
+    this is stored distinctly from a real answer via the ``skipped`` column
+    and still counts toward assessment progress.
     Auth: CHW who owns the assessment, or admin.
 
 POST /api/v1/assessments/{assessment_id}/complete
@@ -276,7 +279,9 @@ async def start_assessment(
         "Per-answer persistence — each call creates exactly one response row. "
         "Multiple responses to the same question_id are permitted (re-assessment); "
         "they create new rows, never updates. "
-        "captured_at defaults to server UTC if not provided by the client."
+        "captured_at defaults to server UTC if not provided by the client. "
+        "skipped=true (Epic W2) records an explicit skip, distinct from a real "
+        "answer and from an unanswered question."
     ),
     status_code=201,
     response_model=AssessmentResponseOut,
@@ -310,12 +315,17 @@ async def append_response(
 
     captured_at = data.captured_at or datetime.now(UTC)
 
+    # data.answer_value / data.answer_label are guaranteed non-None here by
+    # AssessmentResponseCreate's model_validator: either the client supplied
+    # real answer text (skipped=False), or the skipped=True placeholder
+    # ('skipped'/'Skipped') was already filled in during validation.
     response_row = MemberAssessmentResponse(
         assessment_id=assessment_id,
         question_id=data.question_id,
         question_text=data.question_text,
-        answer_value=data.answer_value,
-        answer_label=data.answer_label,
+        answer_value=data.answer_value,  # type: ignore[arg-type]
+        answer_label=data.answer_label,  # type: ignore[arg-type]
+        skipped=data.skipped,
         category=data.category,
         subcategory=data.subcategory,
         tags=data.tags,
@@ -327,8 +337,8 @@ async def append_response(
     await db.refresh(response_row)
 
     logger.info(
-        "assessment response saved: assessment=%s question=%s captured_at=%s",
-        assessment_id, data.question_id, captured_at.isoformat(),
+        "assessment response saved: assessment=%s question=%s skipped=%s captured_at=%s",
+        assessment_id, data.question_id, data.skipped, captured_at.isoformat(),
     )
     return AssessmentResponseOut.model_validate(response_row)
 

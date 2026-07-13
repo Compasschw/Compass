@@ -27,12 +27,23 @@ Design decisions
   (e.g., in-person visit where the session is not tracked digitally).
 - status uses a string enum kept as VARCHAR(20) for portability. The valid
   values mirror the Session pattern elsewhere in the codebase.
+- ``skipped`` (Epic W2) is a dedicated BOOLEAN column rather than a sentinel
+  value in ``answer_value``. This was chosen over a sentinel because:
+  (1) it keeps ``answer_value``/``answer_label`` free of magic strings that
+  downstream AI-summary / admin-reporting queries would otherwise need to
+  special-case; (2) a boolean column is trivially and unambiguously
+  queryable/filterable (``WHERE skipped = true``) and indexable, whereas a
+  sentinel requires exact-string matching that could collide with a future
+  legitimate option value; (3) it is a strictly additive migration (new
+  NOT NULL column with a server default) with zero risk to existing rows or
+  existing read paths. The tradeoff is one extra column + one Alembic
+  migration, which is minimal footprint for a materially safer design.
 """
 
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -112,6 +123,10 @@ class MemberAssessmentResponse(Base):
     2. A complete audit trail with per-answer timestamps.
     3. Re-assessment support — a second (or third) answer to the same question_id
        produces a new row, never an UPDATE, preserving the history.
+    4. Skip support (Epic W2) — tapping "Skip" on a question also writes a row
+       here with ``skipped=True``, so skip counts toward progress and survives
+       resume exactly like a real answer, while remaining distinguishable from
+       one via the ``skipped`` column.
 
     To get the "current" answer for a question, query:
         SELECT * FROM member_assessment_responses
@@ -146,6 +161,17 @@ class MemberAssessmentResponse(Base):
     # Array of source-PDF tags: ["HEDIS"], ["SDOH"], ["Member needs"], or combinations.
     # JSONB gives us the @> operator for "has this tag?" queries without a join table.
     tags: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # Epic W2 — per-question Skip. True when the CHW explicitly tapped "Skip"
+    # for this question rather than selecting a real option. Distinct from
+    # "unanswered" (no row exists at all for this question_id) and distinct
+    # from a real answer (skipped=False). See module docstring for why this
+    # is a dedicated column rather than a sentinel `answer_value`.
+    # When skipped=True, answer_value/answer_label still hold a placeholder
+    # ("skipped"/"Skipped") so the NOT NULL/snapshot contract on those columns
+    # is preserved for every existing reader of this table.
+    skipped: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false", index=True
+    )
     # The exact moment this answer was recorded (server time if not provided by client).
     captured_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False

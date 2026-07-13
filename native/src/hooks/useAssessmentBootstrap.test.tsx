@@ -138,4 +138,65 @@ describe('useAssessmentBootstrap', () => {
     expect(result.current.errorMessage).toBe('Failed to start assessment. Please try again.');
     expect(result.current.assessmentId).toBeNull();
   });
+
+  it('returns an empty initialAnswers array for a freshly created assessment (no prior responses)', async () => {
+    mockedApi.mockImplementation(async (path: string) => {
+      if (path === `/assessment-templates/${SDOH_ASSESSMENT_TEMPLATE_ID}`) return templateFixture;
+      if (path === `/sessions/${SESSION_ID}/assessments`) return startAssessmentFixture;
+      throw new Error(`unexpected path ${path}`);
+    });
+
+    const { result } = setup();
+
+    await waitFor(() => expect(result.current.state).toBe('ready'));
+    expect(result.current.initialAnswers).toEqual([]);
+  });
+
+  it('Epic W3: reduces prior responses (incl. skipped) into initialAnswers, keeping the latest per question', async () => {
+    mockedApi.mockImplementation(async (path: string) => {
+      if (path === `/assessment-templates/${SDOH_ASSESSMENT_TEMPLATE_ID}`) return templateFixture;
+      if (path === `/sessions/${SESSION_ID}/assessments`) {
+        return {
+          ...startAssessmentFixture,
+          responses: [
+            {
+              id: 'resp-1',
+              question_id: 'q1',
+              answer_value: 'no',
+              answer_label: 'No',
+              skipped: false,
+              captured_at: '2026-07-01T09:00:00Z',
+            },
+            // Re-answered the same question later — the latest (captured_at
+            // ascending, as the backend returns it) must win.
+            {
+              id: 'resp-2',
+              question_id: 'q1',
+              answer_value: 'yes',
+              answer_label: 'Yes',
+              skipped: false,
+              captured_at: '2026-07-01T09:05:00Z',
+            },
+            {
+              id: 'resp-3',
+              question_id: 'q2',
+              answer_value: 'skipped',
+              answer_label: 'Skipped',
+              skipped: true,
+              captured_at: '2026-07-01T09:06:00Z',
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+
+    const { result } = setup();
+
+    await waitFor(() => expect(result.current.state).toBe('ready'));
+    expect(result.current.initialAnswers).toEqual([
+      { questionId: 'q1', value: 'yes', label: 'Yes', skipped: false },
+      { questionId: 'q2', value: 'skipped', label: 'Skipped', skipped: true },
+    ]);
+  });
 });
