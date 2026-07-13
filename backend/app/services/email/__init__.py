@@ -25,6 +25,10 @@ def get_email_provider() -> EmailProvider:
             from_address=getattr(settings, "email_from", "noreply@joincompasschw.com"),
             reply_to=getattr(settings, "email_reply_to", None) or None,
         )
+    elif provider_name == "noop":
+        # Test/CI-only — see NoopEmailProvider's docstring.
+        from app.services.email.base import NoopEmailProvider
+        _provider_instance = NoopEmailProvider()
     else:
         raise ValueError(f"Unknown email provider: {provider_name}")
 
@@ -182,6 +186,89 @@ async def send_request_accepted_email(
         return EmailResult(success=False, error=str(e))
 
 
+def render_signup_confirmation_email(name: str) -> tuple[str, str, str]:
+    """Render subject, HTML body, text body for the generic post-signup
+    "thanks for signing up" confirmation email.
+
+    Intentionally generic/role-agnostic — the same copy is used for
+    self-service signup, social (Google/Apple) signup, and CHW-initiated
+    member onboarding (Epic A). ``name`` is the account holder's display
+    name; falls back gracefully to a neutral greeting if empty.
+    """
+    greeting_name = (name or "").strip() or "there"
+    subject = "Welcome to CompassCHW"
+
+    html = f"""<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background:#F4F1ED;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+  <div style="max-width:480px;margin:0 auto;padding:40px 24px;">
+    <h1 style="color:#1E3320;font-size:24px;margin:0 0 8px 0;">
+      Compass<span style="color:#7A9F5A;">CHW</span>
+    </h1>
+    <div style="background:white;border-radius:16px;padding:32px;margin-top:24px;">
+      <h2 style="color:#1E3320;font-size:20px;margin:0 0 16px 0;">
+        Hi {greeting_name},
+      </h2>
+      <p style="color:#555;font-size:15px;line-height:1.5;margin:0 0 16px 0;">
+        Thanks for signing up for CompassCHW — your account has been created
+        successfully.
+      </p>
+      <p style="color:#555;font-size:15px;line-height:1.5;margin:0 0 16px 0;">
+        You can open the app any time to pick up where you left off.
+      </p>
+      <p style="color:#888;font-size:13px;line-height:1.5;margin:24px 0 0 0;">
+        If you didn't create this account, you can safely ignore this email.
+      </p>
+    </div>
+    <p style="color:#888;font-size:12px;text-align:center;margin-top:24px;">
+      CompassCHW · Community Health Workers, connected.
+    </p>
+  </div>
+</body>
+</html>"""
+
+    text = f"""Hi {greeting_name},
+
+Thanks for signing up for CompassCHW — your account has been created successfully.
+
+You can open the app any time to pick up where you left off.
+
+If you didn't create this account, you can safely ignore this email.
+
+— CompassCHW"""
+
+    return subject, html, text
+
+
+async def send_signup_confirmation_email(to: str, name: str) -> EmailResult:
+    """Send the generic post-signup confirmation email. Returns a result;
+    never raises.
+
+    Best-effort by construction (matches ``send_magic_link_email`` /
+    ``send_request_accepted_email``): any exception raised while resolving
+    the provider or sending is caught, logged, and folded into a failed
+    ``EmailResult`` rather than propagating — so a slow/unavailable SES (or
+    a sandbox-mode rejection) never blocks or fails the caller's HTTP
+    response. Callers should invoke this via ``BackgroundTasks`` (see
+    ``app.services.signup_confirmations``) rather than awaiting it inline on
+    the request path.
+    """
+    subject, html, text = render_signup_confirmation_email(name)
+    try:
+        provider = get_email_provider()
+        return await provider.send(EmailMessage(
+            to=to,
+            subject=subject,
+            html=html,
+            text=text,
+            tags={"category": "signup_confirmation"},
+        ))
+    except Exception as e:  # noqa: BLE001
+        import logging
+        logging.getLogger("compass.email").error("Signup confirmation email failed: %s", e)
+        return EmailResult(success=False, error=str(e))
+
+
 __all__ = [
     "EmailMessage",
     "EmailProvider",
@@ -189,4 +276,6 @@ __all__ = [
     "get_email_provider",
     "render_magic_link_email",
     "send_magic_link_email",
+    "render_signup_confirmation_email",
+    "send_signup_confirmation_email",
 ]

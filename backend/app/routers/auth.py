@@ -29,6 +29,7 @@ from app.services.auth_service import (
     revoke_refresh_token,
     store_refresh_token,
 )
+from app.services.signup_confirmations import send_signup_confirmations
 from app.services.storage.avatar_urls import presigned_avatar_url
 from app.utils.security import decode_token
 
@@ -151,6 +152,12 @@ async def register(
     if user.role == "member":
         background_tasks.add_task(_sync_new_member_to_pear, user.id)
         background_tasks.add_task(_append_new_member_to_csv, user.id)
+
+    # Best-effort signup confirmation email (+ SMS for already-SMS-eligible
+    # members — rare at this point since phone verification is a separate
+    # OTP flow, but the helper checks anyway). Fire-and-forget: a slow/down
+    # SES or Vonage never blocks or fails this response (Epic A).
+    background_tasks.add_task(send_signup_confirmations, user.id)
 
     return TokenResponse(
         access_token=access, refresh_token=refresh, role=user.role, name=user.name,
@@ -341,6 +348,10 @@ async def _handle_oauth_signin(
         # until /auth/complete-member-onboarding supplies those fields.
         background_tasks.add_task(_sync_new_member_to_pear, user.id)
         background_tasks.add_task(_append_new_member_to_csv, user.id)
+
+        # Best-effort signup confirmation email (Epic A). Fire-and-forget,
+        # same guarantee as /auth/register — never blocks or fails sign-up.
+        background_tasks.add_task(send_signup_confirmations, user.id)
     else:
         # Existing user — check if they still need onboarding (OAuth-created members
         # that haven't completed the form yet).
