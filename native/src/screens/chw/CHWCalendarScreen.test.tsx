@@ -50,6 +50,17 @@ import { CHWCalendarScreen, deriveBadgeStatus } from './CHWCalendarScreen';
 
 const mockedApi = api as unknown as ReturnType<typeof vi.fn>;
 
+// All time-sensitive fixtures AND the component's internal clock are pinned to
+// this fixed instant. Previously fixtures used `Date.now() ± Nh`, which rolled
+// across the local-midnight boundary in CI (e.g. `Date.now() - 5h` landed on
+// the prior calendar day when the suite ran between 00:00–05:00 UTC), so a
+// "today" fixture silently dropped out of Day view's todaySessions bucket and
+// the render assertions flaked. Anchoring both sides to FROZEN_NOW removes the
+// dependency on wall-clock time entirely. The `beforeEach` freezes ONLY Date
+// (`toFake: ['Date']`) — setTimeout/setInterval stay real, so React Query and
+// testing-library's async polling (waitFor/findBy) are unaffected.
+const FROZEN_NOW = new Date('2026-07-12T18:00:00.000Z');
+
 // ─── Fixtures ───────────────────────────────────────────────────────────────
 
 const CHW_ID = 'chw-1';
@@ -61,7 +72,7 @@ const NEW_SESSION_ID = 'sess-new-1';
 // Derived from "now" so the fixture never goes stale, but computed once so
 // every helper (fixture + input-value expectations) agrees on the exact same
 // wall-clock components regardless of the machine's timezone.
-const scheduledStart = new Date();
+const scheduledStart = new Date(FROZEN_NOW);
 scheduledStart.setDate(scheduledStart.getDate() + 3);
 scheduledStart.setHours(14, 0, 0, 0); // 2:00 PM local
 const scheduledEnd = new Date(scheduledStart.getTime() + 60 * 60 * 1000); // 3:00 PM local
@@ -120,7 +131,7 @@ const COMPLETED_SESSION_ID = 'sess-completed-1';
 const MEMBER_ID_2 = 'member-2';
 const MEMBER_NAME_2 = 'Diego Alvarez';
 
-const confirmedUpcomingStart = new Date(Date.now() + 2 * 60 * 60 * 1000); // +2h, today
+const confirmedUpcomingStart = new Date(FROZEN_NOW.getTime() + 2 * 60 * 60 * 1000); // +2h, today
 const confirmedUpcomingEnd = new Date(confirmedUpcomingStart.getTime() + 60 * 60 * 1000);
 
 const confirmedSessionFixture = {
@@ -139,7 +150,7 @@ const confirmedSessionFixture = {
   member_name: MEMBER_NAME,
 };
 
-const completedStart = new Date(Date.now() - 3 * 60 * 60 * 1000); // -3h, today
+const completedStart = new Date(FROZEN_NOW.getTime() - 3 * 60 * 60 * 1000); // -3h, today
 const completedEnd = new Date(completedStart.getTime() + 60 * 60 * 1000);
 
 const completedSessionFixture = {
@@ -167,7 +178,7 @@ const CANCELLED_SESSION_ID = 'sess-cancelled-1';
 const MEMBER_ID_3 = 'member-3';
 const MEMBER_NAME_3 = 'Priya Nair';
 
-const cancelledStart = new Date(Date.now() + 1 * 60 * 60 * 1000); // +1h, today
+const cancelledStart = new Date(FROZEN_NOW.getTime() + 1 * 60 * 60 * 1000); // +1h, today
 const cancelledEnd = new Date(cancelledStart.getTime() + 60 * 60 * 1000);
 
 /** A session the CHW Removed — status flips to 'cancelled' by useCancelSession. */
@@ -191,7 +202,7 @@ const PAST_SCHEDULED_SESSION_ID = 'sess-past-scheduled-1';
 const MEMBER_ID_4 = 'member-4';
 const MEMBER_NAME_4 = 'Sam Okafor';
 
-const pastScheduledStart = new Date(Date.now() - 5 * 60 * 60 * 1000); // -5h, today
+const pastScheduledStart = new Date(FROZEN_NOW.getTime() - 5 * 60 * 60 * 1000); // -5h, today
 const pastScheduledEnd = new Date(pastScheduledStart.getTime() + 60 * 60 * 1000);
 
 /** A confirmed session whose time passed but the CHW never began it —
@@ -309,6 +320,11 @@ async function openProposeModal(): Promise<void> {
 }
 
 beforeEach(() => {
+  // Freeze ONLY Date so the component's internal `new Date()` agrees with the
+  // FROZEN_NOW-anchored fixtures. setTimeout/setInterval stay real, so React
+  // Query and testing-library's async polling are unaffected.
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(FROZEN_NOW);
   scheduleShouldFail = false;
   startShouldFail = false;
   additionalSessionFixtures = [];
@@ -321,6 +337,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.clearAllMocks();
+  vi.useRealTimers();
 });
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -612,7 +629,7 @@ describe('CHWCalendarScreen — removed sessions vanish from the calendar (N1)',
  * rendered-UI assertion tying it back to the actual Session Details modal.
  */
 describe('CHWCalendarScreen — deriveBadgeStatus truthful status tags (O1)', () => {
-  const now = new Date('2026-07-12T18:00:00.000Z');
+  const now = FROZEN_NOW;
 
   /** Builds a minimal-but-valid SessionData row with the given overrides. */
   function makeSession(overrides: Partial<SessionData>): SessionData {
