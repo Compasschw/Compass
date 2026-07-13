@@ -8,6 +8,13 @@
  *   <1280px → right rail hidden; thread list + conversation both visible
  *   <900px  → only one pane visible at a time; back button reveals thread list
  *
+ * SDOH / Health Screening panel (InlineSdohPanel) sizing:
+ *   >=1280px (rail visible) → always a real sibling pane, never an overlay.
+ *   On widths too narrow for all 4 columns at once (>=1280 and
+ *   <SDOH_PANEL_PANE_BREAKPOINT) opening it temporarily collapses the
+ *   thread-list pane to reclaim room instead of falling back to a
+ *   rail-covering overlay sheet — see `collapseListForSdoh` below.
+ *
  * Data wiring:
  *   - ThreadListPane    : useSessions() — each session = one member thread
  *   - ConversationPane  : useSessionMessages(sessionId) — polls every 4 s
@@ -105,7 +112,6 @@ import {
   Pill,
   SectionHeader,
   ResizableDivider,
-  RightDrawer,
   PressableCard,
   StaggerList,
   EmptyState,
@@ -2039,25 +2045,40 @@ function ConversationPane({
   );
 }
 
-// ─── Case Note Modal ──────────────────────────────────────────────────────────
+// ─── Case Note inline section ──────────────────────────────────────────────
 
-interface CaseNoteModalProps {
+interface CaseNoteInlineSectionProps {
   readonly memberId: string;
   readonly sessionId: string;
-  readonly visible: boolean;
   readonly onClose: () => void;
 }
 
 /**
- * RightDrawer modal for adding a clinical case note for the member.
- * POSTs to POST /api/v1/case-notes via useCreateCaseNote.
+ * Inline, in-flow case-note editor rendered directly inside
+ * MemberContextRail's scrollable content — deliberately NOT a `RightDrawer`.
+ *
+ * It used to be a right-docked `RightDrawer` (`CaseNoteModal`). On web,
+ * RightDrawer's default (non-inline) mode renders `position: fixed` at
+ * `zIndex: 1000` pinned to the right edge of the viewport — the same edge
+ * and (effectively) the same stacking layer `InlineSdohPanel`'s 'sheet'
+ * variant uses. Opening a case note while the SDOH panel was open therefore
+ * visually overlapped it. An un-merged side-by-side attempt (PR #174) tried
+ * to reconcile the two fixed overlays; that approach was abandoned in favor
+ * of this simpler fix: render the case note as a normal sibling *inside*
+ * the rail's own document flow. A pure in-flow element can never cover
+ * anything living outside the rail (the SDOH pane, the thread list, etc.)
+ * — expanding it only ever grows the rail's own scroll content, which is
+ * exactly the "grows into the empty space below Quick Actions" behavior
+ * this was asked for.
+ *
+ * Persistence: unchanged — POSTs to POST /api/v1/case-notes via
+ * useCreateCaseNote, same Pin-to-top toggle.
  */
-function CaseNoteModal({
+function CaseNoteInlineSection({
   memberId,
   sessionId,
-  visible,
   onClose,
-}: CaseNoteModalProps): React.JSX.Element {
+}: CaseNoteInlineSectionProps): React.JSX.Element {
   const [noteBody, setNoteBody] = useState('');
   const [isPinned, setIsPinned] = useState(false);
   const createNote = useCreateCaseNote();
@@ -2083,98 +2104,144 @@ function CaseNoteModal({
     onClose();
   }, [onClose]);
 
-  if (!visible) return <></>;
-
   return (
-    <RightDrawer
-      isOpen={visible}
-      onClose={handleClose}
-      title="Add Case Note"
-      subtitle="Attach a clinical note to this member's record"
-      footer={
-        <View style={caseNoteModalStyles.footer}>
-          <TouchableOpacity
-            style={caseNoteModalStyles.cancelBtn}
-            onPress={handleClose}
-            accessibilityRole="button"
-            accessibilityLabel="Cancel"
-          >
-            <Text style={caseNoteModalStyles.cancelBtnText}>Cancel</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[
-              caseNoteModalStyles.saveBtn,
-              (createNote.isPending || noteBody.trim().length === 0) &&
-                caseNoteModalStyles.saveBtnDisabled,
-            ]}
-            onPress={() => { void handleSave(); }}
-            disabled={createNote.isPending || noteBody.trim().length === 0}
-            accessibilityRole="button"
-            accessibilityLabel="Save case note"
-          >
-            {createNote.isPending ? (
-              <ActivityIndicator size="small" color="#ffffff" />
-            ) : (
-              <Text style={caseNoteModalStyles.saveBtnText}>Save Note</Text>
-            )}
-          </TouchableOpacity>
-        </View>
-      }
+    <View
+      style={[caseNoteInlineStyles.container, shadows.card as ViewStyle]}
+      role="region"
+      accessibilityLabel="Case Note"
     >
-      <View style={caseNoteModalStyles.content}>
-        <Text style={caseNoteModalStyles.inputLabel}>Note</Text>
-        <TextInput
-          style={caseNoteModalStyles.noteInput}
-          value={noteBody}
-          onChangeText={setNoteBody}
-          placeholder="Clinical observations, follow-up actions, member updates..."
-          placeholderTextColor={tokens.textMuted}
-          multiline
-          numberOfLines={5}
-          accessibilityLabel="Case note body"
-          autoFocus
-        />
+      <View style={caseNoteInlineStyles.header}>
+        <View style={caseNoteInlineStyles.headerTextBlock}>
+          <Text style={caseNoteInlineStyles.headerTitle}>Add Case Note</Text>
+          <Text style={caseNoteInlineStyles.headerSubtitle}>
+            Attach a clinical note to this member&apos;s record
+          </Text>
+        </View>
         <TouchableOpacity
-          style={caseNoteModalStyles.pinRow}
-          onPress={() => setIsPinned((v) => !v)}
-          accessibilityRole="checkbox"
-          accessibilityLabel={isPinned ? 'Unpin note' : 'Pin note to top'}
+          onPress={handleClose}
+          accessibilityRole="button"
+          accessibilityLabel="Close case note"
+          style={caseNoteInlineStyles.closeBtn}
         >
-          <View
-            style={[
-              caseNoteModalStyles.checkbox,
-              isPinned && caseNoteModalStyles.checkboxActive,
-            ]}
-          >
-            {isPinned ? (
-              <CheckCircle2 size={14} color="#ffffff" />
-            ) : null}
-          </View>
-          <Text style={caseNoteModalStyles.pinLabel}>Pin to top of notes</Text>
+          <X size={16} color={tokens.textSecondary} />
         </TouchableOpacity>
       </View>
-    </RightDrawer>
+
+      {/* flex:1 + minHeight: large by default, and grows further into any
+          empty space left below Quick Actions when the rail's ScrollView
+          content is shorter than the viewport (railContent's flexGrow: 1).
+          Multiline TextInput renders as a native <textarea> on web, which
+          scrolls internally once the note text exceeds the box height —
+          the rail itself never has to grow to accommodate a long note. */}
+      <TextInput
+        style={caseNoteInlineStyles.noteInput}
+        value={noteBody}
+        onChangeText={setNoteBody}
+        placeholder="Clinical observations, follow-up actions, member updates..."
+        placeholderTextColor={tokens.textMuted}
+        multiline
+        numberOfLines={10}
+        accessibilityLabel="Case note body"
+        autoFocus
+        textAlignVertical="top"
+      />
+
+      <TouchableOpacity
+        style={caseNoteInlineStyles.pinRow}
+        onPress={() => setIsPinned((v) => !v)}
+        accessibilityRole="checkbox"
+        accessibilityLabel={isPinned ? 'Unpin note' : 'Pin note to top'}
+        accessibilityState={{ checked: isPinned }}
+      >
+        <View
+          style={[
+            caseNoteInlineStyles.checkbox,
+            isPinned && caseNoteInlineStyles.checkboxActive,
+          ]}
+        >
+          {isPinned ? (
+            <CheckCircle2 size={14} color="#ffffff" />
+          ) : null}
+        </View>
+        <Text style={caseNoteInlineStyles.pinLabel}>Pin to top of notes</Text>
+      </TouchableOpacity>
+
+      <View style={caseNoteInlineStyles.footer}>
+        <TouchableOpacity
+          style={caseNoteInlineStyles.cancelBtn}
+          onPress={handleClose}
+          accessibilityRole="button"
+          accessibilityLabel="Cancel case note"
+        >
+          <Text style={caseNoteInlineStyles.cancelBtnText}>Cancel</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            caseNoteInlineStyles.saveBtn,
+            (createNote.isPending || noteBody.trim().length === 0) &&
+              caseNoteInlineStyles.saveBtnDisabled,
+          ]}
+          onPress={() => { void handleSave(); }}
+          disabled={createNote.isPending || noteBody.trim().length === 0}
+          accessibilityRole="button"
+          accessibilityLabel="Save case note"
+        >
+          {createNote.isPending ? (
+            <ActivityIndicator size="small" color="#ffffff" />
+          ) : (
+            <Text style={caseNoteInlineStyles.saveBtnText}>Save Note</Text>
+          )}
+        </TouchableOpacity>
+      </View>
+    </View>
   );
 }
 
-const caseNoteModalStyles = StyleSheet.create({
-  content: {
-    gap: spacing.md,
-    padding: spacing.lg,
+const caseNoteInlineStyles = StyleSheet.create({
+  container: {
+    flex: 1,
+    minHeight: 260,
+    backgroundColor: tokens.cardBg,
+    borderWidth: 1,
+    borderColor: tokens.cardBorder,
+    borderRadius: radius.xl,
+    padding: 14,
+    gap: spacing.sm,
   } as ViewStyle,
-  inputLabel: {
+  header: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+  } as ViewStyle,
+  headerTextBlock: {
+    flex: 1,
+    gap: 2,
+  } as ViewStyle,
+  headerTitle: {
     fontSize: 13,
-    fontWeight: '500',
-    color: tokens.textSecondary,
+    fontWeight: '650' as any, // eslint-disable-line @typescript-eslint/no-explicit-any -- matches railCardTitle's numeric-weight pattern
+    color: tokens.textPrimary,
   } as TextStyle,
+  headerSubtitle: {
+    fontSize: 11,
+    color: tokens.textSecondary,
+    lineHeight: 15,
+    marginTop: 2,
+  } as TextStyle,
+  closeBtn: {
+    padding: 4,
+    borderRadius: 6,
+    marginLeft: spacing.sm,
+  } as ViewStyle,
   noteInput: {
+    flex: 1,
+    minHeight: 160,
     borderWidth: 1,
     borderColor: '#E5E7EB',
     borderRadius: radius.md,
     padding: spacing.md,
-    fontSize: 14,
+    fontSize: 13,
     color: tokens.textPrimary,
-    minHeight: 120,
     textAlignVertical: 'top',
   } as unknown as TextStyle,
   pinRow: {
@@ -2183,8 +2250,8 @@ const caseNoteModalStyles = StyleSheet.create({
     gap: spacing.sm,
   } as ViewStyle,
   checkbox: {
-    width: 20,
-    height: 20,
+    width: 18,
+    height: 18,
     borderRadius: 4,
     borderWidth: 1.5,
     borderColor: '#D1D5DB',
@@ -2196,30 +2263,29 @@ const caseNoteModalStyles = StyleSheet.create({
     borderColor: tokens.primary,
   } as ViewStyle,
   pinLabel: {
-    fontSize: 13,
+    fontSize: 12,
     color: tokens.textSecondary,
   } as TextStyle,
   footer: {
     flexDirection: 'row',
     gap: spacing.sm,
-    padding: spacing.lg,
   } as ViewStyle,
   cancelBtn: {
     flex: 1,
-    paddingVertical: 11,
+    paddingVertical: 9,
     borderWidth: 1,
     borderColor: '#E5E7EB',
     borderRadius: radius.md,
     alignItems: 'center',
   } as ViewStyle,
   cancelBtnText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
     color: tokens.textSecondary,
   } as TextStyle,
   saveBtn: {
     flex: 1,
-    paddingVertical: 11,
+    paddingVertical: 9,
     backgroundColor: tokens.primary,
     borderRadius: radius.md,
     alignItems: 'center',
@@ -2228,7 +2294,7 @@ const caseNoteModalStyles = StyleSheet.create({
     opacity: 0.5,
   } as ViewStyle,
   saveBtnText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
     color: '#ffffff',
   } as TextStyle,
@@ -2343,7 +2409,9 @@ function MemberContextRail({
   const navigation = useNavigation<any>(); // eslint-disable-line @typescript-eslint/no-explicit-any
 
   const [questionsDrawerOpen, setQuestionsDrawerOpen] = useState(false);
-  const [caseNoteModalOpen, setCaseNoteModalOpen] = useState(false);
+  // Inline (not drawer) case-note editor state — see CaseNoteInlineSection's
+  // header comment for why this is no longer a RightDrawer.
+  const [caseNoteOpen, setCaseNoteOpen] = useState(false);
   const [endSessionPending, setEndSessionPending] = useState(false);
   const [abortSessionPending, setAbortSessionPending] = useState(false);
   const [showEndConfirm, setShowEndConfirm] = useState(false);
@@ -2974,9 +3042,10 @@ function MemberContextRail({
         <View role="region" accessibilityLabel="Quick Actions">
           <Text style={styles.quickActionsLabel}>QUICK ACTIONS</Text>
           <View style={styles.quickActionsStack}>
-            {/* Add Case Note */}
+            {/* Add Case Note — toggles the inline editor below, in-flow in
+                this rail's own scroll content (see CaseNoteInlineSection). */}
             <PressableCard
-              onPress={() => setCaseNoteModalOpen(true)}
+              onPress={() => setCaseNoteOpen((v) => !v)}
               accessibilityLabel="Add case note"
               style={styles.quickActionBtn}
             >
@@ -3006,6 +3075,25 @@ function MemberContextRail({
             </PressableCard>
           </View>
         </View>
+
+        {/* Inline Case Note editor — expands in-flow below Quick Actions
+            instead of stacking a 2nd right-docked drawer on top of the SDOH
+            panel. Both used to dock at the right edge at the same z-index
+            (RightDrawer's WebDrawer is `position: fixed`), so opening a case
+            note while the SDOH panel was open visually overlapped it. An
+            un-merged side-by-side attempt (PR #174) was abandoned in favor
+            of this simpler inline-expansion approach: because this section
+            is a normal sibling in the rail's own ScrollView content, it can
+            never cover anything outside the rail — it only ever grows the
+            rail's own scroll area. See CaseNoteInlineSection's header
+            comment. */}
+        {caseNoteOpen && conv.memberId ? (
+          <CaseNoteInlineSection
+            memberId={conv.memberId}
+            sessionId={conv.activeSessionId ?? ''}
+            onClose={() => setCaseNoteOpen(false)}
+          />
+        ) : null}
 
         {/* Primary session action:
             completed              → green "Begin Session" (creates + starts new session)
@@ -3171,15 +3259,6 @@ function MemberContextRail({
         member={questionsMember}
         journey={questionsJourney}
       />
-
-      {conv.memberId ? (
-        <CaseNoteModal
-          memberId={conv.memberId}
-          sessionId={conv.activeSessionId ?? ''}
-          visible={caseNoteModalOpen}
-          onClose={() => setCaseNoteModalOpen(false)}
-        />
-      ) : null}
     </View>
   );
 }
@@ -3239,14 +3318,24 @@ export function CHWMessagesScreen(): React.JSX.Element {
   const hideRail = width < BP_HIDE_RAIL;
   const hideList = width < BP_HIDE_LIST;
 
-  // SDOH panel variant: 'pane' when there's room for a genuine 4th column
-  // beside the rail (thread + rail + panel all stay visible/interactive at
-  // once — the non-blocking design). Below that width (including the whole
-  // range where the rail itself is already hidden) it falls back to a
-  // dismissible overlay sheet — see InlineSdohPanel's header comment for the
-  // documented tradeoff.
-  const sdohPanelVariant: 'pane' | 'sheet' =
-    !hideRail && width >= SDOH_PANEL_PANE_BREAKPOINT ? 'pane' : 'sheet';
+  // SDOH panel variant: 'pane' whenever the member-context rail itself is
+  // visible, so the panel always renders as a genuine sibling column next
+  // to the rail — never an overlay on top of it. That's the non-blocking
+  // design the feature requires: thread, rail, and panel all stay
+  // visible/interactive at once.
+  //
+  // On widths where the rail is visible but there isn't quite enough room
+  // for all four columns side by side (BP_HIDE_RAIL <= width <
+  // SDOH_PANEL_PANE_BREAKPOINT), the thread-list pane — the lowest-priority
+  // pane once a member's conversation is already open — is temporarily
+  // collapsed below (`collapseListForSdoh`) to reclaim the room instead of
+  // falling back to an overlay. Below BP_HIDE_RAIL the rail isn't rendered
+  // at all, so there's nothing left for a sheet to cover; the overlay
+  // fallback there is the same intentional, documented tradeoff described
+  // in InlineSdohPanel's header comment, left unchanged by this fix.
+  const sdohOpen = sdohSessionId != null;
+  const collapseListForSdoh = sdohOpen && !hideRail && width < SDOH_PANEL_PANE_BREAKPOINT;
+  const sdohPanelVariant: 'pane' | 'sheet' = !hideRail ? 'pane' : 'sheet';
 
   // Resizable pane widths (web only, persisted via localStorage)
   const [leftWidth, setLeftWidth] = useState<number>(() =>
@@ -3467,7 +3556,11 @@ export function CHWMessagesScreen(): React.JSX.Element {
     );
   }
 
-  const shouldShowList = !hideList || showThreadList;
+  // Reclaim the thread-list pane's width for the SDOH panel on mid-width
+  // screens (see collapseListForSdoh above) — the panel opening temporarily
+  // takes priority over browsing other threads, which the CHW can still get
+  // back to by closing the panel (X).
+  const shouldShowList = (!hideList || showThreadList) && !collapseListForSdoh;
   const shouldShowConv = !hideList || !showThreadList;
 
   return (
@@ -4505,6 +4598,12 @@ const styles = StyleSheet.create({
     paddingTop: 16,
     gap: 10,
     paddingBottom: spacing.xxxl,
+    // Lets a flex:1 child (CaseNoteInlineSection, when open) grow to fill
+    // any empty space below Quick Actions when the rail's natural content
+    // height is shorter than the viewport. A no-op otherwise: flexGrow only
+    // stretches content when there IS spare space, so this doesn't change
+    // sizing/scroll behavior for any other (non-flex) rail card.
+    flexGrow: 1,
   } as ViewStyle,
 
   railCard: {
