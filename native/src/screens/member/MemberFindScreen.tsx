@@ -166,9 +166,10 @@ const URGENCY_OPTIONS: { key: Urgency; label: string }[] = [
   { key: 'urgent',  label: 'Urgent'  },
 ];
 
+// 'virtual' (Video) removed from NEW-selection per product decision 2026-07-14
+// — the SessionMode union keeps it so legacy virtual sessions still work.
 const MODE_OPTIONS: { key: SessionMode; label: string }[] = [
   { key: 'in_person', label: 'In Person' },
-  { key: 'virtual',   label: 'Virtual'   },
   { key: 'phone',     label: 'Phone'     },
 ];
 

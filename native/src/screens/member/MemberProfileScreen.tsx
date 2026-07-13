@@ -135,9 +135,11 @@ const GENDER_OPTIONS: { key: GenderPreference; label: string }[] = [
   { key: 'female', label: 'Female' },
 ];
 
+// 'virtual' (Video) removed from the preference options per product decision
+// 2026-07-14 — the SessionModePreference union keeps it so a previously-saved
+// virtual preference still loads without crashing (it just can't be re-picked).
 const SESSION_MODE_OPTIONS: { key: SessionModePreference; label: string }[] = [
   { key: 'in_person', label: 'In Person' },
-  { key: 'virtual', label: 'Virtual' },
   { key: 'phone', label: 'Phone' },
 ];
 

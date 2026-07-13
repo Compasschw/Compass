@@ -1576,10 +1576,12 @@ const removeModalStyles = StyleSheet.create({
 
 type ScheduleSessionMode = 'in_person' | 'virtual' | 'phone';
 
+// 'virtual' (Video) removed from NEW-session selection per product decision
+// 2026-07-14 — the ScheduleSessionMode union and the label/icon maps keep it
+// so existing virtual sessions still render correctly (grandfathered).
 const SESSION_MODES: { value: ScheduleSessionMode; label: string }[] = [
   { value: 'phone', label: 'Phone' },
   { value: 'in_person', label: 'In-Person' },
-  { value: 'virtual', label: 'Video' },
 ];
 
 const SCHEDULING_STATUS_OPTIONS: { value: 'confirmed' | 'pending'; label: string }[] = [

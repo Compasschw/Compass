@@ -2058,7 +2058,11 @@ function MemberScheduleModal({
 
           <Text style={scheduleStyles.label}>Type</Text>
           <View style={scheduleStyles.segment}>
-            {(['in_person', 'virtual', 'phone'] as const).map((m) => (
+            {/* 'virtual' (Video) removed from NEW-selection per product
+                decision 2026-07-14 — legacy virtual sessions still render via
+                the label/icon maps; the mode state union keeps 'virtual' so a
+                reschedule of one carries its mode through unchanged. */}
+            {(['in_person', 'phone'] as const).map((m) => (
               <TouchableOpacity
                 key={m}
                 style={[scheduleStyles.segBtn, mode === m && scheduleStyles.segBtnActive]}
@@ -2067,7 +2071,7 @@ function MemberScheduleModal({
                 accessibilityState={{ selected: mode === m }}
               >
                 <Text style={[scheduleStyles.segText, mode === m && scheduleStyles.segTextActive]}>
-                  {m === 'in_person' ? 'In person' : m === 'virtual' ? 'Virtual' : 'Phone'}
+                  {m === 'in_person' ? 'In person' : 'Phone'}
                 </Text>
               </TouchableOpacity>
             ))}
