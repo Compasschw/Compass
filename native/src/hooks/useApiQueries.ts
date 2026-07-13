@@ -187,6 +187,13 @@ export interface MemberProfile {
   state?: string | null;       // 2-letter USPS code
   insuranceCompany?: string | null;
   mediCalId?: string | null;   // full CIN, e.g. "12345678A"
+  /**
+   * Epic G2: true when this member is still on a CHW-assigned temporary
+   * password and must set their own before continuing. Drives the
+   * mandatory first-login "set your password" prompt in
+   * MemberHomeScreen.tsx. Always false for a self-registered member.
+   */
+  mustChangePassword?: boolean;
 }
 
 export interface ChwBrowseItem {
@@ -1721,6 +1728,49 @@ export function useUpdateMemberProfile() {
         method: 'PUT',
         body: JSON.stringify(toSnakeCase(data)),
       });
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.memberProfile });
+    },
+  });
+}
+
+// ─── Change password (Epic G2) ─────────────────────────────────────────────────
+
+export interface ChangePasswordPayload {
+  currentPassword: string;
+  newPassword: string;
+}
+
+export interface ChangePasswordResult {
+  detail: string;
+  mustChangePassword: boolean;
+}
+
+/**
+ * POST /auth/change-password — used by the mandatory first-login "set your
+ * password" prompt (a CHW-created member replacing their temp password) and
+ * as a general password-change action for any authenticated user.
+ *
+ * On success, invalidates the member profile query so `mustChangePassword`
+ * (read by MemberHomeScreen to gate the PromptDialog) reflects the cleared
+ * flag on the next read. Callers pass their own onSuccess/onError to
+ * `.mutate()` for inline error handling (wrong current password, weak new
+ * password) — this hook does not surface a global alert, since the caller
+ * owns presenting those errors next to the relevant field.
+ */
+export function useChangePassword() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: ChangePasswordPayload): Promise<ChangePasswordResult> => {
+      const raw = await api<unknown>('/auth/change-password', {
+        method: 'POST',
+        body: JSON.stringify({
+          current_password: payload.currentPassword,
+          new_password: payload.newPassword,
+        }),
+      });
+      return transformKeys<ChangePasswordResult>(raw);
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.memberProfile });

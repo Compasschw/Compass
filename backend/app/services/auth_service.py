@@ -23,6 +23,7 @@ async def register_user(
     *,
     member_profile_fields: dict[str, Any] | None = None,
     commit: bool = True,
+    must_change_password: bool = False,
 ):
     """Register a new User and provision the role-appropriate profile row.
 
@@ -52,6 +53,14 @@ async def register_user(
             passing `commit=False` MUST call `await db.commit()` themselves
             once all related rows are added, and must let any exception
             propagate un-caught so `get_db`'s rollback-on-exception fires.
+        must_change_password: When True (only ``create_chw_member`` in
+            ``routers/chw.py`` passes this), the created User is flagged so the
+            frontend prompts a mandatory password change on first sign-in
+            (Epic G2 — the CHW handed this member a temp password
+            out-of-band). Defaults to False — every self-service caller (the
+            self-signup ``/auth/register`` flow, OAuth sign-up) leaves this at
+            the column default because the account holder chose (or has no)
+            password themselves.
 
     Returns None when the email is already taken (handled at the router layer
     as HTTP 400).
@@ -74,6 +83,7 @@ async def register_user(
         name=name,
         role=role,
         phone=_normalize_phone_e164(phone),
+        must_change_password=must_change_password,
     )
     db.add(user)
     await db.flush()  # populate user.id without ending the transaction

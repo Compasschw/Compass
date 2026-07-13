@@ -30,7 +30,7 @@
  *   - Card, StatTile, PageHeader, Pill from `components/ui`.
  */
 
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   Platform,
   Pressable,
@@ -74,6 +74,7 @@ import {
   useMemberJourneys,
   useRequests,
   useAssignedCHW,
+  useChangePassword,
   type MemberJourneyResponse,
   type SessionData,
 } from '../../hooks/useApiQueries';
@@ -95,6 +96,8 @@ import { useRefreshControl } from '../../hooks/useRefreshControl';
 import { countAwaitingChw } from './memberDashboard';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
+import { PromptDialog, type PromptDialogField } from '../../components/shared/PromptDialog';
+import { ApiError } from '../../api/client';
 import type {
   MemberHomeStackParamList,
   MemberTabParamList,
@@ -337,6 +340,111 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
     assignedCHWQuery.refetch,
   ]);
 
+  // ── Mandatory first-login password change (Epic G2) ─────────────────────
+  // A CHW-created member is handed a temp password out-of-band and must
+  // replace it before continuing. `mustChangePassword` comes straight off
+  // the member-profile bootstrap (GET /member/profile) — self-registered
+  // members (who chose their own password) never see this. No `onCancel` is
+  // passed to PromptDialog below, so it's a mandatory, non-dismissable gate.
+  const changePasswordMutation = useChangePassword();
+  const [passwordFields, setPasswordFields] = useState({
+    currentPassword: '',
+    newPassword: '',
+    confirmPassword: '',
+  });
+  const [passwordFormError, setPasswordFormError] = useState<string | null>(null);
+  const [passwordFieldErrors, setPasswordFieldErrors] = useState<Record<string, string | null>>({});
+
+  const mustChangePassword = Boolean(profileQuery.data?.mustChangePassword);
+
+  const handlePasswordFieldChange = useCallback((key: string, value: string) => {
+    setPasswordFields((prev) => ({ ...prev, [key]: value }));
+    // Clear any stale error on this field as soon as the member edits it.
+    setPasswordFieldErrors((prev) => (prev[key] ? { ...prev, [key]: null } : prev));
+    setPasswordFormError(null);
+  }, []);
+
+  const handleChangePasswordConfirm = useCallback(() => {
+    const { currentPassword, newPassword, confirmPassword } = passwordFields;
+    setPasswordFormError(null);
+
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      setPasswordFormError('Please fill in all fields.');
+      return;
+    }
+    if (newPassword.length < 8) {
+      setPasswordFieldErrors({ newPassword: 'Must be at least 8 characters.' });
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordFieldErrors({ confirmPassword: 'Passwords do not match.' });
+      return;
+    }
+    setPasswordFieldErrors({});
+
+    changePasswordMutation.mutate(
+      { currentPassword, newPassword },
+      {
+        onSuccess: () => {
+          setPasswordFields({ currentPassword: '', newPassword: '', confirmPassword: '' });
+          setPasswordFormError(null);
+          setPasswordFieldErrors({});
+          // Belt-and-suspenders: useChangePassword already invalidates the
+          // memberProfile query, but an explicit refetch here means the
+          // dialog closes on THIS render pass rather than waiting for the
+          // invalidation's background refetch to resolve.
+          void profileQuery.refetch();
+        },
+        onError: (err: unknown) => {
+          // Do not let a transient failure (or any exception shape) crash
+          // this screen — always resolve to an inline, dismiss-free message
+          // so the member can simply retry.
+          if (err instanceof ApiError && err.status === 401) {
+            setPasswordFieldErrors({ currentPassword: 'Current password is incorrect.' });
+            return;
+          }
+          if (err instanceof ApiError && err.status === 422) {
+            setPasswordFieldErrors({ newPassword: 'Password must be at least 8 characters.' });
+            return;
+          }
+          setPasswordFormError(
+            err instanceof Error && err.message
+              ? err.message
+              : 'Could not update your password. Please try again.',
+          );
+        },
+      },
+    );
+  }, [passwordFields, changePasswordMutation, profileQuery]);
+
+  const passwordPromptFields: PromptDialogField[] = useMemo(
+    () => [
+      {
+        key: 'currentPassword',
+        label: 'Current (temporary) password',
+        secureTextEntry: true,
+        autoComplete: 'current-password',
+        errorText: passwordFieldErrors.currentPassword ?? null,
+      },
+      {
+        key: 'newPassword',
+        label: 'New password',
+        placeholder: 'At least 8 characters',
+        secureTextEntry: true,
+        autoComplete: 'new-password',
+        errorText: passwordFieldErrors.newPassword ?? null,
+      },
+      {
+        key: 'confirmPassword',
+        label: 'Confirm new password',
+        secureTextEntry: true,
+        autoComplete: 'new-password',
+        errorText: passwordFieldErrors.confirmPassword ?? null,
+      },
+    ],
+    [passwordFieldErrors],
+  );
+
   const allSessions  = sessionsQuery.data ?? [];
   const profile      = profileQuery.data;
   const roadmap      = roadmapQuery.data ?? [];
@@ -564,6 +672,7 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
   const greeting = deriveGreeting(new Date().getHours());
 
   return (
+    <>
     <AppShell {...shellProps}>
       <StatusBar barStyle="dark-content" backgroundColor={tokens.pageBg} />
       <ScrollView
@@ -908,6 +1017,27 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
         </PageWrap>
       </ScrollView>
     </AppShell>
+
+    {/* ── Mandatory first-login password change (Epic G2) ─────────────────
+     *  Rendered as a sibling (not nested) so it portals above AppShell on
+     *  web the same way AppDialogProvider's alerts do. No onCancel — a
+     *  CHW-created member cannot dismiss this without changing their
+     *  temporary password.
+     */}
+    <PromptDialog
+      visible={mustChangePassword}
+      title="Set your password"
+      message="For your security, please set a password only you know before continuing."
+      fields={passwordPromptFields}
+      values={passwordFields}
+      onChangeValue={handlePasswordFieldChange}
+      onConfirm={handleChangePasswordConfirm}
+      confirmLabel="Update password"
+      submitting={changePasswordMutation.isPending}
+      errorText={passwordFormError}
+      testID="first-login-password-prompt"
+    />
+    </>
   );
 }
 

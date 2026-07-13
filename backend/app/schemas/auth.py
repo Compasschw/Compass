@@ -217,10 +217,45 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
     role: str
     name: str
+    # Epic G2: True when the caller is still on a CHW-assigned temporary
+    # password (set at CHW-initiated member creation, cleared by a successful
+    # POST /auth/change-password). Always False for self-service accounts.
+    # Populated at every call site that mints a TokenResponse (register,
+    # login, refresh, magic-link verify) so the client can gate the
+    # first-login "set your password" prompt without a follow-up call.
+    must_change_password: bool = False
 
 
 class RefreshRequest(BaseModel):
     refresh_token: str
+
+
+class ChangePasswordRequest(BaseModel):
+    """Body for POST /auth/change-password.
+
+    Used both for the mandatory first-login flow (a CHW-created member
+    replacing their temp password — see ``User.must_change_password``) and as
+    a general "change my password" action for any authenticated user with a
+    password (OAuth-only accounts have ``password_hash is None`` and are
+    rejected — see the router handler).
+
+    ``new_password`` enforces the SAME minimum-length rule as signup
+    (``RegisterRequest.password`` / ``CHWCreateMemberRequest.temp_password``)
+    so the strength bar can never silently diverge between creation and
+    change. A violation 422s at this Pydantic boundary, matching the existing
+    signup contract.
+    """
+
+    current_password: str = Field(..., min_length=1)
+    new_password: str = Field(..., min_length=8)
+
+
+class ChangePasswordResponse(BaseModel):
+    detail: str = "Password updated successfully"
+    # Always False on a successful response — the whole point of this
+    # endpoint is to clear the flag. Included so the client can update local
+    # state from the response alone without a follow-up profile refetch.
+    must_change_password: bool = False
 
 
 class UserResponse(BaseModel):

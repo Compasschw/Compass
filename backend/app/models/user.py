@@ -43,6 +43,26 @@ class User(Base):
     # and routers/chw.py list_chw_members for the read site.
     first_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # Distinct from `first_login_at` above — that column records *whether* the
+    # user has ever authenticated; this one records whether they are still
+    # sitting on a password they didn't choose themselves and must replace
+    # before continuing (Epic G2). True only for members a CHW provisions via
+    # `POST /chw/members` (``create_chw_member`` in routers/chw.py), where the
+    # CHW hands the member a temp password out-of-band. False for every
+    # self-service path — ``auth_service.register_user``'s self-signup branch,
+    # OAuth sign-up (`routers/auth.py::_handle_oauth_signin`), and magic-link —
+    # because in those flows the account holder chose (or has no) password
+    # themselves, so there is nothing to force a change on.
+    #
+    # Cleared (set False) by ``POST /auth/change-password`` once the member
+    # successfully sets their own password. Surfaced to the frontend on
+    # ``TokenResponse`` (login/register/refresh/magic-verify) and
+    # ``MemberProfileResponse`` (GET /member/profile) so the client knows to
+    # show the mandatory first-login "set your password" prompt.
+    must_change_password: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+
     # ── Account-deletion fields (soft-delete + HIPAA 6-year retention) ──────────
     # Populated by AccountDeletionService. A non-null deleted_at means the account
     # has been soft-deleted and all PII anonymised. The row is intentionally kept

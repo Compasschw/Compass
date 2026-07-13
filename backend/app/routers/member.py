@@ -56,6 +56,7 @@ def _build_member_profile_response(profile, user) -> MemberProfileResponse:
         state=profile.state,
         insurance_company=profile.insurance_company,
         medi_cal_id=profile.medi_cal_id,
+        must_change_password=user.must_change_password,
     )
 
 
