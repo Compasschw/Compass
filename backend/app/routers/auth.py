@@ -10,7 +10,14 @@ from app.database import get_db
 from app.dependencies import get_current_user
 from app.limiter import limiter
 from app.models.user import User
-from app.schemas.auth import LoginRequest, RefreshRequest, RegisterRequest, TokenResponse
+from app.schemas.auth import (
+    ChangePasswordRequest,
+    ChangePasswordResponse,
+    LoginRequest,
+    RefreshRequest,
+    RegisterRequest,
+    TokenResponse,
+)
 from app.services.auth_service import (
     append_new_member_to_csv as _append_new_member_to_csv,
 )
@@ -145,7 +152,10 @@ async def register(
         background_tasks.add_task(_sync_new_member_to_pear, user.id)
         background_tasks.add_task(_append_new_member_to_csv, user.id)
 
-    return TokenResponse(access_token=access, refresh_token=refresh, role=user.role, name=user.name)
+    return TokenResponse(
+        access_token=access, refresh_token=refresh, role=user.role, name=user.name,
+        must_change_password=user.must_change_password,
+    )
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -157,7 +167,87 @@ async def login(request: Request, data: LoginRequest, db: Annotated[AsyncSession
     mark_first_login(user)
     access, refresh = create_tokens(user)
     await store_refresh_token(db, user.id, refresh)
-    return TokenResponse(access_token=access, refresh_token=refresh, role=user.role, name=user.name)
+    return TokenResponse(
+        access_token=access, refresh_token=refresh, role=user.role, name=user.name,
+        must_change_password=user.must_change_password,
+    )
+
+
+@router.post("/change-password", response_model=ChangePasswordResponse)
+@limiter.limit("5/minute")
+async def change_password(
+    request: Request,
+    data: ChangePasswordRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """Change the authenticated user's password.
+
+    Primary use case (Epic G2): a member created by a CHW (``POST
+    /chw/members``) is handed a temporary password out-of-band and must
+    replace it on first sign-in — see ``User.must_change_password``. Also
+    usable generally by any authenticated user with a password who wants to
+    change it.
+
+    Security:
+    - Requires a valid Bearer JWT (``get_current_user``) — 401 if missing/
+      invalid/expired.
+    - ``current_password`` MUST verify against the stored hash via the same
+      argon2 verifier used at login (``verify_password``) — 401 if it
+      doesn't match, or if the account has no password at all (OAuth-only
+      accounts, ``password_hash is None`` — there is nothing to "change
+      from", so this is treated as an auth failure rather than a 500).
+      ``verify_password`` (passlib) raises ``UnknownHashError`` rather than
+      returning False when the stored value isn't a hash it recognizes (e.g.
+      corrupted/legacy data) — that is caught and also treated as a 401
+      rather than surfacing as an unhandled 500.
+    - ``new_password`` enforces the same minimum-length rule as signup
+      (Pydantic ``min_length=8`` on ``ChangePasswordRequest`` — see its
+      docstring) — a violation 422s before this handler ever runs.
+    - Reuses ``hash_password``/``verify_password`` from ``app.utils.security``
+      (argon2 via passlib) — no hand-rolled crypto.
+    - Rate-limited to 5/minute per IP, matching ``/auth/login``, to blunt a
+      brute-force guess of the current password.
+
+    On success: sets the new hash, clears ``must_change_password`` (a no-op
+    if it was already False), and commits. Existing refresh tokens are left
+    valid — this endpoint is a password rotation, not a full session
+    revocation; a user is not logged out of other devices by changing their
+    password here.
+
+    Returns:
+        200 with ``ChangePasswordResponse`` on success.
+        401 if ``current_password`` is wrong or the account has no password.
+        422 if ``new_password`` is shorter than 8 characters.
+    """
+    from passlib.exc import UnknownHashError
+
+    from app.utils.security import hash_password, verify_password
+
+    current_password_valid = False
+    if current_user.password_hash is not None:
+        try:
+            current_password_valid = verify_password(
+                data.current_password, current_user.password_hash
+            )
+        except UnknownHashError:
+            # Stored hash isn't in a format passlib recognizes (corrupted or
+            # pre-argon2 legacy data) — never let this surface as an
+            # unhandled 500; treat it the same as "current password wrong".
+            logger.warning(
+                "change-password: unrecognized password_hash format for user=%s",
+                current_user.id,
+            )
+            current_password_valid = False
+
+    if not current_password_valid:
+        raise HTTPException(status_code=401, detail="Current password is incorrect")
+
+    current_user.password_hash = hash_password(data.new_password)
+    current_user.must_change_password = False
+    await db.commit()
+
+    return ChangePasswordResponse()
 
 
 @router.post("/refresh", response_model=TokenResponse)
@@ -173,7 +263,10 @@ async def refresh(data: RefreshRequest, db: Annotated[AsyncSession, Depends(get_
         raise HTTPException(status_code=401, detail="User not found or deactivated")
     access, new_refresh = create_tokens(user)
     await store_refresh_token(db, user.id, new_refresh)
-    return TokenResponse(access_token=access, refresh_token=new_refresh, role=user.role, name=user.name)
+    return TokenResponse(
+        access_token=access, refresh_token=new_refresh, role=user.role, name=user.name,
+        must_change_password=user.must_change_password,
+    )
 
 
 # ─── Social OAuth (Google + Apple) ───────────────────────────────────────────
@@ -454,6 +547,7 @@ async def complete_member_onboarding(
         city=profile.city,
         state=profile.state,
         medi_cal_id=profile.medi_cal_id,
+        must_change_password=current_user.must_change_password,
     )
 
 
@@ -673,4 +767,7 @@ async def verify_magic_link(
     access, refresh = create_tokens(user)
     await store_refresh_token(db, user.id, refresh)
     await db.commit()
-    return TokenResponse(access_token=access, refresh_token=refresh, role=user.role, name=user.name)
+    return TokenResponse(
+        access_token=access, refresh_token=refresh, role=user.role, name=user.name,
+        must_change_password=user.must_change_password,
+    )

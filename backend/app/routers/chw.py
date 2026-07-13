@@ -813,7 +813,10 @@ async def create_chw_member(
     Login model (product decision): the CHW supplies the member's email and a
     temporary password in the request body. The CHW shares that password with
     the member out-of-band; the member logs in via the normal ``POST
-    /auth/login`` flow and can change it later. No email-invite/token flow.
+    /auth/login`` flow. ``must_change_password`` is set True on the created
+    User (Epic G2), so the frontend mandatorily prompts the member to set
+    their own password (``POST /auth/change-password``) on that first
+    sign-in. No email-invite/token flow.
 
     Pear-required demographics (DOB, sex, insurance, CIN, ZIP) ARE collected
     here and persisted onto the MemberProfile in the same transaction, so the
@@ -891,6 +894,10 @@ async def create_chw_member(
             "communications_consent_at": consent_now,
         },
         commit=False,
+        # Epic G2: this member is signing in with a temp password the CHW
+        # shared out-of-band — force a mandatory password-change prompt on
+        # their first sign-in. See User.must_change_password's docstring.
+        must_change_password=True,
     )
     if member is None:
         raise HTTPException(status_code=400, detail="Email already registered")

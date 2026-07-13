@@ -99,6 +99,11 @@ class MemberProfileResponse(BaseModel):
     state: str | None = None
     insurance_company: str | None = None
     medi_cal_id: str | None = None
+    # Epic G2: True when this member is still on a CHW-assigned temporary
+    # password and must set their own before continuing. See
+    # User.must_change_password's docstring for the full rationale. Cleared
+    # by a successful POST /auth/change-password.
+    must_change_password: bool = False
 
 class MemberProfileUpdate(BaseModel):
     zip_code: str | None = None
