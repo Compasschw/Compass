@@ -223,10 +223,24 @@ async def accept_request(request_id: UUID, current_user=Depends(require_role("ch
     """
     from datetime import UTC, datetime, timedelta
 
+    from app.config import settings
     from app.models.calendar import CalendarEvent
     from app.models.request import ServiceRequest
     from app.models.session import Session
     from app.models.user import User
+
+    # Epic D work gate: a CHW whose compliance checklist is incomplete may
+    # not accept new requests while chw_work_gate_enabled is True. Flag OFF
+    # (default) preserves prior behavior exactly — no query, no branch taken.
+    if settings.chw_work_gate_enabled and current_user.role == "chw":
+        from app.services.chw_compliance import chw_can_work
+
+        can_work, missing = await chw_can_work(db, current_user)
+        if not can_work:
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "onboarding_incomplete", "missing": missing},
+            )
 
     req = await db.get(ServiceRequest, request_id)
     if not req or req.status != "open":

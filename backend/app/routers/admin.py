@@ -676,6 +676,80 @@ async def list_admin_chws(
     return PaginatedResponse[CHWAdminItem](items=items, total=total)
 
 
+# ─── D2: background-check status (admin-only) ────────────────────────────────
+#
+# CHWProfile.background_check_status is one of "not_started" | "pending" |
+# "clear" | "consider". Only this admin endpoint may move a CHW into "clear"
+# or "consider" — there is deliberately no CHW-facing way to set this value:
+# the self-write path (PATCH /chw/profile) was closed in the Epic D
+# integration by removing the compliance fields from CHWProfileUpdate
+# (schemas/user.py), so this endpoint is now the single writer.
+_BACKGROUND_CHECK_STATUSES = {"not_started", "pending", "clear", "consider"}
+
+
+class _BackgroundCheckUpdateBody(BaseModel):
+    status: str = Field(
+        ...,
+        description="One of: not_started | pending | clear | consider.",
+    )
+
+
+class _BackgroundCheckUpdateResponse(BaseModel):
+    chw_id: UUID
+    background_check_status: str
+    updated_at: datetime
+
+
+@router.patch(
+    "/chws/{chw_id}/background-check",
+    response_model=_BackgroundCheckUpdateResponse,
+    summary="Set a CHW's background-check status (admin)",
+)
+async def update_chw_background_check(
+    chw_id: UUID,
+    body: _BackgroundCheckUpdateBody,
+    _key: bool = Depends(require_admin_key),
+    _2fa: None = Depends(require_2fa_token),
+    db: AsyncSession = Depends(get_db),
+) -> _BackgroundCheckUpdateResponse:
+    """Move a CHW's background_check_status forward (admin key + TOTP required).
+
+    This is the ONLY write path for background_check_status="clear" — the
+    CHW work gate (app.services.chw_compliance.chw_can_work) treats "clear"
+    as a hard requirement, so this endpoint is effectively the final human
+    approval step in the compliance checklist. Requires the same admin-key +
+    2FA-token dependency chain as every other CHW-mutating admin endpoint in
+    this file (see update_claim_status / set_chw_pear_user_id above) — a CHW
+    JWT (even the CHW's own) is rejected with 401/403, never 200.
+    """
+    if body.status not in _BACKGROUND_CHECK_STATUSES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"status must be one of {sorted(_BACKGROUND_CHECK_STATUSES)}",
+        )
+
+    chw_user = await db.get(User, chw_id)
+    if not chw_user or chw_user.role != "chw":
+        raise HTTPException(status_code=404, detail="CHW not found")
+
+    profile_result = await db.execute(
+        select(CHWProfile).where(CHWProfile.user_id == chw_id)
+    )
+    profile = profile_result.scalar_one_or_none()
+    if profile is None:
+        raise HTTPException(status_code=404, detail="CHW profile not found")
+
+    profile.background_check_status = body.status
+    await db.commit()
+    await db.refresh(profile)
+
+    return _BackgroundCheckUpdateResponse(
+        chw_id=chw_id,
+        background_check_status=profile.background_check_status,
+        updated_at=datetime.now(UTC),
+    )
+
+
 @router.get(
     "/members",
     response_model=PaginatedResponse[MemberAdminItem],

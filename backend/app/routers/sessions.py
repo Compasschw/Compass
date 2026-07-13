@@ -557,6 +557,21 @@ async def create_session(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Session:
+    # Epic D work gate: block a non-compliant CHW from creating a session
+    # via the legacy create path. Flag OFF (default) is a no-op — identical
+    # behavior to before this change.
+    from app.config import settings
+
+    if settings.chw_work_gate_enabled and current_user.role == "chw":
+        from app.services.chw_compliance import chw_can_work
+
+        can_work, missing = await chw_can_work(db, current_user)
+        if not can_work:
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "onboarding_incomplete", "missing": missing},
+            )
+
     req = await db.get(ServiceRequest, data.request_id)
     if not req:
         raise HTTPException(status_code=404, detail="Request not found")
@@ -651,7 +666,22 @@ async def schedule_session(
     NULL invariant is satisfied by reusing the CHW↔member ServiceRequest, or
     auto-creating a minimal one when none exists.
     """
+    from app.config import settings
     from app.models.user import MemberProfile
+
+    # Epic D work gate: block a non-compliant CHW from scheduling a session.
+    # Only gates when the CALLER is a CHW (a member scheduling against a CHW
+    # is not affected here — matches the epic's "caller is a CHW" rule).
+    # Flag OFF (default) is a no-op — identical behavior to before this change.
+    if settings.chw_work_gate_enabled and current_user.role == "chw":
+        from app.services.chw_compliance import chw_can_work
+
+        can_work, missing = await chw_can_work(db, current_user)
+        if not can_work:
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "onboarding_incomplete", "missing": missing},
+            )
 
     # ── Resolve the CHW/member pair + booking status from the caller's role ──
     if current_user.role == "chw":
@@ -767,7 +797,24 @@ async def start_session(session_id: UUID, current_user=Depends(get_current_user)
     import logging
     import traceback
 
+    from app.config import settings
+
     try:
+        # Epic D work gate: block a non-compliant CHW from starting a
+        # session. Flag OFF (default) is a no-op — identical behavior to
+        # before this change. Placed inside the try so an unexpected failure
+        # in chw_can_work is still surfaced as a clean HTTPException(500) by
+        # the except Exception handler below, never a bare 500.
+        if settings.chw_work_gate_enabled and current_user.role == "chw":
+            from app.services.chw_compliance import chw_can_work
+
+            can_work, missing = await chw_can_work(db, current_user)
+            if not can_work:
+                raise HTTPException(
+                    status_code=403,
+                    detail={"code": "onboarding_incomplete", "missing": missing},
+                )
+
         session = await db.get(Session, session_id)
         if not session or session.chw_id != current_user.id:
             raise HTTPException(status_code=404, detail="Session not found")

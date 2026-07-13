@@ -26,6 +26,26 @@ vi.mock('../../api/client', async (importOriginal) => {
 vi.mock('../../context/AuthContext', () => ({
   useAuth: () => ({ userName: 'Test CHW' }),
 }));
+// Epic D compliance banner persists "dismissed today" in AsyncStorage — an
+// in-memory mock keeps the test deterministic and avoids depending on the
+// real native module's jsdom shim (there isn't one).
+vi.mock('@react-native-async-storage/async-storage', () => {
+  const store = new Map<string, string>();
+  return {
+    default: {
+      getItem: vi.fn(async (key: string) => store.get(key) ?? null),
+      setItem: vi.fn(async (key: string, value: string) => {
+        store.set(key, value);
+      }),
+      removeItem: vi.fn(async (key: string) => {
+        store.delete(key);
+      }),
+      clear: vi.fn(async () => {
+        store.clear();
+      }),
+    },
+  };
+});
 // See CHWMessagesScreen.test.tsx for why this needs a full literal
 // replacement rather than `importOriginal` — @react-navigation/native's real
 // barrel drags in an extension-less import that jsdom/vite-node can't
@@ -44,6 +64,7 @@ vi.mock('@react-navigation/native', () => ({
 }));
 
 import { api } from '../../api/client';
+import AsyncStorageMock from '@react-native-async-storage/async-storage';
 import { CHWDashboardScreen } from './CHWDashboardScreen';
 
 const mockedApi = api as unknown as ReturnType<typeof vi.fn>;
@@ -113,11 +134,29 @@ const scheduledTodaySessionFixture = {
 
 let sessionsResponse: unknown[] = [];
 
+/** Epic D — compliance checklist fixture. Fully compliant by default (empty
+ * `missing`) so pre-existing tests that don't care about the banner never
+ * see it render unexpectedly. Tests exercising the banner itself override
+ * this per-test. */
+let checklistResponse: {
+  can_work: boolean;
+  missing: string[];
+  items: Array<{ code: string; status: string }>;
+} = {
+  can_work: true,
+  missing: [],
+  items: [],
+};
+
 function routeApi(path: string, options?: { method?: string }): unknown {
   const method = options?.method ?? 'GET';
 
   if (path === '/chw/profile' && method === 'GET') {
     return chwProfileFixture;
+  }
+
+  if (path === '/credentials/checklist' && method === 'GET') {
+    return checklistResponse;
   }
 
   if (path === `/chws/${CHW_USER_ID}/testimonials/summary` && method === 'GET') {
@@ -165,11 +204,13 @@ function renderScreen() {
 beforeEach(() => {
   testimonialSummaryFixture = { rating_avg: null, rating_count: 0 };
   sessionsResponse = [];
+  checklistResponse = { can_work: true, missing: [], items: [] };
   mockNavigate.mockClear();
   mockedApi.mockReset();
   mockedApi.mockImplementation(async (path: string, options?: { method?: string }) =>
     routeApi(path, options),
   );
+  void AsyncStorageMock.clear();
 });
 
 afterEach(() => {
@@ -219,6 +260,68 @@ describe('CHWDashboardScreen — Member satisfaction snapshot box', () => {
 
     await waitFor(() => expect(screen.getByText('No ratings yet')).toBeTruthy());
     expect(screen.queryByText('3.1')).toBeNull();
+  });
+});
+
+describe('CHWDashboardScreen — Compliance banner (Epic D)', () => {
+  it('does not render the banner when the checklist is fully compliant (missing=[])', async () => {
+    checklistResponse = { can_work: true, missing: [], items: [] };
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByText(/sessions today/i)).toBeTruthy());
+    expect(screen.queryByText('Finish your compliance checklist')).toBeNull();
+  });
+
+  it('renders the banner listing missing items in plain language when can_work is false', async () => {
+    checklistResponse = {
+      can_work: false,
+      missing: ['hipaa_training', 'background_check'],
+      items: [],
+    };
+    renderScreen();
+
+    await waitFor(() =>
+      expect(screen.getByText('Finish your compliance checklist')).toBeTruthy(),
+    );
+    expect(screen.getByText(/Upload your HIPAA training certificate/)).toBeTruthy();
+    expect(screen.getByText(/background check is still in review/)).toBeTruthy();
+  });
+
+  it('navigates to the Profile screen when "Go to Profile" is pressed', async () => {
+    checklistResponse = { can_work: false, missing: ['hipaa_training'], items: [] };
+    renderScreen();
+
+    const link = await screen.findByLabelText('Go to compliance checklist');
+    link.click();
+
+    expect(mockNavigate).toHaveBeenCalledWith('Profile');
+  });
+
+  it('dismisses the banner for the day and does not re-render it on remount the same day', async () => {
+    checklistResponse = { can_work: false, missing: ['hipaa_training'], items: [] };
+    const { unmount } = renderScreen();
+
+    await waitFor(() =>
+      expect(screen.getByText('Finish your compliance checklist')).toBeTruthy(),
+    );
+
+    const dismissBtn = screen.getByLabelText('Dismiss compliance reminder for today');
+    dismissBtn.click();
+
+    await waitFor(() =>
+      expect(screen.queryByText('Finish your compliance checklist')).toBeNull(),
+    );
+    // Let the fire-and-forget AsyncStorage.setItem write settle before
+    // unmounting, so its resolution doesn't land as an out-of-act update.
+    await waitFor(() => expect(AsyncStorageMock.setItem).toHaveBeenCalled());
+
+    unmount();
+
+    // Remount — same simulated "day" (AsyncStorage mock persists across
+    // renders within this test) — banner must stay dismissed.
+    renderScreen();
+    await waitFor(() => expect(screen.getByText(/sessions today/i)).toBeTruthy());
+    expect(screen.queryByText('Finish your compliance checklist')).toBeNull();
   });
 });
 

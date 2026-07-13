@@ -60,10 +60,15 @@ class CHWProfileUpdate(BaseModel):
     # Use an explicit sentinel (unset vs null) so callers can clear the photo by
     # sending null without accidentally wiping it when the field is simply absent.
     profile_picture_url: str | None = None
-    # ── Compliance (CHW-editable) ────────────────────────────────────────
-    hipaa_training_completed: bool | None = None
-    chw_certification: str | None = None
-    background_check_status: str | None = None
+    # ── Compliance fields intentionally ABSENT (Epic D lockdown) ─────────
+    # hipaa_training_completed / chw_certification / background_check_status
+    # were previously CHW-editable here, which let a CHW self-write
+    # background_check_status="clear" and bypass the chw_can_work gate
+    # entirely. Post-Epic-D these change ONLY via the admin-verified
+    # credential flow (routers/credentials.py) and the admin background-check
+    # endpoint (routers/admin.py). Pydantic ignores unknown request keys, so
+    # older clients that still send these fields no-op harmlessly instead of
+    # erroring — the values can no longer reach the database from this route.
 
 class MemberProfileCreate(BaseModel):
     zip_code: str | None = None

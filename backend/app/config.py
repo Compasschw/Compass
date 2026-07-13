@@ -81,6 +81,18 @@ class Settings(BaseSettings):
     # Roll out by flipping to True in sandbox first, verify, then prod.
     session_per_call_enabled: bool = False
 
+    # ── CHW compliance checklist work gate (Epic D) ───────────────────────────
+    # When True, /requests/{id}/accept, /sessions/ (legacy create),
+    # /sessions/schedule, and /sessions/{id}/start all reject (403,
+    # code="onboarding_incomplete") a CHW caller whose compliance checklist is
+    # incomplete per app.services.chw_compliance.chw_can_work — see that module
+    # for the exact requirement list. Default False so existing CHWs (most of
+    # whom pre-date the checklist and have not uploaded anything) are not
+    # locked out until the founders explicitly opt in after backfilling /
+    # communicating the requirement. Roll out by flipping to True in sandbox
+    # first, verify, then prod.
+    chw_work_gate_enabled: bool = False
+
     cors_origins: list[str] = [
         "http://localhost:5173",
         "http://localhost:8081",

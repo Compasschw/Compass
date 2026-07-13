@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import ARRAY, Boolean, Date, DateTime, Float, ForeignKey, String, Text, func
+from sqlalchemy import ARRAY, Boolean, Date, DateTime, Float, ForeignKey, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -9,7 +9,32 @@ from app.database import Base
 
 
 class Credential(Base):
+    """CHW compliance-checklist document (Epic D).
+
+    Previously unused by any router; repurposed here as the home for the
+    four document-upload requirement types tracked by the CHW compliance
+    checklist (see app.services.chw_compliance):
+
+        hipaa_training, professional_service_agreement,
+        liability_insurance, chw_certification
+
+    One row per (chw_id, type) — enforced by a unique constraint so a
+    re-upload after rejection UPDATEs the existing row (new s3_key, status
+    reset to "pending") instead of accumulating duplicate rows. This is
+    deliberately NOT used for CHWCredentialValidation-style degree/program
+    credentials, which FK to InstitutionRegistry and don't fit a simple
+    "upload one PDF" requirement.
+
+    ``status`` ∈ {"missing", "pending", "verified", "rejected"}. There is no
+    DB row at all for a type the CHW has never submitted — the "missing"
+    state is represented by row absence, not a status value; the checklist
+    endpoint synthesizes "missing" for any of the 4 types with no row.
+    """
+
     __tablename__ = "credentials"
+    __table_args__ = (
+        UniqueConstraint("chw_id", "type", name="uq_credentials_chw_id_type"),
+    )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     chw_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
     type: Mapped[str] = mapped_column(String(50), nullable=False)
