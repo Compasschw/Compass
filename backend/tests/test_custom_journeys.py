@@ -17,7 +17,7 @@ from uuid import UUID
 import pytest
 from httpx import AsyncClient
 
-from tests.conftest import auth_header
+from tests.conftest import auth_header, test_session
 
 
 def _member_id(tokens: dict) -> str:
@@ -260,6 +260,76 @@ async def test_remove_custom_journey_abandons_it(
     )
     active_ids = [j["id"] for j in listing.json() if j["status"] == "active"]
     assert journey_id not in active_ids
+
+
+@pytest.mark.asyncio
+async def test_member_journey_list_excludes_abandoned_journeys(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    """Epic R regression: after a CHW removes all resource needs, the
+    now-abandoned canonical journey (e.g. Mental Health) must NOT be
+    returned by GET /members/{id}/journeys — neither to the CHW nor to the
+    member themselves. Fails on the pre-fix query, which returned every
+    MemberJourney row regardless of status and relied on the frontend to
+    filter out 'abandoned' ones.
+    """
+    member_id = await _relate(client, member_tokens, chw_tokens)
+
+    # CHW sets a resource need → auto-provisions the canonical Mental Health
+    # journey (reconcile_member_journeys_to_needs).
+    res = await client.patch(
+        f"/api/v1/chw/members/{member_id}/resource-needs",
+        json={"needs": ["mental_health"], "levels": [{"slug": "mental_health", "level": "high"}]},
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 200, res.text
+
+    listing = await client.get(
+        f"/api/v1/members/{member_id}/journeys", headers=auth_header(member_tokens)
+    )
+    assert listing.status_code == 200, listing.text
+    mental_health = next(
+        j for j in listing.json()
+        if j["template"]["name"] == "Mental Health"
+    )
+    assert mental_health["status"] == "active"
+    journey_id = mental_health["id"]
+
+    # CHW removes ALL resource needs — reconciliation abandons the Mental
+    # Health journey (needs:[] path).
+    res = await client.patch(
+        f"/api/v1/chw/members/{member_id}/resource-needs",
+        json={"needs": [], "levels": []},
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 200, res.text
+
+    # The journey itself is abandoned, not deleted.
+    async with test_session() as db:
+        from app.models.journeys import MemberJourney as _MemberJourney
+        db_journey = await db.get(_MemberJourney, journey_id)
+        assert db_journey is not None
+        assert db_journey.status == "abandoned"
+
+    # Neither the member's nor the CHW's raw journey list contains it anymore
+    # — the data layer excludes it outright, not just a frontend filter.
+    member_listing = await client.get(
+        f"/api/v1/members/{member_id}/journeys", headers=auth_header(member_tokens)
+    )
+    assert member_listing.status_code == 200, member_listing.text
+    member_journey_ids = [j["id"] for j in member_listing.json()]
+    assert journey_id not in member_journey_ids, (
+        "Abandoned Mental Health journey leaked into the member's journey list"
+    )
+
+    chw_listing = await client.get(
+        f"/api/v1/members/{member_id}/journeys", headers=auth_header(chw_tokens)
+    )
+    assert chw_listing.status_code == 200, chw_listing.text
+    chw_journey_ids = [j["id"] for j in chw_listing.json()]
+    assert journey_id not in chw_journey_ids, (
+        "Abandoned Mental Health journey leaked into the CHW's journey list"
+    )
 
 
 @pytest.mark.asyncio
