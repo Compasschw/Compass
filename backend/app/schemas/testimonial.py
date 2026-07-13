@@ -2,13 +2,16 @@
 
 Schema hierarchy
 ----------------
-TestimonialCreate      — member POST body (rating + optional text)
-TestimonialResponse    — full row for internal / member-facing use
-PublicTestimonial      — stripped for the CHW Profile public display;
-                         member_id replaced by author_initial ("M.")
-AdminTestimonialView   — full row + member_name for admin moderation queue
-AdminModerateBody      — admin action body (approve | reject + optional notes)
-TestimonialSummary     — aggregate { rating_avg, rating_count } for CHW summary header
+TestimonialCreate         — member POST body (rating + optional text), session-scoped flow
+TestimonialClosureCreate  — Epic B3: CHW-facilitated closure-review POST body
+                             (text only, 1..120 chars, no rating)
+TestimonialResponse       — full row for internal / member-facing use
+TestimonialClosureResponse — Epic B3: response for the closure-review endpoint
+PublicTestimonial         — stripped for the CHW Profile public display;
+                            member_id replaced by author_initial ("M.")
+AdminTestimonialView      — full row + member_name for admin moderation queue
+AdminModerateBody         — admin action body (approve | reject + optional notes)
+TestimonialSummary        — aggregate { rating_avg, rating_count } for CHW summary header
 """
 
 from __future__ import annotations
@@ -40,6 +43,32 @@ class TestimonialCreate(BaseModel):
     )
 
 
+class TestimonialClosureCreate(BaseModel):
+    """Body accepted by POST /chw/members/{member_id}/closure-review (Epic B3).
+
+    CHW-facilitated capture of the member's parting feedback when a CHW
+    closes the member's case. Deliberately text-only — the member is
+    typically not logged in at close time, so a star rating (which needs an
+    authenticated member's own affirmative input for other testimonials) is
+    not collected here. Rating stays absent/None on the created Testimonial
+    row; the session-scoped TestimonialCreate above is unaffected and still
+    requires rating.
+
+    ``text`` is REQUIRED at this schema layer (1..120 chars) because the
+    endpoint itself is only called when the CHW has entered text in the
+    on-brand prompt — the "skip" action on the frontend simply never calls
+    this endpoint at all (see CHWMemberProfileScreen close flow).
+    """
+
+    text: str = Field(
+        ...,
+        min_length=1,
+        max_length=120,
+        description="Member's parting feedback about their experience with "
+                    "their CHW. 1-120 characters.",
+    )
+
+
 class TestimonialResponse(BaseModel):
     """Full testimonial row — used internally and in member-facing contexts
     where member_id disclosure is acceptable (e.g. within the authenticated
@@ -52,9 +81,28 @@ class TestimonialResponse(BaseModel):
     chw_id: uuid.UUID
     member_id: uuid.UUID
     session_id: uuid.UUID | None
-    rating: int
+    rating: int | None
     text: str | None
     status: str
+    created_at: datetime
+
+
+class TestimonialClosureResponse(BaseModel):
+    """Response for POST /chw/members/{member_id}/closure-review (Epic B3).
+
+    Deliberately narrower than TestimonialResponse: the caller is a CHW
+    relaying member feedback, not the member themselves, so this omits
+    member_id/chw_id disclosure nuance and just confirms what was recorded.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    member_id: uuid.UUID
+    chw_id: uuid.UUID
+    text: str | None
+    status: str
+    source: str
     created_at: datetime
 
 
@@ -70,7 +118,7 @@ class PublicTestimonial(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
-    rating: int
+    rating: int | None
     text: str | None
     author_initial: str = Field(
         ...,
@@ -92,9 +140,12 @@ class AdminTestimonialView(BaseModel):
     member_id: uuid.UUID
     member_name: str
     session_id: uuid.UUID | None
-    rating: int
+    rating: int | None
     text: str | None
     status: str
+    # Epic B3: 'session' | 'account_closure' — lets the moderation queue
+    # distinguish CHW-facilitated closure reviews from member session ratings.
+    source: str
     moderation_notes: str | None
     created_at: datetime
     moderated_at: datetime | None

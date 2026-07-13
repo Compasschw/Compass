@@ -11,6 +11,13 @@
  * that point without touching this component's shape or any existing
  * caller).
  *
+ * Epic B3 added optional `maxLength` + `multiline` per-field props (and a
+ * live "N/max" counter rendered under the field when `maxLength` is set) for
+ * the post-close member review capture — the CHW close flow's 120-char
+ * feedback field. Both are additive/opt-in: fields that omit them render
+ * exactly as before (single-line, uncapped), so Epic G2's password prompt
+ * usage and tests are unaffected.
+ *
  * Visual language matches `AppDialogProvider` (src/components/shared/
  * AppDialogProvider.tsx) — the same `showAlert()` dialog every other
  * in-app popup uses: `rgba(15, 23, 42, 0.45)` scrim, white card, emerald
@@ -68,6 +75,13 @@ export interface PromptDialogField {
   autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
   autoComplete?: TextInputProps['autoComplete'];
   keyboardType?: KeyboardTypeOptions;
+  /** Renders a taller multiline input (e.g. free-text feedback). Additive —
+   *  omit for the default single-line input. */
+  multiline?: boolean;
+  /** Caps input length and renders a live "N/max" counter under the field.
+   *  Additive — omit for an uncapped field with no counter (Epic G2's
+   *  password fields are unaffected). */
+  maxLength?: number;
 }
 
 export interface PromptDialogProps {
@@ -129,31 +143,42 @@ export function PromptDialog({
           {message ? <Text style={styles.message}>{message}</Text> : null}
 
           <View style={styles.fields}>
-            {fields.map((field) => (
-              <View key={field.key} style={styles.field}>
-                <Text style={styles.fieldLabel}>{field.label}</Text>
-                <TextInput
-                  style={[
-                    styles.input,
-                    field.errorText ? styles.inputError : null,
-                  ]}
-                  value={values[field.key] ?? ''}
-                  onChangeText={(text) => onChangeValue(field.key, text)}
-                  placeholder={field.placeholder}
-                  placeholderTextColor={tokens.textSecondary}
-                  secureTextEntry={field.secureTextEntry}
-                  autoCapitalize={field.autoCapitalize ?? 'none'}
-                  autoCorrect={false}
-                  autoComplete={field.autoComplete}
-                  keyboardType={field.keyboardType}
-                  editable={!submitting}
-                  accessibilityLabel={field.label}
-                />
-                {field.errorText ? (
-                  <Text style={styles.fieldErrorText}>{field.errorText}</Text>
-                ) : null}
-              </View>
-            ))}
+            {fields.map((field) => {
+              const currentValue = values[field.key] ?? '';
+              return (
+                <View key={field.key} style={styles.field}>
+                  <Text style={styles.fieldLabel}>{field.label}</Text>
+                  <TextInput
+                    style={[
+                      styles.input,
+                      field.multiline ? styles.inputMultiline : null,
+                      field.errorText ? styles.inputError : null,
+                    ]}
+                    value={currentValue}
+                    onChangeText={(text) => onChangeValue(field.key, text)}
+                    placeholder={field.placeholder}
+                    placeholderTextColor={tokens.textSecondary}
+                    secureTextEntry={field.secureTextEntry}
+                    autoCapitalize={field.autoCapitalize ?? 'none'}
+                    autoCorrect={false}
+                    autoComplete={field.autoComplete}
+                    keyboardType={field.keyboardType}
+                    editable={!submitting}
+                    multiline={field.multiline}
+                    maxLength={field.maxLength}
+                    accessibilityLabel={field.label}
+                  />
+                  {field.maxLength ? (
+                    <Text style={styles.fieldCounter}>
+                      {`${currentValue.length}/${field.maxLength}`}
+                    </Text>
+                  ) : null}
+                  {field.errorText ? (
+                    <Text style={styles.fieldErrorText}>{field.errorText}</Text>
+                  ) : null}
+                </View>
+              );
+            })}
           </View>
 
           {errorText ? <Text style={styles.errorText}>{errorText}</Text> : null}
@@ -244,8 +269,19 @@ const styles = StyleSheet.create({
     color: tokens.textPrimary,
     backgroundColor: '#FFFFFF',
   },
+  inputMultiline: {
+    minHeight: 80,
+    paddingTop: 11,
+    textAlignVertical: 'top',
+  },
   inputError: {
     borderColor: tokens.red700,
+  },
+  fieldCounter: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: tokens.textSecondary,
+    textAlign: 'right',
   },
   fieldErrorText: {
     fontFamily: 'PlusJakartaSans_400Regular',

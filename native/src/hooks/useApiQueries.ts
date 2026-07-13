@@ -3091,6 +3091,28 @@ export function useReopenMember(memberId: string) {
 }
 
 /**
+ * Submit the member's parting feedback captured by the CHW during/after the
+ * close-member flow (Epic B3). POST /api/v1/chw/members/{member_id}/closure-review
+ * with { text }. This is a SEPARATE, always-optional call made AFTER
+ * useCloseMember's mutation has already succeeded — the account is closed
+ * regardless of whether this call is ever made or whether it fails, so the
+ * caller (CHWMemberProfileScreen) must never let a failure here block or
+ * "undo" the close. No query invalidation is needed: unlike close/reopen,
+ * a closure review has no effect on any member-detail or roster field the
+ * UI reads back.
+ */
+export function useSubmitClosureReview(memberId: string) {
+  return useMutation({
+    mutationFn: async (text: string): Promise<void> => {
+      await api(`/chw/members/${memberId}/closure-review`, {
+        method: 'POST',
+        body: JSON.stringify({ text }),
+      });
+    },
+  });
+}
+
+/**
  * Edit a member's resource needs from the CHW Member Profile (Resource Needs
  * pencil). PATCH /api/v1/chw/members/{member_id}/resource-needs.
  *

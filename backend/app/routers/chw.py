@@ -30,6 +30,7 @@ from app.schemas.chw import (
     ResourceNeedsUpdate,
     SessionNoteItem,
 )
+from app.schemas.testimonial import TestimonialClosureCreate, TestimonialClosureResponse
 from app.schemas.user import CHWProfileResponse, CHWProfileUpdate
 from app.services.storage.avatar_urls import presigned_avatar_url
 
@@ -1965,6 +1966,135 @@ async def reopen_member(
     profile.closed_by = None
     await db.commit()
     return MemberClosureResponse(member_id=member_id)
+
+
+@router.post(
+    "/members/{member_id}/closure-review",
+    response_model=TestimonialClosureResponse,
+    status_code=201,
+    summary="CHW-facilitated capture of the member's parting feedback at case close",
+)
+async def create_closure_review(
+    member_id: UUID,
+    data: TestimonialClosureCreate,
+    caller=Depends(_require_chw_or_admin_key),
+    db: AsyncSession = Depends(get_db),
+) -> TestimonialClosureResponse:
+    """POST /api/v1/chw/members/{member_id}/closure-review (Epic B3)
+
+    Captures an OPTIONAL 120-char parting review from the member, relayed by
+    the CHW immediately after (or while) closing the member's case. The
+    member typically isn't logged in at close time, so this is intentionally
+    a CHW-facilitated flow rather than a member-authenticated one — the CHW
+    types what the member said, on-brand and skippable in the UI. This
+    endpoint is only called when the CHW actually enters text; the "Skip"
+    action on the frontend never calls it at all, so there's no "empty
+    review" concept to model here.
+
+    This is a SEPARATE, optional call made AFTER POST .../close succeeds.
+    close_member's own behavior/response is completely unchanged by this
+    endpoint's existence — a closure-review failure must never be able to
+    undo or block a close (the frontend enforces this by calling close
+    first, independently, and only then offering this prompt; see
+    CHWMemberProfileScreen).
+
+    Relationship-gate rule: reuses the SAME relationship check as close_member
+    itself (``_assert_chw_member_relationship_or_admin`` — active session OR
+    matched service request). This intentionally also covers a member the
+    CHW *just* closed: closing a member does not delete or alter the
+    session/service-request rows the relationship check queries, so a CHW
+    who has (or had) a real relationship with this member — active or
+    recently closed — can still submit the parting review. A CHW with no
+    relationship at all (never matched, never had a session) is denied,
+    matching close_member's own authorization boundary exactly.
+
+    Errors:
+      401 — missing/invalid credentials
+      403 — CHW has no (and never had a) relationship with this member, or
+            caller is a member (not chw/admin) — role check inside the
+            shared dependency
+      404 — member profile not found
+      422 — text is empty or exceeds 120 characters
+    Auth: CHW JWT or ADMIN_KEY (mirrors close_member/reopen_member).
+    """
+    from app.models.testimonial import Testimonial
+    from app.models.user import MemberProfile
+
+    await _assert_chw_member_relationship_or_admin(caller, member_id, db)
+
+    result = await db.execute(
+        select(MemberProfile).where(MemberProfile.user_id == member_id)
+    )
+    profile = result.scalar_one_or_none()
+    if profile is None:
+        raise HTTPException(status_code=404, detail="Member not found.")
+
+    caller_user = caller["user"]
+
+    # Resolve the CHW to attribute this review to. A CHW caller attributes
+    # to themselves. An admin-key caller has no user row (`caller["user"] is
+    # None`) — fall back to the member's currently-assigned/most-recent CHW
+    # via the same relationship tables the gate above already checked, since
+    # an admin acting on behalf of a CHW still needs a concrete chw_id for
+    # the (NOT NULL) Testimonial.chw_id column.
+    if caller["role"] == "chw":
+        chw_id = caller_user.id
+    else:
+        from app.models.request import ServiceRequest
+        from app.models.session import Session
+
+        session_stmt = (
+            select(Session.chw_id)
+            .where(Session.member_id == member_id)
+            .order_by(Session.created_at.desc())
+            .limit(1)
+        )
+        session_result = await db.execute(session_stmt)
+        chw_id = session_result.scalar_one_or_none()
+
+        if chw_id is None:
+            request_stmt = (
+                select(ServiceRequest.matched_chw_id)
+                .where(ServiceRequest.member_id == member_id)
+                .where(ServiceRequest.matched_chw_id.is_not(None))
+                .order_by(ServiceRequest.created_at.desc())
+                .limit(1)
+            )
+            request_result = await db.execute(request_stmt)
+            chw_id = request_result.scalar_one_or_none()
+
+        if chw_id is None:
+            # No session/request ever linked a CHW to this member — nothing
+            # to attribute the review to. Mirrors the 404 the relationship
+            # gate would otherwise not have caught for admin callers (admins
+            # bypass the relationship check entirely).
+            raise HTTPException(
+                status_code=404,
+                detail="No CHW relationship found for this member.",
+            )
+
+    testimonial = Testimonial(
+        chw_id=chw_id,
+        member_id=member_id,
+        session_id=None,
+        rating=None,
+        text=data.text,
+        status="pending",
+        source="account_closure",
+    )
+    db.add(testimonial)
+    await db.commit()
+    await db.refresh(testimonial)
+
+    import logging as _logging
+    _logging.getLogger("compass.testimonials").info(
+        "Closure review created: id=%s chw_id=%s member_id=%s",
+        testimonial.id,
+        testimonial.chw_id,
+        testimonial.member_id,
+    )
+
+    return TestimonialClosureResponse.model_validate(testimonial)
 
 
 @router.get(
