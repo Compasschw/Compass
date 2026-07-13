@@ -2,15 +2,17 @@
  * Component test for ActiveSessionBadge — the persistent bottom-right
  * "active session" card mounted CHW-only from AppShell.
  *
- * Only the network boundary is out of scope here (the badge reads straight
- * off the react-query cache via useConversations, seeded directly below) and
+ * The network boundary (`../../api/client`) is mocked so the Cancel/Missed
+ * Session mutations (PATCH /sessions/{id}/abort, /no-show — Epic P + O2) can
+ * be asserted without a real backend; the badge otherwise reads straight off
+ * the react-query cache via useConversations, seeded directly below.
  * `@react-navigation/native`'s `useNavigation` is mocked — same pattern as
  * CHWCalendarScreen.test.tsx / CHWMessagesScreen.test.tsx. Tier 2 — jsdom +
  * react-native-web (see native/TESTING.md).
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { mockNavigate } = vi.hoisted(() => ({ mockNavigate: vi.fn() }));
@@ -19,9 +21,16 @@ vi.mock('@react-navigation/native', () => ({
     navigate: mockNavigate,
   }),
 }));
+vi.mock('../../api/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../api/client')>();
+  return { ...actual, api: vi.fn() };
+});
 
 import { ActiveSessionBadge } from './ActiveSessionBadge';
 import { queryKeys, type ConversationData } from '../../hooks/useApiQueries';
+import { api } from '../../api/client';
+
+const mockedApi = api as unknown as ReturnType<typeof vi.fn>;
 
 // ─── Fixtures ───────────────────────────────────────────────────────────────
 
@@ -66,6 +75,17 @@ function renderBadge(conversations: ConversationData[]) {
 
 beforeEach(() => {
   mockNavigate.mockReset();
+  mockedApi.mockReset();
+  mockedApi.mockImplementation(async (path: string, options?: { method?: string }) => {
+    const method = options?.method ?? 'GET';
+    if (path === '/sessions/sess-1/abort' && method === 'PATCH') {
+      return { id: 'sess-1', status: 'cancelled', ended_at: new Date().toISOString() };
+    }
+    if (path === '/sessions/sess-1/no-show' && method === 'PATCH') {
+      return { id: 'sess-1', status: 'no_show', ended_at: new Date().toISOString() };
+    }
+    throw new Error(`Unhandled api() call in ActiveSessionBadge test: ${method} ${path}`);
+  });
   vi.useFakeTimers({ shouldAdvanceTime: true });
   vi.setSystemTime(new Date('2026-07-11T09:05:00.000Z'));
 });
@@ -265,5 +285,146 @@ describe('ActiveSessionBadge', () => {
 
     expect(clearIntervalSpy).toHaveBeenCalled();
     clearIntervalSpy.mockRestore();
+  });
+});
+
+// ─── Epic P + O2 — Cancel / Missed Session actions ─────────────────────────────
+
+describe('ActiveSessionBadge — Cancel / Missed Session actions (Epic P + O2)', () => {
+  function renderActiveBadge() {
+    return renderBadge([
+      conv({
+        id: 'c1',
+        activeSessionId: 'sess-1',
+        activeSessionStartedAt: '2026-07-11T09:00:00.000Z',
+        memberId: 'member-1',
+        memberName: 'Rosa Gutierrez',
+      }),
+    ]);
+  }
+
+  it('shows Cancel, Missed, and Complete actions together', () => {
+    renderActiveBadge();
+
+    expect(screen.getByRole('button', { name: 'Cancel session' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Mark session missed' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Complete session' })).toBeTruthy();
+  });
+
+  it('Cancel opens an in-app confirm modal, never window.confirm', () => {
+    const confirmSpy = vi.spyOn(window, 'confirm');
+    try {
+      renderActiveBadge();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel session' }));
+
+      expect(screen.getByText('Cancel this session?')).toBeTruthy();
+      expect(confirmSpy).not.toHaveBeenCalled();
+    } finally {
+      confirmSpy.mockRestore();
+    }
+  });
+
+  it('Missed opens an in-app confirm modal with no-show copy, never window.confirm', () => {
+    const confirmSpy = vi.spyOn(window, 'confirm');
+    try {
+      renderActiveBadge();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Mark session missed' }));
+
+      expect(screen.getByText('Mark this session as missed?')).toBeTruthy();
+      expect(confirmSpy).not.toHaveBeenCalled();
+    } finally {
+      confirmSpy.mockRestore();
+    }
+  });
+
+  it('declining the Cancel confirm modal does not fire the abort mutation', () => {
+    renderActiveBadge();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel session' }));
+    fireEvent.click(screen.getByRole('button', { name: 'No, keep session' }));
+
+    // react-native-web's Modal keeps its content mounted (opacity: 0) until
+    // a real CSS `animationend` fires, which jsdom never dispatches — so we
+    // assert the actual behavioral contract (no mutation fired, badge still
+    // fully active) rather than DOM removal of the modal markup.
+    // (useConversations' own background refetch legitimately calls
+    // GET /conversations/ — only the destructive mutation endpoints matter here.)
+    expect(mockedApi).not.toHaveBeenCalledWith(
+      '/sessions/sess-1/abort',
+      expect.anything(),
+    );
+    expect(mockedApi).not.toHaveBeenCalledWith(
+      '/sessions/sess-1/no-show',
+      expect.anything(),
+    );
+    expect(screen.getByTestId('active-session-badge')).toBeTruthy();
+    expect(screen.getByTestId('active-session-badge-timer')).toBeTruthy();
+  });
+
+  it('confirming Cancel fires PATCH /sessions/{id}/abort and clears the badge', async () => {
+    const { qc } = renderActiveBadge();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel session' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Yes, Cancel Session' }));
+
+    await waitFor(() => {
+      expect(mockedApi).toHaveBeenCalledWith(
+        '/sessions/sess-1/abort',
+        expect.objectContaining({ method: 'PATCH' }),
+      );
+    });
+
+    // The mutation's onSuccess invalidates the sessions cache — the badge
+    // itself is driven by the conversations cache, so clear activeSessionId
+    // there the way a real refetch would once the backend reflects the
+    // cancelled session, and assert the badge unmounts.
+    act(() => {
+      qc.setQueryData<ConversationData[]>(
+        queryKeys.conversationList(false),
+        [conv({ id: 'c1', activeSessionId: null, memberName: 'Rosa Gutierrez' })],
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('active-session-badge')).toBeNull();
+    });
+  });
+
+  it('confirming Missed fires PATCH /sessions/{id}/no-show and clears the badge', async () => {
+    const { qc } = renderActiveBadge();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mark session missed' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Yes, Mark Missed' }));
+
+    await waitFor(() => {
+      expect(mockedApi).toHaveBeenCalledWith(
+        '/sessions/sess-1/no-show',
+        expect.objectContaining({ method: 'PATCH' }),
+      );
+    });
+
+    act(() => {
+      qc.setQueryData<ConversationData[]>(
+        queryKeys.conversationList(false),
+        [conv({ id: 'c1', activeSessionId: null, memberName: 'Rosa Gutierrez' })],
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('active-session-badge')).toBeNull();
+    });
+  });
+
+  it('Complete Session still navigates (unchanged) alongside the new actions', () => {
+    renderActiveBadge();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Complete session' }));
+
+    expect(mockNavigate).toHaveBeenCalledWith('SessionsStack', {
+      screen: 'Messages',
+      params: { memberId: 'member-1', promptComplete: true },
+    });
   });
 });

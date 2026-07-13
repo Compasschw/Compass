@@ -1477,6 +1477,46 @@ export function useAbortSession() {
   });
 }
 
+// ─── Mark Session No-Show ("Missed") ─────────────────────────────────────────
+
+/**
+ * PATCH /api/v1/sessions/{sessionId}/no-show
+ *
+ * Marks an in-progress session as a no-show ("Missed") — the CHW began the
+ * session but the member never attended. Transitions ``in_progress`` →
+ * ``no_show`` and creates NO documentation and NO billing claim, same as
+ * `useAbortSession`. Epic O2/P.
+ *
+ * DISTINCT from abort: a no-show session is a RECORD-KEEPING terminal
+ * status — it stays visible on the CHW/member calendar tagged "Missed"
+ * (see `deriveBadgeStatus` in CHWCalendarScreen/MemberCalendarScreen),
+ * whereas an aborted (`cancelled`) session vanishes from the calendar grid
+ * entirely (Epic N1).
+ *
+ * Invalidates the same query key the sibling `/abort` and `/end` mutations
+ * do — the sessions cache — so the rail's live session status (fetched via
+ * useSession) and ActiveSessionBadge (fetched via useActiveChwSession, which
+ * derives from the same conversations/sessions data) both pick up the
+ * terminal `no_show` status and the badge/timer disappear.
+ */
+export function useMarkSessionNoShow() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (sessionId: string): Promise<SessionData> => {
+      const raw = await api<unknown>(`/sessions/${sessionId}/no-show`, {
+        method: 'PATCH',
+      });
+      return transformKeys<SessionData>(raw);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.sessions });
+    },
+    onError: (error: Error) => {
+      showAlert('Could not mark session missed', error?.message ?? 'Please try again.');
+    },
+  });
+}
+
 // ─── Case Notes ──────────────────────────────────────────────────────────────
 
 /**

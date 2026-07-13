@@ -107,27 +107,37 @@ type SessionMode = 'in_person' | 'virtual' | 'phone';
 
 // ─── Status badge helpers ─────────────────────────────────────────────────────
 
-export type SessionBadgeStatus = 'Confirmed' | 'Pending' | 'Completed' | 'Cancelled';
+export type SessionBadgeStatus = 'Confirmed' | 'Pending' | 'Completed' | 'Cancelled' | 'Missed';
 
 /**
  * Derives a display status badge from a SessionData row, reflecting the
- * session's REAL status — no inferred/hardcoded "Missed."
+ * session's REAL status — no inferred/hardcoded "Missed" for a session that
+ * was merely never started (see point 4 below).
  *
  * Priority:
  *  1. completed → "Completed"
- *  2. cancelled/cancelled_no_consent (CHW or member cancelled/removed it) → "Cancelled"
- *  3. schedulingStatus 'pending' (awaiting Confirm/Decline) → "Pending"
- *  4. default (scheduled — upcoming OR past-but-never-started) → "Confirmed"
+ *  2. no_show (Epic O2 — CHW began the session but the member never
+ *     attended, PATCH /sessions/{id}/no-show) → "Missed"
+ *  3. cancelled/cancelled_no_consent (CHW or member cancelled/removed it) → "Cancelled"
+ *  4. schedulingStatus 'pending' (awaiting Confirm/Decline) → "Pending"
+ *  5. default (scheduled — upcoming OR past-but-never-started) → "Confirmed"
  *
  * A past session that stayed `scheduled` (the CHW never began it) is
- * intentionally still "Confirmed" here rather than "Missed" — a true no-show
- * "Missed" tag requires a distinct signal (Epic O2, not yet built) that the
- * CHW actually began the session and the member failed to attend. Silently
- * relabeling every past-and-not-started session as "Missed" was misleading
- * (e.g. documentation submitted late, or the row hasn't refreshed yet).
+ * intentionally still "Confirmed" here rather than "Missed" — the "Missed"
+ * tag is reserved for the distinct, explicit no_show signal (Epic O2) that
+ * the CHW actually began the session and the member failed to attend.
+ * Silently relabeling every past-and-not-started session as "Missed" would
+ * be misleading (e.g. documentation submitted late, or the row hasn't
+ * refreshed yet).
+ *
+ * `no_show` is DISTINCT from `cancelled` in the calendar grid too: a
+ * cancelled session is excluded entirely (see `groupSessionsByDate`'s N1
+ * behavior), while a no_show session stays visible, tagged "Missed", for
+ * record-keeping.
  */
 export function deriveBadgeStatus(session: SessionData, now: Date): SessionBadgeStatus {
   if (session.status === 'completed') return 'Completed';
+  if (session.status === 'no_show') return 'Missed';
   if (session.status === 'cancelled' || session.status === 'cancelled_no_consent') return 'Cancelled';
   if (session.schedulingStatus === 'pending') return 'Pending';
   return 'Confirmed';
@@ -135,6 +145,7 @@ export function deriveBadgeStatus(session: SessionData, now: Date): SessionBadge
 
 const BADGE_COLORS: Record<SessionBadgeStatus, { bg: string; text: string; border: string }> = {
   Confirmed: { bg: '#DCFCE7', text: '#15803D', border: '#BBF7D0' },
+  Missed: { bg: '#FEF3C7', text: '#B45309', border: '#FDE68A' },
   Pending: { bg: '#FEF9C3', text: '#A16207', border: '#FDE68A' },
   Completed: { bg: '#F3F4F6', text: '#374151', border: '#E5E7EB' },
   Cancelled: { bg: '#FEE2E2', text: '#B91C1C', border: '#FECACA' },
@@ -302,6 +313,12 @@ function toISODateTimeLocal(date: Date): string {
  * month-view day-cell count both read from this map), not linger as a
  * dangling entry. This is distinct from a past session that stayed
  * `scheduled` (never started) — that one is NOT cancelled and still renders.
+ *
+ * `no_show` (Epic O2 — "Missed Session") is deliberately NOT in this
+ * exclusion list: a no-show is record-keeping, not a removal — the CHW
+ * showed up and began the session, so it stays visible on the calendar
+ * tagged "Missed" (see `deriveBadgeStatus`) rather than vanishing like a
+ * cancelled appointment.
  */
 function groupSessionsByDate(sessions: SessionData[]): Map<string, SessionData[]> {
   const map = new Map<string, SessionData[]>();

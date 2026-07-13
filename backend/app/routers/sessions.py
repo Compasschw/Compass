@@ -1029,6 +1029,97 @@ async def abort_session(
     })
 
 
+@router.patch("/{session_id}/no-show", response_model=SessionResponse)
+async def mark_session_no_show(
+    session_id: UUID,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SessionResponse:
+    """PATCH /api/v1/sessions/{session_id}/no-show
+
+    CHW marks an ACTIVE session as a no-show ("Missed") from the "Complete
+    Session" confirm dialog / ActiveSessionBadge — the member didn't attend a
+    session the CHW had already begun. Transitions ``in_progress`` →
+    ``no_show`` and creates NO documentation and NO billing claim, exactly
+    like ``/abort``.
+
+    DISTINCT from ``/abort``: a ``no_show`` session is a terminal, RECORD-
+    KEEPING status — it stays visible on the CHW/member calendar tagged
+    "Missed" (badge derivation in CHWCalendarScreen/MemberCalendarScreen),
+    whereas ``cancelled`` sessions vanish from the calendar grid entirely
+    (Epic N1). Aborting throws the session away; no-show keeps a record that
+    the CHW showed up and the member did not.
+
+    Only allowed from ``in_progress`` — a member can't be a no-show for a
+    session that never started (unlike abort, which also accepts
+    ``awaiting_documentation``). 409 from ``scheduled``, ``completed``,
+    ``cancelled``, or ``awaiting_documentation``.
+
+    Relationship gate: only the owning CHW (or an admin) may mark a no-show —
+    a non-owner gets 404 so session existence isn't leaked.
+
+    Clears the active-session state the same way ``/abort`` does: flipping
+    ``status`` away from ``in_progress`` means
+    ``get_active_session_for_conversation`` (which filters on
+    ``status == "in_progress"``) no longer returns this row, so the CHW
+    Messages timer/ActiveSessionBadge disappear on the next refetch — no
+    separate "clear" step is needed.
+
+    Errors:
+      404 — session not found or caller is not the owning CHW
+      409 — session is not ``in_progress`` (e.g. ``scheduled`` — the member
+            can't be a no-show for a session that never started; or
+            ``awaiting_documentation``/``completed``/``cancelled``)
+    """
+    import logging as _logging
+
+    from app.models.audit import AuditLog
+
+    session = await _load_chw_session_or_404(
+        session_id=session_id, db=db, current_user=current_user
+    )
+
+    if session.status != "in_progress":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Cannot mark session with status '{session.status}' as a "
+                "no-show. Only an 'in_progress' session can be marked Missed."
+            ),
+        )
+
+    previous_status = session.status
+    session.status = "no_show"
+    if session.ended_at is None:
+        session.ended_at = datetime.now(UTC)
+
+    db.add(
+        AuditLog(
+            user_id=current_user.id,
+            action="session_no_show",
+            resource="session",
+            resource_id=str(session_id),
+            details={"previous_status": previous_status, "new_status": "no_show"},
+        )
+    )
+
+    await db.commit()
+    await db.refresh(session)
+
+    _logging.getLogger("compass.sessions.no_show").info(
+        "session %s marked no_show by chw %s (was %s)",
+        session_id, current_user.id, previous_status,
+    )
+
+    chw = await db.get(User, session.chw_id)
+    member = await db.get(User, session.member_id)
+    return SessionResponse.model_validate({
+        **session.__dict__,
+        "chw_name": chw.name if chw else None,
+        "member_name": member.name if member else None,
+    })
+
+
 async def _run_extraction_in_background(session_id: UUID) -> None:
     """Run LLM follow-up extraction in a fresh DB session, fire-and-forget.
 

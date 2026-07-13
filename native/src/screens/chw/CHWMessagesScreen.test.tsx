@@ -140,6 +140,14 @@ const startAssessmentFixture = {
 
 // ─── API router — the sole network boundary ──────────────────────────────────
 
+// Mutable session status the GET /sessions/{id} route reflects back — lets
+// the Cancel/Missed Session tests assert the rail re-renders with the
+// post-mutation terminal state after the sessions-query invalidation
+// triggers a refetch (mirrors what the real backend does: PATCH .../abort or
+// .../no-show changes the row a subsequent GET then returns). Reset in
+// beforeEach so no state leaks between tests.
+let currentSessionStatus = 'in_progress';
+
 function routeApi(path: string, options?: { method?: string; body?: string }): unknown {
   const method = options?.method ?? 'GET';
 
@@ -166,8 +174,18 @@ function routeApi(path: string, options?: { method?: string; body?: string }): u
     return startAssessmentFixture;
   }
 
+  if (path === `/sessions/${SESSION_ID}/abort` && method === 'PATCH') {
+    currentSessionStatus = 'cancelled';
+    return { ...sessionFixture, status: 'cancelled', ended_at: new Date().toISOString() };
+  }
+
+  if (path === `/sessions/${SESSION_ID}/no-show` && method === 'PATCH') {
+    currentSessionStatus = 'no_show';
+    return { ...sessionFixture, status: 'no_show', ended_at: new Date().toISOString() };
+  }
+
   if (path.startsWith('/sessions/')) {
-    return sessionFixture;
+    return { ...sessionFixture, status: currentSessionStatus };
   }
 
   if (path === '/chw/journeys') {
@@ -272,6 +290,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   mockedApi.mockReset();
+  currentSessionStatus = 'in_progress';
   mockedApi.mockImplementation(async (path: string, options?: { method?: string; body?: string }) =>
     routeApi(path, options),
   );
@@ -617,5 +636,114 @@ describe('CHWMessagesScreen — conversation "…" kebab menu (Pin / Archive / D
     } finally {
       confirmSpy.mockRestore();
     }
+  });
+});
+
+// ─── Epic P — Cancel / Missed actions on the Complete-Session confirm panel ────
+
+describe('CHWMessagesScreen — Cancel / Missed Session actions (Epic P + O2)', () => {
+  /**
+   * Scopes queries to the member-context rail (accessibilityLabel "Member
+   * context"), not the whole document — AppShell (role="chw") also mounts
+   * ActiveSessionBadge in the corner, which renders its OWN "Complete
+   * session" button reading off the same active-session fixture data. Both
+   * are real, simultaneously-mounted controls in production; the rail is
+   * the one under test here (Epic P's second location — ActiveSessionBadge
+   * itself is covered in ActiveSessionBadge.test.tsx).
+   */
+  async function openEndConfirmPanel(): Promise<void> {
+    renderScreen();
+    await screen.findByText('Rosa Gutierrez', {}, { timeout: 3000 });
+    const rail = within(screen.getByLabelText('Member context'));
+    fireEvent.click(await rail.findByLabelText('Complete session'));
+    await rail.findByText('Complete the session for Rosa?');
+  }
+
+  it('shows Cancel Session, Missed Session, and Complete Session together — no window.confirm', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm');
+    try {
+      await openEndConfirmPanel();
+
+      expect(screen.getByLabelText('Cancel session (abort)')).toBeTruthy();
+      expect(screen.getByLabelText('Mark session missed (no-show)')).toBeTruthy();
+      expect(screen.getByLabelText('Confirm complete session')).toBeTruthy();
+      expect(confirmSpy).not.toHaveBeenCalled();
+    } finally {
+      confirmSpy.mockRestore();
+    }
+  });
+
+  it('Cancel Session fires PATCH /sessions/{id}/abort and closes the confirm panel', async () => {
+    await openEndConfirmPanel();
+
+    fireEvent.click(screen.getByLabelText('Cancel session (abort)'));
+
+    await waitFor(() => {
+      expect(mockedApi).toHaveBeenCalledWith(
+        `/sessions/${SESSION_ID}/abort`,
+        expect.objectContaining({ method: 'PATCH' }),
+      );
+    });
+
+    // The confirm panel closes immediately on tap (before the mutation
+    // resolves) — mirrors handleCancelSessionConfirmed's setShowEndConfirm(false).
+    await waitFor(() => {
+      expect(screen.queryByText('Complete the session for Rosa?')).toBeNull();
+    });
+  });
+
+  it('Missed Session fires PATCH /sessions/{id}/no-show and closes the confirm panel', async () => {
+    await openEndConfirmPanel();
+
+    fireEvent.click(screen.getByLabelText('Mark session missed (no-show)'));
+
+    await waitFor(() => {
+      expect(mockedApi).toHaveBeenCalledWith(
+        `/sessions/${SESSION_ID}/no-show`,
+        expect.objectContaining({ method: 'PATCH' }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText('Complete the session for Rosa?')).toBeNull();
+    });
+  });
+
+  it('after Cancel Session succeeds, the rail shows the read-only Cancelled note (badge/timer state cleared)', async () => {
+    await openEndConfirmPanel();
+
+    fireEvent.click(screen.getByLabelText('Cancel session (abort)'));
+
+    await waitFor(() => {
+      expect(mockedApi).toHaveBeenCalledWith(
+        `/sessions/${SESSION_ID}/abort`,
+        expect.objectContaining({ method: 'PATCH' }),
+      );
+    });
+
+    await screen.findByText('Session cancelled');
+    // Rail-scoped: the ActiveSessionBadge's own "Complete session" button
+    // reads off a separate query (useConversations, not useSession) that
+    // this test's mock doesn't reflect the mutation into — its clearing
+    // behavior is covered independently in ActiveSessionBadge.test.tsx.
+    const rail = within(screen.getByLabelText('Member context'));
+    expect(rail.queryByLabelText('Complete session')).toBeNull();
+  });
+
+  it('after Missed Session succeeds, the rail shows the read-only Missed note (badge/timer state cleared)', async () => {
+    await openEndConfirmPanel();
+
+    fireEvent.click(screen.getByLabelText('Mark session missed (no-show)'));
+
+    await waitFor(() => {
+      expect(mockedApi).toHaveBeenCalledWith(
+        `/sessions/${SESSION_ID}/no-show`,
+        expect.objectContaining({ method: 'PATCH' }),
+      );
+    });
+
+    await screen.findByText('Missed — member did not attend');
+    const rail = within(screen.getByLabelText('Member context'));
+    expect(rail.queryByLabelText('Complete session')).toBeNull();
   });
 });

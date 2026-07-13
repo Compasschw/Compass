@@ -19,6 +19,18 @@
  * reach manually from MemberContextRail — see CHWMessagesScreen's
  * `shouldPromptComplete` wiring.
  *
+ * "Cancel Session" / "Missed Session" (Epic P + O2): unlike Complete
+ * Session, these two act directly from the badge — no navigation needed —
+ * via `useAbortSession` / `useMarkSessionNoShow`. Both are destructive
+ * (they end the session without documentation/billing), so both are gated
+ * behind an in-app confirm Modal (`SessionActionConfirmModal` below) —
+ * NEVER `window.confirm`/`Alert.alert` — mirroring the on-brand pattern
+ * CHWCalendarScreen's `RemoveSessionConfirmModal` and MemberProfileScreen's
+ * `RefuseServicesConfirmModal` already use. On success (query invalidation
+ * flips the conversation's `activeSessionId` to null), `useActiveChwSession`
+ * returns null and this whole badge unmounts — same "clears itself" effect
+ * Complete Session's navigation produces on the Messages screen.
+ *
  * Draggable (vertical only): the badge's default bottom-right position sits
  * directly over the Messages rail's "Complete Session" button (Epic V), so
  * the CHW can drag it up/down by its grip handle to uncover whatever it's
@@ -42,6 +54,8 @@ import {
   PanResponder,
   Platform,
   StyleSheet,
+  Modal,
+  ActivityIndicator,
   useWindowDimensions,
   type GestureResponderEvent,
   type LayoutChangeEvent,
@@ -50,9 +64,10 @@ import {
   type TextStyle,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { Clock, LogOut, GripHorizontal } from 'lucide-react-native';
+import { Clock, LogOut, GripHorizontal, XCircle, UserX } from 'lucide-react-native';
 
 import { useActiveChwSession } from '../../hooks/useActiveChwSession';
+import { useAbortSession, useMarkSessionNoShow } from '../../hooks/useApiQueries';
 import { formatElapsedSince } from '../../utils/sessionTimer';
 import { colors as tokens, spacing, radius, shadows, numerals } from '../../theme/tokens';
 
@@ -266,6 +281,36 @@ export function ActiveSessionBadge(): React.JSX.Element | null {
     return () => clearInterval(id);
   }, [activeSession?.sessionId]);
 
+  // ── Cancel / Missed Session (Epic P + O2) ─────────────────────────────────
+  // `confirmAction` drives the shared SessionActionConfirmModal below: null
+  // means no modal is showing; 'cancel' | 'no_show' selects which
+  // destructive action is pending confirmation. Neither action navigates —
+  // both fire directly from the badge and, on success, the sessions-query
+  // invalidation clears activeSessionId, which unmounts this whole badge
+  // (see the `if (!activeSession) return null` guard below).
+  const [confirmAction, setConfirmAction] = useState<'cancel' | 'no_show' | null>(null);
+  const abortSession = useAbortSession();
+  const markSessionNoShow = useMarkSessionNoShow();
+  const actionPending = abortSession.isPending || markSessionNoShow.isPending;
+
+  const handleConfirmAction = useCallback(async (): Promise<void> => {
+    if (!activeSession || confirmAction === null) return;
+    const sessionId = activeSession.sessionId;
+    const action = confirmAction;
+    setConfirmAction(null);
+    if (action === 'cancel') {
+      await abortSession.mutateAsync(sessionId).catch(() => {
+        // useAbortSession's onError already shows the on-brand alert;
+        // swallow here so this handler doesn't produce an unhandled
+        // rejection warning in tests/console.
+      });
+    } else {
+      await markSessionNoShow.mutateAsync(sessionId).catch(() => {
+        // useMarkSessionNoShow's onError already shows the on-brand alert.
+      });
+    }
+  }, [activeSession, confirmAction, abortSession, markSessionNoShow]);
+
   if (!activeSession) return null;
 
   const handleCompleteSession = (): void => {
@@ -281,57 +326,186 @@ export function ActiveSessionBadge(): React.JSX.Element | null {
   };
 
   return (
-    <Animated.View
-      style={[styles.container, { transform: [{ translateY }] }]}
-      onLayout={handleLayout}
-      testID="active-session-badge"
-      accessibilityLabel={`Active session with ${activeSession.memberName}`}
-    >
-      <View
-        style={styles.dragHandle}
-        testID="active-session-badge-drag-handle"
-        accessibilityRole="adjustable"
-        accessibilityLabel="Drag to move active session badge"
-        accessibilityHint="Move up or down to reposition this badge so it doesn't cover other controls"
-        {...panResponder.panHandlers}
+    <>
+      <Animated.View
+        style={[styles.container, { transform: [{ translateY }] }]}
+        onLayout={handleLayout}
+        testID="active-session-badge"
+        accessibilityLabel={`Active session with ${activeSession.memberName}`}
       >
-        <GripHorizontal size={16} color={tokens.textSecondary} />
-      </View>
-
-      <View style={styles.info}>
-        <Text
-          style={styles.memberName}
-          testID="active-session-badge-member-name"
-          numberOfLines={1}
+        <View
+          style={styles.dragHandle}
+          testID="active-session-badge-drag-handle"
+          accessibilityRole="adjustable"
+          accessibilityLabel="Drag to move active session badge"
+          accessibilityHint="Move up or down to reposition this badge so it doesn't cover other controls"
+          {...panResponder.panHandlers}
         >
-          {activeSession.memberName}
-        </Text>
-        <View style={styles.timerRow}>
-          <Clock size={13} color={tokens.emerald700} />
+          <GripHorizontal size={16} color={tokens.textSecondary} />
+        </View>
+
+        <View style={styles.info}>
           <Text
-            style={[styles.timerText, numerals.tabular]}
-            testID="active-session-badge-timer"
-            accessibilityLabel="Session elapsed time"
+            style={styles.memberName}
+            testID="active-session-badge-member-name"
+            numberOfLines={1}
           >
-            {formatElapsedSince(activeSession.startedAt, nowMs)}
+            {activeSession.memberName}
           </Text>
+          <View style={styles.timerRow}>
+            <Clock size={13} color={tokens.emerald700} />
+            <Text
+              style={[styles.timerText, numerals.tabular]}
+              testID="active-session-badge-timer"
+              accessibilityLabel="Session elapsed time"
+            >
+              {formatElapsedSince(activeSession.startedAt, nowMs)}
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.actionsRow}>
+          <Pressable
+            onPress={() => setConfirmAction('cancel')}
+            disabled={actionPending}
+            style={({ pressed }) => [
+              styles.secondaryBtn,
+              pressed && styles.secondaryBtnPressed,
+              actionPending && styles.actionBtnDisabled,
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel="Cancel session"
+            accessibilityState={{ disabled: actionPending }}
+            testID="active-session-badge-cancel-button"
+          >
+            <XCircle size={13} color={tokens.textSecondary} />
+            <Text style={styles.secondaryBtnText}>Cancel</Text>
+          </Pressable>
+
+          <Pressable
+            onPress={() => setConfirmAction('no_show')}
+            disabled={actionPending}
+            style={({ pressed }) => [
+              styles.secondaryBtn,
+              pressed && styles.secondaryBtnPressed,
+              actionPending && styles.actionBtnDisabled,
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel="Mark session missed"
+            accessibilityState={{ disabled: actionPending }}
+            testID="active-session-badge-missed-button"
+          >
+            <UserX size={13} color={tokens.textSecondary} />
+            <Text style={styles.secondaryBtnText}>Missed</Text>
+          </Pressable>
+
+          <Pressable
+            onPress={handleCompleteSession}
+            disabled={actionPending}
+            style={({ pressed }) => [
+              styles.completeBtn,
+              pressed && styles.completeBtnPressed,
+              actionPending && styles.actionBtnDisabled,
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel="Complete session"
+            accessibilityState={{ disabled: actionPending }}
+            testID="active-session-badge-complete-button"
+          >
+            <LogOut size={14} color="#ffffff" />
+            <Text style={styles.completeBtnText}>Complete</Text>
+          </Pressable>
+        </View>
+      </Animated.View>
+
+      <SessionActionConfirmModal
+        action={confirmAction}
+        memberName={activeSession.memberName}
+        isPending={actionPending}
+        onConfirm={() => void handleConfirmAction()}
+        onCancel={() => setConfirmAction(null)}
+      />
+    </>
+  );
+}
+
+// ─── Cancel / Missed confirm modal ─────────────────────────────────────────────
+
+interface SessionActionConfirmModalProps {
+  /** null = hidden. 'cancel' = Cancel Session copy; 'no_show' = Missed Session copy. */
+  action: 'cancel' | 'no_show' | null;
+  memberName: string;
+  isPending: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}
+
+/**
+ * On-brand Yes/No confirmation for the badge's destructive Cancel/Missed
+ * actions — an in-app Modal, never `window.confirm`/`Alert.alert`, mirroring
+ * CHWCalendarScreen's `RemoveSessionConfirmModal` / MemberProfileScreen's
+ * `RefuseServicesConfirmModal`. A single component handles both actions
+ * (distinguished by `action`) rather than two near-identical modals.
+ */
+function SessionActionConfirmModal({
+  action,
+  memberName,
+  isPending,
+  onConfirm,
+  onCancel,
+}: SessionActionConfirmModalProps): React.JSX.Element {
+  const copy =
+    action === 'no_show'
+      ? {
+          title: 'Mark this session as missed?',
+          body: `This records that the session with ${memberName} was started but the member did not attend. No documentation or claim will be filed. This can't be undone.`,
+          confirmLabel: 'Yes, Mark Missed',
+        }
+      : {
+          title: 'Cancel this session?',
+          body: `The in-progress session with ${memberName} will be discarded — no documentation or claim will be filed. This can't be undone.`,
+          confirmLabel: 'Yes, Cancel Session',
+        };
+
+  return (
+    <Modal
+      visible={action !== null}
+      transparent
+      animationType="fade"
+      onRequestClose={onCancel}
+      accessibilityViewIsModal
+    >
+      <View style={confirmModalStyles.overlay}>
+        <View style={confirmModalStyles.dialog}>
+          <Text style={confirmModalStyles.title}>{copy.title}</Text>
+          <Text style={confirmModalStyles.body}>{copy.body}</Text>
+          <View style={confirmModalStyles.actions}>
+            <Pressable
+              style={confirmModalStyles.cancelBtn}
+              onPress={onCancel}
+              disabled={isPending}
+              accessibilityRole="button"
+              accessibilityLabel="No, keep session"
+            >
+              <Text style={confirmModalStyles.cancelBtnText}>No, Keep It</Text>
+            </Pressable>
+            <Pressable
+              style={[confirmModalStyles.confirmBtn, isPending && { opacity: 0.6 }]}
+              onPress={onConfirm}
+              disabled={isPending}
+              accessibilityRole="button"
+              accessibilityLabel={copy.confirmLabel}
+            >
+              {isPending ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Text style={confirmModalStyles.confirmBtnText}>{copy.confirmLabel}</Text>
+              )}
+            </Pressable>
+          </View>
         </View>
       </View>
-
-      <Pressable
-        onPress={handleCompleteSession}
-        style={({ pressed }) => [
-          styles.completeBtn,
-          pressed && styles.completeBtnPressed,
-        ]}
-        accessibilityRole="button"
-        accessibilityLabel="Complete session"
-        testID="active-session-badge-complete-button"
-      >
-        <LogOut size={14} color="#ffffff" />
-        <Text style={styles.completeBtnText}>Complete Session</Text>
-      </Pressable>
-    </Animated.View>
+    </Modal>
   );
 }
 
@@ -345,7 +519,9 @@ const styles = StyleSheet.create({
     // enough to clear the bottom tab bar (60px on iOS) mirrors that approach.
     bottom:            DEFAULT_BOTTOM_OFFSET,
     right:             16,
-    maxWidth:          300,
+    // Widened from 300 to fit the Cancel / Missed / Complete three-button
+    // row (Epic P) without wrapping or crowding tap targets.
+    maxWidth:          340,
     backgroundColor:   tokens.cardBg,
     borderRadius:      radius.lg,
     borderWidth:       1,
@@ -397,13 +573,25 @@ const styles = StyleSheet.create({
     color:      tokens.emerald700,
   } as TextStyle,
 
+  /**
+   * Row hosting all three session actions (Epic P): Cancel, Missed, Complete.
+   * `flexWrap: 'wrap'` is a defensive fallback for a very narrow viewport —
+   * the container's own `maxWidth` normally keeps all three on one line.
+   */
+  actionsRow: {
+    flexDirection: 'row',
+    gap:           6,
+    flexWrap:      'wrap',
+  } as ViewStyle,
+
   completeBtn: {
+    flex:              1,
     flexDirection:     'row',
     alignItems:        'center',
     justifyContent:    'center',
-    gap:               spacing.xs,
+    gap:               4,
     paddingVertical:   9,
-    paddingHorizontal: spacing.md,
+    paddingHorizontal: spacing.sm,
     backgroundColor:   '#dc2626',
     borderRadius:      radius.md,
   } as ViewStyle,
@@ -416,5 +604,101 @@ const styles = StyleSheet.create({
     fontSize:   12,
     fontWeight: '700',
     color:      '#ffffff',
+  } as TextStyle,
+
+  /** Cancel / Missed — secondary (non-destructive-looking) buttons; the
+   *  actual destructive confirmation happens in SessionActionConfirmModal,
+   *  so these stay visually neutral rather than red like Complete. */
+  secondaryBtn: {
+    flex:              1,
+    flexDirection:     'row',
+    alignItems:        'center',
+    justifyContent:    'center',
+    gap:               4,
+    paddingVertical:   9,
+    paddingHorizontal: spacing.sm,
+    backgroundColor:   tokens.cardBg,
+    borderWidth:       1,
+    borderColor:       tokens.cardBorder,
+    borderRadius:      radius.md,
+  } as ViewStyle,
+
+  secondaryBtnPressed: {
+    backgroundColor: '#f3f4f6',
+  } as ViewStyle,
+
+  secondaryBtnText: {
+    fontSize:   12,
+    fontWeight: '700',
+    color:      tokens.textSecondary,
+  } as TextStyle,
+
+  actionBtnDisabled: {
+    opacity: 0.5,
+  } as ViewStyle,
+});
+
+// ─── Confirm modal styles ───────────────────────────────────────────────────────
+
+const confirmModalStyles = StyleSheet.create({
+  overlay: {
+    flex:            1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent:  'center',
+    alignItems:      'center',
+    padding:         spacing.xl,
+  } as ViewStyle,
+  dialog: {
+    backgroundColor: '#FFFFFF',
+    borderRadius:    radius.xl,
+    padding:         spacing.xl,
+    width:           '100%',
+    maxWidth:        400,
+    ...(shadows.elevated as object),
+  } as ViewStyle,
+  title: {
+    fontSize:     17,
+    fontWeight:   '700',
+    color:        tokens.textPrimary,
+    marginBottom: spacing.sm,
+  } as TextStyle,
+  body: {
+    fontSize:     14,
+    color:        tokens.textSecondary,
+    lineHeight:   20,
+    marginBottom: spacing.xl,
+  } as TextStyle,
+  actions: {
+    flexDirection: 'row',
+    gap:           spacing.sm,
+  } as ViewStyle,
+  cancelBtn: {
+    flex:            1,
+    paddingVertical: 12,
+    borderRadius:    radius.md,
+    borderWidth:     1,
+    borderColor:     tokens.cardBorder,
+    alignItems:      'center',
+    justifyContent:  'center',
+    minHeight:       44,
+  } as ViewStyle,
+  cancelBtnText: {
+    fontSize:   14,
+    fontWeight: '600',
+    color:      tokens.textPrimary,
+  } as TextStyle,
+  confirmBtn: {
+    flex:            1,
+    paddingVertical: 12,
+    borderRadius:    radius.md,
+    backgroundColor: '#DC2626',
+    alignItems:      'center',
+    justifyContent:  'center',
+    minHeight:       44,
+  } as ViewStyle,
+  confirmBtnText: {
+    fontSize:   14,
+    fontWeight: '600',
+    color:      '#FFFFFF',
   } as TextStyle,
 });
