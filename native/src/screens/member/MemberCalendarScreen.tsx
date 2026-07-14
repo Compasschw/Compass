@@ -64,6 +64,7 @@ import {
 
 import { colors as tokens, numerals, spacing, radius } from '../../theme/tokens';
 import { verticalLabels, type Vertical } from '../../data/mock';
+import { VERTICAL_LABEL, VERTICAL_COLOR, type Vertical as VerticalsLibVertical } from '../../lib/verticals';
 import {
   useSessions,
   useScheduleSession,
@@ -303,10 +304,26 @@ function formatDateLabel(isoString: string): string {
   return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-/** Groups SessionData[] by their local calendar date key (YYYY-MM-DD). */
+/**
+ * Groups SessionData[] by their local calendar date key (YYYY-MM-DD).
+ *
+ * QA2 A2 #5 (mirrors CHWCalendarScreen's N1 exclusion — see that file's
+ * groupSessionsByDate docstring for the full rationale): removed/cancelled
+ * sessions (`cancelled` and `cancelled_no_consent`) are excluded entirely —
+ * once a session the member or CHW cancelled/removed/retracted (e.g. the old
+ * side of a "Propose New Time" swap) is gone, it must vanish from the
+ * member's calendar grid (week/day cards AND the month-view day-cell count
+ * both read from this map) too, not linger as a dangling entry. This is
+ * distinct from a past session that stayed `scheduled` (never started) —
+ * that one is NOT cancelled and still renders.
+ *
+ * `no_show` is deliberately NOT in this exclusion list, same as the CHW
+ * side: it's record-keeping (tagged "Missed"), not a removal.
+ */
 function groupSessionsByDate(sessions: SessionData[]): Map<string, SessionData[]> {
   const map = new Map<string, SessionData[]>();
   for (const session of sessions) {
+    if (session.status === 'cancelled' || session.status === 'cancelled_no_consent') continue;
     const d = new Date(session.scheduledAt);
     const key = toDateKey(d.getFullYear(), d.getMonth(), d.getDate());
     const bucket = map.get(key) ?? [];
@@ -1071,7 +1088,48 @@ function SessionDetailsModal({
                 </View>
               </View>
 
-              {verticalText ? (
+              {/* QA2 A2 #5 — Resource Needs chips (mirrors CHWCalendarScreen's
+                  Session Details exactly: same verticalLabel/VERTICAL_COLOR
+                  source of truth). Falls back to the legacy "Focus Area" row
+                  only when resourceNeeds is empty/absent — an older session
+                  scheduled before Epic L's Resource Needs multiselect existed
+                  still shows its single `vertical` value rather than nothing. */}
+              {session.resourceNeeds && session.resourceNeeds.length > 0 ? (
+                <>
+                  <View style={detailModalStyles.divider} />
+                  <View style={detailModalStyles.detailRow}>
+                    <View style={{ width: 14, alignItems: 'center' }}>
+                      <Text style={{ fontSize: 14 }}>🏷️</Text>
+                    </View>
+                    <View style={detailModalStyles.detailContent}>
+                      <Text style={detailModalStyles.detailLabel}>Resource Needs</Text>
+                      <View style={detailModalStyles.resourceNeedsRow} accessibilityLabel="Resource needs">
+                        {session.resourceNeeds.map((v) => (
+                          <View
+                            key={v}
+                            style={[
+                              detailModalStyles.resourceNeedChip,
+                              {
+                                backgroundColor: `${VERTICAL_COLOR[v as VerticalsLibVertical] ?? tokens.textSecondary}1A`,
+                                borderColor: VERTICAL_COLOR[v as VerticalsLibVertical] ?? tokens.textSecondary,
+                              },
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                detailModalStyles.resourceNeedChipText,
+                                { color: VERTICAL_COLOR[v as VerticalsLibVertical] ?? tokens.textSecondary },
+                              ]}
+                            >
+                              {VERTICAL_LABEL[v as VerticalsLibVertical] ?? v}
+                            </Text>
+                          </View>
+                        ))}
+                      </View>
+                    </View>
+                  </View>
+                </>
+              ) : verticalText ? (
                 <>
                   <View style={detailModalStyles.divider} />
                   <View style={detailModalStyles.detailRow}>
@@ -1288,6 +1346,22 @@ const detailModalStyles = StyleSheet.create({
     color: '#6B7280',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
+  },
+  resourceNeedsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 4,
+  },
+  resourceNeedChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+  },
+  resourceNeedChipText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12,
   },
   detailValue: {
     fontFamily: 'PlusJakartaSans_600SemiBold',

@@ -235,6 +235,37 @@ const pastScheduledSessionFixture = {
   member_name: MEMBER_NAME_4,
 };
 
+// ─── QA2 A2 #17 — CHW-proposed pending session, "today" (Session Details) ────
+
+const CHW_PROPOSED_TODAY_SESSION_ID = 'sess-chw-proposed-today-1';
+const MEMBER_ID_8 = 'member-8';
+const MEMBER_NAME_8 = 'Lucia Fernandez';
+
+const chwProposedTodayStart = new Date(FUTURE_TODAY); // upcoming, today (never rolls)
+const chwProposedTodayEnd = new Date(chwProposedTodayStart.getTime() + 60 * 60 * 1000);
+
+/** A pending session THIS CHW proposed (proposedBy: 'chw'), anchored to today
+ *  so it lands in Day view's todaySessions bucket — used to assert Session
+ *  Details shows Remove + Propose New Time (no Confirm/Decline on your own
+ *  proposal) for this branch, distinct from pendingSessionFixture's
+ *  member-requested Confirm/Decline branch. */
+const chwProposedTodaySessionFixture = {
+  id: CHW_PROPOSED_TODAY_SESSION_ID,
+  request_id: 'req-10',
+  chw_id: CHW_ID,
+  member_id: MEMBER_ID_8,
+  vertical: 'housing',
+  status: 'scheduled',
+  mode: 'in_person',
+  scheduled_at: chwProposedTodayStart.toISOString(),
+  scheduled_end_at: chwProposedTodayEnd.toISOString(),
+  scheduling_status: 'pending',
+  proposed_by: 'chw',
+  created_at: '2026-07-01T00:00:00.000Z',
+  chw_name: 'Test CHW',
+  member_name: MEMBER_NAME_8,
+};
+
 // ─── Epic L — Resource Needs fixtures ────────────────────────────────────────
 
 const RESOURCE_NEEDS_SESSION_ID = 'sess-resource-needs-1';
@@ -383,6 +414,10 @@ function routeApi(path: string, options?: { method?: string; body?: string }): u
 
   if (path === `/sessions/${CONFIRMED_SESSION_ID}/decline` && method === 'PATCH') {
     return { ...confirmedSessionFixture, status: 'cancelled', scheduling_status: null };
+  }
+
+  if (path === `/sessions/${CHW_PROPOSED_TODAY_SESSION_ID}/cancel` && method === 'PATCH') {
+    return { ...chwProposedTodaySessionFixture, status: 'cancelled' };
   }
 
   if (path === '/sessions/' && method === 'GET') {
@@ -692,6 +727,109 @@ describe('CHWCalendarScreen — Schedule Session Resource Needs multi-select (Ep
   });
 });
 
+/**
+ * QA2 A2 #14 — the Confirmed/Pending Status toggle was removed from Schedule
+ * Session. Every CHW-scheduled session (new session AND Propose New Time) is
+ * now ALWAYS submitted with `scheduling_status: 'pending'` explicitly — the
+ * FE never relies on the backend's 'confirmed' default.
+ */
+describe('CHWCalendarScreen — Schedule Session always submits pending (QA2 A2 #14)', () => {
+  it('does not render a Confirmed/Pending status picker', async () => {
+    renderScreen();
+    fireEvent.click(await screen.findByLabelText('Schedule a new session'));
+    await screen.findByLabelText('Search members');
+    fireEvent.click(await screen.findByLabelText(`Select ${MEMBER_NAME}`));
+
+    // The "Status" field label still renders (as an informational hint), but
+    // the Confirmed/Pending radio picker itself must be gone.
+    expect(screen.queryByLabelText('Confirmed')).toBeNull();
+    expect(screen.queryByLabelText('Pending')).toBeNull();
+  });
+
+  it('submits scheduling_status "pending" for a brand-new session (never "confirmed")', async () => {
+    renderScreen();
+    fireEvent.click(await screen.findByLabelText('Schedule a new session'));
+    await screen.findByLabelText('Search members');
+    fireEvent.click(await screen.findByLabelText(`Select ${MEMBER_NAME}`));
+
+    fireEvent.click(screen.getByLabelText('Schedule session'));
+
+    await waitFor(() => {
+      expect(mockedApi.mock.calls.some(([path]) => path === '/sessions/schedule')).toBe(true);
+    });
+
+    const [, options] = mockedApi.mock.calls.find(([path]) => path === '/sessions/schedule')!;
+    const body = JSON.parse((options as { body: string }).body);
+    expect(body.scheduling_status).toBe('pending');
+  });
+});
+
+/**
+ * QA2 A2 #15 — Propose New Time seeds Resource Needs from the ORIGINAL
+ * session's resourceNeeds instead of resetting to an empty set, so
+ * counter-offering a new time doesn't silently drop needs already on record.
+ */
+describe('CHWCalendarScreen — Propose New Time prefills Resource Needs (QA2 A2 #15)', () => {
+  beforeEach(() => {
+    additionalSessionFixtures = [resourceNeedsSessionFixture];
+  });
+
+  it('seeds the Resource Needs chips from the original session when opening Propose New Time', async () => {
+    renderScreen();
+    fireEvent.click(await screen.findByLabelText('day view'));
+    const card = await screen.findByLabelText(new RegExp(`^Session with ${MEMBER_NAME_5} at`));
+    fireEvent.click(card);
+    await screen.findByText('Session Details');
+
+    fireEvent.click(screen.getByLabelText('Propose a new time'));
+    await screen.findByLabelText('Propose new time'); // submit button, proves the modal opened
+
+    // resourceNeedsSessionFixture has resource_needs: ['housing', 'food'].
+    // 'Housing' is grandfathered (VERTICAL_PICKER_OPTIONS excludes it as a
+    // selectable chip — see lib/verticals.ts), so only 'Food Security' has a
+    // renderable chip to assert the checkmark on.
+    const foodChip = screen.getByLabelText('Food Security');
+    expect(foodChip.textContent).toContain('✓');
+  });
+
+  it('submits the prefilled Resource Needs unchanged if the CHW does not touch the chips', async () => {
+    renderScreen();
+    fireEvent.click(await screen.findByLabelText('day view'));
+    const card = await screen.findByLabelText(new RegExp(`^Session with ${MEMBER_NAME_5} at`));
+    fireEvent.click(card);
+    await screen.findByText('Session Details');
+
+    fireEvent.click(screen.getByLabelText('Propose a new time'));
+    await screen.findByLabelText('Propose new time');
+
+    // Explicitly set a start/end time (rather than relying on the prefilled
+    // values verbatim) — resourceNeedsSessionFixture is anchored to
+    // FUTURE_TODAY, which can land close enough to midnight that its
+    // prefilled 1-hour block rolls the end time onto the next calendar day
+    // and trips the modal's own "end must be after start" guard depending on
+    // what time of day the suite runs. Fixing the times here keeps this
+    // test's assertion (resource_needs round-trips unchanged) independent of
+    // that unrelated flakiness.
+    fireEvent.change(screen.getByLabelText('Session start time'), { target: { value: '9:00 AM' } });
+    fireEvent.change(screen.getByLabelText('Session end time'), { target: { value: '10:00 AM' } });
+
+    fireEvent.click(screen.getByLabelText('Propose new time'));
+
+    await waitFor(() => {
+      expect(mockedApi.mock.calls.some(([path]) => path === '/sessions/schedule')).toBe(true);
+    });
+
+    const [, options] = mockedApi.mock.calls.find(([path]) => path === '/sessions/schedule')!;
+    const body = JSON.parse((options as { body: string }).body);
+    // Both prefilled needs round-trip unchanged, including 'housing' — it has
+    // no visible chip (grandfathered out of VERTICAL_PICKER_OPTIONS, see
+    // lib/verticals.ts), but the prefill effect seeds it straight into the
+    // Set, and since nothing here toggles it off, it stays in the submitted
+    // payload exactly as it was on the original session.
+    expect(body.resource_needs).toEqual(['housing', 'food']);
+  });
+});
+
 describe('CHWCalendarScreen — Session Details renders Resource Needs (Epic L)', () => {
   beforeEach(() => {
     additionalSessionFixtures = [resourceNeedsSessionFixture];
@@ -724,12 +862,17 @@ describe('CHWCalendarScreen — Session Details renders Resource Needs (Epic L)'
 });
 
 /**
- * Session Details modal — Begin Session / Propose New Time / Remove.
+ * Session Details modal — Begin Session / Propose New Time (confirmed), and
+ * Remove / Propose New Time (a pending session THIS CHW proposed).
  *
- * For an upcoming, CHW-confirmed session (status 'scheduled', scheduledAt in
- * the future, NOT a still-pending member request) the modal's footer swaps
- * the plain "Open Member Profile" button for these three actions. A missed/
- * completed session is unaffected and keeps Open Member Profile only.
+ * QA2 A2 #17: for an upcoming, CHW-confirmed session (status 'scheduled',
+ * scheduledAt in the future, NOT a still-pending request) the modal's footer
+ * swaps the plain "Open Member Profile" button for Begin Session + Propose
+ * New Time — Remove was DELETED from this row (product decision). A missed/
+ * completed session is unaffected and keeps Open Member Profile only. A
+ * pending session THIS CHW proposed (proposedBy 'chw') gets its own branch:
+ * Remove + Propose New Time, no Confirm/Decline (see the
+ * "CHW-proposed pending session" describe block below).
  */
 describe('CHWCalendarScreen — Session Details modal actions', () => {
   /** Switches to Day view (hardcoded to the real calendar date — see the
@@ -743,13 +886,14 @@ describe('CHWCalendarScreen — Session Details modal actions', () => {
     await screen.findByText('Session Details');
   }
 
-  it('shows Begin Session / Propose New Time / Remove for an upcoming confirmed session, not for a completed one', async () => {
+  it('shows Begin Session / Propose New Time (no Remove) for an upcoming confirmed session, not for a completed one', async () => {
     renderScreen();
     await openSessionDetails(MEMBER_NAME);
 
     expect(screen.getByLabelText('Begin session')).toBeTruthy();
     expect(screen.getByLabelText('Propose a new time')).toBeTruthy();
-    expect(screen.getByLabelText('Remove session')).toBeTruthy();
+    // QA2 A2 #17 — Remove was deleted from the confirmed-session action row.
+    expect(screen.queryByLabelText('Remove session')).toBeNull();
     expect(screen.queryByLabelText(`Open ${MEMBER_NAME} profile`)).toBeNull();
 
     fireEvent.click(screen.getByLabelText('Close session details'));
@@ -817,10 +961,48 @@ describe('CHWCalendarScreen — Session Details modal actions', () => {
     expect(screen.queryByLabelText('Clear member selection')).toBeNull();
   });
 
+});
+
+/**
+ * QA2 A2 #17 — a pending session THIS CHW proposed (proposedBy: 'chw') gets
+ * Remove + Propose New Time in Session Details, with NO Confirm/Decline
+ * (confirming/declining your own proposal is invalid self-approval — the
+ * backend 409s a CHW-confirm on proposed_by='chw' sessions). This is
+ * distinct from pendingSessionFixture (proposedBy undefined — a legacy/
+ * member-requested row), which keeps the existing Confirm/Decline row
+ * unchanged (covered by the "Pending Session Requests" describe blocks
+ * above, and implicitly here via the isPendingAwaitingChwDecision branch not
+ * firing for this fixture).
+ */
+describe('CHWCalendarScreen — Session Details for a CHW-proposed pending session (QA2 A2 #17)', () => {
+  beforeEach(() => {
+    additionalSessionFixtures = [chwProposedTodaySessionFixture];
+  });
+
+  async function openChwProposedSessionDetails(): Promise<void> {
+    const dayViewBtn = await screen.findByLabelText('day view');
+    fireEvent.click(dayViewBtn);
+    const card = await screen.findByLabelText(new RegExp(`^Session with ${MEMBER_NAME_8} at`));
+    fireEvent.click(card);
+    await screen.findByText('Session Details');
+  }
+
+  it('shows Remove + Propose New Time, and NOT Confirm/Decline/Begin Session', async () => {
+    renderScreen();
+    await openChwProposedSessionDetails();
+
+    expect(screen.getByLabelText('Remove session')).toBeTruthy();
+    expect(screen.getByLabelText('Propose a new time')).toBeTruthy();
+    expect(screen.queryByLabelText('Confirm session request')).toBeNull();
+    expect(screen.queryByLabelText('Decline session request')).toBeNull();
+    expect(screen.queryByLabelText('Begin session')).toBeNull();
+    expect(screen.queryByLabelText(`Open ${MEMBER_NAME_8} profile`)).toBeNull();
+  });
+
   it('Remove only cancels the session after the Yes/No confirm is accepted (never via window.confirm)', async () => {
     const confirmSpy = vi.spyOn(window, 'confirm');
     renderScreen();
-    await openSessionDetails(MEMBER_NAME);
+    await openChwProposedSessionDetails();
 
     fireEvent.click(screen.getByLabelText('Remove session'));
     await screen.findByText('Remove this scheduled session?');
@@ -832,7 +1014,7 @@ describe('CHWCalendarScreen — Session Details modal actions', () => {
     // disappearing from the DOM.)
     fireEvent.click(screen.getByLabelText('No, keep session'));
     expect(
-      mockedApi.mock.calls.some(([path]) => path === `/sessions/${CONFIRMED_SESSION_ID}/cancel`),
+      mockedApi.mock.calls.some(([path]) => path === `/sessions/${CHW_PROPOSED_TODAY_SESSION_ID}/cancel`),
     ).toBe(false);
 
     // "Yes" — cancels.
@@ -842,12 +1024,23 @@ describe('CHWCalendarScreen — Session Details modal actions', () => {
       expect(
         mockedApi.mock.calls.some(
           ([path, opts]) =>
-            path === `/sessions/${CONFIRMED_SESSION_ID}/cancel` &&
+            path === `/sessions/${CHW_PROPOSED_TODAY_SESSION_ID}/cancel` &&
             (opts as { method?: string })?.method === 'PATCH',
         ),
       ).toBe(true);
     });
     confirmSpy.mockRestore();
+  });
+
+  it('Propose New Time opens the reschedule modal prefilled for that session', async () => {
+    renderScreen();
+    await openChwProposedSessionDetails();
+
+    fireEvent.click(screen.getByLabelText('Propose a new time'));
+
+    await screen.findByLabelText('Propose new time'); // submit button
+    const expectedDate = mmddyyyy(chwProposedTodayStart);
+    expect((screen.getByLabelText('Session date') as HTMLInputElement).value).toBe(expectedDate);
   });
 });
 

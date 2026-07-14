@@ -420,14 +420,17 @@ async function openProposeModal(): Promise<void> {
 }
 
 describe('MemberHomeScreen — Pending Session Requests widget', () => {
-  it('renders a CHW-proposed pending request with all 3 actions (Approve / Decline / Propose New Time)', async () => {
+  it('renders a CHW-proposed pending request with 2 actions (Approve / Propose New Time) — no standalone Decline (QA2 A2 #14/#18)', async () => {
     sessionsResponse = [chwProposedSessionFixture];
 
     renderScreen();
 
     expect(await screen.findByLabelText(`Approve request from ${CHW_NAME}`)).toBeTruthy();
-    expect(screen.getByLabelText(`Decline request from ${CHW_NAME}`)).toBeTruthy();
     expect(screen.getByLabelText(`Propose new time for ${CHW_NAME}`)).toBeTruthy();
+    // QA2 A2 #14/#18 — MemberPendingRequestsList's standalone Decline row
+    // action was removed (shared with MemberCalendarScreen, which mounts the
+    // same component); this mount point inherits the change automatically.
+    expect(screen.queryByLabelText(`Decline request from ${CHW_NAME}`)).toBeNull();
   });
 
   it('does NOT show a member-proposed pending request (proposedBy: "member")', async () => {
@@ -480,28 +483,19 @@ describe('MemberHomeScreen — Pending Session Requests widget', () => {
     });
   });
 
-  it('Decline shows an on-brand confirm dialog first, and only calls the API after confirming', async () => {
+  it('has no standalone Decline confirm dialog anywhere in the widget (QA2 A2 #14/#18)', async () => {
     sessionsResponse = [chwProposedSessionFixture];
     renderScreen();
 
-    fireEvent.click(await screen.findByLabelText(`Decline request from ${CHW_NAME}`));
+    await screen.findByLabelText(`Approve request from ${CHW_NAME}`);
 
-    const confirmBtn = await screen.findByLabelText('Yes, decline request');
+    expect(screen.queryByLabelText(`Decline request from ${CHW_NAME}`)).toBeNull();
+    expect(screen.queryByText('Decline this session request?')).toBeNull();
+    expect(screen.queryByLabelText('Yes, decline request')).toBeNull();
+
     expect(
       mockedApi.mock.calls.some(([path]) => path === `/sessions/${CHW_PROPOSED_SESSION_ID}/decline`),
     ).toBe(false);
-
-    fireEvent.click(confirmBtn);
-
-    await waitFor(() => {
-      expect(
-        mockedApi.mock.calls.some(
-          ([path, opts]) =>
-            path === `/sessions/${CHW_PROPOSED_SESSION_ID}/decline` &&
-            (opts as { method?: string })?.method === 'PATCH',
-        ),
-      ).toBe(true);
-    });
   });
 
   it('Propose New Time books the new session BEFORE declining the old one (never the reverse)', async () => {
