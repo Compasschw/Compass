@@ -318,8 +318,8 @@ function setPasswordFieldText(label: string, value: string): void {
 
 function fillAndSubmitPasswordPrompt({
   currentPassword = 'temp-pass-1234',
-  newPassword = 'brand-new-password-1',
-  confirmPassword = 'brand-new-password-1',
+  newPassword = 'BrandNewPass1!',
+  confirmPassword = 'BrandNewPass1!',
 }: {
   currentPassword?: string;
   newPassword?: string;
@@ -367,7 +367,7 @@ describe('MemberHomeScreen — first-login password change (Epic G2)', () => {
 
     await waitFor(() => {
       expect(changePasswordRequestBodies).toEqual([
-        { current_password: 'temp-pass-1234', new_password: 'brand-new-password-1' },
+        { current_password: 'temp-pass-1234', new_password: 'BrandNewPass1!' },
       ]);
     });
 
@@ -396,7 +396,7 @@ describe('MemberHomeScreen — first-login password change (Epic G2)', () => {
     renderScreen();
 
     await screen.findByText('Set your password');
-    fillAndSubmitPasswordPrompt({ newPassword: 'brand-new-password-1', confirmPassword: 'different-password-1' });
+    fillAndSubmitPasswordPrompt({ newPassword: 'BrandNewPass1!', confirmPassword: 'DifferentPass1!' });
 
     expect(await screen.findByText('Passwords do not match.')).toBeTruthy();
     expect(changePasswordRequestBodies).toEqual([]);
@@ -686,5 +686,26 @@ describe('MemberHomeScreen — post-session star-rating prompt (Epic B2)', () =>
     // The rating prompt must NOT be visible while the mandatory gate is up,
     // even though GET /testimonials/prompts returned a session to prompt.
     expect(screen.queryByText(`How was your session with ${CHW_NAME}?`)).toBeNull();
+  });
+});
+
+describe('MemberHomeScreen — QA2 #10: password complexity at the first-login gate', () => {
+  it('rejects a weak new password inline with the missing rules, without posting', async () => {
+    memberProfileFixture = buildMemberProfileFixture({ must_change_password: true });
+    renderScreen();
+    await screen.findByText('Set your password');
+
+    // 12 chars but no uppercase / digit / special — must fail client-side.
+    fillAndSubmitPasswordPrompt({
+      newPassword: 'weakpassword',
+      confirmPassword: 'weakpassword',
+    });
+
+    expect(
+      await screen.findByText(/Password needs .*uppercase letter.*number.*special character/),
+    ).toBeTruthy();
+    expect(
+      mockedApi.mock.calls.some(([path]) => path === '/auth/change-password'),
+    ).toBe(false);
   });
 });

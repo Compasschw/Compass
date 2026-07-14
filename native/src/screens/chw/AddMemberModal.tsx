@@ -39,7 +39,12 @@ import {
   type TextStyle,
 } from 'react-native';
 
+import { Eye, EyeOff } from 'lucide-react-native';
 import { colors as tokens } from '../../theme/tokens';
+import {
+  PASSWORD_RULES_HINT,
+  validatePasswordComplexity,
+} from '../../lib/passwordPolicy';
 import { ConsentCheckboxes } from '../../components/shared/ConsentCheckboxes';
 import { ApiError } from '../../api/client';
 import { showAlert } from '../../utils/showAlert';
@@ -62,7 +67,6 @@ type Sex = 'Male' | 'Female';
 const SEX_OPTIONS: readonly Sex[] = ['Male', 'Female'] as const;
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const MIN_PASSWORD_LENGTH = 8;
 
 // Legal page links (Terms of Service / Privacy Policy) in the consent block.
 // AddMemberModal mounts inside the CHW-authenticated navigation tree, which
@@ -101,7 +105,8 @@ function parseDobInputToIso(value: string): string | null {
 }
 
 interface FormState {
-  name: string;
+  firstName: string;
+  lastName: string;
   email: string;
   phone: string;
   password: string;
@@ -124,15 +129,20 @@ interface FormState {
  * never hits a surprise 422.
  */
 function validate(form: FormState): string | null {
-  const nameTokens = form.name.trim().split(/\s+/).filter(Boolean);
-  if (nameTokens.length < 2) {
-    return 'Enter the member’s first and last name.';
+  if (form.firstName.trim().length === 0) {
+    return 'Enter the member’s first name.';
+  }
+  if (form.lastName.trim().length === 0) {
+    return 'Enter the member’s last name.';
   }
   if (!EMAIL_RE.test(form.email.trim())) {
     return 'Enter a valid email address.';
   }
-  if (form.password.length < MIN_PASSWORD_LENGTH) {
-    return `Temporary password must be at least ${MIN_PASSWORD_LENGTH} characters.`;
+  {
+    const passwordError = validatePasswordComplexity(form.password);
+    if (passwordError !== null) {
+      return `Temporary ${passwordError.charAt(0).toLowerCase()}${passwordError.slice(1)}`;
+    }
   }
   if (parseDobInputToIso(form.dob.trim()) === null) {
     return 'Enter the date of birth as MM/DD/YYYY.';
@@ -185,10 +195,12 @@ export function AddMemberModal({
   onClose,
   onCreated,
 }: AddMemberModalProps): React.JSX.Element {
-  const [name, setName] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [dob, setDob] = useState('');
   const [sex, setSex] = useState<Sex | null>(null);
   const [insuranceCompany, setInsuranceCompany] = useState('');
@@ -210,10 +222,12 @@ export function AddMemberModal({
   // Reset the form each time the modal opens so stale input never lingers.
   useEffect(() => {
     if (visible) {
-      setName('');
+      setFirstName('');
+      setLastName('');
       setEmail('');
       setPhone('');
       setPassword('');
+      setShowPassword(false);
       setDob('');
       setSex(null);
       setInsuranceCompany('');
@@ -233,7 +247,8 @@ export function AddMemberModal({
   const isSubmitting = createMember.isPending;
 
   const form: FormState = {
-    name,
+    firstName,
+    lastName,
     email,
     phone,
     password,
@@ -249,8 +264,8 @@ export function AddMemberModal({
   };
 
   const clientError = useMemo(() => validate(form), [
-    name, email, phone, password, dob, sex, insuranceCompany, primaryCin,
-    addressLine1, city, stateCode, zip,
+    firstName, lastName, email, phone, password, dob, sex, insuranceCompany,
+    primaryCin, addressLine1, city, stateCode, zip,
   ]);
   // Submit also requires BOTH consent boxes — extends the existing gate. Kept
   // out of validate()/clientError so unchecked boxes don't flash a red error on
@@ -293,7 +308,7 @@ export function AddMemberModal({
     setError(null);
     createMember.mutate(
       {
-        name: name.trim(),
+        name: `${firstName.trim()} ${lastName.trim()}`,
         email: email.trim(),
         phone: phone.trim() ? phone.trim() : undefined,
         tempPassword: password,
@@ -316,10 +331,10 @@ export function AddMemberModal({
           // in-app Compass dialog on web (AppDialogProvider) and a native
           // Alert on iOS/Android — never a bare browser popup. It enqueues to
           // the app-root provider, so it survives the onClose() unmount below.
-          const firstName = (member.name || '').trim().split(/\s+/)[0] || 'The member';
+          const memberFirstName = (member.name || '').trim().split(/\s+/)[0] || 'The member';
           showAlert(
             'Member added',
-            `${firstName} has been added to your roster and can sign in with the ` +
+            `${memberFirstName} has been added to your roster and can sign in with the ` +
               'email and temporary password you provided.',
           );
           onCreated?.(member);
@@ -371,16 +386,31 @@ export function AddMemberModal({
             <Text style={styles.sectionLabel}>Account</Text>
 
             <View style={styles.field}>
-              <Text style={styles.fieldLabel}>Full name</Text>
+              <Text style={styles.fieldLabel}>First name</Text>
               <TextInput
                 style={styles.input}
-                value={name}
-                onChangeText={setName}
-                placeholder="Jordan Rivera"
+                value={firstName}
+                onChangeText={setFirstName}
+                placeholder="Jordan"
                 placeholderTextColor={tokens.textSecondary}
                 autoCapitalize="words"
                 editable={!isSubmitting}
-                accessibilityLabel="Member full name"
+                accessibilityLabel="Member first name"
+                returnKeyType="next"
+              />
+            </View>
+
+            <View style={styles.field}>
+              <Text style={styles.fieldLabel}>Last name</Text>
+              <TextInput
+                style={styles.input}
+                value={lastName}
+                onChangeText={setLastName}
+                placeholder="Rivera"
+                placeholderTextColor={tokens.textSecondary}
+                autoCapitalize="words"
+                editable={!isSubmitting}
+                accessibilityLabel="Member last name"
                 returnKeyType="next"
               />
             </View>
@@ -424,20 +454,34 @@ export function AddMemberModal({
 
             <View style={styles.field}>
               <Text style={styles.fieldLabel}>Temporary password</Text>
-              <TextInput
-                style={styles.input}
-                value={password}
-                onChangeText={setPassword}
-                placeholder="At least 8 characters"
-                placeholderTextColor={tokens.textSecondary}
-                autoCapitalize="none"
-                autoCorrect={false}
-                editable={!isSubmitting}
-                accessibilityLabel="Temporary password"
-                returnKeyType="next"
-              />
+              <View style={styles.passwordRow}>
+                <TextInput
+                  style={[styles.input, styles.passwordInput]}
+                  value={password}
+                  onChangeText={setPassword}
+                  placeholder="e.g. Sunrise25!"
+                  placeholderTextColor={tokens.textSecondary}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  secureTextEntry={!showPassword}
+                  editable={!isSubmitting}
+                  accessibilityLabel="Temporary password"
+                  returnKeyType="next"
+                />
+                <TouchableOpacity
+                  style={styles.eyeBtn}
+                  onPress={() => setShowPassword((v) => !v)}
+                  accessibilityRole="button"
+                  accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
+                >
+                  {showPassword
+                    ? <EyeOff size={18} color={tokens.textSecondary} />
+                    : <Eye size={18} color={tokens.textSecondary} />}
+                </TouchableOpacity>
+              </View>
               <Text style={styles.hint}>
-                Share this with the member — they can change it after signing in.
+                {PASSWORD_RULES_HINT} Share it with the member — they'll set
+                their own password at first sign-in.
               </Text>
             </View>
 
@@ -792,6 +836,21 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: tokens.textSecondary,
   } as TextStyle,
+  passwordRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  } as ViewStyle,
+  passwordInput: {
+    flex: 1,
+  } as TextStyle,
+  eyeBtn: {
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+  } as ViewStyle,
   row: {
     flexDirection: 'row',
     gap: 12,

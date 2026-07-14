@@ -160,3 +160,47 @@ describe('MemberFacingCHWProfileScreen — Member Rating stat tile', () => {
     expect(screen.queryByText('3.2')).toBeNull();
   });
 });
+
+describe('MemberFacingCHWProfileScreen — QA2 #11: sparse-profile crash regression', () => {
+  it('renders (no error boundary) when the CHW profile is nearly empty', async () => {
+    // Reproduces the prod "Something went wrong" crash on /member/my-chw:
+    // a CHW with a barely-filled profile returned undefined/absent fields and
+    // the derivation code indexed/spread them (firstName[0],
+    // ...additionalLanguages). Every field below is intentionally missing or
+    // null except the id.
+    mockedApi.mockImplementation(async (path: string, options?: { method?: string }) => {
+      const method = options?.method ?? 'GET';
+      if (path === `/member/chws/${CHW_ID}` && method === 'GET') {
+        return {
+          id: CHW_ID,
+          first_name: null,
+          last_name_initial: null,
+          primary_language: null,
+          additional_languages: null, // not even an array
+          primary_specialization: null,
+          years_experience: null,
+          ca_chw_certified: null,
+          modality: null,
+          service_area_zips: null,
+          available_days: null,
+          availability_windows: null,
+          shared_session_count: null,
+          profile_picture_url: null,
+        };
+      }
+      if (path === `/chws/${CHW_ID}/testimonials/summary` && method === 'GET') {
+        return { rating_avg: null, rating_count: 0 };
+      }
+      if (path.startsWith('/sessions/') && method === 'GET') return [];
+      if (path.startsWith('/conversations')) return []; // AppShell unread badge
+      return {};
+    });
+
+    renderScreen();
+
+    // The screen must settle into a rendered state — the ?? fallback initials
+    // and the ratings empty state prove the happy render path completed.
+    await waitFor(() => expect(screen.getByText('No ratings yet')).toBeTruthy());
+    expect(screen.getByText('??')).toBeTruthy();
+  });
+});

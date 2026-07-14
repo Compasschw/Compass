@@ -73,7 +73,7 @@ import {
   type KeyboardTypeOptions,
   type TextInputProps,
 } from 'react-native';
-import { Star } from 'lucide-react-native';
+import { Eye, EyeOff, Star } from 'lucide-react-native';
 
 import { colors as tokens, radius, shadows, spacing } from '../../theme/tokens';
 
@@ -147,6 +147,13 @@ export function PromptDialog({
   errorText = null,
   testID,
 }: PromptDialogProps): React.JSX.Element | null {
+  // QA2 (#10): per-field show/hide for secure inputs. Keyed by field.key so
+  // toggling one password field never reveals the others. Reset is implicit —
+  // the component unmounts with the dialog.
+  const [revealedKeys, setRevealedKeys] = React.useState<Record<string, boolean>>({});
+  const toggleReveal = (key: string): void =>
+    setRevealedKeys((prev) => ({ ...prev, [key]: !prev[key] }));
+
   if (!visible) return null;
 
   const handleRequestClose = () => {
@@ -216,29 +223,47 @@ export function PromptDialog({
                 );
               }
 
+              const isRevealed = revealedKeys[field.key] === true;
               return (
                 <View key={field.key} style={styles.field}>
                   <Text style={styles.fieldLabel}>{field.label}</Text>
-                  <TextInput
-                    style={[
-                      styles.input,
-                      field.multiline ? styles.inputMultiline : null,
-                      field.errorText ? styles.inputError : null,
-                    ]}
-                    value={currentValue}
-                    onChangeText={(text) => onChangeValue(field.key, text)}
-                    placeholder={field.placeholder}
-                    placeholderTextColor={tokens.textSecondary}
-                    secureTextEntry={field.secureTextEntry}
-                    autoCapitalize={field.autoCapitalize ?? 'none'}
-                    autoCorrect={false}
-                    autoComplete={field.autoComplete}
-                    keyboardType={field.keyboardType}
-                    editable={!submitting}
-                    multiline={field.multiline}
-                    maxLength={field.maxLength}
-                    accessibilityLabel={field.label}
-                  />
+                  <View style={field.secureTextEntry ? styles.secureRow : null}>
+                    <TextInput
+                      style={[
+                        styles.input,
+                        field.multiline ? styles.inputMultiline : null,
+                        field.errorText ? styles.inputError : null,
+                        field.secureTextEntry ? styles.secureInput : null,
+                      ]}
+                      value={currentValue}
+                      onChangeText={(text) => onChangeValue(field.key, text)}
+                      placeholder={field.placeholder}
+                      placeholderTextColor={tokens.textSecondary}
+                      secureTextEntry={field.secureTextEntry ? !isRevealed : undefined}
+                      autoCapitalize={field.autoCapitalize ?? 'none'}
+                      autoCorrect={false}
+                      autoComplete={field.autoComplete}
+                      keyboardType={field.keyboardType}
+                      editable={!submitting}
+                      multiline={field.multiline}
+                      maxLength={field.maxLength}
+                      accessibilityLabel={field.label}
+                    />
+                    {field.secureTextEntry ? (
+                      <TouchableOpacity
+                        style={styles.eyeButton}
+                        onPress={() => toggleReveal(field.key)}
+                        accessibilityRole="button"
+                        accessibilityLabel={
+                          isRevealed ? `Hide ${field.label}` : `Show ${field.label}`
+                        }
+                      >
+                        {isRevealed
+                          ? <EyeOff size={18} color={tokens.textSecondary} />
+                          : <Eye size={18} color={tokens.textSecondary} />}
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
                   {field.maxLength ? (
                     <Text style={styles.fieldCounter}>
                       {`${currentValue.length}/${field.maxLength}`}
@@ -339,6 +364,20 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: tokens.textPrimary,
     backgroundColor: '#FFFFFF',
+  },
+  secureRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  secureInput: {
+    flex: 1,
+  },
+  eyeButton: {
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: radius.md,
   },
   inputMultiline: {
     minHeight: 80,

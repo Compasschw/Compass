@@ -946,16 +946,26 @@ export function MemberFacingCHWProfileScreen(
 
   // ── Derived display values ──────────────────────────────────────────────────
 
+  // QA2 #11 hardening: every field here can arrive undefined/null from the
+  // wire (a CHW with a barely-filled profile crashed this whole screen into
+  // the app error boundary — `profile.firstName[0]` on undefined, spreading a
+  // non-array `additionalLanguages`). Treat all of them as optional.
+  const safeFirstName = profile?.firstName ?? '';
+  const safeLastInitial = profile?.lastNameInitial ?? '';
+
   const initials = profile
-    ? `${profile.firstName[0] ?? ''}${profile.lastNameInitial[0] ?? ''}`.toUpperCase()
+    ? `${safeFirstName[0] ?? ''}${safeLastInitial[0] ?? ''}`.toUpperCase() || '??'
     : '??';
 
   const displayName = profile
-    ? `${profile.firstName} ${profile.lastNameInitial}`.trim()
+    ? `${safeFirstName} ${safeLastInitial}`.trim()
     : '';
 
   const allLanguages = profile
-    ? [profile.primaryLanguage, ...profile.additionalLanguages].filter(Boolean)
+    ? [
+        profile.primaryLanguage,
+        ...(Array.isArray(profile.additionalLanguages) ? profile.additionalLanguages : []),
+      ].filter(Boolean)
     : [];
 
   // The API surface exposes only `primarySpecialization` (singular). Compose a
@@ -1079,16 +1089,20 @@ export function MemberFacingCHWProfileScreen(
               photoUrl={profile.profilePictureUrl}
               specializations={specializations}
               languages={allLanguages}
-              serviceAreaZips={profile.serviceAreaZips}
-              caChwCertified={profile.caChwCertified}
+              serviceAreaZips={
+                Array.isArray(profile.serviceAreaZips) ? profile.serviceAreaZips : []
+              }
+              caChwCertified={profile.caChwCertified ?? false}
               modality={profile.modality}
             />
 
             {/* Center — performance & about */}
             <PerformanceCard
-              sharedSessionCount={profile.sharedSessionCount}
-              yearsExperience={profile.yearsExperience}
-              availableDays={profile.availableDays}
+              sharedSessionCount={profile.sharedSessionCount ?? 0}
+              yearsExperience={profile.yearsExperience ?? null}
+              availableDays={
+                Array.isArray(profile.availableDays) ? profile.availableDays : []
+              }
               ratingAvg={testimonialSummaryQuery.data?.ratingAvg ?? null}
               ratingCount={testimonialSummaryQuery.data?.ratingCount ?? 0}
             />
