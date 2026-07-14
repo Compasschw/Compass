@@ -34,7 +34,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "smsnotif0714"
-down_revision = "resneeds0713"
+down_revision = "chwphone0713"
 branch_labels = None
 depends_on = None
 
