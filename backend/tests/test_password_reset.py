@@ -612,3 +612,171 @@ async def test_request_rate_limit_fires_on_fourth_request_per_minute(client: Asy
         assert statuses[3] == 429, f"4th request should be rate-limited, got statuses={statuses}"
     finally:
         limiter.enabled = False
+
+
+# ---------------------------------------------------------------------------
+# Coverage of the defensive branches (diff-cover gate): the send-wrapper
+# never-raise contract, the OAuth-only render body, and the router's
+# email-failure logging paths. Every branch below is a "degrade gracefully,
+# never 500" guarantee — pinned so a refactor can't silently drop one.
+# ---------------------------------------------------------------------------
+
+
+async def test_send_wrappers_return_failure_result_when_provider_raises():
+    """All three send fns swallow a raising provider into
+    EmailResult(success=False) — the never-raise contract itself."""
+    import app.services.email as email_svc
+
+    def _boom():
+        raise RuntimeError("provider construction failed")
+
+    original = email_svc.get_email_provider
+    email_svc.get_email_provider = _boom  # type: ignore[assignment]
+    try:
+        r1 = await email_svc.send_password_reset_email(
+            to="x@example.com", reset_url="https://example.com/r?token=t", ttl_minutes=30
+        )
+        r2 = await email_svc.send_oauth_only_password_reset_email(to="x@example.com")
+        r3 = await email_svc.send_password_changed_email(to="x@example.com")
+    finally:
+        email_svc.get_email_provider = original  # type: ignore[assignment]
+
+    for r in (r1, r2, r3):
+        assert r.success is False
+        assert r.error
+
+
+async def test_send_wrappers_happy_path_via_noop_provider():
+    """The try-bodies of all three send fns execute end-to-end against the
+    noop provider (EMAIL_PROVIDER=noop in tests)."""
+    import app.services.email as email_svc
+
+    r1 = await email_svc.send_password_reset_email(
+        to="x@example.com", reset_url="https://example.com/r?token=t", ttl_minutes=30
+    )
+    r2 = await email_svc.send_oauth_only_password_reset_email(to="x@example.com")
+    r3 = await email_svc.send_password_changed_email(to="x@example.com")
+    assert r1.success and r2.success and r3.success
+
+
+def test_oauth_only_render_points_at_google_apple_and_has_no_reset_link():
+    from app.services.email import render_oauth_only_password_reset_email
+
+    subject, html, text = render_oauth_only_password_reset_email()
+    assert "sign-in" in subject.lower() or "sign in" in subject.lower()
+    for body in (html, text):
+        assert "Google" in body and "Apple" in body
+        assert "token=" not in body  # informational — never a reset link
+    assert "ignore this email" in text
+
+
+async def test_request_oauth_only_email_failure_and_raise_still_202(client: AsyncClient, monkeypatch):
+    """OAuth-only path: informational email returning failure AND raising
+    both still yield the neutral 202 (no-enumeration endpoint must never 500)."""
+    from app.services.email import EmailResult
+    import app.services.email as email_mod
+
+    email = "pwreset.oauthdefense@example.com"
+    await _register_member(client, email=email)
+    user = await _get_user_by_email(email)
+    async with pwreset_session() as session:
+        db_user = await session.get(User, user.id)
+        db_user.password_hash = None  # simulate OAuth-only account
+        await session.commit()
+
+    monkeypatch.setattr(
+        email_mod, "send_oauth_only_password_reset_email",
+        AsyncMock(return_value=EmailResult(success=False, error="ses down")),
+    )
+    res = await client.post(REQUEST_URL, json={"email": email})
+    assert res.status_code == 202, res.text
+
+    monkeypatch.setattr(
+        email_mod, "send_oauth_only_password_reset_email",
+        AsyncMock(side_effect=RuntimeError("boom")),
+    )
+    res = await client.post(REQUEST_URL, json={"email": email})
+    assert res.status_code == 202, res.text
+
+
+async def test_request_reset_email_failure_logs_dev_url_and_still_202(client: AsyncClient, monkeypatch):
+    """Reset-email send failure → 202, and in the development environment the
+    reset URL is logged as a local convenience (branch pinned)."""
+    from app.config import settings
+    from app.services.email import EmailResult
+    import app.services.email as email_mod
+
+    email = "pwreset.devlog@example.com"
+    await _register_member(client, email=email)
+
+    monkeypatch.setattr(
+        email_mod, "send_password_reset_email",
+        AsyncMock(return_value=EmailResult(success=False, error="ses sandbox")),
+    )
+    monkeypatch.setattr(settings, "environment", "development")
+    res = await client.post(REQUEST_URL, json={"email": email})
+    assert res.status_code == 202, res.text
+    # The token row exists even though the email failed — resend works later.
+    user = await _get_user_by_email(email)
+    assert len(await _token_rows_for_user(user.id)) == 1
+
+
+async def test_confirm_rejects_user_deleted_after_request(client: AsyncClient, monkeypatch):
+    """A token issued BEFORE the account was deleted must be unusable after —
+    the confirm-side active/deleted re-check."""
+    from app.services.email import EmailResult
+    import app.services.email as email_mod
+
+    email = "pwreset.deletedrace@example.com"
+    await _register_member(client, email=email)
+
+    captured: dict = {}
+
+    async def _capture(**kwargs):
+        captured.update(kwargs)
+        return EmailResult(success=True)
+
+    monkeypatch.setattr(email_mod, "send_password_reset_email", AsyncMock(side_effect=_capture))
+    res = await client.post(REQUEST_URL, json={"email": email})
+    assert res.status_code == 202
+    raw_token = _extract_raw_token_from_url(captured["reset_url"])
+
+    user = await _get_user_by_email(email)
+    from datetime import UTC, datetime
+    async with pwreset_session() as session:
+        db_user = await session.get(User, user.id)
+        db_user.deleted_at = datetime.now(UTC)
+        await session.commit()
+
+    res = await client.post(CONFIRM_URL, json={"token": raw_token, "new_password": "brand-new-pass-1"})
+    assert res.status_code == 401, res.text
+
+
+async def test_confirm_password_changed_email_failure_and_raise_still_200(client: AsyncClient, monkeypatch):
+    """The post-commit notification email failing (or raising) must never turn
+    an already-successful reset into an error."""
+    from app.services.email import EmailResult
+    import app.services.email as email_mod
+
+    for suffix, notifier in (
+        ("fail", AsyncMock(return_value=EmailResult(success=False, error="ses down"))),
+        ("raise", AsyncMock(side_effect=RuntimeError("boom"))),
+    ):
+        email = f"pwreset.notify{suffix}@example.com"
+        await _register_member(client, email=email)
+
+        captured: dict = {}
+
+        async def _capture(**kwargs):
+            captured.update(kwargs)
+            return EmailResult(success=True)
+
+        monkeypatch.setattr(email_mod, "send_password_reset_email", AsyncMock(side_effect=_capture))
+        res = await client.post(REQUEST_URL, json={"email": email})
+        assert res.status_code == 202
+        raw_token = _extract_raw_token_from_url(captured["reset_url"])
+
+        monkeypatch.setattr(email_mod, "send_password_changed_email", notifier)
+        res = await client.post(CONFIRM_URL, json={"token": raw_token, "new_password": "brand-new-pass-1"})
+        assert res.status_code == 200, res.text
+        assert res.json().get("ok") is True
