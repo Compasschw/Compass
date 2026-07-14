@@ -13,11 +13,16 @@
  * session start/stop state of its own; it only ticks a local 1s interval to
  * redraw the elapsed-time display between conversations refetches.
  *
- * "Complete Session" navigates to the CHW Messages screen for the active
- * member with `promptComplete: true`, which CHWMessagesScreen reads on mount
- * to auto-open the same inline Complete-Session confirm panel the CHW would
- * reach manually from MemberContextRail — see CHWMessagesScreen's
- * `shouldPromptComplete` wiring.
+ * "Complete" (#19/#20, 2026-07-13): navigates to the CHW Messages screen for
+ * the active member with `promptComplete: true`, which CHWMessagesScreen
+ * reads on mount to immediately call POST /sessions/{id}/end and open
+ * DocumentationModal directly as an overlay — NO intermediate confirm panel.
+ * (Before this change, `promptComplete` opened MemberContextRail's inline
+ * Complete-Session confirm panel instead; that panel — and the rail's
+ * separate manual "Complete Session" button — have been removed. This badge
+ * is now the CHW's only active-session control surface: it already offers
+ * Cancel/Missed right here, so a second confirm step after Complete was
+ * redundant.) See CHWMessagesScreen's `shouldPromptComplete` wiring.
  *
  * "Cancel Session" / "Missed Session" (Epic P + O2): unlike Complete
  * Session, these two act directly from the badge — no navigation needed —
@@ -31,18 +36,19 @@
  * returns null and this whole badge unmounts — same "clears itself" effect
  * Complete Session's navigation produces on the Messages screen.
  *
- * Draggable (vertical only): the badge's default bottom-right position sits
- * directly over the Messages rail's "Complete Session" button (Epic V), so
- * the CHW can drag it up/down by its grip handle to uncover whatever it's
- * covering. Drag is implemented with `PanResponder` + `Animated.Value`,
- * which works uniformly for mouse-drag on web and touch on native (same
- * approach as `SwipeableThreadRow`) — no gesture-handler/Reanimated
- * dependency needed for a single-axis drag. The resulting vertical offset is
- * clamped every frame so the badge can never be dragged off-screen, and is
+ * Draggable (full 2D — #19): the badge's default bottom-right position can
+ * sit directly over other on-screen controls (e.g. the Messages rail), so
+ * the CHW can drag it anywhere on screen by its grip handle to uncover
+ * whatever it's covering. Drag is implemented with `PanResponder` +
+ * `Animated.ValueXY`, which works uniformly for mouse-drag on web and touch
+ * on native (same approach as `SwipeableThreadRow`) — no gesture-handler/
+ * Reanimated dependency needed. The resulting {x, y} offset is clamped every
+ * frame on both axes so the badge can never be dragged off-screen, and is
  * re-clamped on window resize. On web the last offset is persisted to
- * `localStorage` so it survives reloads/navigation; native has no durable
- * per-CHW local store wired here, so it resets to the default position each
- * mount (acceptable — the badge is reachable again immediately).
+ * `localStorage` (as `{x, y}` JSON) so it survives reloads/navigation;
+ * native has no durable per-CHW local store wired here, so it resets to the
+ * default position each mount (acceptable — the badge is reachable again
+ * immediately).
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -99,55 +105,90 @@ const DEFAULT_BOTTOM_OFFSET = Platform.OS === 'web' ? 24 : 76;
 const DRAG_EDGE_MARGIN = 8;
 
 /**
+ * Default distance from the right edge — the anchor the horizontal drag
+ * offset is measured relative to, mirroring `DEFAULT_BOTTOM_OFFSET` for the
+ * vertical axis. Matches the pre-existing static `right` style value.
+ */
+const DEFAULT_RIGHT_OFFSET = 16;
+
+/**
  * Fallback badge height (px) used to clamp drag before the real height is
  * known from `onLayout` (first paint). Roughly matches the two-line info
  * block + complete button + grip handle at default padding.
  */
 const ESTIMATED_BADGE_HEIGHT = 140;
 
-/** Drag must move at least this many vertical px before we claim the gesture
- *  (keeps an accidental micro-jitter from feeling like a stuck drag). */
+/**
+ * Fallback badge width (px) used to clamp horizontal drag before the real
+ * width is known from `onLayout` (first paint). Matches the container's
+ * `maxWidth` — the badge's actual rendered width is usually smaller (content
+ * is short), so this is a conservative (safe, not over-permissive) estimate.
+ */
+const ESTIMATED_BADGE_WIDTH = 340;
+
+/** Drag must move at least this many px (either axis) before we claim the
+ *  gesture (keeps an accidental micro-jitter from feeling like a stuck drag). */
 const DRAG_CLAIM_THRESHOLD = 2;
 
-/** `localStorage` key the badge's last dragged Y-offset is persisted under
- *  (web only — see module docstring). */
-const LS_KEY_BADGE_OFFSET = 'compass:activeSessionBadge:dragOffsetY';
+/** `localStorage` key the badge's last dragged {x, y} offset is persisted
+ *  under (web only — see module docstring). Renamed from the vertical-only
+ *  `dragOffsetY` key now that drag is full 2D (#19); the old key is simply
+ *  abandoned (unread) rather than migrated — losing a previously-dragged
+ *  position on upgrade is a cosmetic, one-time reset back to default. */
+const LS_KEY_BADGE_OFFSET = 'compass:activeSessionBadge:dragOffset';
+
+/** Persisted drag offset, both axes. */
+interface DragOffset {
+  x: number;
+  y: number;
+}
+
+const ZERO_OFFSET: DragOffset = { x: 0, y: 0 };
 
 // ─── Persisted offset (web only) ───────────────────────────────────────────────
 
 /**
- * Reads the CHW's last-dragged vertical offset from `localStorage`.
- * Returns `0` (default position) in SSR/native context or when the stored
- * value is absent or non-numeric.
+ * Reads the CHW's last-dragged {x, y} offset from `localStorage`.
+ * Returns `{x: 0, y: 0}` (default position) in SSR/native context or when
+ * the stored value is absent, malformed, or non-numeric.
  */
-function readStoredOffset(): number {
-  if (typeof window === 'undefined') return 0;
+function readStoredOffset(): DragOffset {
+  if (typeof window === 'undefined') return ZERO_OFFSET;
   try {
     const stored = window.localStorage.getItem(LS_KEY_BADGE_OFFSET);
-    if (stored === null) return 0;
-    const parsed = Number(stored);
-    return Number.isFinite(parsed) ? parsed : 0;
+    if (stored === null) return ZERO_OFFSET;
+    const parsed: unknown = JSON.parse(stored);
+    if (
+      parsed !== null &&
+      typeof parsed === 'object' &&
+      Number.isFinite((parsed as { x?: unknown }).x) &&
+      Number.isFinite((parsed as { y?: unknown }).y)
+    ) {
+      return { x: (parsed as DragOffset).x, y: (parsed as DragOffset).y };
+    }
+    return ZERO_OFFSET;
   } catch {
-    return 0;
+    return ZERO_OFFSET;
   }
 }
 
 /**
- * Persists the CHW's dragged vertical offset to `localStorage`.
+ * Persists the CHW's dragged {x, y} offset to `localStorage`.
  * Silently swallows errors (e.g. private-browsing quota exceptions).
  */
-function writeStoredOffset(value: number): void {
+function writeStoredOffset(value: DragOffset): void {
   if (typeof window === 'undefined') return;
   try {
-    window.localStorage.setItem(LS_KEY_BADGE_OFFSET, String(value));
+    window.localStorage.setItem(LS_KEY_BADGE_OFFSET, JSON.stringify(value));
   } catch {
     // Storage unavailable — ignore.
   }
 }
 
 /**
- * Clamps a candidate drag offset so the badge's top and bottom edges both
- * stay within the viewport (with `DRAG_EDGE_MARGIN` of breathing room).
+ * Clamps a candidate vertical drag offset so the badge's top and bottom
+ * edges both stay within the viewport (with `DRAG_EDGE_MARGIN` of breathing
+ * room).
  *
  * The badge is positioned with `bottom: DEFAULT_BOTTOM_OFFSET` and dragging
  * translates it vertically on top of that anchor — positive `offsetY` moves
@@ -159,7 +200,7 @@ function writeStoredOffset(value: number): void {
  *     margin, must stay >= DRAG_EDGE_MARGIN, so
  *     offsetY >= DEFAULT_BOTTOM_OFFSET - (windowHeight - badgeHeight - DRAG_EDGE_MARGIN).
  */
-function clampDragOffset(
+function clampDragOffsetY(
   offsetY: number,
   windowHeight: number,
   badgeHeight: number,
@@ -175,6 +216,42 @@ function clampDragOffset(
   return Math.max(lo, Math.min(hi, offsetY));
 }
 
+/**
+ * Clamps a candidate horizontal drag offset so the badge's left and right
+ * edges both stay within the viewport (with `DRAG_EDGE_MARGIN` of breathing
+ * room). Mirrors `clampDragOffsetY`'s derivation exactly, just on the
+ * horizontal axis: the badge is positioned with `right: DEFAULT_RIGHT_OFFSET`
+ * and dragging translates it horizontally on top of that anchor — positive
+ * `offsetX` moves it RIGHT (shrinking its effective right margin) and
+ * negative moves it LEFT (toward the left edge).
+ */
+function clampDragOffsetX(
+  offsetX: number,
+  windowWidth: number,
+  badgeWidth: number,
+): number {
+  const maxOffsetX = DEFAULT_RIGHT_OFFSET - DRAG_EDGE_MARGIN;
+  const minOffsetX =
+    DEFAULT_RIGHT_OFFSET - (windowWidth - badgeWidth - DRAG_EDGE_MARGIN);
+  const lo = Math.min(minOffsetX, maxOffsetX);
+  const hi = Math.max(minOffsetX, maxOffsetX);
+  return Math.max(lo, Math.min(hi, offsetX));
+}
+
+/** Clamps a full {x, y} candidate offset against both axes at once. */
+function clampDragOffset(
+  offset: DragOffset,
+  windowWidth: number,
+  windowHeight: number,
+  badgeWidth: number,
+  badgeHeight: number,
+): DragOffset {
+  return {
+    x: clampDragOffsetX(offset.x, windowWidth, badgeWidth),
+    y: clampDragOffsetY(offset.y, windowHeight, badgeHeight),
+  };
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function ActiveSessionBadge(): React.JSX.Element | null {
@@ -185,53 +262,61 @@ export function ActiveSessionBadge(): React.JSX.Element | null {
   // but react-native-web's underlying Dimensions module can report a
   // transient `{width: 0, height: 0}` before the web viewport is measured
   // (observed consistently in jsdom-based component tests, and plausible
-  // during SSR/hydration on real web deploys too). A height of 0 would
+  // during SSR/hydration on real web deploys too). A zero dimension would
   // collapse `clampDragOffset`'s safe range to a single point and yank the
   // badge to that point the instant the mount-reconciliation effect below
-  // runs — so fall back to a direct `window.innerHeight` read (always
-  // populated, just not resize-reactive) whenever the hook hasn't caught up
-  // yet. Native RN always reports real dimensions from the first render, so
-  // this fallback is a no-op there.
-  const rawWindowHeight = useWindowDimensions().height;
+  // runs — so fall back to a direct `window.innerWidth`/`innerHeight` read
+  // (always populated, just not resize-reactive) whenever the hook hasn't
+  // caught up yet. Native RN always reports real dimensions from the first
+  // render, so this fallback is a no-op there.
+  const rawWindowDimensions = useWindowDimensions();
+  const windowWidth =
+    rawWindowDimensions.width > 0
+      ? rawWindowDimensions.width
+      : typeof window !== 'undefined' && typeof window.innerWidth === 'number'
+        ? window.innerWidth
+        : rawWindowDimensions.width;
   const windowHeight =
-    rawWindowHeight > 0
-      ? rawWindowHeight
+    rawWindowDimensions.height > 0
+      ? rawWindowDimensions.height
       : typeof window !== 'undefined' && typeof window.innerHeight === 'number'
         ? window.innerHeight
-        : rawWindowHeight;
+        : rawWindowDimensions.height;
 
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
 
-  // ── Drag state ──────────────────────────────────────────────────────────
-  // `translateY` drives the visible position (Animated so drag tracking is
-  // smooth); `offsetRef` mirrors the last *committed* (post-clamp) value so
-  // gesture callbacks — which close over stale state otherwise — always
-  // compute deltas from the true current position, same pattern as
-  // `SwipeableThreadRow`'s `isOpenRef`.
-  const translateY = useRef(new Animated.Value(readStoredOffset())).current;
-  const offsetRef = useRef<number>(readStoredOffset());
-  const dragStartOffsetRef = useRef<number>(0);
+  // ── Drag state (2D — #19) ────────────────────────────────────────────────
+  // `translate` (an `Animated.ValueXY`) drives the visible position (Animated
+  // so drag tracking is smooth); `offsetRef` mirrors the last *committed*
+  // (post-clamp) {x, y} value so gesture callbacks — which close over stale
+  // state otherwise — always compute deltas from the true current position,
+  // same pattern as `SwipeableThreadRow`'s `isOpenRef`.
+  const translate = useRef(new Animated.ValueXY(readStoredOffset())).current;
+  const offsetRef = useRef<DragOffset>(readStoredOffset());
+  const dragStartOffsetRef = useRef<DragOffset>(ZERO_OFFSET);
+  const [badgeWidth, setBadgeWidth] = useState<number>(ESTIMATED_BADGE_WIDTH);
   const [badgeHeight, setBadgeHeight] = useState<number>(ESTIMATED_BADGE_HEIGHT);
 
   const handleLayout = useCallback((e: LayoutChangeEvent) => {
-    const measured = e.nativeEvent.layout.height;
-    if (measured > 0) setBadgeHeight(measured);
+    const { width: measuredWidth, height: measuredHeight } = e.nativeEvent.layout;
+    if (measuredWidth > 0) setBadgeWidth(measuredWidth);
+    if (measuredHeight > 0) setBadgeHeight(measuredHeight);
   }, []);
 
-  // Re-clamp whenever the viewport or measured height changes (e.g. browser
+  // Re-clamp whenever the viewport or measured size changes (e.g. browser
   // window resize, or device rotation) so a previously-valid offset can't
   // strand the badge off-screen.
   useEffect(() => {
-    // Still no usable viewport height (e.g. native's very first frame,
+    // Still no usable viewport size (e.g. native's very first frame,
     // pre-measurement) — nothing safe to reconcile against yet.
-    if (windowHeight <= 0) return;
-    const clamped = clampDragOffset(offsetRef.current, windowHeight, badgeHeight);
-    if (clamped !== offsetRef.current) {
+    if (windowWidth <= 0 || windowHeight <= 0) return;
+    const clamped = clampDragOffset(offsetRef.current, windowWidth, windowHeight, badgeWidth, badgeHeight);
+    if (clamped.x !== offsetRef.current.x || clamped.y !== offsetRef.current.y) {
       offsetRef.current = clamped;
-      translateY.setValue(clamped);
+      translate.setValue(clamped);
       writeStoredOffset(clamped);
     }
-  }, [windowHeight, badgeHeight, translateY]);
+  }, [windowWidth, windowHeight, badgeWidth, badgeHeight, translate]);
 
   const panResponder = useRef(
     PanResponder.create({
@@ -242,33 +327,37 @@ export function ActiveSessionBadge(): React.JSX.Element | null {
       onMoveShouldSetPanResponder: (
         _e: GestureResponderEvent,
         g: PanResponderGestureState,
-      ) => Math.abs(g.dy) > DRAG_CLAIM_THRESHOLD,
+      ) => Math.abs(g.dx) > DRAG_CLAIM_THRESHOLD || Math.abs(g.dy) > DRAG_CLAIM_THRESHOLD,
       onPanResponderGrant: () => {
         dragStartOffsetRef.current = offsetRef.current;
       },
       onPanResponderMove: (_e, g: PanResponderGestureState) => {
         const next = clampDragOffset(
-          dragStartOffsetRef.current + g.dy,
+          { x: dragStartOffsetRef.current.x + g.dx, y: dragStartOffsetRef.current.y + g.dy },
+          windowWidth,
           windowHeight,
+          badgeWidth,
           badgeHeight,
         );
-        translateY.setValue(next);
+        translate.setValue(next);
       },
       onPanResponderRelease: (_e, g: PanResponderGestureState) => {
         const next = clampDragOffset(
-          dragStartOffsetRef.current + g.dy,
+          { x: dragStartOffsetRef.current.x + g.dx, y: dragStartOffsetRef.current.y + g.dy },
+          windowWidth,
           windowHeight,
+          badgeWidth,
           badgeHeight,
         );
         offsetRef.current = next;
-        translateY.setValue(next);
+        translate.setValue(next);
         writeStoredOffset(next);
       },
       onPanResponderTerminate: () => {
         // Some other component grabbed the gesture mid-drag — snap back to
         // the last committed offset rather than leaving the badge stuck at
         // an unclamped position.
-        translateY.setValue(offsetRef.current);
+        translate.setValue(offsetRef.current);
       },
     }),
   ).current;
@@ -328,7 +417,10 @@ export function ActiveSessionBadge(): React.JSX.Element | null {
   return (
     <>
       <Animated.View
-        style={[styles.container, { transform: [{ translateY }] }]}
+        style={[
+          styles.container,
+          { transform: [{ translateX: translate.x }, { translateY: translate.y }] },
+        ]}
         onLayout={handleLayout}
         testID="active-session-badge"
         accessibilityLabel={`Active session with ${activeSession.memberName}`}
@@ -338,7 +430,7 @@ export function ActiveSessionBadge(): React.JSX.Element | null {
           testID="active-session-badge-drag-handle"
           accessibilityRole="adjustable"
           accessibilityLabel="Drag to move active session badge"
-          accessibilityHint="Move up or down to reposition this badge so it doesn't cover other controls"
+          accessibilityHint="Drag anywhere to reposition this badge so it doesn't cover other controls"
           {...panResponder.panHandlers}
         >
           <GripHorizontal size={16} color={tokens.textSecondary} />

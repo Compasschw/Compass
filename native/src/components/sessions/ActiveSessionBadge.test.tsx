@@ -214,7 +214,7 @@ describe('ActiveSessionBadge', () => {
   });
 
   it('moves the badge (and persists the offset) when the drag handle is dragged vertically', () => {
-    window.localStorage.removeItem('compass:activeSessionBadge:dragOffsetY');
+    window.localStorage.removeItem('compass:activeSessionBadge:dragOffset');
     renderBadge([
       conv({
         id: 'c1',
@@ -231,7 +231,7 @@ describe('ActiveSessionBadge', () => {
     expect(badge.style.transform || '').not.toMatch(/translateY\((?!0)/);
 
     fireEvent.mouseDown(handle, { clientX: 40, clientY: 100 });
-    fireEvent.mouseMove(document, { clientX: 40, clientY: 140 }); // drag down 40px
+    fireEvent.mouseMove(document, { clientX: 40, clientY: 140 }); // drag down 40px, no horizontal movement
     fireEvent.mouseUp(document, { clientX: 40, clientY: 140 });
 
     // The badge is anchored `bottom: 24` with an 8px edge margin, so a 40px
@@ -239,11 +239,14 @@ describe('ActiveSessionBadge', () => {
     // than passing straight through — this also proves the viewport clamp
     // is live, not just that *some* transform got applied.
     expect(badge.style.transform).toContain('translateY(16px)');
-    expect(window.localStorage.getItem('compass:activeSessionBadge:dragOffsetY')).toBe('16');
+    expect(JSON.parse(window.localStorage.getItem('compass:activeSessionBadge:dragOffset') ?? '{}')).toEqual({
+      x: 0,
+      y: 16,
+    });
   });
 
   it('clamps an upward drag so the badge cannot be dragged above the top of the viewport', () => {
-    window.localStorage.removeItem('compass:activeSessionBadge:dragOffsetY');
+    window.localStorage.removeItem('compass:activeSessionBadge:dragOffset');
     renderBadge([
       conv({
         id: 'c1',
@@ -268,6 +271,98 @@ describe('ActiveSessionBadge', () => {
     // Never further up than DEFAULT_BOTTOM_OFFSET(24) - (windowHeight - estimatedHeight - margin).
     expect(appliedOffset).toBeGreaterThan(-5000);
     expect(appliedOffset).toBeLessThanOrEqual(16);
+  });
+
+  // ─── #19 — full 2D drag (horizontal axis) ──────────────────────────────────
+
+  it('moves the badge horizontally (and persists the offset) when dragged sideways', () => {
+    window.localStorage.removeItem('compass:activeSessionBadge:dragOffset');
+    renderBadge([
+      conv({
+        id: 'c1',
+        activeSessionId: 'sess-1',
+        activeSessionStartedAt: '2026-07-11T09:00:00.000Z',
+        memberName: 'Rosa Gutierrez',
+      }),
+    ]);
+
+    const badge = screen.getByTestId('active-session-badge');
+    const handle = screen.getByTestId('active-session-badge-drag-handle');
+
+    expect(badge.style.transform || '').not.toMatch(/translateX\((?!0)/);
+
+    // Drag left by 40px, no vertical movement — the badge is anchored
+    // `right: 16` with an 8px edge margin and plenty of viewport width
+    // (jsdom default 1024px), so a modest 40px leftward drag is well within
+    // bounds and should apply unclamped.
+    fireEvent.mouseDown(handle, { clientX: 300, clientY: 100 });
+    fireEvent.mouseMove(document, { clientX: 260, clientY: 100 });
+    fireEvent.mouseUp(document, { clientX: 260, clientY: 100 });
+
+    expect(badge.style.transform).toContain('translateX(-40px)');
+    expect(JSON.parse(window.localStorage.getItem('compass:activeSessionBadge:dragOffset') ?? '{}')).toEqual({
+      x: -40,
+      y: 0,
+    });
+  });
+
+  it('clamps a rightward drag so the badge cannot be dragged past the right edge of the viewport', () => {
+    window.localStorage.removeItem('compass:activeSessionBadge:dragOffset');
+    renderBadge([
+      conv({
+        id: 'c1',
+        activeSessionId: 'sess-1',
+        activeSessionStartedAt: '2026-07-11T09:00:00.000Z',
+        memberName: 'Rosa Gutierrez',
+      }),
+    ]);
+
+    const badge = screen.getByTestId('active-session-badge');
+    const handle = screen.getByTestId('active-session-badge-drag-handle');
+
+    // Drag far past the right edge — should clamp rather than pushing the
+    // badge off-screen. Max allowed offset is DEFAULT_RIGHT_OFFSET(16) -
+    // DRAG_EDGE_MARGIN(8) = 8.
+    fireEvent.mouseDown(handle, { clientX: 300, clientY: 100 });
+    fireEvent.mouseMove(document, { clientX: 5300, clientY: 100 });
+    fireEvent.mouseUp(document, { clientX: 5300, clientY: 100 });
+
+    const match = /translateX\((-?\d+(?:\.\d+)?)px\)/.exec(badge.style.transform || '');
+    expect(match).not.toBeNull();
+    const appliedOffset = Number(match?.[1]);
+    expect(appliedOffset).toBeLessThan(5000);
+    expect(appliedOffset).toBeLessThanOrEqual(8);
+  });
+
+  it('moves the badge diagonally (both axes at once) in a single drag gesture', () => {
+    window.localStorage.removeItem('compass:activeSessionBadge:dragOffset');
+    renderBadge([
+      conv({
+        id: 'c1',
+        activeSessionId: 'sess-1',
+        activeSessionStartedAt: '2026-07-11T09:00:00.000Z',
+        memberName: 'Rosa Gutierrez',
+      }),
+    ]);
+
+    const badge = screen.getByTestId('active-session-badge');
+    const handle = screen.getByTestId('active-session-badge-drag-handle');
+
+    // Y offset kept small (10px) and well within the vertical clamp's max
+    // allowed offset (DEFAULT_BOTTOM_OFFSET(24) - DRAG_EDGE_MARGIN(8) = 16,
+    // see the dedicated vertical-clamp test above) so both axes move
+    // unclamped here — this test is about the two axes moving together in
+    // one gesture, not about clamp math (already covered separately per axis).
+    fireEvent.mouseDown(handle, { clientX: 300, clientY: 300 });
+    fireEvent.mouseMove(document, { clientX: 270, clientY: 310 }); // left 30, down 10
+    fireEvent.mouseUp(document, { clientX: 270, clientY: 310 });
+
+    expect(badge.style.transform).toContain('translateX(-30px)');
+    expect(badge.style.transform).toContain('translateY(10px)');
+    expect(JSON.parse(window.localStorage.getItem('compass:activeSessionBadge:dragOffset') ?? '{}')).toEqual({
+      x: -30,
+      y: 10,
+    });
   });
 
   it('clears the tick interval on unmount (no leaked timers)', () => {

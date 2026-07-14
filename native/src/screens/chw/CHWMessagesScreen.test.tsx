@@ -683,234 +683,38 @@ describe('CHWMessagesScreen — conversation "…" kebab menu (Pin / Archive / D
   });
 });
 
-// ─── Epic P — Cancel / Missed actions on the Complete-Session confirm panel ────
+// ─── #19/#20 — ActiveSessionBadge is the sole active-session control surface ──
+//
+// The rail's own "Complete Session" button + inline confirm panel (Epic P/O2's
+// original triggers) were REMOVED in #19/#20 (2026-07-13) — ActiveSessionBadge
+// is now the only Complete/Cancel/Missed control surface while a session is
+// active:
+//   - Cancel / Missed actions: covered in ActiveSessionBadge.test.tsx (the
+//     badge calls useAbortSession/useMarkSessionNoShow directly — this
+//     screen no longer has an in-rail trigger for either).
+//   - Complete → auto POST /sessions/{id}/end + DocumentationModal overlay,
+//     with Q1/Q3 internals and the 16-minute not-billable gate intact:
+//     covered in CHWMessagesScreen.promptComplete.test.tsx, which drives the
+//     `promptComplete` route param this screen reads on mount (this file's
+//     own `useRoute` mock hardcodes `params: {}` for its own unrelated SDOH
+//     suite, so promptComplete needs that separate route-param mock).
+//
+// What's left to verify here, in this file's full-harness environment, is
+// that the rail itself renders the new read-only "active session" note
+// instead of any actionable control while a session is in progress.
 
-describe('CHWMessagesScreen — Cancel / Missed Session actions (Epic P + O2)', () => {
-  /**
-   * Scopes queries to the member-context rail (accessibilityLabel "Member
-   * context"), not the whole document — AppShell (role="chw") also mounts
-   * ActiveSessionBadge in the corner, which renders its OWN "Complete
-   * session" button reading off the same active-session fixture data. Both
-   * are real, simultaneously-mounted controls in production; the rail is
-   * the one under test here (Epic P's second location — ActiveSessionBadge
-   * itself is covered in ActiveSessionBadge.test.tsx).
-   */
-  async function openEndConfirmPanel(): Promise<void> {
-    renderScreen();
-    await screen.findByText('Rosa Gutierrez', {}, { timeout: 3000 });
-    const rail = within(screen.getByLabelText('Member context'));
-    fireEvent.click(await rail.findByLabelText('Complete session'));
-    await rail.findByText('Complete the session for Rosa?');
-  }
-
-  it('shows Cancel Session, Missed Session, and Complete Session together — no window.confirm', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm');
-    try {
-      await openEndConfirmPanel();
-
-      expect(screen.getByLabelText('Cancel session (abort)')).toBeTruthy();
-      expect(screen.getByLabelText('Mark session missed (no-show)')).toBeTruthy();
-      expect(screen.getByLabelText('Confirm complete session')).toBeTruthy();
-      expect(confirmSpy).not.toHaveBeenCalled();
-    } finally {
-      confirmSpy.mockRestore();
-    }
-  });
-
-  it('Cancel Session fires PATCH /sessions/{id}/abort and closes the confirm panel', async () => {
-    await openEndConfirmPanel();
-
-    fireEvent.click(screen.getByLabelText('Cancel session (abort)'));
-
-    await waitFor(() => {
-      expect(mockedApi).toHaveBeenCalledWith(
-        `/sessions/${SESSION_ID}/abort`,
-        expect.objectContaining({ method: 'PATCH' }),
-      );
-    });
-
-    // The confirm panel closes immediately on tap (before the mutation
-    // resolves) — mirrors handleCancelSessionConfirmed's setShowEndConfirm(false).
-    await waitFor(() => {
-      expect(screen.queryByText('Complete the session for Rosa?')).toBeNull();
-    });
-  });
-
-  it('Missed Session fires PATCH /sessions/{id}/no-show and closes the confirm panel', async () => {
-    await openEndConfirmPanel();
-
-    fireEvent.click(screen.getByLabelText('Mark session missed (no-show)'));
-
-    await waitFor(() => {
-      expect(mockedApi).toHaveBeenCalledWith(
-        `/sessions/${SESSION_ID}/no-show`,
-        expect.objectContaining({ method: 'PATCH' }),
-      );
-    });
-
-    await waitFor(() => {
-      expect(screen.queryByText('Complete the session for Rosa?')).toBeNull();
-    });
-  });
-
-  it('after Cancel Session succeeds, the rail clears the destructive-session state (badge/timer gone, no longer showing Complete Session)', async () => {
-    await openEndConfirmPanel();
-
-    fireEvent.click(screen.getByLabelText('Cancel session (abort)'));
-
-    await waitFor(() => {
-      expect(mockedApi).toHaveBeenCalledWith(
-        `/sessions/${SESSION_ID}/abort`,
-        expect.objectContaining({ method: 'PATCH' }),
-      );
-    });
-
-    // The `cancelled` status is real and briefly reachable via useSession,
-    // but — now that the abort mutation also invalidates `queryKeys
-    // .conversations` (the fix under test) — the conversations refetch that
-    // clears `activeSessionId` can land in the same act() flush, so the
-    // terminal "Session cancelled" note is not a reliably observable
-    // intermediate state here (see the dedicated recovery test below, which
-    // covers the full Begin-Session-reset behavior this note is a step
-    // toward). What IS guaranteed and asserted: the destructive action
-    // fired, and the rail no longer shows a "Complete session" button for
-    // the now-ended session.
-    const rail = within(screen.getByLabelText('Member context'));
-    await waitFor(() => {
-      expect(rail.queryByLabelText('Complete session')).toBeNull();
-    });
-  });
-
-  it('after Missed Session succeeds, the rail clears the destructive-session state (badge/timer gone, no longer showing Complete Session)', async () => {
-    await openEndConfirmPanel();
-
-    fireEvent.click(screen.getByLabelText('Mark session missed (no-show)'));
-
-    await waitFor(() => {
-      expect(mockedApi).toHaveBeenCalledWith(
-        `/sessions/${SESSION_ID}/no-show`,
-        expect.objectContaining({ method: 'PATCH' }),
-      );
-    });
-
-    const rail = within(screen.getByLabelText('Member context'));
-    await waitFor(() => {
-      expect(rail.queryByLabelText('Complete session')).toBeNull();
-    });
-  });
-
-  // ── Regression: Begin Session must reset without a manual refresh ──────────
-  //
-  // This is the actual bug under test: does the rail recover to "Begin
-  // Session" so the CHW can immediately start a new session with the same
-  // member, or does it stay stuck until a manual page reload? That
-  // transition is driven by useSessionHook re-keying off
-  // `conv.activeSessionId` once the conversations query refetches with
-  // `active_session_id: null` — which only happens if the mutation
-  // invalidates `queryKeys.conversations` (not just `queryKeys.sessions`).
-  // These tests assert that full recovery, relying ONLY on the mutations'
-  // own onSuccess invalidation (this file's mocked `/conversations/` route
-  // reflects `currentSessionStatus`, mirroring the real backend) — no manual
-  // refetch/reload call anywhere in the test.
-  it('after Missed Session succeeds, Begin Session reappears in the rail without a manual refresh', async () => {
-    await openEndConfirmPanel();
-
-    fireEvent.click(screen.getByLabelText('Mark session missed (no-show)'));
-
-    await waitFor(() => {
-      expect(mockedApi).toHaveBeenCalledWith(
-        `/sessions/${SESSION_ID}/no-show`,
-        expect.objectContaining({ method: 'PATCH' }),
-      );
-    });
-
-    // Purely from the conversations-query invalidation the mutation itself
-    // triggers (no test-driven refetch call), the rail must recover to a
-    // fresh "Begin Session" — proving the CHW can start a new session with
-    // this member immediately, matching Complete Session's behavior.
-    const rail = within(screen.getByLabelText('Member context'));
-    expect(await rail.findByLabelText('Begin session')).toBeTruthy();
-    expect(rail.queryByText('Missed — member did not attend')).toBeNull();
-  });
-
-  it('after Cancel Session succeeds, Begin Session reappears in the rail without a manual refresh', async () => {
-    await openEndConfirmPanel();
-
-    fireEvent.click(screen.getByLabelText('Cancel session (abort)'));
-
-    await waitFor(() => {
-      expect(mockedApi).toHaveBeenCalledWith(
-        `/sessions/${SESSION_ID}/abort`,
-        expect.objectContaining({ method: 'PATCH' }),
-      );
-    });
-
-    const rail = within(screen.getByLabelText('Member context'));
-    expect(await rail.findByLabelText('Begin session')).toBeTruthy();
-    expect(rail.queryByText('Session cancelled')).toBeNull();
-  });
-});
-
-// ─── Epic Q4 — Documentation submission as an on-brand Messages overlay ───────
-
-describe('CHWMessagesScreen — Documentation modal renders as an on-brand overlay (Epic Q4)', () => {
-  it('End Session opens DocumentationModal as an on-brand overlay (not a full-screen Modal takeover), with Q1-Q3 internals intact', async () => {
+describe('CHWMessagesScreen — rail shows a read-only note (not a control) while a session is active (#19/#20)', () => {
+  it('renders a read-only "active session" note, with no Complete/Cancel/Missed controls, for an in-progress session', async () => {
     renderScreen();
     await screen.findByText('Rosa Gutierrez', {}, { timeout: 3000 });
 
-    const rail = within(screen.getByLabelText('Member context'));
-    fireEvent.click(await rail.findByLabelText('Complete session'));
-    await rail.findByText('Complete the session for Rosa?');
-    fireEvent.click(screen.getByLabelText('Confirm complete session'));
+    const rail = within(await screen.findByLabelText('Member context', {}, { timeout: 3000 }));
+    await rail.findByLabelText('Active session');
 
-    await waitFor(() => {
-      expect(mockedApi).toHaveBeenCalledWith(
-        `/sessions/${SESSION_ID}/end`,
-        expect.objectContaining({ method: 'POST' }),
-      );
-    });
-
-    // The documentation form is now open — its header close button is a
-    // reliable "the modal mounted" signal.
-    const closeBtn = await screen.findByLabelText('Close documentation modal');
-    expect(closeBtn).toBeTruthy();
-
-    // On-brand overlay: rendered in-place inside the Messages page, NOT via
-    // RN's Modal (which react-native-web portals to a node outside the
-    // rendered tree). Asserting it's reachable through the same `document`
-    // that also still contains the Messages thread/composer proves it's an
-    // in-page overlay, not a screen takeover that replaced the page.
-    expect(screen.getByPlaceholderText(/type a message/i)).toBeTruthy();
-    expect(screen.getByLabelText('Search message threads')).toBeTruthy();
-
-    // Q1: inline "Units: N" line present (spot-assert Q1-Q3 survive the
-    // presentation change).
-    expect(screen.getByText('Units:')).toBeTruthy();
-
-    // Q3: a grouped diagnosis chip renders inside the overlay.
-    fireEvent.click(screen.getByLabelText('Housing'));
-    expect(screen.getByLabelText('Z59.00: Homelessness, unspecified')).toBeTruthy();
-  });
-
-  it('the 16-minute not-billable gate still blocks submit inside the Messages overlay', async () => {
-    // 10-minute session (started 09:00, ended 09:10) — under the 16-minute
-    // floor, so the overlay's submit must stay blocked.
-    endSessionEndedAt = '2026-07-11T09:10:00.000Z';
-    renderScreen();
-    await screen.findByText('Rosa Gutierrez', {}, { timeout: 3000 });
-
-    const rail = within(screen.getByLabelText('Member context'));
-    fireEvent.click(await rail.findByLabelText('Complete session'));
-    await rail.findByText('Complete the session for Rosa?');
-    fireEvent.click(screen.getByLabelText('Confirm complete session'));
-
-    await screen.findByLabelText('Close documentation modal');
-
-    expect(
-      screen.getByText('Under 16 minutes — not billable; no claim will be filed.'),
-    ).toBeTruthy();
-    const submit = screen.getByLabelText('Submit documentation and billing');
-    expect(submit.getAttribute('aria-disabled')).toBe('true');
+    expect(rail.queryByLabelText('Complete session')).toBeNull();
+    expect(rail.queryByLabelText('Cancel session (abort)')).toBeNull();
+    expect(rail.queryByLabelText('Mark session missed (no-show)')).toBeNull();
+    expect(rail.queryByText('Complete the session for Rosa?')).toBeNull();
   });
 });
 
@@ -998,15 +802,17 @@ describe('CHWMessagesScreen — phone-width single-pane collapse (Epic K)', () =
     fireEvent.click(await screen.findByLabelText('Thread with Rosa Gutierrez', {}, { timeout: 3000 }));
     await screen.findByPlaceholderText(/type a message/i);
 
-    // No sibling rail pane — the active-session controls (Complete Session,
-    // etc.) aren't just present-but-squeezed, they're absent until opened.
+    // No sibling rail pane — the rail's content (including the active-session
+    // note) isn't just present-but-squeezed, it's absent until opened.
     expect(screen.queryByLabelText('Member context')).toBeNull();
 
-    // The rail's controls, including Complete Session, are reachable behind
-    // the "Open member context" toggle in the conversation header.
+    // The rail's content, including the active-session note (#19/#20 — the
+    // rail no longer has its own Complete Session control; ActiveSessionBadge
+    // owns that now), is reachable behind the "Open member context" toggle
+    // in the conversation header.
     fireEvent.click(screen.getByLabelText('Open member context'));
     const rail = within(await screen.findByLabelText('Member context'));
-    expect(await rail.findByLabelText('Complete session')).toBeTruthy();
+    expect(await rail.findByLabelText('Active session')).toBeTruthy();
 
     // Closing the overlay removes the rail again.
     fireEvent.click(screen.getByLabelText('Close member context'));

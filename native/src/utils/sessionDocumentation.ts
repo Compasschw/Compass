@@ -5,48 +5,114 @@
  * unit-testable in the fast `node` tier (no React/DOM) — see
  * sessionDocumentation.test.ts.
  *
- * Session date-time input format: "MM/DD/YYYY HH:MM" entered by the CHW on a
- * 24-hour clock (e.g. "07/12/2026 14:30"). A 24-hour clock is used — rather
- * than 12-hour + AM/PM — so the auto-formatting can mirror the digits-only
- * DOB pattern in AddMemberModal.tsx (formatDobInput/parseDobInputToIso): no
- * letters to type or validate, and no AM/PM ambiguity in a billing-adjacent
- * field. Values are treated as local wall-clock time (what the CHW read off
- * a clock during the session), not a UTC instant — parsing/formatting uses
- * the JS Date's local getters/constructor, matching how DOB is handled.
+ * Session date-time input format: "MM/DD/YYYY hh:MM AM/PM" (12-hour clock,
+ * zero-padded hour) entered by the CHW (e.g. "07/12/2026 02:30 PM").
+ *
+ * #21 (2026-07-13): this format was changed FROM a 24-hour "MM/DD/YYYY
+ * HH:MM" mask TO this one so it matches EXACTLY what the billing CSV export
+ * requires — see `backend/app/services/billing_csv_writer.py`'s
+ * `_fmt_la_datetime()`:
+ *
+ *   ```python
+ *   def _fmt_la_datetime(value: datetime | None) -> str:
+ *       """Render a UTC datetime as ``MM/DD/YYYY hh:MM AM/PM`` in LA local time.
+ *
+ *       Fully zero-padded: month, day, and the 12-hour clock hour ("01:30 PM",
+ *       not "1:30 PM"). Ops confirmed 2026-06-17 that the billing upload
+ *       requires the padded ``MM/DD/YYYY hh:MM AM/PM`` form for Activity
+ *       Start/End — unpadded hours force manual correction during import.
+ *       """
+ *   ```
+ *
+ * i.e. the writer emits `MM/DD/YYYY hh:MM AM/PM` — zero-padded month, day,
+ * AND 12-hour hour (never "1:30 PM", always "01:30 PM") — converted to
+ * `America/Los_Angeles` local time. Before this fix, the CHW-facing modal
+ * displayed/collected a 24-hour "14:30" style time (chosen at the time to
+ * mirror AddMemberModal's digits-only DOB mask), which did not match what
+ * Pear Suite's billing upload expects — every session time the CHW entered
+ * would have required manual correction during CSV import. This module now
+ * masks/parses in the exact `MM/DD/YYYY hh:MM AM/PM` shape so what the CHW
+ * sees is byte-for-byte what ends up on the claim.
+ *
+ * Values are treated as local wall-clock time (what the CHW read off a clock
+ * during the session), not a UTC instant — parsing/formatting uses the JS
+ * Date's local getters/constructor (matching how DOB is handled in
+ * AddMemberModal.tsx), NOT `_fmt_la_datetime`'s LA-timezone conversion — the
+ * CHW enters/sees their own device's local wall-clock time, same as before;
+ * only the 12-hour/AM-PM shape changed, not the timezone-handling model. The
+ * wire format submitted to the backend stays ISO 8601 (unchanged) — the
+ * backend/billing CSV writer independently converts to LA local at export
+ * time regardless of what timezone the CHW's device was in.
  */
 
+// Groups: 1=month(01-12) 2=day(01-31) 3=year 4=hour(01-12) 5=minute(00-59) 6=AM/PM
 const SESSION_DATETIME_PATTERN =
-  /^(0[1-9]|1[0-2])\/(0[1-9]|[12]\d|3[01])\/(19|20)\d{2} ([01]\d|2[0-3]):([0-5]\d)$/;
+  /^(0[1-9]|1[0-2])\/(0[1-9]|[12]\d|3[01])\/(19|20)\d{2} (0[1-9]|1[0-2]):([0-5]\d) (AM|PM)$/;
 
-/** Auto-formats "MM/DD/YYYY HH:MM" as the CHW types (digits only + separators). */
+/**
+ * Auto-formats "MM/DD/YYYY hh:MM AM/PM" as the CHW types. Digits are typed
+ * freely (auto-inserting slashes/colon/space as each segment fills); AM/PM
+ * is a trailing single keystroke ('a'/'p', case-insensitive) appended after
+ * the minute digits — mirrors how a CHW would naturally type "0230p" to mean
+ * "02:30 PM" without needing to type out the letters "PM".
+ */
 export function formatSessionDateTimeInput(raw: string): string {
+  // Trailing AM/PM letter (if any) is captured separately from the digit
+  // stream so it survives independently of how many date/time digits have
+  // been typed so far.
+  const meridiemMatch = /[aApP][mM]?$/.exec(raw.trimEnd());
+  const meridiem = meridiemMatch
+    ? meridiemMatch[0][0].toUpperCase() === 'A'
+      ? 'AM'
+      : 'PM'
+    : null;
+
   const digits = raw.replace(/\D/g, '').slice(0, 12);
-  if (digits.length <= 2) return digits;
-  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
-  if (digits.length <= 8) return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
-  if (digits.length <= 10) {
-    return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4, 8)} ${digits.slice(8)}`;
+  let out: string;
+  if (digits.length <= 2) {
+    out = digits;
+  } else if (digits.length <= 4) {
+    out = `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  } else if (digits.length <= 8) {
+    out = `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+  } else if (digits.length <= 10) {
+    out = `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4, 8)} ${digits.slice(8)}`;
+  } else {
+    out = `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4, 8)} ${digits.slice(8, 10)}:${digits.slice(10, 12)}`;
   }
-  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4, 8)} ${digits.slice(8, 10)}:${digits.slice(10, 12)}`;
+
+  // Only append AM/PM once the minute pair is complete (10 digits: MMDDYYYYHHMM
+  // less the leading MMDDYYYYHH = 10 total digits typed) — matches the point
+  // the field shows "MM/DD/YYYY hh:MM" and a trailing a/p becomes meaningful.
+  if (digits.length >= 12 && meridiem) {
+    out = `${out} ${meridiem}`;
+  }
+  return out;
 }
 
 /**
- * Parses "MM/DD/YYYY HH:MM" (local wall clock, 24hr) → ISO 8601, or null when
- * the input doesn't match the expected shape or names an impossible date/time
- * (e.g. "02/30/2026 14:30", which rolls over in the Date constructor and is
- * rejected here rather than silently coerced — mirrors parseDobInputToIso's
- * UTC round-trip check).
+ * Parses "MM/DD/YYYY hh:MM AM/PM" (local wall clock, 12hr) → ISO 8601, or
+ * null when the input doesn't match the expected shape or names an
+ * impossible date/time (e.g. "02/30/2026 02:30 PM", which rolls over in the
+ * Date constructor and is rejected here rather than silently coerced —
+ * mirrors parseDobInputToIso's UTC round-trip check).
  */
 export function parseSessionDateTimeInputToIso(value: string): string | null {
-  if (!SESSION_DATETIME_PATTERN.test(value)) return null;
-  const [datePart, timePart] = value.split(' ');
+  const match = SESSION_DATETIME_PATTERN.exec(value);
+  if (!match) return null;
+  const [datePart, timePart, meridiem] = value.split(' ');
   const [mm, dd, yyyy] = datePart.split('/');
-  const [hh, min] = timePart.split(':');
+  const [hh12Str, min] = timePart.split(':');
+  const hh12 = Number(hh12Str);
+  // Convert 12-hour + AM/PM to 24-hour for the Date constructor.
+  // 12 AM → 0, 12 PM → 12, otherwise PM adds 12.
+  const hh24 =
+    meridiem === 'AM' ? (hh12 === 12 ? 0 : hh12) : hh12 === 12 ? 12 : hh12 + 12;
   const probe = new Date(
     Number(yyyy),
     Number(mm) - 1,
     Number(dd),
-    Number(hh),
+    hh24,
     Number(min),
     0,
     0,
@@ -55,7 +121,7 @@ export function parseSessionDateTimeInputToIso(value: string): string | null {
     probe.getFullYear() !== Number(yyyy) ||
     probe.getMonth() + 1 !== Number(mm) ||
     probe.getDate() !== Number(dd) ||
-    probe.getHours() !== Number(hh) ||
+    probe.getHours() !== hh24 ||
     probe.getMinutes() !== Number(min)
   ) {
     return null;
@@ -64,8 +130,8 @@ export function parseSessionDateTimeInputToIso(value: string): string | null {
 }
 
 /**
- * Formats an ISO 8601 timestamp back to "MM/DD/YYYY HH:MM" local wall-clock,
- * for pre-filling the Session Start / Session End inputs from
+ * Formats an ISO 8601 timestamp back to "MM/DD/YYYY hh:MM AM/PM" local
+ * wall-clock, for pre-filling the Session Start / Session End inputs from
  * `sessionStartedAt` / `sessionEndedAt`. Returns '' for null/undefined/unparseable
  * input so the field renders empty rather than "Invalid Date".
  */
@@ -76,9 +142,12 @@ export function formatIsoForSessionDateTimeInput(iso: string | null | undefined)
   const mm = String(d.getMonth() + 1).padStart(2, '0');
   const dd = String(d.getDate()).padStart(2, '0');
   const yyyy = String(d.getFullYear());
-  const hh = String(d.getHours()).padStart(2, '0');
+  const hour24 = d.getHours();
+  const hour12 = hour24 % 12 || 12;
+  const hh = String(hour12).padStart(2, '0');
   const min = String(d.getMinutes()).padStart(2, '0');
-  return `${mm}/${dd}/${yyyy} ${hh}:${min}`;
+  const meridiem = hour24 < 12 ? 'AM' : 'PM';
+  return `${mm}/${dd}/${yyyy} ${hh}:${min} ${meridiem}`;
 }
 
 /**
@@ -166,4 +235,35 @@ export const MIN_BILLABLE_DURATION_MINUTES = 16;
  */
 export function isBelowBillableFloor(units: number): boolean {
   return units === 0;
+}
+
+// ─── Potential earnings (#22) ───────────────────────────────────────────────
+
+/**
+ * Product-specified CHW payout rate, per billable unit, shown to the CHW in
+ * the Documentation modal as "Potential Earnings" (#22, 2026-07-13).
+ *
+ * This is a DISPLAY-ONLY constant, intentionally distinct from the backend's
+ * actual net payout math: `app.services.billing_service.calculate_earnings`
+ * computes ``net_payout`` from ``gross_amount`` minus platform/PearSuite fees,
+ * which nets out to approximately $16/unit today. Product asked the
+ * CHW-facing "potential earnings" estimate shown BEFORE submission to use a
+ * flat, intentionally-conservative $14/unit instead — never overstating what
+ * the CHW will actually be paid. The backend's own net-payout figure (from
+ * ``calculate_earnings``) remains the authoritative amount that is actually
+ * billed/paid; this constant does not feed into any billing/claim submission
+ * path, only this pre-submit estimate.
+ */
+export const CHW_RATE_PER_UNIT = 14;
+
+/**
+ * Computes the CHW-facing "Potential Earnings" estimate shown under the
+ * Units line in DocumentationModal — flat ``units * CHW_RATE_PER_UNIT``.
+ * Returns 0 for 0 units (not billable) rather than a negative/NaN result for
+ * any unexpected input — a potential-earnings display must never suggest a
+ * non-billable session is worth money.
+ */
+export function computePotentialEarnings(units: number): number {
+  if (!Number.isFinite(units) || units <= 0) return 0;
+  return units * CHW_RATE_PER_UNIT;
 }

@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 
 import {
+  CHW_RATE_PER_UNIT,
+  computePotentialEarnings,
   computeUnitsFromDuration,
   computeUnitsFromTimes,
   formatIsoForSessionDateTimeInput,
@@ -85,39 +87,76 @@ describe('formatSessionDateTimeInput', () => {
 
   it('appends a space + colon once time digits start', () => {
     expect(formatSessionDateTimeInput('071220261')).toBe('07/12/2026 1');
-    expect(formatSessionDateTimeInput('0712202614')).toBe('07/12/2026 14');
-    expect(formatSessionDateTimeInput('071220261430')).toBe('07/12/2026 14:30');
+    expect(formatSessionDateTimeInput('0712202602')).toBe('07/12/2026 02');
+    expect(formatSessionDateTimeInput('071220260230')).toBe('07/12/2026 02:30');
   });
 
-  it('strips non-digit characters and caps at 12 digits total', () => {
-    expect(formatSessionDateTimeInput('07/12/2026 14:30extra digits 99')).toBe('07/12/2026 14:30');
+  it('appends AM/PM once minute digits complete, from a trailing a/p keystroke', () => {
+    expect(formatSessionDateTimeInput('071220260230p')).toBe('07/12/2026 02:30 PM');
+    expect(formatSessionDateTimeInput('071220260230P')).toBe('07/12/2026 02:30 PM');
+    expect(formatSessionDateTimeInput('071220260230a')).toBe('07/12/2026 02:30 AM');
+    expect(formatSessionDateTimeInput('071220260230A')).toBe('07/12/2026 02:30 AM');
+  });
+
+  it('does not append a meridiem before the minute pair is complete', () => {
+    // Only 9 digits typed (MMDDYYYYh) — no meridiem should be appended yet
+    // even if a stray 'p' trails the input.
+    expect(formatSessionDateTimeInput('071220260p')).toBe('07/12/2026 0');
+  });
+
+  it('strips non-digit characters (other than a trailing meridiem letter) and caps at 12 digits total', () => {
+    expect(formatSessionDateTimeInput('07/12/2026 02:30extra digits 99')).toBe('07/12/2026 02:30');
+    expect(formatSessionDateTimeInput('07/12/2026 02:30 PM')).toBe('07/12/2026 02:30 PM');
   });
 });
 
 describe('parseSessionDateTimeInputToIso', () => {
-  it('parses a well-formed input to an ISO string', () => {
-    const iso = parseSessionDateTimeInputToIso('07/12/2026 14:30');
+  it('parses a well-formed PM input to an ISO string', () => {
+    const iso = parseSessionDateTimeInputToIso('07/12/2026 02:30 PM');
     expect(iso).not.toBeNull();
     expect(new Date(iso as string).getFullYear()).toBe(2026);
+    expect(new Date(iso as string).getHours()).toBe(14);
+  });
+
+  it('parses a well-formed AM input to an ISO string', () => {
+    const iso = parseSessionDateTimeInputToIso('07/12/2026 09:05 AM');
+    expect(iso).not.toBeNull();
+    expect(new Date(iso as string).getHours()).toBe(9);
+  });
+
+  it('handles the 12 AM / 12 PM boundary correctly', () => {
+    const midnight = parseSessionDateTimeInputToIso('07/12/2026 12:00 AM');
+    expect(midnight).not.toBeNull();
+    expect(new Date(midnight as string).getHours()).toBe(0);
+
+    const noon = parseSessionDateTimeInputToIso('07/12/2026 12:00 PM');
+    expect(noon).not.toBeNull();
+    expect(new Date(noon as string).getHours()).toBe(12);
   });
 
   it('round-trips through formatIsoForSessionDateTimeInput', () => {
-    const iso = parseSessionDateTimeInputToIso('07/12/2026 09:05');
-    expect(formatIsoForSessionDateTimeInput(iso)).toBe('07/12/2026 09:05');
+    const iso = parseSessionDateTimeInputToIso('07/12/2026 09:05 AM');
+    expect(formatIsoForSessionDateTimeInput(iso)).toBe('07/12/2026 09:05 AM');
+
+    const isoPm = parseSessionDateTimeInputToIso('07/12/2026 02:30 PM');
+    expect(formatIsoForSessionDateTimeInput(isoPm)).toBe('07/12/2026 02:30 PM');
   });
 
   it('rejects malformed shapes', () => {
     expect(parseSessionDateTimeInputToIso('')).toBeNull();
     expect(parseSessionDateTimeInputToIso('07/12/2026')).toBeNull();
-    expect(parseSessionDateTimeInputToIso('7/12/2026 14:30')).toBeNull();
-    expect(parseSessionDateTimeInputToIso('07/12/2026 25:00')).toBeNull();
+    expect(parseSessionDateTimeInputToIso('7/12/2026 02:30 PM')).toBeNull();
+    expect(parseSessionDateTimeInputToIso('07/12/2026 25:00 PM')).toBeNull();
+    expect(parseSessionDateTimeInputToIso('07/12/2026 13:00 PM')).toBeNull(); // 13 is not a valid 12hr hour
+    expect(parseSessionDateTimeInputToIso('07/12/2026 02:30')).toBeNull(); // missing AM/PM
+    expect(parseSessionDateTimeInputToIso('07/12/2026 02:30 XM')).toBeNull(); // invalid meridiem
     expect(parseSessionDateTimeInputToIso('not a date')).toBeNull();
   });
 
   it('rejects impossible calendar dates instead of rolling them over', () => {
     // Feb 30 rolls over to Mar 2 in the Date constructor — must be rejected.
-    expect(parseSessionDateTimeInputToIso('02/30/2026 10:00')).toBeNull();
-    expect(parseSessionDateTimeInputToIso('13/01/2026 10:00')).toBeNull();
+    expect(parseSessionDateTimeInputToIso('02/30/2026 10:00 AM')).toBeNull();
+    expect(parseSessionDateTimeInputToIso('13/01/2026 10:00 AM')).toBeNull();
   });
 });
 
@@ -126,6 +165,20 @@ describe('formatIsoForSessionDateTimeInput', () => {
     expect(formatIsoForSessionDateTimeInput(null)).toBe('');
     expect(formatIsoForSessionDateTimeInput(undefined)).toBe('');
     expect(formatIsoForSessionDateTimeInput('not-a-date')).toBe('');
+  });
+
+  it('formats local wall-clock time as MM/DD/YYYY hh:MM AM/PM, matching the billing CSV shape', () => {
+    const morning = new Date(2026, 6, 12, 9, 5, 0).toISOString();
+    expect(formatIsoForSessionDateTimeInput(morning)).toBe('07/12/2026 09:05 AM');
+
+    const afternoon = new Date(2026, 6, 12, 14, 30, 0).toISOString();
+    expect(formatIsoForSessionDateTimeInput(afternoon)).toBe('07/12/2026 02:30 PM');
+
+    const midnight = new Date(2026, 6, 12, 0, 0, 0).toISOString();
+    expect(formatIsoForSessionDateTimeInput(midnight)).toBe('07/12/2026 12:00 AM');
+
+    const noon = new Date(2026, 6, 12, 12, 0, 0).toISOString();
+    expect(formatIsoForSessionDateTimeInput(noon)).toBe('07/12/2026 12:00 PM');
   });
 });
 
@@ -199,5 +252,31 @@ describe('computeUnitsFromTimes', () => {
       units: 0,
       error: null,
     });
+  });
+});
+
+// ─── Potential earnings (#22) ────────────────────────────────────────────────
+
+describe('CHW_RATE_PER_UNIT', () => {
+  it('is the product-specified $14/unit display rate', () => {
+    expect(CHW_RATE_PER_UNIT).toBe(14);
+  });
+});
+
+describe('computePotentialEarnings', () => {
+  it('multiplies units by the flat $14/unit rate', () => {
+    expect(computePotentialEarnings(1)).toBe(14);
+    expect(computePotentialEarnings(2)).toBe(28);
+    expect(computePotentialEarnings(3)).toBe(42);
+    expect(computePotentialEarnings(4)).toBe(56);
+  });
+
+  it('returns 0 for 0 units (not billable) — never suggests a non-billable session is worth money', () => {
+    expect(computePotentialEarnings(0)).toBe(0);
+  });
+
+  it('never returns a negative or NaN value for unexpected input', () => {
+    expect(computePotentialEarnings(-1)).toBe(0);
+    expect(computePotentialEarnings(NaN)).toBe(0);
   });
 });
