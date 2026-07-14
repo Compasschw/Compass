@@ -100,6 +100,7 @@ import { countAwaitingChw } from './memberDashboard';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 import { PromptDialog, type PromptDialogField } from '../../components/shared/PromptDialog';
+import { PASSWORD_RULES_HINT, validatePasswordComplexity } from '../../lib/passwordPolicy';
 import { ApiError } from '../../api/client';
 import type {
   MemberHomeStackParamList,
@@ -409,9 +410,14 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
       setPasswordFormError('Please fill in all fields.');
       return;
     }
-    if (newPassword.length < 8) {
-      setPasswordFieldErrors({ newPassword: 'Must be at least 8 characters.' });
-      return;
+    {
+      // QA2 (#10): platform password policy — mirrors the backend validator,
+      // so the member sees the exact missing rule instead of a 422 roundtrip.
+      const complexityError = validatePasswordComplexity(newPassword);
+      if (complexityError !== null) {
+        setPasswordFieldErrors({ newPassword: complexityError });
+        return;
+      }
     }
     if (newPassword !== confirmPassword) {
       setPasswordFieldErrors({ confirmPassword: 'Passwords do not match.' });
@@ -441,7 +447,7 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
             return;
           }
           if (err instanceof ApiError && err.status === 422) {
-            setPasswordFieldErrors({ newPassword: 'Password must be at least 8 characters.' });
+            setPasswordFieldErrors({ newPassword: PASSWORD_RULES_HINT });
             return;
           }
           setPasswordFormError(
@@ -466,7 +472,7 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
       {
         key: 'newPassword',
         label: 'New password',
-        placeholder: 'At least 8 characters',
+        placeholder: PASSWORD_RULES_HINT,
         secureTextEntry: true,
         autoComplete: 'new-password',
         errorText: passwordFieldErrors.newPassword ?? null,

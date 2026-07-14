@@ -251,3 +251,33 @@ describe('PromptDialog', () => {
     expect(screen.queryByRole('radiogroup')).toBeNull();
   });
 });
+
+describe('PromptDialog — QA2: per-field show/hide toggle on secure fields', () => {
+  it('secure fields render hidden with independent eye toggles', () => {
+    render(<ControlledPromptDialog onConfirm={() => {}} />);
+
+    const current = screen.getByLabelText('Current password') as HTMLInputElement;
+    const next = screen.getByLabelText('New password') as HTMLInputElement;
+    expect(current.type).toBe('password');
+    expect(next.type).toBe('password');
+
+    // Reveal ONLY the current-password field.
+    fireEvent.click(screen.getByLabelText('Show Current password'));
+    expect((screen.getByLabelText('Current password') as HTMLInputElement).type).toBe('text');
+    expect((screen.getByLabelText('New password') as HTMLInputElement).type).toBe('password');
+
+    // Hide it again.
+    fireEvent.click(screen.getByLabelText('Hide Current password'));
+    expect((screen.getByLabelText('Current password') as HTMLInputElement).type).toBe('password');
+  });
+
+  it('non-secure fields render no eye toggle', () => {
+    render(
+      <ControlledPromptDialog
+        onConfirm={() => {}}
+        fields={[{ key: 'plain', label: 'Plain field' }]}
+      />,
+    );
+    expect(screen.queryByLabelText('Show Plain field')).toBeNull();
+  });
+});

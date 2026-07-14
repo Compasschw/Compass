@@ -47,10 +47,11 @@ function setText(label: string, value: string): void {
 
 /** Fill every non-consent required field so clientError === null. */
 function fillRequiredFields(): void {
-  setText('Member full name', 'Jordan Rivera');
+  setText('Member first name', 'Jordan');
+  setText('Member last name', 'Rivera');
   setText('Member email', 'jordan@example.com');
   setText('Member phone', '(310) 555-0142');
-  setText('Temporary password', 'temp-pass-1234');
+  setText('Temporary password', 'TempPass123!');
   setText('Member date of birth in MM/DD/YYYY format', '04/12/1990');
   fireEvent.click(screen.getByLabelText('Sex Female'));
   fireEvent.click(screen.getByLabelText('Select insurance company'));
@@ -124,9 +125,10 @@ describe('AddMemberModal — required consent gate', () => {
     // fields are now required in the form so that can't happen.
     renderModal();
     // Everything EXCEPT phone + address filled in.
-    setText('Member full name', 'Jordan Rivera');
+    setText('Member first name', 'Jordan');
+    setText('Member last name', 'Rivera');
     setText('Member email', 'jordan@example.com');
-    setText('Temporary password', 'temp-pass-1234');
+    setText('Temporary password', 'TempPass123!');
     setText('Member date of birth in MM/DD/YYYY format', '04/12/1990');
     fireEvent.click(screen.getByLabelText('Sex Female'));
     fireEvent.click(screen.getByLabelText('Select insurance company'));
@@ -222,5 +224,40 @@ describe('AddMemberModal — communications consent copy', () => {
     expect(label).toContain('CompassCHW platform');
     expect(label).toContain('bill their insurance for covered services');
     expect(label).toContain('no cost to them');
+  });
+});
+
+describe('AddMemberModal — QA2: first/last name split + password policy + show/hide', () => {
+  it('requires BOTH first and last name as separate fields', () => {
+    renderModal();
+    fillRequiredFields();
+    // Blank out just the last name — submit must disable again.
+    setText('Member last name', '');
+    expect(screen.getByLabelText('Add member').getAttribute('aria-disabled')).toBe('true');
+    setText('Member last name', 'Rivera');
+    setText('Member first name', '');
+    expect(screen.getByLabelText('Add member').getAttribute('aria-disabled')).toBe('true');
+  });
+
+  it('rejects a temp password missing complexity (no uppercase/number/special)', () => {
+    renderModal();
+    fillRequiredFields();
+    fireEvent.click(screen.getByTestId('consent-terms'));
+    fireEvent.click(screen.getByTestId('consent-communications'));
+    setText('Temporary password', 'weakpassword'); // 12 chars but no upper/digit/special
+    expect(screen.getByLabelText('Add member').getAttribute('aria-disabled')).toBe('true');
+    setText('Temporary password', 'TempPass123!');
+    // Enabled = aria-disabled absent (null) or 'false', depending on RN-web version.
+    expect(screen.getByLabelText('Add member').getAttribute('aria-disabled')).not.toBe('true');
+  });
+
+  it('temp password is hidden by default with a working show/hide toggle', () => {
+    renderModal();
+    const input = screen.getByLabelText('Temporary password') as HTMLInputElement;
+    expect(input.type).toBe('password');
+    fireEvent.click(screen.getByLabelText('Show password'));
+    expect((screen.getByLabelText('Temporary password') as HTMLInputElement).type).toBe('text');
+    fireEvent.click(screen.getByLabelText('Hide password'));
+    expect((screen.getByLabelText('Temporary password') as HTMLInputElement).type).toBe('password');
   });
 });
