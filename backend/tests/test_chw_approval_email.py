@@ -376,3 +376,282 @@ class TestApprovalEmailViaBackgroundCheck:
             )
         assert res.status_code == 200, res.text
         assert mock_email.await_count == 0
+
+
+# ─── Unit tests: template render + provider send ─────────────────────────────
+#
+# The integration tests above intentionally mock send_chw_approved_email at
+# the transition-detection boundary, so the template and provider plumbing
+# below are exercised directly here.
+
+
+class TestChwApprovedEmailRender:
+    def test_render_has_name_subject_and_support_contact(self):
+        from app.services.email import render_chw_approved_email
+
+        subject, html, text = render_chw_approved_email("Jamie")
+        assert subject.strip()
+        assert "approved" in subject.lower()
+        assert "Jamie" in html
+        assert "Jamie" in text
+        assert "support@joincompasschw.com" in html
+        assert "support@joincompasschw.com" in text
+
+    def test_render_contains_no_phi(self):
+        """First name only — same minimum-necessary standard as every other
+        templated email (no health terms, no member references)."""
+        from app.services.email import render_chw_approved_email
+
+        _, html, text = render_chw_approved_email("Jamie")
+        lowered = (html + text).lower()
+        for phi_term in ("diagnosis", "medication", "health condition", "medi-cal id"):
+            assert phi_term not in lowered
+
+
+class TestSendChwApprovedEmail:
+    async def test_success_sends_tagged_message_via_provider(self):
+        from app.services.email import EmailResult, send_chw_approved_email
+
+        provider = AsyncMock()
+        provider.send.return_value = EmailResult(
+            success=True, provider_message_id="msg-123"
+        )
+        with patch("app.services.email.get_email_provider", return_value=provider):
+            result = await send_chw_approved_email(
+                to="chw@example.com", chw_first_name="Jamie"
+            )
+
+        assert result.success is True
+        (message,) = provider.send.call_args.args
+        assert message.to == "chw@example.com"
+        assert "Jamie" in message.text
+        assert message.tags == {"category": "chw_approved"}
+
+    async def test_provider_error_returns_failure_never_raises(self):
+        from app.services.email import send_chw_approved_email
+
+        with patch(
+            "app.services.email.get_email_provider",
+            side_effect=RuntimeError("SES outage simulated"),
+        ):
+            result = await send_chw_approved_email(
+                to="chw@example.com", chw_first_name="Jamie"
+            )
+
+        assert result.success is False
+        assert "SES outage simulated" in (result.error or "")
+
+
+# ─── Unit tests: notify_chw_if_newly_approved branch coverage ────────────────
+#
+# db is only ever handed to chw_can_work / notify_user, both patched here, so
+# the transition logic can be exercised without a database round trip.
+
+
+def _detached_chw(email: str | None = "jamie@example.com", name: str | None = "Jamie Rivera") -> User:
+    return User(id=uuid.uuid4(), email=email, name=name, role="chw")
+
+
+class TestNotifyChwIfNewlyApprovedBranches:
+    async def test_noop_when_already_compliant_before(self):
+        """No transition (was already compliant) — must return before even
+        re-evaluating can_work, and fire nothing."""
+        from app.services.chw_compliance import notify_chw_if_newly_approved
+
+        with (
+            patch(
+                "app.services.chw_compliance.chw_can_work", new_callable=AsyncMock
+            ) as mock_can_work,
+            patch(
+                "app.services.email.send_chw_approved_email", new_callable=AsyncMock
+            ) as mock_email,
+            patch(
+                "app.services.notifications.notify_user", new_callable=AsyncMock
+            ) as mock_push,
+        ):
+            await notify_chw_if_newly_approved(
+                None, _detached_chw(), was_compliant_before=True
+            )
+
+        assert mock_can_work.await_count == 0
+        assert mock_email.await_count == 0
+        assert mock_push.await_count == 0
+
+    async def test_noop_when_still_not_compliant_after(self):
+        from app.services.chw_compliance import notify_chw_if_newly_approved
+
+        with (
+            patch(
+                "app.services.chw_compliance.chw_can_work",
+                new_callable=AsyncMock,
+                return_value=(False, ["background_check"]),
+            ),
+            patch(
+                "app.services.email.send_chw_approved_email", new_callable=AsyncMock
+            ) as mock_email,
+            patch(
+                "app.services.notifications.notify_user", new_callable=AsyncMock
+            ) as mock_push,
+        ):
+            await notify_chw_if_newly_approved(
+                None, _detached_chw(), was_compliant_before=False
+            )
+
+        assert mock_email.await_count == 0
+        assert mock_push.await_count == 0
+
+    async def test_transition_sends_email_with_first_name_and_push(self):
+        from app.services.chw_compliance import notify_chw_if_newly_approved
+
+        chw = _detached_chw(name="Jamie Rivera")
+        with (
+            patch(
+                "app.services.chw_compliance.chw_can_work",
+                new_callable=AsyncMock,
+                return_value=(True, []),
+            ),
+            patch(
+                "app.services.email.send_chw_approved_email", new_callable=AsyncMock
+            ) as mock_email,
+            patch(
+                "app.services.notifications.notify_user", new_callable=AsyncMock
+            ) as mock_push,
+        ):
+            await notify_chw_if_newly_approved(None, chw, was_compliant_before=False)
+
+        assert mock_email.await_count == 1
+        assert mock_email.await_args.kwargs["to"] == chw.email
+        assert mock_email.await_args.kwargs["chw_first_name"] == "Jamie"
+        assert mock_push.await_count == 1
+        payload = mock_push.await_args.args[2]
+        assert payload.category == "chw.approved"
+
+    async def test_missing_name_falls_back_to_there(self):
+        from app.services.chw_compliance import notify_chw_if_newly_approved
+
+        with (
+            patch(
+                "app.services.chw_compliance.chw_can_work",
+                new_callable=AsyncMock,
+                return_value=(True, []),
+            ),
+            patch(
+                "app.services.email.send_chw_approved_email", new_callable=AsyncMock
+            ) as mock_email,
+            patch("app.services.notifications.notify_user", new_callable=AsyncMock),
+        ):
+            await notify_chw_if_newly_approved(
+                None, _detached_chw(name=None), was_compliant_before=False
+            )
+
+        assert mock_email.await_args.kwargs["chw_first_name"] == "there"
+
+    async def test_no_email_address_skips_email_still_pushes(self):
+        from app.services.chw_compliance import notify_chw_if_newly_approved
+
+        with (
+            patch(
+                "app.services.chw_compliance.chw_can_work",
+                new_callable=AsyncMock,
+                return_value=(True, []),
+            ),
+            patch(
+                "app.services.email.send_chw_approved_email", new_callable=AsyncMock
+            ) as mock_email,
+            patch(
+                "app.services.notifications.notify_user", new_callable=AsyncMock
+            ) as mock_push,
+        ):
+            await notify_chw_if_newly_approved(
+                None, _detached_chw(email=None), was_compliant_before=False
+            )
+
+        assert mock_email.await_count == 0
+        assert mock_push.await_count == 1
+
+    async def test_email_failure_is_swallowed_and_push_still_fires(self):
+        from app.services.chw_compliance import notify_chw_if_newly_approved
+
+        with (
+            patch(
+                "app.services.chw_compliance.chw_can_work",
+                new_callable=AsyncMock,
+                return_value=(True, []),
+            ),
+            patch(
+                "app.services.email.send_chw_approved_email",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("SES outage simulated"),
+            ),
+            patch(
+                "app.services.notifications.notify_user", new_callable=AsyncMock
+            ) as mock_push,
+        ):
+            await notify_chw_if_newly_approved(
+                None, _detached_chw(), was_compliant_before=False
+            )
+
+        assert mock_push.await_count == 1
+
+    async def test_push_failure_is_swallowed(self):
+        from app.services.chw_compliance import notify_chw_if_newly_approved
+
+        with (
+            patch(
+                "app.services.chw_compliance.chw_can_work",
+                new_callable=AsyncMock,
+                return_value=(True, []),
+            ),
+            patch(
+                "app.services.email.send_chw_approved_email", new_callable=AsyncMock
+            ) as mock_email,
+            patch(
+                "app.services.notifications.notify_user",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("push provider down"),
+            ),
+        ):
+            await notify_chw_if_newly_approved(
+                None, _detached_chw(), was_compliant_before=False
+            )
+
+        assert mock_email.await_count == 1
+
+
+# ─── Unit test: review_credential orphaned-CHW guard ─────────────────────────
+
+
+class TestReviewCredentialOrphanedChw:
+    async def test_credential_pointing_at_missing_user_returns_404(self):
+        """db.get(User, ...) coming back None (orphaned credential row) must
+        surface a clean 404, never an AttributeError-driven 500."""
+        import pytest
+        from fastapi import HTTPException
+
+        from app.routers.credentials import review_credential
+        from app.schemas.credential import CredentialReviewRequest
+
+        credential_id = uuid.uuid4()
+        row = Credential(
+            id=credential_id,
+            chw_id=uuid.uuid4(),
+            type="hipaa_training",
+            status="pending_review",
+        )
+
+        class _StubSession:
+            async def get(self, model, pk):
+                if model is Credential:
+                    return row
+                return None
+
+        admin = User(id=uuid.uuid4(), email="admin@example.com", role="admin")
+        with pytest.raises(HTTPException) as exc_info:
+            await review_credential(
+                credential_id,
+                CredentialReviewRequest(approved=True),
+                current_user=admin,
+                db=_StubSession(),
+            )
+        assert exc_info.value.status_code == 404
+        assert "CHW not found" in exc_info.value.detail
