@@ -10,6 +10,12 @@ Scheduled jobs:
     starting in ~23-25 hours ("your session is tomorrow").
   - session_reminder_1h — every 2 minutes, notifies the MEMBER of sessions
     starting in ~59-61 minutes ("your session is in 1 hour").
+  - sms_session_reminders — every 5 minutes (Wave-2 Agent B3): sends the
+    24h-before / 1h-before SMS reminders to the CHW AND the member (member
+    gated by SMS eligibility) for CONFIRMED upcoming sessions. Dedupe is
+    DB-column-backed (Session.reminder_24h_sent_at / reminder_1h_sent_at),
+    not in-memory, since SMS costs real money per send and must survive a
+    process restart. See app.services.sms_notifications.
   - claim_retry         — every 10 minutes, retries failed Pear Suite claims.
 
 For horizontal scaling (multi-instance), replace with APScheduler's
@@ -238,6 +244,103 @@ async def send_hour_before_session_reminders(now: datetime | None = None) -> Non
                 logger.warning(
                     "Failed to send hour-before session reminder for %s: %s", session.id, e
                 )
+
+
+async def send_sms_session_reminders(now: datetime | None = None) -> None:
+    """Send 24h-before and 1h-before SMS reminders for CONFIRMED upcoming sessions.
+
+    Wave-2 Agent B3. Distinct from the push-notification reminder jobs above
+    in two ways:
+
+      1. Scope: only sessions with ``status == "scheduled"`` AND
+         ``scheduling_status == "confirmed"`` qualify — an unconfirmed
+         ("pending") appointment proposal should not trigger an SMS to
+         either party, since it might still be rescheduled or declined.
+      2. Dedupe: DB-column-backed (``Session.reminder_24h_sent_at`` /
+         ``reminder_1h_sent_at``), not the in-memory ``_reminded_sessions``
+         set the push jobs use — SMS costs real money per send and the
+         dedupe must survive a process restart, unlike a push notification
+         where an occasional duplicate is low-cost.
+
+    Windows: [23, 25] hours-from-now for the 24h reminder and [0.75, 1.25]
+    hours-from-now for the 1h reminder — both wide relative to the 5-minute
+    scheduler cadence so a single missed/delayed run can't skip a session.
+    The two windows are scanned and stamped independently so a session
+    can (correctly) receive both reminders as time passes.
+
+    Args:
+        now: Reference time for the window scan. Defaults to
+            ``datetime.now(UTC)``. Exposed as a parameter (rather than always
+            reading the wall clock) so tests can seed sessions at controlled
+            offsets and deterministically exercise the window edges instead
+            of racing real time.
+
+    Never raises — every per-session send is individually wrapped so one
+    failure (bad data, Vonage outage) cannot poison the rest of the batch.
+    """
+    from app.database import async_session
+    from app.models.session import Session
+    from app.services.sms_notifications import send_session_reminder_sms
+
+    if now is None:
+        now = datetime.now(UTC)
+
+    windows = (
+        ("24h", now + timedelta(hours=23), now + timedelta(hours=25), "reminder_24h_sent_at"),
+        (
+            "1h",
+            now + timedelta(minutes=45),
+            now + timedelta(minutes=75),
+            "reminder_1h_sent_at",
+        ),
+    )
+
+    for window_label, window_start, window_end, dedupe_column in windows:
+        async with async_session() as db:
+            result = await db.execute(
+                select(Session).where(
+                    and_(
+                        Session.status == "scheduled",
+                        Session.scheduling_status == "confirmed",
+                        Session.scheduled_at >= window_start,
+                        Session.scheduled_at <= window_end,
+                        getattr(Session, dedupe_column).is_(None),
+                    )
+                )
+            )
+            due_sessions = list(result.scalars().all())
+
+            for session in due_sessions:
+                try:
+                    fully_handled = await send_session_reminder_sms(
+                        db,
+                        session_id=session.id,
+                        chw_id=session.chw_id,
+                        member_id=session.member_id,
+                        scheduled_at=session.scheduled_at,
+                        window=window_label,
+                    )
+                    # Only stamp the dedupe column when every leg either sent
+                    # successfully or was legitimately skipped (no phone,
+                    # ineligible, opted out). A transient failure (Vonage
+                    # outage, DB error) leaves the column NULL so the next
+                    # scheduler run retries — see send_session_reminder_sms's
+                    # return-value contract.
+                    if fully_handled:
+                        setattr(session, dedupe_column, now)
+                        await db.commit()
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(
+                        "Failed to send %s SMS reminder for session %s: %s",
+                        window_label, session.id, e,
+                    )
+                    try:
+                        await db.rollback()
+                    except Exception as rollback_exc:  # noqa: BLE001
+                        logger.warning(
+                            "Rollback also failed for session %s: %s",
+                            session.id, rollback_exc,
+                        )
 
 
 async def retry_pending_claims() -> None:
@@ -622,6 +725,20 @@ def start_scheduler() -> None:
         "interval",
         minutes=2,
         id="session_reminders_1h",
+        max_instances=1,
+        coalesce=True,
+    )
+
+    # SMS session reminders (Wave-2 Agent B3) — 5-minute cadence, wide enough
+    # relative to the [23,25]h / [45,75]min windows that a delayed run can't
+    # skip a session. DB-column dedupe (see send_sms_session_reminders
+    # docstring) — deliberately NOT the in-memory dedup the push jobs above
+    # use, since SMS costs real money per send.
+    _scheduler.add_job(
+        send_sms_session_reminders,
+        "interval",
+        minutes=5,
+        id="sms_session_reminders",
         max_instances=1,
         coalesce=True,
     )

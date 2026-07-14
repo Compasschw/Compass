@@ -66,6 +66,18 @@ class Session(Base):
     # it (see routers/sessions.py schedule_session, and the CHWCalendarScreen /
     # MemberCalendarScreen pending filters on the frontend).
     proposed_by: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    # ── SMS reminder dedupe (Wave-2 Agent B3) ────────────────────────────────
+    # Stamped by app.services.scheduler's SMS reminder job the first time each
+    # reminder text actually sends for this session. Durable (DB-backed,
+    # unlike the push-reminder jobs' in-memory `_reminded_sessions` set) so a
+    # process restart or a delayed scheduler run can never double-send a
+    # paid SMS. NULL means "not yet sent". See migration smsnotif0714.
+    reminder_24h_sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    reminder_1h_sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     duration_minutes: Mapped[int | None] = mapped_column(Integer)

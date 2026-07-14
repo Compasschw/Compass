@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -155,6 +155,7 @@ async def get_request(
 @router.post("/", response_model=ServiceRequestResponse, status_code=201)
 async def create_request(
     data: ServiceRequestCreate,
+    background_tasks: BackgroundTasks,
     current_user=Depends(require_role("member")),
     db: AsyncSession = Depends(get_db),
 ) -> ServiceRequestResponse:
@@ -206,6 +207,24 @@ async def create_request(
     db.add(req)
     await db.commit()
     await db.refresh(req)
+
+    # New-request SMS alert (Wave-2 Agent B3): only meaningful for the
+    # Schedule-with-X targeted flow — an un-targeted request has no single
+    # CHW to alert (it isn't in ANY CHW's /requests/incoming list until
+    # accepted through matching, unlike a targeted request). Scheduled as a
+    # BackgroundTask so Vonage latency/failure can never affect this
+    # endpoint's response, mirroring the message-send SMS fanout convention
+    # in app.routers.conversations.
+    if req.target_chw_id is not None:
+        from app.services.sms_notifications import send_new_request_sms
+
+        background_tasks.add_task(
+            send_new_request_sms,
+            db,
+            chw_id=req.target_chw_id,
+            member_id=req.member_id,
+        )
+
     return ServiceRequestResponse.model_validate(req)
 
 @router.patch("/{request_id}/accept")

@@ -939,6 +939,26 @@ async def send_message(
             db=db,
         )
 
+    # New-message SMS alert (Wave-2 Agent B3): the reverse direction of the
+    # fanout above — when the MEMBER sends an in-app message, alert the CHW
+    # by SMS (CHWs are always in-app, so this is a real out-of-band alert,
+    # not a channel mirror). Throttled to 1 SMS per conversation per 30
+    # minutes inside send_new_message_sms itself (DB-column-backed — see
+    # Conversation.member_message_sms_alert_last_sent_at). Scheduled as a
+    # BackgroundTask so Vonage latency/failure can never affect this
+    # endpoint's response.
+    is_member_sender = current_user.role == "member" and current_user.id == conv.member_id
+    if is_member_sender and data.body and data.body.strip():
+        from app.services.sms_notifications import send_new_message_sms
+
+        background_tasks.add_task(
+            send_new_message_sms,
+            db,
+            conversation_id=conversation_id,
+            chw_id=conv.chw_id,
+            member_id=current_user.id,
+        )
+
     return _serialize_message(msg, attachment)
 
 
