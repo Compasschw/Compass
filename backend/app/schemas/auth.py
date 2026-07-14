@@ -387,6 +387,15 @@ class PasswordResetConfirmBody(BaseModel):
     token: str = Field(..., min_length=1)
     new_password: str = Field(..., min_length=8)
 
+    @field_validator("new_password")
+    @classmethod
+    def _validate_password_complexity(cls, v: str) -> str:
+        # QA2 A1 integration: the platform complexity policy (>=8 + upper +
+        # digit + special) applies to reset-set passwords exactly like
+        # register/change/temp-password — the reset flow must never be the
+        # weak-password backdoor.
+        return validate_password_complexity(v)
+
 
 class PasswordResetConfirmResponse(BaseModel):
     """Deliberately does NOT mint tokens / auto-login — the client must

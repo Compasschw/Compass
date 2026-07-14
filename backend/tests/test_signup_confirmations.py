@@ -623,7 +623,7 @@ async def test_self_signup_member_gets_the_plain_welcome_copy_variant_end_to_end
     )
     payload = {
         "email": "variant.self.signup@example.com",
-        "password": "password123",
+        "password": "Password123!",
         "name": "Variant Self Signup",
         "role": "member",
         **{
