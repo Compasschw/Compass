@@ -27,6 +27,7 @@ import { colors } from '../theme/colors';
 import { LandingScreen } from '../screens/LandingScreen';
 import { LoginScreen } from '../screens/auth/LoginScreen';
 import { MagicLinkScreen } from '../screens/auth/MagicLinkScreen';
+import { ResetPasswordScreen } from '../screens/auth/ResetPasswordScreen';
 import { RegisterScreen } from '../screens/auth/RegisterScreen';
 import { WaitlistScreen } from '../screens/auth/WaitlistScreen';
 import { CompleteProfileScreen } from '../screens/auth/CompleteProfileScreen';
@@ -55,6 +56,7 @@ export type AuthStackParamList = {
   Register: undefined;
   Waitlist: undefined;
   MagicLink: { token?: string } | undefined;
+  ResetPassword: { token?: string } | undefined;
   Legal: { page: LegalPage } | undefined;
 };
 
@@ -106,6 +108,12 @@ function AuthNavigator({ initialRoute = 'Landing' }: AuthNavigatorProps): React.
           even pre-launch. The screen itself shows "Coming soon" if verification
           fails because the user isn't provisioned. */}
       <AuthStack.Screen name="MagicLink" component={withErrorBoundary(MagicLinkScreen)} />
+      {/* ResetPasswordScreen handles the forgot-password flow: request mode
+          (no token) emails a reset link; confirm mode (token from the email
+          deep link) lets the user set a new password. Distinct from
+          MagicLinkScreen — that's passwordless sign-in, this is a password
+          reset with no auto-login. */}
+      <AuthStack.Screen name="ResetPassword" component={withErrorBoundary(ResetPasswordScreen)} />
       {/* Login is sign-in. RegisterScreen is the new self-service signup —
           launched 2026-05 alongside the Golden Path go-live so Jemal/JT and
           subsequent users can onboard themselves without waitlist intervention.
@@ -176,6 +184,8 @@ function buildLinkingConfig(): LinkingOptions<RootStackParamList> {
             Waitlist: 'waitlist',
             // Email magic-link callback — `?token=xyz` populates route params.
             MagicLink: 'auth/magic',
+            // Email password-reset callback — `?token=xyz` populates route params.
+            ResetPassword: 'auth/reset-password',
             // `/legal/privacy`, `/legal/terms`, `/legal/hipaa`, `/legal/contact`
             Legal: 'legal/:page',
           },
@@ -299,9 +309,23 @@ export function AppNavigator(): React.JSX.Element {
     [],
   );
 
+  // Handle password-reset tokens from deep links
+  // (email → compasschw://auth/reset-password?token=...) by navigating to
+  // ResetPasswordScreen with the token, which shows the confirm-new-password
+  // form. Distinct from handleMagicLink — no auto-login here.
+  const handlePasswordReset = useCallback(
+    (token: string) => {
+      const nav = navigationRef.current;
+      if (!nav) return;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (nav as any).navigate('Auth', { screen: 'ResetPassword', params: { token } });
+    },
+    [],
+  );
+
   // Install deep-link + push-tap handlers. The hook guards against duplicate URL
   // handling and no-ops on the web / in simulators.
-  useDeepLinks(navigationRef, handleMagicLink);
+  useDeepLinks(navigationRef, handleMagicLink, handlePasswordReset);
 
   // Built once per session — prefixes/screens are static.
   const linking = useMemo(buildLinkingConfig, []);

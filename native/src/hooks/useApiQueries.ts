@@ -2240,6 +2240,51 @@ export function useVerifyMagicLink() {
   });
 }
 
+// ─── Forgot-password reset flow ──────────────────────────────────────────────
+//
+// Both endpoints are unauthenticated. Unlike the magic-link flow, confirming
+// a reset does NOT return tokens — there is no auto-login. The user signs in
+// with their new password on LoginScreen after a successful confirm.
+
+/**
+ * POST /auth/password-reset/request — always resolves (202), even for an
+ * unknown email (anti-enumeration). No query invalidation: unauthenticated
+ * flow with nothing cached to invalidate.
+ */
+export function useRequestPasswordReset() {
+  return useMutation({
+    mutationFn: async (email: string) => {
+      await api('/auth/password-reset/request', {
+        method: 'POST',
+        body: JSON.stringify({ email }),
+      });
+    },
+  });
+}
+
+/**
+ * POST /auth/password-reset/confirm — resolves `{ok: true}` on success.
+ * Throws `ApiError(401, ...)` for an unknown/expired/already-used token, and
+ * `ApiError(422, ...)` for a password shorter than 8 characters. Callers
+ * should branch on `err.status` rather than parsing `err.detail` text.
+ */
+export function useConfirmPasswordReset() {
+  return useMutation({
+    mutationFn: async ({
+      token,
+      newPassword,
+    }: {
+      token: string;
+      newPassword: string;
+    }): Promise<void> => {
+      await api('/auth/password-reset/confirm', {
+        method: 'POST',
+        body: JSON.stringify({ token, new_password: newPassword }),
+      });
+    },
+  });
+}
+
 // ─── Messages ────────────────────────────────────────────────────────────────
 
 export function useSendMessage() {

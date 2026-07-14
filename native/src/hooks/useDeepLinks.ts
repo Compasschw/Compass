@@ -2,15 +2,16 @@
  * Deep link handling for CompassCHW.
  *
  * Supported URL schemes:
- *   compasschw://sessions/<session-id>        → route to CHW/MemberSessionsScreen
- *   compasschw://conversations/<conv-id>      → route to chat (inside the session)
- *   compasschw://requests                     → route to CHWRequestsScreen
- *   compasschw://auth/magic?token=<token>     → route to magic-link verification
+ *   compasschw://sessions/<session-id>              → route to CHW/MemberSessionsScreen
+ *   compasschw://conversations/<conv-id>             → route to chat (inside the session)
+ *   compasschw://requests                             → route to CHWRequestsScreen
+ *   compasschw://auth/magic?token=<token>             → route to magic-link verification
+ *   compasschw://auth/reset-password?token=<token>   → route to password-reset confirm
  *
  * Two sources of deep links:
  *   1. Tapping a push notification (Expo Notifications)
  *   2. Following a universal link / custom scheme from outside the app
- *      (email magic links, shared CHW profile URLs, etc.)
+ *      (email magic links, password-reset links, shared CHW profile URLs, etc.)
  */
 
 import { useEffect, useRef } from 'react';
@@ -24,6 +25,10 @@ interface DeepLinkPayload {
   resource: 'sessions' | 'conversations' | 'requests' | 'auth';
   id?: string;
   token?: string;
+  /** Only set when resource === 'auth'. Distinguishes the magic-link
+   *  (passwordless sign-in) path from the password-reset path — both carry a
+   *  `?token=` query param but resolve to different screens/mutations. */
+  authAction?: 'magic' | 'reset-password';
 }
 
 function parseUrl(url: string): DeepLinkPayload | null {
@@ -32,12 +37,15 @@ function parseUrl(url: string): DeepLinkPayload | null {
     // Expo's Linking.parse handles both custom-scheme and universal-link formats.
     // For `compasschw://sessions/abc`, hostname='sessions', path='abc'.
     // For `compasschw://auth/magic?token=xyz`, hostname='auth', path='magic', queryParams={token}.
+    // For `compasschw://auth/reset-password?token=xyz`, hostname='auth', path='reset-password'.
     if (!hostname) return null;
     const resource = hostname as DeepLinkPayload['resource'];
 
     if (resource === 'auth') {
       const token = typeof queryParams?.token === 'string' ? queryParams.token : undefined;
-      return token ? { resource: 'auth', token } : null;
+      if (!token) return null;
+      const authAction = path === 'reset-password' ? 'reset-password' : 'magic';
+      return { resource: 'auth', token, authAction };
     }
 
     const id = path?.split('/')[0] || undefined;
@@ -50,13 +58,16 @@ function parseUrl(url: string): DeepLinkPayload | null {
 /**
  * Install global deep-link listeners.
  *
- * @param navigationRef  the NavigationContainer ref so we can dispatch routes
- * @param onMagicLink    callback to handle auth magic links specifically —
- *                       the caller decides how to exchange the token for JWTs
+ * @param navigationRef      the NavigationContainer ref so we can dispatch routes
+ * @param onMagicLink        callback to handle auth magic links specifically —
+ *                           the caller decides how to exchange the token for JWTs
+ * @param onPasswordReset    callback to handle password-reset links specifically —
+ *                           the caller navigates to ResetPasswordScreen with the token
  */
 export function useDeepLinks(
   navigationRef: React.RefObject<NavigationContainerRef<Record<string, object | undefined>> | null>,
   onMagicLink: (token: string) => void,
+  onPasswordReset?: (token: string) => void,
 ): void {
   const lastHandledUrl = useRef<string | null>(null);
 
@@ -69,7 +80,11 @@ export function useDeepLinks(
       if (!payload) return;
 
       if (payload.resource === 'auth' && payload.token) {
-        onMagicLink(payload.token);
+        if (payload.authAction === 'reset-password') {
+          onPasswordReset?.(payload.token);
+        } else {
+          onMagicLink(payload.token);
+        }
         return;
       }
 
@@ -121,5 +136,5 @@ export function useDeepLinks(
       linkingSubscription.remove();
       notificationSubscription.remove();
     };
-  }, [navigationRef, onMagicLink]);
+  }, [navigationRef, onMagicLink, onPasswordReset]);
 }

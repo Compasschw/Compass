@@ -250,12 +250,13 @@ export function LoginScreen(): React.JSX.Element {
     navigation.navigate('Register');
   }, [navigation]);
 
-  // ── Navigate to passwordless sign-in / account recovery ──────────────────
-  // The MagicLinkScreen (request mode) emails a one-time sign-in link — this
-  // is the recovery path for users who forgot their password.
+  // ── Navigate to forgot-password reset flow ────────────────────────────────
+  // ResetPasswordScreen (request mode) emails a reset link the user follows
+  // to set a new password. MagicLinkScreen (passwordless sign-in) remains a
+  // separate, untouched flow.
 
-  const handleNavToMagicLink = useCallback((): void => {
-    navigation.navigate('MagicLink');
+  const handleNavToResetPassword = useCallback((): void => {
+    navigation.navigate('ResetPassword');
   }, [navigation]);
 
   // ── Navigate back to Landing ─────────────────────────────────────────────
@@ -483,12 +484,12 @@ export function LoginScreen(): React.JSX.Element {
                       </View>
                     </View>
 
-                    {/* Forgot password → passwordless sign-in link (account recovery) */}
+                    {/* Forgot password → password-reset flow (account recovery) */}
                     <TouchableOpacity
-                      onPress={handleNavToMagicLink}
+                      onPress={handleNavToResetPassword}
                       style={s.forgotPasswordRow}
                       accessibilityRole="button"
-                      accessibilityLabel="Forgot password? Email me a sign-in link"
+                      accessibilityLabel="Forgot password? Reset your password"
                     >
                       <Text style={s.forgotPasswordText}>Forgot password?</Text>
                     </TouchableOpacity>
