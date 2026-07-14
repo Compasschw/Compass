@@ -90,6 +90,11 @@ class ChecklistResponse(BaseModel):
     can_work: bool
     missing: list[str]
     items: list[ChecklistItemResponse]
+    # Epic D3: mirrors app.config.settings.chw_work_gate_enabled so the
+    # frontend can distinguish "gate is live, can_work=False really blocks
+    # you" from "gate is off, this is informational only" without needing a
+    # second endpoint. False by default (matches the flag's default).
+    gate_enabled: bool = False
 
 
 class CredentialValidationSubmit(BaseModel):

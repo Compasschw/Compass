@@ -857,6 +857,23 @@ async def send_message(
     from app.services.relationship_guards import assert_member_consents_to_services
     await assert_member_consents_to_services(db, member_id=conv.member_id)
 
+    # Epic D work gate: a CHW whose compliance checklist is incomplete may not
+    # send messages while chw_work_gate_enabled is True. Members are never
+    # gated — only the CHW-sender branch is checked. Flag OFF (default)
+    # preserves prior behavior exactly — no query, no branch taken.
+    from app.config import settings
+
+    is_chw_caller = current_user.role == "chw" and current_user.id == conv.chw_id
+    if settings.chw_work_gate_enabled and is_chw_caller:
+        from app.services.chw_compliance import chw_can_work
+
+        can_work, missing = await chw_can_work(db, current_user)
+        if not can_work:
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "onboarding_incomplete", "missing": missing},
+            )
+
     # Validate attachment completeness: all four fields must be present together
     attachment_fields = [
         data.attachment_s3_key,
@@ -998,6 +1015,21 @@ async def send_sms(
             status_code=403,
             detail="Not authorized: only the CHW on this conversation may send SMS.",
         )
+
+    # Epic D work gate: a CHW whose compliance checklist is incomplete may not
+    # send SMS while chw_work_gate_enabled is True. Flag OFF (default)
+    # preserves prior behavior exactly — no query, no branch taken.
+    from app.config import settings
+
+    if settings.chw_work_gate_enabled:
+        from app.services.chw_compliance import chw_can_work
+
+        can_work, missing = await chw_can_work(db, current_user)
+        if not can_work:
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "onboarding_incomplete", "missing": missing},
+            )
 
     member_user = await db.get(User, conv.member_id)
     member_profile_result = await db.execute(

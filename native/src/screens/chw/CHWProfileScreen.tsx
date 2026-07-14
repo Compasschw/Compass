@@ -37,6 +37,7 @@ import {
   ActivityIndicator,
   Alert,
   Linking,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -55,11 +56,10 @@ import {
   DollarSign,
   ExternalLink,
   FileText,
-  Globe,
-  HelpCircle,
-  Mail,
-  MessageSquare,
-  Shield,
+  // Globe, HelpCircle, Mail, MessageSquare, Shield: only used by the
+  // Language / Help / Privacy & Security tab panels, hidden until further
+  // notice (QA batch #7) — see TAB_ORDER above. Re-add when those panels
+  // are restored.
   Trash2,
   Upload,
   XCircle,
@@ -79,13 +79,19 @@ import {
   type ChwChecklistItemCode,
   type ChwChecklistItemStatus,
 } from '../../hooks/useApiQueries';
-import { uploadFile } from '../../api/upload';
+import { uploadFile, getPresignedUploadUrl } from '../../api/upload';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { AppShell, PageHeader, Card, ProfilePictureEditor } from '../../components/ui';
-import { colors as tokens } from '../../theme/tokens';
+import { colors as tokens, radius, shadows, spacing } from '../../theme/tokens';
 
 // ─── Types & constants ────────────────────────────────────────────────────────
 
+// QA batch #7 (Wave-2 B1): Notifications / Privacy & Security / Language /
+// Help tabs are hidden until further notice — product wants Settings to be
+// Profile-only for now. Type + labels are kept as-is (not deleted) so the
+// commented-out render blocks below still type-check and can be restored by
+// re-adding the tab keys to TAB_ORDER; only TAB_ORDER (what's actually
+// shown) is trimmed.
 type SettingsTab = 'profile' | 'notifications' | 'privacy' | 'language' | 'help';
 
 const TAB_LABELS: Record<SettingsTab, string> = {
@@ -96,7 +102,9 @@ const TAB_LABELS: Record<SettingsTab, string> = {
   help:          'Help',
 };
 
-const TAB_ORDER: SettingsTab[] = ['profile', 'notifications', 'privacy', 'language', 'help'];
+// Hidden until further notice (QA batch #7) — was:
+// ['profile', 'notifications', 'privacy', 'language', 'help']
+const TAB_ORDER: SettingsTab[] = ['profile'];
 
 const LANGUAGE_OPTIONS = [
   { value: 'English',    label: 'English' },
@@ -164,10 +172,15 @@ const ALL_DAYS: DayKey[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 // and app/services/chw_compliance.py's ALL_REQUIREMENT_CODES. Single source of
 // display copy/links so ops can update wording/URLs in one place.
 
-/** External link / asset placeholders — swap the real URL here only. */
-const HIPAA_TRAINING_LINK = 'https://joincompasschw.com/resources/hipaa-training';
-const LIABILITY_INSURANCE_LINK = 'https://joincompasschw.com/resources/liability-insurance';
-const CHW_ATTESTATION_FORM_LINK = 'https://joincompasschw.com/resources/chw-attestation-form';
+/**
+ * Real external link / asset URLs (Wave-2 B1, QA batch #4). Mirrors
+ * backend/app/routers/credentials.py's HIPAA_TRAINING_LINK /
+ * LIABILITY_INSURANCE_LINK / CHW_ATTESTATION_FORM_LINK constants — keep
+ * both in sync if either changes.
+ */
+const HIPAA_TRAINING_LINK = 'https://hipaatraining.us/';
+const LIABILITY_INSURANCE_LINK = 'https://www.hpso.com/Get-a-Quote/';
+const CHW_ATTESTATION_FORM_LINK = 'https://joincompasschw.com/documents/chw-attestation-form.pdf';
 
 interface ChecklistItemMeta {
   code: ChwChecklistItemCode;
@@ -437,6 +450,131 @@ const tabStyles = StyleSheet.create({
   } as TextStyle,
   labelActive: {
     color: '#10B981',
+  } as TextStyle,
+});
+
+// ─── SignOutConfirmModal ────────────────────────────────────────────────────
+//
+// On-brand confirm dialog for "Sign out of this device?" — replaces a bare
+// `Alert.alert`, which is a documented no-op on react-native-web (see
+// src/utils/showAlert.ts's docstring), meaning Sign Out silently did nothing
+// on the web app. Mirrors the visual language of AppDialogProvider /
+// DeleteAccountModal (scrim + centered/bottom card, RN `Modal` — which DOES
+// portal correctly on web) rather than `window.confirm`, which is explicitly
+// disallowed for on-brand confirms.
+
+interface SignOutConfirmModalProps {
+  visible: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}
+
+function SignOutConfirmModal({
+  visible,
+  onCancel,
+  onConfirm,
+}: SignOutConfirmModalProps): React.JSX.Element | null {
+  if (!visible) return null;
+
+  return (
+    <Modal
+      visible
+      transparent
+      animationType="fade"
+      onRequestClose={onCancel}
+      accessible
+      accessibilityViewIsModal
+    >
+      <View style={signOutModalStyles.overlay} accessibilityViewIsModal accessibilityRole="alert">
+        <View style={signOutModalStyles.card}>
+          <Text style={signOutModalStyles.title}>Sign out of this device?</Text>
+          <Text style={signOutModalStyles.message}>
+            You'll need to sign back in to access your CompassCHW account.
+          </Text>
+          <View style={signOutModalStyles.buttonRow}>
+            <Pressable
+              onPress={onCancel}
+              accessibilityRole="button"
+              accessibilityLabel="Cancel sign out"
+              style={({ pressed }: { pressed: boolean }) => [
+                signOutModalStyles.cancelButton,
+                pressed && { opacity: 0.7 },
+              ]}
+            >
+              <Text style={signOutModalStyles.cancelButtonText}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              onPress={onConfirm}
+              accessibilityRole="button"
+              accessibilityLabel="Confirm sign out"
+              style={({ pressed }: { pressed: boolean }) => [
+                signOutModalStyles.confirmButton,
+                pressed && { opacity: 0.85 },
+              ]}
+            >
+              <Text style={signOutModalStyles.confirmButtonText}>Sign Out</Text>
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+const signOutModalStyles = StyleSheet.create({
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.xl,
+  } as ViewStyle,
+  card: {
+    width: '100%',
+    maxWidth: 380,
+    backgroundColor: tokens.cardBg,
+    borderRadius: radius.lg,
+    padding: spacing.xl,
+    gap: spacing.md,
+    ...shadows.card,
+  } as ViewStyle,
+  title: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 17,
+    color: tokens.textPrimary,
+  } as TextStyle,
+  message: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 14,
+    lineHeight: 20,
+    color: tokens.textSecondary,
+  } as TextStyle,
+  buttonRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  } as ViewStyle,
+  cancelButton: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+  } as ViewStyle,
+  cancelButtonText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 14,
+    color: tokens.textSecondary,
+  } as TextStyle,
+  confirmButton: {
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: '#DC2626',
+  } as ViewStyle,
+  confirmButtonText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 14,
+    color: '#FFFFFF',
   } as TextStyle,
 });
 
@@ -873,6 +1011,7 @@ export function CHWProfileScreen(): React.JSX.Element {
 
   const [activeTab, setActiveTab] = useState<SettingsTab>('profile');
   const [editingField, setEditingField] = useState<string | null>(null);
+  const [isSignOutModalVisible, setIsSignOutModalVisible] = useState(false);
 
   const profile = profileQuery.data;
 
@@ -954,14 +1093,18 @@ export function CHWProfileScreen(): React.JSX.Element {
   }, [profile?.specializations]);
 
   // ── Local-only toggle state ───────────────────────────────────────────────
-  const [twoFactor, setTwoFactor]             = useState(true);
-  const [biometric, setBiometric]             = useState(false);
-  const [showProfileByZip, setShowProfileByZip] = useState(true);
-  const [aiDraftSummaries, setAiDraftSummaries] = useState(true);
-  const [sessionReminders, setSessionReminders] = useState(true);
-  const [memberRequestAlerts, setMemberRequestAlerts] = useState(true);
-  const [messageNotifications, setMessageNotifications] = useState(true);
-  const [earningsDeposit, setEarningsDeposit] = useState(true);
+  // QA batch #7 (Wave-2 B1): only consumed by the Notifications / Privacy &
+  // Security tab panels, which are hidden until further notice (see
+  // TAB_ORDER above + the commented-out render blocks below). Commented out
+  // together rather than deleted so restoring the tabs is a single revert.
+  // const [twoFactor, setTwoFactor]             = useState(true);
+  // const [biometric, setBiometric]             = useState(false);
+  // const [showProfileByZip, setShowProfileByZip] = useState(true);
+  // const [aiDraftSummaries, setAiDraftSummaries] = useState(true);
+  // const [sessionReminders, setSessionReminders] = useState(true);
+  // const [memberRequestAlerts, setMemberRequestAlerts] = useState(true);
+  // const [messageNotifications, setMessageNotifications] = useState(true);
+  // const [earningsDeposit, setEarningsDeposit] = useState(true);
 
   /**
    * Save a single field to the backend. On success the query cache is
@@ -980,23 +1123,66 @@ export function CHWProfileScreen(): React.JSX.Element {
     [updateProfile],
   );
 
-  // ── Compliance checklist upload (Epic D) ─────────────────────────────────
+  // ── Compliance checklist upload (Epic D / QA batch #4) ───────────────────
   //
-  // Native-only, mirroring CredentialUploadModal's documented constraint: the
-  // presigned-PUT + FormData flow has inconsistent CORS behaviour on web and
-  // has not been validated end-to-end there, so web users see a "use the
-  // mobile app" message instead of a broken upload attempt.
+  // Native: expo-document-picker + api/upload.ts's uploadFile (FormData PUT
+  // — works fine on native's fetch implementation).
+  //
+  // Web: native's FormData-wrapped PUT does NOT work against an S3 presigned
+  // PUT URL (a presigned PUT expects the raw file bytes as the body, not a
+  // multipart envelope), which is why web previously showed a hard "mobile
+  // app required" block. Fixed here by using a raw <input type="file"> ->
+  // getPresignedUploadUrl -> PUT the File object directly (its `type` is
+  // sent via the Content-Type header, matching how the URL was signed) ->
+  // confirm via submitChecklistCredential — the same raw-blob-PUT approach
+  // already proven working in hooks/useFileUpload.ts's web branch. The
+  // remaining blocker for a live upload is S3 bucket CORS configuration
+  // (compass-phi-dev — see backend/docs/S3_CORS_CREDENTIAL_UPLOADS.md),
+  // which is an infra change outside this component.
   const [uploadingChecklistCode, setUploadingChecklistCode] = useState<
     Exclude<ChwChecklistItemCode, 'background_check'> | null
   >(null);
+  /** Hidden <input type="file"> ref for the web upload path (one shared
+   * input; `pendingWebUploadCodeRef` tracks which checklist item the next
+   * onChange event belongs to). */
+  const checklistFileInputRef = useRef<HTMLInputElement | null>(null);
+  const pendingWebUploadCodeRef = useRef<Exclude<ChwChecklistItemCode, 'background_check'> | null>(null);
+
+  const uploadChecklistFileWeb = useCallback(
+    async (code: Exclude<ChwChecklistItemCode, 'background_check'>, file: File) => {
+      setUploadingChecklistCode(code);
+      try {
+        const { upload_url: uploadUrl, s3_key: s3Key } = await getPresignedUploadUrl(
+          file.name,
+          file.type || 'application/pdf',
+          'credential',
+          file.size,
+        );
+
+        const putResponse = await fetch(uploadUrl, {
+          method: 'PUT',
+          headers: { 'Content-Type': file.type || 'application/pdf' },
+          body: file,
+        });
+        if (!putResponse.ok) {
+          throw new Error(`S3 upload failed: HTTP ${putResponse.status}`);
+        }
+
+        await submitChecklistCredential.mutateAsync({ type: code, s3Key });
+      } catch {
+        Alert.alert('Upload failed', 'We could not upload that file. Please try again.');
+      } finally {
+        setUploadingChecklistCode(null);
+      }
+    },
+    [submitChecklistCredential],
+  );
 
   const handleUploadChecklistItem = useCallback(
     async (code: Exclude<ChwChecklistItemCode, 'background_check'>) => {
       if (Platform.OS === 'web') {
-        Alert.alert(
-          'Mobile app required',
-          'Document uploads must be done from the iOS or Android app. Please open the Compass CHW app on your phone to upload this document.',
-        );
+        pendingWebUploadCodeRef.current = code;
+        checklistFileInputRef.current?.click();
         return;
       }
 
@@ -1031,6 +1217,18 @@ export function CHWProfileScreen(): React.JSX.Element {
       }
     },
     [submitChecklistCredential],
+  );
+
+  const handleChecklistFileInputChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      const code = pendingWebUploadCodeRef.current;
+      // Reset immediately so the same file can be re-selected later.
+      e.target.value = '';
+      pendingWebUploadCodeRef.current = null;
+      if (file && code) void uploadChecklistFileWeb(code, file);
+    },
+    [uploadChecklistFileWeb],
   );
 
   /**
@@ -1094,11 +1292,21 @@ export function CHWProfileScreen(): React.JSX.Element {
     );
   }, [deleteAccount, clearAfterDeletion]);
 
-  const handleLogout = useCallback(() => {
-    Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Sign Out', style: 'destructive', onPress: () => void logout() },
-    ]);
+  // On-brand confirm modal (SignOutConfirmModal above) instead of a bare
+  // Alert.alert, which no-ops on react-native-web (see src/utils/showAlert.ts)
+  // — the previous implementation silently did nothing when Sign Out was
+  // tapped on the web app. Never uses window.confirm.
+  const handleLogoutPress = useCallback(() => {
+    setIsSignOutModalVisible(true);
+  }, []);
+
+  const handleLogoutCancel = useCallback(() => {
+    setIsSignOutModalVisible(false);
+  }, []);
+
+  const handleLogoutConfirm = useCallback(() => {
+    setIsSignOutModalVisible(false);
+    void logout();
   }, [logout]);
 
   const shellUserBlock = {
@@ -1134,7 +1342,11 @@ export function CHWProfileScreen(): React.JSX.Element {
 
           {/* Main card with tab strip */}
           <Card style={pageStyles.mainCard}>
-            <TabBar active={activeTab} onChange={setActiveTab} />
+            {/* QA batch #7: with only one tab (Profile) left in TAB_ORDER,
+                the tab strip is pure visual noise — hide it entirely rather
+                than render a single non-interactive "Profile" pill. Restore
+                automatically once TAB_ORDER regains a 2nd entry. */}
+            {TAB_ORDER.length > 1 && <TabBar active={activeTab} onChange={setActiveTab} />}
 
             <View style={pageStyles.tabContent}>
 
@@ -1357,10 +1569,30 @@ export function CHWProfileScreen(): React.JSX.Element {
                       })
                     )}
                   </View>
+
+                  {/* Hidden web file input for the checklist upload web
+                      path (QA batch #4) — triggered programmatically by
+                      handleUploadChecklistItem via checklistFileInputRef. */}
+                  {Platform.OS === 'web' ? (
+                    <input
+                      ref={checklistFileInputRef}
+                      type="file"
+                      accept="application/pdf,image/jpeg,image/png"
+                      style={{ display: 'none' }}
+                      onChange={handleChecklistFileInputChange}
+                    />
+                  ) : null}
                 </>
               )}
 
-              {/* ── Notifications tab ───────────────────────────────────── */}
+              {/*
+                QA batch #7 (Wave-2 B1): Notifications / Privacy & Security /
+                Language / Help tabs are HIDDEN UNTIL FURTHER NOTICE — product
+                wants Settings to be Profile-only for now. Code kept intact
+                (not deleted) so it can be restored by un-commenting these
+                blocks AND re-adding the tab keys to TAB_ORDER above.
+
+              {/* ── Notifications tab ───────────────────────────────────── *}
               {activeTab === 'notifications' && (
                 <View style={pageStyles.tabPanel}>
                   <Text style={pageStyles.tabPanelTitle}>Notifications</Text>
@@ -1391,7 +1623,7 @@ export function CHWProfileScreen(): React.JSX.Element {
                 </View>
               )}
 
-              {/* ── Privacy & Security tab ──────────────────────────────── */}
+              {/* ── Privacy & Security tab ──────────────────────────────── *}
               {activeTab === 'privacy' && (
                 <View style={pageStyles.tabPanel}>
                   <Text style={pageStyles.tabPanelTitle}>Privacy & Security</Text>
@@ -1429,7 +1661,7 @@ export function CHWProfileScreen(): React.JSX.Element {
                 </View>
               )}
 
-              {/* ── Language tab ────────────────────────────────────────── */}
+              {/* ── Language tab ────────────────────────────────────────── *}
               {activeTab === 'language' && (
                 <View style={pageStyles.tabPanel}>
                   <Text style={pageStyles.tabPanelTitle}>Primary Language</Text>
@@ -1461,7 +1693,7 @@ export function CHWProfileScreen(): React.JSX.Element {
                 </View>
               )}
 
-              {/* ── Help tab ────────────────────────────────────────────── */}
+              {/* ── Help tab ────────────────────────────────────────────── *}
               {activeTab === 'help' && (
                 <View style={pageStyles.tabPanel}>
                   <Text style={pageStyles.tabPanelTitle}>Help & Support</Text>
@@ -1494,6 +1726,7 @@ export function CHWProfileScreen(): React.JSX.Element {
                   />
                 </View>
               )}
+              */}
             </View>
           </Card>
 
@@ -1505,7 +1738,7 @@ export function CHWProfileScreen(): React.JSX.Element {
               <Text style={pageStyles.bottomCardSubtitle}>Your account settings and data</Text>
 
               <Pressable
-                onPress={handleLogout}
+                onPress={handleLogoutPress}
                 accessibilityRole="button"
                 accessibilityLabel="Sign out of your account"
                 style={({ pressed }: { pressed: boolean }) => [
@@ -1583,6 +1816,12 @@ export function CHWProfileScreen(): React.JSX.Element {
           </View>
         </View>
       </ScrollView>
+
+      <SignOutConfirmModal
+        visible={isSignOutModalVisible}
+        onCancel={handleLogoutCancel}
+        onConfirm={handleLogoutConfirm}
+      />
     </AppShell>
   );
 }

@@ -70,6 +70,7 @@ import {
   type SessionData,
   type ServiceRequestData,
   type ChwClaim,
+  type MembersRosterItem,
 } from '../../hooks/useApiQueries';
 import { useRefreshControl } from '../../hooks/useRefreshControl';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
@@ -518,6 +519,145 @@ function ComplianceBanner({ missing, onOpenProfile }: ComplianceBannerProps): Re
   );
 }
 
+// ─── New-member alert (QA batch #12) ────────────────────────────────────────
+//
+// One card per roster member whose account was created within the last 48h,
+// derived entirely client-side from useChwMembers() — no new backend field.
+// Each is independently dismissible; dismissal is keyed by member id and
+// persisted in AsyncStorage so it survives app restarts but a DIFFERENT new
+// member still gets its own alert. Unlike the compliance banner (which
+// reappears daily on purpose), a dismissed new-member alert stays dismissed
+// — the "new" signal is inherently one-time, not a recurring nudge.
+
+const NEW_MEMBER_ALERT_WINDOW_MS = 48 * 60 * 60 * 1000; // 48 hours
+const NEW_MEMBER_ALERT_DISMISSED_KEY_PREFIX = 'chw_new_member_alert_dismissed_';
+
+/** Roster members created within the last 48h, newest first. */
+function selectRecentlyCreatedMembers(
+  members: MembersRosterItem[] | undefined,
+  now: Date,
+): MembersRosterItem[] {
+  if (!members || members.length === 0) return [];
+  const cutoff = now.getTime() - NEW_MEMBER_ALERT_WINDOW_MS;
+  return members
+    .filter((m) => {
+      const createdMs = new Date(m.createdAt).getTime();
+      return Number.isFinite(createdMs) && createdMs >= cutoff;
+    })
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+}
+
+interface NewMemberAlertProps {
+  member: MembersRosterItem;
+  onOpenMember: (memberId: string) => void;
+  onDismiss: (memberId: string) => void;
+}
+
+function NewMemberAlert({ member, onOpenMember, onDismiss }: NewMemberAlertProps): React.JSX.Element {
+  return (
+    <View style={styles.newMemberAlert} accessibilityRole="alert">
+      <View style={styles.newMemberAlertIconWrap}>
+        <UserPlus size={18} color={tokens.blue700} />
+      </View>
+      <View style={styles.complianceBannerBody}>
+        <Text style={styles.newMemberAlertTitle}>New member account created</Text>
+        <Text style={styles.newMemberAlertText}>{member.displayName}</Text>
+        <TouchableOpacity
+          onPress={() => onOpenMember(member.id)}
+          accessibilityRole="button"
+          accessibilityLabel={`View ${member.displayName}'s profile`}
+        >
+          <Text style={styles.newMemberAlertLink}>View member</Text>
+        </TouchableOpacity>
+      </View>
+      <TouchableOpacity
+        onPress={() => onDismiss(member.id)}
+        accessibilityRole="button"
+        accessibilityLabel={`Dismiss new member alert for ${member.displayName}`}
+        style={styles.complianceBannerDismiss}
+      >
+        <X size={16} color={tokens.textSecondary} />
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+// ─── AlertsSection ───────────────────────────────────────────────────────────
+//
+// Stacks all dashboard alert cards vertically with a consistent gap — no
+// overlap, arbitrary count. Currently: the compliance banner (re-parented,
+// same dismiss/reappear behavior as before) + one NewMemberAlert per
+// recently-created roster member. Renders nothing (no wrapper element) when
+// there is nothing to show, so it never affects layout when empty.
+
+interface AlertsSectionProps {
+  missing: string[];
+  onOpenProfile: () => void;
+  recentMembers: MembersRosterItem[];
+  onOpenMember: (memberId: string) => void;
+}
+
+function AlertsSection({
+  missing,
+  onOpenProfile,
+  recentMembers,
+  onOpenMember,
+}: AlertsSectionProps): React.JSX.Element | null {
+  const [dismissedMemberIds, setDismissedMemberIds] = useState<Set<string> | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const entries = await Promise.all(
+        recentMembers.map(async (m) => {
+          const stored = await AsyncStorage.getItem(
+            `${NEW_MEMBER_ALERT_DISMISSED_KEY_PREFIX}${m.id}`,
+          );
+          return [m.id, stored === '1'] as const;
+        }),
+      );
+      if (cancelled) return;
+      setDismissedMemberIds(new Set(entries.filter(([, dismissed]) => dismissed).map(([id]) => id)));
+      // recentMembers is derived fresh each render from live query data —
+      // re-keying on its member ids (not the array reference) avoids
+      // re-fetching AsyncStorage on every unrelated re-render.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [recentMembers.map((m) => m.id).join(',')]);
+
+  const handleDismissMember = useCallback((memberId: string) => {
+    setDismissedMemberIds((prev) => {
+      const next = new Set(prev ?? []);
+      next.add(memberId);
+      return next;
+    });
+    void AsyncStorage.setItem(`${NEW_MEMBER_ALERT_DISMISSED_KEY_PREFIX}${memberId}`, '1');
+  }, []);
+
+  const visibleNewMemberAlerts = recentMembers.filter(
+    (m) => !(dismissedMemberIds?.has(m.id) ?? false),
+  );
+
+  if (missing.length === 0 && visibleNewMemberAlerts.length === 0) return null;
+
+  return (
+    <View style={styles.alertsSection}>
+      <ComplianceBanner missing={missing} onOpenProfile={onOpenProfile} />
+      {visibleNewMemberAlerts.map((member) => (
+        <NewMemberAlert
+          key={member.id}
+          member={member}
+          onOpenMember={onOpenMember}
+          onDismiss={handleDismissMember}
+        />
+      ))}
+    </View>
+  );
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export function CHWDashboardScreen(): React.JSX.Element {
@@ -557,6 +697,34 @@ export function CHWDashboardScreen(): React.JSX.Element {
   // Compliance checklist (Epic D) — drives the "Finish your compliance
   // checklist" banner below the greeting row.
   const checklistQuery = useChwChecklist();
+
+  // QA batch #2 (Wave-2 B1): Add New Member is disabled only when the
+  // backend gate is actually live (`gateEnabled`) AND this CHW currently
+  // fails the checklist (`canWork === false`). When the flag is off, or the
+  // CHW is compliant, behavior is unchanged — matches the backend's
+  // identical flag-conditional 403 on POST /chw/members.
+  const isAddMemberGated =
+    checklistQuery.data?.gateEnabled === true && checklistQuery.data?.canWork === false;
+
+  // QA batch #12: roster members created within the last 48h — drives one
+  // dismissible NewMemberAlert per member in the AlertsSection below.
+  const recentlyCreatedMembers = useMemo(
+    () => selectRecentlyCreatedMembers(membersQuery.data, new Date()),
+    [membersQuery.data],
+  );
+
+  const handleOpenMemberFromAlert = useCallback(
+    (memberId: string) => {
+      (navigation as { navigate: (screen: string, params?: unknown) => void }).navigate(
+        'SessionsStack',
+        {
+          screen: 'MemberProfile',
+          params: { memberId, backLabel: 'Dashboard', backTo: 'Dashboard' },
+        },
+      );
+    },
+    [navigation],
+  );
 
   const isLoading =
     sessionsQuery.isLoading ||
@@ -792,8 +960,13 @@ export function CHWDashboardScreen(): React.JSX.Element {
             {/* Add New Member */}
             <PressableCard
               onPress={() => setAddMemberOpen(true)}
-              style={styles.newSessionBtn}
-              accessibilityLabel="Add a new member"
+              disabled={isAddMemberGated}
+              style={[styles.newSessionBtn, isAddMemberGated && styles.newSessionBtnDisabled]}
+              accessibilityLabel={
+                isAddMemberGated
+                  ? 'Add a new member (disabled until your compliance checklist is complete)'
+                  : 'Add a new member'
+              }
             >
               <UserPlus size={14} color="#fff" />
               <Text style={styles.newSessionText}>Add New Member</Text>
@@ -801,11 +974,13 @@ export function CHWDashboardScreen(): React.JSX.Element {
           </View>
         </View>
 
-        {/* ── Compliance banner (Epic D) ──────────────────────────────────── */}
+        {/* ── Alerts (QA batch #12): compliance banner + new-member alerts ── */}
         {checklistQuery.data != null && (
-          <ComplianceBanner
+          <AlertsSection
             missing={checklistQuery.data.missing}
             onOpenProfile={() => navigation.navigate('Profile' as never)}
+            recentMembers={recentlyCreatedMembers}
+            onOpenMember={handleOpenMemberFromAlert}
           />
         )}
 
@@ -1130,6 +1305,15 @@ const styles = StyleSheet.create({
     paddingVertical:   spacing.sm + 2,
   } as ViewStyle,
 
+  // QA batch #2: Add New Member button when the compliance work gate is
+  // live and this CHW currently fails the checklist. PressableCard's own
+  // `disabled` styling (opacity 0.5) already applies on top of this, so
+  // this just prevents any further hover/press affordance from reading as
+  // interactive.
+  newSessionBtnDisabled: {
+    backgroundColor: '#9CA3AF', // gray-400 — de-emphasized vs. the emerald active state
+  } as ViewStyle,
+
   newSessionText: {
     fontSize:   14,
     fontWeight: '600',
@@ -1137,6 +1321,15 @@ const styles = StyleSheet.create({
   } as TextStyle,
 
   // ── Compliance banner (Epic D) ────────────────────────────────────────────
+  // QA batch #12: alerts are now stacked by the AlertsSection wrapper below,
+  // which owns the bottom margin for the whole stack — individual alert
+  // cards (this one + newMemberAlert) no longer set their own marginBottom
+  // to avoid a double gap.
+  alertsSection: {
+    gap:          spacing.md,
+    marginBottom: spacing.xxl,
+  } as ViewStyle,
+
   complianceBanner: {
     flexDirection:     'row',
     alignItems:        'flex-start',
@@ -1146,7 +1339,6 @@ const styles = StyleSheet.create({
     borderColor:       '#FDE68A',
     borderRadius:      radius.lg,
     padding:           spacing.md,
-    marginBottom:      spacing.xxl,
   } as ViewStyle,
   complianceBannerIconWrap: {
     marginTop: 2,
@@ -1174,6 +1366,37 @@ const styles = StyleSheet.create({
   complianceBannerDismiss: {
     padding: 4,
   } as ViewStyle,
+
+  // ── New-member alert (QA batch #12) ───────────────────────────────────────
+  newMemberAlert: {
+    flexDirection:   'row',
+    alignItems:      'flex-start',
+    gap:             spacing.md,
+    backgroundColor: tokens.blue100,
+    borderWidth:     1,
+    borderColor:     '#BFDBFE',
+    borderRadius:    radius.lg,
+    padding:         spacing.md,
+  } as ViewStyle,
+  newMemberAlertIconWrap: {
+    marginTop: 2,
+  } as ViewStyle,
+  newMemberAlertTitle: {
+    fontSize:   14,
+    fontWeight: '700',
+    color:      tokens.blue700,
+  } as TextStyle,
+  newMemberAlertText: {
+    fontSize:   12,
+    color:      tokens.blue700,
+    lineHeight: 17,
+  } as TextStyle,
+  newMemberAlertLink: {
+    fontSize:   12,
+    fontWeight: '700',
+    color:      tokens.blue700,
+    marginTop:  2,
+  } as TextStyle,
 
   // ── KPI row ────────────────────────────────────────────────────────────────
   kpiRow: {

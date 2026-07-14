@@ -31,10 +31,14 @@ vi.mock('../../api/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api/client')>();
   return { ...actual, api: vi.fn() };
 });
+// `mockLogout` is hoisted so the Sign-out confirm-modal tests (QA batch #5)
+// can assert it was/wasn't called, mirroring the `mockNavigate` pattern used
+// in CHWDashboardScreen.test.tsx / CHWMessagesScreen.test.tsx.
+const { mockLogout } = vi.hoisted(() => ({ mockLogout: vi.fn() }));
 vi.mock('../../context/AuthContext', () => ({
   useAuth: () => ({
     userName: 'Test CHW',
-    logout: vi.fn(),
+    logout: mockLogout,
     clearAfterDeletion: vi.fn(),
   }),
 }));
@@ -137,6 +141,7 @@ function renderScreen() {
 
 beforeEach(() => {
   mockedApi.mockReset();
+  mockLogout.mockClear();
   installApiRouter();
 });
 
@@ -152,6 +157,78 @@ describe('CHWProfileScreen — Account & Security', () => {
     // "Sign out of this device" and "Delete my account" must be unaffected.
     expect(screen.getByText('Sign out of this device')).toBeTruthy();
     expect(screen.getByText('Delete my account')).toBeTruthy();
+  });
+});
+
+describe('CHWProfileScreen — Sign-out confirm modal (QA batch #5)', () => {
+  it('does not call logout() immediately on tap — shows an on-brand confirm modal instead', async () => {
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByText('Sign out of this device')).toBeTruthy());
+    fireEvent.click(screen.getByText('Sign out of this device'));
+
+    expect(mockLogout).not.toHaveBeenCalled();
+    expect(await screen.findByText('Sign out of this device?')).toBeTruthy();
+    expect(
+      screen.getByLabelText('Confirm sign out'),
+    ).toBeTruthy();
+    expect(screen.getByLabelText('Cancel sign out')).toBeTruthy();
+  });
+
+  it('Cancel dismisses the modal without calling logout()', async () => {
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByText('Sign out of this device')).toBeTruthy());
+    fireEvent.click(screen.getByText('Sign out of this device'));
+
+    const cancelBtn = await screen.findByLabelText('Cancel sign out');
+    fireEvent.click(cancelBtn);
+
+    await waitFor(() => expect(screen.queryByText('Sign out of this device?')).toBeNull());
+    expect(mockLogout).not.toHaveBeenCalled();
+  });
+
+  it('Confirm calls logout() and dismisses the modal', async () => {
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByText('Sign out of this device')).toBeTruthy());
+    fireEvent.click(screen.getByText('Sign out of this device'));
+
+    const confirmBtn = await screen.findByLabelText('Confirm sign out');
+    fireEvent.click(confirmBtn);
+
+    expect(mockLogout).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.queryByText('Sign out of this device?')).toBeNull());
+  });
+});
+
+describe('CHWProfileScreen — Settings tabs Profile-only (QA batch #7)', () => {
+  it('renders only the Profile tab content — no Notifications/Privacy/Language/Help sections', async () => {
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByText('Profile information')).toBeTruthy());
+
+    expect(screen.queryByText('Notifications')).toBeNull();
+    expect(screen.queryByText('Privacy & Security')).toBeNull();
+    expect(screen.queryByText('Help & Support')).toBeNull();
+    expect(screen.queryByText('New session reminders')).toBeNull();
+    expect(screen.queryByText('Two-factor authentication')).toBeNull();
+    // "Primary Language" itself is ambiguous — it's ALSO the Profile tab's
+    // EditableField label (unaffected by this change) — so assert on the
+    // hidden Language tab's radio-picker labels instead, which only render
+    // there.
+    expect(screen.queryByText('Español')).toBeNull();
+    expect(screen.queryByLabelText('中文')).toBeNull();
+  });
+
+  it('does not render a tab strip with multiple tabs (single Profile tab is hidden, not shown as one pill)', async () => {
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByText('Profile information')).toBeTruthy());
+
+    expect(screen.queryByRole('tab')).toBeNull();
+    expect(screen.queryByLabelText('Notifications')).toBeNull();
+    expect(screen.queryByLabelText('Language')).toBeNull();
   });
 });
 
@@ -360,20 +437,17 @@ describe('CHWProfileScreen — Compliance checklist (Epic D)', () => {
     expect(screen.getByLabelText('Complete free HIPAA training')).toBeTruthy();
   });
 
-  it('shows a "mobile app required" alert instead of attempting upload on web', async () => {
+  it('clicking Upload on web triggers the hidden file input rather than an Alert (QA batch #4)', async () => {
     const alertSpy = vi.spyOn(Alert, 'alert').mockImplementation(() => {});
     renderScreen();
 
     const uploadBtn = await screen.findByLabelText('Upload HIPAA Training');
     fireEvent.click(uploadBtn);
 
-    await waitFor(() => expect(alertSpy).toHaveBeenCalled());
-    expect(alertSpy.mock.calls[0][0]).toBe('Mobile app required');
-    // No credential submit call should have been attempted.
-    expect(mockedApi).not.toHaveBeenCalledWith(
-      '/credentials/hipaa_training',
-      expect.objectContaining({ method: 'POST' }),
-    );
+    // No "mobile app required" (or any other) Alert should fire — the web
+    // path now opens a real file picker instead of blocking.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(alertSpy).not.toHaveBeenCalled();
     alertSpy.mockRestore();
   });
 
@@ -385,6 +459,132 @@ describe('CHWProfileScreen — Compliance checklist (Epic D)', () => {
     // for the CHW to set their own background check status — removed because
     // it let a CHW self-approve. Only the read-only status chip should exist.
     expect(screen.queryByRole('radio')).toBeNull();
+  });
+});
+
+describe('CHWProfileScreen — Checklist web upload flow (QA batch #4)', () => {
+  // The S3 boundary (the presigned PUT itself) is mocked via global.fetch;
+  // everything else (presigned-url POST, credential confirm POST) goes
+  // through the same routed `api()` mock the rest of this file uses, so this
+  // exercises the real production wiring end-to-end down to the S3 edge.
+  const PRESIGNED_URL_FIXTURE = {
+    upload_url: 'https://compass-phi-dev.s3.amazonaws.com/users/chw-1/credential/hipaa.pdf?X-Amz-Signature=abc',
+    s3_key: 'users/chw-1/credential/hipaa.pdf',
+  };
+
+  function makePdfFile(name = 'hipaa-cert.pdf'): File {
+    return new File(['%PDF-1.4 fake pdf bytes'], name, { type: 'application/pdf' });
+  }
+
+  it('file select -> POST /upload/presigned-url -> PUT with matching content-type -> POST /credentials/{type} confirm', async () => {
+    const putCalls: Array<{ url: string; init: RequestInit }> = [];
+    const fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(async (url, init) => {
+      putCalls.push({ url: String(url), init: init as RequestInit });
+      return new Response(null, { status: 200 });
+    });
+
+    mockedApi.mockImplementation(async (path: string, init?: RequestInit) => {
+      const method = init?.method ?? 'GET';
+      if (path === '/chw/profile' && method === 'GET') return CHW_PROFILE_FIXTURE;
+      if (path === '/chw/availability' && method === 'GET') return AVAILABILITY_FIXTURE;
+      if (path.startsWith('/chw/earnings')) return EARNINGS_FIXTURE;
+      if (path.startsWith('/conversations')) return [];
+      if (path === '/credentials/checklist' && method === 'GET') return CHECKLIST_FIXTURE_ALL_MISSING;
+      if (path === '/upload/presigned-url' && method === 'POST') return PRESIGNED_URL_FIXTURE;
+      if (path === '/credentials/hipaa_training' && method === 'POST') {
+        return { id: 'cred-1', type: 'hipaa_training', status: 'pending' };
+      }
+      return {};
+    });
+
+    renderScreen();
+
+    const uploadBtn = await screen.findByLabelText('Upload HIPAA Training');
+    fireEvent.click(uploadBtn);
+
+    // The click should have focused/opened the hidden <input type="file">.
+    // NOTE: ProfilePictureEditor also renders its own hidden file input
+    // higher up the tree, so scope the selector to the checklist upload's
+    // distinct `accept` list (application/pdf,image/jpeg,image/png) rather
+    // than grabbing the first file input in the document.
+    const fileInput = document.querySelector(
+      'input[type="file"][accept="application/pdf,image/jpeg,image/png"]',
+    ) as HTMLInputElement;
+    expect(fileInput).toBeTruthy();
+
+    const file = makePdfFile();
+    fireEvent.change(fileInput, { target: { files: [file] } });
+
+    // 1. Presigned-url POST fired with the right purpose + content-type.
+    await waitFor(() =>
+      expect(mockedApi).toHaveBeenCalledWith(
+        '/upload/presigned-url',
+        expect.objectContaining({ method: 'POST' }),
+      ),
+    );
+    const presignCall = mockedApi.mock.calls.find(([path]) => path === '/upload/presigned-url');
+    expect(presignCall).toBeTruthy();
+    const presignBody = JSON.parse((presignCall![1] as RequestInit).body as string);
+    expect(presignBody.purpose).toBe('credential');
+    expect(presignBody.content_type).toBe('application/pdf');
+    expect(presignBody.filename).toBe('hipaa-cert.pdf');
+
+    // 2. Raw PUT to the presigned URL with matching Content-Type — NOT a
+    // FormData envelope (a presigned S3 PUT rejects a multipart body).
+    await waitFor(() => expect(putCalls.length).toBeGreaterThan(0));
+    const put = putCalls[0];
+    expect(put.url).toBe(PRESIGNED_URL_FIXTURE.upload_url);
+    expect(put.init.method).toBe('PUT');
+    expect((put.init.headers as Record<string, string>)['Content-Type']).toBe('application/pdf');
+    expect(put.init.body).toBe(file);
+
+    // 3. Confirm/record call — attaches the returned s3_key to the checklist type.
+    await waitFor(() =>
+      expect(mockedApi).toHaveBeenCalledWith(
+        '/credentials/hipaa_training',
+        expect.objectContaining({ method: 'POST' }),
+      ),
+    );
+    const confirmCall = mockedApi.mock.calls.find(([path]) => path === '/credentials/hipaa_training');
+    const confirmBody = JSON.parse((confirmCall![1] as RequestInit).body as string);
+    expect(confirmBody.s3_key).toBe(PRESIGNED_URL_FIXTURE.s3_key);
+
+    fetchSpy.mockRestore();
+  });
+
+  it('shows an "Upload failed" alert and does not call the confirm endpoint when the S3 PUT fails', async () => {
+    const alertSpy = vi.spyOn(Alert, 'alert').mockImplementation(() => {});
+    const fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(async () => new Response(null, { status: 500 }));
+
+    mockedApi.mockImplementation(async (path: string, init?: RequestInit) => {
+      const method = init?.method ?? 'GET';
+      if (path === '/chw/profile' && method === 'GET') return CHW_PROFILE_FIXTURE;
+      if (path === '/chw/availability' && method === 'GET') return AVAILABILITY_FIXTURE;
+      if (path.startsWith('/chw/earnings')) return EARNINGS_FIXTURE;
+      if (path.startsWith('/conversations')) return [];
+      if (path === '/credentials/checklist' && method === 'GET') return CHECKLIST_FIXTURE_ALL_MISSING;
+      if (path === '/upload/presigned-url' && method === 'POST') return PRESIGNED_URL_FIXTURE;
+      return {};
+    });
+
+    renderScreen();
+
+    const uploadBtn = await screen.findByLabelText('Upload HIPAA Training');
+    fireEvent.click(uploadBtn);
+
+    const fileInput = document.querySelector(
+      'input[type="file"][accept="application/pdf,image/jpeg,image/png"]',
+    ) as HTMLInputElement;
+    fireEvent.change(fileInput, { target: { files: [makePdfFile()] } });
+
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith('Upload failed', expect.any(String)));
+    expect(mockedApi).not.toHaveBeenCalledWith(
+      '/credentials/hipaa_training',
+      expect.objectContaining({ method: 'POST' }),
+    );
+
+    fetchSpy.mockRestore();
+    alertSpy.mockRestore();
   });
 });
 

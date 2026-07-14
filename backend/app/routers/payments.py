@@ -68,6 +68,21 @@ async def connect_onboarding(
     """
     from app.models.user import CHWProfile
 
+    # Epic D work gate: a CHW whose compliance checklist is incomplete may not
+    # start Stripe payout onboarding while chw_work_gate_enabled is True.
+    # Read-only endpoints (GET /account-status) are deliberately NOT gated —
+    # only this account-creation/onboarding-link mutation path is. Flag OFF
+    # (default) preserves prior behavior exactly — no query, no branch taken.
+    if settings.chw_work_gate_enabled:
+        from app.services.chw_compliance import chw_can_work
+
+        can_work, missing = await chw_can_work(db, current_user)
+        if not can_work:
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "onboarding_incomplete", "missing": missing},
+            )
+
     # Stripe not configured (no STRIPE_SECRET_KEY) → the provider would hand back
     # a placeholder onboarding URL that dead-ends in the app. Fail loudly instead
     # so the CHW sees "payouts aren't set up yet" rather than a silent bounce to

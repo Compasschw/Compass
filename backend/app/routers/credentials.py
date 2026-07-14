@@ -28,12 +28,13 @@ router = APIRouter(prefix="/api/v1/credentials", tags=["credentials"])
 
 # ── D1: compliance-checklist document types ──────────────────────────────────
 #
-# External link / asset placeholders. Single named constants so ops can swap
-# the real URL in one place once the resources exist — never inline these
-# strings elsewhere.
-HIPAA_TRAINING_LINK = "https://joincompasschw.com/resources/hipaa-training"
-LIABILITY_INSURANCE_LINK = "https://joincompasschw.com/resources/liability-insurance"
-CHW_ATTESTATION_FORM_LINK = "https://joincompasschw.com/resources/chw-attestation-form"
+# Real external link / asset URLs (Wave-2 B1, QA batch #4). Single named
+# constants so ops can swap the URL in one place if it ever changes — never
+# inline these strings elsewhere. Mirrored on the frontend in
+# CHWProfileScreen.tsx — keep both in sync if either changes.
+HIPAA_TRAINING_LINK = "https://hipaatraining.us/"
+LIABILITY_INSURANCE_LINK = "https://www.hpso.com/Get-a-Quote/"
+CHW_ATTESTATION_FORM_LINK = "https://joincompasschw.com/documents/chw-attestation-form.pdf"
 
 # type -> (label, guidance copy, optional link). Order matches
 # app.services.chw_compliance.DOCUMENT_CREDENTIAL_TYPES.
@@ -191,7 +192,14 @@ async def get_checklist(
     single fetch. Backed by app.services.chw_compliance.get_compliance_status
     — the same evaluation used by the work-gate enforcement, so the
     checklist the CHW sees can never drift from what actually blocks them.
+
+    ``gate_enabled`` mirrors app.config.settings.chw_work_gate_enabled
+    (Epic D3) so the frontend knows whether can_work=False is merely
+    informational (flag off) or actually blocks feature access right now
+    (flag on) — without a second round trip.
     """
+    from app.config import settings
+
     status_result = await get_compliance_status(db, current_user)
     items = [
         ChecklistItemResponse(code=code, status=status_result.credentials[code])
@@ -205,6 +213,7 @@ async def get_checklist(
         can_work=status_result.can_work,
         missing=status_result.missing,
         items=items,
+        gate_enabled=settings.chw_work_gate_enabled,
     )
 
 
@@ -306,12 +315,27 @@ async def review_credential(
     A CHW (even the owning CHW) must receive 403 — enforced by
     require_role("admin") above, matching the identical negative-auth
     guarantee already tested for /validations/{id}/review.
+
+    Epic D3: on a can_work false -> true transition (i.e. approving the
+    LAST outstanding requirement flips the CHW to fully compliant), fires a
+    best-effort "you're approved" email + push. Captured BEFORE the mutation
+    so approving a middle credential — with other requirements still
+    outstanding — never fires it, and re-approving an already-verified
+    credential never re-fires it (can_work was already True beforehand).
     """
     from app.models.credential import Credential
+    from app.models.user import User
+    from app.services.chw_compliance import chw_can_work, notify_chw_if_newly_approved
 
     row: Credential | None = await db.get(Credential, credential_id)
     if not row:
         raise HTTPException(status_code=404, detail="Credential not found")
+
+    chw_user = await db.get(User, row.chw_id)
+    if chw_user is None:
+        raise HTTPException(status_code=404, detail="CHW not found")
+
+    was_compliant_before, _ = await chw_can_work(db, chw_user)
 
     from datetime import datetime
 
@@ -320,4 +344,7 @@ async def review_credential(
     row.verified_at = datetime.now(UTC)
     await db.commit()
     await db.refresh(row)
+
+    await notify_chw_if_newly_approved(db, chw_user, was_compliant_before=was_compliant_before)
+
     return row

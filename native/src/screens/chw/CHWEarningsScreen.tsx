@@ -53,6 +53,7 @@ import {
   useChwPayouts,
   useConnectOnboardingLink,
   usePaymentsAccountStatus,
+  useChwChecklist,
   type EarningsPeriod,
   type SessionEarningItem,
 } from '../../hooks/useApiQueries';
@@ -499,6 +500,15 @@ export function CHWEarningsScreen(): React.JSX.Element {
   const payoutsQuery        = useChwPayouts(period);
   const connectOnboarding   = useConnectOnboardingLink();
   const accountStatusQuery  = usePaymentsAccountStatus();
+  // QA batch #2 (Wave-2 B1): disables the Stripe onboarding/update-bank-
+  // account CTA when the backend work gate is live AND this CHW currently
+  // fails the compliance checklist — mirrors the identical flag-conditional
+  // 403 the backend already enforces on POST /payments/connect-onboarding.
+  // Read-only earnings summaries (everything else on this screen) stay
+  // open, matching the backend leaving GET /account-status ungated.
+  const checklistQuery      = useChwChecklist();
+  const isPayoutsCtaGated =
+    checklistQuery.data?.gateEnabled === true && checklistQuery.data?.canWork === false;
 
   // Defaults to "connected" while status is loading so the header doesn't
   // flash the urgent CTA before we know the real state. Once loaded, an
@@ -508,7 +518,7 @@ export function CHWEarningsScreen(): React.JSX.Element {
 
   // ── Stripe Connect onboarding flow ────────────────────────────────────────
   const handleUpdateBankAccount = useCallback(() => {
-    if (connectOnboarding.isPending) return;
+    if (connectOnboarding.isPending || isPayoutsCtaGated) return;
     connectOnboarding.mutate(undefined, {
       onSuccess: ({ onboardingUrl }) => {
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -523,7 +533,7 @@ export function CHWEarningsScreen(): React.JSX.Element {
         }
       },
     });
-  }, [connectOnboarding]);
+  }, [connectOnboarding, isPayoutsCtaGated]);
 
   // ── Session detail modal handlers ─────────────────────────────────────────
   const handleSessionPress = useCallback((session: SessionEarningItem) => {
@@ -561,11 +571,21 @@ export function CHWEarningsScreen(): React.JSX.Element {
     <View style={styles.headerRight}>
       <PeriodSelector value={period} onChange={setPeriod} />
       <TouchableOpacity
-        style={[styles.updateBankBtn, !payoutsEnabled && styles.setupPayoutsBtn]}
+        style={[
+          styles.updateBankBtn,
+          !payoutsEnabled && styles.setupPayoutsBtn,
+          isPayoutsCtaGated && styles.payoutsCtaDisabled,
+        ]}
         onPress={handleUpdateBankAccount}
-        disabled={connectOnboarding.isPending}
+        disabled={connectOnboarding.isPending || isPayoutsCtaGated}
         accessibilityRole="button"
-        accessibilityLabel={payoutsEnabled ? 'Update bank account' : 'Set up payouts with Stripe'}
+        accessibilityLabel={
+          isPayoutsCtaGated
+            ? 'Set up payouts with Stripe (disabled until your compliance checklist is complete)'
+            : payoutsEnabled
+              ? 'Update bank account'
+              : 'Set up payouts with Stripe'
+        }
       >
         {connectOnboarding.isPending ? (
           <ActivityIndicator size="small" color={payoutsEnabled ? tokens.textPrimary : '#ffffff'} />
@@ -898,6 +918,12 @@ const styles = StyleSheet.create({
   setupPayoutsBtnText: {
     color: '#ffffff',
   } as TextStyle,
+
+  // QA batch #2: dims the CTA (either variant) when the compliance work
+  // gate blocks Stripe onboarding.
+  payoutsCtaDisabled: {
+    opacity: 0.5,
+  } as ViewStyle,
 
   // ── Summary card row ────────────────────────────────────────────────────────
   cardRow: {

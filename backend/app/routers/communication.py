@@ -434,6 +434,20 @@ async def call_bridge(
             # services-consent status to users without a care relationship.
             await assert_member_consents_to_services(db, member_id=member_id_for_gate)
 
+    # Epic D work gate: a CHW whose compliance checklist is incomplete may not
+    # initiate a call-bridge while chw_work_gate_enabled is True. Member
+    # callers are never gated. Flag OFF (default) preserves prior behavior
+    # exactly — no query, no branch taken.
+    if _app_config_module.settings.chw_work_gate_enabled and caller.role == "chw":
+        from app.services.chw_compliance import chw_can_work
+
+        can_work, missing = await chw_can_work(db, current_user)
+        if not can_work:
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "onboarding_incomplete", "missing": missing},
+            )
+
     # Resolve the Session this bridge attaches to. With session_per_call_enabled
     # on (and a CHW↔member call), auto-mint a new Session when the conversation
     # has no active one; reuse the active one when it exists. Falls back to the
@@ -1472,6 +1486,19 @@ async def chw_call_member(
             status_code=400,
             detail="Both parties must have a verified phone number on file.",
         )
+
+    # Epic D work gate: a CHW whose compliance checklist is incomplete may not
+    # initiate an ad-hoc call while chw_work_gate_enabled is True. Flag OFF
+    # (default) preserves prior behavior exactly — no query, no branch taken.
+    if _app_config_module.settings.chw_work_gate_enabled:
+        from app.services.chw_compliance import chw_can_work
+
+        can_work, missing = await chw_can_work(db, current_user)
+        if not can_work:
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "onboarding_incomplete", "missing": missing},
+            )
 
     # Eligibility: ≥1 shared session (any status).
     await _assert_shared_session(db, chw_id=current_user.id, member_id=member_id)

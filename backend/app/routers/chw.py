@@ -874,6 +874,7 @@ async def create_chw_member(
     """
     from datetime import UTC, datetime
 
+    from app.config import settings
     from app.models.request import ServiceRequest
     from app.services.auth_service import (
         DuplicatePhoneError,
@@ -882,6 +883,20 @@ async def create_chw_member(
     )
     from app.services.session_lookup import find_or_create_conversation_for_pair
     from app.services.signup_confirmations import send_signup_confirmations
+
+    # Epic D work gate: a CHW whose compliance checklist is incomplete may not
+    # onboard new members while chw_work_gate_enabled is True. Flag OFF
+    # (default) preserves prior behavior exactly — no query, no branch taken.
+    # Mirrors the identical gate on PATCH /requests/{id}/accept (requests.py).
+    if settings.chw_work_gate_enabled and current_user.role == "chw":
+        from app.services.chw_compliance import chw_can_work
+
+        can_work, missing = await chw_can_work(db, current_user)
+        if not can_work:
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "onboarding_incomplete", "missing": missing},
+            )
 
     # ── Create the member User + MemberProfile (reuses signup provisioning) ──
     # register_user handles the duplicate-email guard (returns None), phone
