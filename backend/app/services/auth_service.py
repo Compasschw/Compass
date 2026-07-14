@@ -333,3 +333,37 @@ async def revoke_refresh_token(db: AsyncSession, token: str):
         rt.revoked = True
         await db.commit()
     return rt
+
+
+async def revoke_all_refresh_tokens_for_user(db: AsyncSession, user_id: UUID) -> int:
+    """Revoke every outstanding (not already revoked, not yet expired)
+    refresh token for ``user_id`` — signs the user out of all devices.
+
+    Used by the password-reset confirm flow (Epic — forgot password): a
+    successful reset is a strong signal that any previously-issued session
+    material should no longer be trusted, so every refresh token is revoked
+    in bulk rather than the single-token revocation ``revoke_refresh_token``
+    performs on login/refresh rotation.
+
+    Does NOT commit — the caller (password-reset confirm) performs one
+    commit for the whole unit of work (password hash + consumed_at + token
+    revocation) so a partial failure can't leave the account in a half-reset
+    state.
+
+    Returns:
+        The number of refresh-token rows revoked (0 if the user had none
+        outstanding — not an error).
+    """
+    from app.models.auth import RefreshToken
+
+    result = await db.execute(
+        select(RefreshToken).where(
+            RefreshToken.user_id == user_id,
+            RefreshToken.revoked == False,
+            RefreshToken.expires_at > datetime.now(UTC),
+        )
+    )
+    tokens = result.scalars().all()
+    for rt in tokens:
+        rt.revoked = True
+    return len(tokens)

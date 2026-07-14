@@ -344,3 +344,41 @@ class CompleteOnboardingRequest(BaseModel):
             self.state = normalized_state
 
         return self
+
+
+# ─── Forgot-password reset flow ──────────────────────────────────────────────
+
+
+class PasswordResetRequestBody(BaseModel):
+    """Body for POST /auth/password-reset/request."""
+
+    email: EmailStr
+
+
+class PasswordResetRequestResponse(BaseModel):
+    """Always the same body regardless of whether the email is registered,
+    active, or password-based — see the router handler's no-enumeration
+    contract."""
+
+    status: str = "accepted"
+
+
+class PasswordResetConfirmBody(BaseModel):
+    """Body for POST /auth/password-reset/confirm.
+
+    ``new_password`` enforces the SAME minimum-length rule as signup/
+    change-password (``RegisterRequest.password`` /
+    ``ChangePasswordRequest.new_password``) so the strength bar can never
+    silently diverge between creation, change, and reset. A violation 422s
+    at this Pydantic boundary.
+    """
+
+    token: str = Field(..., min_length=1)
+    new_password: str = Field(..., min_length=8)
+
+
+class PasswordResetConfirmResponse(BaseModel):
+    """Deliberately does NOT mint tokens / auto-login — the client must
+    prompt the user to sign in again with their new password."""
+
+    ok: bool = True

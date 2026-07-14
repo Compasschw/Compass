@@ -960,7 +960,11 @@ async def create_chw_member(
     # Best-effort signup confirmation email + (if already SMS-eligible) SMS
     # for the newly-created member, same guarantee as /auth/register — a
     # slow/down SES or Vonage never fails this request (Epic A).
-    background_tasks.add_task(send_signup_confirmations, member.id)
+    # created_by_chw=True selects the "your CHW created your account —
+    # you'll set your own password at first sign-in" email copy variant
+    # (Epic A v2) instead of the plain self-signup welcome, since this path
+    # is the one surface that actually knows the account was CHW-initiated.
+    background_tasks.add_task(send_signup_confirmations, member.id, created_by_chw=True)
 
     return CHWCreateMemberResponse(
         id=member.id,
