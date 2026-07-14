@@ -46,7 +46,7 @@ from tests.conftest import test_session as _test_session_factory
 
 _DELETE_URL = "/api/v1/auth/users/me"
 _MEMBER_EMAIL = "testmember@example.com"
-_MEMBER_PASSWORD = "testpass123"
+_MEMBER_PASSWORD = "Testpass123!"
 
 
 @pytest.fixture(autouse=True)

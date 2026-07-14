@@ -37,7 +37,7 @@ async def _register_chw(client: AsyncClient, suffix: str = "") -> dict:
         "/api/v1/auth/register",
         json={
             "email": f"chw-flagnote{suffix}@example.com",
-            "password": "testpass123",
+            "password": "Testpass123!",
             "name": f"CHW FlagNote{suffix}",
             "role": "chw",
         },

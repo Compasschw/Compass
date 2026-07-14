@@ -17,7 +17,6 @@ from httpx import AsyncClient
 
 from tests.conftest import auth_header
 
-
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 
@@ -29,7 +28,7 @@ async def _register(client: AsyncClient, email: str, role: str, name: str) -> di
     """
     payload: dict = {
         "email": email,
-        "password": "testpass123",
+        "password": "Testpass123!",
         "name": name,
         "role": role,
     }
@@ -322,3 +321,63 @@ async def test_chw_profile_picture_url_returned_when_set(
     )
     assert res.status_code == 200, res.text
     assert res.json()["profile_picture_url"] == photo_url
+
+
+@pytest.mark.asyncio
+async def test_completely_empty_chw_profile_returns_200_with_safe_defaults(
+    client: AsyncClient,
+    member_tokens: dict,
+) -> None:
+    """QA-batch #11 — GET /member/chws/{chw_id} must never 500 on a CHW with
+    a completely bare profile: no bio, no languages, no specializations, no
+    zip_code, no availability_windows, no CHWIntake row at all (never
+    completed the questionnaire).
+
+    register_user() always provisions a CHWProfile row at signup time (with
+    every optional column at its column default: specializations=[],
+    languages=[], bio=None, zip_code=None, years_experience=0,
+    availability_windows=None) and never creates a CHWIntake row — so a
+    freshly-registered CHW who has done nothing else is exactly this
+    "completely empty" state without needing to hand-seed anything.
+    """
+    empty_chw = await _register(
+        client, "chw_totally_empty@example.com", "chw", "Empty Profile"
+    )
+    chw_id = _user_id_from_tokens(empty_chw)
+
+    res = await client.get(
+        f"/api/v1/member/chws/{chw_id}",
+        headers=auth_header(member_tokens),
+    )
+    assert res.status_code == 200, res.text
+    data = res.json()
+
+    # Identity fields always present, never null.
+    assert data["id"] == chw_id
+    assert isinstance(data["first_name"], str)
+    assert isinstance(data["last_name_initial"], str)
+
+    # Language defaults to English with no additional languages.
+    assert data["primary_language"] == "English"
+    assert data["additional_languages"] == []
+
+    # No specializations / no cert / no modality yet. years_experience is
+    # NEVER null once a CHWProfile row exists (which register_user always
+    # provisions) — it formats the 0 default as the "<1 year" bracket rather
+    # than surfacing null; only a MISSING CHWProfile row would produce null,
+    # which register_user's invariant makes unreachable in practice.
+    assert data["primary_specialization"] is None
+    assert data["years_experience"] == "<1 year"
+    assert data["ca_chw_certified"] is False
+    assert data["modality"] is None
+
+    # Empty list defaults, never null.
+    assert data["service_area_zips"] == []
+    assert data["available_days"] == []
+    assert isinstance(data["availability_windows"], dict)
+
+    # No shared sessions with this member yet.
+    assert data["shared_session_count"] == 0
+
+    # No photo uploaded.
+    assert data["profile_picture_url"] is None

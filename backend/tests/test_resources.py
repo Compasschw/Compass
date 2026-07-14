@@ -49,7 +49,7 @@ async def _register(client: AsyncClient, email: str, role: str) -> dict:
         "/api/v1/auth/register",
         json={
             "email": email,
-            "password": "testpass123",
+            "password": "Testpass123!",
             "name": f"Test {role} {email[:6]}",
             "role": role,
         },

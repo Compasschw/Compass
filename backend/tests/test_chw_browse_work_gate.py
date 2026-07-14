@@ -50,21 +50,26 @@ def _auth_header(tokens: dict) -> dict:
 async def _register_chw(client: AsyncClient, *, email: str, name: str) -> dict:
     res = await client.post(
         "/api/v1/auth/register",
-        json={"email": email, "password": "testpass123", "name": name, "role": "chw"},
+        json={"email": email, "password": "Testpass123!", "name": name, "role": "chw"},
     )
     assert res.status_code == 201, res.text
     return res.json()
 
 
 async def _register_member(client: AsyncClient, *, email: str) -> dict:
+    # Phone derived from email so tests registering multiple members (e.g.
+    # member.browse1 + member.browse2) keep phone numbers distinct — phone
+    # is now globally unique across all accounts (QA-batch #1), so a shared
+    # literal phone would 409 the second registration.
+    phone_suffix = f"{abs(hash(email)) % 10_000:04d}"
     res = await client.post(
         "/api/v1/auth/register",
         json={
             "email": email,
-            "password": "testpass123",
+            "password": "Testpass123!",
             "name": "Test Member",
             "role": "member",
-            "phone": "+13105550100",
+            "phone": f"+131055{phone_suffix}",
             "date_of_birth": "1993-01-05",
             "gender": "Female",
             "insurance_company": "Health Net",

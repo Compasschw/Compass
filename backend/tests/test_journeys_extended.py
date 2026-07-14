@@ -128,7 +128,7 @@ async def _register_user(
     if role == "member":
         payload = complete_member_signup_payload(email=email, name=name)
     else:
-        payload = {"email": email, "password": "pass12345", "name": name, "role": role}
+        payload = {"email": email, "password": "Pass12345!", "name": name, "role": role}
     res = await client.post("/api/v1/auth/register", json=payload)
     assert res.status_code == 201, res.text
     return res.json()
@@ -544,7 +544,7 @@ async def test_unrelated_chw_returns_403(
         "/api/v1/auth/register",
         json={
             "email": "otherchw@example.com",
-            "password": "pass12345",
+            "password": "Pass12345!",
             "name": "Other CHW",
             "role": "chw",
         },
@@ -714,7 +714,7 @@ async def test_delete_node_unrelated_chw_returns_403(
         "/api/v1/auth/register",
         json={
             "email": "otherchw_delete@example.com",
-            "password": "pass12345",
+            "password": "Pass12345!",
             "name": "Other CHW Delete",
             "role": "chw",
         },

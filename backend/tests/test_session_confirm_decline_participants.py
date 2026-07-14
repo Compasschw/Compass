@@ -392,7 +392,7 @@ async def test_non_participant_chw_gets_404_on_decline(
         "/api/v1/auth/register",
         json={
             "email": "other_chw_decline@example.com",
-            "password": "testpass123",
+            "password": "Testpass123!",
             "name": "Other CHW",
             "role": "chw",
         },

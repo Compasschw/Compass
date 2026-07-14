@@ -39,7 +39,7 @@ from tests.conftest import auth_header, complete_member_signup_payload
 async def _register_chw(client: AsyncClient, *, email: str, name: str = "CHW User") -> dict:
     res = await client.post(
         "/api/v1/auth/register",
-        json={"email": email, "password": "testpass123", "name": name, "role": "chw"},
+        json={"email": email, "password": "Testpass123!", "name": name, "role": "chw"},
     )
     assert res.status_code == 201, f"CHW register failed: {res.text}"
     return res.json()

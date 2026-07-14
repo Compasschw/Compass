@@ -72,7 +72,7 @@ async def _register_extra_member(client: AsyncClient, email: str = "other@exampl
     payload = complete_member_signup_payload(
         email=email,
         name="Other Member",
-        password="testpass123",
+        password="Testpass123!",
     )
     payload["medi_cal_id"] = f"{abs(hash(email)) % 100_000_000:08d}A"
     res = await client.post("/api/v1/auth/register", json=payload)

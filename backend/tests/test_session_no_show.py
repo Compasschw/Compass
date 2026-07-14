@@ -130,7 +130,7 @@ async def test_no_show_relationship_gate_non_owning_chw(
     mirrors test_abort_relationship_gate."""
     session_id = await _create_in_progress_session(client, member_tokens, chw_tokens)
     res = await client.post("/api/v1/auth/register", json={
-        "email": "chw_noshow2@example.com", "password": "testpass123",
+        "email": "chw_noshow2@example.com", "password": "Testpass123!",
         "name": "Other CHW", "role": "chw",
     })
     assert res.status_code == 201

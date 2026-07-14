@@ -42,7 +42,7 @@ async def _register_chw(client: AsyncClient, suffix: str = "") -> dict:
         "/api/v1/auth/register",
         json={
             "email": f"chw{suffix}@audio-consent-test.com",
-            "password": "password123",
+            "password": "Password123!",
             "name": f"Test CHW{suffix}",
             "role": "chw",
         },
@@ -60,7 +60,7 @@ async def _register_member(client: AsyncClient, suffix: str = "") -> dict:
     email = f"member{suffix}@audio-consent-test.com"
     payload: dict = {
         "email": email,
-        "password": "password123",
+        "password": "Password123!",
         "name": f"Test Member{suffix}",
         "role": "member",
         "terms_accepted": True,

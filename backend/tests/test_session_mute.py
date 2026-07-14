@@ -89,7 +89,7 @@ async def test_only_owning_chw_can_mute(client: AsyncClient, chw_tokens, member_
         "/api/v1/auth/register",
         json={
             "email": "other_chw_mute@example.com",
-            "password": "testpass123",
+            "password": "Testpass123!",
             "name": "Other CHW",
             "role": "chw",
         },

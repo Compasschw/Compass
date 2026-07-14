@@ -579,22 +579,9 @@ async def list_chw_members(
     )
     member_rows = members_result.all()
 
-    # ── Step 3: batch-load session counts for status + engagement bucketing ───────
-    # recent_30: count per member for sessions in the last 30 days (status signal).
-    recent_30_result = await db.execute(
-        select(Session.member_id, func.count(Session.id).label("cnt"))
-        .where(Session.chw_id == current_user.id)
-        .where(Session.member_id.in_(all_member_ids))
-        .where(
-            # Use ended_at when available (completed sessions), else scheduled_at
-            func.coalesce(Session.ended_at, Session.scheduled_at) >= thirty_days_ago
-        )
-        .group_by(Session.member_id)
-    )
-    recent_30_by_member: dict[UUID, int] = {
-        row.member_id: row.cnt for row in recent_30_result.all()
-    }
-
+    # ── Step 3: batch-load session counts for engagement bucketing ────────────────
+    # (Status no longer derives from session/request activity — QA-batch #13
+    # switched it to User.last_active_at recency. See the per-member loop below.)
     # recent_60: count per member for sessions in the last 60 days (engagement).
     recent_60_result = await db.execute(
         select(Session.member_id, func.count(Session.id).label("cnt"))
@@ -733,18 +720,28 @@ async def list_chw_members(
         name_parts = (member_user.name or "").strip().split()
         initials = "".join(p[0].upper() for p in name_parts if p)[:2] or "?"
 
-        # Status (Epic G3): a member who has NEVER signed in (first_login_at is
-        # NULL) is always 'inactive' — this is what fixes the CHW-created-member
-        # case, where the CHW provisioned the account and handed the member a
-        # temp password out-of-band, but the member hasn't logged in yet. Once
-        # they HAVE signed in at least once, status reflects ordinary activity:
-        # active if session in last 30 days OR open/accepted request.
-        has_recent_session = (recent_30_by_member.get(member_id) or 0) > 0
-        has_active_request = member_id in active_request_by_member
+        # Status (QA-batch #13): "active" now means recent platform ACCESS, not
+        # CHW-visible session/request activity. A member who has NEVER signed
+        # in (first_login_at is NULL) is always 'inactive' — this is what
+        # fixes the CHW-created-member case, where the CHW provisioned the
+        # account and handed the member a temp password out-of-band, but the
+        # member hasn't logged in yet. Once they HAVE signed in at least once,
+        # status reflects recency of User.last_active_at (bumped on every
+        # authenticated request — see dependencies.get_current_user — and on
+        # every explicit sign-in via mark_first_login's call sites): active
+        # iff last_active_at is within the last 30 days. A signed-in member
+        # whose last_active_at is NULL (data predating this column, or a
+        # never-throttled edge case) is treated as inactive rather than
+        # crashing on a None comparison.
+        last_active_at = member_user.last_active_at
         status: Literal["active", "inactive"] = (
             "inactive"
             if member_user.first_login_at is None
-            else ("active" if (has_recent_session or has_active_request) else "inactive")
+            else (
+                "active"
+                if last_active_at is not None and last_active_at >= thirty_days_ago
+                else "inactive"
+            )
         )
 
         # Engagement bucket from 60-day session count.
@@ -878,7 +875,11 @@ async def create_chw_member(
     from datetime import UTC, datetime
 
     from app.models.request import ServiceRequest
-    from app.services.auth_service import append_new_member_to_csv, register_user
+    from app.services.auth_service import (
+        DuplicatePhoneError,
+        append_new_member_to_csv,
+        register_user,
+    )
     from app.services.session_lookup import find_or_create_conversation_for_pair
     from app.services.signup_confirmations import send_signup_confirmations
 
@@ -898,32 +899,41 @@ async def create_chw_member(
     # consents are True (the CHW confirmed the member agrees), so stamping
     # NOW(UTC) here is safe — an unconsented request would have 422'd already.
     consent_now = datetime.now(UTC)
-    member = await register_user(
-        db,
-        email=data.email,
-        password=data.temp_password,
-        name=data.name,
-        role="member",
-        phone=data.phone,
-        member_profile_fields={
-            "date_of_birth": data.date_of_birth,
-            "gender": data.gender,
-            "insurance_company": data.insurance_company,
-            "medi_cal_id": data.medi_cal_id,
-            "address_line1": data.address_line1,
-            "address_line2": data.address_line2,
-            "city": data.city,
-            "state": data.state,
-            "zip_code": data.zip_code,
-            "terms_accepted_at": consent_now,
-            "communications_consent_at": consent_now,
-        },
-        commit=False,
-        # Epic G2: this member is signing in with a temp password the CHW
-        # shared out-of-band — force a mandatory password-change prompt on
-        # their first sign-in. See User.must_change_password's docstring.
-        must_change_password=True,
-    )
+    try:
+        member = await register_user(
+            db,
+            email=data.email,
+            password=data.temp_password,
+            name=data.name,
+            role="member",
+            phone=data.phone,
+            member_profile_fields={
+                "date_of_birth": data.date_of_birth,
+                "gender": data.gender,
+                "insurance_company": data.insurance_company,
+                "medi_cal_id": data.medi_cal_id,
+                "address_line1": data.address_line1,
+                "address_line2": data.address_line2,
+                "city": data.city,
+                "state": data.state,
+                "zip_code": data.zip_code,
+                "terms_accepted_at": consent_now,
+                "communications_consent_at": consent_now,
+            },
+            commit=False,
+            # Epic G2: this member is signing in with a temp password the CHW
+            # shared out-of-band — force a mandatory password-change prompt on
+            # their first sign-in. See User.must_change_password's docstring.
+            must_change_password=True,
+        )
+    except DuplicatePhoneError as exc:
+        # commit=False above means nothing has been committed yet — no
+        # rollback needed beyond letting get_db's exception handler roll back
+        # the still-open transaction (the flushed-but-uncommitted User row).
+        raise HTTPException(
+            status_code=409,
+            detail="An account with this phone number already exists.",
+        ) from exc
     if member is None:
         raise HTTPException(status_code=400, detail="Email already registered")
 

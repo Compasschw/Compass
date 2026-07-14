@@ -70,7 +70,7 @@ async def _get_user_first_login_at(user_id: UUID | str):
 
 _NEW_MEMBER_PAYLOAD = {
     "email": "g1g3.newmember@example.com",
-    "temp_password": "temp-pass-1234",
+    "temp_password": "Temp-pass-1234!",
     "name": "Grace Newmember",
     "phone": "+13105550142",
     "date_of_birth": "1990-04-12",
@@ -186,19 +186,24 @@ async def test_login_does_not_move_an_already_set_first_login_at(
     assert second_stamp == first_stamp
 
 
-# ─── G3: CHW Members roster status ─────────────────────────────────────────────
+# ─── QA-batch #13: CHW Members roster status = recent ACCESS ──────────────────
+#
+# Status no longer derives from session/request activity (the old Epic G3
+# rule below) — it now derives purely from User.last_active_at recency:
+#   - first_login_at IS NULL -> always 'inactive' (never signed in).
+#   - else 'active' iff last_active_at is within the last 30 days, else
+#     'inactive' (including when last_active_at is NULL despite having
+#     first_login_at set — a defensive fallback, not an expected steady
+#     state since mark_first_login now stamps both together).
 
 
 async def test_chw_created_member_with_activity_but_no_login_is_inactive(
     client: AsyncClient, chw_tokens: dict
 ):
-    """The exact scenario Epic G3 fixes: a CHW-created member has a matched
-    request AND a scheduled session (real activity a CHW would see), but has
-    never logged in themselves. Status must be 'inactive'.
-
-    FAILS on the pre-fix code: the old status rule only checked
-    (session in last 30d) OR (open/accepted request) — both true here — and
-    would have returned 'active' despite the member never having signed in.
+    """A CHW-created member has a matched request AND a scheduled session
+    (real activity a CHW would see), but has never logged in themselves.
+    Status must be 'inactive' regardless of that activity — access, not
+    caseload activity, drives status.
     """
     member_id = await _create_chw_member(client, chw_tokens)
     await _schedule_session_for_member(client, chw_tokens, member_id)
@@ -216,8 +221,10 @@ async def test_chw_created_member_with_activity_but_no_login_is_inactive(
 async def test_member_flips_active_after_first_login_with_activity(
     client: AsyncClient, chw_tokens: dict
 ):
-    """The SAME member as above flips to 'active' once they log in themselves,
-    with the underlying activity unchanged."""
+    """The SAME member as above flips to 'active' once they log in themselves
+    — the login itself stamps last_active_at (mark_first_login), so status
+    flips immediately, with the underlying session/request activity
+    unchanged (proving activity was never the driver)."""
     member_id = await _create_chw_member(client, chw_tokens)
     await _schedule_session_for_member(client, chw_tokens, member_id)
 
@@ -237,12 +244,46 @@ async def test_member_flips_active_after_first_login_with_activity(
     assert item["status"] == "active"
 
 
-async def test_signed_in_member_without_recent_activity_is_inactive(
+async def test_member_signs_in_with_zero_sessions_or_requests_shows_active(
     client: AsyncClient, chw_tokens: dict
 ):
-    """A member who HAS signed in but has no session in the last 30 days and
-    no open/accepted request is still 'inactive' — first_login_at only lifts
-    the always-inactive floor; ordinary activity rules still apply."""
+    """QA-batch #13's core new case: a member with NO sessions and NO
+    open/accepted request signs in — status must be 'active' purely from
+    the login-driven last_active_at bump. FAILS on the old
+    (session-in-30d OR open/accepted-request) rule, which would have called
+    this member 'inactive' despite them having just signed in.
+    """
+    member_id = await _create_chw_member(client, chw_tokens)
+    # Deliberately do NOT schedule any session — this member has zero
+    # sessions and only the initial "matched" (not open/accepted) request
+    # create_chw_member wrote, so the OLD activity-based rule would fail
+    # this member as inactive.
+
+    login = await client.post(
+        "/api/v1/auth/login",
+        json={
+            "email": _NEW_MEMBER_PAYLOAD["email"],
+            "password": _NEW_MEMBER_PAYLOAD["temp_password"],
+        },
+    )
+    assert login.status_code == 200, login.text
+
+    roster = await client.get("/api/v1/chw/members", headers=auth_header(chw_tokens))
+    assert roster.status_code == 200, roster.text
+    item = next((i for i in roster.json() if i["id"] == member_id), None)
+    assert item is not None
+    assert item["status"] == "active"
+
+
+async def test_signed_in_member_with_stale_last_active_at_is_inactive(
+    client: AsyncClient, chw_tokens: dict
+):
+    """A member who HAS signed in (first_login_at set) but whose
+    last_active_at is more than 30 days stale is 'inactive' — recency, not
+    the mere fact of having ever logged in, drives status. Seeded directly
+    via the DB (mirrors a member who logged in over a month ago and hasn't
+    touched the app since — no throttled get_current_user bump to refresh
+    it in this test)."""
     import uuid as _uuid
 
     from app.models.request import ServiceRequest
@@ -250,17 +291,19 @@ async def test_signed_in_member_without_recent_activity_is_inactive(
 
     chw_id = UUID(_decode_jwt_sub(chw_tokens["access_token"]))
     member_id = _uuid.uuid4()
-    signed_in_at = datetime.now(UTC) - timedelta(days=10)
+    signed_in_at = datetime.now(UTC) - timedelta(days=45)
+    stale_last_active_at = datetime.now(UTC) - timedelta(days=45)
 
     async with _session_factory() as db:
         db.add(User(
             id=member_id,
-            email=f"signedin_noactivity_{member_id.hex[:8]}@example.com",
+            email=f"stale_lastactive_{member_id.hex[:8]}@example.com",
             password_hash="x",
-            name="Signed In NoActivity",
+            name="Stale LastActive",
             role="member",
             is_active=True,
             first_login_at=signed_in_at,
+            last_active_at=stale_last_active_at,
         ))
         await db.flush()
         db.add(MemberProfile(
@@ -270,7 +313,8 @@ async def test_signed_in_member_without_recent_activity_is_inactive(
             zip_code="90001",
         ))
         # Matched, but status "matched" (not open/accepted) and no session —
-        # mirrors create_chw_member's initial relationship shape.
+        # mirrors create_chw_member's initial relationship shape. Included to
+        # prove status no longer keys off this at all.
         db.add(ServiceRequest(
             id=_uuid.uuid4(),
             member_id=member_id,
@@ -279,7 +323,65 @@ async def test_signed_in_member_without_recent_activity_is_inactive(
             verticals=["other"],
             status="matched",
             urgency="routine",
-            description="Signed-in member with no recent activity — seeded directly",
+            description="Signed-in member with stale last_active_at — seeded directly",
+            preferred_mode="in_person",
+            estimated_units=1,
+        ))
+        await db.commit()
+
+    roster = await client.get("/api/v1/chw/members", headers=auth_header(chw_tokens))
+    assert roster.status_code == 200, roster.text
+    item = next((i for i in roster.json() if i["id"] == str(member_id)), None)
+    assert item is not None
+    assert item["status"] == "inactive"
+
+
+async def test_signed_in_member_with_null_last_active_at_is_inactive(
+    client: AsyncClient, chw_tokens: dict
+):
+    """Defensive fallback: first_login_at set but last_active_at somehow
+    still NULL (legacy data predating this column, or any other edge case)
+    must not crash on a None comparison and must resolve to 'inactive'."""
+    import uuid as _uuid
+
+    from app.models.user import MemberProfile, User
+
+    member_id = _uuid.uuid4()
+    signed_in_at = datetime.now(UTC) - timedelta(days=5)
+
+    async with _session_factory() as db:
+        db.add(User(
+            id=member_id,
+            email=f"null_lastactive_{member_id.hex[:8]}@example.com",
+            password_hash="x",
+            name="Null LastActive",
+            role="member",
+            is_active=True,
+            first_login_at=signed_in_at,
+            last_active_at=None,
+        ))
+        await db.flush()
+        db.add(MemberProfile(
+            id=_uuid.uuid4(),
+            user_id=member_id,
+            primary_language="English",
+            zip_code="90001",
+        ))
+        await db.commit()
+
+    chw_id = UUID(_decode_jwt_sub(chw_tokens["access_token"]))
+    async with _session_factory() as db:
+        from app.models.request import ServiceRequest
+
+        db.add(ServiceRequest(
+            id=_uuid.uuid4(),
+            member_id=member_id,
+            matched_chw_id=chw_id,
+            vertical="other",
+            verticals=["other"],
+            status="matched",
+            urgency="routine",
+            description="Signed-in member with NULL last_active_at — seeded directly",
             preferred_mode="in_person",
             estimated_units=1,
         ))

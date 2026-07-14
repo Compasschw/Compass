@@ -43,7 +43,7 @@ pytestmark = pytest.mark.asyncio
 # non-@example.com email in every payload below so the export actually runs.
 _CHW_NEW_MEMBER_PAYLOAD = {
     "email": "brand.new.member@compasschw-test.dev",
-    "temp_password": "temp-pass-1234",
+    "temp_password": "Temp-pass-1234!",
     "name": "Brand New",
     "phone": "+13105550142",
     "date_of_birth": "1990-04-12",

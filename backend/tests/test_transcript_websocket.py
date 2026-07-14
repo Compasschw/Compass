@@ -107,7 +107,7 @@ async def _create_user(
         id=uuid.uuid4(),
         email=email or f"test-{uuid.uuid4().hex[:8]}@example.com",
         name="Test User",
-        password_hash=hash_password("testpass123"),
+        password_hash=hash_password("Testpass123!"),
         role=role,
         is_active=True,
         is_onboarded=True,

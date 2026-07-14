@@ -77,7 +77,10 @@ async def _make_chw_compliant(chw_id: str) -> None:
         from app.models.user import User
 
         user = await db.get(User, chw_uuid)
-        user.phone = "+13105550100"
+        # Distinct from the member_tokens fixture's phone (conftest.py) — phone
+        # is now globally unique across all accounts (QA-batch #1), and several
+        # tests in this file use both chw_tokens and member_tokens together.
+        user.phone = "+13105559100"
         await db.commit()
 
 

@@ -40,7 +40,7 @@ async def _create_user(
     email = email or f"{role}-{uuid.uuid4().hex[:8]}@example.com"
     user = User(
         email=email,
-        password_hash=hash_password("testpass123"),
+        password_hash=hash_password("Testpass123!"),
         role=role,
         name=name,
         is_active=True,

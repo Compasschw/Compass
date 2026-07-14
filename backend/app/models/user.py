@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import ARRAY, Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, func, text
+from sqlalchemy import ARRAY, Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -11,6 +11,27 @@ from app.utils.encryption import EncryptedString
 
 class User(Base):
     __tablename__ = "users"
+    __table_args__ = (
+        # QA-batch #1 — CHW phone uniqueness, applied platform-wide (any role
+        # supplying a phone). Partial index (NULL phones excluded) so the
+        # optional-phone-at-signup contract is preserved: any number of
+        # accounts may still have no phone on file. Mirrors migration
+        # ``chwphone0713`` — kept in sync here so ``Base.metadata.create_all``
+        # (used by the test suite's per-test schema setup, which does NOT run
+        # Alembic migrations) also creates this constraint, and so a fresh
+        # `alembic upgrade head` on a NEW database is consistent with what
+        # `create_all` would produce. This is the race-safe backstop; the
+        # primary UX is the pre-create check in
+        # ``app.services.auth_service.register_user`` (returns a clean 409
+        # instead of surfacing this constraint's IntegrityError to the
+        # caller).
+        Index(
+            "uq_users_phone_not_null",
+            "phone",
+            unique=True,
+            postgresql_where=text("phone IS NOT NULL"),
+        ),
+    )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)

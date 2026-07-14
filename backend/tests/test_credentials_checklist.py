@@ -72,7 +72,7 @@ async def _register_admin(client: AsyncClient, email: str = "admin-checklist@exa
 async def _register_chw(client: AsyncClient, email: str = "chw-checklist2@example.com") -> dict:
     res = await client.post(
         "/api/v1/auth/register",
-        json={"email": email, "password": "testpass123", "name": "Second CHW", "role": "chw"},
+        json={"email": email, "password": "Testpass123!", "name": "Second CHW", "role": "chw"},
     )
     assert res.status_code == 201, res.text
     return res.json()

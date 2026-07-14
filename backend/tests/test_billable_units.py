@@ -36,7 +36,7 @@ async def _register_chw(client: AsyncClient, *, email: str) -> dict:
     """Register a CHW via the API and return the token response."""
     res = await client.post(
         "/api/v1/auth/register",
-        json={"email": email, "password": "testpass123", "name": "Test CHW", "role": "chw"},
+        json={"email": email, "password": "Testpass123!", "name": "Test CHW", "role": "chw"},
     )
     assert res.status_code == 201, f"CHW register failed: {res.text}"
     return res.json()
@@ -45,19 +45,23 @@ async def _register_chw(client: AsyncClient, *, email: str) -> dict:
 async def _register_member(client: AsyncClient, *, email: str) -> dict:
     """Register a member via the API and return the token response.
 
-    The CIN is derived from the email so tests that register multiple
-    members (e.g. target + other member) keep their Medi-Cal IDs distinct.
+    The CIN AND phone are derived from the email so tests that register
+    multiple members (e.g. target + other member) keep their Medi-Cal IDs
+    and phone numbers distinct — phone is now globally unique across all
+    accounts (QA-batch #1), so a shared literal phone would 409 the second
+    registration.
     """
+    phone_suffix = f"{abs(hash(email)) % 10_000:04d}"
     res = await client.post(
         "/api/v1/auth/register",
         json={
             "email": email,
-            "password": "testpass123",
+            "password": "Testpass123!",
             "name": "Test Member",
             "role": "member",
             "terms_accepted": True,
             "communications_consent": True,
-            "phone": "+13105550199",
+            "phone": f"+131055{phone_suffix}",
             "date_of_birth": "1990-06-01",
             "gender": "Female",
             "insurance_company": "Health Net",

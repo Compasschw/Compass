@@ -118,7 +118,7 @@ async def client():
 @pytest.fixture
 async def chw_tokens(client: AsyncClient) -> dict:
     res = await client.post("/api/v1/auth/register", json={
-        "email": "testchw@example.com", "password": "testpass123",
+        "email": "testchw@example.com", "password": "Testpass123!",
         "name": "Test CHW", "role": "chw",
     })
     assert res.status_code == 201
@@ -133,7 +133,7 @@ async def member_tokens(client: AsyncClient) -> dict:
     # shape), it should bypass the API and seed the row directly.
     res = await client.post("/api/v1/auth/register", json={
         "email": "testmember@example.com",
-        "password": "testpass123",
+        "password": "Testpass123!",
         "name": "Test Member",
         "role": "member",
         "phone": "+13105550100",
@@ -161,23 +161,35 @@ def complete_member_signup_payload(
     *,
     email: str,
     name: str = "Member Tester",
-    password: str = "test-password-1234",
+    password: str = "Test-password-1234!",
+    phone: str | None = None,
 ) -> dict:
     """Build a /auth/register body with every Pear-required member field
     populated.  Use in tests that need to register a member via the API
     after #14 added the mandatory-field gate.  Tests that need an
     INCOMPLETE profile should seed the row directly via SQL instead.
+
+    ``phone`` defaults to a value DERIVED from ``email`` (not a fixed
+    constant) so two calls with different emails in the same test never
+    collide — QA-batch #1 added a platform-wide unique index on
+    ``users.phone``, and dozens of callers across the suite register
+    multiple members via this helper in a single test. A shared hardcoded
+    phone would make every 2nd+ call 409 instead of 201. Pass an explicit
+    ``phone=None`` to omit the field entirely (registers with no phone) or
+    a specific value if a test needs to control/collide it deliberately
+    (e.g. testing the uniqueness guard itself).
     """
+    derived_phone = phone if phone is not None else f"+1310{abs(hash(email)) % 10_000_000:07d}"
     return {
         "email": email,
         "password": password,
         "name": name,
         "role": "member",
-        "phone": "+13105550100",
+        "phone": derived_phone,
         "date_of_birth": "1993-01-05",
         "gender": "Female",
         "insurance_company": "Health Net",
-        "medi_cal_id": "12345678A",
+        "medi_cal_id": f"{abs(hash(email)) % 100_000_000:08d}A",
         "address_line1": "1 Main St",
         "city": "Los Angeles",
         "state": "CA",

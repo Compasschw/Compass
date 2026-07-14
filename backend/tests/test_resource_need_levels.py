@@ -36,7 +36,7 @@ from tests.conftest import auth_header
 async def _register_user(client: AsyncClient, email: str, role: str, name: str) -> dict:
     payload: dict = {
         "email": email,
-        "password": "testpass123",
+        "password": "Testpass123!",
         "name": name,
         "role": role,
     }

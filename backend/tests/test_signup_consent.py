@@ -30,7 +30,7 @@ pytestmark = pytest.mark.asyncio
 # wire shape). Individual tests strip/flip the consent keys to prove the gate.
 _CHW_MEMBER_PAYLOAD = {
     "email": "consent.chw.member@example.com",
-    "temp_password": "temp-pass-1234",
+    "temp_password": "Temp-pass-1234!",
     "name": "Consent Member",
     "phone": "+13105550142",
     "date_of_birth": "1990-04-12",
@@ -112,7 +112,7 @@ async def test_register_chw_does_not_require_consent(client: AsyncClient):
         "/api/v1/auth/register",
         json={
             "email": "consent-not-required-chw@example.com",
-            "password": "test-password-1234",
+            "password": "Test-password-1234!",
             "name": "Consent Chw",
             "role": "chw",
         },

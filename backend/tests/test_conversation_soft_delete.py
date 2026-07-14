@@ -46,7 +46,7 @@ async def _setup_conversation(
         "/api/v1/auth/register",
         json={
             "email": chw_email,
-            "password": "testpass123",
+            "password": "Testpass123!",
             "name": "Soft Delete CHW",
             "role": "chw",
         },
@@ -58,7 +58,7 @@ async def _setup_conversation(
         "/api/v1/auth/register",
         json={
             "email": member_email,
-            "password": "testpass123",
+            "password": "Testpass123!",
             "name": "Soft Delete Member",
             "role": "member",
             "terms_accepted": True,
@@ -161,7 +161,7 @@ async def test_soft_delete_non_participant_returns_403(client: AsyncClient):
         "/api/v1/auth/register",
         json={
             "email": "other_sd_chw@example.com",
-            "password": "testpass123",
+            "password": "Testpass123!",
             "name": "Other CHW",
             "role": "chw",
         },

@@ -159,7 +159,7 @@ async def test_create_case_note_no_relationship_blocked(
         "/api/v1/auth/register",
         json={
             "email": "stranger_chw@example.com",
-            "password": "testpass123",
+            "password": "Testpass123!",
             "name": "Stranger CHW",
             "role": "chw",
         },
@@ -365,7 +365,7 @@ async def test_update_case_note_author_only(
         "/api/v1/auth/register",
         json={
             "email": "chw_two@example.com",
-            "password": "testpass123",
+            "password": "Testpass123!",
             "name": "CHW Two",
             "role": "chw",
         },
@@ -462,7 +462,7 @@ async def test_delete_case_note_author_only(
         "/api/v1/auth/register",
         json={
             "email": "chw_three@example.com",
-            "password": "testpass123",
+            "password": "Testpass123!",
             "name": "CHW Three",
             "role": "chw",
         },

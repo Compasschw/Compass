@@ -248,7 +248,7 @@ async def test_member_cancels_own_session(
         "/api/v1/auth/register",
         json={
             "email": "stranger_cancel@example.com",
-            "password": "testpass123",
+            "password": "Testpass123!",
             "name": "Stranger CHW",
             "role": "chw",
         },

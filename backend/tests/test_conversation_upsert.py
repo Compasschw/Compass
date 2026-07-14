@@ -149,7 +149,7 @@ async def test_http_find_or_create_parallel_produces_single_row(client: AsyncCli
         "/api/v1/auth/register",
         json={
             "email": "http_chw@example.com",
-            "password": "testpass123",
+            "password": "Testpass123!",
             "name": "HTTP CHW Upsert",
             "role": "chw",
         },
@@ -161,7 +161,7 @@ async def test_http_find_or_create_parallel_produces_single_row(client: AsyncCli
         "/api/v1/auth/register",
         json={
             "email": "http_member@example.com",
-            "password": "testpass123",
+            "password": "Testpass123!",
             "name": "HTTP Member Upsert",
             "role": "member",
             "terms_accepted": True,
@@ -257,7 +257,7 @@ async def test_sequential_http_find_or_create_reuses_existing_thread(client: Asy
         "/api/v1/auth/register",
         json={
             "email": "dedup_chw@example.com",
-            "password": "testpass123",
+            "password": "Testpass123!",
             "name": "Dedup CHW",
             "role": "chw",
         },
@@ -269,7 +269,7 @@ async def test_sequential_http_find_or_create_reuses_existing_thread(client: Asy
         "/api/v1/auth/register",
         json={
             "email": "dedup_member@example.com",
-            "password": "testpass123",
+            "password": "Testpass123!",
             "name": "Dedup Member",
             "role": "member",
             "terms_accepted": True,

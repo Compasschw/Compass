@@ -23,15 +23,16 @@ from app.schemas.auth import (
     TokenResponse,
 )
 from app.services.auth_service import (
-    append_new_member_to_csv as _append_new_member_to_csv,
-)
-from app.services.auth_service import (
+    DuplicatePhoneError,
     authenticate_user,
     create_tokens,
     mark_first_login,
     register_user,
     revoke_refresh_token,
     store_refresh_token,
+)
+from app.services.auth_service import (
+    append_new_member_to_csv as _append_new_member_to_csv,
 )
 from app.services.signup_confirmations import send_signup_confirmations
 from app.services.storage.avatar_urls import presigned_avatar_url
@@ -134,11 +135,23 @@ async def register(
             "communications_consent_at": consent_now,
         }
 
-    user = await register_user(
-        db,
-        data.email, data.password, data.name, data.role, data.phone,
-        member_profile_fields=member_profile_fields,
-    )
+    try:
+        user = await register_user(
+            db,
+            data.email, data.password, data.name, data.role, data.phone,
+            member_profile_fields=member_profile_fields,
+        )
+    except DuplicatePhoneError as exc:
+        # Log only the last 4 digits (mirrors phone_verification.py's
+        # _masked() convention) — a phone number is PII and the full E.164
+        # value has no diagnostic value beyond "which account" that the last
+        # 4 digits don't already provide.
+        _masked_suffix = exc.normalized_phone[-4:] if len(exc.normalized_phone) >= 4 else exc.normalized_phone
+        logger.info("register: rejected duplicate phone ending in ***%s", _masked_suffix)
+        raise HTTPException(
+            status_code=409,
+            detail="An account with this phone number already exists.",
+        ) from exc
     if user is None:
         raise HTTPException(status_code=400, detail="Email already registered")
     # Self-service registration returns tokens immediately (auto-login) — this

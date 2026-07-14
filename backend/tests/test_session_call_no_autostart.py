@@ -45,7 +45,7 @@ async def _register(client: AsyncClient, email: str, role: str) -> dict:
     """Register a new user via the HTTP endpoint and return the token payload."""
     payload: dict = {
         "email": email,
-        "password": "testpass123",
+        "password": "Testpass123!",
         "name": f"Test {role.upper()} {email[:12]}",
         "role": role,
     }
