@@ -183,6 +183,10 @@ class Settings(BaseSettings):
     magic_link_ttl_minutes: int = 15
     magic_link_base_url: str = "https://joincompasschw.com/auth/magic"
 
+    # Forgot-password reset flow (email-delivered reset link)
+    password_reset_ttl_minutes: int = 30
+    password_reset_base_url: str = "https://joincompasschw.com/auth/reset-password"
+
     # Transcription provider (assemblyai for medical-grade; vonage_builtin as fallback)
     transcription_provider: str = "assemblyai"
     assemblyai_api_key: str = ""

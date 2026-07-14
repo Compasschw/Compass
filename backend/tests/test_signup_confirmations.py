@@ -482,7 +482,9 @@ def test_render_signup_confirmation_email_has_nonempty_subject_and_body():
     assert subject.strip()
     assert "Jamie" in html
     assert "Jamie" in text
-    assert "signing up" in text.lower() or "signed up" in text.lower()
+    # v2 (Epic A v2): the self-signup member variant opens with "Welcome to
+    # CompassCHW" rather than the old "Thanks for signing up" phrasing.
+    assert "welcome to compasschw" in text.lower()
 
 
 def test_render_signup_confirmation_email_handles_empty_name():
@@ -491,6 +493,156 @@ def test_render_signup_confirmation_email_handles_empty_name():
     subject, html, text = render_signup_confirmation_email("")
     assert subject.strip()
     assert "Hi there" in html or "Hi there" in text
+
+
+# ─── Epic A v2: welcome email copy variants ────────────────────────────────
+
+
+def test_self_signup_member_variant_has_next_steps_and_app_link_no_phi():
+    """Self-signup member (role=member, created_by_chw=False): welcome +
+    "what happens next" bullets (find your CHW, schedule your first
+    session), app link, support contact, and "didn't create this account"
+    disclaimer. Must NOT mention any CHW name or health information (no
+    PHI) — the copy is intentionally generic."""
+    from app.services.email import render_signup_confirmation_email
+
+    subject, html, text = render_signup_confirmation_email(
+        "Jamie", created_by_chw=False, role="member",
+    )
+    assert subject.strip()
+    lowered_text = text.lower()
+
+    # "What happens next" bullets.
+    assert "find your community health worker" in lowered_text
+    assert "schedule your first session" in lowered_text
+
+    # App link + support contact.
+    assert "https://joincompasschw.com" in text
+    assert "support@joincompasschw.com" in text
+
+    # Enumeration-safe disclaimer.
+    assert "didn't create this account" in lowered_text
+
+    # Must NOT contain the CHW-created variant's password-setup copy.
+    assert "set your own password" not in lowered_text
+
+    # No PHI: no CHW name (this variant never receives one) and no
+    # health-related terms.
+    for phi_term in ("diagnosis", "medication", "health condition", "medi-cal id"):
+        assert phi_term not in lowered_text
+
+
+def test_chw_created_member_variant_mentions_chw_created_account_and_password_setup():
+    """CHW-created member (role=member, created_by_chw=True): same welcome
+    shape as self-signup, plus "your CHW created your account" + "you'll
+    set your own password at first sign-in" — but still no CHW name (no
+    PHI)."""
+    from app.services.email import render_signup_confirmation_email
+
+    subject, html, text = render_signup_confirmation_email(
+        "Alex", created_by_chw=True, role="member",
+    )
+    lowered_text = text.lower()
+
+    assert "community health worker created your account" in lowered_text
+    assert "set your own password" in lowered_text
+
+    # Still has the same "what happens next" bullets as the self-signup variant.
+    assert "find your community health worker" in lowered_text
+    assert "schedule your first session" in lowered_text
+
+    # Support contact present in this variant too.
+    assert "support@joincompasschw.com" in text
+
+    # No PHI — no CHW name is threaded into this template at all.
+    for phi_term in ("diagnosis", "medication", "health condition"):
+        assert phi_term not in lowered_text
+
+
+def test_chw_account_signup_variant_uses_simple_welcome_copy():
+    """CHW (role != member) signups keep the simple welcome copy — no
+    member-facing "what happens next" bullets."""
+    from app.services.email import render_signup_confirmation_email
+
+    subject, html, text = render_signup_confirmation_email(
+        "Morgan", created_by_chw=False, role="chw",
+    )
+    lowered_text = text.lower()
+
+    assert "thanks for signing up" in lowered_text
+    assert "find your community health worker" not in lowered_text
+    assert "schedule your first session" not in lowered_text
+    assert "support@joincompasschw.com" in text
+
+
+def test_both_member_variants_contain_support_email():
+    """Both the self-signup and CHW-created member variants must surface
+    the support contact address."""
+    from app.services.email import render_signup_confirmation_email
+
+    _, _, self_signup_text = render_signup_confirmation_email(
+        "Jamie", created_by_chw=False, role="member",
+    )
+    _, _, chw_created_text = render_signup_confirmation_email(
+        "Alex", created_by_chw=True, role="member",
+    )
+    assert "support@joincompasschw.com" in self_signup_text
+    assert "support@joincompasschw.com" in chw_created_text
+
+
+async def test_chw_created_member_gets_the_chw_created_copy_variant_end_to_end(
+    client: AsyncClient, chw_tokens: dict,
+):
+    """End-to-end: POST /chw/members must select the created_by_chw=True
+    copy variant, not the plain self-signup welcome."""
+    fake_send = AsyncMock(
+        return_value=EmailResult(success=True, provider_message_id="ses-msg-variant")
+    )
+    with patch("app.services.email.get_email_provider") as mock_provider:
+        mock_provider.return_value.send = fake_send
+        res = await client.post(
+            "/api/v1/chw/members",
+            json=CHW_CREATE_MEMBER_PAYLOAD,
+            headers=auth_header(chw_tokens),
+        )
+    assert res.status_code == 201, res.text
+
+    fake_send.assert_awaited_once()
+    (sent_message,), _ = fake_send.call_args
+    assert "set your own password" in sent_message.text.lower()
+    assert "community health worker created your account" in sent_message.text.lower()
+
+
+async def test_self_signup_member_gets_the_plain_welcome_copy_variant_end_to_end(
+    client: AsyncClient,
+):
+    """End-to-end: POST /auth/register (self-signup) must NOT select the
+    created_by_chw copy variant."""
+    fake_send = AsyncMock(
+        return_value=EmailResult(success=True, provider_message_id="ses-msg-self")
+    )
+    payload = {
+        "email": "variant.self.signup@example.com",
+        "password": "password123",
+        "name": "Variant Self Signup",
+        "role": "member",
+        **{
+            k: v
+            for k, v in complete_member_signup_payload(
+                email="variant.self.signup@example.com"
+            ).items()
+            if k not in {"email", "password", "name", "role"}
+        },
+    }
+    with patch("app.services.email.get_email_provider") as mock_provider:
+        mock_provider.return_value.send = fake_send
+        res = await client.post("/api/v1/auth/register", json=payload)
+    assert res.status_code == 201, res.text
+
+    fake_send.assert_awaited_once()
+    (sent_message,), _ = fake_send.call_args
+    assert "set your own password" not in sent_message.text.lower()
+    assert "find your community health worker" in sent_message.text.lower()
 
 
 async def test_send_signup_confirmations_noop_when_user_missing():

@@ -39,7 +39,7 @@ from uuid import UUID
 logger = logging.getLogger("compass.signup_confirmations")
 
 
-async def send_signup_confirmations(user_id: UUID) -> None:
+async def send_signup_confirmations(user_id: UUID, *, created_by_chw: bool = False) -> None:
     """Best-effort: send the post-signup confirmation email, and — for
     SMS-eligible members — a brief confirmation SMS.
 
@@ -47,14 +47,26 @@ async def send_signup_confirmations(user_id: UUID) -> None:
     register flow (self-signup, OAuth signup, CHW-created member) AFTER the
     account is durably committed. Opens its own DB session; never raises.
 
-    Email is sent for every role (member, chw, admin) since the copy is
-    generic. SMS is attempted only for members, and only when
-    ``check_sms_eligibility`` says the member's phone is verified,
-    non-sentinel, non-duplicate, and not opted out — which in practice means
-    it usually no-ops at signup time (phone verification happens via a
-    separate OTP flow, after account creation), but the guard is here so
-    already-eligible members (e.g. re-registration edge cases, or future
-    flows that verify phone before this fires) still get texted.
+    Args:
+        user_id: The just-created account's id.
+        created_by_chw: True only when this call originates from the
+            CHW-initiated member-onboarding path (``POST /chw/members``) —
+            selects the "your CHW created this account for you" email copy
+            variant (Epic A v2) instead of the plain self-signup welcome.
+            Self-signup and OAuth-signup call sites leave this at the
+            default False. Ignored for non-member roles (the CHW-created
+            variant only exists for members — see
+            ``render_signup_confirmation_email``).
+
+    Email is sent for every role (member, chw, admin); the copy varies by
+    role/creation-path (Epic A v2) but the send is unconditional. SMS is
+    attempted only for members, and only when ``check_sms_eligibility`` says
+    the member's phone is verified, non-sentinel, non-duplicate, and not
+    opted out — which in practice means it usually no-ops at signup time
+    (phone verification happens via a separate OTP flow, after account
+    creation), but the guard is here so already-eligible members (e.g.
+    re-registration edge cases, or future flows that verify phone before
+    this fires) still get texted.
     """
     from sqlalchemy import select
 
@@ -68,7 +80,7 @@ async def send_signup_confirmations(user_id: UUID) -> None:
                 logger.warning("signup_confirmations: user not found user_id=%s", user_id)
                 return
 
-            await _send_confirmation_email(user)
+            await _send_confirmation_email(user, created_by_chw=created_by_chw)
 
             if user.role == "member":
                 profile_result = await db.execute(
@@ -88,12 +100,17 @@ async def send_signup_confirmations(user_id: UUID) -> None:
         )
 
 
-async def _send_confirmation_email(user) -> None:
-    """Send the generic signup confirmation email. Logs and swallows failure."""
+async def _send_confirmation_email(user, *, created_by_chw: bool = False) -> None:
+    """Send the signup confirmation email (variant chosen by role /
+    created_by_chw — see ``render_signup_confirmation_email``). Logs and
+    swallows failure."""
     from app.services.email import send_signup_confirmation_email
 
     try:
-        result = await send_signup_confirmation_email(to=user.email, name=user.name)
+        result = await send_signup_confirmation_email(
+            to=user.email, name=user.name,
+            created_by_chw=created_by_chw, role=user.role,
+        )
         if not result.success:
             logger.warning(
                 "signup_confirmations: confirmation email failed user=%s error=%s",

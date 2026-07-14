@@ -15,6 +15,7 @@ from app.models.flag_note import FlagNote
 from app.models.followup import SessionFollowup
 from app.models.magic_link import MagicLinkToken
 from app.models.member_document import MemberDocument
+from app.models.password_reset import PasswordResetToken
 from app.models.request import ServiceRequest
 from app.models.resource import Resource, ResourceSuggestion
 from app.models.reward import RedemptionItem, RewardTransaction
@@ -41,6 +42,7 @@ __all__ = [
     "CommunicationTouch",
     "DeviceToken",
     "MagicLinkToken",
+    "PasswordResetToken",
     "WaitlistEntry",
     "CHWIntakeResponse",
     "AdminTotpSecret",

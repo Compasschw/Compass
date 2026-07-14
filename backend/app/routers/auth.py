@@ -14,6 +14,10 @@ from app.schemas.auth import (
     ChangePasswordRequest,
     ChangePasswordResponse,
     LoginRequest,
+    PasswordResetConfirmBody,
+    PasswordResetConfirmResponse,
+    PasswordResetRequestBody,
+    PasswordResetRequestResponse,
     RefreshRequest,
     RegisterRequest,
     TokenResponse,
@@ -813,3 +817,263 @@ async def verify_magic_link(
         access_token=access, refresh_token=refresh, role=user.role, name=user.name,
         must_change_password=user.must_change_password,
     )
+
+
+# ─── Forgot-password reset flow ───────────────────────────────────────────────
+
+
+@router.post(
+    "/password-reset/request",
+    response_model=PasswordResetRequestResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+@limiter.limit("3/minute")
+async def request_password_reset(
+    request: Request,
+    data: PasswordResetRequestBody,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Request a password-reset email.
+
+    Security notes (mirrors ``/auth/magic/request``'s no-enumeration
+    contract):
+    - ALWAYS returns 202 with an identical body regardless of outcome — an
+      attacker cannot use this endpoint to discover which emails are
+      registered, active, or password-based.
+    - Rate-limited to 3/min per IP.
+    - Token creation is silently skipped (still 202) for: no account with
+      this email, ``is_active=False`` accounts, tombstoned/deleted accounts
+      (``deleted_at IS NOT NULL`` — see ``app.services.account_deletion``),
+      and OAuth-only accounts (``password_hash IS NULL``) — the last group
+      gets an informational "use Google/Apple sign-in" email instead of a
+      reset link, since there is no CompassCHW password to reset.
+    - For eligible users: a cryptographically random token
+      (``secrets.token_urlsafe(32)``) is generated, only its SHA-256 hash is
+      stored, TTL comes from ``settings.password_reset_ttl_minutes``, and
+      the requesting IP is captured on the row.
+    - Newest-link-only: any prior outstanding (unconsumed, unexpired) reset
+      token for this user is consumed (not deleted — consumed_at is set) so
+      an old, still-emailed link can never be combined with a new one.
+    - The reset email send is best-effort — a slow/down SES never changes
+      the 202 response.
+    - An ``AuditLog`` row is written with the user id + requesting IP only;
+      the raw token (and its hash) are NEVER included in audit details.
+    """
+    import hashlib
+    import secrets
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import func, select
+
+    from app.config import settings
+    from app.models.password_reset import PasswordResetToken
+
+    client_ip = request.client.host if request.client else None
+
+    normalized_email = (data.email or "").strip().lower()
+    result = await db.execute(
+        select(User).where(func.lower(User.email) == normalized_email)
+    )
+    user = result.scalar_one_or_none()
+
+    # No-enumeration guard: silently no-op (but still 202) for every
+    # ineligible case — missing account, deactivated, tombstoned/deleted.
+    if user is None or not user.is_active or user.deleted_at is not None:
+        return PasswordResetRequestResponse()
+
+    if user.password_hash is None:
+        # OAuth-only account — there is no password to reset. Send the
+        # informational email instead of a reset link; still 202, still no
+        # token row created.
+        from app.services.email import send_oauth_only_password_reset_email
+
+        # send_oauth_only_password_reset_email already catches and logs its
+        # own exceptions (never-raise contract, like every email sender in
+        # this module) — this try/except is defense-in-depth so a caller
+        # that somehow bypasses that contract (e.g. a monkeypatched
+        # replacement in tests, or a future refactor) still can never turn
+        # into an unhandled 500 on this no-enumeration endpoint.
+        try:
+            email_result = await send_oauth_only_password_reset_email(to=user.email)
+            if not email_result.success:
+                logger.warning(
+                    "password_reset.request: oauth-only informational email failed "
+                    "user=%s error=%s",
+                    user.id, email_result.error,
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(
+                "password_reset.request: oauth-only informational email raised "
+                "unexpectedly user=%s error=%s",
+                user.id, exc,
+            )
+        return PasswordResetRequestResponse()
+
+    # Newest-link-only: consume any prior outstanding token for this user
+    # before issuing a new one.
+    now = datetime.now(UTC)
+    prior_result = await db.execute(
+        select(PasswordResetToken).where(
+            PasswordResetToken.user_id == user.id,
+            PasswordResetToken.consumed_at.is_(None),
+        )
+    )
+    for prior in prior_result.scalars().all():
+        prior.consumed_at = now
+
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    expires_at = now + timedelta(minutes=settings.password_reset_ttl_minutes)
+
+    db.add(PasswordResetToken(
+        user_id=user.id,
+        token_hash=token_hash,
+        expires_at=expires_at,
+        ip_address=client_ip,
+    ))
+
+    from app.models.audit import AuditLog
+
+    db.add(AuditLog(
+        user_id=user.id,
+        action="password_reset_requested",
+        resource="password_reset",
+        resource_id=str(user.id),
+        ip_address=client_ip,
+        details={},
+    ))
+
+    await db.commit()
+
+    reset_url = f"{settings.password_reset_base_url}?token={raw_token}"
+
+    from app.services.email import send_password_reset_email
+
+    # send_password_reset_email already catches and logs its own exceptions
+    # (never-raise contract, mirroring send_magic_link_email) — this
+    # try/except is defense-in-depth so a caller that somehow bypasses that
+    # contract still can never turn into an unhandled 500 on this
+    # no-enumeration endpoint. The token + audit row are already committed
+    # above, so a delivery failure here never rolls back durable state.
+    try:
+        email_result = await send_password_reset_email(
+            to=user.email,
+            reset_url=reset_url,
+            ttl_minutes=settings.password_reset_ttl_minutes,
+        )
+        if not email_result.success:
+            logger.warning(
+                "password_reset.request: reset email failed user=%s error=%s",
+                user.id, email_result.error,
+            )
+            if settings.environment == "development":
+                # Local-only convenience when SES isn't configured.
+                logger.warning("Password reset URL (development only): %s", reset_url)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(
+            "password_reset.request: reset email raised unexpectedly user=%s error=%s",
+            user.id, exc,
+        )
+
+    return PasswordResetRequestResponse()
+
+
+@router.post("/password-reset/confirm", response_model=PasswordResetConfirmResponse)
+@limiter.limit("5/minute")
+async def confirm_password_reset(
+    request: Request,
+    data: PasswordResetConfirmBody,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Complete a password reset using a token minted by
+    ``POST /password-reset/request``.
+
+    Security notes:
+    - The presented token is SHA-256'd and looked up by hash — the raw
+      token is never stored.
+    - Unknown, expired, and already-consumed tokens all return the SAME
+      generic 401 message (no information leakage about *why* a token
+      didn't work).
+    - Re-checks the owning user is still active and not
+      deleted/tombstoned — an account could have been deactivated/deleted
+      in the window between requesting and confirming a reset.
+    - On success: hashes the new password with the same argon2 verifier as
+      register/login/change-password, marks the token consumed, REVOKES
+      EVERY outstanding refresh token for the account (signs the user out
+      of all devices — a password reset is treated as a full session
+      invalidation event), and clears ``must_change_password`` (the new,
+      self-chosen password satisfies that requirement).
+    - Writes an ``AuditLog`` row (user id only, no token material).
+    - Sends a best-effort "your password was changed" notification email —
+      a delivery failure never unwinds the already-committed password
+      change.
+    - Returns 200 with a minimal ``{"ok": true}`` body — deliberately does
+      NOT mint access/refresh tokens or auto-login; the client must prompt
+      the user to sign in again with the new password.
+    """
+    import hashlib
+    from datetime import UTC, datetime
+
+    from sqlalchemy import select
+
+    from app.models.audit import AuditLog
+    from app.models.password_reset import PasswordResetToken
+    from app.services.auth_service import revoke_all_refresh_tokens_for_user
+    from app.utils.security import hash_password
+
+    _GENERIC_INVALID_DETAIL = "Invalid or expired reset link"
+
+    token_hash = hashlib.sha256(data.token.encode("utf-8")).hexdigest()
+    result = await db.execute(
+        select(PasswordResetToken).where(PasswordResetToken.token_hash == token_hash)
+    )
+    prt = result.scalar_one_or_none()
+    if prt is None:
+        raise HTTPException(status_code=401, detail=_GENERIC_INVALID_DETAIL)
+
+    now = datetime.now(UTC)
+    if prt.consumed_at is not None or prt.expires_at < now:
+        raise HTTPException(status_code=401, detail=_GENERIC_INVALID_DETAIL)
+
+    user = await db.get(User, prt.user_id)
+    if user is None or not user.is_active or user.deleted_at is not None:
+        raise HTTPException(status_code=401, detail=_GENERIC_INVALID_DETAIL)
+
+    user.password_hash = hash_password(data.new_password)
+    user.must_change_password = False
+    prt.consumed_at = now
+    revoked_count = await revoke_all_refresh_tokens_for_user(db, user.id)
+
+    client_ip = request.client.host if request.client else None
+    db.add(AuditLog(
+        user_id=user.id,
+        action="password_reset_completed",
+        resource="password_reset",
+        resource_id=str(user.id),
+        ip_address=client_ip,
+        details={"refresh_tokens_revoked": revoked_count},
+    ))
+
+    await db.commit()
+
+    from app.services.email import send_password_changed_email
+
+    # Defense-in-depth try/except, matching the request endpoint above — the
+    # password change + token consumption + refresh-token revocation are
+    # already committed by this point, so a notification-email failure must
+    # never surface as a 500 on an otherwise-successful reset.
+    try:
+        email_result = await send_password_changed_email(to=user.email)
+        if not email_result.success:
+            logger.warning(
+                "password_reset.confirm: password-changed email failed user=%s error=%s",
+                user.id, email_result.error,
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(
+            "password_reset.confirm: password-changed email raised unexpectedly "
+            "user=%s error=%s",
+            user.id, exc,
+        )
+
+    return PasswordResetConfirmResponse()
