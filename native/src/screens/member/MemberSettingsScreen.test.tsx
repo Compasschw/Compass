@@ -264,10 +264,10 @@ describe('MemberSettingsScreen — phone-width form/grid does not overflow the p
     // available content width at a 390px viewport, forcing the page body to
     // scroll sideways instead of the grid stacking cleanly to one column.
     expect(await screen.findByText('Profile information')).toBeTruthy();
-    // "Privacy & Security" appears twice (the tab label AND the bottom
-    // card's title) — assert at least the card copy is present via a more
-    // specific match, and that both occurrences render without throwing.
-    expect(screen.getAllByText('Privacy & Security').length).toBeGreaterThanOrEqual(2);
+    // "Privacy & Security" appears exactly once — the bottom card's title.
+    // (It used to also be a tab label, but the tab strip is hidden until
+    // further notice — QA batch #7.)
+    expect(screen.getAllByText('Privacy & Security').length).toBe(1);
     expect(screen.getByText('Need help?')).toBeTruthy();
 
     // documentElement never grows wider than the phone viewport itself —
@@ -282,6 +282,44 @@ describe('MemberSettingsScreen — phone-width form/grid does not overflow the p
     await screen.findByText('Settings');
 
     expect(await screen.findByText('Profile information')).toBeTruthy();
-    expect(screen.getAllByText('Privacy & Security').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText('Privacy & Security').length).toBe(1);
+  });
+});
+
+describe('MemberSettingsScreen — Settings tabs Profile-only (QA batch #7)', () => {
+  it('renders only the Profile tab content — no Notifications/Language/Help panels', async () => {
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByText('Profile information')).toBeTruthy());
+
+    // Hidden panels' unambiguous copy — none of these strings appear in the
+    // always-visible bottom cards, so their absence proves the panels are
+    // unreachable. ("Two-factor authentication" is NOT asserted: it also
+    // lives in the bottom Privacy & Security summary card.)
+    expect(screen.queryByText('Notifications')).toBeNull();
+    expect(screen.queryByText('Session Reminders')).toBeNull();
+    expect(screen.queryByText('Help & Support')).toBeNull();
+    // The Language panel's radio labels only render there.
+    expect(screen.queryByText('Español')).toBeNull();
+    expect(screen.queryByLabelText('中文')).toBeNull();
+  });
+
+  it('does not render a tab strip (single Profile tab is hidden, not shown as one pill)', async () => {
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByText('Profile information')).toBeTruthy());
+
+    expect(screen.queryByRole('tab')).toBeNull();
+    expect(screen.queryByLabelText('Notifications')).toBeNull();
+    expect(screen.queryByLabelText('Language')).toBeNull();
+  });
+
+  it('keeps the always-visible bottom cards (Privacy & Security summary, Need help?)', async () => {
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByText('Profile information')).toBeTruthy());
+
+    expect(screen.getAllByText('Privacy & Security').length).toBe(1);
+    expect(screen.getByText('Need help?')).toBeTruthy();
   });
 });

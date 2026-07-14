@@ -3,8 +3,10 @@
  *
  * Layout matches `_mockups/member-settings.html` 1:1 on web:
  *   - Page header (Settings + subtitle)
- *   - Main card with underline-style tab strip (Profile / Notifications /
- *     Privacy & Security / Language / Help). Profile is the default tab.
+ *   - Main card showing the Profile tab's content. The underline-style tab
+ *     strip (Profile / Notifications / Privacy & Security / Language / Help)
+ *     is hidden until further notice (QA batch #7, same as CHWProfileScreen)
+ *     — see TAB_ORDER below.
  *   - Below the main card: 2-column grid of always-visible cards —
  *     left: Privacy & Security summary (4 toggles + Deactivate + Delete);
  *     right: Need help? (3 contact buttons).
@@ -66,6 +68,12 @@ import { BP_PHONE } from '../../constants/breakpoints';
 
 // ─── Types & constants ────────────────────────────────────────────────────────
 
+// QA batch #7 (Wave-2 B1): Notifications / Privacy & Security / Language /
+// Help tabs are hidden until further notice — product wants Settings to be
+// Profile-only for now, mirroring the identical change on CHWProfileScreen.
+// Type + labels are kept as-is (not deleted) so the now-unreachable tab
+// panels below still type-check and can be restored by re-adding the tab
+// keys to TAB_ORDER; only TAB_ORDER (what's actually shown) is trimmed.
 type SettingsTab = 'profile' | 'notifications' | 'privacy' | 'language' | 'help';
 
 const TAB_LABELS: Record<SettingsTab, string> = {
@@ -76,7 +84,9 @@ const TAB_LABELS: Record<SettingsTab, string> = {
   help:          'Help',
 };
 
-const TAB_ORDER: SettingsTab[] = ['profile', 'notifications', 'privacy', 'language', 'help'];
+// Hidden until further notice (QA batch #7) — was:
+// ['profile', 'notifications', 'privacy', 'language', 'help']
+const TAB_ORDER: SettingsTab[] = ['profile'];
 
 const LANGUAGE_OPTIONS = [
   { value: 'English',    label: 'English' },
@@ -596,7 +606,11 @@ export function MemberSettingsScreen(): React.JSX.Element {
 
           {/* Main card with tab strip */}
           <Card style={pageStyles.mainCard}>
-            <TabBar active={activeTab} onChange={setActiveTab} />
+            {/* QA batch #7: with only one tab (Profile) left in TAB_ORDER,
+                the tab strip is pure visual noise — hide it entirely rather
+                than render a single non-interactive "Profile" pill. Restore
+                automatically once TAB_ORDER regains a 2nd entry. */}
+            {TAB_ORDER.length > 1 && <TabBar active={activeTab} onChange={setActiveTab} />}
 
             <View style={pageStyles.tabContent}>
               {activeTab === 'profile' && (
