@@ -81,6 +81,16 @@ class Conversation(Base):
     archived_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # ── "New message from member" SMS alert throttle (Wave-2 Agent B3) ──────
+    # Smallest-footprint throttle for the best-effort CHW SMS alert fired when
+    # the MEMBER sends a message: at most one alert SMS per conversation per
+    # 30 minutes. A single timestamp is sufficient because the throttle is
+    # scoped per-conversation, not per-message — see
+    # app.services.sms_notifications.send_new_message_sms and migration
+    # smsnotif0714 for the full rationale.
+    member_message_sms_alert_last_sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 class Message(Base):
     __tablename__ = "messages"

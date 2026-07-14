@@ -359,5 +359,22 @@ async def trigger_chw_payout(
         claim.stripe_transfer_id = result.provider_transfer_id
         # Actual `paid_to_chw_at` timestamp is set by the transfer.created webhook
         await db.commit()
+
+        # Payout-initiated SMS alert (Wave-2 Agent B3). Best-effort, never
+        # raises — called inline (not via BackgroundTasks) since this
+        # function itself runs from the scheduler's trigger_pending_payouts
+        # job, not an HTTP request, so there is no response to protect by
+        # deferring the send; send_payout_initiated_sms already swallows
+        # every internal failure so it can never break the payout job's loop.
+        try:
+            from app.services.sms_notifications import send_payout_initiated_sms
+
+            await send_payout_initiated_sms(db, chw_id=claim.chw_id, amount_cents=amount_cents)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "sms_notifications: payout alert raised unexpectedly claim=%s error=%s",
+                billing_claim_id, exc,
+            )
+
         return True
     return False
