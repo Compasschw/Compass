@@ -186,7 +186,7 @@ async def _register_unrelated_chw(client: AsyncClient) -> dict:
     TESTING.md rule #1)."""
     res = await client.post("/api/v1/auth/register", json={
         "email": "unrelated-chw@example.com",
-        "password": "testpass123",
+        "password": "Testpass123!",
         "name": "Unrelated CHW",
         "role": "chw",
     })
