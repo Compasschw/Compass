@@ -1,8 +1,16 @@
 /**
  * Component test for CHWMessagesScreen's `promptComplete` route-param wiring
- * — the auto-open behavior ActiveSessionBadge's "Complete Session" button
- * relies on (see native/src/components/sessions/ActiveSessionBadge.tsx and
+ * — the auto-open behavior ActiveSessionBadge's "Complete" button relies on
+ * (see native/src/components/sessions/ActiveSessionBadge.tsx and
  * MemberContextRail's `promptCompleteOnMount` prop).
+ *
+ * #19/#20 (2026-07-13): promptComplete now calls POST /sessions/{id}/end and
+ * opens DocumentationModal DIRECTLY as an on-brand overlay — there is no
+ * longer an intermediate "Complete the session for X?" confirm panel (that
+ * panel, and the rail's separate manual "Complete Session" button, were
+ * removed; ActiveSessionBadge is now the sole active-session control
+ * surface, and it already offers Cancel/Missed before the CHW ever taps
+ * Complete).
  *
  * Split into its own file (rather than added to CHWMessagesScreen.test.tsx)
  * because it needs a different `useRoute()` mock — CHWMessagesScreen.test.tsx
@@ -89,6 +97,12 @@ function sessionFixture(status: string) {
 
 let currentSessionStatus = 'in_progress';
 let currentConsent: string | null = null;
+// Mutable per-test `ended_at` the mocked POST /sessions/{id}/end route
+// returns, alongside the fixture's fixed `started_at`
+// ('2026-07-11T09:00:00.000Z') — lets individual tests control the
+// resulting session duration (e.g. a sub-16-minute end time for the
+// not-billable-floor test). Defaults to a comfortably-billable 50 minutes.
+let endSessionEndedAt = '2026-07-11T09:50:00.000Z';
 
 function routeApi(path: string, options?: { method?: string; body?: string }): unknown {
   const method = options?.method ?? 'GET';
@@ -100,7 +114,12 @@ function routeApi(path: string, options?: { method?: string; body?: string }): u
     return [conversationFixture];
   }
   if (path.startsWith('/sessions/') && path.endsWith('/end') && method === 'POST') {
-    return { ...sessionFixture('awaiting_documentation'), ended_at: new Date().toISOString() };
+    currentSessionStatus = 'awaiting_documentation';
+    return {
+      ...sessionFixture('awaiting_documentation'),
+      started_at: sessionFixture('awaiting_documentation').started_at,
+      ended_at: endSessionEndedAt,
+    };
   }
   if (path.startsWith('/sessions/')) {
     return sessionFixture(currentSessionStatus);
@@ -129,8 +148,8 @@ function renderScreen() {
 }
 
 beforeAll(() => {
-  // Wide desktop viewport — MemberContextRail (and its Complete-Session
-  // confirm panel) only renders above BP_HIDE_RAIL (1280px).
+  // Wide desktop viewport — MemberContextRail (and the badge's controls)
+  // only render above BP_HIDE_RAIL (1280px).
   Object.defineProperty(document.documentElement, 'clientWidth', {
     value: SDOH_PANEL_PANE_BREAKPOINT + 200,
     configurable: true,
@@ -144,6 +163,7 @@ beforeAll(() => {
 beforeEach(() => {
   currentSessionStatus = 'in_progress';
   currentConsent = null;
+  endSessionEndedAt = '2026-07-11T09:50:00.000Z';
   mockedApi.mockReset();
   mockedApi.mockImplementation(async (path: string, options?: { method?: string; body?: string }) =>
     routeApi(path, options),
@@ -154,29 +174,58 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe('CHWMessagesScreen — promptComplete route param (ActiveSessionBadge wiring)', () => {
-  it('auto-opens the Complete-Session confirm panel when landing with promptComplete=true on an in-progress session', async () => {
+describe('CHWMessagesScreen — promptComplete route param (ActiveSessionBadge wiring, #19/#20)', () => {
+  it('auto-calls POST /sessions/{id}/end and opens DocumentationModal directly — no confirm panel — when landing with promptComplete=true on an in-progress session', async () => {
     renderScreen();
 
-    // The confirm panel opens on its own — no click required.
-    await waitFor(
-      () => {
-        expect(screen.getByText('Complete the session for Rosa?')).toBeTruthy();
-      },
-      { timeout: 3000 },
-    );
-    expect(screen.getByRole('dialog', { name: 'Confirm end session' })).toBeTruthy();
+    await screen.findByText('Rosa Gutierrez', {}, { timeout: 3000 });
 
-    // Confirming actually ends the session through the real mutation.
-    const proceedBtn = screen.getByLabelText('Confirm complete session');
-    fireEvent.click(proceedBtn);
-
+    // /end fires automatically, with no user interaction / confirm step.
     await waitFor(() => {
       expect(mockedApi).toHaveBeenCalledWith(`/sessions/${SESSION_ID}/end`, { method: 'POST' });
     });
+
+    // DocumentationModal opens directly as an overlay.
+    await screen.findByLabelText('Close documentation modal', {}, { timeout: 3000 });
+
+    // The old intermediate confirm panel is gone — never rendered at any point.
+    expect(screen.queryByText('Complete the session for Rosa?')).toBeNull();
+    expect(screen.queryByRole('dialog', { name: 'Confirm end session' })).toBeNull();
+
+    // On-brand overlay (Epic Q4, re-verified under the new #19/#20 trigger):
+    // rendered in-place inside the Messages page, not a full-screen Modal
+    // takeover — the thread/composer stays reachable in the same document.
+    expect(screen.getByPlaceholderText(/type a message/i)).toBeTruthy();
+    expect(screen.getByLabelText('Search message threads')).toBeTruthy();
+
+    // Q1: inline "Units: N" line present (50-minute default fixture duration).
+    expect(screen.getByText('Units:')).toBeTruthy();
+
+    // Q3: a grouped diagnosis chip renders inside the overlay.
+    fireEvent.click(screen.getByLabelText('Housing'));
+    expect(screen.getByLabelText('Z59.00: Homelessness, unspecified')).toBeTruthy();
   });
 
-  it('does NOT auto-open the confirm panel when the session is not in a completable state (still scheduled)', async () => {
+  it('the 16-minute not-billable gate still blocks submit inside the auto-opened overlay', async () => {
+    // 10-minute session (started 09:00, ended 09:10) — under the 16-minute
+    // floor, so the overlay's submit must stay blocked.
+    endSessionEndedAt = '2026-07-11T09:10:00.000Z';
+    renderScreen();
+
+    await screen.findByText('Rosa Gutierrez', {}, { timeout: 3000 });
+    await waitFor(() => {
+      expect(mockedApi).toHaveBeenCalledWith(`/sessions/${SESSION_ID}/end`, { method: 'POST' });
+    });
+    await screen.findByLabelText('Close documentation modal', {}, { timeout: 3000 });
+
+    expect(
+      screen.getByText('Under 16 minutes — not billable; no claim will be filed.'),
+    ).toBeTruthy();
+    const submit = screen.getByLabelText('Submit documentation and billing');
+    expect(submit.getAttribute('aria-disabled')).toBe('true');
+  });
+
+  it('does NOT call /end or open the modal when the session is not in a completable state (still scheduled)', async () => {
     currentSessionStatus = 'scheduled';
     renderScreen();
 
@@ -186,19 +235,44 @@ describe('CHWMessagesScreen — promptComplete route param (ActiveSessionBadge w
       expect(screen.getByLabelText('Begin session')).toBeTruthy();
     });
 
-    expect(screen.queryByText('Complete the session for Rosa?')).toBeNull();
-    expect(screen.queryByRole('dialog', { name: 'Confirm end session' })).toBeNull();
+    expect(mockedApi).not.toHaveBeenCalledWith(
+      `/sessions/${SESSION_ID}/end`,
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(screen.queryByLabelText('Close documentation modal')).toBeNull();
   });
 
-  it('does NOT auto-open the confirm panel when the member has refused services', async () => {
+  it('does NOT call /end or open the modal when the member has refused services', async () => {
     currentConsent = 'refuse_services';
     renderScreen();
 
     await screen.findByText('Rosa Gutierrez', {}, { timeout: 3000 });
-    await waitFor(() => {
-      expect(screen.getByLabelText('Complete session disabled — member has refused services')).toBeTruthy();
-    });
+    // Session is in_progress (default fixture) — the rail shows the
+    // read-only "active session, use the badge" note either way (#19/#20
+    // removed the rail's own Complete Session control, so there's no
+    // separate "disabled — refused services" state to assert on here); what
+    // matters is that the auto-complete effect itself stayed gated off.
+    await screen.findByLabelText('Active session', {}, { timeout: 3000 });
 
-    expect(screen.queryByText('Complete the session for Rosa?')).toBeNull();
+    expect(mockedApi).not.toHaveBeenCalledWith(
+      `/sessions/${SESSION_ID}/end`,
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(screen.queryByLabelText('Close documentation modal')).toBeNull();
+  });
+
+  it('is a one-shot: /end is only called once even if the rail re-renders after the modal opens', async () => {
+    renderScreen();
+
+    await screen.findByText('Rosa Gutierrez', {}, { timeout: 3000 });
+    await waitFor(() => {
+      expect(mockedApi).toHaveBeenCalledWith(`/sessions/${SESSION_ID}/end`, { method: 'POST' });
+    });
+    await screen.findByLabelText('Close documentation modal', {}, { timeout: 3000 });
+
+    const endCallCount = mockedApi.mock.calls.filter(
+      (args) => args[0] === `/sessions/${SESSION_ID}/end`,
+    ).length;
+    expect(endCallCount).toBe(1);
   });
 });

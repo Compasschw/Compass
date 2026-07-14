@@ -14,13 +14,23 @@
  *    language as the Resource Needs picker elsewhere in the app.
  *  - Procedure Code: picker from procedureCodes mock data
  *  - Session Notes: multiline TextInput (2000 char limit with counter)
- *  - Session Time: CHW-editable Session Start / Session End (MM/DD/YYYY HH:MM,
- *    24hr) — pre-filled from sessionStartedAt/sessionEndedAt when known —
- *    plus a simple inline computed-units line ("Units: N"), or a not-billable
- *    notice when the session is under the 16-minute floor. Bottom of the
- *    form, immediately above Submit. NO revenue/rate breakdown is shown here
- *    (the old Gross/Net/Rate UnitsSummary card is gone — see Q1, 2026-07-13).
+ *  - Session Time: CHW-editable Session Start / Session End
+ *    (MM/DD/YYYY hh:MM AM/PM, 12hr — matches the billing CSV export format
+ *    exactly, see #21 in sessionDocumentation.ts) — pre-filled from
+ *    sessionStartedAt/sessionEndedAt when known — plus a simple inline
+ *    computed-units line ("Units: N") and a "Potential Earnings: $N" line
+ *    (#22, flat $14/unit display estimate), or a not-billable notice when
+ *    the session is under the 16-minute floor. Bottom of the form,
+ *    immediately above Submit. NO platform-fee/net-payout breakdown is shown
+ *    here (the old Gross/Net/Rate UnitsSummary card is gone — see Q1,
+ *    2026-07-13).
  *  - Submit Documentation button
+ *
+ *  Draft persistence (#23): all of the above form state (notes, diagnosis
+ *  codes, procedure code, session start/end) is persisted per-sessionId to
+ *  AsyncStorage on change (debounced) and restored when the modal reopens
+ *  for the same session — see the "Draft persistence" section below. Cleared
+ *  on successful submit.
  *
  * 2026-07-12 redesign: Members Served, Member Goals Discussed, Resources
  * Referred, Follow-Up Needed, and AI Summary were removed (backend schema
@@ -98,7 +108,9 @@ import {
   diagnosisGroupLabel,
   type DiagnosisVerticalGroup,
 } from '../../data/diagnosisVerticalMap';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
+  computePotentialEarnings,
   computeUnitsFromDuration,
   computeUnitsFromTimes,
   formatIsoForSessionDateTimeInput,
@@ -166,6 +178,111 @@ export interface DocumentationModalProps {
 // for review/editing) plus the CHW's edits; the backend `summary` column is
 // unbounded Text, so this is a UI guardrail only.
 const NOTES_MAX = 2000;
+
+// ─── Draft persistence (#23) ────────────────────────────────────────────────
+//
+// Persists the in-progress documentation form (notes, diagnosis codes,
+// procedure code, session start/end times) to AsyncStorage keyed by
+// sessionId, so navigating away from Messages (or anywhere else this modal
+// is mounted) and back restores exactly what the CHW had typed rather than
+// losing it. AsyncStorage (not localStorage directly) is used because it's
+// the cross-platform (web + native) storage primitive already used
+// elsewhere in this codebase (see AuthContext.tsx, CHWDashboardScreen.tsx) —
+// on web it's backed by localStorage under the hood, on native by its own
+// native persistence layer.
+//
+// Draft shape intentionally mirrors the CHW-editable form fields only (not
+// derived values like unitsToBill, which are recomputed live from the times
+// on restore) so there's a single source of truth for what "restoring a
+// draft" means.
+
+interface DocumentationDraft {
+  chwNotes: string;
+  selectedDiagnosisCodes: string[];
+  selectedProcedureCode: string;
+  sessionStartInput: string;
+  sessionEndInput: string;
+}
+
+/** Debounce window (ms) between the CHW's last keystroke/selection and the
+ *  draft actually being written to AsyncStorage — avoids a write on every
+ *  single keystroke while notes are being typed. */
+const DRAFT_SAVE_DEBOUNCE_MS = 500;
+
+function draftStorageKey(sessionId: string): string {
+  return `compass:documentationDraft:${sessionId}`;
+}
+
+/** True when a draft has no CHW-entered content worth persisting/restoring —
+ *  guards against writing (and later "restoring") an all-empty draft that
+ *  would just match the form's own fresh-mount defaults anyway. */
+function isEmptyDraft(draft: DocumentationDraft): boolean {
+  return (
+    draft.chwNotes.trim().length === 0 &&
+    draft.selectedDiagnosisCodes.length === 0 &&
+    draft.sessionStartInput.length === 0 &&
+    draft.sessionEndInput.length === 0
+  );
+}
+
+/** Runtime shape guard for a value read back out of AsyncStorage — a stored
+ *  draft is untrusted input (could be stale/corrupt from a previous app
+ *  version), so this is validated field-by-field rather than trusted via a
+ *  blind `as DocumentationDraft` cast. */
+function isValidDraftShape(value: unknown): value is DocumentationDraft {
+  if (value === null || typeof value !== 'object') return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.chwNotes === 'string' &&
+    Array.isArray(v.selectedDiagnosisCodes) &&
+    v.selectedDiagnosisCodes.every((c) => typeof c === 'string') &&
+    typeof v.selectedProcedureCode === 'string' &&
+    typeof v.sessionStartInput === 'string' &&
+    typeof v.sessionEndInput === 'string'
+  );
+}
+
+/**
+ * Reads and validates a persisted draft for `sessionId`. Returns `null` when
+ * no draft exists, storage is unavailable, or the stored value is malformed
+ * — every failure mode degrades to "no draft" rather than throwing, since a
+ * draft is a nice-to-have convenience, never a hard requirement to open the
+ * modal.
+ */
+async function readDraft(sessionId: string): Promise<DocumentationDraft | null> {
+  try {
+    const raw = await AsyncStorage.getItem(draftStorageKey(sessionId));
+    if (raw === null) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (!isValidDraftShape(parsed)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+/** Persists a draft for `sessionId`. Silently swallows storage errors (e.g.
+ *  private-browsing quota exceptions) — a failed draft save must never
+ *  interrupt the CHW's documentation flow. */
+async function writeDraft(sessionId: string, draft: DocumentationDraft): Promise<void> {
+  try {
+    await AsyncStorage.setItem(draftStorageKey(sessionId), JSON.stringify(draft));
+  } catch {
+    // Storage unavailable — ignore; the CHW's in-memory form state is
+    // unaffected, only cross-navigation persistence is lost.
+  }
+}
+
+/** Clears the persisted draft for `sessionId` — called on successful submit
+ *  (the documentation is filed; there's nothing left to restore) and when a
+ *  debounced save would otherwise persist an all-empty draft. */
+async function clearDraft(sessionId: string): Promise<void> {
+  try {
+    await AsyncStorage.removeItem(draftStorageKey(sessionId));
+  } catch {
+    // Storage unavailable — ignore.
+  }
+}
 
 // ─── DiagnosisCodeSection ─────────────────────────────────────────────────────
 //
@@ -550,6 +667,15 @@ const pc = StyleSheet.create({
 // sees only the unit count (or the not-billable notice below the 16-minute
 // floor), not a dollar breakdown. Rendered inside SessionTimesSection, at
 // the bottom of the form.
+//
+// #22 (2026-07-13): a "Potential Earnings" line was added directly under the
+// Units line — a flat `units * CHW_RATE_PER_UNIT` ($14/unit) estimate, via
+// `computePotentialEarnings` in utils/sessionDocumentation.ts. This is
+// deliberately NOT the old Gross/Net/Rate breakdown Q1 removed (no platform
+// fee / PearSuite fee split shown) — just a single conservative dollar
+// figure so the CHW has a rough sense of what this session is worth before
+// submitting. 0 units renders "$0 — not billable" instead of "$0", so the
+// not-billable state reads unambiguously rather than looking like a $0 payout.
 
 interface UnitsLineProps {
   /** Auto-computed units from session duration. 0 means not billable. */
@@ -559,20 +685,34 @@ interface UnitsLineProps {
 function UnitsLine({ value }: UnitsLineProps): React.JSX.Element {
   if (isBelowBillableFloor(value)) {
     return (
-      <View style={ul.notBillableBanner} accessibilityRole="alert">
-        <AlertTriangle size={16} color={tokens.red700} />
-        <Text style={ul.notBillableText}>
-          Under {MIN_BILLABLE_DURATION_MINUTES} minutes — not billable; no claim will be filed.
-        </Text>
-      </View>
+      <>
+        <View style={ul.notBillableBanner} accessibilityRole="alert">
+          <AlertTriangle size={16} color={tokens.red700} />
+          <Text style={ul.notBillableText}>
+            Under {MIN_BILLABLE_DURATION_MINUTES} minutes — not billable; no claim will be filed.
+          </Text>
+        </View>
+        <View style={ul.row}>
+          <Text style={ul.label}>Potential Earnings:</Text>
+          <Text style={ul.value}>$0 — not billable</Text>
+        </View>
+      </>
     );
   }
 
+  const potentialEarnings = computePotentialEarnings(value);
+
   return (
-    <View style={ul.row}>
-      <Text style={ul.label}>Units:</Text>
-      <Text style={ul.value}>{value}</Text>
-    </View>
+    <>
+      <View style={ul.row}>
+        <Text style={ul.label}>Units:</Text>
+        <Text style={ul.value}>{value}</Text>
+      </View>
+      <View style={ul.row} accessibilityLabel={`Potential earnings: $${potentialEarnings}`}>
+        <Text style={ul.label}>Potential Earnings:</Text>
+        <Text style={ul.value}>${potentialEarnings}</Text>
+      </View>
+    </>
   );
 }
 
@@ -615,7 +755,7 @@ const ul = StyleSheet.create({
 // ─── SessionTimesSection ──────────────────────────────────────────────────────
 
 interface SessionTimesSectionProps {
-  /** Displayed "MM/DD/YYYY HH:MM" text, not yet necessarily valid. */
+  /** Displayed "MM/DD/YYYY hh:MM AM/PM" text, not yet necessarily valid. */
   startValue: string;
   endValue: string;
   onStartChange: (value: string) => void;
@@ -636,12 +776,14 @@ interface SessionTimesSectionProps {
  * is the source of truth for the actual times worked, and the units line
  * recomputes live from whatever is entered here via ``computeUnitsFromTimes``.
  *
- * Free-text "MM/DD/YYYY HH:MM" (24-hour clock) input with digit-only
- * auto-formatting, mirroring the DOB field in AddMemberModal.tsx — see
+ * Free-text "MM/DD/YYYY hh:MM AM/PM" (12-hour clock) input, digit-driven
+ * auto-formatting (same digits-first pattern as the DOB field in
+ * AddMemberModal.tsx, plus a trailing a/p keystroke for AM/PM) — see
  * ``formatSessionDateTimeInput`` / ``parseSessionDateTimeInputToIso`` in
- * utils/sessionDocumentation.ts. A 24-hour clock avoids AM/PM letters (kept
- * consistent with the digits-only mask) and AM/PM ambiguity in a
- * billing-adjacent field.
+ * utils/sessionDocumentation.ts. This EXACT shape (zero-padded month/day/
+ * 12-hour-hour, "AM"/"PM") is required so it matches the billing CSV export
+ * format byte-for-byte — see sessionDocumentation.ts's module docstring
+ * (#21) for the backend `_fmt_la_datetime()` reference this mirrors.
  */
 function SessionTimesSection({
   startValue,
@@ -662,10 +804,10 @@ function SessionTimesSection({
             style={[st.input, !!startError && st.inputError]}
             value={startValue}
             onChangeText={(t) => onStartChange(formatSessionDateTimeInput(t))}
-            placeholder="MM/DD/YYYY HH:MM"
+            placeholder="MM/DD/YYYY hh:MM AM/PM"
             placeholderTextColor={tokens.textMuted}
-            keyboardType={Platform.OS === 'ios' ? 'numbers-and-punctuation' : 'default'}
-            maxLength={16}
+            keyboardType="default"
+            maxLength={22}
             accessibilityLabel="Session start date and time"
           />
           {startError && <Text style={st.errorText}>{startError}</Text>}
@@ -677,17 +819,18 @@ function SessionTimesSection({
             style={[st.input, !!endError && st.inputError]}
             value={endValue}
             onChangeText={(t) => onEndChange(formatSessionDateTimeInput(t))}
-            placeholder="MM/DD/YYYY HH:MM"
+            placeholder="MM/DD/YYYY hh:MM AM/PM"
             placeholderTextColor={tokens.textMuted}
-            keyboardType={Platform.OS === 'ios' ? 'numbers-and-punctuation' : 'default'}
-            maxLength={16}
+            keyboardType="default"
+            maxLength={22}
             accessibilityLabel="Session end date and time"
           />
           {endError && <Text style={st.errorText}>{endError}</Text>}
         </View>
       </Card>
       <Text style={st.hint}>
-        24-hour clock, e.g. 07/12/2026 14:30. Used to auto-calculate units below.
+        e.g. 07/12/2026 02:30 PM. Matches the billing export format. Used to
+        auto-calculate units below.
       </Text>
 
       {/* Q1: inline computed-units line (or not-billable notice) — replaces
@@ -818,10 +961,13 @@ export function DocumentationModal({
   const [selectedProcedureCode, setSelectedProcedureCode] = useState<string>(
     procedureCodes[0]?.code ?? '',
   );
-  // Session Start / Session End — CHW-editable "MM/DD/YYYY HH:MM" text,
+  // Session Start / Session End — CHW-editable "MM/DD/YYYY hh:MM AM/PM" text,
   // pre-filled from the session record when available. Lazy initializers run
   // once per mount; callers conditionally mount this modal (documentingSessionId
   // != null), so a fresh mount always reflects the current session's times.
+  // NOTE: draft restoration (see the "Draft persistence" effect below) can
+  // overwrite these lazy-initial values shortly after mount, once an
+  // AsyncStorage read for this sessionId resolves.
   const [sessionStartInput, setSessionStartInput] = useState<string>(() =>
     formatIsoForSessionDateTimeInput(sessionStartedAt),
   );
@@ -851,15 +997,75 @@ export function DocumentationModal({
   // Guard: pre-fill Session Notes from case notes only once per modal-open.
   const notesPrefilledRef = useRef(false);
 
-  // Reset the pre-fill guard each time the modal opens (for a new session).
+  // ── Draft persistence (#23) ────────────────────────────────────────────
+  //
+  // `draftLoaded` (real React state, NOT a plain ref) guards the
+  // debounced-save effect below from firing — and persisting a blank/default
+  // draft over a real one — before the initial AsyncStorage read for the
+  // current sessionId has resolved. It MUST be state rather than a ref: the
+  // debounce-save effect's dependency array can't "see" a ref flip, so a
+  // ref-only guard would leave that effect permanently gated off after the
+  // async read resolves with "no draft found" (nothing else changes React
+  // state in that branch, so no re-render — and therefore no effect
+  // re-evaluation — would ever follow the ref write). `draftRestoredRef`
+  // (a plain ref is fine here — it's read inside another effect's body, not
+  // depended on) records whether a non-empty draft was actually found and
+  // restored for the current open — the case-notes prefill effect reads
+  // this to skip pre-filling over a restored draft (#24: "a restored draft
+  // must NOT be clobbered by the prefill — prefill only when no draft
+  // exists").
+  const [draftLoaded, setDraftLoaded] = useState(false);
+  const draftRestoredRef = useRef(false);
+
+  // Reset the pre-fill guard and draft-load state each time the modal opens
+  // (for a new session) — and, while closed, load this session's persisted
+  // draft (if any) so it's ready to restore into fresh form state the moment
+  // the modal opens for this sessionId.
   useEffect(() => {
-    if (!visible) notesPrefilledRef.current = false;
-  }, [visible]);
+    if (!visible) {
+      notesPrefilledRef.current = false;
+      setDraftLoaded(false);
+      draftRestoredRef.current = false;
+      return;
+    }
+    if (!sessionId) {
+      setDraftLoaded(true); // nothing to load against — treat as "loaded, no draft"
+      return;
+    }
+    let cancelled = false;
+    void readDraft(sessionId).then((draft) => {
+      if (cancelled) return;
+      if (draft && !isEmptyDraft(draft)) {
+        setChwNotes(draft.chwNotes);
+        setSelectedDiagnosisCodes(draft.selectedDiagnosisCodes);
+        if (draft.selectedProcedureCode) {
+          setSelectedProcedureCode(draft.selectedProcedureCode);
+        }
+        setSessionStartInput(draft.sessionStartInput);
+        setSessionEndInput(draft.sessionEndInput);
+        draftRestoredRef.current = true;
+        // A restored draft already has its own notes (possibly empty, if the
+        // CHW cleared them) — never let the case-notes prefill run over it.
+        notesPrefilledRef.current = true;
+      }
+      setDraftLoaded(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // Only re-run when the modal opens/closes or targets a different session —
+    // re-reading on every keystroke would fight the debounced-save effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, sessionId]);
 
   // Pre-fill Session Notes with this session's case notes, once, without
-  // clobbering anything the CHW has already typed.
+  // clobbering anything the CHW has already typed OR a just-restored draft
+  // (#24 regression: draft restoration always wins over the case-note
+  // prefill — see draftRestoredRef above, set before this effect's guard
+  // check ever runs for a session with a real draft).
   useEffect(() => {
     if (!visible || !sessionId || notesPrefilledRef.current) return;
+    if (!draftLoaded) return; // wait for the draft-load check to settle first
     if (caseNotesQuery.isLoading) return; // wait for the fetch to settle
     // Don't overwrite in-progress edits.
     if (chwNotes.trim().length > 0) {
@@ -876,7 +1082,49 @@ export function DocumentationModal({
     if (sessionNotes.length > 0) {
       setChwNotes(sessionNotes.join('\n\n').slice(0, NOTES_MAX));
     }
-  }, [visible, sessionId, caseNotesQuery.isLoading, caseNotesQuery.data, chwNotes]);
+  }, [visible, sessionId, caseNotesQuery.isLoading, caseNotesQuery.data, chwNotes, draftLoaded]);
+
+  // Debounced draft auto-save — persists the CHW-editable form fields to
+  // AsyncStorage keyed by sessionId whenever any of them change, so
+  // navigating away from Messages (or wherever this modal is mounted) and
+  // back restores the in-progress draft exactly. Skipped until the initial
+  // draft-load check for this sessionId has settled (`draftLoaded` state —
+  // see its declaration above for why this can't be a plain ref), so a
+  // fresh mount's default/pre-fill values can't race ahead of — and
+  // overwrite — a real persisted draft before it's had a chance to restore.
+  useEffect(() => {
+    if (!visible || !sessionId) return;
+    if (!draftLoaded) return;
+
+    const draft: DocumentationDraft = {
+      chwNotes,
+      selectedDiagnosisCodes,
+      selectedProcedureCode,
+      sessionStartInput,
+      sessionEndInput,
+    };
+
+    const timer = setTimeout(() => {
+      if (isEmptyDraft(draft)) {
+        // Nothing worth persisting (e.g. the CHW cleared everything back
+        // out) — clear any stale draft rather than writing an empty one.
+        void clearDraft(sessionId);
+      } else {
+        void writeDraft(sessionId, draft);
+      }
+    }, DRAFT_SAVE_DEBOUNCE_MS);
+
+    return () => clearTimeout(timer);
+  }, [
+    visible,
+    sessionId,
+    draftLoaded,
+    chwNotes,
+    selectedDiagnosisCodes,
+    selectedProcedureCode,
+    sessionStartInput,
+    sessionEndInput,
+  ]);
 
   // Reset all form state when modal closes. Belt-and-suspenders: callers
   // conditionally mount this modal, so React's own unmount already clears
@@ -917,11 +1165,11 @@ export function DocumentationModal({
 
   const startError: string | null =
     sessionStartInput.length > 0 && timesResult.error === 'invalid_start'
-      ? 'Enter a valid date & time (MM/DD/YYYY HH:MM).'
+      ? 'Enter a valid date & time (MM/DD/YYYY hh:MM AM/PM).'
       : null;
   const endError: string | null =
     sessionEndInput.length > 0 && timesResult.error === 'invalid_end'
-      ? 'Enter a valid date & time (MM/DD/YYYY HH:MM).'
+      ? 'Enter a valid date & time (MM/DD/YYYY hh:MM AM/PM).'
       : timesResult.error === 'end_before_start'
       ? 'Session end must be after session start.'
       : null;
@@ -983,6 +1231,12 @@ export function DocumentationModal({
     }
 
     setIsSubmitting(false);
+
+    // #23: the documentation is now filed — clear the persisted draft so a
+    // future open for this sessionId (if the modal is ever reopened, e.g.
+    // after a retry-driven re-navigation) doesn't resurrect stale content
+    // for a session that's already been submitted.
+    void clearDraft(sessionId);
 
     // In-app, on-brand confirmation (replaces the browser "…says" alert and the
     // old earnings/units breakdown). Shows a styled success panel inside the
@@ -1208,9 +1462,9 @@ export function DocumentationModal({
                 : chwNotes.trim().length === 0
                 ? 'Your notes are required before submitting.'
                 : timesResult.error === 'invalid_start'
-                ? 'Enter a valid session start time (MM/DD/YYYY HH:MM).'
+                ? 'Enter a valid session start time (MM/DD/YYYY hh:MM AM/PM).'
                 : timesResult.error === 'invalid_end'
-                ? 'Enter a valid session end time (MM/DD/YYYY HH:MM).'
+                ? 'Enter a valid session end time (MM/DD/YYYY hh:MM AM/PM).'
                 : timesResult.error === 'end_before_start'
                 ? 'Session end must be after session start.'
                 : isBelowFloor

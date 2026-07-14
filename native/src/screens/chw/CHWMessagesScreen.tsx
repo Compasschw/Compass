@@ -27,8 +27,18 @@
  *   - numerals.tabular on all numeric values (timestamps, counts, percentages)
  *   - shadows.card / shadows.elevated token — no inline shadow overrides
  *   - Consolidated 6-hue Pill variants only (emerald / blue / amber / red / gray / purple)
- *   - End Session → slide-up inline confirmation within the rail (no window.confirm)
  *   - Engagement Pill in thread row list + conversation header
+ *
+ * Active-session control surface (#19/#20, 2026-07-13): while a session is
+ * in_progress / awaiting_documentation, the rail no longer shows its own
+ * "Complete Session" button or confirm panel — ActiveSessionBadge (mounted
+ * app-wide for CHWs, see components/sessions/ActiveSessionBadge.tsx) is the
+ * SOLE control surface for Complete / Cancel / Missed while a session is
+ * active. The rail shows a read-only note pointing to the badge instead (see
+ * `isActiveSession` in MemberContextRail). Tapping Complete on the badge (or
+ * landing here with route.params.promptComplete === true) calls
+ * POST /sessions/{id}/end directly, then opens DocumentationModal as an
+ * overlay — no intermediate confirm panel.
  *
  * Hard constraints (do NOT modify):
  *   - Do NOT modify DashboardSidebar.
@@ -38,7 +48,8 @@
  *
  * STUB NOTES:
  *   - "Add Case Note" → Wired to POST /api/v1/case-notes (shipped 2026-06-09).
- *   - "Complete Session" → POST /sessions/{id}/end, opens DocumentationModal.
+ *   - "Complete" (via ActiveSessionBadge or promptComplete) → POST
+ *     /sessions/{id}/end, then opens DocumentationModal directly.
  */
 
 import React, {
@@ -58,7 +69,6 @@ import {
   Image,
   Modal,
   Linking,
-  Animated,
   StyleSheet,
   Platform,
   Alert,
@@ -83,7 +93,6 @@ import {
   FileText,
   X,
   Download,
-  LogOut,
   Play,
   Home,
   ShoppingCart,
@@ -130,8 +139,6 @@ import {
   useMemberServicesConsent,
   useCreateCaseNote,
   useEndSession as useEndSessionHook,
-  useAbortSession as useAbortSessionHook,
-  useMarkSessionNoShow as useMarkSessionNoShowHook,
   useStartSession as useStartSessionHook,
   useScheduleSession as useScheduleSessionHook,
   useSoftDeleteConversation,
@@ -2439,7 +2446,11 @@ interface MemberContextRailProps {
  *   3. Session Focus card — last interaction, today's goal, next step
  *   4. Screening Questions card — opens the suggested-questions drawer
  *   5. Quick Actions — Add Case Note, Open Member Profile, Schedule Session
- *   6. Complete Session — red destructive, inline slide-up confirm panel
+ *   6. Primary session action — "Begin Session" (scheduled/completed/no
+ *      active session) or a read-only "session is active, use the badge"
+ *      note (in_progress/awaiting_documentation — #19/#20: ActiveSessionBadge
+ *      is the sole Complete/Cancel/Missed control surface while active) or a
+ *      terminal-status note (cancelled/cancelled_no_consent/no_show).
  *
  * No nested cards within a single Card region — border-top dividers used instead.
  */
@@ -2460,9 +2471,6 @@ function MemberContextRail({
   // header comment for why this is no longer a RightDrawer.
   const [caseNoteOpen, setCaseNoteOpen] = useState(false);
   const [endSessionPending, setEndSessionPending] = useState(false);
-  const [abortSessionPending, setAbortSessionPending] = useState(false);
-  const [noShowSessionPending, setNoShowSessionPending] = useState(false);
-  const [showEndConfirm, setShowEndConfirm] = useState(false);
   const [beginSessionPending, setBeginSessionPending] = useState(false);
 
   // Fetch live session status for lifecycle gating. When activeSessionId is
@@ -2475,8 +2483,12 @@ function MemberContextRail({
   //   null activeSessionId   → "Begin Session" (POST /sessions/schedule + PATCH /start)
   //   scheduled              → "Begin Session" (PATCH /sessions/{id}/start)
   //   completed              → "Begin Session" (POST /sessions/schedule then PATCH /start)
-  //   in_progress            → "Complete Session" (end flow + documentation)
-  //   awaiting_documentation → "Complete Session" (re-opens documentation; /end is idempotent)
+  //   in_progress /          → read-only "active session" note — the badge
+  //     awaiting_documentation  (ActiveSessionBadge) is the sole control
+  //                             surface for Complete/Cancel/Missed while a
+  //                             session is active (#19/#20, 2026-07-13; see
+  //                             the removed red "Complete Session" button +
+  //                             confirm panel below).
   //   cancelled /            → non-actionable status note.
   //     cancelled_no_consent
   const activeStatus = liveSession?.status ?? null;
@@ -2488,46 +2500,12 @@ function MemberContextRail({
   const isTerminalSession =
     activeStatus !== null &&
     TERMINAL_SESSION_STATUSES.includes(activeStatus);
-
-  // Slide-up animation for the end-session confirmation panel
-  const confirmSlideY = useRef(new Animated.Value(60)).current;
-  const confirmOpacity = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    if (showEndConfirm) {
-      Animated.parallel([
-        Animated.spring(confirmSlideY, {
-          toValue: 0,
-          useNativeDriver: true,
-          stiffness: 280,
-          damping: 22,
-          mass: 1,
-        }),
-        Animated.timing(confirmOpacity, {
-          toValue: 1,
-          duration: 200,
-          useNativeDriver: true,
-        }),
-      ]).start();
-    } else {
-      Animated.parallel([
-        Animated.timing(confirmSlideY, {
-          toValue: 60,
-          duration: 160,
-          useNativeDriver: true,
-        }),
-        Animated.timing(confirmOpacity, {
-          toValue: 0,
-          duration: 160,
-          useNativeDriver: true,
-        }),
-      ]).start();
-    }
-  }, [showEndConfirm, confirmSlideY, confirmOpacity]);
+  // A session is "active" (in_progress / awaiting_documentation) whenever
+  // it's neither beginnable nor terminal — the state ActiveSessionBadge is
+  // mounted for and solely controls (#19/#20).
+  const isActiveSession = !canBeginSession && !canBeginNewSession && !isTerminalSession;
 
   const endSession = useEndSessionHook();
-  const abortSession = useAbortSessionHook();
-  const markSessionNoShow = useMarkSessionNoShowHook();
   const startSession = useStartSessionHook();
   const scheduleSession = useScheduleSessionHook();
 
@@ -2759,44 +2737,26 @@ function MemberContextRail({
     onAutoBeginSessionConsumed,
   ]);
 
-  // One-shot auto-prompt: open the inline Complete-Session confirm panel on
-  // mount when the caller requested it (route param promptComplete === true,
-  // e.g. from ActiveSessionBadge's "Complete Session" button) and the session
-  // is actually in a completable state (in_progress / awaiting_documentation,
-  // not terminal, and not disabled by a services-refused consent — mirrors
-  // the manual button's own disabled condition). A ref guards against
-  // double-firing across re-renders, same as autoBeginFiredRef above.
-  const promptCompleteFiredRef = useRef(false);
-  useEffect(() => {
-    if (!promptCompleteOnMount) return;
-    if (promptCompleteFiredRef.current) return;
-    // Wait until both the live session AND the consent query have settled —
-    // firing while consent is still loading would race servicesRefused (it
-    // defaults to false until the fetch resolves), risking a false-negative
-    // auto-open for a member who has actually refused services.
-    if (liveSessionQuery.isLoading || consentQuery.isLoading) return;
-    const canComplete =
-      !canBeginSession && !canBeginNewSession && !isTerminalSession && !servicesRefused;
-    if (!canComplete) return;
-
-    promptCompleteFiredRef.current = true;
-    onPromptCompleteConsumed?.();
-    setShowEndConfirm(true);
-  }, [
-    promptCompleteOnMount,
-    liveSessionQuery.isLoading,
-    consentQuery.isLoading,
-    canBeginSession,
-    canBeginNewSession,
-    isTerminalSession,
-    servicesRefused,
-    onPromptCompleteConsumed,
-  ]);
-
+  /**
+   * "Complete" — ends the in-progress session (POST /sessions/{id}/end,
+   * transitioning in_progress → awaiting_documentation and tearing down any
+   * active Vonage call bridge) then hands the just-ended session's id +
+   * started/ended timestamps to the parent via `onEndSessionComplete`, which
+   * opens DocumentationModal pre-filled with both.
+   *
+   * #19/#20 (2026-07-13): this now fires directly — from the badge's
+   * Complete button (via the promptCompleteOnMount effect below) or,
+   * on this rail, there is no longer a separate manual trigger for it (see
+   * the removed red "Complete Session" button + confirm panel further down —
+   * the badge is now the single active-session control surface; it already
+   * offers Cancel/Missed before the CHW ever reaches Complete, so a second
+   * confirm here was redundant friction). Defined ahead of the
+   * promptCompleteOnMount effect (rather than after, as originally written)
+   * so that effect can call it directly without an intermediate ref.
+   */
   const handleEndSessionConfirmed = useCallback(async (): Promise<void> => {
     if (!conv.activeSessionId) return; // Guard: no active session to end
     const activeId = conv.activeSessionId;
-    setShowEndConfirm(false);
     setEndSessionPending(true);
     try {
       const endedSession = await endSession.mutateAsync(activeId);
@@ -2821,69 +2781,41 @@ function MemberContextRail({
     }
   }, [conv.activeSessionId, endSession, onEndSessionComplete]);
 
-  /**
-   * "Cancel Session" — the left button on the Complete-Session confirm panel.
-   * Aborts the in-progress session outright (PATCH /sessions/{id}/abort →
-   * `cancelled`) instead of ending it into `awaiting_documentation`. Unlike
-   * Complete Session, this does NOT open the documentation modal — the CHW
-   * is discarding the session, not documenting it. Closes the confirm panel
-   * either way; on success the sessions-query invalidation flips
-   * `liveSession.status` to the terminal `cancelled` state, which the rail
-   * already renders as a read-only status note (see isTerminalSession).
-   */
-  const handleCancelSessionConfirmed = useCallback(async (): Promise<void> => {
-    if (!conv.activeSessionId) return; // Guard: no active session to cancel
-    const activeId = conv.activeSessionId;
-    setShowEndConfirm(false);
-    setAbortSessionPending(true);
-    try {
-      await abortSession.mutateAsync(activeId);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Could not cancel session. Try again.';
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.alert(`Failed to cancel session\n\n${message}`);
-      } else {
-        Alert.alert('Failed to cancel session', message);
-      }
-    } finally {
-      setAbortSessionPending(false);
-    }
-  }, [conv.activeSessionId, abortSession]);
+  // One-shot auto-complete: on mount, when the caller requested it (route
+  // param promptComplete === true, e.g. from ActiveSessionBadge's "Complete"
+  // button) and the session is actually in a completable state (in_progress /
+  // awaiting_documentation, not terminal, and not disabled by a
+  // services-refused consent — mirrors the old manual button's own disabled
+  // condition), immediately call /end and open DocumentationModal directly —
+  // NO intermediate confirm panel (#19/#20). A ref guards against
+  // double-firing across re-renders, same as autoBeginFiredRef above.
+  const promptCompleteFiredRef = useRef(false);
+  useEffect(() => {
+    if (!promptCompleteOnMount) return;
+    if (promptCompleteFiredRef.current) return;
+    // Wait until both the live session AND the consent query have settled —
+    // firing while consent is still loading would race servicesRefused (it
+    // defaults to false until the fetch resolves), risking a false-negative
+    // auto-open for a member who has actually refused services.
+    if (liveSessionQuery.isLoading || consentQuery.isLoading) return;
+    const canComplete =
+      !canBeginSession && !canBeginNewSession && !isTerminalSession && !servicesRefused;
+    if (!canComplete) return;
 
-  /**
-   * "Missed Session" — the third button on the Complete-Session confirm
-   * panel, alongside Cancel Session and Complete Session (Epic P/O2). Marks
-   * the in-progress session a no-show (PATCH /sessions/{id}/no-show →
-   * `no_show`) when the CHW began the session but the member never showed.
-   *
-   * DISTINCT from Cancel Session: a no-show is RECORD-KEEPING — it stays
-   * visible on the calendar/history tagged "Missed" (see deriveBadgeStatus
-   * in CHWCalendarScreen/MemberCalendarScreen), whereas Cancel Session
-   * (`cancelled`) vanishes from the calendar grid entirely (Epic N1). Like
-   * Cancel Session, this does NOT open the documentation modal — no
-   * billing/documentation flow triggers for a no-show. Closes the confirm
-   * panel either way; on success the sessions-query invalidation flips
-   * `liveSession.status` to the terminal `no_show` state, which the rail
-   * renders as a read-only status note (see isTerminalSession/TERMINAL_SESSION_STATUSES).
-   */
-  const handleMissedSessionConfirmed = useCallback(async (): Promise<void> => {
-    if (!conv.activeSessionId) return; // Guard: no active session to mark missed
-    const activeId = conv.activeSessionId;
-    setShowEndConfirm(false);
-    setNoShowSessionPending(true);
-    try {
-      await markSessionNoShow.mutateAsync(activeId);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Could not mark session missed. Try again.';
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.alert(`Failed to mark session missed\n\n${message}`);
-      } else {
-        Alert.alert('Failed to mark session missed', message);
-      }
-    } finally {
-      setNoShowSessionPending(false);
-    }
-  }, [conv.activeSessionId, markSessionNoShow]);
+    promptCompleteFiredRef.current = true;
+    onPromptCompleteConsumed?.();
+    void handleEndSessionConfirmed();
+  }, [
+    promptCompleteOnMount,
+    liveSessionQuery.isLoading,
+    consentQuery.isLoading,
+    canBeginSession,
+    canBeginNewSession,
+    isTerminalSession,
+    servicesRefused,
+    onPromptCompleteConsumed,
+    handleEndSessionConfirmed,
+  ]);
 
   const memberName = conv.memberName ?? 'Unknown Member';
   const initials = getInitials(memberName);
@@ -3184,8 +3116,10 @@ function MemberContextRail({
         {/* Primary session action:
             completed              → green "Begin Session" (creates + starts new session)
             scheduled              → green "Begin Session" (starts existing scheduled session)
-            in_progress /          → red "Complete Session"
-              awaiting_documentation
+            in_progress /          → read-only "active session" note — the
+              awaiting_documentation  badge (ActiveSessionBadge) is the sole
+                                      Complete/Cancel/Missed control surface
+                                      while a session is active (#19/#20)
             cancelled /            → read-only status note
               cancelled_no_consent */}
         <View
@@ -3195,7 +3129,7 @@ function MemberContextRail({
               ? terminalSessionLabel(activeStatus ?? 'cancelled')
               : canBeginSession || canBeginNewSession
               ? 'Begin Session'
-              : 'Complete Session'
+              : 'Active session'
           }
           style={styles.endSessionRegion}
         >
@@ -3203,6 +3137,18 @@ function MemberContextRail({
             <View style={styles.sessionStatusNote} accessibilityRole="text">
               <Text style={styles.sessionStatusNoteText}>
                 {terminalSessionLabel(activeStatus ?? 'cancelled')}
+              </Text>
+            </View>
+          ) : isActiveSession ? (
+            /* #19/#20: no manual Complete/Cancel/Missed control here anymore —
+               the persistent ActiveSessionBadge (mounted app-wide for CHWs,
+               see ActiveSessionBadge.tsx) is the single active-session
+               control surface. This read-only note tells the CHW where to
+               go rather than duplicating those controls in two places. */
+            <View style={styles.sessionStatusNote} accessibilityRole="text">
+              <Text style={styles.sessionStatusNoteText}>
+                Session with {memberFirstName} is active — use the session
+                badge to Complete, Cancel, or mark it Missed.
               </Text>
             </View>
           ) : canBeginNewSession ? (
@@ -3261,97 +3207,6 @@ function MemberContextRail({
                 {beginSessionPending ? 'Beginning...' : 'Begin Session'}
               </Text>
             </TouchableOpacity>
-          ) : (
-            <TouchableOpacity
-              style={[
-                styles.endSessionBtn,
-                (endSessionPending || servicesRefused) && styles.endSessionBtnDisabled,
-              ]}
-              onPress={() => setShowEndConfirm(true)}
-              disabled={endSessionPending || servicesRefused}
-              accessibilityRole="button"
-              accessibilityLabel={
-                servicesRefused
-                  ? 'Complete session disabled — member has refused services'
-                  : endSessionPending
-                  ? 'Completing session...'
-                  : 'Complete session'
-              }
-              accessibilityState={{ disabled: endSessionPending || servicesRefused }}
-            >
-              {endSessionPending ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <LogOut size={16} color="#fff" />
-              )}
-              <Text style={styles.endSessionBtnText}>
-                {endSessionPending ? 'Completing...' : 'Complete Session'}
-              </Text>
-            </TouchableOpacity>
-          )}
-
-          {/* Inline slide-up confirmation panel — no window.confirm */}
-          {!canBeginSession && !canBeginNewSession && !isTerminalSession && showEndConfirm ? (
-            <Animated.View
-              style={[
-                styles.endConfirmPanel,
-                {
-                  opacity: confirmOpacity,
-                  transform: [{ translateY: confirmSlideY }],
-                },
-              ]}
-              role="dialog"
-              accessibilityLabel="Confirm end session"
-            >
-              <Text style={styles.endConfirmTitle}>
-                Complete the session for {memberFirstName}?
-              </Text>
-              <Text style={styles.endConfirmBody}>
-                Recording stops and you will be prompted to document the session before the claim can be filed.
-              </Text>
-              <View style={styles.endConfirmActions}>
-                <TouchableOpacity
-                  style={styles.endConfirmCancel}
-                  onPress={() => void handleCancelSessionConfirmed()}
-                  disabled={abortSessionPending || endSessionPending || noShowSessionPending}
-                  accessibilityRole="button"
-                  accessibilityLabel="Cancel session (abort)"
-                  accessibilityState={{
-                    disabled: abortSessionPending || endSessionPending || noShowSessionPending,
-                  }}
-                >
-                  <Text style={styles.endConfirmCancelText}>
-                    {abortSessionPending ? 'Cancelling...' : 'Cancel Session'}
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.endConfirmCancel}
-                  onPress={() => void handleMissedSessionConfirmed()}
-                  disabled={abortSessionPending || endSessionPending || noShowSessionPending}
-                  accessibilityRole="button"
-                  accessibilityLabel="Mark session missed (no-show)"
-                  accessibilityState={{
-                    disabled: abortSessionPending || endSessionPending || noShowSessionPending,
-                  }}
-                >
-                  <Text style={styles.endConfirmCancelText}>
-                    {noShowSessionPending ? 'Marking Missed...' : 'Missed Session'}
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.endConfirmProceed}
-                  onPress={() => void handleEndSessionConfirmed()}
-                  disabled={abortSessionPending || endSessionPending || noShowSessionPending}
-                  accessibilityRole="button"
-                  accessibilityLabel="Confirm complete session"
-                  accessibilityState={{
-                    disabled: abortSessionPending || endSessionPending || noShowSessionPending,
-                  }}
-                >
-                  <Text style={styles.endConfirmProceedText}>Complete Session</Text>
-                </TouchableOpacity>
-              </View>
-            </Animated.View>
           ) : null}
         </View>
       </ScrollView>
@@ -4996,20 +4851,11 @@ const styles = StyleSheet.create({
     flex: 1,
   } as TextStyle,
 
-  // End Session (destructive)
+  // End Session region — now just a layout anchor; the destructive
+  // "Complete Session" button + confirm panel that used to render here moved
+  // to ActiveSessionBadge (#19/#20) and were removed from this rail.
   endSessionRegion: {
     position: 'relative',
-  } as ViewStyle,
-
-  endSessionBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.sm,
-    paddingVertical: 11,
-    paddingHorizontal: spacing.lg,
-    backgroundColor: '#dc2626',
-    borderRadius: 10,
   } as ViewStyle,
 
   // Green "Begin Session" variant — shown when the session is still scheduled.
@@ -5050,67 +4896,6 @@ const styles = StyleSheet.create({
   } as TextStyle,
 
   endSessionBtnText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#ffffff',
-  } as TextStyle,
-
-  // End session inline confirmation panel
-  endConfirmPanel: {
-    marginTop: spacing.sm,
-    backgroundColor: tokens.cardBg,
-    borderTopWidth: 2,
-    borderTopColor: '#dc2626',
-    borderRadius: radius.xl,
-    padding: spacing.lg,
-    ...(shadows.elevated as object),
-  } as ViewStyle,
-
-  endConfirmTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: tokens.textPrimary,
-    marginBottom: 6,
-    letterSpacing: -0.2,
-  } as TextStyle,
-
-  endConfirmBody: {
-    fontSize: 13,
-    color: tokens.textSecondary,
-    lineHeight: 19,
-    marginBottom: 14,
-  } as TextStyle,
-
-  endConfirmActions: {
-    flexDirection: 'row',
-    gap: 8,
-  } as ViewStyle,
-
-  endConfirmCancel: {
-    flex: 1,
-    paddingVertical: 9,
-    borderWidth: 1,
-    borderColor: tokens.cardBorder,
-    borderRadius: 10,
-    alignItems: 'center',
-    backgroundColor: tokens.cardBg,
-  } as ViewStyle,
-
-  endConfirmCancelText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: tokens.textSecondary,
-  } as TextStyle,
-
-  endConfirmProceed: {
-    flex: 1,
-    paddingVertical: 9,
-    borderRadius: 10,
-    alignItems: 'center',
-    backgroundColor: '#dc2626',
-  } as ViewStyle,
-
-  endConfirmProceedText: {
     fontSize: 13,
     fontWeight: '700',
     color: '#ffffff',
