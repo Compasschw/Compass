@@ -576,6 +576,84 @@ async def send_password_changed_email(to: str) -> EmailResult:
         return EmailResult(success=False, error=str(e))
 
 
+def render_chw_approved_email(chw_first_name: str) -> tuple[str, str, str]:
+    """Render the "you're approved, ready to work" email (Epic D3).
+
+    Fired on a chw_can_work false -> true transition (see
+    app.services.chw_compliance.chw_can_work). No PHI — first name only,
+    same minimum-necessary standard as every other templated email here.
+    """
+    subject = "Your CompassCHW account is approved — you're ready to start working"
+
+    html = f"""<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background:#F4F1ED;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+  <div style="max-width:480px;margin:0 auto;padding:40px 24px;">
+    <h1 style="color:#1E3320;font-size:24px;margin:0 0 8px 0;">
+      Compass<span style="color:#7A9F5A;">CHW</span>
+    </h1>
+    <div style="background:white;border-radius:16px;padding:32px;margin-top:24px;">
+      <h2 style="color:#1E3320;font-size:20px;margin:0 0 16px 0;">
+        Congratulations, {chw_first_name}!
+      </h2>
+      <p style="color:#555;font-size:15px;line-height:1.5;margin:0 0 16px 0;">
+        Your CompassCHW compliance checklist is complete and your account is
+        now fully approved. You're ready to accept requests, schedule
+        sessions, and start working with members.
+      </p>
+      <p style="color:#555;font-size:15px;line-height:1.5;margin:0 0 16px 0;">
+        Open the app to browse open requests in your area and get started.
+      </p>
+      <p style="color:#888;font-size:13px;line-height:1.5;margin:24px 0 0 0;">
+        Questions about your approval? Contact support@joincompasschw.com.
+      </p>
+    </div>
+    <p style="color:#888;font-size:12px;text-align:center;margin-top:24px;">
+      CompassCHW · Community Health Workers, connected.
+    </p>
+  </div>
+</body>
+</html>"""
+
+    text = f"""Congratulations, {chw_first_name}!
+
+Your CompassCHW compliance checklist is complete and your account is now
+fully approved. You're ready to accept requests, schedule sessions, and
+start working with members.
+
+Open the app to browse open requests in your area and get started.
+
+Questions about your approval? Contact support@joincompasschw.com.
+
+— CompassCHW"""
+
+    return subject, html, text
+
+
+async def send_chw_approved_email(to: str, chw_first_name: str) -> EmailResult:
+    """Notify a CHW that their compliance checklist is complete and they can
+    now work (Epic D3, chw_can_work false -> true transition).
+
+    Best-effort: errors are logged and returned, never raised — the
+    triggering admin mutation (credential review / background-check update)
+    must never fail because of a downstream email delivery issue.
+    """
+    subject, html, text = render_chw_approved_email(chw_first_name)
+    try:
+        provider = get_email_provider()
+        return await provider.send(EmailMessage(
+            to=to,
+            subject=subject,
+            html=html,
+            text=text,
+            tags={"category": "chw_approved"},
+        ))
+    except Exception as e:  # noqa: BLE001
+        import logging
+        logging.getLogger("compass.email").error("CHW-approved email failed: %s", e)
+        return EmailResult(success=False, error=str(e))
+
+
 __all__ = [
     "EmailMessage",
     "EmailProvider",
@@ -591,4 +669,6 @@ __all__ = [
     "send_oauth_only_password_reset_email",
     "render_password_changed_email",
     "send_password_changed_email",
+    "render_chw_approved_email",
+    "send_chw_approved_email",
 ]

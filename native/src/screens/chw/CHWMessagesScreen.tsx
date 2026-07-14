@@ -146,6 +146,7 @@ import {
   useToggleConversationArchive,
   useToggleSessionMute,
   useSession as useSessionHook,
+  useChwChecklist,
   type ConversationData,
   type MessageData,
   type SendConversationMessageVars,
@@ -1360,6 +1361,14 @@ function ConversationPane({
   const markRead = useConversationMarkRead();
   const startCall = useStartCall();
   const submitDocumentation = useSubmitDocumentation();
+  // QA batch #2 (Wave-2 B1): disables the composer send button when the
+  // backend work gate is live AND this CHW currently fails the compliance
+  // checklist — mirrors the identical flag-conditional 403 the backend
+  // already enforces on POST /conversations/{id}/messages and .../sms for
+  // CHW senders (members are never gated; this screen is CHW-only).
+  const checklistQuery = useChwChecklist();
+  const isComposerGated =
+    checklistQuery.data?.gateEnabled === true && checklistQuery.data?.canWork === false;
 
   // ── Toast ─────────────────────────────────────────────────────────────────
 
@@ -2041,11 +2050,24 @@ function ConversationPane({
           />
           <PressableCard
             onPress={() => void handleSend()}
-            disabled={(!draftText.trim() && !pendingAttachment) || sendMessage.isPending || isAttachmentUploading}
-            accessibilityLabel="Send message"
+            disabled={
+              (!draftText.trim() && !pendingAttachment) ||
+              sendMessage.isPending ||
+              isAttachmentUploading ||
+              isComposerGated
+            }
+            accessibilityLabel={
+              isComposerGated
+                ? 'Send message (disabled until your compliance checklist is complete)'
+                : 'Send message'
+            }
             style={[
               styles.sendBtnCard,
-              ((!draftText.trim() && !pendingAttachment) || sendMessage.isPending || isAttachmentUploading) && styles.sendBtnDisabled,
+              ((!draftText.trim() && !pendingAttachment) ||
+                sendMessage.isPending ||
+                isAttachmentUploading ||
+                isComposerGated) &&
+                styles.sendBtnDisabled,
             ]}
           >
             {sendMessage.isPending ? (
@@ -2057,8 +2079,22 @@ function ConversationPane({
           </PressableCard>
         </View>
 
-        {/* SMS caption — mono tabular */}
-        <Text style={styles.composerMeta}>SMS via Vonage masked number</Text>
+        {/* QA batch #2: inline note when the work gate blocks sending —
+            links to the Profile checklist so the CHW knows how to unblock. */}
+        {isComposerGated ? (
+          <Pressable
+            onPress={() => navigation.navigate('Profile' as never)}
+            accessibilityRole="link"
+            accessibilityLabel="Complete your compliance checklist to send messages"
+          >
+            <Text style={styles.composerGatedNote}>
+              Finish your compliance checklist to send messages. Go to Profile →
+            </Text>
+          </Pressable>
+        ) : (
+          /* SMS caption — mono tabular */
+          <Text style={styles.composerMeta}>SMS via Vonage masked number</Text>
+        )}
       </View>
 
       {/* Documentation modal — Epic Q4: on-brand overlay, anchored over this
@@ -4598,6 +4634,15 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontVariant: ['tabular-nums'],
   } as unknown as TextStyle,
+
+  // QA batch #2: inline note shown in place of composerMeta when the CHW
+  // work gate blocks sending.
+  composerGatedNote: {
+    fontSize: 11,
+    color: '#B45309',
+    textAlign: 'center',
+    fontWeight: '600',
+  } as TextStyle,
 
   // ── No selection ──────────────────────────────────────────────────────────────
   noSelectionWrap: {

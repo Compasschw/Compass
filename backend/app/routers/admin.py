@@ -721,7 +721,16 @@ async def update_chw_background_check(
     2FA-token dependency chain as every other CHW-mutating admin endpoint in
     this file (see update_claim_status / set_chw_pear_user_id above) — a CHW
     JWT (even the CHW's own) is rejected with 401/403, never 200.
+
+    Epic D3: on a can_work false -> true transition (i.e. this call flips
+    background_check_status to "clear" while every other requirement is
+    already satisfied), fires a best-effort "you're approved" email + push.
+    Captured BEFORE the mutation so a transition to any non-"clear" status,
+    or re-setting "clear" when the CHW was already fully compliant, never
+    re-fires it.
     """
+    from app.services.chw_compliance import chw_can_work, notify_chw_if_newly_approved
+
     if body.status not in _BACKGROUND_CHECK_STATUSES:
         raise HTTPException(
             status_code=422,
@@ -739,9 +748,13 @@ async def update_chw_background_check(
     if profile is None:
         raise HTTPException(status_code=404, detail="CHW profile not found")
 
+    was_compliant_before, _ = await chw_can_work(db, chw_user)
+
     profile.background_check_status = body.status
     await db.commit()
     await db.refresh(profile)
+
+    await notify_chw_if_newly_approved(db, chw_user, was_compliant_before=was_compliant_before)
 
     return _BackgroundCheckUpdateResponse(
         chw_id=chw_id,

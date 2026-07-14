@@ -163,8 +163,23 @@ let currentSessionStatus = 'in_progress';
 // clock. Defaults to a comfortably-billable 50 minutes after start.
 let endSessionEndedAt = '2026-07-11T09:50:00.000Z';
 
+/** QA batch #2 (Wave-2 B1) — CHW work-gate checklist fixture. Fully
+ * compliant / gate-off by default so pre-existing tests never see the
+ * composer disabled unexpectedly; the gate describe block below overrides
+ * this per-test. */
+let checklistResponse: {
+  can_work: boolean;
+  missing: string[];
+  items: Array<{ code: string; status: string }>;
+  gate_enabled: boolean;
+} = { can_work: true, missing: [], items: [], gate_enabled: false };
+
 function routeApi(path: string, options?: { method?: string; body?: string }): unknown {
   const method = options?.method ?? 'GET';
+
+  if (path === '/credentials/checklist' && method === 'GET') {
+    return checklistResponse;
+  }
 
   if (path.startsWith(`/conversations/${CONVERSATION_ID}/messages`)) {
     if (method === 'GET') return [];
@@ -340,6 +355,7 @@ beforeEach(() => {
   mockedApi.mockReset();
   currentSessionStatus = 'in_progress';
   endSessionEndedAt = '2026-07-11T09:50:00.000Z';
+  checklistResponse = { can_work: true, missing: [], items: [], gate_enabled: false };
   mockNavigate.mockClear();
   mockedApi.mockImplementation(async (path: string, options?: { method?: string; body?: string }) =>
     routeApi(path, options),
@@ -849,5 +865,72 @@ describe('CHWMessagesScreen — phone-width single-pane collapse (Epic K)', () =
     await screen.findByText('Do you have stable housing?', {}, { timeout: 3000 });
     // ...and the rail overlay is gone (not stacked underneath it).
     expect(screen.queryByLabelText('Member context')).toBeNull();
+  });
+});
+
+describe('CHWMessagesScreen — composer work gate (QA batch #2)', () => {
+  async function openThread(): Promise<void> {
+    fireEvent.click(await screen.findByLabelText('Thread with Rosa Gutierrez', {}, { timeout: 3000 }));
+    await screen.findByPlaceholderText(/type a message/i);
+  }
+
+  it('composer send button stays enabled when the work gate is off, even if can_work is false', async () => {
+    checklistResponse = { can_work: false, missing: ['hipaa_training'], items: [], gate_enabled: false };
+    renderScreen();
+    await openThread();
+
+    fireEvent.change(screen.getByPlaceholderText(/type a message/i), { target: { value: 'Hello' } });
+
+    const sendBtn = await screen.findByLabelText('Send message');
+    expect(sendBtn.getAttribute('aria-disabled')).not.toBe('true');
+    expect(screen.queryByText(/Finish your compliance checklist/i)).toBeNull();
+  });
+
+  it('composer send button stays enabled when can_work is true, even if gate_enabled is true', async () => {
+    checklistResponse = { can_work: true, missing: [], items: [], gate_enabled: true };
+    renderScreen();
+    await openThread();
+
+    fireEvent.change(screen.getByPlaceholderText(/type a message/i), { target: { value: 'Hello' } });
+
+    const sendBtn = await screen.findByLabelText('Send message');
+    expect(sendBtn.getAttribute('aria-disabled')).not.toBe('true');
+  });
+
+  it('composer send button is disabled and shows an inline note when gate_enabled is true AND can_work is false', async () => {
+    checklistResponse = { can_work: false, missing: ['hipaa_training'], items: [], gate_enabled: true };
+    renderScreen();
+    await openThread();
+
+    fireEvent.change(screen.getByPlaceholderText(/type a message/i), { target: { value: 'Hello' } });
+
+    const sendBtn = await screen.findByLabelText(
+      'Send message (disabled until your compliance checklist is complete)',
+    );
+    expect(sendBtn.getAttribute('aria-disabled')).toBe('true');
+    expect(
+      screen.getByText('Finish your compliance checklist to send messages. Go to Profile →'),
+    ).toBeTruthy();
+
+    // Clicking Send while gated must not fire the send mutation.
+    fireEvent.click(sendBtn);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mockedApi).not.toHaveBeenCalledWith(
+      `/conversations/${CONVERSATION_ID}/messages`,
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
+  it('tapping the inline gated note navigates to Profile', async () => {
+    checklistResponse = { can_work: false, missing: ['hipaa_training'], items: [], gate_enabled: true };
+    renderScreen();
+    await openThread();
+
+    const note = await screen.findByLabelText(
+      'Complete your compliance checklist to send messages',
+    );
+    fireEvent.click(note);
+
+    expect(mockNavigate).toHaveBeenCalledWith('Profile');
   });
 });

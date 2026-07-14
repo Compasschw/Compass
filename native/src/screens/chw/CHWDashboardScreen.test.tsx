@@ -325,6 +325,154 @@ describe('CHWDashboardScreen — Compliance banner (Epic D)', () => {
   });
 });
 
+describe('CHWDashboardScreen — AlertsSection (QA batch #12)', () => {
+  function memberFixture(overrides: Partial<Record<string, unknown>> = {}) {
+    return {
+      id: 'member-new-1',
+      display_name: 'Jordan Diaz',
+      age: 34,
+      date_of_birth: '1991-01-01',
+      masked_id: '...1234',
+      medi_cal_id: null,
+      avatar_initials: 'JD',
+      status: 'active',
+      risk: null,
+      engagement: 'moderately',
+      active_journey: null,
+      last_contact_at: null,
+      top_need: null,
+      created_at: new Date().toISOString(),
+      ...overrides,
+    };
+  }
+
+  it('shows a "New member account created" alert for a roster member created within 48h', async () => {
+    const members = [memberFixture({ id: 'm1', display_name: 'Jordan Diaz' })];
+    mockedApi.mockImplementation(async (path: string, options?: { method?: string }) => {
+      if (path === '/chw/members' && (options?.method ?? 'GET') === 'GET') return members;
+      return routeApi(path, options);
+    });
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByText('New member account created')).toBeTruthy());
+    expect(screen.getByText('Jordan Diaz')).toBeTruthy();
+  });
+
+  it('does not show an alert for a roster member created more than 48h ago', async () => {
+    const oldCreatedAt = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
+    const members = [memberFixture({ id: 'm-old', display_name: 'Old Member', created_at: oldCreatedAt })];
+    mockedApi.mockImplementation(async (path: string, options?: { method?: string }) => {
+      if (path === '/chw/members' && (options?.method ?? 'GET') === 'GET') return members;
+      return routeApi(path, options);
+    });
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByText(/sessions today/i)).toBeTruthy());
+    expect(screen.queryByText('New member account created')).toBeNull();
+  });
+
+  it('stacks the compliance banner AND a new-member alert together without overlap (both visible)', async () => {
+    checklistResponse = { can_work: false, missing: ['hipaa_training'], items: [] };
+    const members = [memberFixture({ id: 'm2', display_name: 'Sam Rivera' })];
+    mockedApi.mockImplementation(async (path: string, options?: { method?: string }) => {
+      if (path === '/chw/members' && (options?.method ?? 'GET') === 'GET') return members;
+      return routeApi(path, options);
+    });
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByText('Finish your compliance checklist')).toBeTruthy());
+    expect(screen.getByText('New member account created')).toBeTruthy();
+    expect(screen.getByText('Sam Rivera')).toBeTruthy();
+  });
+
+  it('dismissing a new-member alert persists per-member-id and survives remount', async () => {
+    const members = [memberFixture({ id: 'm3', display_name: 'Casey Lee' })];
+    mockedApi.mockImplementation(async (path: string, options?: { method?: string }) => {
+      if (path === '/chw/members' && (options?.method ?? 'GET') === 'GET') return members;
+      return routeApi(path, options);
+    });
+    const { unmount } = renderScreen();
+
+    await waitFor(() => expect(screen.getByText('Casey Lee')).toBeTruthy());
+
+    const dismissBtn = screen.getByLabelText('Dismiss new member alert for Casey Lee');
+    dismissBtn.click();
+
+    await waitFor(() => expect(screen.queryByText('Casey Lee')).toBeNull());
+    await waitFor(() =>
+      expect(AsyncStorageMock.setItem).toHaveBeenCalledWith(
+        'chw_new_member_alert_dismissed_m3',
+        '1',
+      ),
+    );
+
+    unmount();
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByText(/sessions today/i)).toBeTruthy());
+    expect(screen.queryByText('Casey Lee')).toBeNull();
+  });
+
+  it('a DIFFERENT new member still gets its own alert after another member was dismissed', async () => {
+    const members = [
+      memberFixture({ id: 'm-dismissed', display_name: 'Dismissed Member' }),
+      memberFixture({ id: 'm-fresh', display_name: 'Fresh Member' }),
+    ];
+    mockedApi.mockImplementation(async (path: string, options?: { method?: string }) => {
+      if (path === '/chw/members' && (options?.method ?? 'GET') === 'GET') return members;
+      return routeApi(path, options);
+    });
+    void AsyncStorageMock.setItem('chw_new_member_alert_dismissed_m-dismissed', '1');
+
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByText('Fresh Member')).toBeTruthy());
+    expect(screen.queryByText('Dismissed Member')).toBeNull();
+  });
+});
+
+describe('CHWDashboardScreen — Add New Member gate (QA batch #2)', () => {
+  it('Add New Member stays enabled when the work gate is off, even if can_work is false', async () => {
+    checklistResponse = { can_work: false, missing: ['hipaa_training'], items: [] };
+    // gate_enabled omitted -> transformKeys yields undefined, treated as
+    // "not gated" (matches the backend's own default-False semantics).
+    renderScreen();
+
+    const btn = await screen.findByLabelText('Add a new member');
+    expect(btn.getAttribute('aria-disabled')).not.toBe('true');
+  });
+
+  it('Add New Member stays enabled when can_work is true, even if gate_enabled is true', async () => {
+    checklistResponse = {
+      can_work: true,
+      missing: [],
+      items: [],
+      // @ts-expect-error -- test fixture augments the mocked response shape
+      gate_enabled: true,
+    };
+    renderScreen();
+
+    const btn = await screen.findByLabelText('Add a new member');
+    expect(btn.getAttribute('aria-disabled')).not.toBe('true');
+  });
+
+  it('Add New Member is disabled when gate_enabled is true AND can_work is false', async () => {
+    checklistResponse = {
+      can_work: false,
+      missing: ['hipaa_training'],
+      items: [],
+      // @ts-expect-error -- test fixture augments the mocked response shape
+      gate_enabled: true,
+    };
+    renderScreen();
+
+    const btn = await screen.findByLabelText(
+      'Add a new member (disabled until your compliance checklist is complete)',
+    );
+    expect(btn.getAttribute('aria-disabled')).toBe('true');
+  });
+});
+
 describe('CHWDashboardScreen — Member Profile origin params (Epic S "Back to …")', () => {
   it('opening a member from Today\'s Schedule passes backLabel "Dashboard" / backTo "Dashboard"', async () => {
     sessionsResponse = [scheduledTodaySessionFixture];

@@ -757,6 +757,16 @@ export interface ChwChecklist {
   canWork: boolean;
   missing: string[];
   items: ChwChecklistItem[];
+  /**
+   * Epic D3 (Wave-2 B1): mirrors backend app.config.settings.chw_work_gate_enabled.
+   * When true, `canWork === false` actually blocks CHW-gated features
+   * (Add Member, message/SMS send, earnings/Stripe onboarding) — the UI
+   * should disable those controls. When false, the checklist is purely
+   * informational and nothing should be disabled based on `canWork` alone.
+   * Defaults to false (additive field — older cached responses / a stale
+   * backend without this field simply behave as "gate not enforced").
+   */
+  gateEnabled: boolean;
 }
 
 /**

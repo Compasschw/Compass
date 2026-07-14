@@ -178,3 +178,64 @@ async def get_compliance_status(db: AsyncSession, chw_user: User) -> ChwComplian
         credentials=credential_statuses,
         background_check_status=background_status,
     )
+
+
+async def notify_chw_if_newly_approved(
+    db: AsyncSession, chw_user: User, *, was_compliant_before: bool
+) -> None:
+    """Fire the "you're approved" email + push on a false -> true can_work
+    transition (Epic D3).
+
+    Callers (PATCH /credentials/{id}/review and PATCH
+    /admin/chws/{id}/background-check) are each responsible for capturing
+    ``was_compliant_before`` via ``chw_can_work()`` BEFORE applying their
+    mutation, then calling this AFTER the mutation is committed. Re-checks
+    the CURRENT can_work state itself (rather than trusting a caller-passed
+    "after" value) so the two call sites can never drift out of sync with
+    the single source of truth.
+
+    No-op (does nothing, raises nothing) when:
+      - the CHW was already compliant before the mutation (no transition), or
+      - the CHW is still not compliant after the mutation (no transition).
+
+    Best-effort: the email/push helpers already never raise on their own,
+    and this function adds no additional exception surface — a delivery
+    failure must never unwind the caller's already-committed admin mutation.
+    """
+    if was_compliant_before:
+        return
+
+    is_compliant_now, _ = await chw_can_work(db, chw_user)
+    if not is_compliant_now:
+        return
+
+    import logging
+
+    logger = logging.getLogger("compass.chw_compliance")
+
+    if chw_user.email:
+        try:
+            from app.services.email import send_chw_approved_email
+
+            first_name = (chw_user.name or "there").split(" ")[0]
+            await send_chw_approved_email(to=chw_user.email, chw_first_name=first_name)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("CHW-approved email failed for chw=%s: %s", chw_user.id, e)
+
+    try:
+        from app.services.notifications import NotificationPayload, notify_user
+
+        await notify_user(
+            db,
+            chw_user.id,
+            NotificationPayload(
+                user_id=chw_user.id,
+                title="You're approved!",
+                body="Your CompassCHW account is approved — you're ready to start working.",
+                deeplink="compasschw://chw/dashboard",
+                category="chw.approved",
+                data={},
+            ),
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("CHW-approved push failed for chw=%s: %s", chw_user.id, e)
