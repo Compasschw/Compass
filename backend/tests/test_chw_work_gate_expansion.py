@@ -43,7 +43,7 @@ DOCUMENT_TYPES = (
 
 _NEW_MEMBER_PAYLOAD = {
     "email": "gate.expansion.member@example.com",
-    "temp_password": "temp-pass-1234",
+    "temp_password": "Temp-pass-1234!",
     "name": "Gate Expansion",
     "phone": "+13105550199",
     "date_of_birth": "1990-04-12",
@@ -88,7 +88,9 @@ async def _make_chw_compliant(chw_id: str) -> None:
 
     async with _test_session_factory() as db:
         user = await db.get(User, chw_uuid)
-        user.phone = "+13105550100"
+        # Derive from the chw_id so parallel/compound tests never collide with
+        # the users.phone partial unique index (QA2 A1).
+        user.phone = f"+1310{abs(hash(str(chw_id))) % 10_000_000:07d}"
         await db.commit()
 
 
