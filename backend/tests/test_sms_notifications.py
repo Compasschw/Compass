@@ -47,6 +47,54 @@ Coverage:
   No-PHI assertion: every message body asserted in this file is checked to
   contain no vertical/service-category strings (a Vertical enum value) and
   no health-related terms.
+
+  Guard/failure-branch coverage (diff-cover gate — added after PR #223's CI
+  run flagged these lines as uncovered):
+    19. ``_first_name`` falls back to the default when given ``None``/blank.
+    20. ``_format_local_time`` falls back to "the scheduled time" when
+        ``scheduled_at`` is ``None``.
+    21. ``_send_best_effort`` returns False (logged, no raise) when
+        ``send_text`` reports ``success=False`` without raising.
+    22. ``send_session_reminder_sms`` treats an unrecognized ``window`` value
+        as a defensive no-op.
+    23. ``send_session_reminder_sms`` returns False when the initial
+        CHW/member ``db.get(User, ...)`` lookup raises.
+    24. ``send_session_reminder_sms`` warns and continues when the CHW user
+        row is missing (CHW leg simply skipped, member leg unaffected).
+    25. ``send_session_reminder_sms`` returns early when the member user row
+        is missing.
+    26. ``send_session_reminder_sms`` returns False when the member-profile
+        lookup raises.
+    27. ``send_session_reminder_sms`` returns early when the member has no
+        MemberProfile row.
+    28. ``send_session_reminder_sms`` returns False when
+        ``check_sms_eligibility`` itself raises.
+    29. ``send_new_request_sms`` returns (no raise) when the initial user
+        lookup raises.
+    30. ``send_new_request_sms`` no-ops when the CHW user row is missing.
+    31. ``send_new_request_sms`` no-ops when the CHW has no sendable phone.
+    32. ``send_new_message_sms`` returns when the conversation lookup raises.
+    33. ``send_new_message_sms`` returns when the conversation row is missing.
+    34. ``send_new_message_sms`` normalizes a naive (tz-less)
+        ``last_sent`` timestamp before the throttle comparison.
+    35. ``send_new_message_sms`` returns when the CHW/member user lookup
+        raises.
+    36. ``send_new_message_sms`` no-ops when the CHW user row is missing.
+    37. ``send_new_message_sms`` logs (does not raise) when stamping the
+        throttle column raises and the subsequent rollback also raises.
+    38. ``send_payout_initiated_sms`` returns (no raise) when the CHW user
+        lookup raises.
+    39. ``send_payout_initiated_sms`` no-ops when the CHW user row is
+        missing.
+    40. ``send_payout_initiated_sms`` no-ops when the CHW has no sendable
+        phone (also covers ``trigger_chw_payout``'s payout-SMS-hook
+        try/except region in app.routers.payments, lines 369-377).
+    41. ``send_sms_session_reminders`` defaults ``now`` to the wall clock
+        when the caller omits it (scheduler.py line 286).
+    42. ``send_sms_session_reminders`` logs and rolls back (without raising)
+        when an unexpected exception escapes a per-session reminder send
+        AND the DB rollback that follows also raises (scheduler.py
+        lines 332-333, 337-340).
 """
 
 from __future__ import annotations
@@ -60,6 +108,7 @@ from uuid import UUID
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.conversation import Conversation
 from app.models.user import MemberProfile, User
@@ -846,6 +895,37 @@ async def test_blocked_payout_sends_no_sms(
 
 
 @pytest.mark.asyncio
+async def test_payout_still_succeeds_when_sms_notification_hook_itself_raises(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db, monkeypatch
+):
+    """app.routers.payments.trigger_chw_payout wraps the call to
+    send_payout_initiated_sms in its own try/except (lines 369-377) as a
+    belt-and-suspenders guard, even though send_payout_initiated_sms is
+    documented to never raise. Simulates that defensive branch actually
+    firing (e.g. an import error or other unexpected exception escaping the
+    notification helper) and asserts the payout itself is still marked
+    successful."""
+    import app.routers.payments as payments_router
+
+    chw_id = _user_id_from_tokens(chw_tokens)
+    member_id = _user_id_from_tokens(member_tokens)
+    await _set_phone(chw_id, "+15550119012")
+
+    claim_id, _ = await _seed_payable_claim(chw_id, member_id)
+    monkeypatch.setattr(payments_router, "get_payments_provider", lambda: _FakeTransferProvider())
+
+    with patch(
+        "app.services.sms_notifications.send_payout_initiated_sms",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("unexpected notification-hook failure"),
+    ):
+        async with _test_session_factory() as session:
+            ok = await payments_router.trigger_chw_payout(session, UUID(claim_id))
+
+    assert ok is True  # payout succeeds regardless of the notification hook raising
+
+
+@pytest.mark.asyncio
 async def test_payout_still_succeeds_when_vonage_raises(
     client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db, monkeypatch
 ):
@@ -869,3 +949,661 @@ async def test_payout_still_succeeds_when_vonage_raises(
     # The payout itself (the important side effect) must succeed regardless
     # of the notification failure.
     assert ok is True
+
+
+# ─── Guard/failure-branch coverage (diff-cover gate) ────────────────────────
+
+
+def test_first_name_falls_back_when_name_missing_or_blank():
+    from app.services.sms_notifications import _first_name
+
+    assert _first_name(None) == "your contact"
+    assert _first_name("   ") == "your contact"
+    assert _first_name(None, "your CHW") == "your CHW"
+    assert _first_name("Jane Doe") == "Jane"
+
+
+def test_format_local_time_falls_back_when_scheduled_at_none():
+    from app.services.sms_notifications import _format_local_time
+
+    assert _format_local_time(None) == "the scheduled time"
+
+
+@pytest.mark.asyncio
+async def test_send_best_effort_returns_false_when_vonage_reports_failure():
+    from app.services.sms_notifications import _send_best_effort
+
+    with patch(
+        "app.services.vonage_sms.VonageSmsMessagesClient.send_text",
+        new_callable=AsyncMock,
+        return_value=SmsSendResult(success=False, error="rejected", status_code=400),
+    ):
+        result = await _send_best_effort("+15550119001", "test body", context="unit_test")
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_send_session_reminder_sms_invalid_window_is_a_noop(setup_db):
+    from app.services.sms_notifications import send_session_reminder_sms
+
+    async with _test_session_factory() as session:
+        with patch(
+            "app.services.vonage_sms.VonageSmsMessagesClient.send_text",
+            new_callable=AsyncMock,
+            return_value=_stub_send_result(),
+        ) as mock_send:
+            result = await send_session_reminder_sms(
+                session,
+                session_id=UUID("00000000-0000-0000-0000-000000000001"),
+                chw_id=UUID("00000000-0000-0000-0000-000000000002"),
+                member_id=UUID("00000000-0000-0000-0000-000000000003"),
+                scheduled_at=REFERENCE_NOW,
+                window="3d",  # not "24h" or "1h"
+            )
+    assert result is False
+    mock_send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_send_session_reminder_sms_returns_false_when_initial_lookup_raises(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    from app.services.sms_notifications import send_session_reminder_sms
+
+    chw_id = _user_id_from_tokens(chw_tokens)
+    member_id = await _establish_relationship(client, member_tokens, chw_tokens)
+
+    async with _test_session_factory() as session:
+        with patch.object(
+            type(session), "get", new_callable=AsyncMock, side_effect=RuntimeError("db down")
+        ):
+            result = await send_session_reminder_sms(
+                session,
+                session_id=UUID("00000000-0000-0000-0000-000000000001"),
+                chw_id=UUID(chw_id),
+                member_id=UUID(member_id),
+                scheduled_at=REFERENCE_NOW,
+                window="24h",
+            )
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_send_session_reminder_sms_missing_chw_user_skips_chw_leg_only(
+    client: AsyncClient, member_tokens: dict, setup_db
+):
+    """A dangling chw_id (no matching User row) must not block the member leg."""
+    from app.services.sms_notifications import send_session_reminder_sms
+
+    member_id = _user_id_from_tokens(member_tokens)
+    await _set_member_phone_verified(member_id, "+15550119002")
+    missing_chw_id = UUID("00000000-0000-0000-0000-0000000000ff")
+
+    with patch(
+        "app.services.vonage_sms.VonageSmsMessagesClient.send_text",
+        new_callable=AsyncMock,
+        return_value=_stub_send_result(),
+    ) as mock_send:
+        async with _test_session_factory() as session:
+            result = await send_session_reminder_sms(
+                session,
+                session_id=UUID("00000000-0000-0000-0000-000000000001"),
+                chw_id=missing_chw_id,
+                member_id=UUID(member_id),
+                scheduled_at=REFERENCE_NOW,
+                window="24h",
+            )
+    assert result is True
+    mock_send.assert_called_once()
+    assert mock_send.call_args.args[0] == "+15550119002"
+
+
+@pytest.mark.asyncio
+async def test_send_session_reminder_sms_missing_member_user_returns_early(
+    client: AsyncClient, chw_tokens: dict, setup_db
+):
+    from app.services.sms_notifications import send_session_reminder_sms
+
+    chw_id = _user_id_from_tokens(chw_tokens)
+    await _set_phone(chw_id, "+15550119003")
+    missing_member_id = UUID("00000000-0000-0000-0000-0000000000fe")
+
+    with patch(
+        "app.services.vonage_sms.VonageSmsMessagesClient.send_text",
+        new_callable=AsyncMock,
+        return_value=_stub_send_result(),
+    ) as mock_send:
+        async with _test_session_factory() as session:
+            result = await send_session_reminder_sms(
+                session,
+                session_id=UUID("00000000-0000-0000-0000-000000000001"),
+                chw_id=UUID(chw_id),
+                member_id=missing_member_id,
+                scheduled_at=REFERENCE_NOW,
+                window="24h",
+            )
+    assert result is True  # CHW leg sent + handled; missing member is not a transient failure
+    mock_send.assert_called_once()
+    assert mock_send.call_args.args[0] == "+15550119003"
+
+
+@pytest.mark.asyncio
+async def test_send_session_reminder_sms_returns_false_when_profile_lookup_raises(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    from app.services.sms_notifications import send_session_reminder_sms
+
+    chw_id = _user_id_from_tokens(chw_tokens)
+    member_id = await _establish_relationship(client, member_tokens, chw_tokens)
+    await _set_phone(chw_id, "+15550119004")
+
+    with patch(
+        "app.services.vonage_sms.VonageSmsMessagesClient.send_text",
+        new_callable=AsyncMock,
+        return_value=_stub_send_result(),
+    ):
+        async with _test_session_factory() as session:
+            with patch.object(
+                AsyncSession, "execute", new_callable=AsyncMock, side_effect=RuntimeError("db down")
+            ):
+                result = await send_session_reminder_sms(
+                    session,
+                    session_id=UUID("00000000-0000-0000-0000-000000000001"),
+                    chw_id=UUID(chw_id),
+                    member_id=UUID(member_id),
+                    scheduled_at=REFERENCE_NOW,
+                    window="24h",
+                )
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_send_session_reminder_sms_missing_member_profile_returns_early(
+    client: AsyncClient, chw_tokens: dict, setup_db
+):
+    """A member User row with no MemberProfile (data anomaly) must not crash
+    the reminder job — the CHW leg is unaffected."""
+    from app.models.user import User
+    from app.services.sms_notifications import send_session_reminder_sms
+
+    chw_id = _user_id_from_tokens(chw_tokens)
+    await _set_phone(chw_id, "+15550119005")
+
+    async with _test_session_factory() as session:
+        orphan = User(
+            email="orphan-member@example.com",
+            password_hash="x",
+            name="Orphan Member",
+            role="member",
+        )
+        session.add(orphan)
+        await session.commit()
+        await session.refresh(orphan)
+        orphan_id = orphan.id
+
+    with patch(
+        "app.services.vonage_sms.VonageSmsMessagesClient.send_text",
+        new_callable=AsyncMock,
+        return_value=_stub_send_result(),
+    ) as mock_send:
+        async with _test_session_factory() as session:
+            result = await send_session_reminder_sms(
+                session,
+                session_id=UUID("00000000-0000-0000-0000-000000000001"),
+                chw_id=UUID(chw_id),
+                member_id=orphan_id,
+                scheduled_at=REFERENCE_NOW,
+                window="24h",
+            )
+    assert result is True
+    mock_send.assert_called_once()
+    assert mock_send.call_args.args[0] == "+15550119005"
+
+
+@pytest.mark.asyncio
+async def test_send_session_reminder_sms_returns_false_when_eligibility_check_raises(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    from app.services.sms_notifications import send_session_reminder_sms
+
+    chw_id = _user_id_from_tokens(chw_tokens)
+    member_id = await _establish_relationship(client, member_tokens, chw_tokens)
+    await _set_phone(chw_id, "+15550119006")
+    await _set_member_phone_verified(member_id, "+15550119007")
+
+    with patch(
+        "app.services.vonage_sms.VonageSmsMessagesClient.send_text",
+        new_callable=AsyncMock,
+        return_value=_stub_send_result(),
+    ), patch(
+        "app.services.sms_eligibility.check_sms_eligibility",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("eligibility service down"),
+    ):
+        async with _test_session_factory() as session:
+            result = await send_session_reminder_sms(
+                session,
+                session_id=UUID("00000000-0000-0000-0000-000000000001"),
+                chw_id=UUID(chw_id),
+                member_id=UUID(member_id),
+                scheduled_at=REFERENCE_NOW,
+                window="24h",
+            )
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_send_new_request_sms_returns_when_lookup_raises(setup_db):
+    from app.services.sms_notifications import send_new_request_sms
+
+    async with _test_session_factory() as session:
+        with patch.object(
+            type(session), "get", new_callable=AsyncMock, side_effect=RuntimeError("db down")
+        ):
+            with patch(
+                "app.services.vonage_sms.VonageSmsMessagesClient.send_text",
+                new_callable=AsyncMock,
+                return_value=_stub_send_result(),
+            ) as mock_send:
+                await send_new_request_sms(
+                    session,
+                    chw_id=UUID("00000000-0000-0000-0000-000000000001"),
+                    member_id=UUID("00000000-0000-0000-0000-000000000002"),
+                )
+    mock_send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_send_new_request_sms_missing_chw_user_is_a_noop(setup_db):
+    from app.services.sms_notifications import send_new_request_sms
+
+    with patch(
+        "app.services.vonage_sms.VonageSmsMessagesClient.send_text",
+        new_callable=AsyncMock,
+        return_value=_stub_send_result(),
+    ) as mock_send:
+        async with _test_session_factory() as session:
+            await send_new_request_sms(
+                session,
+                chw_id=UUID("00000000-0000-0000-0000-0000000000ff"),
+                member_id=UUID("00000000-0000-0000-0000-000000000002"),
+            )
+    mock_send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_send_new_request_sms_chw_without_phone_is_a_noop(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    from app.services.sms_notifications import send_new_request_sms
+
+    chw_id = _user_id_from_tokens(chw_tokens)
+    member_id = _user_id_from_tokens(member_tokens)
+    # CHW has no phone on file at all (User.phone is NULL by default).
+
+    with patch(
+        "app.services.vonage_sms.VonageSmsMessagesClient.send_text",
+        new_callable=AsyncMock,
+        return_value=_stub_send_result(),
+    ) as mock_send:
+        async with _test_session_factory() as session:
+            await send_new_request_sms(session, chw_id=UUID(chw_id), member_id=UUID(member_id))
+    mock_send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_send_new_message_sms_returns_when_conversation_lookup_raises(setup_db):
+    from app.services.sms_notifications import send_new_message_sms
+
+    async with _test_session_factory() as session:
+        with patch.object(
+            type(session), "get", new_callable=AsyncMock, side_effect=RuntimeError("db down")
+        ):
+            with patch(
+                "app.services.vonage_sms.VonageSmsMessagesClient.send_text",
+                new_callable=AsyncMock,
+                return_value=_stub_send_result(),
+            ) as mock_send:
+                await send_new_message_sms(
+                    session,
+                    conversation_id=UUID("00000000-0000-0000-0000-000000000001"),
+                    chw_id=UUID("00000000-0000-0000-0000-000000000002"),
+                    member_id=UUID("00000000-0000-0000-0000-000000000003"),
+                    now=REFERENCE_NOW,
+                )
+    mock_send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_send_new_message_sms_missing_conversation_is_a_noop(setup_db):
+    from app.services.sms_notifications import send_new_message_sms
+
+    with patch(
+        "app.services.vonage_sms.VonageSmsMessagesClient.send_text",
+        new_callable=AsyncMock,
+        return_value=_stub_send_result(),
+    ) as mock_send:
+        async with _test_session_factory() as session:
+            await send_new_message_sms(
+                session,
+                conversation_id=UUID("00000000-0000-0000-0000-0000000000ff"),
+                chw_id=UUID("00000000-0000-0000-0000-000000000002"),
+                member_id=UUID("00000000-0000-0000-0000-000000000003"),
+                now=REFERENCE_NOW,
+            )
+    mock_send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_send_new_message_sms_normalizes_naive_last_sent_timestamp(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    """A DB row that comes back with a naive (tz-less) datetime for
+    ``member_message_sms_alert_last_sent_at`` (driver/test-setup dependent,
+    per the inline comment in send_new_message_sms) must still be compared
+    correctly against the throttle window instead of raising a naive/aware
+    TypeError.
+
+    The column is ``DateTime(timezone=True)`` (Postgres timestamptz), so
+    round-tripping a naive Python datetime through asyncpg always comes back
+    tz-aware — the "naive" case can only be forced by patching the loaded
+    ORM attribute directly (in-process, mirroring what a different driver or
+    an in-memory test double could hand back), which is exactly the
+    defensive scenario the inline comment guards against.
+    """
+    from app.services.sms_notifications import send_new_message_sms
+
+    chw_id = _user_id_from_tokens(chw_tokens)
+    member_id = await _establish_relationship(client, member_tokens, chw_tokens)
+    await _set_phone(chw_id, "+15550119008")
+    conv_id = await _find_or_create_conversation(client, chw_tokens, member_id)
+
+    async with _test_session_factory() as session:
+        row = await session.get(Conversation, UUID(conv_id))
+        row.member_message_sms_alert_last_sent_at = REFERENCE_NOW - timedelta(minutes=5)
+        await session.commit()
+
+    naive_last_sent = (REFERENCE_NOW - timedelta(minutes=5)).replace(tzinfo=None)
+
+    with patch(
+        "app.services.vonage_sms.VonageSmsMessagesClient.send_text",
+        new_callable=AsyncMock,
+        return_value=_stub_send_result(),
+    ) as mock_send:
+        async with _test_session_factory() as session:
+            row = await session.get(Conversation, UUID(conv_id))
+            # Force the in-memory attribute back to naive right before the
+            # call under test, bypassing the DB round-trip that always
+            # re-hydrates it as tz-aware.
+            row.member_message_sms_alert_last_sent_at = naive_last_sent
+            await send_new_message_sms(
+                session,
+                conversation_id=UUID(conv_id),
+                chw_id=UUID(chw_id),
+                member_id=UUID(member_id),
+                now=REFERENCE_NOW,
+            )
+    mock_send.assert_not_called()  # still within throttle -> no send, no raise
+
+
+@pytest.mark.asyncio
+async def test_send_new_message_sms_returns_when_user_lookup_raises(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    from app.services.sms_notifications import send_new_message_sms
+
+    chw_id = _user_id_from_tokens(chw_tokens)
+    member_id = await _establish_relationship(client, member_tokens, chw_tokens)
+    conv_id = await _find_or_create_conversation(client, chw_tokens, member_id)
+
+    call_count = 0
+    original_get = AsyncSession.get
+
+    async def _flaky_get(self, entity, ident, *args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        # First call is the Conversation lookup (must succeed); the
+        # subsequent User lookups should raise.
+        if call_count == 1:
+            return await original_get(self, entity, ident, *args, **kwargs)
+        raise RuntimeError("db down")
+
+    with patch(
+        "app.services.vonage_sms.VonageSmsMessagesClient.send_text",
+        new_callable=AsyncMock,
+        return_value=_stub_send_result(),
+    ) as mock_send:
+        async with _test_session_factory() as session:
+            with patch.object(AsyncSession, "get", new=_flaky_get):
+                await send_new_message_sms(
+                    session,
+                    conversation_id=UUID(conv_id),
+                    chw_id=UUID(chw_id),
+                    member_id=UUID(member_id),
+                    now=REFERENCE_NOW,
+                )
+    mock_send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_send_new_message_sms_chw_without_phone_is_a_noop(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    from app.services.sms_notifications import send_new_message_sms
+
+    member_id = await _establish_relationship(client, member_tokens, chw_tokens)
+    chw_id = _user_id_from_tokens(chw_tokens)
+    conv_id = await _find_or_create_conversation(client, chw_tokens, member_id)
+    # CHW.phone intentionally left NULL.
+
+    with patch(
+        "app.services.vonage_sms.VonageSmsMessagesClient.send_text",
+        new_callable=AsyncMock,
+        return_value=_stub_send_result(),
+    ) as mock_send:
+        async with _test_session_factory() as session:
+            await send_new_message_sms(
+                session,
+                conversation_id=UUID(conv_id),
+                chw_id=UUID(chw_id),
+                member_id=UUID(member_id),
+                now=REFERENCE_NOW,
+            )
+    mock_send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_send_new_message_sms_missing_chw_user_is_a_noop(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    from app.services.sms_notifications import send_new_message_sms
+
+    member_id = await _establish_relationship(client, member_tokens, chw_tokens)
+    conv_id = await _find_or_create_conversation(client, chw_tokens, member_id)
+    missing_chw_id = UUID("00000000-0000-0000-0000-0000000000ff")
+
+    with patch(
+        "app.services.vonage_sms.VonageSmsMessagesClient.send_text",
+        new_callable=AsyncMock,
+        return_value=_stub_send_result(),
+    ) as mock_send:
+        async with _test_session_factory() as session:
+            await send_new_message_sms(
+                session,
+                conversation_id=UUID(conv_id),
+                chw_id=missing_chw_id,
+                member_id=UUID(member_id),
+                now=REFERENCE_NOW,
+            )
+    mock_send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_send_new_message_sms_logs_when_throttle_stamp_and_rollback_both_raise(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    """Simulates a commit failure on the throttle stamp AND a subsequent
+    rollback failure — both must be swallowed (logged), never raised, since
+    this runs from a BackgroundTask with no caller to propagate to."""
+    from app.services.sms_notifications import send_new_message_sms
+
+    chw_id = _user_id_from_tokens(chw_tokens)
+    member_id = await _establish_relationship(client, member_tokens, chw_tokens)
+    await _set_phone(chw_id, "+15550119009")
+    conv_id = await _find_or_create_conversation(client, chw_tokens, member_id)
+
+    with patch(
+        "app.services.vonage_sms.VonageSmsMessagesClient.send_text",
+        new_callable=AsyncMock,
+        return_value=_stub_send_result(),
+    ):
+        async with _test_session_factory() as session:
+            with patch.object(
+                AsyncSession, "commit", new_callable=AsyncMock, side_effect=RuntimeError("commit failed")
+            ), patch.object(
+                AsyncSession,
+                "rollback",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("rollback also failed"),
+            ):
+                # Must not raise despite both commit and rollback failing.
+                await send_new_message_sms(
+                    session,
+                    conversation_id=UUID(conv_id),
+                    chw_id=UUID(chw_id),
+                    member_id=UUID(member_id),
+                    now=REFERENCE_NOW,
+                )
+
+
+@pytest.mark.asyncio
+async def test_send_payout_initiated_sms_returns_when_lookup_raises(setup_db):
+    from app.services.sms_notifications import send_payout_initiated_sms
+
+    async with _test_session_factory() as session:
+        with patch.object(
+            type(session), "get", new_callable=AsyncMock, side_effect=RuntimeError("db down")
+        ):
+            with patch(
+                "app.services.vonage_sms.VonageSmsMessagesClient.send_text",
+                new_callable=AsyncMock,
+                return_value=_stub_send_result(),
+            ) as mock_send:
+                await send_payout_initiated_sms(
+                    session, chw_id=UUID("00000000-0000-0000-0000-000000000001"), amount_cents=1000
+                )
+    mock_send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_send_payout_initiated_sms_missing_chw_user_is_a_noop(setup_db):
+    from app.services.sms_notifications import send_payout_initiated_sms
+
+    with patch(
+        "app.services.vonage_sms.VonageSmsMessagesClient.send_text",
+        new_callable=AsyncMock,
+        return_value=_stub_send_result(),
+    ) as mock_send:
+        async with _test_session_factory() as session:
+            await send_payout_initiated_sms(
+                session,
+                chw_id=UUID("00000000-0000-0000-0000-0000000000ff"),
+                amount_cents=1000,
+            )
+    mock_send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_send_payout_initiated_sms_chw_without_phone_is_a_noop(
+    client: AsyncClient, chw_tokens: dict, setup_db
+):
+    """Also exercises app.routers.payments.trigger_chw_payout's payout-SMS
+    hook region (lines 369-377): a successful transfer whose CHW has no
+    phone on file must reach the try/await/except block, no-op inside
+    send_payout_initiated_sms, and still leave the payout marked successful."""
+    import app.routers.payments as payments_router
+
+    chw_id = _user_id_from_tokens(chw_tokens)
+    # Need a real member for the seeded claim; register one via a second fixture-like call.
+    res = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "payout-nophonemember@example.com",
+            "password": "Testpass123!",
+            "name": "Payout Member",
+            "role": "member",
+            "phone": "+13105559911",
+            "date_of_birth": "1993-01-05",
+            "gender": "Female",
+            "insurance_company": "Health Net",
+            "medi_cal_id": "87654321A",
+            "address_line1": "1 Main St",
+            "city": "Los Angeles",
+            "state": "CA",
+            "zip_code": "90001",
+            "terms_accepted": True,
+            "communications_consent": True,
+        },
+    )
+    assert res.status_code == 201, res.text
+    member_id = _user_id_from_tokens(res.json())
+    # CHW.phone intentionally left NULL.
+
+    claim_id, _ = await _seed_payable_claim(chw_id, member_id)
+
+    with patch.object(
+        payments_router, "get_payments_provider", lambda: _FakeTransferProvider()
+    ):
+        with patch(
+            "app.services.vonage_sms.VonageSmsMessagesClient.send_text",
+            new_callable=AsyncMock,
+            return_value=_stub_send_result(),
+        ) as mock_send:
+            async with _test_session_factory() as session:
+                ok = await payments_router.trigger_chw_payout(session, UUID(claim_id))
+
+    assert ok is True  # payout itself unaffected by the CHW having no phone
+    mock_send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_reminder_job_defaults_now_to_wall_clock_when_omitted(setup_db):
+    """scheduler.py line 286 — the `if now is None: now = datetime.now(UTC)`
+    branch. No sessions exist, so this only proves the default-now path runs
+    without raising and queries with a real wall-clock window."""
+    with patch(
+        "app.services.vonage_sms.VonageSmsMessagesClient.send_text",
+        new_callable=AsyncMock,
+        return_value=_stub_send_result(),
+    ) as mock_send:
+        await scheduler.send_sms_session_reminders()  # now omitted entirely
+    mock_send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_reminder_job_logs_when_rollback_after_send_failure_also_raises(
+    client: AsyncClient, chw_tokens: dict, member_tokens: dict, setup_db
+):
+    """scheduler.py lines 332-333 / 337-340 — an unexpected exception during
+    a per-session reminder send is caught and logged, and if the subsequent
+    rollback ALSO raises, that too is caught and logged (never propagated),
+    so the batch loop keeps running."""
+    chw_id = _user_id_from_tokens(chw_tokens)
+    member_id = await _establish_relationship(client, member_tokens, chw_tokens)
+    await _set_phone(chw_id, "+15550119010")
+    await _set_member_phone_verified(member_id, "+15550119011")
+
+    await _schedule(client, chw_tokens, member_id, REFERENCE_NOW + timedelta(hours=24))
+
+    with patch(
+        "app.services.sms_notifications.send_session_reminder_sms",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("unexpected failure mid-send"),
+    ), patch.object(
+        AsyncSession,
+        "rollback",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("rollback also failed"),
+    ):
+        # Must not raise despite both the send and the rollback failing.
+        await scheduler.send_sms_session_reminders(now=REFERENCE_NOW)
