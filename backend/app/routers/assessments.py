@@ -13,6 +13,18 @@ POST /api/v1/sessions/{session_id}/assessments
     creating a duplicate. If a fresh one is created, returns HTTP 201.
     Auth: CHW who owns the session, or admin.
 
+POST /api/v1/chw/members/{member_id}/assessments
+    Start (or resume) an assessment for a member OUTSIDE the context of a
+    live session (Wave-2 #26 — SDOH screening conducted in person, by phone,
+    etc., with no digitally-tracked session). Creates a MemberAssessment with
+    session_id=NULL. Idempotency spans BOTH session-scoped and session-less
+    starts for the same (member_id, template_id): an in_progress assessment
+    started here will be resumed by a later call to the session-scoped
+    endpoint, and vice versa, since a CHW's progress on a questionnaire is
+    continuous regardless of which context they started it in. Lives in this
+    router (not chw.py) so all assessment lifecycle logic stays together.
+    Auth: CHW with a shared session with the member, or admin.
+
 POST /api/v1/assessments/{assessment_id}/responses
     Append a single response row. Per-answer persistence — each call
     saves exactly one answer. Multiple responses to the same question_id
@@ -132,6 +144,30 @@ async def _load_responses(
     return list(result.scalars().all())
 
 
+async def _find_in_progress_assessment(
+    member_id: UUID,
+    template_id: str,
+    db: AsyncSession,
+) -> MemberAssessment | None:
+    """Return the in_progress MemberAssessment for (member_id, template_id), if any.
+
+    Deliberately has NO session_id filter — this is the mechanism behind the
+    cross-context idempotency invariant: an in_progress assessment started
+    inside a session is resumed by the session-less start endpoint, and an
+    in_progress assessment started session-less is resumed by the
+    session-scoped start endpoint. A member+template pair is meant to have at
+    most one in_progress assessment regardless of which context created it.
+    """
+    result = await db.execute(
+        select(MemberAssessment).where(
+            MemberAssessment.member_id == member_id,
+            MemberAssessment.template_id == template_id,
+            MemberAssessment.status == "in_progress",
+        )
+    )
+    return result.scalar_one_or_none()
+
+
 def _assessment_to_out(
     assessment: MemberAssessment,
     responses: list[MemberAssessmentResponse] | None = None,
@@ -227,15 +263,11 @@ async def start_assessment(
 
     session = await _assert_session_chw(session_id, current_user, db)
 
-    # Idempotency: return any in_progress assessment for this member+template.
-    existing_result = await db.execute(
-        select(MemberAssessment).where(
-            MemberAssessment.member_id == session.member_id,
-            MemberAssessment.template_id == data.template_id,
-            MemberAssessment.status == "in_progress",
-        )
+    # Idempotency: return any in_progress assessment for this member+template,
+    # regardless of which context (session-scoped or session-less) created it.
+    existing = await _find_in_progress_assessment(
+        session.member_id, data.template_id, db
     )
-    existing = existing_result.scalar_one_or_none()
     if existing is not None:
         logger.info(
             "assessment idempotent return: assessment=%s member=%s template=%s",
@@ -263,6 +295,105 @@ async def start_assessment(
     logger.info(
         "assessment created: assessment=%s session=%s member=%s template=%s chw=%s",
         assessment.id, session_id, session.member_id, data.template_id, current_user.id,
+    )
+    return _assessment_to_out(assessment)
+
+
+# ---------------------------------------------------------------------------
+# Session-less: start assessment directly against a member (Wave-2 #26)
+# ---------------------------------------------------------------------------
+#
+# Placement note: this endpoint is keyed on {member_id}, which puts it in the
+# same URL family as the chw.py member-management routes. It is kept HERE in
+# assessments.py instead, alongside the other assessment lifecycle endpoints,
+# because it shares the exact idempotency helper, template validation, and
+# response-shape logic as start_assessment() above — splitting it into
+# chw.py would duplicate that logic or force a cross-module import of
+# private helpers. Keeping all assessment-engine logic in one file also
+# matches how GET /chw/members/{member_id}/assessments/latest is already
+# placed here rather than in chw.py.
+
+
+@router.post(
+    "/api/v1/chw/members/{member_id}/assessments",
+    summary="Start (or resume) an assessment for a member outside a session",
+    description=(
+        "Starts an assessment for a member with no associated session "
+        "(session_id=NULL) — for SDOH screening conducted outside a "
+        "digitally-tracked visit. Idempotent: if an in_progress assessment "
+        "already exists for this member+template — whether it was started "
+        "here or via the session-scoped endpoint — the existing assessment "
+        "is returned (HTTP 200) rather than creating a duplicate. A newly "
+        "created assessment returns HTTP 201. "
+        "Body: {\"template_id\": \"compass_member_v1\"}."
+    ),
+    status_code=201,
+    response_model=AssessmentOut,
+)
+async def start_member_assessment(
+    member_id: UUID,
+    data: AssessmentStartRequest,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> AssessmentOut | JSONResponse:
+    """POST /api/v1/chw/members/{member_id}/assessments
+
+    Idempotency rule: identical to start_assessment() above — one
+    in_progress assessment per (member_id, template_id), regardless of
+    session_id. See _find_in_progress_assessment() for why the lookup is
+    intentionally session_id-agnostic (cross-context resume).
+
+    Auth: CHW with a shared session with the member (assert_shared_session,
+    the same relationship gate used by get_latest_member_assessment), or
+    admin. A bare role check is insufficient — any CHW would otherwise be
+    able to start assessments against any member's record.
+    """
+    _assert_chw_or_admin(current_user)
+
+    # Validate template exists before touching the DB.
+    template = get_template(data.template_id)
+    if template is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown template '{data.template_id}'.",
+        )
+
+    # Relationship gate: mirrors get_latest_member_assessment's pattern.
+    # Admins bypass this check — they can access any member's data.
+    if current_user.role != "admin":
+        from app.services.relationship_guards import assert_shared_session
+        await assert_shared_session(db, chw_id=current_user.id, member_id=member_id)
+
+    # Idempotency: return any in_progress assessment for this member+template,
+    # regardless of which context (session-scoped or session-less) created it.
+    existing = await _find_in_progress_assessment(member_id, data.template_id, db)
+    if existing is not None:
+        logger.info(
+            "assessment idempotent return (session-less): assessment=%s member=%s "
+            "template=%s",
+            existing.id, member_id, data.template_id,
+        )
+        responses = await _load_responses(existing.id, db)
+        out = _assessment_to_out(existing, responses)
+        return JSONResponse(
+            content=out.model_dump(mode="json"),
+            status_code=200,
+        )
+
+    assessment = MemberAssessment(
+        member_id=member_id,
+        session_id=None,
+        template_id=data.template_id,
+        chw_id=current_user.id,
+        status="in_progress",
+    )
+    db.add(assessment)
+    await db.commit()
+    await db.refresh(assessment)
+
+    logger.info(
+        "assessment created (session-less): assessment=%s member=%s template=%s chw=%s",
+        assessment.id, member_id, data.template_id, current_user.id,
     )
     return _assessment_to_out(assessment)
 

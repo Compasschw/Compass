@@ -20,6 +20,11 @@
  * useMemberRewardsBalance, useCaseNotes, useSessionNotes,
  * useMemberDocuments) all run for real against a routed `api()` mock —
  * Tier 2 (jsdom + react-native-web, see native/TESTING.md).
+ *
+ * Also covers Wave-2 #25 — the Screening Results card/modal now hosts an
+ * EDITABLE AssessmentForm (seeded via useAssessmentBootstrap's session-less
+ * resume) instead of a read-only response list, with a "Start screening"
+ * path when no assessment exists yet.
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -118,6 +123,50 @@ let closureReviewResponder: (body: unknown) => unknown = () => ({
   created_at: '2026-07-13T00:00:00Z',
 });
 
+// ─── Wave-2 #25/#26 — Screening Results fixtures ───────────────────────────
+
+const ASSESSMENT_ID = 'assess-1';
+const TEMPLATE_ID = 'compass_member_v1';
+
+const assessmentTemplateFixture = {
+  id: TEMPLATE_ID,
+  name: 'Compass Member Assessment',
+  total_questions: 1,
+  sections: [{ id: 'sec1', title: 'Housing', part: 1, part_label: 'Part 1', category: 'housing' }],
+  questions: [
+    {
+      id: 'q1',
+      section_id: 'sec1',
+      source_q_num: 1,
+      text: 'Do you have stable housing?',
+      category: 'housing',
+      subcategory: 'stability',
+      tags: [],
+      options: [
+        { value: 'yes', label: 'Yes' },
+        { value: 'no', label: 'No' },
+      ],
+    },
+  ],
+};
+
+// Mutable per-test override for GET /chw/members/{id}/assessments/latest —
+// null (the default) means "no completed assessment yet" (404), matching
+// the pre-existing fixture behavior. Set to an object to simulate an
+// existing completed assessment with saved answers.
+let assessmentLatestResponder: () => unknown = () => null;
+
+// Mutable per-test override for POST /chw/members/{id}/assessments (the
+// Wave-2 #26 session-less start/resume endpoint) — lets tests simulate
+// resuming prior in_progress answers via `responses`.
+let memberAssessmentStartResponder: () => unknown = () => ({
+  id: ASSESSMENT_ID,
+  status: 'in_progress',
+  template_id: TEMPLATE_ID,
+  session_id: null,
+  member_id: MEMBER_ID,
+});
+
 function routeApi(path: string, options?: { method?: string; body?: string }): unknown {
   const method = options?.method ?? 'GET';
 
@@ -137,7 +186,25 @@ function routeApi(path: string, options?: { method?: string; body?: string }): u
     return closureReviewResponder(body);
   }
   if (path === `/chw/members/${MEMBER_ID}/assessments/latest` && method === 'GET') {
-    throw Object.assign(new Error('Not Found'), { status: 404 });
+    const latest = assessmentLatestResponder();
+    if (latest == null) {
+      throw Object.assign(new Error('Not Found'), { status: 404 });
+    }
+    return latest;
+  }
+  if (path === `/assessment-templates/${TEMPLATE_ID}` && method === 'GET') {
+    return assessmentTemplateFixture;
+  }
+  // Wave-2 #26 — session-less start/resume, called when the CHW taps
+  // "Start screening" / "Edit answers" on the profile's Screening Results card.
+  if (path === `/chw/members/${MEMBER_ID}/assessments` && method === 'POST') {
+    return memberAssessmentStartResponder();
+  }
+  if (path === `/assessments/${ASSESSMENT_ID}/responses` && method === 'POST') {
+    return {};
+  }
+  if (path === `/assessments/${ASSESSMENT_ID}/complete` && method === 'POST') {
+    return {};
   }
   if (path === `/member/services-consent?member_id=${MEMBER_ID}` && method === 'GET') {
     return { value: null, changed_at: null, last_changed_by: null };
@@ -209,6 +276,14 @@ beforeEach(() => {
     status: 'pending',
     source: 'account_closure',
     created_at: '2026-07-13T00:00:00Z',
+  });
+  assessmentLatestResponder = () => null;
+  memberAssessmentStartResponder = () => ({
+    id: ASSESSMENT_ID,
+    status: 'in_progress',
+    template_id: TEMPLATE_ID,
+    session_id: null,
+    member_id: MEMBER_ID,
   });
   mockedApi.mockImplementation(
     async (path: string, options?: { method?: string; body?: string }) => routeApi(path, options),
@@ -398,5 +473,94 @@ describe('CHWMemberProfileScreen — post-close parting feedback prompt (Epic B3
       ),
     ).toBeTruthy();
     expect(screen.getByLabelText('Skip')).toBeTruthy();
+  });
+});
+
+// ─── Wave-2 #25 — editable Screening Results from the profile ─────────────────
+
+describe('CHWMemberProfileScreen — Screening Results card (Wave-2 #25/#26)', () => {
+  it('"Start screening" when no assessment exists starts one via the session-less endpoint and renders the form', async () => {
+    // Default assessmentLatestResponder returns null (404) — no assessment yet.
+    renderScreen();
+    await waitFor(() => expect(screen.getByText(MEMBER_NAME)).toBeTruthy());
+
+    fireEvent.click(screen.getByText('Screening Results'));
+    await screen.findByText('No screening completed for this member yet.');
+
+    fireEvent.click(screen.getByLabelText('Start screening'));
+
+    // Bootstraps via the member-scoped (session-less) start endpoint, then
+    // renders the real AssessmentForm — proves the "Start screening" path
+    // uses the same session-less mechanism as the Messages panel.
+    await screen.findByText('Do you have stable housing?', {}, { timeout: 3000 });
+    expect(mockedApi).toHaveBeenCalledWith(
+      `/chw/members/${MEMBER_ID}/assessments`,
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
+  it('renders a compact read-only summary strip + editable form seeded with the member\'s saved answers, and saves', async () => {
+    assessmentLatestResponder = () => ({
+      id: ASSESSMENT_ID,
+      completed_at: '2026-07-10T12:00:00Z',
+      response_counts: {},
+      responses: [
+        {
+          question_id: 'q1',
+          question_text: 'Do you have stable housing?',
+          answer_value: 'yes',
+          answer_label: 'Yes',
+        },
+      ],
+    });
+    memberAssessmentStartResponder = () => ({
+      id: ASSESSMENT_ID,
+      status: 'in_progress',
+      template_id: TEMPLATE_ID,
+      session_id: null,
+      member_id: MEMBER_ID,
+      responses: [
+        {
+          id: 'resp-1',
+          question_id: 'q1',
+          answer_value: 'yes',
+          answer_label: 'Yes',
+          skipped: false,
+          captured_at: '2026-07-10T12:00:00Z',
+        },
+      ],
+    });
+
+    renderScreen();
+    await waitFor(() => expect(screen.getByText(MEMBER_NAME)).toBeTruthy());
+
+    fireEvent.click(screen.getByText('Screening Results'));
+
+    // Compact read-only summary strip up top.
+    await screen.findByText(/1 answered · last updated/);
+
+    // Editing seeds the form with the prior answer via resume hydration —
+    // proves the same initialAnswers mechanism InlineSdohPanel uses.
+    fireEvent.click(screen.getByLabelText('Edit answers'));
+    await screen.findByText('Do you have stable housing?', {}, { timeout: 3000 });
+    expect(mockedApi).toHaveBeenCalledWith(
+      `/chw/members/${MEMBER_ID}/assessments`,
+      expect.objectContaining({ method: 'POST' }),
+    );
+
+    // The prior answer ('Yes') is pre-selected — changing it to 'No' still
+    // posts through the same persistence endpoint AssessmentForm always used.
+    const noOption = screen.getByLabelText('No');
+    fireEvent.click(noOption);
+
+    await waitFor(() => {
+      expect(mockedApi).toHaveBeenCalledWith(
+        `/assessments/${ASSESSMENT_ID}/responses`,
+        expect.objectContaining({
+          method: 'POST',
+          body: expect.stringContaining('"answer_value":"no"'),
+        }),
+      );
+    });
   });
 });

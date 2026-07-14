@@ -19,7 +19,21 @@
  * `initialAnswers` prop to hydrate the form on reopen instead of showing a
  * blank questionnaire.
  *
- * Used by `InlineSdohPanel` (the in-Messages panel). The legacy full-screen
+ * Wave-2 #26 (session-less screenings): the CHW may open the SDOH panel with
+ * NO active session (e.g. a phone check-in). `useAssessmentBootstrap` now
+ * accepts either `{ sessionId }` (existing session-scoped start, POST
+ * `/sessions/{sessionId}/assessments`) or `{ memberId }` (new member-scoped
+ * start, POST `/chw/members/{memberId}/assessments`, `session_id` left
+ * NULL). Both branches are idempotent and — per the backend's cross-context
+ * resume invariant — share the SAME in_progress assessment for a given
+ * member+template regardless of which context started it, so switching
+ * between "in a session" and "no session" never loses progress. Callers
+ * (`InlineSdohPanel`, the Member Profile screening card) pick whichever
+ * target they have; `AssessmentForm` itself is unaware of the distinction —
+ * it only ever sees the resulting `assessmentId`.
+ *
+ * Used by `InlineSdohPanel` (the in-Messages panel) and, as of Wave-2 #25/#26,
+ * `CHWMemberProfileScreen`'s Screening Results card. The legacy full-screen
  * `CHWMemberAssessmentScreen` keeps its own historical bootstrap code path —
  * see that file's header comment for why it was left untouched (it does not
  * currently wire resume hydration).
@@ -85,7 +99,8 @@ interface StartOrResumeAssessmentResponse {
   id: string;
   status: string;
   template_id: string;
-  session_id: string;
+  /** NULL for an assessment started via the session-less (member-scoped) endpoint. */
+  session_id: string | null;
   member_id: string;
   /**
    * Present (and populated) on the idempotent "resume" branch — the
@@ -94,6 +109,16 @@ interface StartOrResumeAssessmentResponse {
    */
   responses?: AssessmentResponseHydration[];
 }
+
+/**
+ * The assessment target: either an existing session (session-scoped start,
+ * the original/only mode before Wave-2 #26) or a bare member id (session-less
+ * start, new in Wave-2 #26). Exactly one of the two must be provided —
+ * enforced by the discriminated union rather than a runtime check.
+ */
+export type AssessmentBootstrapTarget =
+  | { sessionId: string; memberId?: undefined }
+  | { memberId: string; sessionId?: undefined };
 
 export type AssessmentBootstrapState = 'loading' | 'ready' | 'error';
 
@@ -146,8 +171,23 @@ async function fetchAssessmentTemplate(templateId: string): Promise<AssessmentTe
   return api<AssessmentTemplate>(`/assessment-templates/${templateId}`);
 }
 
-async function startOrResumeAssessment(sessionId: string): Promise<StartOrResumeAssessmentResponse> {
-  return api<StartOrResumeAssessmentResponse>(`/sessions/${sessionId}/assessments`, {
+/**
+ * POST the appropriate start/resume endpoint for `target`:
+ *   - `{ sessionId }` → POST /sessions/{sessionId}/assessments (existing)
+ *   - `{ memberId }`  → POST /chw/members/{memberId}/assessments (Wave-2 #26)
+ *
+ * Both are idempotent on the backend and share the same in_progress
+ * assessment per (member, template) regardless of which one is called —
+ * see this file's header comment.
+ */
+async function startOrResumeAssessment(
+  target: AssessmentBootstrapTarget,
+): Promise<StartOrResumeAssessmentResponse> {
+  const path =
+    target.sessionId !== undefined
+      ? `/sessions/${target.sessionId}/assessments`
+      : `/chw/members/${target.memberId}/assessments`;
+  return api<StartOrResumeAssessmentResponse>(path, {
     method: 'POST',
     body: JSON.stringify({ template_id: SDOH_ASSESSMENT_TEMPLATE_ID }),
   });
@@ -157,16 +197,26 @@ async function startOrResumeAssessment(sessionId: string): Promise<StartOrResume
 
 /**
  * Fetches the SDOH template (cached 5 min — templates rarely change) and
- * starts/resumes the in_progress assessment for `sessionId` on mount.
+ * starts/resumes the in_progress assessment for `target` on mount.
  *
- * Callers should mount a fresh instance per session (e.g. via a React `key`)
- * rather than passing a changing `sessionId` into a long-lived instance.
+ * `target` is either `{ sessionId }` (in-session, the original behavior) or
+ * `{ memberId }` (session-less, Wave-2 #26) — see `AssessmentBootstrapTarget`.
+ *
+ * Callers should mount a fresh instance per target (e.g. via a React `key`
+ * on `sessionId`/`memberId`) rather than passing a changing target into a
+ * long-lived instance.
  */
-export function useAssessmentBootstrap(sessionId: string): UseAssessmentBootstrapResult {
+export function useAssessmentBootstrap(
+  target: AssessmentBootstrapTarget,
+): UseAssessmentBootstrapResult {
   const [assessmentId, setAssessmentId] = useState<string | null>(null);
   const [startError, setStartError] = useState<string | null>(null);
   const [starting, setStarting] = useState<boolean>(true);
   const [initialAnswers, setInitialAnswers] = useState<AssessmentInitialAnswer[]>([]);
+
+  // Stable primitive key for the effect below — targets are objects so a
+  // fresh reference on every render would otherwise re-fire the start call.
+  const targetKey = target.sessionId ?? target.memberId ?? '';
 
   const {
     data: template,
@@ -181,12 +231,13 @@ export function useAssessmentBootstrap(sessionId: string): UseAssessmentBootstra
   useEffect(() => {
     if (templateLoading) return;
     if (templateError) return; // surfaced via the derived `state` below
+    if (!targetKey) return; // no valid target yet (e.g. memberId not resolved)
 
     let cancelled = false;
     setStarting(true);
     setStartError(null);
 
-    startOrResumeAssessment(sessionId)
+    startOrResumeAssessment(target)
       .then((assessment) => {
         if (cancelled) return;
         setAssessmentId(assessment.id);
@@ -202,8 +253,8 @@ export function useAssessmentBootstrap(sessionId: string): UseAssessmentBootstra
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- sessionId is stable per mounted instance (caller remounts via `key`)
-  }, [sessionId, templateLoading, templateError]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- targetKey is the stable per-mount identity; `target` itself is intentionally excluded (see comment above)
+  }, [targetKey, templateLoading, templateError]);
 
   const errorMessage = templateError
     ? 'Failed to load the questionnaire. Please try again.'

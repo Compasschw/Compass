@@ -48,22 +48,39 @@ Coverage
      CHW's device can hydrate previously-saved + previously-skipped state on
      reopen.
 
+8. Wave-2 #26 — session-less assessments
+   POST /api/v1/chw/members/{member_id}/assessments
+   - 403 for a CHW with no shared session with the member (relationship gate)
+   - 403 for a member-role caller
+   - 401 for an unauthenticated caller
+   - Creates a MemberAssessment with session_id IS NULL (201)
+   - Idempotent: second call returns the same in_progress row (200)
+   - 422 for unknown template_id
+   - Cross-context continuity (invariant, tested both directions):
+     * a session-less start resumes an existing session-SCOPED in_progress
+       assessment for the same member+template
+     * a session-scoped start resumes an existing session-LESS in_progress
+       assessment for the same member+template
+   - responses/complete/abandon behave identically on a session-less
+     assessment (keyed purely on assessment_id, no session dependency)
+   - GET .../assessments/latest surfaces a completed session-less assessment
+
 Each test runs against a real PostgreSQL test database (same conftest as all
 other tests). No mocks — full request → router → ORM → commit path.
 """
 
-from datetime import UTC, datetime, timedelta
+import base64
+import json
+from datetime import UTC, datetime
 from uuid import UUID
 
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
 
-import base64
-import json
-
 from app.models.assessment import MemberAssessment, MemberAssessmentResponse
-from tests.conftest import auth_header, test_session as _db_factory
+from tests.conftest import auth_header
+from tests.conftest import test_session as _db_factory
 
 
 def _extract_user_id_from_token(tokens: dict) -> str:
@@ -145,6 +162,36 @@ async def _start_assessment(
     )
     assert res.status_code in (200, 201), f"Expected 200/201, got {res.status_code}: {res.text}"
     return res.json(), res.status_code
+
+
+async def _start_member_assessment(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_id: str,
+    template_id: str = "compass_member_v1",
+):
+    """POST to the session-less start endpoint; return (json_body, status_code)."""
+    res = await client.post(
+        f"/api/v1/chw/members/{member_id}/assessments",
+        json={"template_id": template_id},
+        headers=auth_header(chw_tokens),
+    )
+    return res, res.json() if res.status_code < 500 else None
+
+
+async def _register_unrelated_chw(client: AsyncClient) -> dict:
+    """Register a second CHW with NO relationship to any member/session in
+    the test — used to assert the relationship gate actually rejects a CHW
+    who is not on a shared session (role check alone is insufficient, per
+    TESTING.md rule #1)."""
+    res = await client.post("/api/v1/auth/register", json={
+        "email": "unrelated-chw@example.com",
+        "password": "testpass123",
+        "name": "Unrelated CHW",
+        "role": "chw",
+    })
+    assert res.status_code == 201, f"Register failed: {res.text}"
+    return res.json()
 
 
 _SAMPLE_RESPONSE_BODY = {
@@ -994,3 +1041,337 @@ async def test_resume_hydrates_prior_answered_and_skipped_responses(
     assert responses_by_qid["housing_situation"]["answer_value"] == "own_or_rent_stable"
     assert responses_by_qid["food_insecurity"]["skipped"] is True
     assert responses_by_qid["food_insecurity"]["answer_value"] == "skipped"
+
+
+# ─── 8. Wave-2 #26 — session-less assessments ─────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_start_member_assessment_forbidden_for_unrelated_chw(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_tokens: dict,
+) -> None:
+    """A CHW with no shared session with the member gets 403, not 200/201.
+
+    This is the relationship-gate test required by TESTING.md rule #1 — a
+    role-only check (any CHW) would wrongly let an unrelated CHW start an
+    assessment against a member they have never worked with.
+    """
+    member_id = _extract_user_id_from_token(member_tokens)
+    unrelated_chw_tokens = await _register_unrelated_chw(client)
+
+    res = await client.post(
+        f"/api/v1/chw/members/{member_id}/assessments",
+        json={"template_id": "compass_member_v1"},
+        headers=auth_header(unrelated_chw_tokens),
+    )
+    assert res.status_code == 403, res.text
+
+
+@pytest.mark.asyncio
+async def test_start_member_assessment_forbidden_for_member(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_tokens: dict,
+) -> None:
+    """Members may not start assessments against themselves via this endpoint."""
+    member_id = _extract_user_id_from_token(member_tokens)
+
+    res = await client.post(
+        f"/api/v1/chw/members/{member_id}/assessments",
+        json={"template_id": "compass_member_v1"},
+        headers=auth_header(member_tokens),
+    )
+    assert res.status_code == 403, res.text
+
+
+@pytest.mark.asyncio
+async def test_start_member_assessment_unauthenticated_returns_401(
+    client: AsyncClient,
+    member_tokens: dict,
+) -> None:
+    """No Authorization header at all must be rejected (401), not 403/500."""
+    member_id = _extract_user_id_from_token(member_tokens)
+
+    res = await client.post(
+        f"/api/v1/chw/members/{member_id}/assessments",
+        json={"template_id": "compass_member_v1"},
+    )
+    assert res.status_code == 401, res.text
+
+
+@pytest.mark.asyncio
+async def test_start_member_assessment_creates_session_less_row(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_tokens: dict,
+) -> None:
+    """A relationship-gated CHW gets 201 and a row with session_id IS NULL."""
+    member_id = _extract_user_id_from_token(member_tokens)
+    request_id = await _create_request_and_accept(client, member_tokens, chw_tokens)
+    # Establish the care relationship via a session, but do NOT pass the
+    # session_id into the assessment-start call — this is the whole point of
+    # the session-less endpoint.
+    await _create_session(client, chw_tokens, request_id)
+
+    res, body = await _start_member_assessment(client, chw_tokens, member_id)
+    assert res.status_code == 201, res.text
+    assert body["status"] == "in_progress"
+    assert body["template_id"] == "compass_member_v1"
+    assert body["session_id"] is None
+    assert body["member_id"] == member_id
+
+    # Verify directly against the DB — the API-level null is not enough proof
+    # on its own since a bug could coerce None -> the string "None" etc.
+    async with _db_factory() as db:
+        row = await db.get(MemberAssessment, UUID(body["id"]))
+        assert row is not None
+        assert row.session_id is None
+        assert row.member_id == UUID(member_id)
+
+
+@pytest.mark.asyncio
+async def test_start_member_assessment_idempotent(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_tokens: dict,
+) -> None:
+    """A second session-less start call returns the same in_progress row (200)."""
+    member_id = _extract_user_id_from_token(member_tokens)
+    request_id = await _create_request_and_accept(client, member_tokens, chw_tokens)
+    await _create_session(client, chw_tokens, request_id)
+
+    res1, body1 = await _start_member_assessment(client, chw_tokens, member_id)
+    assert res1.status_code == 201, res1.text
+
+    res2, body2 = await _start_member_assessment(client, chw_tokens, member_id)
+    assert res2.status_code == 200, res2.text
+    assert body2["id"] == body1["id"]
+    assert body2["status"] == "in_progress"
+
+
+@pytest.mark.asyncio
+async def test_start_member_assessment_unknown_template_returns_422(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_tokens: dict,
+) -> None:
+    member_id = _extract_user_id_from_token(member_tokens)
+    request_id = await _create_request_and_accept(client, member_tokens, chw_tokens)
+    await _create_session(client, chw_tokens, request_id)
+
+    res, _ = await _start_member_assessment(
+        client, chw_tokens, member_id, template_id="not_a_real_template"
+    )
+    assert res.status_code == 422, res.text
+
+
+@pytest.mark.asyncio
+async def test_session_less_start_resumes_existing_session_scoped_in_progress(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_tokens: dict,
+) -> None:
+    """Invariant, direction 1: an in_progress assessment started INSIDE a
+    session is resumed (not duplicated) by the session-less start endpoint.
+
+    This proves the idempotency lookup is session_id-agnostic. A test that
+    only checked "some 200 or 201 comes back" would pass even if a bug made
+    every session-less call create a brand-new row — asserting the SAME id
+    and that only one row total exists is what makes this test fail on that
+    broken behavior.
+    """
+    member_id = _extract_user_id_from_token(member_tokens)
+    request_id = await _create_request_and_accept(client, member_tokens, chw_tokens)
+    session_id = await _create_session(client, chw_tokens, request_id)
+
+    # Start INSIDE the session first.
+    body_session, code_session = await _start_assessment(client, chw_tokens, session_id)
+    assert code_session == 201
+    session_scoped_id = body_session["id"]
+    assert body_session["session_id"] == session_id
+
+    # Now call the session-less endpoint for the same member+template — must
+    # resume the existing row, not create a second one.
+    res, body_sessionless = await _start_member_assessment(client, chw_tokens, member_id)
+    assert res.status_code == 200, res.text
+    assert body_sessionless["id"] == session_scoped_id
+    # The resumed row still carries its original session_id — resuming via
+    # the session-less endpoint must not mutate/null it out.
+    assert body_sessionless["session_id"] == session_id
+
+    async with _db_factory() as db:
+        result = await db.execute(
+            select(MemberAssessment).where(
+                MemberAssessment.member_id == UUID(member_id),
+                MemberAssessment.template_id == "compass_member_v1",
+            )
+        )
+        rows = result.scalars().all()
+    assert len(rows) == 1, "Session-less resume must not create a duplicate row"
+
+
+@pytest.mark.asyncio
+async def test_session_scoped_start_resumes_existing_session_less_in_progress(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_tokens: dict,
+) -> None:
+    """Invariant, direction 2 (converse of the above): an in_progress
+    assessment started session-less is resumed (not duplicated) by the
+    session-scoped start endpoint.
+    """
+    member_id = _extract_user_id_from_token(member_tokens)
+    request_id = await _create_request_and_accept(client, member_tokens, chw_tokens)
+    session_id = await _create_session(client, chw_tokens, request_id)
+
+    # Start session-less first.
+    res, body_sessionless = await _start_member_assessment(client, chw_tokens, member_id)
+    assert res.status_code == 201, res.text
+    sessionless_id = body_sessionless["id"]
+    assert body_sessionless["session_id"] is None
+
+    # Now call the session-scoped endpoint for the same member+template — must
+    # resume the existing row, not create a second one.
+    body_session, code_session = await _start_assessment(client, chw_tokens, session_id)
+    assert code_session == 200
+    assert body_session["id"] == sessionless_id
+    # The resumed row keeps session_id NULL — resuming via the session-scoped
+    # endpoint must not retroactively attach a session to it.
+    assert body_session["session_id"] is None
+
+    async with _db_factory() as db:
+        result = await db.execute(
+            select(MemberAssessment).where(
+                MemberAssessment.member_id == UUID(member_id),
+                MemberAssessment.template_id == "compass_member_v1",
+            )
+        )
+        rows = result.scalars().all()
+    assert len(rows) == 1, "Session-scoped resume must not create a duplicate row"
+
+
+@pytest.mark.asyncio
+async def test_session_less_assessment_response_lifecycle(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_tokens: dict,
+) -> None:
+    """responses/complete work identically on a session-less assessment —
+    they key purely on assessment_id/ownership with no session dependency."""
+    member_id = _extract_user_id_from_token(member_tokens)
+    request_id = await _create_request_and_accept(client, member_tokens, chw_tokens)
+    await _create_session(client, chw_tokens, request_id)
+
+    res, body = await _start_member_assessment(client, chw_tokens, member_id)
+    assert res.status_code == 201, res.text
+    assessment_id = body["id"]
+
+    # Append a normal response.
+    res_resp = await client.post(
+        f"/api/v1/assessments/{assessment_id}/responses",
+        json=_SAMPLE_RESPONSE_BODY,
+        headers=auth_header(chw_tokens),
+    )
+    assert res_resp.status_code == 201, res_resp.text
+
+    # Append a skipped response.
+    res_skip = await client.post(
+        f"/api/v1/assessments/{assessment_id}/responses",
+        json={
+            "question_id": "food_insecurity",
+            "question_text": "Were you ever worried that food would run out?",
+            "category": "sdoh",
+            "subcategory": "food_access",
+            "tags": ["SDOH"],
+            "skipped": True,
+        },
+        headers=auth_header(chw_tokens),
+    )
+    assert res_skip.status_code == 201, res_skip.text
+    assert res_skip.json()["skipped"] is True
+
+    # Complete it.
+    res_complete = await client.post(
+        f"/api/v1/assessments/{assessment_id}/complete",
+        headers=auth_header(chw_tokens),
+    )
+    assert res_complete.status_code == 200, res_complete.text
+    completed = res_complete.json()
+    assert completed["status"] == "completed"
+    assert completed["session_id"] is None
+    assert len(completed["responses"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_session_less_assessment_can_be_abandoned(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_tokens: dict,
+) -> None:
+    """abandon works identically on a session-less assessment."""
+    member_id = _extract_user_id_from_token(member_tokens)
+    request_id = await _create_request_and_accept(client, member_tokens, chw_tokens)
+    await _create_session(client, chw_tokens, request_id)
+
+    res, body = await _start_member_assessment(client, chw_tokens, member_id)
+    assert res.status_code == 201, res.text
+    assessment_id = body["id"]
+
+    res_abandon = await client.post(
+        f"/api/v1/assessments/{assessment_id}/abandon",
+        headers=auth_header(chw_tokens),
+    )
+    assert res_abandon.status_code == 200, res_abandon.text
+    assert res_abandon.json()["status"] == "abandoned"
+    assert res_abandon.json()["session_id"] is None
+
+    # 409 on a second abandon call — same lifecycle rules as session-scoped.
+    res_abandon_again = await client.post(
+        f"/api/v1/assessments/{assessment_id}/abandon",
+        headers=auth_header(chw_tokens),
+    )
+    assert res_abandon_again.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_latest_endpoint_includes_completed_session_less_assessment(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_tokens: dict,
+) -> None:
+    """GET .../assessments/latest must surface a completed session-less
+    assessment — it queries by member_id + status='completed' with no
+    session_id filter, so this should already work; this test proves it
+    explicitly rather than relying on code inspection.
+    """
+    member_id = _extract_user_id_from_token(member_tokens)
+    request_id = await _create_request_and_accept(client, member_tokens, chw_tokens)
+    await _create_session(client, chw_tokens, request_id)
+
+    res, body = await _start_member_assessment(client, chw_tokens, member_id)
+    assert res.status_code == 201, res.text
+    assessment_id = body["id"]
+
+    await client.post(
+        f"/api/v1/assessments/{assessment_id}/responses",
+        json=_SAMPLE_RESPONSE_BODY,
+        headers=auth_header(chw_tokens),
+    )
+    res_complete = await client.post(
+        f"/api/v1/assessments/{assessment_id}/complete",
+        headers=auth_header(chw_tokens),
+    )
+    assert res_complete.status_code == 200, res_complete.text
+
+    res_latest = await client.get(
+        f"/api/v1/chw/members/{member_id}/assessments/latest",
+        headers=auth_header(chw_tokens),
+    )
+    assert res_latest.status_code == 200, res_latest.text
+    data = res_latest.json()
+    assert data["id"] == assessment_id
+    assert data["session_id"] is None
+    assert data["status"] == "completed"
+    assert len(data["responses"]) == 1

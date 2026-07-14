@@ -158,7 +158,6 @@ import {
 } from '../../hooks/useMessagesInsights';
 import { SwipeableThreadRow } from '../../components/chw/SwipeableThreadRow';
 import { applyThreadFilter, type ThreadFilterTab } from './threadFilter';
-import { showAlert } from '../../utils/showAlert';
 import { formatElapsedSince } from '../../utils/sessionTimer';
 import {
   useMessageAttachmentUpload,
@@ -2431,12 +2430,17 @@ interface MemberContextRailProps {
   /** Fired after the auto-prompt attempt so the parent can clear the one-shot flag. */
   readonly onPromptCompleteConsumed?: () => void;
   /**
-   * Called when the CHW taps "SDOH / Health Screening" with an active
-   * session. The parent (CHWMessagesScreen) owns the panel's open/close
-   * state because the panel renders as a sibling pane of the rail, not
-   * nested inside it — see InlineSdohPanel's header comment for why.
+   * Called when the CHW taps "SDOH / Health Screening" — with OR without an
+   * active session (Wave-2 #26 removed the "begin a session first" gate).
+   * `sessionId` is passed when `conv.activeSessionId` is set (preserves the
+   * exact pre-existing in-session behavior); `memberId` is always passed so
+   * the panel can fall back to the session-less start endpoint when there is
+   * no active session. The parent (CHWMessagesScreen) owns the panel's
+   * open/close state because the panel renders as a sibling pane of the
+   * rail, not nested inside it — see InlineSdohPanel's header comment for
+   * why.
    */
-  readonly onOpenSdohPanel: (sessionId: string) => void;
+  readonly onOpenSdohPanel: (target: { sessionId: string | null; memberId: string }) => void;
 }
 
 /**
@@ -3033,15 +3037,14 @@ function MemberContextRail({
             onPress={() => {
               // Open the SDOH/Health Screening questionnaire inline, within
               // this Messages page — its answers surface in the member
-              // profile's Screening Results. Requires an in-progress session.
-              if (conv.activeSessionId) {
-                onOpenSdohPanel(conv.activeSessionId);
-              } else {
-                showAlert(
-                  'Begin a session first',
-                  'Start a session with this member to run the SDOH / Health Screening and capture answers.',
-                );
-              }
+              // profile's Screening Results. Wave-2 #26: no longer requires
+              // an active session — pass activeSessionId when present (same
+              // in-session behavior as before) and always pass memberId so
+              // the panel can start a session-less assessment otherwise.
+              onOpenSdohPanel({
+                sessionId: conv.activeSessionId ?? null,
+                memberId: conv.memberId ?? '',
+              });
             }}
             accessibilityLabel="Open SDOH / Health Screening"
             style={railCardStyles.screeningRow}
@@ -3260,7 +3263,13 @@ export function CHWMessagesScreen(): React.JSX.Element {
   // MemberContextRail, because the panel renders as a 4th sibling pane next
   // to the rail (wide desktop) rather than nested/overlaying inside it — see
   // InlineSdohPanel's header comment.
-  const [sdohSessionId, setSdohSessionId] = useState<string | null>(null);
+  // Wave-2 #26: holds BOTH sessionId (null when no active session) and
+  // memberId (always set) so the panel can fall back to the session-less
+  // start endpoint when there's no active session — the "Begin a session
+  // first" gate was removed.
+  const [sdohTarget, setSdohTarget] = useState<{ sessionId: string | null; memberId: string } | null>(
+    null,
+  );
 
   // Route params — navigate from CHWMemberProfileScreen with memberId + autoCall / autoBeginSession
   const route = useRoute<RouteProp<CHWSessionsStackParamList, 'Messages'>>();
@@ -3299,7 +3308,7 @@ export function CHWMessagesScreen(): React.JSX.Element {
   // at all, so there's nothing left for a sheet to cover; the overlay
   // fallback there is the same intentional, documented tradeoff described
   // in InlineSdohPanel's header comment, left unchanged by this fix.
-  const sdohOpen = sdohSessionId != null;
+  const sdohOpen = sdohTarget != null;
   const collapseListForSdoh = sdohOpen && !hideRail && width < SDOH_PANEL_PANE_BREAKPOINT;
   const sdohPanelVariant: 'pane' | 'sheet' = !hideRail ? 'pane' : 'sheet';
 
@@ -3372,19 +3381,22 @@ export function CHWMessagesScreen(): React.JSX.Element {
     setShowThreadList(true);
   }, []);
 
-  const handleOpenSdohPanel = useCallback((sessionId: string): void => {
-    setSdohSessionId(sessionId);
-  }, []);
+  const handleOpenSdohPanel = useCallback(
+    (target: { sessionId: string | null; memberId: string }): void => {
+      setSdohTarget(target);
+    },
+    [],
+  );
 
   const handleCloseSdohPanel = useCallback((): void => {
-    setSdohSessionId(null);
+    setSdohTarget(null);
   }, []);
 
   // Close the SDOH panel when the CHW switches to a different member's
   // thread — otherwise it would keep showing (and could resume/complete)
   // the previous member's in-progress assessment against the new thread.
   useEffect(() => {
-    setSdohSessionId(null);
+    setSdohTarget(null);
   }, [selectedConversation?.id]);
 
   // Close the phone-width rail overlay on thread switch too, for the same
@@ -3644,10 +3656,11 @@ export function CHWMessagesScreen(): React.JSX.Element {
             control, including "Add Case Note", stay visible and clickable
             while it's open. See InlineSdohPanel's header comment for the
             'pane' vs 'sheet' variant tradeoff. */}
-        {sdohSessionId != null ? (
+        {sdohTarget != null ? (
           <InlineSdohPanel
-            key={sdohSessionId}
-            sessionId={sdohSessionId}
+            key={sdohTarget.sessionId ?? sdohTarget.memberId}
+            sessionId={sdohTarget.sessionId}
+            memberId={sdohTarget.memberId}
             memberName={
               (liveSelectedConversation ?? selectedConversation)?.memberName ?? null
             }
@@ -3687,9 +3700,9 @@ export function CHWMessagesScreen(): React.JSX.Element {
                 onAutoBeginSessionConsumed={() => {}}
                 promptCompleteOnMount={false}
                 onPromptCompleteConsumed={() => {}}
-                onOpenSdohPanel={(sessionId) => {
+                onOpenSdohPanel={(target) => {
                   setShowPhoneRail(false);
-                  handleOpenSdohPanel(sessionId);
+                  handleOpenSdohPanel(target);
                 }}
               />
             </View>

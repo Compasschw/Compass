@@ -81,8 +81,20 @@ export const SDOH_PANEL_PANE_BREAKPOINT = 1280 + SDOH_PANEL_WIDTH;
 export type SdohPanelVariant = 'pane' | 'sheet';
 
 export interface InlineSdohPanelProps {
-  /** The active session id. Caller must gate on `conv.activeSessionId` before rendering this. */
-  sessionId: string;
+  /**
+   * The active session id, when one exists. When null/omitted, the panel
+   * starts/resumes the assessment session-less against `memberId` instead
+   * (Wave-2 #26) — the SDOH panel no longer requires an active session to
+   * open. Exactly one of `sessionId`/`memberId` drives the actual bootstrap
+   * call; see `useAssessmentBootstrap`'s `AssessmentBootstrapTarget`.
+   */
+  sessionId?: string | null;
+  /**
+   * Member id, required when `sessionId` is not provided so the panel can
+   * start a session-less assessment. Callers that already pass `sessionId`
+   * may omit this — the session-scoped endpoint resolves the member itself.
+   */
+  memberId?: string | null;
   /** Member display name, shown in the panel subtitle. */
   memberName?: string | null;
   /** Called when the CHW dismisses the panel (X, backdrop tap, "Pause for now", or "Done" after completion). */
@@ -92,6 +104,7 @@ export interface InlineSdohPanelProps {
 
 export function InlineSdohPanel({
   sessionId,
+  memberId,
   memberName,
   onClose,
   variant,
@@ -102,7 +115,12 @@ export function InlineSdohPanel({
   const body = completed ? (
     <SdohSuccessState onDone={onClose} />
   ) : (
-    <SdohBootstrapBody sessionId={sessionId} onComplete={handleComplete} onPause={onClose} />
+    <SdohBootstrapBody
+      sessionId={sessionId ?? null}
+      memberId={memberId ?? null}
+      onComplete={handleComplete}
+      onPause={onClose}
+    />
   );
 
   const subtitle = memberName ? `For ${memberName}` : undefined;
@@ -135,13 +153,28 @@ export function InlineSdohPanel({
 // ─── Bootstrap body — loading / error / ready(AssessmentForm) ─────────────────
 
 interface SdohBootstrapBodyProps {
-  sessionId: string;
+  /** Session-scoped target, when an active session exists. */
+  sessionId: string | null;
+  /** Session-less (member-scoped) target, used when `sessionId` is null (Wave-2 #26). */
+  memberId: string | null;
   onComplete: () => void;
   onPause: () => void;
 }
 
-function SdohBootstrapBody({ sessionId, onComplete, onPause }: SdohBootstrapBodyProps): React.JSX.Element {
-  const { state, template, assessmentId, errorMessage, initialAnswers } = useAssessmentBootstrap(sessionId);
+function SdohBootstrapBody({
+  sessionId,
+  memberId,
+  onComplete,
+  onPause,
+}: SdohBootstrapBodyProps): React.JSX.Element {
+  // Prefer the session-scoped target when an active session exists — this
+  // preserves the exact pre-existing in-session behavior unchanged. Fall
+  // back to the session-less (member-scoped) target otherwise. Exactly one
+  // of these is expected to be non-null; the caller (InlineSdohPanel) is
+  // responsible for supplying at least one.
+  const target = sessionId != null ? { sessionId } : { memberId: memberId ?? '' };
+  const { state, template, assessmentId, errorMessage, initialAnswers } =
+    useAssessmentBootstrap(target);
 
   if (state === 'loading') {
     return (

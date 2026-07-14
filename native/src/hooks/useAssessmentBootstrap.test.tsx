@@ -1,8 +1,9 @@
 /**
  * Hook test for useAssessmentBootstrap — the shared "fetch the SDOH template
- * + start/resume the assessment for a session" scaffolding used by
- * InlineSdohPanel. Only the network boundary (`../api/client`) is mocked;
- * the real react-query orchestration runs.
+ * + start/resume the assessment for a session (or, as of Wave-2 #26, a bare
+ * member id with no session)" scaffolding used by InlineSdohPanel and the
+ * Member Profile screening card. Only the network boundary (`../api/client`)
+ * is mocked; the real react-query orchestration runs.
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -55,17 +56,20 @@ const startAssessmentFixture = {
   member_id: 'member-1',
 };
 
-function setup(sessionId: string = SESSION_ID) {
+function setup(target: { sessionId: string } | { memberId: string } = { sessionId: SESSION_ID }) {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   const wrapper = ({ children }: { children: React.ReactNode }) => (
     <QueryClientProvider client={qc}>{children}</QueryClientProvider>
   );
-  return renderHook(({ sid }: { sid: string }) => useAssessmentBootstrap(sid), {
-    wrapper,
-    initialProps: { sid: sessionId },
-  });
+  return renderHook(
+    ({ t }: { t: { sessionId: string } | { memberId: string } }) => useAssessmentBootstrap(t),
+    {
+      wrapper,
+      initialProps: { t: target },
+    },
+  );
 }
 
 beforeEach(() => {
@@ -198,5 +202,86 @@ describe('useAssessmentBootstrap', () => {
       { questionId: 'q1', value: 'yes', label: 'Yes', skipped: false },
       { questionId: 'q2', value: 'skipped', label: 'Skipped', skipped: true },
     ]);
+  });
+
+  // ─── Wave-2 #26 — session-less (member-scoped) target ───────────────────
+
+  describe('session-less target ({ memberId })', () => {
+    const MEMBER_ID = 'member-1';
+    const memberStartFixture = {
+      id: ASSESSMENT_ID,
+      status: 'in_progress',
+      template_id: SDOH_ASSESSMENT_TEMPLATE_ID,
+      session_id: null,
+      member_id: MEMBER_ID,
+    };
+
+    it('starts the assessment via the member-scoped endpoint, not the session-scoped one', async () => {
+      mockedApi.mockImplementation(async (path: string) => {
+        if (path === `/assessment-templates/${SDOH_ASSESSMENT_TEMPLATE_ID}`) return templateFixture;
+        if (path === `/chw/members/${MEMBER_ID}/assessments`) return memberStartFixture;
+        throw new Error(`unexpected path ${path}`);
+      });
+
+      const { result } = setup({ memberId: MEMBER_ID });
+
+      await waitFor(() => expect(result.current.state).toBe('ready'));
+      expect(result.current.assessmentId).toBe(ASSESSMENT_ID);
+      expect(mockedApi).toHaveBeenCalledWith(
+        `/chw/members/${MEMBER_ID}/assessments`,
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ template_id: SDOH_ASSESSMENT_TEMPLATE_ID }),
+        }),
+      );
+      // Must NEVER hit the session-scoped path when given a member target.
+      expect(mockedApi).not.toHaveBeenCalledWith(
+        expect.stringContaining('/sessions/'),
+        expect.anything(),
+      );
+    });
+
+    it('hydrates initialAnswers from a resumed session-less assessment same as a session-scoped one', async () => {
+      mockedApi.mockImplementation(async (path: string) => {
+        if (path === `/assessment-templates/${SDOH_ASSESSMENT_TEMPLATE_ID}`) return templateFixture;
+        if (path === `/chw/members/${MEMBER_ID}/assessments`) {
+          return {
+            ...memberStartFixture,
+            responses: [
+              {
+                id: 'resp-1',
+                question_id: 'q1',
+                answer_value: 'yes',
+                answer_label: 'Yes',
+                skipped: false,
+                captured_at: '2026-07-01T09:00:00Z',
+              },
+            ],
+          };
+        }
+        throw new Error(`unexpected path ${path}`);
+      });
+
+      const { result } = setup({ memberId: MEMBER_ID });
+
+      await waitFor(() => expect(result.current.state).toBe('ready'));
+      expect(result.current.initialAnswers).toEqual([
+        { questionId: 'q1', value: 'yes', label: 'Yes', skipped: false },
+      ]);
+    });
+
+    it('surfaces state "error" when the member-scoped start fails', async () => {
+      mockedApi.mockImplementation(async (path: string) => {
+        if (path === `/assessment-templates/${SDOH_ASSESSMENT_TEMPLATE_ID}`) return templateFixture;
+        if (path === `/chw/members/${MEMBER_ID}/assessments`) throw new Error('boom');
+        throw new Error(`unexpected path ${path}`);
+      });
+
+      const { result } = setup({ memberId: MEMBER_ID });
+
+      await waitFor(() => expect(result.current.state).toBe('error'));
+      expect(result.current.errorMessage).toBe('Failed to start assessment. Please try again.');
+      expect(result.current.assessmentId).toBeNull();
+    });
   });
 });
