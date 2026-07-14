@@ -33,7 +33,7 @@ from tests.conftest import test_session as _test_session_factory
 async def _register_member(client: AsyncClient, email: str) -> str:
     payload = {
         "email": email,
-        "password": "testpass123",
+        "password": "Testpass123!",
         "name": "Eligibility Test Member",
         "role": "member",
         "date_of_birth": "1990-01-01",
@@ -53,6 +53,37 @@ async def _register_member(client: AsyncClient, email: str) -> str:
     parts = res.json()["access_token"].split(".")
     padded = parts[1] + "=" * (4 - len(parts[1]) % 4)
     return json.loads(base64.urlsafe_b64decode(padded))["sub"]
+
+
+async def _drop_phone_uniqueness_index_for_legacy_data_simulation() -> None:
+    """Drop ``uq_users_phone_not_null`` (QA-batch #1) so a test can construct
+    a shared-phone state that no longer occurs through any real write path.
+
+    That DB-level partial unique index makes a shared-phone state
+    structurally unconstructable for any NEW write going forward — which is
+    the whole point of the index. But ``check_sms_eligibility``'s
+    duplicate-phone branch (see app/services/sms_eligibility.py rule #5)
+    exists as defense-in-depth for data that predates the index (rows
+    written before the ``chwphone0713`` migration ran) or that reaches
+    ``User.phone`` through a future write path nobody has audited against
+    this invariant yet. Both are real prod possibilities the index alone
+    doesn't retroactively fix, so the eligibility check — and coverage of
+    it — must stay. Bypassing the constraint here (rather than deleting the
+    coverage) is the only way to construct that legacy-shaped state in a
+    fresh test DB where the index already exists from the start.
+
+    Deliberately does NOT re-create the index afterward: the two callers
+    below leave duplicate phone rows in place for their assertions, and
+    conftest's autouse ``setup_db`` fixture fully drops + recreates the
+    schema (index included, via ``Base.metadata.create_all``) before the
+    NEXT test runs — so there is nothing to restore within a single test's
+    lifetime, and no cross-test leakage.
+    """
+    async with _test_session_factory() as session:
+        from sqlalchemy import text as _text
+
+        await session.execute(_text("DROP INDEX IF EXISTS uq_users_phone_not_null"))
+        await session.commit()
 
 
 async def _set_member_state(
@@ -179,9 +210,19 @@ async def test_opted_out_excluded(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_duplicate_phone_excludes_both_members(client: AsyncClient):
     """Two otherwise-eligible members sharing one phone are BOTH ineligible —
-    inbound routing can't disambiguate them by from-number."""
+    inbound routing can't disambiguate them by from-number.
+
+    This is a legacy-data scenario: QA-batch #1's DB-level unique index
+    forbids any NEW write from creating this state, so this test
+    deliberately drops that index first to simulate a pre-migration row
+    (see _drop_phone_uniqueness_index_for_legacy_data_simulation's
+    docstring) — proving check_sms_eligibility's defense-in-depth still
+    catches it even though the index is now the primary guard for
+    everything going forward.
+    """
     member1_id = await _register_member(client, "elig_dup1@test.com")
     member2_id = await _register_member(client, "elig_dup2@test.com")
+    await _drop_phone_uniqueness_index_for_legacy_data_simulation()
     shared_phone = "+13105554444"
     await _set_member_state(member1_id, phone=shared_phone, phone_verified=True)
     await _set_member_state(member2_id, phone=shared_phone, phone_verified=True)
@@ -201,9 +242,15 @@ async def test_duplicate_phone_excludes_both_members(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_duplicate_phone_ignores_opted_out_duplicate(client: AsyncClient):
     """A shared phone doesn't block eligibility when the OTHER holder has
-    opted out of SMS — they're no longer a routing collision risk."""
+    opted out of SMS — they're no longer a routing collision risk.
+
+    Legacy-data scenario (see test_duplicate_phone_excludes_both_members'
+    docstring) — this test drops QA-batch #1's unique index to simulate a
+    pre-migration duplicate-phone row.
+    """
     member1_id = await _register_member(client, "elig_dupoptout1@test.com")
     member2_id = await _register_member(client, "elig_dupoptout2@test.com")
+    await _drop_phone_uniqueness_index_for_legacy_data_simulation()
     shared_phone = "+13105555555"
     await _set_member_state(member1_id, phone=shared_phone, phone_verified=True)
     await _set_member_state(

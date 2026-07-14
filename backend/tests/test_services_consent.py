@@ -173,7 +173,7 @@ async def _register_chw(
         "/api/v1/auth/register",
         json={
             "email": email,
-            "password": "testpass123",
+            "password": "Testpass123!",
             "name": "Test CHW",
             "role": "chw",
         },

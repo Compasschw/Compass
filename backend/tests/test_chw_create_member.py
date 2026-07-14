@@ -31,7 +31,7 @@ pytestmark = pytest.mark.asyncio
 # CHW-created member is complete and immediately billable.
 _NEW_MEMBER_PAYLOAD = {
     "email": "brand.new.member@example.com",
-    "temp_password": "temp-pass-1234",
+    "temp_password": "Temp-pass-1234!",
     "name": "Brand New",
     "phone": "+13105550142",
     "date_of_birth": "1990-04-12",
@@ -324,13 +324,19 @@ async def test_parity_with_self_register_member(client: AsyncClient, chw_tokens:
     reg = await client.post("/api/v1/auth/register", json=self_payload)
     assert reg.status_code == 201, reg.text
 
-    # 2) CHW-created member with the equivalent demographic set.
+    # 2) CHW-created member with the equivalent demographic set. Phone must be
+    # a DIFFERENT number from the self-signup member's — QA-batch #1 added a
+    # platform-wide unique index on users.phone, so two distinct member
+    # accounts can never legitimately share one. The raw format below
+    # deliberately differs (dashes vs. the self-signup's derived +1XXXXXXXXXX)
+    # while still proving BOTH normalize cleanly to E.164 (see the shape
+    # assertions below, which replace the old exact-equality check).
     chw_email = "chw.created.parity@example.com"
     chw_payload = {
         "email": chw_email,
         "temp_password": self_payload["password"],
         "name": "Chw Created",
-        "phone": self_payload["phone"],
+        "phone": "310-555-0199",
         "date_of_birth": self_payload["date_of_birth"],
         "gender": self_payload["gender"],
         "insurance_company": self_payload["insurance_company"],
@@ -367,7 +373,15 @@ async def test_parity_with_self_register_member(client: AsyncClient, chw_tokens:
     # User-row parity (identity-independent fields).
     assert chw_user.role == self_user.role == "member"
     assert chw_user.is_active == self_user.is_active
-    assert chw_user.phone == self_user.phone  # both E.164-normalized identically
+    # Phones are DIFFERENT numbers (see above — uniqueness forbids sharing
+    # one), but both must be E.164-normalized the same WAY: "+1" + 10 digits.
+    # This is the parity invariant that matters here, not literal equality.
+    import re as _re
+
+    _E164_US = _re.compile(r"^\+1\d{10}$")
+    assert _E164_US.match(chw_user.phone or ""), chw_user.phone
+    assert _E164_US.match(self_user.phone or ""), self_user.phone
+    assert chw_user.phone != self_user.phone  # distinct accounts, distinct numbers
     assert (chw_user.password_hash is not None) == (self_user.password_hash is not None)
 
     # MemberProfile-row parity — every field register_user populates or defaults.

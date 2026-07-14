@@ -160,7 +160,7 @@ async def test_different_chws_can_each_have_active_session(
         "/api/v1/auth/register",
         json={
             "email": "secondchw@example.com",
-            "password": "testpass123",
+            "password": "Testpass123!",
             "name": "Second CHW",
             "role": "chw",
         },
@@ -185,7 +185,7 @@ async def test_different_chws_can_each_have_active_session(
         "/api/v1/auth/register",
         json={
             "email": "chw1_isolation@example.com",
-            "password": "testpass123",
+            "password": "Testpass123!",
             "name": "CHW One",
             "role": "chw",
         },

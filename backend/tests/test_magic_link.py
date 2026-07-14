@@ -29,7 +29,7 @@ MAGIC_REQUEST_URL = "/api/v1/auth/magic/request"
 MAGIC_VERIFY_URL = "/api/v1/auth/magic/verify"
 
 _CHW_EMAIL = "magiclinkchw@example.com"
-_CHW_PASSWORD = "testpass123"
+_CHW_PASSWORD = "Testpass123!"
 
 
 async def _register_chw(client: AsyncClient) -> dict:

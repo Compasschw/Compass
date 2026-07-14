@@ -179,7 +179,7 @@ class TestDeactivatedUserLoginBlocked:
         for a deactivated (not hard-deleted) account and returns a clean
         4xx, never a 500."""
         login_email = "testmember@example.com"
-        login_password = "testpass123"
+        login_password = "Testpass123!"
 
         await client.post(_DEACTIVATE_URL, headers=auth_header(member_tokens))
 

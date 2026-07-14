@@ -170,16 +170,20 @@ LOGIN_URL = "/api/v1/auth/login"
 REFRESH_URL = "/api/v1/auth/refresh"
 
 _MEMBER_EMAIL = "pwreset.member@example.com"
-_MEMBER_PASSWORD = "original-password-123"
+_MEMBER_PASSWORD = "Original-password-123!"
 
 
 def _member_payload(email: str = _MEMBER_EMAIL, password: str = _MEMBER_PASSWORD) -> dict:
+    # Phone derived from the email so multiple registrations in one test never
+    # collide with the users.phone partial unique index (QA2 A1) — mirrors the
+    # conftest helper's approach.
+    phone_suffix = abs(hash(email)) % 10_000_000
     return {
         "email": email,
         "password": password,
         "name": "Password Reset Member",
         "role": "member",
-        "phone": "+13105550100",
+        "phone": f"+1310{phone_suffix:07d}",
         "date_of_birth": "1993-01-05",
         "gender": "Female",
         "insurance_company": "Health Net",
@@ -255,7 +259,7 @@ async def test_happy_path_request_confirm_then_login_with_new_password(client: A
     assert reset_url.startswith("https://joincompasschw.com/auth/reset-password?token=")
     raw_token = _extract_raw_token_from_url(reset_url)
 
-    new_password = "brand-new-password-456"
+    new_password = "Brand-new-password-456!"
     confirm_res = await client.post(
         CONFIRM_URL, json={"token": raw_token, "new_password": new_password}
     )
@@ -311,7 +315,7 @@ async def test_expired_token_returns_401(client: AsyncClient):
         ))
         await session.commit()
 
-    res = await client.post(CONFIRM_URL, json={"token": raw_token, "new_password": "new-password-789"})
+    res = await client.post(CONFIRM_URL, json={"token": raw_token, "new_password": "New-password-789!"})
     assert res.status_code == 401
     assert res.json()["detail"] == "Invalid or expired reset link"
 
@@ -326,10 +330,10 @@ async def test_second_confirm_with_same_token_returns_401(client: AsyncClient):
 
     raw_token = _extract_raw_token_from_url(fake_send.call_args.kwargs["reset_url"])
 
-    first = await client.post(CONFIRM_URL, json={"token": raw_token, "new_password": "first-new-password-1"})
+    first = await client.post(CONFIRM_URL, json={"token": raw_token, "new_password": "First-new-password-1!"})
     assert first.status_code == 200, first.text
 
-    second = await client.post(CONFIRM_URL, json={"token": raw_token, "new_password": "second-new-password-2"})
+    second = await client.post(CONFIRM_URL, json={"token": raw_token, "new_password": "Second-new-password-2!"})
     assert second.status_code == 401
     assert second.json()["detail"] == "Invalid or expired reset link"
 
@@ -353,13 +357,13 @@ async def test_newest_link_only_older_token_unusable_after_re_request(client: As
 
     # The OLDER token must now be unusable (consumed by the re-request).
     stale_res = await client.post(
-        CONFIRM_URL, json={"token": first_raw_token, "new_password": "stale-token-password-1"}
+        CONFIRM_URL, json={"token": first_raw_token, "new_password": "Stale-token-password-1!"}
     )
     assert stale_res.status_code == 401
 
     # The NEWEST token must still work.
     fresh_res = await client.post(
-        CONFIRM_URL, json={"token": second_raw_token, "new_password": "fresh-token-password-2"}
+        CONFIRM_URL, json={"token": second_raw_token, "new_password": "Fresh-token-password-2!"}
     )
     assert fresh_res.status_code == 200, fresh_res.text
 
@@ -464,7 +468,7 @@ async def test_confirm_short_password_returns_422(client: AsyncClient):
 
 async def test_confirm_unknown_token_returns_401(client: AsyncClient):
     res = await client.post(
-        CONFIRM_URL, json={"token": "totally-made-up-token", "new_password": "some-new-password-1"}
+        CONFIRM_URL, json={"token": "totally-made-up-token", "new_password": "Some-new-password-1!"}
     )
     assert res.status_code == 401
     assert res.json()["detail"] == "Invalid or expired reset link"
@@ -506,7 +510,7 @@ async def test_confirm_revokes_all_refresh_tokens_and_clears_must_change_passwor
         raw_token = _extract_raw_token_from_url(fake_reset_send.call_args.kwargs["reset_url"])
 
         confirm_res = await client.post(
-            CONFIRM_URL, json={"token": raw_token, "new_password": "post-reset-password-999"}
+            CONFIRM_URL, json={"token": raw_token, "new_password": "Post-reset-password-999!"}
         )
     assert confirm_res.status_code == 200, confirm_res.text
     fake_changed_send.assert_awaited_once()
@@ -542,7 +546,7 @@ async def test_audit_rows_exist_for_request_and_confirm_with_no_token_material(c
         raw_token = _extract_raw_token_from_url(fake_send.call_args.kwargs["reset_url"])
 
         confirm_res = await client.post(
-            CONFIRM_URL, json={"token": raw_token, "new_password": "audited-new-password-1"}
+            CONFIRM_URL, json={"token": raw_token, "new_password": "Audited-new-password-1!"}
         )
     assert confirm_res.status_code == 200, confirm_res.text
 
@@ -673,8 +677,8 @@ def test_oauth_only_render_points_at_google_apple_and_has_no_reset_link():
 async def test_request_oauth_only_email_failure_and_raise_still_202(client: AsyncClient, monkeypatch):
     """OAuth-only path: informational email returning failure AND raising
     both still yield the neutral 202 (no-enumeration endpoint must never 500)."""
-    from app.services.email import EmailResult
     import app.services.email as email_mod
+    from app.services.email import EmailResult
 
     email = "pwreset.oauthdefense@example.com"
     await _register_member(client, email=email)
@@ -702,9 +706,9 @@ async def test_request_oauth_only_email_failure_and_raise_still_202(client: Asyn
 async def test_request_reset_email_failure_logs_dev_url_and_still_202(client: AsyncClient, monkeypatch):
     """Reset-email send failure → 202, and in the development environment the
     reset URL is logged as a local convenience (branch pinned)."""
+    import app.services.email as email_mod
     from app.config import settings
     from app.services.email import EmailResult
-    import app.services.email as email_mod
 
     email = "pwreset.devlog@example.com"
     await _register_member(client, email=email)
@@ -724,8 +728,8 @@ async def test_request_reset_email_failure_logs_dev_url_and_still_202(client: As
 async def test_confirm_rejects_user_deleted_after_request(client: AsyncClient, monkeypatch):
     """A token issued BEFORE the account was deleted must be unusable after —
     the confirm-side active/deleted re-check."""
-    from app.services.email import EmailResult
     import app.services.email as email_mod
+    from app.services.email import EmailResult
 
     email = "pwreset.deletedrace@example.com"
     await _register_member(client, email=email)
@@ -748,15 +752,15 @@ async def test_confirm_rejects_user_deleted_after_request(client: AsyncClient, m
         db_user.deleted_at = datetime.now(UTC)
         await session.commit()
 
-    res = await client.post(CONFIRM_URL, json={"token": raw_token, "new_password": "brand-new-pass-1"})
+    res = await client.post(CONFIRM_URL, json={"token": raw_token, "new_password": "Brand-new-pass-1!"})
     assert res.status_code == 401, res.text
 
 
 async def test_confirm_password_changed_email_failure_and_raise_still_200(client: AsyncClient, monkeypatch):
     """The post-commit notification email failing (or raising) must never turn
     an already-successful reset into an error."""
-    from app.services.email import EmailResult
     import app.services.email as email_mod
+    from app.services.email import EmailResult
 
     for suffix, notifier in (
         ("fail", AsyncMock(return_value=EmailResult(success=False, error="ses down"))),
@@ -767,8 +771,8 @@ async def test_confirm_password_changed_email_failure_and_raise_still_200(client
 
         captured: dict = {}
 
-        async def _capture(**kwargs):
-            captured.update(kwargs)
+        async def _capture(_captured: dict = captured, **kwargs):
+            _captured.update(kwargs)
             return EmailResult(success=True)
 
         monkeypatch.setattr(email_mod, "send_password_reset_email", AsyncMock(side_effect=_capture))
@@ -777,6 +781,6 @@ async def test_confirm_password_changed_email_failure_and_raise_still_200(client
         raw_token = _extract_raw_token_from_url(captured["reset_url"])
 
         monkeypatch.setattr(email_mod, "send_password_changed_email", notifier)
-        res = await client.post(CONFIRM_URL, json={"token": raw_token, "new_password": "brand-new-pass-1"})
+        res = await client.post(CONFIRM_URL, json={"token": raw_token, "new_password": "Brand-new-pass-1!"})
         assert res.status_code == 200, res.text
         assert res.json().get("ok") is True

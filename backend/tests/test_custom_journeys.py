@@ -219,7 +219,7 @@ async def test_update_priority_rejects_unrelated_chw(
         "/api/v1/auth/register",
         json={
             "email": "other_chw_prio@example.com",
-            "password": "testpass123",
+            "password": "Testpass123!",
             "name": "Other CHW",
             "role": "chw",
         },
@@ -349,7 +349,7 @@ async def test_remove_rejects_unrelated_chw(
         "/api/v1/auth/register",
         json={
             "email": "other_chw_remove@example.com",
-            "password": "testpass123",
+            "password": "Testpass123!",
             "name": "Other CHW",
             "role": "chw",
         },

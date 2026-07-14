@@ -48,7 +48,7 @@ pytestmark = pytest.mark.asyncio
 # boundary is touched by any test below.
 _CHW_NEW_MEMBER_PAYLOAD = {
     "email": "pwchange.member@compasschw-test.dev",
-    "temp_password": "temp-pass-1234",
+    "temp_password": "Temp-pass-1234!",
     "name": "Pw Change",
     "phone": "+13105550199",
     "date_of_birth": "1990-04-12",
@@ -157,7 +157,7 @@ async def test_change_password_requires_auth(client: AsyncClient) -> None:
     matching the existing convention in tests/test_auth.py."""
     res = await client.post(
         "/api/v1/auth/change-password",
-        json={"current_password": "whatever12", "new_password": "newpassword123"},
+        json={"current_password": "whatever12", "new_password": "Newpassword123!"},
     )
     assert res.status_code in (401, 403)
 
@@ -171,7 +171,7 @@ async def test_change_password_wrong_current_password_is_rejected(
 
     res = await client.post(
         "/api/v1/auth/change-password",
-        json={"current_password": "totally-wrong-password", "new_password": "brand-new-password-1"},
+        json={"current_password": "totally-wrong-password", "new_password": "Brand-new-password-1!"},
         headers=auth_header(member_tokens),
     )
     assert res.status_code == 401, res.text
@@ -229,7 +229,7 @@ async def test_change_password_with_unparseable_stored_hash_does_not_500(
 
     res = await client.post(
         "/api/v1/auth/change-password",
-        json={"current_password": "anything-at-all", "new_password": "brand-new-password-1"},
+        json={"current_password": "anything-at-all", "new_password": "Brand-new-password-1!"},
         headers=auth_header(member_tokens),
     )
     assert res.status_code == 401, res.text
@@ -251,7 +251,7 @@ async def test_change_password_with_no_password_hash_is_rejected(
 
     res = await client.post(
         "/api/v1/auth/change-password",
-        json={"current_password": "anything-at-all", "new_password": "brand-new-password-1"},
+        json={"current_password": "anything-at-all", "new_password": "Brand-new-password-1!"},
         headers=auth_header(member_tokens),
     )
     assert res.status_code == 401, res.text
@@ -269,7 +269,7 @@ async def test_change_password_success_clears_flag_and_rotates_hash(
         "/api/v1/auth/change-password",
         json={
             "current_password": _CHW_NEW_MEMBER_PAYLOAD["temp_password"],
-            "new_password": "brand-new-password-1",
+            "new_password": "Brand-new-password-1!",
         },
         headers=auth_header(member_tokens),
     )
@@ -295,7 +295,7 @@ async def test_change_password_success_clears_flag_and_rotates_hash(
         "/api/v1/auth/login",
         json={
             "email": _CHW_NEW_MEMBER_PAYLOAD["email"],
-            "password": "brand-new-password-1",
+            "password": "Brand-new-password-1!",
         },
     )
     assert new_login_res.status_code == 200, new_login_res.text
@@ -315,13 +315,13 @@ async def test_change_password_works_for_a_chw_with_a_real_password_too(
     password can also rotate it via the same endpoint."""
     res = await client.post(
         "/api/v1/auth/change-password",
-        json={"current_password": "testpass123", "new_password": "a-new-chw-password-1"},
+        json={"current_password": "Testpass123!", "new_password": "A-new-chw-password-1!"},
         headers=auth_header(chw_tokens),
     )
     assert res.status_code == 200, res.text
 
     relogin_res = await client.post(
         "/api/v1/auth/login",
-        json={"email": "testchw@example.com", "password": "a-new-chw-password-1"},
+        json={"email": "testchw@example.com", "password": "A-new-chw-password-1!"},
     )
     assert relogin_res.status_code == 200, relogin_res.text

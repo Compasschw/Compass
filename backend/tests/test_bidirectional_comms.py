@@ -41,7 +41,7 @@ async def _register(client: AsyncClient, email: str, role: str) -> dict:
     """
     payload: dict = {
         "email": email,
-        "password": "testpass123",
+        "password": "Testpass123!",
         "name": f"Test {role.upper()} {email[:8]}",
         "role": role,
     }

@@ -155,7 +155,7 @@ async def client():
 @pytest.fixture
 async def chw_tokens(client: AsyncClient) -> dict:
     res = await client.post("/api/v1/auth/register", json={
-        "email": "q2-chw@example.com", "password": "testpass123",
+        "email": "q2-chw@example.com", "password": "Testpass123!",
         "name": "Q2 Test CHW", "role": "chw",
     })
     assert res.status_code == 201, res.text
@@ -166,7 +166,7 @@ async def chw_tokens(client: AsyncClient) -> dict:
 async def member_tokens(client: AsyncClient) -> dict:
     res = await client.post("/api/v1/auth/register", json={
         "email": "q2-member@example.com",
-        "password": "testpass123",
+        "password": "Testpass123!",
         "name": "Q2 Test Member",
         "role": "member",
         "phone": "+13105550100",

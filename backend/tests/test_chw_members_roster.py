@@ -37,7 +37,7 @@ def _decode_jwt_sub(access_token: str) -> str:
 async def _register(client: AsyncClient, email: str, role: str, name: str) -> dict:
     payload: dict = {
         "email": email,
-        "password": "testpass123",
+        "password": "Testpass123!",
         "name": name,
         "role": role,
     }

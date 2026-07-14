@@ -67,7 +67,7 @@ async def _register_chw(client: AsyncClient) -> dict:
         "/api/v1/auth/register",
         json={
             "email": f"avail-{date.today().isoformat()}-{id(client)}@example.com",
-            "password": "testpass123",
+            "password": "Testpass123!",
             "name": "Avail CHW",
             "role": "chw",
         },

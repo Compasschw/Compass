@@ -2,9 +2,10 @@ from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 from app.schemas.cin_config import validate_cin_for_carrier
+from app.utils.passwords import validate_password_complexity
 
 # Sex values accepted by Pear Suite's CreateMember endpoint. Mirrors the
 # member-signup dropdown options.
@@ -151,6 +152,11 @@ class RegisterRequest(BaseModel):
     role: str = Field(..., pattern="^(chw|member)$")
     phone: str | None = None
 
+    @field_validator("password")
+    @classmethod
+    def _validate_password_complexity(cls, v: str) -> str:
+        return validate_password_complexity(v)
+
     # ── Member-only profile fields (ignored when role != "member") ──────
     date_of_birth: date | None = None
     gender: SexEnum | None = None
@@ -239,7 +245,7 @@ class ChangePasswordRequest(BaseModel):
     password (OAuth-only accounts have ``password_hash is None`` and are
     rejected — see the router handler).
 
-    ``new_password`` enforces the SAME minimum-length rule as signup
+    ``new_password`` enforces the SAME complexity rule as signup
     (``RegisterRequest.password`` / ``CHWCreateMemberRequest.temp_password``)
     so the strength bar can never silently diverge between creation and
     change. A violation 422s at this Pydantic boundary, matching the existing
@@ -248,6 +254,11 @@ class ChangePasswordRequest(BaseModel):
 
     current_password: str = Field(..., min_length=1)
     new_password: str = Field(..., min_length=8)
+
+    @field_validator("new_password")
+    @classmethod
+    def _validate_new_password_complexity(cls, v: str) -> str:
+        return validate_password_complexity(v)
 
 
 class ChangePasswordResponse(BaseModel):
@@ -375,6 +386,15 @@ class PasswordResetConfirmBody(BaseModel):
 
     token: str = Field(..., min_length=1)
     new_password: str = Field(..., min_length=8)
+
+    @field_validator("new_password")
+    @classmethod
+    def _validate_password_complexity(cls, v: str) -> str:
+        # QA2 A1 integration: the platform complexity policy (>=8 + upper +
+        # digit + special) applies to reset-set passwords exactly like
+        # register/change/temp-password — the reset flow must never be the
+        # weak-password backdoor.
+        return validate_password_complexity(v)
 
 
 class PasswordResetConfirmResponse(BaseModel):

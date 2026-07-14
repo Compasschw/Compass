@@ -167,7 +167,7 @@ async def _register_member(client: AsyncClient, email: str) -> dict:
         "/api/v1/auth/register",
         json={
             "email": email,
-            "password": "testpass123",
+            "password": "Testpass123!",
             "name": "Avatar Test Member",
             "role": "member",
             "terms_accepted": True,
@@ -282,7 +282,7 @@ async def test_i4_chw_profile_picture_is_presigned(
         "/api/v1/auth/register",
         json={
             "email": "avatar_chw_i4@example.com",
-            "password": "testpass123",
+            "password": "Testpass123!",
             "name": "CHW Avatar Tester",
             "role": "chw",
         },

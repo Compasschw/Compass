@@ -50,7 +50,7 @@ async def _register_user(client: AsyncClient, email: str, role: str, name: str) 
     derived from the email so multiple members in one test stay distinct.
     """
     payload: dict = {
-        "email": email, "password": "testpass123", "name": name, "role": role,
+        "email": email, "password": "Testpass123!", "name": name, "role": role,
     }
     if role == "member":
         payload.update({

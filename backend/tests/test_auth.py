@@ -9,7 +9,7 @@ from tests.conftest import auth_header
 @pytest.mark.asyncio
 async def test_register_success(client: AsyncClient):
     res = await client.post("/api/v1/auth/register", json={
-        "email": "new@example.com", "password": "password123",
+        "email": "new@example.com", "password": "Password123!",
         "name": "New User", "role": "chw",
     })
     assert res.status_code == 201
@@ -23,7 +23,7 @@ async def test_register_success(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_register_duplicate_email(client: AsyncClient, chw_tokens):
     res = await client.post("/api/v1/auth/register", json={
-        "email": "testchw@example.com", "password": "password123",
+        "email": "testchw@example.com", "password": "Password123!",
         "name": "Dupe", "role": "chw",
     })
     assert res.status_code == 400
@@ -32,7 +32,7 @@ async def test_register_duplicate_email(client: AsyncClient, chw_tokens):
 @pytest.mark.asyncio
 async def test_register_invalid_email(client: AsyncClient):
     res = await client.post("/api/v1/auth/register", json={
-        "email": "notanemail", "password": "password123",
+        "email": "notanemail", "password": "Password123!",
         "name": "Bad Email", "role": "chw",
     })
     assert res.status_code == 422
@@ -50,7 +50,7 @@ async def test_register_short_password(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_login_success(client: AsyncClient, chw_tokens):
     res = await client.post("/api/v1/auth/login", json={
-        "email": "testchw@example.com", "password": "testpass123",
+        "email": "testchw@example.com", "password": "Testpass123!",
     })
     assert res.status_code == 200
     data = res.json()
@@ -65,20 +65,20 @@ async def test_login_is_case_insensitive_for_email(client: AsyncClient):
     because the lookup was exact-match. FAILS on the pre-fix code.
     """
     reg = await client.post("/api/v1/auth/register", json={
-        "email": "Mixed.Case@Example.com", "password": "password123",
+        "email": "Mixed.Case@Example.com", "password": "Password123!",
         "name": "Case Tester", "role": "chw",
     })
     assert reg.status_code == 201, reg.text
 
     # Log in with a DIFFERENT casing than was registered.
     res = await client.post("/api/v1/auth/login", json={
-        "email": "mixed.case@example.com", "password": "password123",
+        "email": "mixed.case@example.com", "password": "Password123!",
     })
     assert res.status_code == 200, res.text
 
     # And the original casing still works.
     res2 = await client.post("/api/v1/auth/login", json={
-        "email": "Mixed.Case@Example.com", "password": "password123",
+        "email": "Mixed.Case@Example.com", "password": "Password123!",
     })
     assert res2.status_code == 200, res2.text
 
@@ -89,13 +89,13 @@ async def test_register_duplicate_email_is_case_insensitive(client: AsyncClient)
     person, one account) — prevents a capitalized duplicate that then can't log in.
     """
     first = await client.post("/api/v1/auth/register", json={
-        "email": "dupe.case@example.com", "password": "password123",
+        "email": "dupe.case@example.com", "password": "Password123!",
         "name": "First", "role": "chw",
     })
     assert first.status_code == 201, first.text
 
     second = await client.post("/api/v1/auth/register", json={
-        "email": "Dupe.Case@Example.com", "password": "password123",
+        "email": "Dupe.Case@Example.com", "password": "Password123!",
         "name": "Second", "role": "chw",
     })
     assert second.status_code == 400, second.text
@@ -157,7 +157,7 @@ async def test_register_member_auto_creates_member_profile(client: AsyncClient):
         "/api/v1/auth/register",
         json={
             "email": email,
-            "password": "test-password-1234",
+            "password": "Test-password-1234!",
             "name": "Test Member",
             "role": "member",
             "terms_accepted": True,
@@ -195,7 +195,7 @@ async def test_register_chw_auto_creates_chw_profile(client: AsyncClient):
         "/api/v1/auth/register",
         json={
             "email": email,
-            "password": "test-password-1234",
+            "password": "Test-password-1234!",
             "name": "Test CHW",
             "role": "chw",
         },
@@ -221,7 +221,7 @@ async def test_chw_can_update_name(client: AsyncClient):
     email = f"rename-chw-{uuid.uuid4()}@example.com"
     reg = await client.post(
         "/api/v1/auth/register",
-        json={"email": email, "password": "test-password-1234", "name": "Old Name", "role": "chw"},
+        json={"email": email, "password": "Test-password-1234!", "name": "Old Name", "role": "chw"},
     )
     assert reg.status_code == 201
     headers = {"Authorization": f"Bearer {reg.json()['access_token']}"}
@@ -257,7 +257,7 @@ async def test_completing_intake_makes_chw_discoverable(client: AsyncClient):
         "/api/v1/auth/register",
         json={
             "email": f"discover-chw-{uuid.uuid4()}@example.com",
-            "password": "testpass123",
+            "password": "Testpass123!",
             "name": "Discoverable CHW",
             "role": "chw",
         },
@@ -300,7 +300,7 @@ async def test_registered_chw_appears_in_browse_without_onboarding(client: Async
         "/api/v1/auth/register",
         json={
             "email": f"newchw-{uuid.uuid4()}@example.com",
-            "password": "testpass123",
+            "password": "Testpass123!",
             "name": "Lemaj James",
             "role": "chw",
         },
@@ -331,7 +331,7 @@ async def test_register_member_rejects_single_token_name(client: AsyncClient):
         "/api/v1/auth/register",
         json={
             "email": f"single-name-{uuid.uuid4()}@example.com",
-            "password": "test-password-1234",
+            "password": "Test-password-1234!",
             "name": "Madonna",
             "role": "member",
             "terms_accepted": True,
@@ -354,7 +354,7 @@ async def test_register_member_rejects_whitespace_only_lastname(client: AsyncCli
         "/api/v1/auth/register",
         json={
             "email": f"trailing-space-{uuid.uuid4()}@example.com",
-            "password": "test-password-1234",
+            "password": "Test-password-1234!",
             "name": "John   ",
             "role": "member",
             "terms_accepted": True,
@@ -375,7 +375,7 @@ async def test_register_chw_allows_single_token_name(client: AsyncClient):
         "/api/v1/auth/register",
         json={
             "email": f"chw-mono-{uuid.uuid4()}@example.com",
-            "password": "test-password-1234",
+            "password": "Test-password-1234!",
             "name": "Cher",
             "role": "chw",
         },
@@ -390,7 +390,7 @@ def _complete_member_payload(email: str) -> dict:
     """A member-signup body with every Pear-required field populated."""
     return {
         "email": email,
-        "password": "test-password-1234",
+        "password": "Test-password-1234!",
         "name": "Jane Doe",
         "role": "member",
         "terms_accepted": True,
@@ -484,7 +484,7 @@ async def test_register_chw_unaffected_by_member_pear_gate(client: AsyncClient):
         "/api/v1/auth/register",
         json={
             "email": f"chw-bare-{uuid.uuid4()}@example.com",
-            "password": "test-password-1234",
+            "password": "Test-password-1234!",
             "name": "CHW Tester",
             "role": "chw",
         },
@@ -505,7 +505,7 @@ async def test_register_member_succeeds_with_only_minimum_fields(client: AsyncCl
         "/api/v1/auth/register",
         json={
             "email": f"min-fields-{uuid.uuid4()}@example.com",
-            "password": "test-password-1234",
+            "password": "Test-password-1234!",
             "name": "Jane Doe",
             "role": "member",
             "terms_accepted": True,
@@ -541,7 +541,7 @@ async def test_register_member_still_rejects_missing_dob_sex_insurance_cin_zip(
     """
     payload = {
         "email": f"still-required-{missing_field}-{uuid.uuid4()}@example.com",
-        "password": "test-password-1234",
+        "password": "Test-password-1234!",
         "name": "Jane Doe",
         "role": "member",
         "terms_accepted": True,
@@ -570,7 +570,7 @@ async def test_register_member_invalid_state_format_rejected_if_provided(
         "/api/v1/auth/register",
         json={
             "email": f"bad-state-long-{uuid.uuid4()}@example.com",
-            "password": "test-password-1234",
+            "password": "Test-password-1234!",
             "name": "Jane Doe",
             "role": "member",
             "terms_accepted": True,
@@ -593,7 +593,7 @@ async def test_register_member_null_state_accepted(client: AsyncClient):
         "/api/v1/auth/register",
         json={
             "email": f"null-state-{uuid.uuid4()}@example.com",
-            "password": "test-password-1234",
+            "password": "Test-password-1234!",
             "name": "Jane Doe",
             "role": "member",
             "terms_accepted": True,

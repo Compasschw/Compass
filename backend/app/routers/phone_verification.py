@@ -25,6 +25,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, field_validator
 from sqlalchemy import and_, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -332,15 +333,41 @@ async def confirm_verification(
     # ── Success — persist verified phone on User ───────────────────────────────
     pv.verified_at = now
 
+    # Captured BEFORE any rollback — db.rollback() expires every ORM-tracked
+    # attribute on `user`/`current_user`, so reading .id off either instance
+    # afterward (e.g. in the except block's log line) triggers a lazy-refresh
+    # query against a session that just rolled back, which itself raises.
+    # Plain locals are safe to use after rollback; ORM attributes are not.
+    current_user_id = current_user.id
+
     # Reload the user within this session to avoid stale state
     user_result = await db.execute(
-        select(User).where(User.id == current_user.id)
+        select(User).where(User.id == current_user_id)
     )
     user = user_result.scalar_one()
     user.phone = body.phone
     user.phone_verified_at = now
 
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        # QA-batch #1's platform-wide unique index on users.phone (partial,
+        # WHERE phone IS NOT NULL) applies here too — this write path sets
+        # User.phone directly and does NOT go through
+        # auth_service.register_user's pre-create duplicate check, so this
+        # is the backstop that would otherwise surface as a raw
+        # IntegrityError/500 (TESTING.md rule #3: no unhandled 500s) if two
+        # different users ever verified the same number.
+        await db.rollback()
+        logger.info(
+            "confirm-verification: rejected duplicate phone ending in %s for user %s.",
+            _masked(body.phone),
+            current_user_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An account with this phone number already exists.",
+        ) from exc
 
     logger.info(
         "Phone %s verified for user %s.",

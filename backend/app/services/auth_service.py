@@ -13,6 +13,22 @@ from app.utils.security import create_access_token, create_refresh_token, hash_p
 logger = logging.getLogger("compass.auth")
 
 
+class DuplicatePhoneError(Exception):
+    """Raised by ``register_user`` when the normalized phone is already on
+    another account.
+
+    A distinct exception type (rather than overloading the existing
+    "return None means duplicate email" convention) so callers can surface a
+    specific, correct HTTP status: 409 for a duplicate phone vs. the existing
+    400 for a duplicate email. Carries the already-normalized E.164 value so
+    callers never need to re-normalize just to log/report it.
+    """
+
+    def __init__(self, normalized_phone: str) -> None:
+        self.normalized_phone = normalized_phone
+        super().__init__(f"Phone number already registered: {normalized_phone}")
+
+
 async def register_user(
     db: AsyncSession,
     email: str,
@@ -64,6 +80,19 @@ async def register_user(
 
     Returns None when the email is already taken (handled at the router layer
     as HTTP 400).
+
+    Raises:
+        DuplicatePhoneError: When ``phone`` normalizes to a value already
+            stored on another account (QA-batch #1 — CHW phone uniqueness,
+            defensively applied to every role that supplies a phone, not
+            only CHWs). Checked BEFORE creating the User row so no partial
+            row is written. A partial unique index on ``users.phone`` (see
+            migration ``chwphone0713``) is the race-safe backstop for
+            concurrent requests that both pass this pre-check simultaneously
+            — this in-app check exists to return a clean 409 with a readable
+            message on the common (non-racing) path, matching the existing
+            duplicate-email UX rather than surfacing a raw
+            IntegrityError/500.
     """
     from app.models.user import CHWProfile, MemberProfile, User
 
@@ -77,12 +106,25 @@ async def register_user(
     if existing.scalar_one_or_none():
         return None
 
+    # Duplicate-phone guard (QA-batch #1). Phone is optional at signup for
+    # every role, so this only fires when a normalized value is actually
+    # present — NULL phones are never compared (any number of accounts may
+    # have no phone on file; enforced at the DB layer too via the partial
+    # unique index's `WHERE phone IS NOT NULL` clause).
+    normalized_phone = _normalize_phone_e164(phone)
+    if normalized_phone is not None:
+        existing_phone = await db.execute(
+            select(User).where(User.phone == normalized_phone)
+        )
+        if existing_phone.scalar_one_or_none():
+            raise DuplicatePhoneError(normalized_phone)
+
     user = User(
         email=normalized_email,
         password_hash=hash_password(password),
         name=name,
         role=role,
-        phone=_normalize_phone_e164(phone),
+        phone=normalized_phone,
         must_change_password=must_change_password,
     )
     db.add(user)
@@ -282,8 +324,18 @@ async def authenticate_user(db: AsyncSession, email: str, password: str):
 
 
 def mark_first_login(user) -> None:
-    """Stamp ``user.first_login_at`` with NOW(UTC) the first time this user is
-    successfully authenticated — idempotent (a no-op once already set).
+    """Stamp ``user.first_login_at`` (once) and ``user.last_active_at`` (every
+    call) with NOW(UTC) on every successful authentication.
+
+    ``first_login_at`` is idempotent (a no-op once already set) — it records
+    *whether* the user has ever signed in. ``last_active_at`` is stamped
+    unconditionally every call — this is a recency signal ("QA-batch #13":
+    the CHW Members-page roster status is "active" iff last_active_at is
+    within the last 30 days), not a one-time flag, so a returning user's
+    sign-in must always refresh it even though it is ALSO bumped by ordinary
+    authenticated requests (``dependencies.get_current_user``, throttled to
+    once/minute there). Stamping it here too means status flips to "active"
+    immediately on login, before the user has made any other API call.
 
     Called from every path that mints tokens for a user (self-service
     ``/auth/register`` auto-login, ``/auth/login``, and OAuth sign-in in
@@ -292,16 +344,18 @@ def mark_first_login(user) -> None:
     account on their behalf is not the *member* signing in; that member must
     still authenticate themselves (via ``/auth/login`` with the temp
     password) before ``first_login_at`` is set. This is what drives the CHW
-    Members-page status rule (Epic G3): a CHW-created member stays 'inactive'
-    until they do so.
+    Members-page status rule: a CHW-created member stays 'inactive' until
+    they do so.
 
-    This only mutates the in-memory ORM attribute — it does not commit. Every
-    call site below is immediately followed by ``store_refresh_token``, which
-    commits the session, so the dirty attribute rides along on that same
-    transaction with no extra round-trip.
+    This only mutates the in-memory ORM attributes — it does not commit.
+    Every call site below is immediately followed by ``store_refresh_token``,
+    which commits the session, so the dirty attributes ride along on that
+    same transaction with no extra round-trip.
     """
+    now = datetime.now(UTC)
     if user.first_login_at is None:
-        user.first_login_at = datetime.now(UTC)
+        user.first_login_at = now
+    user.last_active_at = now
 
 
 def create_tokens(user) -> tuple[str, str]:

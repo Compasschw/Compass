@@ -41,14 +41,14 @@ from tests.conftest import test_session as _test_session_factory
 
 CHW_PAYLOAD = {
     "email": "signup.confirm.chw@example.com",
-    "password": "testpass123",
+    "password": "Testpass123!",
     "name": "Confirm CHW",
     "role": "chw",
 }
 
 CHW_CREATE_MEMBER_PAYLOAD = {
     "email": "chw.created.member@example.com",
-    "temp_password": "temp-pass-1234",
+    "temp_password": "Temp-pass-1234!",
     "name": "New Onboarded Member",
     "phone": "+13105550199",
     "date_of_birth": "1990-04-12",
@@ -76,7 +76,7 @@ async def test_self_signup_sends_confirmation_email(client: AsyncClient):
             "/api/v1/auth/register",
             json={
                 "email": "confirm.email.member@example.com",
-                "password": "password123",
+                "password": "Password123!",
                 "name": "Email Confirm Member",
                 "role": "member",
                 **{
@@ -236,7 +236,7 @@ async def test_email_send_failure_does_not_fail_self_signup(client: AsyncClient)
 
     payload = {
         "email": "email.failure.member@example.com",
-        "password": "password123",
+        "password": "Password123!",
         "name": "Email Failure Member",
         "role": "member",
         **{
@@ -407,7 +407,7 @@ async def test_google_oauth_existing_user_signin_does_not_resend_confirmation(
     # First create the account normally (self-service register).
     register_payload = {
         "email": "existing.oauth.user@example.com",
-        "password": "password123",
+        "password": "Password123!",
         "name": "Existing OAuth User",
         "role": "member",
         **{
@@ -623,7 +623,7 @@ async def test_self_signup_member_gets_the_plain_welcome_copy_variant_end_to_end
     )
     payload = {
         "email": "variant.self.signup@example.com",
-        "password": "password123",
+        "password": "Password123!",
         "name": "Variant Self Signup",
         "role": "member",
         **{

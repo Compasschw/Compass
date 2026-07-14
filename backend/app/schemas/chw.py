@@ -29,6 +29,7 @@ from app.schemas.auth import (
     normalize_member_pear_fields,
 )
 from app.schemas.cin_config import validate_cin_for_carrier as _validate_chw_cin
+from app.utils.passwords import validate_password_complexity
 
 # Valid CHW-assigned priority levels for a resource need.
 _VALID_LEVELS = {"low", "medium", "high"}
@@ -664,6 +665,11 @@ class CHWCreateMemberRequest(BaseModel):
     temp_password: str = Field(..., min_length=8, description="Temporary password the CHW shares with the member")
     name: str = Field(..., min_length=1)
     phone: str | None = None
+
+    @field_validator("temp_password")
+    @classmethod
+    def _validate_temp_password_complexity(cls, v: str) -> str:
+        return validate_password_complexity(v)
 
     # ── Pear-required member demographics (mirrors RegisterRequest) ──────────
     date_of_birth: date | None = None

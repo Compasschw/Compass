@@ -56,6 +56,15 @@ class CHWProfileUpdate(BaseModel):
     bio: str | None = Field(default=None, max_length=120)
     zip_code: str | None = None
     is_available: bool | None = None
+    # QA-batch #3: was silently missing from this schema, so a PUT with
+    # years_experience in the body passed Pydantic validation (extra fields
+    # are ignored, not rejected) but the value never reached model_dump()'s
+    # output and the handler's setattr loop never saw it — a silent no-op
+    # bug. CHWProfile.years_experience already exists on the model; this
+    # just lets the field flow through. Bounded 0-60 (a sanity ceiling, not
+    # a real-world limit enforcement) so obviously-bad input 422s instead of
+    # silently persisting.
+    years_experience: int | None = Field(default=None, ge=0, le=60)
     # Optional: update the User.profile_picture_url after a presigned-URL upload.
     # Use an explicit sentinel (unset vs null) so callers can clear the photo by
     # sending null without accidentally wiping it when the field is simply absent.

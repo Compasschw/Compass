@@ -298,7 +298,7 @@ async def test_end_session_relationship_gate(client: AsyncClient, chw_tokens, me
 
     # Register a second CHW.
     res = await client.post("/api/v1/auth/register", json={
-        "email": "chw2@example.com", "password": "testpass123",
+        "email": "chw2@example.com", "password": "Testpass123!",
         "name": "Second CHW", "role": "chw",
     })
     assert res.status_code == 201
@@ -445,7 +445,7 @@ async def test_abort_relationship_gate(client: AsyncClient, chw_tokens, member_t
     """A CHW who doesn't own the session gets 404 (existence not leaked)."""
     session_id = await _create_in_progress_session(client, member_tokens, chw_tokens)
     res = await client.post("/api/v1/auth/register", json={
-        "email": "chw_abort2@example.com", "password": "testpass123",
+        "email": "chw_abort2@example.com", "password": "Testpass123!",
         "name": "Other CHW", "role": "chw",
     })
     assert res.status_code == 201

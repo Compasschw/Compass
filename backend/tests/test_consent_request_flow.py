@@ -602,7 +602,7 @@ async def test_unrelated_user_cannot_view_consent_request(
         json=complete_member_signup_payload(
             email="thirdparty@example.com",
             name="Third Party",
-            password="thirdpass123",
+            password="Thirdpass123!",
         ),
     )
     assert third_party_res.status_code == 201

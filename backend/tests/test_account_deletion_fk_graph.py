@@ -129,7 +129,7 @@ async def _seed_full_graph(client: AsyncClient) -> tuple[dict, _SeededGraph]:
         "/api/v1/auth/register",
         json={
             "email": "fkgraph-chw@example.com",
-            "password": "testpass123",
+            "password": "Testpass123!",
             "name": "FK Graph CHW",
             "role": "chw",
         },
@@ -142,7 +142,7 @@ async def _seed_full_graph(client: AsyncClient) -> tuple[dict, _SeededGraph]:
         "/api/v1/auth/register",
         json={
             "email": "fkgraph-member@example.com",
-            "password": "testpass123",
+            "password": "Testpass123!",
             "name": "FK Graph Member",
             "role": "member",
             "phone": "+13105550199",
@@ -622,7 +622,7 @@ class TestAccountDeletionFkGraph:
         # back in fresh since we only kept the raw ids).
         chw_login = await client.post(
             "/api/v1/auth/login",
-            json={"email": "fkgraph-chw@example.com", "password": "testpass123"},
+            json={"email": "fkgraph-chw@example.com", "password": "Testpass123!"},
         )
         assert chw_login.status_code == 200, chw_login.text
         chw_tokens = chw_login.json()
