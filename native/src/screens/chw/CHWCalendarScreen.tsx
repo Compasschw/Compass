@@ -917,11 +917,28 @@ function SessionDetailsModal({
   const badge = deriveBadgeStatus(session, now);
   const badgeStyle = BADGE_COLORS[badge];
   const isPending = badge === 'Pending';
+  // QA2 A2 #17 — a pending session's action row now branches on WHO proposed
+  // it, mirroring the initiator-inversion rule the backend already enforces
+  // on confirm/decline:
+  //   - proposedBy === 'member' (or null/legacy — same "unknown initiator,
+  //     preserve today's CHW behavior" default used elsewhere in this file)
+  //     → this is a MEMBER's request awaiting the CHW's decision, so it keeps
+  //     the existing Confirm/Decline row.
+  //   - proposedBy === 'chw' → this is the CHW's OWN proposal awaiting the
+  //     MEMBER's decision. Confirm/Decline on your own proposal is invalid
+  //     self-approval (the backend 409s a CHW-confirm on proposed_by='chw'
+  //     sessions — see routers/sessions.py's initiator-inversion rule), so
+  //     instead this shows Remove (cancel the stale proposal outright) +
+  //     Propose New Time (counter-offer yet another slot).
+  const isPendingAwaitingChwDecision = isPending && session.proposedBy !== 'chw';
+  const isPendingChwProposed = isPending && session.proposedBy === 'chw';
   // An upcoming session the CHW has already confirmed (not a member request
   // still awaiting approval — that keeps its existing Confirm/Decline row +
   // Open Member Profile below, unchanged) gets the Begin Session / Propose
-  // New Time / Remove action row instead of the plain Open Member Profile
-  // button. Past-scheduled/completed/cancelled sessions are unaffected.
+  // New Time action row instead of the plain Open Member Profile button.
+  // Past-scheduled/completed/cancelled sessions are unaffected. QA2 A2 #17 —
+  // Remove was DELETED from this row (product decision): a confirmed
+  // upcoming session's only actions are Begin Session + Propose New Time.
   const isConfirmedUpcoming =
     session.status === 'scheduled' && new Date(session.scheduledAt) >= now && !isPending;
 
@@ -1056,8 +1073,12 @@ function SessionDetailsModal({
 
               {/* Footer */}
               <View style={detailModalStyles.footer}>
-                {/* Confirm / Decline — only for a member-requested pending session. */}
-                {isPending && (
+                {/* Confirm / Decline — only for a pending session awaiting THIS
+                    CHW's decision (proposedBy 'member' or null/legacy). A
+                    session the CHW itself proposed (proposedBy 'chw') is
+                    awaiting the MEMBER's decision instead — see the Remove +
+                    Propose New Time block below (QA2 A2 #17). */}
+                {isPendingAwaitingChwDecision && (
                   <View style={detailModalStyles.confirmRow}>
                     <TouchableOpacity
                       style={[detailModalStyles.declineBtn, actionPending && { opacity: 0.6 }]}
@@ -1097,9 +1118,41 @@ function SessionDetailsModal({
                   </View>
                 )}
 
+                {/* Remove / Propose New Time — a pending session the CHW itself
+                    proposed. No Confirm/Decline here: confirming your own
+                    proposal is invalid self-approval (backend 409s it), and
+                    "declining" your own proposal is really a removal, so this
+                    surfaces the same Remove confirm-dialog + Propose New Time
+                    pairing as a confirmed upcoming session (QA2 A2 #17). */}
+                {isPendingChwProposed && (
+                  <View style={detailModalStyles.secondaryRow}>
+                    <TouchableOpacity
+                      style={detailModalStyles.removeBtn}
+                      onPress={() => setRemoveConfirmOpen(true)}
+                      accessibilityRole="button"
+                      accessibilityLabel="Remove session"
+                    >
+                      <Text style={detailModalStyles.removeBtnText}>Remove</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={detailModalStyles.proposeBtn}
+                      onPress={() => {
+                        onClose();
+                        onProposeNewTime(session);
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel="Propose a new time"
+                    >
+                      <Text style={detailModalStyles.proposeBtnText}>Propose New Time</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
                 {isConfirmedUpcoming ? (
-                  // Upcoming, CHW-confirmed session — Begin/Propose/Remove replace
-                  // the plain Open Member Profile button below.
+                  // Upcoming, CHW-confirmed session — Begin/Propose replace the
+                  // plain Open Member Profile button below. QA2 A2 #17: Remove
+                  // was DELETED from this row (product decision) — a confirmed
+                  // session's only actions are Begin Session + Propose New Time.
                   <View style={detailModalStyles.scheduledActions}>
                     <TouchableOpacity
                       style={[detailModalStyles.beginBtn, startSession.isPending && { opacity: 0.6 }]}
@@ -1127,29 +1180,19 @@ function SessionDetailsModal({
                       )}
                     </TouchableOpacity>
 
-                    <View style={detailModalStyles.secondaryRow}>
-                      <TouchableOpacity
-                        style={detailModalStyles.proposeBtn}
-                        onPress={() => {
-                          onClose();
-                          onProposeNewTime(session);
-                        }}
-                        accessibilityRole="button"
-                        accessibilityLabel="Propose a new time"
-                      >
-                        <Text style={detailModalStyles.proposeBtnText}>Propose New Time</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={detailModalStyles.removeBtn}
-                        onPress={() => setRemoveConfirmOpen(true)}
-                        accessibilityRole="button"
-                        accessibilityLabel="Remove session"
-                      >
-                        <Text style={detailModalStyles.removeBtnText}>Remove</Text>
-                      </TouchableOpacity>
-                    </View>
+                    <TouchableOpacity
+                      style={detailModalStyles.proposeBtn}
+                      onPress={() => {
+                        onClose();
+                        onProposeNewTime(session);
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel="Propose a new time"
+                    >
+                      <Text style={detailModalStyles.proposeBtnText}>Propose New Time</Text>
+                    </TouchableOpacity>
                   </View>
-                ) : (
+                ) : !isPending ? (
                   <TouchableOpacity
                     style={detailModalStyles.openProfileBtn}
                     onPress={() => {
@@ -1162,7 +1205,7 @@ function SessionDetailsModal({
                     <User size={14} color="#FFFFFF" />
                     <Text style={detailModalStyles.openProfileText}>Open Member Profile</Text>
                   </TouchableOpacity>
-                )}
+                ) : null}
               </View>
             </View>
           </View>
@@ -1584,11 +1627,6 @@ const SESSION_MODES: { value: ScheduleSessionMode; label: string }[] = [
   { value: 'in_person', label: 'In-Person' },
 ];
 
-const SCHEDULING_STATUS_OPTIONS: { value: 'confirmed' | 'pending'; label: string }[] = [
-  { value: 'confirmed', label: 'Confirmed' },
-  { value: 'pending', label: 'Pending' },
-];
-
 interface ScheduleSessionModalProps {
   visible: boolean;
   onClose: () => void;
@@ -1603,6 +1641,10 @@ interface ScheduleSessionModalProps {
   /** "h:mm AM/PM" — matches the Start/End Time fields' own input format. */
   prefillStartTime?: string;
   prefillEndTime?: string;
+  /** Resource Needs verticals carried over from the original session when
+   *  opening in "Propose New Time" mode (QA2 A2 #15) — so counter-offering a
+   *  new time doesn't silently drop the member's already-recorded needs. */
+  prefillResourceNeeds?: Vertical[];
   /**
    * When set, the modal is in reschedule/"Propose New Time" mode: the member
    * is locked, schedulingStatus is forced to 'pending' (the member must
@@ -1618,9 +1660,15 @@ interface ScheduleSessionModalProps {
 /**
  * Modal for scheduling a session with one of the CHW's members.
  *
- * Collects: member (searchable list), session type, date, start time, end time,
- * scheduling status, and optional Resource Needs (a multi-select of verticals,
- * e.g. Housing/Food/Transportation). Submits via useScheduleSession().
+ * Collects: member (searchable list), session type, date, start time, end
+ * time, and optional Resource Needs (a multi-select of verticals, e.g.
+ * Housing/Food/Transportation). Submits via useScheduleSession().
+ *
+ * QA2 A2 #14 — the Confirmed/Pending status picker was removed: every new
+ * CHW-scheduled session is submitted with `scheduling_status: 'pending'`
+ * explicitly (never relying on the backend's 'confirmed' default), so it
+ * always lands in the member's Pending Session Requests for approval, the
+ * same as a member-initiated request and the same as "Propose New Time".
  *
  * Doubles as the "Propose New Time" reschedule flow for a member-requested
  * pending session (see `replaceSessionId` above) — opened from
@@ -1636,6 +1684,7 @@ function ScheduleSessionModal({
   prefillDate,
   prefillStartTime,
   prefillEndTime,
+  prefillResourceNeeds,
   replaceSessionId,
 }: ScheduleSessionModalProps): React.JSX.Element {
   const { mutateAsync, isPending } = useScheduleSession();
@@ -1656,7 +1705,6 @@ function ScheduleSessionModal({
   });
   const [startTimeInput, setStartTimeInput] = useState('10:00 AM');
   const [endTimeInput, setEndTimeInput] = useState('11:00 AM');
-  const [schedulingStatus, setSchedulingStatus] = useState<'confirmed' | 'pending'>('confirmed');
   // Epic L — replaces the free-text Notes field with a Resource Needs
   // multi-select. A Set gives O(1) toggle/has checks for the chip grid.
   const [resourceNeeds, setResourceNeeds] = useState<Set<Vertical>>(new Set());
@@ -1689,7 +1737,6 @@ function ScheduleSessionModal({
     setDateInput(`${mm}/${dd}/${tomorrow.getFullYear()}`);
     setStartTimeInput('10:00 AM');
     setEndTimeInput('11:00 AM');
-    setSchedulingStatus('confirmed');
     setResourceNeeds(new Set());
     setFieldError(null);
   }, []);
@@ -1711,8 +1758,10 @@ function ScheduleSessionModal({
     if (prefillDate) setDateInput(prefillDate);
     if (prefillStartTime) setStartTimeInput(prefillStartTime);
     if (prefillEndTime) setEndTimeInput(prefillEndTime);
-    setSchedulingStatus('pending');
-    setResourceNeeds(new Set());
+    // QA2 A2 #15 — seed from the ORIGINAL session's resourceNeeds instead of
+    // resetting to empty, so counter-offering a new time doesn't silently
+    // drop needs the member already has on record.
+    setResourceNeeds(new Set(prefillResourceNeeds ?? []));
     setFieldError(null);
   }, [
     visible,
@@ -1722,6 +1771,7 @@ function ScheduleSessionModal({
     prefillDate,
     prefillStartTime,
     prefillEndTime,
+    prefillResourceNeeds,
   ]);
 
   /**
@@ -1782,10 +1832,13 @@ function ScheduleSessionModal({
         scheduledAt,
         scheduledEndAt,
         mode: sessionMode,
-        // Propose New Time always books a pending request — the member must
-        // confirm the CHW's proposed time, regardless of the Status field
-        // (which is hidden in this mode anyway).
-        schedulingStatus: isProposeMode ? 'pending' : schedulingStatus,
+        // QA2 A2 #14 — every CHW-scheduled session (new OR Propose New Time)
+        // is ALWAYS submitted as an explicit 'pending' request: the FE never
+        // relies on the backend's 'confirmed' default, and the removed
+        // Status picker used to let a CHW skip the member's approval step
+        // entirely. Every session now lands in the member's Pending Session
+        // Requests, same as a member-initiated request.
+        schedulingStatus: 'pending',
         resourceNeeds: Array.from(resourceNeeds),
       });
       // Reschedule: only after the new booking succeeds do we decline the
@@ -1795,10 +1848,20 @@ function ScheduleSessionModal({
       if (replaceSessionId) {
         try {
           await declineOldSession.mutateAsync(replaceSessionId);
-        } catch {
-          // Non-fatal — the new session booked successfully; the stale
-          // pending request can be declined manually. declineOldSession
-          // surfaces its own error alert.
+        } catch (declineErr) {
+          // QA2 A2 #2 — surface this instead of swallowing it silently: the
+          // new session booked successfully, but the stale original is still
+          // live and needs manual cleanup. Log for diagnostics and show a
+          // non-blocking warning (the new booking already succeeded, so this
+          // must not block handleClose() below).
+          console.error(
+            '[ScheduleSessionModal] Failed to decline the original session after a successful Propose New Time re-book:',
+            declineErr,
+          );
+          showAlert(
+            'New time proposed, but the old request is still pending',
+            'The new session was booked, but we could not automatically remove the original request. Please decline it manually from Session Details.',
+          );
         }
       }
       handleClose();
@@ -1811,11 +1874,9 @@ function ScheduleSessionModal({
     startTimeInput,
     endTimeInput,
     sessionMode,
-    schedulingStatus,
     resourceNeeds,
     mutateAsync,
     handleClose,
-    isProposeMode,
     replaceSessionId,
     declineOldSession,
   ]);
@@ -1996,40 +2057,19 @@ function ScheduleSessionModal({
               </View>
             </View>
 
-            {/* Status — hidden in Propose New Time mode, where it's forced to
-                'pending' since the member must confirm the CHW's new time. */}
-            {isProposeMode ? (
-              <View style={scheduleModalStyles.field}>
-                <Text style={scheduleModalStyles.fieldLabel}>Status</Text>
-                <Text style={scheduleModalStyles.proposeHint}>
-                  Sent as a new pending request — {selectedMemberName || 'the member'} will
-                  need to confirm this time.
-                </Text>
-              </View>
-            ) : (
-              <View style={scheduleModalStyles.field}>
-                <Text style={scheduleModalStyles.fieldLabel}>Status</Text>
-                <View style={scheduleModalStyles.segmentRow}>
-                  {SCHEDULING_STATUS_OPTIONS.map(({ value, label }) => {
-                    const isActive = schedulingStatus === value;
-                    return (
-                      <TouchableOpacity
-                        key={value}
-                        style={[scheduleModalStyles.segmentBtn, isActive && scheduleModalStyles.segmentBtnActive]}
-                        onPress={() => setSchedulingStatus(value)}
-                        accessibilityRole="radio"
-                        accessibilityState={{ checked: isActive }}
-                        accessibilityLabel={label}
-                      >
-                        <Text style={[scheduleModalStyles.segmentText, isActive && scheduleModalStyles.segmentTextActive]}>
-                          {label}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </View>
-            )}
+            {/* Status — QA2 A2 #14: the Confirmed/Pending toggle was removed.
+                Every CHW-scheduled session (new or Propose New Time) is
+                ALWAYS submitted as 'pending' so it lands in the member's
+                Pending Session Requests for approval — this is now a fixed
+                fact of the flow, not a choice, so it's surfaced as a plain
+                hint instead of a picker. */}
+            <View style={scheduleModalStyles.field}>
+              <Text style={scheduleModalStyles.fieldLabel}>Status</Text>
+              <Text style={scheduleModalStyles.proposeHint}>
+                Sent as a pending request — {selectedMemberName || 'the member'} will need to
+                confirm this time.
+              </Text>
+            </View>
 
             {/* Resource Needs (optional) — Epic L: replaces the free-text
                 Notes field with a multi-select of the same verticals used
@@ -2783,6 +2823,7 @@ export function CHWCalendarScreen(): React.JSX.Element {
           prefillEndTime={
             proposeRequest?.scheduledEndAt ? formatTimeAMPM(proposeRequest.scheduledEndAt) : undefined
           }
+          prefillResourceNeeds={proposeRequest?.resourceNeeds as Vertical[] | undefined}
           replaceSessionId={proposeRequest?.id}
         />
       </AppShell>
@@ -2841,6 +2882,7 @@ export function CHWCalendarScreen(): React.JSX.Element {
         prefillEndTime={
           proposeRequest?.scheduledEndAt ? formatTimeAMPM(proposeRequest.scheduledEndAt) : undefined
         }
+        prefillResourceNeeds={proposeRequest?.resourceNeeds as Vertical[] | undefined}
         replaceSessionId={proposeRequest?.id}
       />
     </SafeAreaView>

@@ -2,26 +2,33 @@
  * MemberPendingRequestsList — CHW-proposed pending session requests awaiting
  * this member's approval, shown as a card above the calendar/dashboard.
  *
- * Mirrors CHWCalendarScreen's `PendingRequestsList` (Approve / Decline /
- * Propose New Time), adapted for the member POV:
+ * Mirrors CHWCalendarScreen's `PendingRequestsList` (Approve / Propose New
+ * Time), adapted for the member POV:
  *  - Shows the CHW's name (not a member name).
- *  - Approve/Decline hit the SAME useConfirmSession/useDeclineSession
- *    mutations the CHW side uses — the member is just the caller now. The
- *    backend's "initiator inversion" rule (only the party who did NOT
- *    propose the session may confirm/decline it) is what makes this safe:
- *    a member can only act on a session `proposedBy: 'chw'`.
+ *  - Approve hits the SAME useConfirmSession mutation the CHW side uses —
+ *    the member is just the caller now. The backend's "initiator inversion"
+ *    rule (only the party who did NOT propose the session may confirm it)
+ *    is what makes this safe: a member can only act on a session
+ *    `proposedBy: 'chw'`.
  *  - Filter is INTENTIONALLY exclusive of null/legacy `proposedBy` (unlike
  *    the CHW-side filter, which is inclusive of null/legacy) — a member
  *    should never see/act on a legacy pending row whose initiator is
  *    unknown, per the safe-default rule.
- *  - Decline shows an on-brand confirm Modal first (never window.confirm),
- *    matching CHWCalendarScreen's RemoveSessionConfirmModal pattern.
+ *  - QA2 A2 #14/#18 — the Decline button was REMOVED from this list (product
+ *    decision): a member's only actions on a CHW-proposed pending request
+ *    are Approve and Propose New Time. The backend decline endpoint is left
+ *    completely untouched — ProposeNewTimeModal below still calls
+ *    useDeclineSession internally as the "retract the old request" second
+ *    step of the propose flow, it's just no longer exposed as a standalone
+ *    row action.
  *  - "Propose New Time" books the new pending session FIRST via
  *    useScheduleSession (chwId set, so the backend sets proposed_by:
  *    'member'), and only on success declines the OLD session via
  *    useDeclineSession — mirroring CHWCalendarScreen's ScheduleSessionModal
  *    replaceSessionId ordering exactly, so a failed re-book never loses the
- *    original request.
+ *    original request. QA2 A2 #3 — the counter-offer also carries a Resource
+ *    Needs multiselect, seeded from the original request, so proposing a new
+ *    time doesn't silently drop needs already on record.
  *
  * Shared between MemberCalendarScreen (mounted above the calendar) and
  * MemberHomeScreen (mounted above the dashboard hero) rather than duplicated
@@ -49,6 +56,12 @@ import {
   useScheduleSession,
   type SessionData,
 } from '../../hooks/useApiQueries';
+import {
+  VERTICAL_PICKER_OPTIONS,
+  VERTICAL_COLOR,
+  type Vertical,
+} from '../../lib/verticals';
+import { showAlert } from '../../utils/showAlert';
 
 // ─── Formatting helpers (ported — see MemberCalendarScreen's own module
 // docstring for why these are copied rather than imported across screens) ──
@@ -146,136 +159,6 @@ export function selectMemberPendingRequests(sessions: SessionData[]): SessionDat
     .sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime());
 }
 
-// ─── Decline confirm modal (on-brand — mirrors CHWCalendarScreen's
-// RemoveSessionConfirmModal, never window.confirm/Alert.alert) ────────────
-
-interface DeclineConfirmModalProps {
-  visible: boolean;
-  chwName: string;
-  isPending: boolean;
-  onConfirm: () => void;
-  onCancel: () => void;
-}
-
-function DeclineConfirmModal({
-  visible,
-  chwName,
-  isPending,
-  onConfirm,
-  onCancel,
-}: DeclineConfirmModalProps): React.JSX.Element {
-  return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={onCancel}
-      accessibilityViewIsModal
-    >
-      <View style={confirmModalStyles.overlay}>
-        <View style={confirmModalStyles.dialog}>
-          <Text style={confirmModalStyles.title}>Decline this session request?</Text>
-          <Text style={confirmModalStyles.body}>
-            {chwDisplayName(chwName)} will be notified. This can't be undone.
-          </Text>
-          <View style={confirmModalStyles.actions}>
-            <TouchableOpacity
-              style={confirmModalStyles.cancelBtn}
-              onPress={onCancel}
-              disabled={isPending}
-              accessibilityRole="button"
-              accessibilityLabel="No, keep request"
-            >
-              <Text style={confirmModalStyles.cancelBtnText}>No, Keep It</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[confirmModalStyles.confirmBtn, isPending && { opacity: 0.6 }]}
-              onPress={onConfirm}
-              disabled={isPending}
-              accessibilityRole="button"
-              accessibilityLabel="Yes, decline request"
-            >
-              {isPending ? (
-                <ActivityIndicator size="small" color="#FFFFFF" />
-              ) : (
-                <Text style={confirmModalStyles.confirmBtnText}>Yes, Decline</Text>
-              )}
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
-    </Modal>
-  );
-}
-
-const confirmModalStyles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: spacing.xl,
-  },
-  dialog: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: radius.xl,
-    padding: spacing.xl,
-    width: '100%',
-    maxWidth: 400,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.18,
-    shadowRadius: 32,
-    elevation: 12,
-  },
-  title: {
-    fontFamily: 'DMSans_700Bold',
-    fontSize: 17,
-    color: '#1E3320',
-    marginBottom: spacing.sm,
-  },
-  body: {
-    fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 14,
-    color: '#6B7280',
-    lineHeight: 20,
-    marginBottom: spacing.xl,
-  },
-  actions: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-  },
-  cancelBtn: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 44,
-  },
-  cancelBtnText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 14,
-    color: '#374151',
-  },
-  confirmBtn: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: radius.md,
-    backgroundColor: '#DC2626',
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 44,
-  },
-  confirmBtnText: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 14,
-    color: '#FFFFFF',
-  },
-});
-
 // ─── Propose New Time modal ─────────────────────────────────────────────────
 
 interface ProposeNewTimeModalProps {
@@ -306,12 +189,28 @@ function ProposeNewTimeModal({
   const [startTimeInput, setStartTimeInput] = useState('');
   const [endTimeInput, setEndTimeInput] = useState('');
   const [mode, setMode] = useState<'in_person' | 'virtual' | 'phone'>('in_person');
+  // QA2 A2 #3 — Resource Needs multiselect, mirroring CHWCalendarScreen's
+  // ScheduleSessionModal chip grid exactly (same VERTICAL_PICKER_OPTIONS
+  // source of truth, same Set-based toggle). Seeded from the original
+  // request below so counter-offering a new time doesn't drop needs already
+  // on record.
+  const [resourceNeeds, setResourceNeeds] = useState<Set<Vertical>>(new Set());
   const [fieldError, setFieldError] = useState<string | null>(null);
 
-  // Seed the form from the request's CHW + scheduled time whenever the modal
-  // opens. The modal stays mounted between opens (visible toggles), so this
-  // can't just be an initializer — it must re-run each time `visible` flips
-  // true, mirroring CHWCalendarScreen's ScheduleSessionModal prefill effect.
+  const toggleResourceNeed = useCallback((v: Vertical) => {
+    setResourceNeeds((prev) => {
+      const next = new Set(prev);
+      if (next.has(v)) next.delete(v);
+      else next.add(v);
+      return next;
+    });
+  }, []);
+
+  // Seed the form from the request's CHW + scheduled time + resource needs
+  // whenever the modal opens. The modal stays mounted between opens (visible
+  // toggles), so this can't just be an initializer — it must re-run each
+  // time `visible` flips true, mirroring CHWCalendarScreen's
+  // ScheduleSessionModal prefill effect.
   useEffect(() => {
     if (!visible || !request) return;
     setDateInput(formatDateInputValue(request.scheduledAt));
@@ -320,6 +219,7 @@ function ProposeNewTimeModal({
       request.scheduledEndAt ? formatTimeAMPM(request.scheduledEndAt) : formatTimeAMPM(request.scheduledAt),
     );
     setMode((request.mode as 'in_person' | 'virtual' | 'phone') ?? 'in_person');
+    setResourceNeeds(new Set((request.resourceNeeds as Vertical[] | null | undefined) ?? []));
     setFieldError(null);
   }, [visible, request]);
 
@@ -354,6 +254,7 @@ function ProposeNewTimeModal({
         scheduledEndAt,
         mode,
         schedulingStatus: 'pending',
+        resourceNeeds: Array.from(resourceNeeds),
       });
       // Only after the new booking succeeds do we decline the original
       // pending request, so a failed re-book never leaves the member with no
@@ -361,16 +262,36 @@ function ProposeNewTimeModal({
       // ScheduleSessionModal replaceSessionId flow.
       try {
         await declineOldSession.mutateAsync(request.id);
-      } catch {
-        // Non-fatal — the new session booked successfully; the stale pending
-        // request can be declined manually. declineOldSession surfaces its
-        // own error alert.
+      } catch (declineErr) {
+        // QA2 A2 #2 — surface this instead of swallowing it silently: the
+        // new session booked successfully, but the stale original is still
+        // live and needs manual cleanup. Log for diagnostics and show a
+        // non-blocking warning (the new booking already succeeded, so this
+        // must not block handleClose() below).
+        console.error(
+          '[ProposeNewTimeModal] Failed to decline the original session after a successful Propose New Time re-book:',
+          declineErr,
+        );
+        showAlert(
+          'New time proposed, but the old request is still pending',
+          'The new session was booked, but we could not automatically remove the original request. Please decline it manually.',
+        );
       }
       handleClose();
     } catch {
       // Error alert handled by useScheduleSession's onError.
     }
-  }, [request, dateInput, startTimeInput, endTimeInput, mode, mutateAsync, declineOldSession, handleClose]);
+  }, [
+    request,
+    dateInput,
+    startTimeInput,
+    endTimeInput,
+    mode,
+    resourceNeeds,
+    mutateAsync,
+    declineOldSession,
+    handleClose,
+  ]);
 
   const canSubmit = !!request && !isPending && !declineOldSession.isPending;
 
@@ -442,6 +363,49 @@ function ProposeNewTimeModal({
                   autoCapitalize="characters"
                   autoCorrect={false}
                 />
+              </View>
+            </View>
+
+            {/* Resource Needs (optional) — QA2 A2 #3: reuses lib/verticals.ts
+                as the single source of truth, exactly like CHWCalendarScreen's
+                ScheduleSessionModal chip grid, seeded from the original
+                request (see the prefill effect above). */}
+            <View style={proposeModalStyles.field}>
+              <Text style={proposeModalStyles.fieldLabel}>Resource Needs (optional)</Text>
+              <View style={proposeModalStyles.chipRow} accessibilityLabel="Resource needs">
+                {VERTICAL_PICKER_OPTIONS.map((opt) => {
+                  const isSelected = resourceNeeds.has(opt.key);
+                  const color = VERTICAL_COLOR[opt.key];
+                  return (
+                    <TouchableOpacity
+                      key={opt.key}
+                      style={[
+                        proposeModalStyles.chip,
+                        isSelected && {
+                          backgroundColor: `${color}1A`,
+                          borderColor: color,
+                        },
+                      ]}
+                      onPress={() => toggleResourceNeed(opt.key)}
+                      accessibilityRole="checkbox"
+                      accessibilityState={{ checked: isSelected }}
+                      accessibilityLabel={opt.label}
+                    >
+                      <Text style={proposeModalStyles.chipEmoji}>{opt.emoji}</Text>
+                      <Text
+                        style={[
+                          proposeModalStyles.chipText,
+                          isSelected && { color, fontFamily: 'PlusJakartaSans_600SemiBold' },
+                        ]}
+                      >
+                        {opt.label}
+                      </Text>
+                      {isSelected ? (
+                        <Text style={[proposeModalStyles.chipCheck, { color }]}>✓</Text>
+                      ) : null}
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
             </View>
 
@@ -561,6 +525,34 @@ const proposeModalStyles = StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.md,
   },
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+  },
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 8,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    backgroundColor: '#FFFFFF',
+  },
+  chipEmoji: {
+    fontSize: 14,
+  },
+  chipText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: '#374151',
+  },
+  chipCheck: {
+    fontFamily: 'PlusJakartaSans_700Bold',
+    fontSize: 13,
+  },
   errorBanner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -629,32 +621,23 @@ export interface MemberPendingRequestsListProps {
 
 /**
  * CHW-proposed (pending) sessions awaiting this member's approval, listed
- * above the calendar/dashboard. Each row can be Approved (→ confirmed) or
- * Declined (→ cancelled, behind an on-brand confirm dialog) inline via
- * useConfirmSession / useDeclineSession — the same mutations the CHW side
- * uses, now called by the member. "Propose New Time" opens a counter-offer
- * modal pre-filled with this request's time (see ProposeNewTimeModal) so the
- * member can suggest a different slot instead of just approving or
- * declining.
+ * above the calendar/dashboard. Each row can be Approved (→ confirmed)
+ * inline via useConfirmSession — the same mutation the CHW side uses, now
+ * called by the member. "Propose New Time" opens a counter-offer modal
+ * pre-filled with this request's time + resource needs (see
+ * ProposeNewTimeModal) so the member can suggest a different slot instead of
+ * just approving. QA2 A2 #14/#18 — the standalone Decline action was removed
+ * from this row (product decision); useDeclineSession is still used
+ * internally by ProposeNewTimeModal to retract the old request as step 2 of
+ * the propose flow.
  */
 export function MemberPendingRequestsList({
   requests,
 }: MemberPendingRequestsListProps): React.JSX.Element | null {
   const confirmSession = useConfirmSession();
-  const declineSession = useDeclineSession();
-  const busy = confirmSession.isPending || declineSession.isPending;
+  const busy = confirmSession.isPending;
 
-  const [declineTarget, setDeclineTarget] = useState<SessionData | null>(null);
   const [proposeTarget, setProposeTarget] = useState<SessionData | null>(null);
-
-  const handleConfirmDecline = useCallback(() => {
-    if (!declineTarget) return;
-    const target = declineTarget;
-    void declineSession
-      .mutateAsync(target.id)
-      .catch(() => {})
-      .finally(() => setDeclineTarget(null));
-  }, [declineTarget, declineSession]);
 
   if (requests.length === 0) return null;
 
@@ -663,7 +646,7 @@ export function MemberPendingRequestsList({
       <Card style={pendingStyles.card}>
         <Text style={pendingStyles.title}>Pending Session Requests ({requests.length})</Text>
         <Text style={pendingStyles.subtitle}>
-          Your CHW proposed these times — approve, decline, or suggest a different time.
+          Your CHW proposed these times — approve or suggest a different time.
         </Text>
         {requests.map((r) => (
           <View key={r.id} style={pendingStyles.row}>
@@ -688,15 +671,6 @@ export function MemberPendingRequestsList({
                 <Text style={pendingStyles.proposeText}>Propose New Time</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[pendingStyles.declineBtn, busy && { opacity: 0.6 }]}
-                disabled={busy}
-                onPress={() => setDeclineTarget(r)}
-                accessibilityRole="button"
-                accessibilityLabel={`Decline request from ${chwDisplayName(r.chwName)}`}
-              >
-                <Text style={pendingStyles.declineText}>Decline</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
                 style={[pendingStyles.approveBtn, busy && { opacity: 0.6 }]}
                 disabled={busy}
                 onPress={() => {
@@ -711,14 +685,6 @@ export function MemberPendingRequestsList({
           </View>
         ))}
       </Card>
-
-      <DeclineConfirmModal
-        visible={declineTarget !== null}
-        chwName={declineTarget?.chwName ?? ''}
-        isPending={declineSession.isPending}
-        onCancel={() => setDeclineTarget(null)}
-        onConfirm={handleConfirmDecline}
-      />
 
       <ProposeNewTimeModal
         visible={proposeTarget !== null}
@@ -784,19 +750,6 @@ const pendingStyles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: '#374151',
-  },
-  declineBtn: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: 8,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: '#FCA5A5',
-    backgroundColor: '#FEF2F2',
-  },
-  declineText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#b91c1c',
   },
   approveBtn: {
     paddingHorizontal: spacing.md,

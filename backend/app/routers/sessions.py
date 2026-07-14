@@ -308,8 +308,21 @@ def _add_scheduling_message(db: AsyncSession, session, sender_id, *, confirmed: 
 
 
 def _reject_self_approval_if_initiator(session: Session, current_user: User) -> None:
-    """Enforce the initiator-inversion rule shared by confirm_session and
-    decline_session: only the NON-proposing party may act on a session.
+    """Enforce the initiator-inversion rule for CONFIRM ONLY: only the
+    NON-proposing party may confirm a session's proposed time.
+
+    NOTE (QA2 A2 — root cause of the "propose new time doesn't remove the
+    original" bug): this rule used to also gate ``decline_session``, which
+    blocked a proposer from retracting their OWN proposal. Concretely: a CHW
+    who scheduled a pending session (proposed_by='chw'), then used "Propose
+    New Time" to counter-offer a different slot, could not decline the stale
+    original — the CHW IS that session's proposer, so the old rule 409'd the
+    retraction, leaving two pending sessions instead of one. That's backwards:
+    retracting your own proposal (to replace it with a new one) is exactly the
+    case a proposer must always be allowed to do; only ACCEPTING your own
+    proposal (confirm) is invalid self-approval. ``decline_session`` no longer
+    calls this helper at all — decline is now unconditional for any
+    participant. Only ``confirm_session`` still calls this helper.
 
     - CHW caller: allowed when ``proposed_by == "member"`` or ``None``
       (legacy rows — allow, preserving pre-existing CHW behavior). Rejected
@@ -322,7 +335,7 @@ def _reject_self_approval_if_initiator(session: Session, current_user: User) -> 
     - Admin caller: bypasses this rule entirely (admins act on behalf of
       support/ops workflows and are not a "side" of the negotiation).
 
-    Raises HTTPException(409) on violation; the caller (confirm/decline)
+    Raises HTTPException(409) on violation; the caller (confirm_session)
     should call this AFTER the participant-relationship 404 gate.
     """
     if current_user.role == "admin":
@@ -434,8 +447,8 @@ async def decline_session(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SessionResponse:
-    """Decline a pending scheduled session — either participant may call this,
-    but never the party that proposed the current time.
+    """Decline (or retract) a pending scheduled session — EITHER participant
+    may call this, INCLUDING the party that proposed the current time.
 
     Marks the session ``cancelled`` so it drops off both parties' upcoming
     calendar views. Callable by the owning CHW, the participant member, or an
@@ -443,12 +456,16 @@ async def decline_session(
     so session existence isn't leaked. 409 when the session is not in the
     ``scheduled`` state.
 
-    Initiator-inversion rule (409, see ``_reject_self_approval_if_initiator``):
-    same rule as ``confirm_session`` — a caller cannot decline a session they
-    themselves proposed. Legacy sessions with no recorded proposer
-    (``proposed_by is None``) still work unaffected for a CHW caller
-    (preserves the pre-existing decline flow); a member caller is rejected
-    on a legacy-null session (conservative default). Admins bypass the rule.
+    NO initiator-inversion rule here (QA2 A2 fix — this used to call
+    ``_reject_self_approval_if_initiator``, the same check ``confirm_session``
+    uses, which incorrectly blocked a proposer from retracting their OWN
+    proposal). Declining/retracting is symmetric: the proposer may withdraw
+    their own pending offer (the "Propose New Time" flow's book-then-decline-
+    the-original sequence depends on this — the CHW/member who just proposed
+    the NEW time is also the proposer of the OLD session being replaced), and
+    the non-proposer may decline an offer made to them, exactly as before.
+    Only ``confirm_session`` keeps the inversion check, since confirming your
+    own proposal is the one case that really is invalid self-approval.
 
     No push notification here — only ``_add_scheduling_message`` posts to the
     shared thread (it already takes ``sender_id`` generically, so it works
@@ -457,7 +474,6 @@ async def decline_session(
     session = await _load_participant_session_or_404(
         session_id=session_id, db=db, current_user=current_user
     )
-    _reject_self_approval_if_initiator(session, current_user)
     if session.status != "scheduled":
         raise HTTPException(
             status_code=409, detail="Only a scheduled session can be declined."

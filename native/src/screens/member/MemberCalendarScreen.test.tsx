@@ -19,7 +19,10 @@
  *     useDeclineSession, and useScheduleSession all run for real against a
  *     routed `api()` mock (Tier 2 — jsdom + react-native-web, see
  *     native/TESTING.md), so this exercises the actual production
- *     mutation-ordering wiring, not a hand-rolled hook mock.
+ *     mutation-ordering wiring, not a hand-rolled hook mock. QA2 A2 #14/#18:
+ *     the widget's row actions are Approve + Propose New Time ONLY — the
+ *     standalone Decline button was removed (product decision); Decline is
+ *     still exercised internally as step 2 of the Propose New Time flow.
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -159,7 +162,9 @@ function mmddyyyy(d: Date): string {
 const EXPECTED_DATE_INPUT = mmddyyyy(scheduledStart);
 
 /** A pending session the CHW proposed — must appear in the member's widget
- *  with all 3 actions (Approve / Decline / Propose New Time). */
+ *  with 2 actions (Approve / Propose New Time — QA2 A2 #14/#18 removed the
+ *  standalone Decline). Carries resource_needs so QA2 A2 #3's Propose New
+ *  Time prefill-seeding can be asserted against a known value. */
 const chwProposedSessionFixture = {
   id: CHW_PROPOSED_SESSION_ID,
   request_id: 'req-1',
@@ -172,6 +177,7 @@ const chwProposedSessionFixture = {
   scheduled_end_at: scheduledEnd.toISOString(),
   scheduling_status: 'pending',
   proposed_by: 'chw',
+  resource_needs: ['food', 'transportation'],
   created_at: '2026-07-01T00:00:00.000Z',
   chw_name: CHW_NAME,
   member_name: 'Test Member',
@@ -298,12 +304,12 @@ afterEach(() => {
 });
 
 describe('MemberCalendarScreen — Pending Session Requests widget (member POV)', () => {
-  it('renders a CHW-proposed pending request with all 3 actions (Approve / Decline / Propose New Time)', async () => {
+  it('renders a CHW-proposed pending request with 2 actions (Approve / Propose New Time) — no standalone Decline (QA2 A2 #14/#18)', async () => {
     renderScreen();
 
     expect(await screen.findByLabelText(`Approve request from ${CHW_NAME}`)).toBeTruthy();
-    expect(screen.getByLabelText(`Decline request from ${CHW_NAME}`)).toBeTruthy();
     expect(screen.getByLabelText(`Propose new time for ${CHW_NAME}`)).toBeTruthy();
+    expect(screen.queryByLabelText(`Decline request from ${CHW_NAME}`)).toBeNull();
   });
 
   it('does NOT show a member-proposed pending request (proposedBy: "member")', async () => {
@@ -345,30 +351,19 @@ describe('MemberCalendarScreen — Pending Session Requests widget (member POV)'
     });
   });
 
-  it('Decline shows an on-brand confirm dialog first, and only calls the API after confirming', async () => {
+  it('has no standalone Decline confirm dialog anywhere in the widget (QA2 A2 #14/#18)', async () => {
     renderScreen();
 
-    const declineBtn = await screen.findByLabelText(`Decline request from ${CHW_NAME}`);
-    fireEvent.click(declineBtn);
+    await screen.findByLabelText(`Approve request from ${CHW_NAME}`);
 
-    // The confirm dialog appears (on-brand Modal, not window.confirm) — the
-    // decline API call must NOT have fired yet.
-    const confirmBtn = await screen.findByLabelText('Yes, decline request');
+    // Neither the row action nor its confirm-dialog remnants exist.
+    expect(screen.queryByLabelText(`Decline request from ${CHW_NAME}`)).toBeNull();
+    expect(screen.queryByText('Decline this session request?')).toBeNull();
+    expect(screen.queryByLabelText('Yes, decline request')).toBeNull();
+
     expect(
       mockedApi.mock.calls.some(([path]) => path === `/sessions/${CHW_PROPOSED_SESSION_ID}/decline`),
     ).toBe(false);
-
-    fireEvent.click(confirmBtn);
-
-    await waitFor(() => {
-      expect(
-        mockedApi.mock.calls.some(
-          ([path, opts]) =>
-            path === `/sessions/${CHW_PROPOSED_SESSION_ID}/decline` &&
-            (opts as { method?: string })?.method === 'PATCH',
-        ),
-      ).toBe(true);
-    });
   });
 
   it('opens the Propose New Time modal prefilled with the request\'s date/time', async () => {
@@ -378,6 +373,34 @@ describe('MemberCalendarScreen — Pending Session Requests widget (member POV)'
     expect((screen.getByLabelText('Session date') as HTMLInputElement).value).toBe(EXPECTED_DATE_INPUT);
     expect((screen.getByLabelText('Session start time') as HTMLInputElement).value).toBe('2:00 PM');
     expect((screen.getByLabelText('Session end time') as HTMLInputElement).value).toBe('3:00 PM');
+  });
+
+  it('seeds the Resource Needs chips from the original request (QA2 A2 #3)', async () => {
+    renderScreen();
+    await openProposeModal();
+
+    // chwProposedSessionFixture has resource_needs: ['food', 'transportation'].
+    const foodChip = screen.getByLabelText('Food Security');
+    const transportationChip = screen.getByLabelText('Transportation');
+    expect(foodChip.textContent).toContain('✓');
+    expect(transportationChip.textContent).toContain('✓');
+    // A vertical NOT in the fixture stays unchecked.
+    expect(screen.getByLabelText('Utilities').textContent).not.toContain('✓');
+  });
+
+  it('submits the prefilled Resource Needs with the counter-proposal (QA2 A2 #3)', async () => {
+    renderScreen();
+    await openProposeModal();
+
+    fireEvent.click(screen.getByLabelText('Propose new time'));
+
+    await waitFor(() => {
+      expect(mockedApi.mock.calls.some(([path]) => path === '/sessions/schedule')).toBe(true);
+    });
+
+    const [, options] = mockedApi.mock.calls.find(([path]) => path === '/sessions/schedule')!;
+    const body = JSON.parse((options as { body: string }).body);
+    expect(body.resource_needs).toEqual(['food', 'transportation']);
   });
 
   it('Propose New Time books the new session BEFORE declining the old one (never the reverse)', async () => {
@@ -436,5 +459,131 @@ describe('MemberCalendarScreen — Pending Session Requests widget (member POV)'
 
     // The modal stays open (not silently closed) so the member can retry.
     expect(screen.getByLabelText('Propose new time')).toBeTruthy();
+  });
+});
+
+// ─── QA2 A2 #5 — cancelled sessions vanish from the member's grid (N1 mirror),
+// and Session Details renders Resource Needs chips ──────────────────────────
+
+const CONFIRMED_TODAY_SESSION_ID = 'sess-confirmed-today-1';
+const CANCELLED_TODAY_SESSION_ID = 'sess-cancelled-today-1';
+const RESOURCE_NEEDS_TODAY_SESSION_ID = 'sess-resource-needs-today-1';
+const CHW_NAME_CONTROL = 'Alex Chen';
+
+// "Today" anchoring, same clamp-inside-today approach as
+// CHWCalendarScreen.status.test.tsx — Day view reads the real calendar date,
+// so fixtures must land on today, before end-of-day, to render there.
+const _fxNow2 = new Date();
+const _endOfToday2 = new Date(_fxNow2);
+_endOfToday2.setHours(23, 59, 59, 999);
+const FUTURE_TODAY_2 = new Date((_fxNow2.getTime() + _endOfToday2.getTime()) / 2);
+
+function todayFixture(overrides: {
+  id: string;
+  status: string;
+  resource_needs?: string[];
+}) {
+  const start = new Date(FUTURE_TODAY_2);
+  const end = new Date(start.getTime() + 60 * 60 * 1000);
+  return {
+    id: overrides.id,
+    request_id: `req-${overrides.id}`,
+    chw_id: CHW_ID,
+    member_id: MEMBER_ID,
+    vertical: 'housing',
+    status: overrides.status,
+    mode: 'in_person',
+    scheduled_at: start.toISOString(),
+    scheduled_end_at: end.toISOString(),
+    scheduling_status: overrides.status === 'scheduled' ? 'confirmed' : null,
+    resource_needs: overrides.resource_needs,
+    created_at: '2026-07-01T00:00:00.000Z',
+    chw_name: CHW_NAME_CONTROL,
+    member_name: 'Test Member',
+  };
+}
+
+const confirmedTodayFixture = todayFixture({
+  id: CONFIRMED_TODAY_SESSION_ID,
+  status: 'scheduled',
+});
+const cancelledTodayFixture = todayFixture({
+  id: CANCELLED_TODAY_SESSION_ID,
+  status: 'cancelled',
+});
+const resourceNeedsTodayFixture = todayFixture({
+  id: RESOURCE_NEEDS_TODAY_SESSION_ID,
+  status: 'scheduled',
+  resource_needs: ['housing', 'food'],
+});
+
+describe('MemberCalendarScreen — cancelled sessions vanish from the grid (N1 mirror, QA2 A2 #5)', () => {
+  beforeEach(() => {
+    additionalSessionFixtures = [confirmedTodayFixture, cancelledTodayFixture];
+  });
+
+  it('does not render a cancelled session as a card in Day view', async () => {
+    renderScreen();
+    fireEvent.click(await screen.findByLabelText('day view'));
+
+    // Control: the non-cancelled fixture renders, proving the day's data
+    // actually loaded (a false negative here would make the assertion below
+    // meaningless). Both fixtures share the same CHW name, so distinguish by
+    // count instead of a per-name query.
+    await screen.findByLabelText(new RegExp(`^Session with ${CHW_NAME_CONTROL} at`));
+    expect(screen.getAllByLabelText(new RegExp(`^Session with ${CHW_NAME_CONTROL} at`)).length).toBe(1);
+  });
+
+  it('excludes the cancelled session from today\'s Month view day-cell session count', async () => {
+    renderScreen();
+    fireEvent.click(await screen.findByLabelText('month view'));
+
+    // Scope to TODAY's specific day cell — other fixtures used elsewhere in
+    // this suite (e.g. the base chwProposedSessionFixture, +3 days out) can
+    // independently render a "1 session" cell on a different day, so a bare
+    // `/, 1 session$/` regex is ambiguous across the whole month grid.
+    const today = new Date();
+    const monthName = today.toLocaleDateString('en-US', { month: 'long' });
+    const todayLabel = `${monthName} ${today.getDate()}, 1 session`;
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(todayLabel)).toBeTruthy();
+    });
+    expect(
+      screen.queryByLabelText(`${monthName} ${today.getDate()}, 2 sessions`),
+    ).toBeNull();
+  });
+});
+
+describe('MemberCalendarScreen — Session Details renders Resource Needs chips (QA2 A2 #5)', () => {
+  beforeEach(() => {
+    additionalSessionFixtures = [resourceNeedsTodayFixture];
+  });
+
+  it('renders Resource Needs chips instead of the Focus Area row when resourceNeeds is present', async () => {
+    renderScreen();
+    fireEvent.click(await screen.findByLabelText('day view'));
+    const card = await screen.findByLabelText(new RegExp(`^Session with ${CHW_NAME_CONTROL} at`));
+    fireEvent.click(card);
+    await screen.findByText('Session Details');
+
+    expect(screen.getByText('Resource Needs')).toBeTruthy();
+    const chips = screen.getByLabelText('Resource needs');
+    expect(chips.textContent).toContain('Housing');
+    expect(chips.textContent).toContain('Food Security');
+    expect(screen.queryByText('Focus Area')).toBeNull();
+  });
+
+  it('falls back to the Focus Area row for a legacy session with no resourceNeeds', async () => {
+    additionalSessionFixtures = [confirmedTodayFixture];
+    renderScreen();
+    fireEvent.click(await screen.findByLabelText('day view'));
+    const card = await screen.findByLabelText(new RegExp(`^Session with ${CHW_NAME_CONTROL} at`));
+    fireEvent.click(card);
+    await screen.findByText('Session Details');
+
+    expect(screen.queryByText('Resource Needs')).toBeNull();
+    expect(screen.queryByLabelText('Resource needs')).toBeNull();
+    expect(screen.getByText('Focus Area')).toBeTruthy();
   });
 });
