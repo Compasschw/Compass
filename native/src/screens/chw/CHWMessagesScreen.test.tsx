@@ -206,6 +206,12 @@ function routeApi(path: string, options?: { method?: string; body?: string }): u
     return startAssessmentFixture;
   }
 
+  // Wave-2 #26 — session-less start, used when the CHW opens the SDOH panel
+  // with no active session (activeSessionId null).
+  if (path === `/chw/members/${MEMBER_ID}/assessments` && method === 'POST') {
+    return { ...startAssessmentFixture, session_id: null };
+  }
+
   if (path === `/sessions/${SESSION_ID}/abort` && method === 'PATCH') {
     currentSessionStatus = 'cancelled';
     return { ...sessionFixture, status: 'cancelled', ended_at: new Date().toISOString() };
@@ -493,18 +499,16 @@ describe('CHWMessagesScreen — inline SDOH panel', () => {
     });
   });
 
-  it('routes to the in-app "Begin a session first" dialog (not a browser alert) when there is no active session', async () => {
+  it('opens the SDOH panel with NO active session (Wave-2 #26 — the "Begin a session first" gate was removed), starting a session-less assessment', async () => {
     mockedApi.mockImplementation(async (path: string, options?: { method?: string; body?: string }) => {
       if (path.startsWith('/conversations/') && !path.includes('/messages')) {
         return [{ ...conversationFixture, active_session_id: null, session_id: null }];
       }
       return routeApi(path, options);
     });
-    // showAlert() is what CHWMessagesScreen actually calls in this case — the
-    // dialog itself is rendered by AppDialogProvider, which is mounted once
-    // at the app root (App.tsx) and has its own dedicated render test
-    // (AppDialogProvider.test.tsx). Asserting the call here, at this
-    // screen's actual boundary, avoids duplicating that coverage.
+    // showAlert() must NOT be called anymore — the gate this test used to
+    // assert (routing to an in-app dialog instead of opening the panel) was
+    // removed. The panel opens with or without an active session now.
     const showAlertSpy = vi.spyOn(showAlertModule, 'showAlert');
 
     renderScreen();
@@ -512,12 +516,23 @@ describe('CHWMessagesScreen — inline SDOH panel', () => {
 
     fireEvent.click(await screen.findByLabelText('Open SDOH / Health Screening'));
 
-    await waitFor(() => {
-      expect(showAlertSpy).toHaveBeenCalledWith(
-        'Begin a session first',
-        'Start a session with this member to run the SDOH / Health Screening and capture answers.',
-      );
-    });
+    // The questionnaire loads via the session-less (member-scoped) start
+    // endpoint — proves the panel is fully usable with no active session.
+    await screen.findByText('Do you have stable housing?', {}, { timeout: 3000 });
+
+    expect(mockedApi).toHaveBeenCalledWith(
+      `/chw/members/${MEMBER_ID}/assessments`,
+      expect.objectContaining({ method: 'POST' }),
+    );
+    // Must never hit the session-scoped endpoint when there's no active session.
+    expect(mockedApi).not.toHaveBeenCalledWith(
+      `/sessions/${SESSION_ID}/assessments`,
+      expect.anything(),
+    );
+    expect(showAlertSpy).not.toHaveBeenCalledWith(
+      'Begin a session first',
+      expect.anything(),
+    );
   });
 });
 

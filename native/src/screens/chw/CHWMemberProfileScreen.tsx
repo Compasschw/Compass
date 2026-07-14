@@ -85,7 +85,7 @@ import {
   ClipboardList,
   X,
 } from 'lucide-react-native';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 // Web-only: createPortal lets fixed overlays escape any transformed ancestor.
 // Metro replaces Platform.OS with the literal platform string at build time, so
@@ -173,6 +173,8 @@ import {
   expectedFormatMessage,
 } from '../../constants/insurance';
 import { POINTS_ENABLED } from '../../constants/featureFlags';
+import { AssessmentForm } from '../../components/assessment/AssessmentForm';
+import { useAssessmentBootstrap } from '../../hooks/useAssessmentBootstrap';
 
 // ─── Navigation types ─────────────────────────────────────────────────────────
 
@@ -276,6 +278,8 @@ interface AssessmentResponseItem {
 }
 
 interface AssessmentLatest {
+  /** Assessment id — needed to seed an editable AssessmentForm (Wave-2 #25). */
+  id: string;
   completedAt: string;
   responseCounts: Record<string, number>;
   /** Per-question answers (snapshots) returned by the latest-assessment endpoint. */
@@ -340,6 +344,68 @@ function useAssessmentLatest(memberId: string) {
     staleTime: 120_000,
     retry: false,
   });
+}
+
+// ─── Screening Results — editable form (Wave-2 #25) ───────────────────────────
+
+interface ScreeningEditableBodyProps {
+  memberId: string;
+  onSaved: () => void;
+}
+
+/**
+ * Hosts the SAME AssessmentForm/useAssessmentBootstrap machinery InlineSdohPanel
+ * uses, targeted at `{ memberId }` (session-less — Wave-2 #26) so the CHW can
+ * edit/continue a member's screening answers directly from the profile,
+ * outside any session. Mounted only while the CHW is actively editing (see
+ * `screeningEditing` in the parent) so opening the modal to view the compact
+ * summary alone never fires a start/resume call.
+ *
+ * Idempotency note: because the member-scoped start endpoint resumes an
+ * existing in_progress assessment (regardless of whether it was started here,
+ * in Messages, or in a session — see the backend's cross-context invariant),
+ * tapping "Edit answers" on an already-completed latest assessment creates a
+ * FRESH in_progress assessment (re-assessment) rather than mutating history —
+ * this mirrors the existing re-assessment behavior already supported by the
+ * session-scoped start endpoint.
+ */
+function ScreeningEditableBody({ memberId, onSaved }: ScreeningEditableBodyProps): React.JSX.Element {
+  const { state, template, assessmentId, errorMessage, initialAnswers } = useAssessmentBootstrap({
+    memberId,
+  });
+
+  if (state === 'loading') {
+    return (
+      <View style={screeningStyles.editableCenterState}>
+        <ActivityIndicator size="small" color={tokens.primary} />
+        <Text style={screeningStyles.editableCenterText}>Loading questionnaire…</Text>
+      </View>
+    );
+  }
+
+  if (state === 'error') {
+    return (
+      <View style={screeningStyles.editableCenterState}>
+        <Text style={screeningStyles.editableCenterText}>
+          {errorMessage ?? 'Something went wrong loading the questionnaire.'}
+        </Text>
+      </View>
+    );
+  }
+
+  // state === 'ready' — template + assessmentId are guaranteed non-null.
+  return (
+    <View style={screeningStyles.editableFormWrap}>
+      <AssessmentForm
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Template shape matches AssessmentForm's local Template type structurally (same cast InlineSdohPanel uses).
+        template={template as any}
+        assessmentId={assessmentId as string}
+        onComplete={onSaved}
+        onPause={onSaved}
+        initialAnswers={initialAnswers}
+      />
+    </View>
+  );
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -3672,6 +3738,41 @@ const screeningStyles = StyleSheet.create({
     fontSize: 13,
     color: '#111827',
     marginTop: 2,
+  } as TextStyle,
+  // ── Wave-2 #25 — compact read-only summary strip + editable form ──────────
+  summaryStrip: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12,
+    color: '#374151',
+  } as TextStyle,
+  editButton: {
+    marginTop: 4,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#EA580C',
+  } as ViewStyle,
+  editButtonText: {
+    fontFamily: 'DMSans_700Bold',
+    fontSize: 13,
+    color: '#FFFFFF',
+  } as TextStyle,
+  editableFormWrap: {
+    height: 480,
+    maxHeight: '70vh' as unknown as number,
+  } as ViewStyle,
+  editableCenterState: {
+    height: 200,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  } as ViewStyle,
+  editableCenterText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 13,
+    color: '#6B7280',
+    textAlign: 'center',
   } as TextStyle,
 });
 
@@ -8828,6 +8929,10 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
   const { data: servicesConsentData } = useMemberServicesConsent(memberId);
   const servicesConsentRefused = servicesConsentData?.value === 'refuse_services';
   const { data: assessmentLatest } = useAssessmentLatest(memberId);
+  // Wave-2 #25 — invalidates the assessmentLatest query after the editable
+  // screening form saves/completes so the summary strip + Quick Access
+  // sublabel reflect the just-saved answers without a full screen refresh.
+  const queryClient = useQueryClient();
 
   // Single stable resource-need level map (slug → level), memoized off the
   // profile's levels array. Passed by reference to BOTH the Member Journey
@@ -8853,6 +8958,13 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
   /** When true, the Member Journey section reveals per-node edit affordances. */
   const [journeyEditMode, setJourneyEditMode] = useState(false);
   const [showScreening, setShowScreening] = useState(false);
+  // Wave-2 #25 — the Screening Results modal now hosts an EDITABLE
+  // AssessmentForm rather than a read-only response list. `screeningEditing`
+  // gates whether the bootstrap (which starts/resumes a session-less
+  // assessment — see useAssessmentBootstrap) is actually mounted, so opening
+  // the modal to view the compact summary never fires a start call by
+  // itself; only tapping "Edit answers" / "Start screening" does.
+  const [screeningEditing, setScreeningEditing] = useState(false);
   const [caseNotesOpen, setCaseNotesOpen] = useState(false);
   const [documentsOpen, setDocumentsOpen] = useState(false);
   // Close/Reopen member — modal rendered at the screen root (not nested in the
@@ -9358,7 +9470,10 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                           ? `${assessmentLatest.responses.length} answers`
                           : 'View answers'
                       }
-                      onPress={() => setShowScreening(true)}
+                      onPress={() => {
+                        setScreeningEditing(false);
+                        setShowScreening(true);
+                      }}
                     />
                     <RailAccessItem
                       icon={<UploadCloud size={14} color="#64748B" />}
@@ -9405,20 +9520,37 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
           onClose={() => setEditResourceNeedsOpen(false)}
         />
 
-        {/* Screening answers modal — the member's latest SDOH/health responses */}
+        {/* Screening Results modal (Wave-2 #25) — compact read-only summary
+            strip up top, plus either a read-only answer list (default) or an
+            EDITABLE AssessmentForm (screeningEditing) seeded with the
+            member's saved answers via useAssessmentBootstrap's resume
+            hydration — savable outside a session. "Start screening" when no
+            assessment exists yet uses the same session-less bootstrap
+            (Wave-2 #26), which creates the first assessment on demand. */}
         <Modal
           visible={showScreening}
           transparent
           animationType="fade"
-          onRequestClose={() => setShowScreening(false)}
+          onRequestClose={() => {
+            setShowScreening(false);
+            setScreeningEditing(false);
+          }}
           accessibilityViewIsModal
         >
           <View style={consentModalStyles.overlay}>
-            <View style={[consentModalStyles.sheet, { maxWidth: 520 }]}>
+            <View
+              style={[
+                consentModalStyles.sheet,
+                { maxWidth: screeningEditing ? 640 : 520 },
+              ]}
+            >
               <View style={consentModalStyles.headerRow}>
-                <Text style={consentModalStyles.title}>Screening Answers</Text>
+                <Text style={consentModalStyles.title}>Screening Results</Text>
                 <TouchableOpacity
-                  onPress={() => setShowScreening(false)}
+                  onPress={() => {
+                    setShowScreening(false);
+                    setScreeningEditing(false);
+                  }}
                   accessibilityRole="button"
                   accessibilityLabel="Close"
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -9426,35 +9558,83 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                   <X size={18} color="#6B7280" />
                 </TouchableOpacity>
               </View>
-              {assessmentLatest?.completedAt ? (
-                <Text style={consentModalStyles.meta}>
-                  Completed {formatDate(assessmentLatest.completedAt)}
-                </Text>
-              ) : null}
+
+              {/* Compact read-only summary strip — always visible, even while editing. */}
+              <Text style={screeningStyles.summaryStrip}>
+                {assessmentLatest?.responses?.length
+                  ? `${assessmentLatest.responses.length} answered${
+                      assessmentLatest.completedAt
+                        ? ` · last updated ${formatDate(assessmentLatest.completedAt)}`
+                        : ''
+                    }`
+                  : 'No screening completed for this member yet.'}
+              </Text>
               <View style={consentModalStyles.divider} />
-              {assessmentLatest?.responses?.length ? (
-                <ScrollView style={{ maxHeight: 360 }}>
-                  {assessmentLatest.responses.map((r, i) => (
-                    <View key={`${r.questionId}-${i}`} style={screeningStyles.qaRow}>
-                      <Text style={screeningStyles.question}>{r.questionText}</Text>
-                      <Text style={screeningStyles.answer}>{r.answerLabel}</Text>
-                    </View>
-                  ))}
-                </ScrollView>
+
+              {screeningEditing ? (
+                // ── Editable form (Wave-2 #25/#26) — mounted only while editing,
+                // so opening the modal to view the summary never itself
+                // starts/resumes an assessment.
+                <ScreeningEditableBody
+                  memberId={memberId}
+                  onSaved={() => {
+                    setScreeningEditing(false);
+                    void queryClient.invalidateQueries({
+                      queryKey: assessmentLatestKey(memberId),
+                    });
+                  }}
+                />
+              ) : assessmentLatest?.responses?.length ? (
+                <>
+                  <ScrollView style={{ maxHeight: 360 }}>
+                    {assessmentLatest.responses.map((r, i) => (
+                      <View key={`${r.questionId}-${i}`} style={screeningStyles.qaRow}>
+                        <Text style={screeningStyles.question}>{r.questionText}</Text>
+                        <Text style={screeningStyles.answer}>{r.answerLabel}</Text>
+                      </View>
+                    ))}
+                  </ScrollView>
+                  <TouchableOpacity
+                    style={screeningStyles.editButton}
+                    onPress={() => setScreeningEditing(true)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Edit answers"
+                  >
+                    <Text style={screeningStyles.editButtonText}>Edit answers</Text>
+                  </TouchableOpacity>
+                </>
               ) : (
-                <Text style={consentModalStyles.bodyText}>
-                  No screening completed for this member yet. Run the SDOH / Health
-                  Screening from the conversation or session to capture answers.
-                </Text>
+                <>
+                  <Text style={consentModalStyles.bodyText}>
+                    No screening completed for this member yet. Start the SDOH /
+                    Health Screening below — it can be filled out here, outside
+                    a session, and picks up right where you left off in
+                    Messages or a session.
+                  </Text>
+                  <TouchableOpacity
+                    style={screeningStyles.editButton}
+                    onPress={() => setScreeningEditing(true)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Start screening"
+                  >
+                    <Text style={screeningStyles.editButtonText}>Start screening</Text>
+                  </TouchableOpacity>
+                </>
               )}
-              <TouchableOpacity
-                style={consentModalStyles.closeBtn}
-                onPress={() => setShowScreening(false)}
-                accessibilityRole="button"
-                accessibilityLabel="Done"
-              >
-                <Text style={consentModalStyles.closeBtnText}>Done</Text>
-              </TouchableOpacity>
+
+              {!screeningEditing ? (
+                <TouchableOpacity
+                  style={consentModalStyles.closeBtn}
+                  onPress={() => {
+                    setShowScreening(false);
+                    setScreeningEditing(false);
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Done"
+                >
+                  <Text style={consentModalStyles.closeBtnText}>Done</Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
           </View>
         </Modal>

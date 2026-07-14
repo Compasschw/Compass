@@ -24,6 +24,7 @@ const mockedApi = api as unknown as ReturnType<typeof vi.fn>;
 
 const SESSION_ID = 'sess-1';
 const ASSESSMENT_ID = 'assess-1';
+const MEMBER_ID = 'member-1';
 
 const templateFixture = {
   id: 'compass_member_v1',
@@ -268,5 +269,79 @@ describe('InlineSdohPanel', () => {
       `/assessments/${ASSESSMENT_ID}/responses`,
       expect.anything(),
     );
+  });
+
+  // ─── Wave-2 #26 — session-less (no active session) ──────────────────────
+
+  describe('session-less (no sessionId, memberId only)', () => {
+    const memberStartFixture = {
+      id: ASSESSMENT_ID,
+      status: 'in_progress',
+      template_id: 'compass_member_v1',
+      session_id: null,
+      member_id: MEMBER_ID,
+    };
+
+    function routeMemberApi(path: string, options?: { method?: string }): unknown {
+      const method = options?.method ?? 'GET';
+      if (path === '/assessment-templates/compass_member_v1') return templateFixture;
+      if (path === `/chw/members/${MEMBER_ID}/assessments` && method === 'POST') {
+        return memberStartFixture;
+      }
+      if (path === `/assessments/${ASSESSMENT_ID}/responses` && method === 'POST') return {};
+      if (path === `/assessments/${ASSESSMENT_ID}/complete` && method === 'POST') return {};
+      throw new Error(`Unhandled api() call: ${method} ${path}`);
+    }
+
+    beforeEach(() => {
+      mockedApi.mockReset();
+      mockedApi.mockImplementation(async (path: string, options?: { method?: string }) =>
+        routeMemberApi(path, options),
+      );
+    });
+
+    it('renders and starts the assessment via the member-scoped endpoint when sessionId is omitted', async () => {
+      renderPanel({ sessionId: undefined, memberId: MEMBER_ID });
+
+      expect(screen.getByText('SDOH / Health Screening')).toBeTruthy();
+      await screen.findByText('Do you have stable housing?', {}, { timeout: 3000 });
+
+      expect(mockedApi).toHaveBeenCalledWith(
+        `/chw/members/${MEMBER_ID}/assessments`,
+        expect.objectContaining({ method: 'POST' }),
+      );
+      expect(mockedApi).not.toHaveBeenCalledWith(
+        expect.stringContaining('/sessions/'),
+        expect.anything(),
+      );
+    });
+
+    it('answering and completing a session-less assessment persists identically to the in-session flow', async () => {
+      const { onClose } = renderPanel({ sessionId: undefined, memberId: MEMBER_ID });
+      await screen.findByText('Do you have stable housing?', {}, { timeout: 3000 });
+
+      fireEvent.click(screen.getByLabelText('Yes'));
+      await waitFor(() => {
+        expect(mockedApi).toHaveBeenCalledWith(
+          `/assessments/${ASSESSMENT_ID}/responses`,
+          expect.objectContaining({ method: 'POST' }),
+        );
+      });
+
+      await act(async () => {
+        fireEvent.click(screen.getByLabelText('Complete assessment'));
+      });
+
+      await waitFor(() => {
+        expect(mockedApi).toHaveBeenCalledWith(
+          `/assessments/${ASSESSMENT_ID}/complete`,
+          expect.objectContaining({ method: 'POST' }),
+        );
+      });
+
+      await screen.findByText('Assessment Complete');
+      fireEvent.click(screen.getByLabelText('Done'));
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
   });
 });
