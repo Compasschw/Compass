@@ -44,8 +44,10 @@ POST /api/v1/assessments/{assessment_id}/abandon
     Auth: CHW who owns the assessment, or admin.
 
 GET  /api/v1/chw/members/{member_id}/assessments/latest
-    Return the most recent *completed* assessment for a member,
-    with all responses included. Used by the Member Profile screen.
+    Return the member's most recent *in_progress* assessment if one exists
+    (preferred — it's the actionable, resumable one), otherwise the most
+    recent *completed* assessment, with all responses and `status`
+    included. Used by the Member Profile screen's Screening Results view.
     Auth: any CHW, or admin (CHW must be on a session with the member
     or be admin — enforced below).
 
@@ -568,11 +570,14 @@ async def abandon_assessment(
 
 @router.get(
     "/api/v1/chw/members/{member_id}/assessments/latest",
-    summary="Get the latest completed assessment for a member",
+    summary="Get the latest actionable assessment for a member",
     description=(
-        "Returns the most recently completed assessment for the given member, "
-        "including all response rows. Used by the Member Profile screen. "
-        "Auth: any CHW, or admin. Members never access this endpoint."
+        "Returns the member's most recent in_progress assessment if one "
+        "exists (the actionable one — a CHW can resume it), otherwise the "
+        "most recently completed assessment, including all response rows "
+        "and the assessment's `status`. Used by the Member Profile screen's "
+        "Screening Results view. Auth: any CHW, or admin. Members never "
+        "access this endpoint."
     ),
     response_model=AssessmentOut,
 )
@@ -583,8 +588,19 @@ async def get_latest_member_assessment(
 ) -> AssessmentOut:
     """GET /api/v1/chw/members/{member_id}/assessments/latest
 
-    Returns the most recent completed assessment for ``member_id``.
-    Returns 404 if no completed assessment exists for this member.
+    QA batch (2026-07-14) Part 10: a member with a partially-answered
+    in_progress screening used to 404 here (the query only ever looked at
+    completed assessments), so the Member Profile's Screening Results panel
+    wrongly claimed "No screening completed for this member yet" even
+    though the CHW had already saved partial answers. The in_progress
+    assessment is the *actionable* one (the CHW can continue filling it
+    out), so it is preferred over an older completed assessment when both
+    exist for this member.
+
+    Resolution order:
+      1. Most recent `in_progress` assessment (by `created_at`), if any.
+      2. Otherwise, most recent `completed` assessment (by `completed_at`).
+    Returns 404 only if the member has neither.
 
     Auth: CHW with a shared session, or admin.  Role-only checks are
     insufficient — any CHW would otherwise be able to read any member's
@@ -603,12 +619,25 @@ async def get_latest_member_assessment(
         select(MemberAssessment)
         .where(
             MemberAssessment.member_id == member_id,
-            MemberAssessment.status == "completed",
+            MemberAssessment.status == "in_progress",
         )
-        .order_by(MemberAssessment.completed_at.desc())
+        .order_by(MemberAssessment.created_at.desc())
         .limit(1)
     )
     assessment = result.scalar_one_or_none()
+
+    if assessment is None:
+        result = await db.execute(
+            select(MemberAssessment)
+            .where(
+                MemberAssessment.member_id == member_id,
+                MemberAssessment.status == "completed",
+            )
+            .order_by(MemberAssessment.completed_at.desc())
+            .limit(1)
+        )
+        assessment = result.scalar_one_or_none()
+
     if assessment is None:
         raise HTTPException(
             status_code=404,
@@ -617,7 +646,7 @@ async def get_latest_member_assessment(
 
     responses = await _load_responses(assessment.id, db)
     logger.info(
-        "latest assessment fetched: assessment=%s member=%s responses=%d by_chw=%s",
-        assessment.id, member_id, len(responses), current_user.id,
+        "latest assessment fetched: assessment=%s member=%s status=%s responses=%d by_chw=%s",
+        assessment.id, member_id, assessment.status, len(responses), current_user.id,
     )
     return _assessment_to_out(assessment, responses)

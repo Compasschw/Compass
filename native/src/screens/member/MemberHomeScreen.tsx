@@ -10,7 +10,7 @@
  *   - PageWrap (1280px max-width on web — matches CHW dashboard breakpoint)
  *   - PageHeader: greeting + subtitle
  *   - "Your CHW" hero card (CHW photo + name + Message/Call CTAs)  ← hero
- *   - 2×2 StatTile grid (Rewards · Upcoming · Active Goals · Open Requests)
+ *   - 2×2 StatTile grid (Rewards · Upcoming · To do list · Open Requests)
  *   - Secondary stat row (Completed sessions)
  *   - Your Journeys section (progress cards)
  *   - Recent Activity section
@@ -94,7 +94,7 @@ import {
   StaggerList,
 } from '../../components/ui';
 import type { PillVariant } from '../../components/ui/Pill';
-import { useMemberRoadmap } from '../../hooks/useFollowupQueries';
+import { selectOpenTodoItems, useMemberRoadmap } from '../../hooks/useFollowupQueries';
 import { useRefreshControl } from '../../hooks/useRefreshControl';
 import { countAwaitingChw } from './memberDashboard';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
@@ -625,10 +625,11 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
   );
   const completedSessionsCount = allSessions.filter((s) => s.status === 'completed').length;
 
-  // Active goals = roadmap items NOT yet completed or dismissed.
-  const activeRoadmapItems = roadmap.filter(
-    (item) => item.status !== 'completed' && item.status !== 'dismissed',
-  );
+  // QA batch (2026-07-14) Part 26 — "To do list" tile count. Uses the same
+  // selectOpenTodoItems() selector MemberJourneyScreen's visible "From Your
+  // Sessions" action-items list filters through, so the tile can never
+  // disagree with what the member actually sees when they tap through.
+  const activeRoadmapItems = selectOpenTodoItems(roadmap);
 
   // "Awaiting CHW" — pending-approval sessions + open service requests. See
   // countAwaitingChw for why (keeps this tile in sync with the Appointments page).
@@ -945,7 +946,7 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
 
           {/* ── KPI stat grid (2×2) ─────────────────────────────────────
            *  Mirror of CHWDashboard's KPI row — same tile pattern, member
-           *  content: Rewards, Upcoming sessions, Active Goals, Open Requests.
+           *  content: Rewards, Upcoming sessions, To do list, Open Requests.
            */}
           <View style={styles.statGrid}>
             <StaggerList delayMs={50} durationMs={240}>
@@ -975,13 +976,13 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
               <StatTile
                 icon={<Target color={tokens.amber700} size={18} />}
                 iconBg={tokens.amber100}
-                label="Active Goals"
+                label="To do list"
                 value={activeRoadmapItems.length}
-                delta="On your roadmap"
+                delta="Journeys"
                 deltaColor={tokens.amber700}
                 style={styles.statGridTile}
                 onPress={handleOpenRoadmap}
-                accessibilityLabel={`Active goals: ${activeRoadmapItems.length}`}
+                accessibilityLabel={`To do list: ${activeRoadmapItems.length}`}
               />
               <StatTile
                 icon={<ClipboardList color={tokens.purple700} size={18} />}
@@ -1380,7 +1381,7 @@ const styles = StyleSheet.create({
 
   statGridTile: {
     // flex:1 → all KPI tiles share the row equally (single evenly-spaced row of
-    // 4: Upcoming · Active Goals · Open Requests · Completed Sessions).
+    // 4: Upcoming · To do list · Open Requests · Completed Sessions).
     flex: 1,
     minWidth: 0,
   } as import('react-native').ViewStyle,

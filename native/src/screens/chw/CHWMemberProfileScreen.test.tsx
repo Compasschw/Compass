@@ -329,7 +329,25 @@ describe('CHWMemberProfileScreen — dynamic "Back to …" link (Epic S)', () =>
     expect(mockNavigate).toHaveBeenCalledWith('Map');
   });
 
-  it('renders "Back to Dashboard" and navigates to Dashboard when backLabel="Dashboard"/backTo="Dashboard" are passed', async () => {
+  it('renders "Back to Dashboard" and navigates to DashboardStack when backLabel="Dashboard"/backTo="DashboardStack" are passed', async () => {
+    routeParams = { memberId: MEMBER_ID, backLabel: 'Dashboard', backTo: 'DashboardStack' };
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByText(MEMBER_NAME)).toBeTruthy());
+
+    const backLink = screen.getByLabelText('Back to Dashboard');
+    expect(backLink).toBeTruthy();
+
+    backLink.click();
+    expect(mockNavigate).toHaveBeenCalledWith('DashboardStack');
+  });
+
+  // Regression (QA batch 2026-07-14, Part 5): "Back to Dashboard" used to be
+  // a dead button because `backTo="Dashboard"` doesn't match the registered
+  // `DashboardStack` route, so `navigate()` silently no-op'd. Stale
+  // params/deep links may still carry the legacy value — the alias in
+  // CHWMemberProfileScreen must translate it so the button always works.
+  it('aliases legacy backTo="Dashboard" to DashboardStack (regression: dead "Back to Dashboard" button)', async () => {
     routeParams = { memberId: MEMBER_ID, backLabel: 'Dashboard', backTo: 'Dashboard' };
     renderScreen();
 
@@ -339,7 +357,7 @@ describe('CHWMemberProfileScreen — dynamic "Back to …" link (Epic S)', () =>
     expect(backLink).toBeTruthy();
 
     backLink.click();
-    expect(mockNavigate).toHaveBeenCalledWith('Dashboard');
+    expect(mockNavigate).toHaveBeenCalledWith('DashboardStack');
   });
 });
 
@@ -562,5 +580,50 @@ describe('CHWMemberProfileScreen — Screening Results card (Wave-2 #25/#26)', (
         }),
       );
     });
+  });
+
+  // QA batch (2026-07-14) Part 10 — regression. Before the fix, the backend
+  // 404'd for an in_progress-only assessment, so this exact fixture used to
+  // render "No screening completed for this member yet." even though the
+  // CHW had already saved a partial answer. It must now render the
+  // answered-so-far responses with an "In progress · N answered" strip and
+  // a "Continue screening" action, never the "No screening completed" copy.
+  it('renders answered-so-far responses + "Continue screening" for an in_progress assessment (never "No screening completed")', async () => {
+    assessmentLatestResponder = () => ({
+      id: ASSESSMENT_ID,
+      status: 'in_progress',
+      completed_at: null,
+      response_counts: {},
+      responses: [
+        {
+          question_id: 'q1',
+          question_text: 'Do you have stable housing?',
+          answer_value: 'yes',
+          answer_label: 'Yes',
+        },
+      ],
+    });
+
+    renderScreen();
+    await waitFor(() => expect(screen.getByText(MEMBER_NAME)).toBeTruthy());
+
+    fireEvent.click(screen.getByText('Screening Results'));
+
+    await screen.findByText('In progress · 1 answered');
+    expect(screen.queryByText('No screening completed for this member yet.')).toBeNull();
+    expect(screen.getByText('Do you have stable housing?')).toBeTruthy();
+    expect(screen.getByText('Yes')).toBeTruthy();
+
+    const continueButton = screen.getByLabelText('Continue screening');
+    expect(continueButton).toBeTruthy();
+    expect(screen.queryByLabelText('Edit answers')).toBeNull();
+
+    // "Continue screening" resumes via the same session-less bootstrap.
+    fireEvent.click(continueButton);
+    await screen.findByText('Do you have stable housing?', {}, { timeout: 3000 });
+    expect(mockedApi).toHaveBeenCalledWith(
+      `/chw/members/${MEMBER_ID}/assessments`,
+      expect.objectContaining({ method: 'POST' }),
+    );
   });
 });

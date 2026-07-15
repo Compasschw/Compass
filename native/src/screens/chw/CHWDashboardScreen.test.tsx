@@ -534,7 +534,7 @@ describe('CHWDashboardScreen — Add New Member gate (QA batch #2)', () => {
 });
 
 describe('CHWDashboardScreen — Member Profile origin params (Epic S "Back to …")', () => {
-  it('opening a member from Today\'s Schedule passes backLabel "Dashboard" / backTo "Dashboard"', async () => {
+  it('opening a member from Today\'s Schedule passes backLabel "Dashboard" / backTo "DashboardStack"', async () => {
     sessionsResponse = [scheduledTodaySessionFixture];
     renderScreen();
 
@@ -546,7 +546,7 @@ describe('CHWDashboardScreen — Member Profile origin params (Epic S "Back to �
 
     expect(mockNavigate).toHaveBeenCalledWith('SessionsStack', {
       screen: 'MemberProfile',
-      params: { memberId: SCHEDULED_MEMBER_ID, backLabel: 'Dashboard', backTo: 'Dashboard' },
+      params: { memberId: SCHEDULED_MEMBER_ID, backLabel: 'Dashboard', backTo: 'DashboardStack' },
     });
   });
 });

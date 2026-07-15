@@ -3,14 +3,20 @@
  *
  * Regression coverage for Epic B1 (plan: cosmic-swinging-tiger.md): the tile
  * used to render a hardcoded "4.9" regardless of the CHW's actual reviews.
- * It now sources the real average + count from the Testimonial system via
- * GET /chws/{chw_id}/testimonials/summary (useTestimonialSummary), and must
- * NEVER fabricate a number — "No ratings yet" when ratingCount is 0/null.
+ *
+ * QA batch (2026-07-14) Part 18: the tile was then wired to the CHW's global
+ * *approved-testimonial* summary (GET /chws/{chw_id}/testimonials/summary),
+ * which stayed "No ratings yet" right after a member rated a session because
+ * unapproved rows were excluded. It now sources `myRatingAvg`/`myRatingCount`
+ * directly from the member-facing CHW profile response (GET
+ * /member/chws/{chw_id}) — THIS member's own post-session scores for THIS
+ * CHW, with no approval gate — and must NEVER fabricate a number:
+ * "No ratings yet" when myRatingCount is 0/null.
  *
  * Only the network boundary (`../../api/client`), auth context, and
- * navigation hooks are mocked — useMemberFacingCHWProfile, useSessions, and
- * useTestimonialSummary all run for real against a routed `api()` mock
- * (Tier 2 — jsdom + react-native-web, see native/TESTING.md).
+ * navigation hooks are mocked — useMemberFacingCHWProfile and useSessions
+ * run for real against a routed `api()` mock (Tier 2 — jsdom +
+ * react-native-web, see native/TESTING.md).
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -49,38 +55,35 @@ const mockedApi = api as unknown as ReturnType<typeof vi.fn>;
 
 const CHW_ID = 'chw-1';
 
-const chwProfileFixture = {
-  id: CHW_ID,
-  first_name: 'Maria',
-  last_name_initial: 'S.',
-  primary_language: 'English',
-  additional_languages: [] as string[],
-  primary_specialization: 'Utilities',
-  years_experience: '5 years',
-  ca_chw_certified: true,
-  modality: 'in_person',
-  service_area_zips: ['90001'],
-  available_days: ['mon', 'wed'],
-  availability_windows: {},
-  shared_session_count: 3,
-  profile_picture_url: null,
-};
+/** Mutable per-test so each `it()` controls the CHW profile response. */
+let chwProfileFixture: Record<string, unknown> = {};
 
-/** Mutable per-test so each `it()` controls the testimonial-summary response. */
-let testimonialSummaryFixture: { rating_avg: number | null; rating_count: number } = {
-  rating_avg: null,
-  rating_count: 0,
-};
+function baseChwProfileFixture(): Record<string, unknown> {
+  return {
+    id: CHW_ID,
+    first_name: 'Maria',
+    last_name_initial: 'S.',
+    primary_language: 'English',
+    additional_languages: [] as string[],
+    primary_specialization: 'Utilities',
+    years_experience: '5 years',
+    ca_chw_certified: true,
+    modality: 'in_person',
+    service_area_zips: ['90001'],
+    available_days: ['mon', 'wed'],
+    availability_windows: {},
+    shared_session_count: 3,
+    my_rating_avg: null,
+    my_rating_count: 0,
+    profile_picture_url: null,
+  };
+}
 
 function routeApi(path: string, options?: { method?: string }): unknown {
   const method = options?.method ?? 'GET';
 
   if (path === `/member/chws/${CHW_ID}` && method === 'GET') {
     return chwProfileFixture;
-  }
-
-  if (path === `/chws/${CHW_ID}/testimonials/summary` && method === 'GET') {
-    return testimonialSummaryFixture;
   }
 
   if (path.startsWith('/sessions/') && method === 'GET') {
@@ -102,7 +105,7 @@ function renderScreen() {
 }
 
 beforeEach(() => {
-  testimonialSummaryFixture = { rating_avg: null, rating_count: 0 };
+  chwProfileFixture = baseChwProfileFixture();
   mockedApi.mockReset();
   mockedApi.mockImplementation(async (path: string, options?: { method?: string }) =>
     routeApi(path, options),
@@ -115,9 +118,9 @@ afterEach(() => {
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
-describe('MemberFacingCHWProfileScreen — Member Rating stat tile', () => {
+describe('MemberFacingCHWProfileScreen — Member Rating stat tile (Part 18: member-scoped)', () => {
   it('never renders the old hardcoded "4.9" literal, regardless of the real rating', async () => {
-    testimonialSummaryFixture = { rating_avg: 4.7, rating_count: 23 };
+    chwProfileFixture = { ...baseChwProfileFixture(), my_rating_avg: 4.7, my_rating_count: 23 };
     renderScreen();
 
     await waitFor(() => expect(screen.getByText('4.7')).toBeTruthy());
@@ -125,7 +128,7 @@ describe('MemberFacingCHWProfileScreen — Member Rating stat tile', () => {
   });
 
   it('renders the real average rating with its review count when ratings exist', async () => {
-    testimonialSummaryFixture = { rating_avg: 4.7, rating_count: 23 };
+    chwProfileFixture = { ...baseChwProfileFixture(), my_rating_avg: 4.7, my_rating_count: 23 };
     renderScreen();
 
     await waitFor(() => expect(screen.getByText('4.7')).toBeTruthy());
@@ -133,7 +136,7 @@ describe('MemberFacingCHWProfileScreen — Member Rating stat tile', () => {
   });
 
   it('renders a singular "review" (not "reviews") when the count is exactly 1', async () => {
-    testimonialSummaryFixture = { rating_avg: 5.0, rating_count: 1 };
+    chwProfileFixture = { ...baseChwProfileFixture(), my_rating_avg: 5.0, my_rating_count: 1 };
     renderScreen();
 
     await waitFor(() => expect(screen.getByText('5.0')).toBeTruthy());
@@ -141,8 +144,8 @@ describe('MemberFacingCHWProfileScreen — Member Rating stat tile', () => {
     expect(screen.queryByText(/1 reviews/)).toBeNull();
   });
 
-  it('shows "No ratings yet" — never a fabricated number — when ratingCount is 0', async () => {
-    testimonialSummaryFixture = { rating_avg: null, rating_count: 0 };
+  it('shows "No ratings yet" — never a fabricated number — when myRatingCount is 0', async () => {
+    chwProfileFixture = { ...baseChwProfileFixture(), my_rating_avg: null, my_rating_count: 0 };
     renderScreen();
 
     await waitFor(() => expect(screen.getByText('No ratings yet')).toBeTruthy());
@@ -150,14 +153,35 @@ describe('MemberFacingCHWProfileScreen — Member Rating stat tile', () => {
     expect(screen.queryByText('4.7')).toBeNull();
   });
 
-  it('shows "No ratings yet" when ratingAvg is present but ratingCount is 0 (defensive)', async () => {
+  it('shows "No ratings yet" when myRatingAvg is present but myRatingCount is 0 (defensive)', async () => {
     // Defensive case: a malformed/edge-case backend response shouldn't ever
     // let a number through without at least one contributing review.
-    testimonialSummaryFixture = { rating_avg: 3.2, rating_count: 0 };
+    chwProfileFixture = { ...baseChwProfileFixture(), my_rating_avg: 3.2, my_rating_count: 0 };
     renderScreen();
 
     await waitFor(() => expect(screen.getByText('No ratings yet')).toBeTruthy());
     expect(screen.queryByText('3.2')).toBeNull();
+  });
+
+  // Regression (Part 18): before the fix, this fixture (an unapproved rating
+  // that would have been excluded from the old global approved-only summary)
+  // must now render as a real number, not "No ratings yet".
+  it('renders a rating that would have been invisible under the old approval-gated summary', async () => {
+    chwProfileFixture = { ...baseChwProfileFixture(), my_rating_avg: 4.0, my_rating_count: 1 };
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByText('4.0')).toBeTruthy());
+    expect(screen.queryByText('No ratings yet')).toBeNull();
+  });
+});
+
+describe('MemberFacingCHWProfileScreen — Sessions Together (Part 17: completed only)', () => {
+  it('renders shared_session_count (already completed-only per the backend contract)', async () => {
+    chwProfileFixture = { ...baseChwProfileFixture(), shared_session_count: 5 };
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByText('5')).toBeTruthy());
+    expect(screen.getByText(/5 completed/)).toBeTruthy();
   });
 });
 
@@ -185,11 +209,10 @@ describe('MemberFacingCHWProfileScreen — QA2 #11: sparse-profile crash regress
           available_days: null,
           availability_windows: null,
           shared_session_count: null,
+          my_rating_avg: null,
+          my_rating_count: null,
           profile_picture_url: null,
         };
-      }
-      if (path === `/chws/${CHW_ID}/testimonials/summary` && method === 'GET') {
-        return { rating_avg: null, rating_count: 0 };
       }
       if (path.startsWith('/sessions/') && method === 'GET') return [];
       if (path.startsWith('/conversations')) return []; // AppShell unread badge

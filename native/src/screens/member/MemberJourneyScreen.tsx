@@ -82,6 +82,7 @@ import {
 import {
   useMemberRoadmap,
   useCompleteRoadmapItem,
+  selectOpenTodoItems,
   type SessionFollowup,
   type FollowupVertical,
 } from '../../hooks/useFollowupQueries';
@@ -803,9 +804,16 @@ export function MemberJourneyScreen(props: MemberJourneyScreenProps): React.JSX.
 
   // ── Derived follow-up data ─────────────────────────────────────────────────
   const roadmapItems = roadmapQuery.data ?? [];
+  // QA batch (2026-07-14) Part 26 — "From Your Sessions" is the member's
+  // visible to-do list, so it renders only OPEN items (same
+  // selectOpenTodoItems() selector the MemberHomeScreen "To do list" tile
+  // count uses) — previously this list rendered every non-dismissed roadmap
+  // item, including already-completed ones, which could silently diverge
+  // from what the home tile counted as "open".
+  const openRoadmapItems = useMemo(() => selectOpenTodoItems(roadmapItems), [roadmapItems]);
   const groupedFollowups = useMemo(
-    () => groupFollowupsByVertical(roadmapItems),
-    [roadmapItems],
+    () => groupFollowupsByVertical(openRoadmapItems),
+    [openRoadmapItems],
   );
 
   // ── Handlers ──────────────────────────────────────────────────────────────
@@ -1085,7 +1093,7 @@ export function MemberJourneyScreen(props: MemberJourneyScreenProps): React.JSX.
                         Could not load session items. Pull to refresh.
                       </Text>
                     </Card>
-                  ) : roadmapItems.length === 0 ? (
+                  ) : openRoadmapItems.length === 0 ? (
                     <Card style={styles.followupEmptyCard}>
                       <Text style={styles.followupEmptyText}>
                         Session action items will appear here after your CHW reviews

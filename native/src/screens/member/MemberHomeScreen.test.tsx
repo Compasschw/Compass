@@ -98,6 +98,7 @@ const chwProposedSessionFixture = {
 
 let assignedChwResponse: unknown = null;
 let sessionsResponse: unknown[] = [];
+let roadmapFixture: unknown[] = [];
 let memberProfileFixture: Record<string, unknown> = buildMemberProfileFixture();
 /** Controls what POST /auth/change-password does for the next call. */
 let changePasswordBehavior: 'success' | 'wrong-current' | 'weak' | null = 'success';
@@ -140,7 +141,7 @@ function routeApi(path: string, options?: { method?: string; body?: string }): u
     return sessionsResponse;
   }
   if (path === '/member/roadmap' && method === 'GET') {
-    return [];
+    return roadmapFixture;
   }
   if (path === '/requests/' && method === 'GET') {
     return [];
@@ -225,6 +226,7 @@ function renderScreen() {
 beforeEach(() => {
   assignedChwResponse = null;
   sessionsResponse = [];
+  roadmapFixture = [];
   memberProfileFixture = buildMemberProfileFixture();
   changePasswordBehavior = 'success';
   changePasswordRequestBodies = [];
@@ -707,5 +709,89 @@ describe('MemberHomeScreen — QA2 #10: password complexity at the first-login g
     expect(
       mockedApi.mock.calls.some(([path]) => path === '/auth/change-password'),
     ).toBe(false);
+  });
+});
+
+describe('MemberHomeScreen — "To do list" tile (QA batch 2026-07-14, Part 26)', () => {
+  function buildRoadmapFixture(id: string, status: string) {
+    return {
+      id,
+      kind: 'action_item',
+      description: `Task ${id}`,
+      owner: 'member',
+      vertical: 'housing',
+      priority: 'medium',
+      due_date: null,
+      status,
+      auto_created: false,
+      show_on_roadmap: true,
+      confirmed_by_user_id: null,
+      confirmed_at: null,
+      created_at: '2026-07-01T00:00:00.000Z',
+      session_date: null,
+      chw_name: CHW_NAME,
+      session_id: 'sess-1',
+    };
+  }
+
+  it('counts only open items — 3 open mixed with a completed and a dismissed one → tile shows 3', async () => {
+    roadmapFixture = [
+      buildRoadmapFixture('1', 'pending'),
+      buildRoadmapFixture('2', 'confirmed'),
+      buildRoadmapFixture('3', 'pending'),
+      buildRoadmapFixture('4', 'completed'),
+      buildRoadmapFixture('5', 'dismissed'),
+    ];
+    renderScreen();
+
+    await screen.findByText('To do list');
+    expect(screen.getByLabelText('To do list: 3')).toBeTruthy();
+  });
+
+  it('renders the "Journeys" pill (was "On your roadmap")', async () => {
+    roadmapFixture = [buildRoadmapFixture('1', 'pending')];
+    renderScreen();
+
+    await screen.findByText('To do list');
+    expect(screen.getByText('Journeys')).toBeTruthy();
+    expect(screen.queryByText('On your roadmap')).toBeNull();
+    expect(screen.queryByText('Active Goals')).toBeNull();
+  });
+
+  it('shows 2 when there are 2 open items', async () => {
+    roadmapFixture = [
+      buildRoadmapFixture('1', 'pending'),
+      buildRoadmapFixture('2', 'pending'),
+    ];
+    renderScreen();
+
+    await screen.findByText('To do list');
+    expect(screen.getByLabelText('To do list: 2')).toBeTruthy();
+  });
+
+  // Regression companion to the "shows 2" case above: the ONLY difference
+  // between these two fixtures is item "2" flipping from pending → completed
+  // (same shape the real app sees after a mark-complete + refetch). Both
+  // read through the identical selectOpenTodoItems() selector the visible
+  // to-do list uses, so the tile can never drift out of sync with it.
+  it('drops to 1 when a previously-open item is completed (list/tile share one selector)', async () => {
+    roadmapFixture = [
+      buildRoadmapFixture('1', 'pending'),
+      buildRoadmapFixture('2', 'completed'),
+    ];
+    renderScreen();
+
+    await screen.findByText('To do list');
+    expect(screen.getByLabelText('To do list: 1')).toBeTruthy();
+  });
+
+  it('tapping the tile navigates to MemberJourney (unchanged tap-through)', async () => {
+    roadmapFixture = [buildRoadmapFixture('1', 'pending')];
+    renderScreen();
+
+    await screen.findByText('To do list');
+    fireEvent.click(screen.getByLabelText('To do list: 1'));
+
+    expect(mockNavigation.navigate).toHaveBeenCalledWith('MemberJourney');
   });
 });

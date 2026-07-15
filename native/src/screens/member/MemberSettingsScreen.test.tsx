@@ -20,6 +20,7 @@
  * same mocking pattern as MemberHomeScreen.test.tsx.
  */
 import React from 'react';
+import { Alert } from 'react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -268,7 +269,9 @@ describe('MemberSettingsScreen — phone-width form/grid does not overflow the p
     // (It used to also be a tab label, but the tab strip is hidden until
     // further notice — QA batch #7.)
     expect(screen.getAllByText('Privacy & Security').length).toBe(1);
-    expect(screen.getByText('Need help?')).toBeTruthy();
+    // The "Need help?" card's header/contact rows are commented out (Part
+    // 22) — only "Sign out of this device" remains in that card slot.
+    expect(screen.getByText('Sign out of this device')).toBeTruthy();
 
     // documentElement never grows wider than the phone viewport itself —
     // i.e. nothing in the tree is forcing a wider layout box than the
@@ -314,12 +317,177 @@ describe('MemberSettingsScreen — Settings tabs Profile-only (QA batch #7)', ()
     expect(screen.queryByLabelText('Language')).toBeNull();
   });
 
-  it('keeps the always-visible bottom cards (Privacy & Security summary, Need help?)', async () => {
+  it('keeps the always-visible bottom cards (Privacy & Security summary, Sign out)', async () => {
     renderScreen();
 
     await waitFor(() => expect(screen.getByText('Profile information')).toBeTruthy());
 
     expect(screen.getAllByText('Privacy & Security').length).toBe(1);
-    expect(screen.getByText('Need help?')).toBeTruthy();
+    expect(screen.getByText('Sign out of this device')).toBeTruthy();
+  });
+});
+
+// ─── QA batch (2026-07-14) Part 20 — Privacy & Security toggles removed ────────
+
+describe('MemberSettingsScreen — Privacy & Security card: fake toggles removed (Part 20)', () => {
+  it('renders no switch/toggle in the bottom card; Deactivate/Delete rows remain', async () => {
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByText('Profile information')).toBeTruthy());
+
+    // The title/subtitle stay — only the four fake local-state toggles
+    // (two-factor, biometric, AI transcription consent, research sharing)
+    // are gone.
+    expect(screen.getAllByText('Privacy & Security').length).toBe(1);
+    expect(screen.getByText("Your data is protected. You're in control.")).toBeTruthy();
+
+    expect(screen.queryByRole('switch')).toBeNull();
+    expect(screen.queryByText('Two-factor authentication')).toBeNull();
+    expect(screen.queryByText('Biometric login')).toBeNull();
+    expect(screen.queryByText(/AI session transcription/)).toBeNull();
+    expect(screen.queryByText('Share data for anonymous research')).toBeNull();
+
+    expect(screen.getByLabelText('Deactivate my account')).toBeTruthy();
+    expect(screen.getByLabelText('Delete my account')).toBeTruthy();
+  });
+});
+
+// ─── QA batch (2026-07-14) Part 22 — Need help? card commented out ────────────
+
+describe('MemberSettingsScreen — Need help? card commented out, Sign out preserved (Part 22)', () => {
+  it('does not render "Need help?" / "Call support" / "555-COMPASS"; "Sign out of this device" still renders and fires logout', async () => {
+    const alertSpy = vi.spyOn(Alert, 'alert').mockImplementation(() => {});
+
+    renderScreen();
+    await waitFor(() => expect(screen.getByText('Profile information')).toBeTruthy());
+
+    expect(screen.queryByText('Need help?')).toBeNull();
+    expect(screen.queryByText(/We're here for you/)).toBeNull();
+    expect(screen.queryByText('Call support')).toBeNull();
+    expect(screen.queryByText('Text us')).toBeNull();
+    expect(screen.queryByText('Email us')).toBeNull();
+    expect(screen.queryByText(/555-COMPASS/)).toBeNull();
+
+    const signOutRow = screen.getByLabelText('Sign out of your account');
+    expect(signOutRow).toBeTruthy();
+    expect(screen.getByText('Sign out of this device')).toBeTruthy();
+
+    fireEvent.click(signOutRow);
+
+    expect(alertSpy).toHaveBeenCalledTimes(1);
+    const [, , buttons] = alertSpy.mock.calls[0] as [string, string, Array<{ text: string; onPress?: () => void }>];
+    const signOutButton = buttons.find((b) => b.text === 'Sign Out');
+    expect(signOutButton).toBeTruthy();
+    signOutButton?.onPress?.();
+
+    expect(logout).toHaveBeenCalledTimes(1);
+
+    alertSpy.mockRestore();
+  });
+});
+
+// ─── QA batch (2026-07-14) Part 21 — Profile information shows all signup data ─
+
+describe('MemberSettingsScreen — Profile information shows all signup fields (Part 21)', () => {
+  it('renders every signup field with its value; CIN shows in full; insurance row uses insurance_company', async () => {
+    memberProfileFixture = buildMemberProfileFixture({
+      preferred_name: 'Middy',
+      date_of_birth: '1990-05-14',
+      gender: 'Female',
+      address_line1: '123 Main St',
+      address_line2: 'Apt 4B',
+      city: 'Los Angeles',
+      state: 'CA',
+      insurance_company: 'Health Net',
+      insurance_provider: null,
+      medi_cal_id: '91234567A2',
+      primary_need: 'housing',
+    });
+
+    renderScreen();
+    await waitFor(() => expect(screen.getByText('Profile information')).toBeTruthy());
+
+    expect(screen.getByText('Middy')).toBeTruthy();
+    expect(screen.getByText('1990-05-14')).toBeTruthy();
+    expect(screen.getByText('Female')).toBeTruthy();
+    expect(screen.getByText('123 Main St')).toBeTruthy();
+    expect(screen.getByText('Apt 4B')).toBeTruthy();
+    expect(screen.getByText('Los Angeles')).toBeTruthy();
+    expect(screen.getByText('CA')).toBeTruthy();
+    // Insurance row must show the company name, not "—" (the old bug read
+    // the unset legacy insurance_provider field instead of insurance_company).
+    expect(screen.getByText('Health Net')).toBeTruthy();
+    expect(screen.queryByText('—')).toBeNull();
+    // Full CIN is member-visible (the member is the data subject).
+    expect(screen.getByText('91234567A2')).toBeTruthy();
+    expect(screen.getByText('housing')).toBeTruthy();
+  });
+
+  it('falls back to the legacy insurance_provider when insurance_company is unset', async () => {
+    memberProfileFixture = buildMemberProfileFixture({
+      insurance_company: null,
+      insurance_provider: 'Legacy Health Plan',
+    });
+
+    renderScreen();
+    await waitFor(() => expect(screen.getByText('Profile information')).toBeTruthy());
+
+    expect(screen.getByText('Legacy Health Plan')).toBeTruthy();
+  });
+
+  it('an edit to a new field (Preferred Name) round-trips through the existing update mutation', async () => {
+    let lastProfilePutBody: unknown = null;
+    mockedApi.mockImplementation(async (path: string, options?: { method?: string; body?: string }) => {
+      const method = options?.method ?? 'GET';
+      if (path === '/member/profile' && method === 'PUT') {
+        lastProfilePutBody = options?.body ? JSON.parse(options.body) : null;
+        memberProfileFixture = { ...memberProfileFixture, preferred_name: 'Middy' };
+        return undefined;
+      }
+      return routeApi(path, options);
+    });
+
+    renderScreen();
+    await waitFor(() => expect(screen.getByText('Profile information')).toBeTruthy());
+
+    fireEvent.click(screen.getByLabelText('Edit Preferred Name'));
+    const input = await screen.findByLabelText('Preferred Name');
+    fireEvent.change(input, { target: { value: 'Middy' } });
+    fireEvent.click(screen.getByLabelText('Save'));
+
+    await waitFor(() => {
+      expect(lastProfilePutBody).toEqual({ preferred_name: 'Middy' });
+    });
+  });
+
+  it('a CIN edit saves through the dedicated insurance-CIN endpoint with the current insurance company', async () => {
+    memberProfileFixture = buildMemberProfileFixture({
+      insurance_company: 'Health Net',
+      medi_cal_id: '91234567A2',
+    });
+    let lastCinPatchBody: unknown = null;
+    mockedApi.mockImplementation(async (path: string, options?: { method?: string; body?: string }) => {
+      const method = options?.method ?? 'GET';
+      if (path === '/member/profile/insurance-cin' && method === 'PATCH') {
+        lastCinPatchBody = options?.body ? JSON.parse(options.body) : null;
+        return undefined;
+      }
+      return routeApi(path, options);
+    });
+
+    renderScreen();
+    await waitFor(() => expect(screen.getByText('Profile information')).toBeTruthy());
+
+    fireEvent.click(screen.getByLabelText('Edit CIN (Medi-Cal ID)'));
+    const input = await screen.findByLabelText('CIN (Medi-Cal ID)');
+    fireEvent.change(input, { target: { value: '98765432B1' } });
+    fireEvent.click(screen.getByLabelText('Save'));
+
+    await waitFor(() => {
+      expect(lastCinPatchBody).toEqual({
+        insurance_company: 'Health Net',
+        medi_cal_id: '98765432B1',
+      });
+    });
   });
 });

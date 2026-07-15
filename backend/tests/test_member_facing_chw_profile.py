@@ -11,11 +11,14 @@ Coverage (5 tests + 1 extra):
 
 import base64
 import json
+from datetime import UTC, datetime
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import update
 
 from tests.conftest import auth_header
+from tests.conftest import test_session as _test_session_factory
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -95,6 +98,25 @@ async def _make_session(
     )
     assert res.status_code == 201, res.text
     return res.json()["id"]
+
+
+async def _set_session_status(session_id: str, status: str) -> None:
+    """Directly update a Session row's status (and ended_at when completed).
+
+    Bypasses the full documentation-submission flow — these tests only care
+    about the terminal `status` value that ``shared_session_count`` filters
+    on (QA batch 2026-07-14, Part 17), not the billing/claim side effects.
+    """
+    from app.models.session import Session as SessionModel
+
+    async with _test_session_factory() as db:
+        values: dict = {"status": status}
+        if status == "completed":
+            values["ended_at"] = datetime.now(UTC)
+        await db.execute(
+            update(SessionModel).where(SessionModel.id == session_id).values(**values)
+        )
+        await db.commit()
 
 
 # ─── Tests ─────────────────────────────────────────────────────────────────────
@@ -206,11 +228,12 @@ async def test_last_name_initial_is_one_char_plus_period(
 async def test_shared_session_count_reflects_calling_member_only(
     client: AsyncClient,
 ) -> None:
-    """shared_session_count is scoped to the calling member's sessions only.
+    """shared_session_count is scoped to the calling member's COMPLETED
+    sessions only (QA batch 2026-07-14, Part 17).
 
     We create:
-    - member_a has 1 session with the CHW.
-    - member_b has 2 sessions with the CHW.
+    - member_a has 1 completed session with the CHW.
+    - member_b has 2 completed sessions with the CHW.
 
     When member_a calls GET /member/chws/{chw_id} they see count == 1.
     When member_b calls the same endpoint they see count == 2.
@@ -221,34 +244,220 @@ async def test_shared_session_count_reflects_calling_member_only(
 
     chw_id = _user_id_from_tokens(chw)
 
-    # member_a: 1 session
-    await _make_session(client, member_a, chw)
+    # member_a: 1 completed session
+    session_a1 = await _make_session(client, member_a, chw)
+    await _set_session_status(session_a1, "completed")
 
-    # member_b: 2 sessions (create request + session twice)
-    await _make_session(client, member_b, chw)
-    await _make_session(client, member_b, chw)
+    # member_b: 2 completed sessions (create request + session twice)
+    session_b1 = await _make_session(client, member_b, chw)
+    session_b2 = await _make_session(client, member_b, chw)
+    await _set_session_status(session_b1, "completed")
+    await _set_session_status(session_b2, "completed")
 
-    # Assert member_a sees 1
     res_a = await client.get(
         f"/api/v1/member/chws/{chw_id}",
         headers=auth_header(member_a),
     )
     assert res_a.status_code == 200, res_a.text
-    # request-accept auto-creates a scheduled session per request, so the exact
-    # count depends on how many requests-and-sessions each member set up.
-    # The behavioural invariant is "member_b has more than member_a" (isolation),
-    # not the absolute numbers.
-    count_a = res_a.json()["shared_session_count"]
-    assert count_a >= 1, res_a.text
+    assert res_a.json()["shared_session_count"] == 1, res_a.text
 
-    # Assert member_b sees more sessions than member_a (isolation check)
     res_b = await client.get(
         f"/api/v1/member/chws/{chw_id}",
         headers=auth_header(member_b),
     )
     assert res_b.status_code == 200, res_b.text
-    count_b = res_b.json()["shared_session_count"]
-    assert count_b > count_a, f"member_b ({count_b}) should exceed member_a ({count_a}); res_b={res_b.text}"
+    assert res_b.json()["shared_session_count"] == 2, res_b.text
+
+
+@pytest.mark.asyncio
+async def test_shared_session_count_excludes_non_completed_statuses(
+    client: AsyncClient,
+) -> None:
+    """QA batch (2026-07-14) Part 17 — regression.
+
+    A pair with one completed session plus a cancelled, a missed, and a
+    still-scheduled session must count only the completed one. Before the
+    fix, the endpoint counted sessions of ANY status, so a future booking
+    (or a cancelled/missed one) inflated "Sessions Together" / "Journey
+    Progress" on the member-facing CHW profile.
+    """
+    chw = await _register(client, "chw_statuses@example.com", "chw", "Status CHW")
+    member = await _register(client, "member_statuses@example.com", "member", "Sam S")
+    chw_id = _user_id_from_tokens(chw)
+
+    session_completed = await _make_session(client, member, chw)
+    session_cancelled = await _make_session(client, member, chw)
+    session_missed = await _make_session(client, member, chw)
+    session_scheduled = await _make_session(client, member, chw)  # left as-is
+
+    await _set_session_status(session_completed, "completed")
+    await _set_session_status(session_cancelled, "cancelled")
+    await _set_session_status(session_missed, "missed")
+    assert session_scheduled  # created but deliberately left "scheduled"
+
+    res = await client.get(
+        f"/api/v1/member/chws/{chw_id}",
+        headers=auth_header(member),
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["shared_session_count"] == 1, res.text
+
+
+@pytest.mark.asyncio
+async def test_shared_session_count_zero_when_no_completed_sessions(
+    client: AsyncClient,
+) -> None:
+    """A pair with only non-completed sessions (or none at all) shows 0."""
+    chw = await _register(client, "chw_zero@example.com", "chw", "Zero CHW")
+    member = await _register(client, "member_zero@example.com", "member", "Zero M")
+    chw_id = _user_id_from_tokens(chw)
+
+    session_id = await _make_session(client, member, chw)
+    await _set_session_status(session_id, "cancelled")
+
+    res = await client.get(
+        f"/api/v1/member/chws/{chw_id}",
+        headers=auth_header(member),
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["shared_session_count"] == 0, res.text
+
+
+# ─── Part 18: my_rating_avg / my_rating_count ──────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_my_rating_defaults_to_none_with_no_ratings(
+    client: AsyncClient,
+    member_tokens: dict,
+    chw_tokens: dict,
+) -> None:
+    """A member who has never rated this CHW sees my_rating_avg=None,
+    my_rating_count=0 — the frontend renders "No ratings yet" from this."""
+    chw_id = _user_id_from_tokens(chw_tokens)
+
+    res = await client.get(
+        f"/api/v1/member/chws/{chw_id}",
+        headers=auth_header(member_tokens),
+    )
+    assert res.status_code == 200, res.text
+    data = res.json()
+    assert data["my_rating_avg"] is None
+    assert data["my_rating_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_my_rating_averages_this_members_own_ratings_regardless_of_approval(
+    client: AsyncClient,
+) -> None:
+    """QA batch (2026-07-14) Part 18 — regression.
+
+    A member's own post-session ratings for a CHW must average into
+    my_rating_avg with NO approval-status gate — moderation only controls
+    public display of testimonial *text*. Before the fix, the tile read the
+    CHW's global *approved-only* testimonial summary, so a fresh unapproved
+    rating stayed invisible ("No ratings yet") right after the member rated
+    a session.
+    """
+    from app.models.testimonial import Testimonial
+
+    chw = await _register(client, "chw_rating@example.com", "chw", "Rating CHW")
+    member = await _register(client, "member_rating@example.com", "member", "Rater M")
+    chw_id = _user_id_from_tokens(chw)
+    member_id = _user_id_from_tokens(member)
+
+    session_1 = await _make_session(client, member, chw)
+    session_2 = await _make_session(client, member, chw)
+
+    async with _test_session_factory() as db:
+        db.add(
+            Testimonial(
+                chw_id=chw_id,
+                member_id=member_id,
+                session_id=session_1,
+                rating=4,
+                status="pending",  # deliberately unapproved
+                source="session",
+            )
+        )
+        db.add(
+            Testimonial(
+                chw_id=chw_id,
+                member_id=member_id,
+                session_id=session_2,
+                rating=5,
+                status="pending",
+                source="session",
+            )
+        )
+        await db.commit()
+
+    res = await client.get(
+        f"/api/v1/member/chws/{chw_id}",
+        headers=auth_header(member),
+    )
+    assert res.status_code == 200, res.text
+    data = res.json()
+    assert data["my_rating_avg"] == 4.5, res.text
+    assert data["my_rating_count"] == 2, res.text
+
+
+@pytest.mark.asyncio
+async def test_my_rating_never_leaks_other_members_ratings(
+    client: AsyncClient,
+) -> None:
+    """Other members' ratings of the same CHW must never leak into
+    my_rating_avg/my_rating_count for the calling member."""
+    from app.models.testimonial import Testimonial
+
+    chw = await _register(client, "chw_isolation@example.com", "chw", "Iso CHW")
+    member_a = await _register(client, "member_iso_a@example.com", "member", "Iso A")
+    member_b = await _register(client, "member_iso_b@example.com", "member", "Iso B")
+    chw_id = _user_id_from_tokens(chw)
+    member_a_id = _user_id_from_tokens(member_a)
+    member_b_id = _user_id_from_tokens(member_b)
+
+    session_a = await _make_session(client, member_a, chw)
+    session_b = await _make_session(client, member_b, chw)
+
+    async with _test_session_factory() as db:
+        db.add(
+            Testimonial(
+                chw_id=chw_id,
+                member_id=member_a_id,
+                session_id=session_a,
+                rating=2,
+                status="approved",
+                source="session",
+            )
+        )
+        db.add(
+            Testimonial(
+                chw_id=chw_id,
+                member_id=member_b_id,
+                session_id=session_b,
+                rating=5,
+                status="approved",
+                source="session",
+            )
+        )
+        await db.commit()
+
+    res_a = await client.get(
+        f"/api/v1/member/chws/{chw_id}",
+        headers=auth_header(member_a),
+    )
+    assert res_a.status_code == 200, res_a.text
+    assert res_a.json()["my_rating_avg"] == 2.0
+    assert res_a.json()["my_rating_count"] == 1
+
+    res_b = await client.get(
+        f"/api/v1/member/chws/{chw_id}",
+        headers=auth_header(member_b),
+    )
+    assert res_b.status_code == 200, res_b.text
+    assert res_b.json()["my_rating_avg"] == 5.0
+    assert res_b.json()["my_rating_count"] == 1
 
 
 @pytest.mark.asyncio

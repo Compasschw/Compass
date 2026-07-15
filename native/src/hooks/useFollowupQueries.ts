@@ -216,6 +216,26 @@ export function useUpdateFollowup(sessionId: string) {
   });
 }
 
+// ─── selectOpenTodoItems ────────────────────────────────────────────────────
+
+/**
+ * QA batch (2026-07-14) Part 26 — the single source of truth for "which
+ * roadmap items count as an open to-do".
+ *
+ * `GET /member/roadmap` already excludes `dismissed` items server-side, but
+ * still returns `completed` ones (sorted after pending/confirmed — see
+ * `routers/member.py::get_my_roadmap`). Both the member home "To do list"
+ * tile and MemberJourneyScreen's "From Your Sessions" action-items list
+ * must agree on which of those are still *open* — this was previously two
+ * independent filters (MemberHomeScreen's inline `.filter()` for the tile
+ * count vs. MemberJourneyScreen rendering the roadmap unfiltered) that could
+ * silently drift apart. Both call sites now filter through this one
+ * function so the visible list and its count can never disagree.
+ */
+export function selectOpenTodoItems(items: SessionFollowup[]): SessionFollowup[] {
+  return items.filter((item) => item.status !== 'completed' && item.status !== 'dismissed');
+}
+
 // ─── useMemberRoadmap ─────────────────────────────────────────────────────────
 
 /**
