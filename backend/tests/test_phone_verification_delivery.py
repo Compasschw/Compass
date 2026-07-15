@@ -66,3 +66,9 @@ async def test_legacy_otp_client_is_gone():
         from app.services.communication.vonage_sms import (  # noqa: F401
             VonageSmsProvider,
         )
+
+
+async def test_sentinel_phone_cannot_start_verification(client, member_tokens):
+    res = await _start_verification(client, member_tokens, phone="+15555555555")
+    assert res.status_code == 422
+    assert "placeholder" in res.json()["detail"].lower()

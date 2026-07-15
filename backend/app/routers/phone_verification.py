@@ -33,6 +33,7 @@ from app.dependencies import get_current_user
 from app.limiter import limiter
 from app.models.phone_verification import PhoneVerification
 from app.models.user import User
+from app.utils.phone import is_placeholder_phone
 from app.utils.security import pwd_context
 
 logger = logging.getLogger("compass.phone_verification")
@@ -191,6 +192,16 @@ async def start_verification(
     """
     now = datetime.now(UTC)
     one_hour_ago = now - timedelta(hours=1)
+
+    # ── Sentinel guard (Spec 1 §1, decision 2) ────────────────────────────────
+    # The 555-555-5555 placeholder is treated as fully SMS-opted-out: it has no
+    # real device behind it, so it can never receive an OTP. Reject before we
+    # generate/store a code or attempt delivery.
+    if is_placeholder_phone(body.phone):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This phone number is a placeholder and can't receive texts.",
+        )
 
     # ── Per-user rate limiting ────────────────────────────────────────────────
     recent_count = await _count_recent_starts(db, current_user.id, since=one_hour_ago)
