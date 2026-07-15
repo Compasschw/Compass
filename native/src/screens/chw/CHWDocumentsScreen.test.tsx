@@ -100,6 +100,35 @@ const chatAttachmentFixture = {
   created_at: '2026-06-15T10:00:00.000Z',
 };
 
+/** A grandfathered 'medical' document row — QA batch #7 Part 6: the type/filter
+ * chip is removed from pickers, but pre-existing 'medical' rows must keep
+ * rendering under "All Types". */
+const medicalDocFixture = {
+  id: 'doc-medical-1',
+  member_id: MEMBER_1_ID,
+  document_type: 'medical',
+  filename: 'immunization_record.pdf',
+  content_type: 'application/pdf',
+  size_bytes: 102400,
+  uploaded_by: 'chw-1',
+  uploaded_at: '2026-05-01T10:00:00.000Z',
+  deleted_at: null,
+};
+
+/** QA batch #7 Part 7 — a CHW's own compliance-checklist upload (GET /credentials/mine). */
+const myCredentialFixture = {
+  id: 'cred-1',
+  chw_id: 'chw-1',
+  type: 'hipaa_training',
+  label: 'HIPAA Training',
+  status: 'pending',
+  s3_key: 'users/chw-1/credential/hipaa-cert.pdf',
+  file_name: 'hipaa-cert.pdf',
+  verified_by: null,
+  verified_at: null,
+  created_at: '2026-06-20T09:00:00.000Z',
+};
+
 let membersResponse: unknown[] = [member1Fixture, member2Fixture];
 let docsResponse: { items: unknown[]; total: number; page: number; page_size: number } = {
   items: [uploadedDocFixture],
@@ -113,11 +142,19 @@ let attachmentsResponse: { items: unknown[]; total: number; page: number; page_s
   page: 1,
   page_size: 50,
 };
+let myCredentialsResponse: unknown[] = [];
 
 const deleteMock = vi.fn();
 
 function routeApi(path: string, options?: { method?: string; body?: string }): unknown {
   const method = options?.method ?? 'GET';
+
+  if (path === '/credentials/mine' && method === 'GET') {
+    return myCredentialsResponse;
+  }
+  if (path.startsWith('/credentials/') && path.endsWith('/download-url') && method === 'GET') {
+    return { download_url: 'https://s3.example.com/signed-credential', expires_in_seconds: 900 };
+  }
 
   if (path === '/chw/members' && method === 'GET') {
     return membersResponse;
@@ -172,6 +209,7 @@ beforeEach(() => {
   membersResponse = [member1Fixture, member2Fixture];
   docsResponse = { items: [uploadedDocFixture], total: 1, page: 1, page_size: 50 };
   attachmentsResponse = { items: [chatAttachmentFixture], total: 1, page: 1, page_size: 50 };
+  myCredentialsResponse = [];
   deleteMock.mockClear();
   mockedApi.mockReset();
   mockedApi.mockImplementation(async (path: string, options?: { method?: string; body?: string }) =>
@@ -381,5 +419,101 @@ describe('CHWDocumentsScreen — deep link', () => {
 
     await screen.findByLabelText('Back to member list');
     expect(screen.getAllByText(MEMBER_2_NAME).length).toBeGreaterThan(0);
+  });
+});
+
+// ─── QA batch #7 Part 6: 'Medical' category removed (grandfathered) ───────────
+
+describe('CHWDocumentsScreen — Medical category removed (Part 6)', () => {
+  it('the repository filter chips no longer include Medical', async () => {
+    renderScreen();
+    const row = await screen.findByLabelText(`Open documents for ${MEMBER_1_NAME}`);
+    fireEvent.click(row);
+    await screen.findByText('passport.pdf');
+
+    expect(screen.queryByLabelText('Filter by Medical')).toBeNull();
+    // The other type chips are still present.
+    expect(screen.getByLabelText('Filter by Photo ID')).toBeTruthy();
+  });
+
+  it('the upload doc-type picker no longer offers Medical', async () => {
+    renderScreen();
+    await screen.findByText(MEMBER_1_NAME);
+
+    fireEvent.click(screen.getByLabelText('Upload document for a member'));
+    await screen.findByText('Select a member');
+
+    fireEvent.click(screen.getByLabelText(`Select ${MEMBER_1_NAME}`));
+    await screen.findByText('Choose document type');
+
+    expect(screen.queryByLabelText('Upload Medical')).toBeNull();
+    expect(screen.getByLabelText('Upload Photo ID')).toBeTruthy();
+  });
+
+  it('a previously-uploaded Medical-typed document still renders under All Types', async () => {
+    docsResponse = {
+      items: [uploadedDocFixture, medicalDocFixture],
+      total: 2,
+      page: 1,
+      page_size: 50,
+    };
+    renderScreen();
+    const row = await screen.findByLabelText(`Open documents for ${MEMBER_1_NAME}`);
+    fireEvent.click(row);
+
+    // Default filter is "All Types" — the grandfathered medical row renders
+    // with its filename and its (still-present) "Medical" type label.
+    await screen.findByText('immunization_record.pdf');
+    expect(screen.getByText('passport.pdf')).toBeTruthy();
+    expect(screen.getByText('Medical')).toBeTruthy();
+  });
+});
+
+// ─── QA batch #7 Part 7: My Compliance Documents (landing view) ───────────────
+
+describe('CHWDocumentsScreen — My Compliance Documents (Part 7)', () => {
+  it('renders nothing when the CHW has no compliance-document uploads', async () => {
+    myCredentialsResponse = [];
+    renderScreen();
+    await screen.findByText(MEMBER_1_NAME);
+
+    expect(screen.queryByText('My Compliance Documents')).toBeNull();
+  });
+
+  it('renders the section with label, status chip, and date for an uploaded credential', async () => {
+    myCredentialsResponse = [myCredentialFixture];
+    renderScreen();
+
+    await screen.findByText('My Compliance Documents');
+    expect(screen.getByText('HIPAA Training')).toBeTruthy();
+    expect(screen.getByText('Pending review')).toBeTruthy();
+  });
+
+  it('View fetches a presigned URL via the credentials download-url endpoint and opens it', async () => {
+    myCredentialsResponse = [myCredentialFixture];
+    renderScreen();
+    await screen.findByText('My Compliance Documents');
+
+    fireEvent.click(screen.getByLabelText('View document'));
+
+    await waitFor(() => {
+      const calledPaths = mockedApi.mock.calls.map((c) => c[0]);
+      expect(
+        calledPaths.some(
+          (p) => typeof p === 'string' && p === '/credentials/cred-1/download-url',
+        ),
+      ).toBe(true);
+    });
+    await waitFor(() => {
+      expect(Linking.openURL).toHaveBeenCalledWith('https://s3.example.com/signed-credential');
+    });
+  });
+
+  it('shows a Verified pill for a verified credential', async () => {
+    myCredentialsResponse = [{ ...myCredentialFixture, status: 'verified' }];
+    renderScreen();
+
+    await screen.findByText('My Compliance Documents');
+    expect(screen.getByText('Verified')).toBeTruthy();
   });
 });

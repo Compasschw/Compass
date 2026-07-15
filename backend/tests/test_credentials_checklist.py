@@ -5,6 +5,7 @@ Covers:
 - GET  /credentials/mine              CHW's own Credential rows
 - GET  /credentials/checklist         full 5-item checklist + can_work/missing
 - PATCH /credentials/{id}/review      admin-only verify/reject
+- GET  /credentials/{id}/download-url owning CHW or admin -> presigned GET URL
 
 Negative-auth boundaries (backend/TESTING.md rule 1):
 - A CHW cannot set status=verified via POST /credentials/{type} (schema doesn't
@@ -12,9 +13,12 @@ Negative-auth boundaries (backend/TESTING.md rule 1):
 - A CHW (even the owning CHW) gets 403 on PATCH /credentials/{id}/review.
 - A member gets 403 on both CHW-facing and admin-facing endpoints.
 - An unauthenticated caller gets 401/403 everywhere.
+- GET /credentials/{id}/download-url: a DIFFERENT CHW (CHW A fetching CHW B's
+  credential) must get 403 — the QA batch #7 (Part 7) review-blind-spot fix.
 """
 
 import uuid
+from unittest.mock import patch
 
 import pytest
 from httpx import AsyncClient
@@ -384,6 +388,136 @@ class TestReviewCredential:
             json={"approved": True},
         )
         assert res.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /credentials/{id}/download-url
+# ---------------------------------------------------------------------------
+
+
+class TestCredentialDownloadUrl:
+    async def _submit(self, client: AsyncClient, tokens: dict, cred_type: str = "hipaa_training") -> dict:
+        chw_id = _user_id(tokens)
+        res = await client.post(
+            f"{BASE}/{cred_type}", headers=_auth(tokens), json={"s3_key": _valid_s3_key(chw_id)}
+        )
+        assert res.status_code == 201, res.text
+        return res.json()
+
+    async def test_owning_chw_gets_presigned_url(self, client: AsyncClient, chw_tokens: dict):
+        """Happy path: the owning CHW can fetch a download URL for their own upload."""
+        record = await self._submit(client, chw_tokens)
+
+        fake_url = "https://s3.us-west-2.amazonaws.com/fake-presigned-credential?X-Amz-Signature=abc"
+        with patch(
+            "app.routers.credentials.generate_presigned_download_url",
+            return_value=fake_url,
+        ):
+            res = await client.get(
+                f"{BASE}/{record['id']}/download-url", headers=_auth(chw_tokens)
+            )
+
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["download_url"] == fake_url
+        assert body["expires_in_seconds"] == 900
+
+    async def test_admin_gets_presigned_url_for_any_chw_credential(
+        self, client: AsyncClient, chw_tokens: dict
+    ):
+        """Admins can view any CHW's compliance document (fixes the sight-unseen
+        review blind spot cited in Part 7)."""
+        record = await self._submit(client, chw_tokens)
+        admin_tokens = await _register_admin(client)
+
+        fake_url = "https://s3.us-west-2.amazonaws.com/fake-presigned-credential?X-Amz-Signature=admin"
+        with patch(
+            "app.routers.credentials.generate_presigned_download_url",
+            return_value=fake_url,
+        ):
+            res = await client.get(
+                f"{BASE}/{record['id']}/download-url", headers=_auth(admin_tokens)
+            )
+
+        assert res.status_code == 200, res.text
+        assert res.json()["download_url"] == fake_url
+
+    async def test_different_chw_cannot_download_another_chws_credential(
+        self, client: AsyncClient, chw_tokens: dict
+    ):
+        """NEGATIVE-AUTH (TESTING.md rule 1): CHW A must not be able to fetch
+        CHW B's credential download URL — relationship gate, not just role gate."""
+        record = await self._submit(client, chw_tokens)
+        chw2_tokens = await _register_chw(client, "chw-download-other@example.com")
+
+        res = await client.get(
+            f"{BASE}/{record['id']}/download-url", headers=_auth(chw2_tokens)
+        )
+        assert res.status_code == 403
+
+    async def test_member_cannot_download_credential(
+        self, client: AsyncClient, chw_tokens: dict, member_tokens: dict
+    ):
+        record = await self._submit(client, chw_tokens)
+        res = await client.get(
+            f"{BASE}/{record['id']}/download-url", headers=_auth(member_tokens)
+        )
+        assert res.status_code == 403
+
+    async def test_unauthenticated_cannot_download(self, client: AsyncClient, chw_tokens: dict):
+        record = await self._submit(client, chw_tokens)
+        res = await client.get(f"{BASE}/{record['id']}/download-url")
+        assert res.status_code in (401, 403)
+
+    async def test_nonexistent_credential_returns_404(self, client: AsyncClient, chw_tokens: dict):
+        res = await client.get(
+            f"{BASE}/{uuid.uuid4()}/download-url", headers=_auth(chw_tokens)
+        )
+        assert res.status_code == 404
+
+    async def test_credential_with_no_uploaded_file_returns_404(
+        self, client: AsyncClient, chw_tokens: dict
+    ):
+        """A Credential row can exist with s3_key=None in theory (the column is
+        nullable) — must return a clean 404, not a 500 from S3 client misuse."""
+        from app.models.credential import Credential
+
+        chw_id = uuid.UUID(_user_id(chw_tokens))
+        cred_id = uuid.uuid4()
+        async with _test_session_factory() as db:
+            db.add(
+                Credential(
+                    id=cred_id,
+                    chw_id=chw_id,
+                    type="liability_insurance",
+                    label="Professional Liability Insurance",
+                    status="pending",
+                    s3_key=None,
+                )
+            )
+            await db.commit()
+
+        res = await client.get(f"{BASE}/{cred_id}/download-url", headers=_auth(chw_tokens))
+        assert res.status_code == 404
+
+    async def test_s3_failure_returns_clean_500_not_bare_error(
+        self, client: AsyncClient, chw_tokens: dict
+    ):
+        """NO-UNHANDLED-500 (TESTING.md rule 3): if the S3 client raises, the
+        endpoint must still return a well-formed HTTPException with a readable
+        detail (and, critically, still pass through CORSMiddleware)."""
+        record = await self._submit(client, chw_tokens)
+
+        with patch(
+            "app.routers.credentials.generate_presigned_download_url",
+            side_effect=RuntimeError("boto3 client misconfigured"),
+        ):
+            res = await client.get(
+                f"{BASE}/{record['id']}/download-url", headers=_auth(chw_tokens)
+            )
+
+        assert res.status_code == 500
+        assert "boto3 client misconfigured" in res.json()["detail"]
 
 
 # ---------------------------------------------------------------------------

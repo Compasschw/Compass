@@ -59,6 +59,7 @@ import {
   ChevronRight,
   ClipboardList,
   Download,
+  Eye,
   FileBadge,
   FileSignature,
   FileScan,
@@ -69,6 +70,7 @@ import {
   MessageSquare,
   Plus,
   Search,
+  ShieldCheck,
   Trash2,
   Upload,
   X,
@@ -93,9 +95,12 @@ import {
   useMemberChatAttachments,
   useMessageAttachmentDownloadUrl,
   useChwMembers,
+  useMyCredentials,
+  useCredentialDownloadUrl,
   type MemberDocumentData,
   type MemberChatAttachmentData,
   type MembersRosterItem,
+  type MyCredentialData,
 } from '../../hooks/useApiQueries';
 import { useFileUpload, type DocumentType } from '../../hooks/useFileUpload';
 
@@ -147,11 +152,25 @@ const DOC_TYPE_PILL: Record<DocumentType, 'blue' | 'purple' | 'emerald' | 'amber
   other:   'gray',
 };
 
-/** Document categories offered in the upload picker, in display order. */
-const DOC_TYPE_OPTIONS: DocumentType[] = ['id', 'income', 'address', 'medical', 'other'];
+/**
+ * Document categories offered in the upload picker, in display order.
+ *
+ * QA batch #7 Part 6: 'medical' is intentionally excluded here (HIPAA
+ * minimum-necessary posture — Compass should not encourage receiving
+ * confidential medical documents). DOC_TYPE_LABELS/DOC_TYPE_PILL/DocTypeIcon
+ * above still carry a 'medical' entry so previously-uploaded rows of that
+ * type keep rendering correctly under "All Types" (grandfathered, no
+ * backfill — mirrors the C5 housing->utilities pattern).
+ */
+const DOC_TYPE_OPTIONS: DocumentType[] = ['id', 'income', 'address', 'other'];
 
-/** Filter chip display order on the repository view. */
-const FILTER_ORDER: FilterType[] = ['all', 'id', 'income', 'address', 'medical', 'other', 'chat'];
+/**
+ * Filter chip display order on the repository view.
+ *
+ * QA batch #7 Part 6: no 'medical' chip — existing medical-typed rows still
+ * show up under the 'all' filter, they just have no dedicated chip anymore.
+ */
+const FILTER_ORDER: FilterType[] = ['all', 'id', 'income', 'address', 'other', 'chat'];
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -1180,6 +1199,110 @@ function MemberRepository({
   );
 }
 
+// ─── My Compliance Documents (Part 7 — landing view, above the member list) ──
+
+/** Status pill for a single Credential row (GET /credentials/mine). */
+function CredentialStatusPill({ status }: { status: MyCredentialData['status'] }): React.JSX.Element {
+  if (status === 'verified') return <Pill variant="emerald" size="sm">Verified</Pill>;
+  if (status === 'rejected') return <Pill variant="red" size="sm">Rejected</Pill>;
+  return <Pill variant="amber" size="sm">Pending review</Pill>;
+}
+
+/**
+ * View button for a compliance document — lazily fetches a presigned GET
+ * URL via GET /credentials/{id}/download-url (owning CHW or admin only) and
+ * opens it. Mirrors the member-document DownloadButton pattern above.
+ */
+function CredentialViewButton({ credentialId }: { credentialId: string }): React.JSX.Element {
+  const [enabled, setEnabled] = useState(false);
+  const q = useCredentialDownloadUrl(credentialId, { enabled });
+
+  const handlePress = useCallback(() => {
+    if (q.isFetching) return;
+    setEnabled(true);
+  }, [q.isFetching]);
+
+  useEffect(() => {
+    if (!enabled || !q.data) return;
+    void Linking.openURL(q.data.downloadUrl).catch(() =>
+      showError('Could not open the file. Please try again.')
+    );
+    setEnabled(false);
+  }, [enabled, q.data]);
+
+  useEffect(() => {
+    if (q.isError) {
+      showError('Could not generate a view link. Please try again.');
+      setEnabled(false);
+    }
+  }, [q.isError]);
+
+  return (
+    <Pressable
+      onPress={handlePress}
+      accessibilityRole="button"
+      accessibilityLabel="View document"
+      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+      style={({ pressed }) => [styles.myComplianceViewBtn, pressed && { opacity: 0.6 }]}
+    >
+      {q.isFetching ? (
+        <ActivityIndicator size="small" color={colors.primary} />
+      ) : (
+        <>
+          <Eye size={13} color={colors.primary} />
+          <Text style={styles.myComplianceViewBtnText}>View</Text>
+        </>
+      )}
+    </Pressable>
+  );
+}
+
+/**
+ * "My Compliance Documents" — the CHW's own checklist-document uploads
+ * (HIPAA Training / PSA / Liability Insurance / CHW Certification), fed by
+ * GET /credentials/mine. Renders above the member list on the landing view
+ * so the CHW's own files are visible somewhere on the Documents page (QA
+ * batch #7 Part 7 — previously they appeared nowhere).
+ *
+ * Renders nothing until at least one credential has been submitted, keeping
+ * the landing view uncluttered for a brand-new CHW (the full checklist,
+ * including "missing" items, already lives on CHWProfileScreen).
+ */
+function MyComplianceDocumentsSection(): React.JSX.Element | null {
+  const credsQuery = useMyCredentials();
+  const creds = credsQuery.data ?? [];
+
+  if (credsQuery.isLoading) {
+    return (
+      <Card style={styles.myComplianceCard}>
+        <ActivityIndicator size="small" color={colors.primary} accessibilityLabel="Loading your compliance documents" />
+      </Card>
+    );
+  }
+
+  if (credsQuery.isError || creds.length === 0) return null;
+
+  return (
+    <Card style={styles.myComplianceCard}>
+      <View style={styles.myComplianceHeader}>
+        <ShieldCheck size={16} color={colors.primary} />
+        <Text style={styles.myComplianceTitle}>My Compliance Documents</Text>
+      </View>
+      {creds.map((cred) => (
+        <View key={cred.id} style={styles.myComplianceRow}>
+          <FileBadge size={16} color={colors.textSecondary} />
+          <View style={styles.myComplianceRowText}>
+            <Text style={styles.myComplianceLabel} numberOfLines={1}>{cred.label}</Text>
+            <Text style={styles.myComplianceMeta}>{formatDate(cred.createdAt)}</Text>
+          </View>
+          <CredentialStatusPill status={cred.status} />
+          <CredentialViewButton credentialId={cred.id} />
+        </View>
+      ))}
+    </Card>
+  );
+}
+
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export function CHWDocumentsScreen(): React.JSX.Element {
@@ -1283,6 +1406,8 @@ export function CHWDocumentsScreen(): React.JSX.Element {
           </View>
         }
       />
+
+      <MyComplianceDocumentsSection />
 
       <View style={styles.bodyRow}>
         <View style={styles.groupsWrap}>
@@ -1513,6 +1638,66 @@ const styles = StyleSheet.create({
   emptyState: {
     paddingTop: 32,
   } as ViewStyle,
+
+  // ─── My Compliance Documents (Part 7) ─────────────────────────────────────
+  myComplianceCard: {
+    padding: spacing.lg,
+    gap: spacing.sm,
+    marginBottom: spacing.lg,
+  } as ViewStyle,
+
+  myComplianceHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    marginBottom: spacing.xs,
+  } as ViewStyle,
+
+  myComplianceTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.textPrimary,
+  } as TextStyle,
+
+  myComplianceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: colors.cardBorder,
+  } as ViewStyle,
+
+  myComplianceRowText: {
+    flex: 1,
+    minWidth: 0,
+  } as ViewStyle,
+
+  myComplianceLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.textPrimary,
+  } as TextStyle,
+
+  myComplianceMeta: {
+    fontSize: 11,
+    color: colors.textMuted,
+    marginTop: 2,
+  } as TextStyle,
+
+  myComplianceViewBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+  } as ViewStyle,
+
+  myComplianceViewBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.primary,
+  } as unknown as TextStyle,
 
   // ─── Landing member list ───────────────────────────────────────────────────
   memberListCard: {
