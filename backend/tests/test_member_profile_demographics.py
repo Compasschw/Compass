@@ -94,3 +94,17 @@ async def test_member_invalid_state_rejected(
         headers=auth_header(member_tokens),
     )
     assert res.status_code == 422, res.text
+
+
+@pytest.mark.asyncio
+async def test_member_profile_exposes_phone_verified_at(
+    client: AsyncClient, member_tokens: dict, setup_db
+):
+    """GET /member/profile surfaces phone_verified_at so the Settings "Text
+    messages" card (SMS Output Spec 1) can render its on/off state. A freshly
+    registered member has never verified their phone, so it is null."""
+    res = await client.get("/api/v1/member/profile", headers=auth_header(member_tokens))
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert "phone_verified_at" in body
+    assert body["phone_verified_at"] is None

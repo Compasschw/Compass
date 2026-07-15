@@ -33,7 +33,7 @@ from app.dependencies import get_current_user
 from app.limiter import limiter
 from app.models.phone_verification import PhoneVerification
 from app.models.user import User
-from app.services.communication.vonage_sms import get_vonage_sms_provider
+from app.utils.phone import is_placeholder_phone
 from app.utils.security import pwd_context
 
 logger = logging.getLogger("compass.phone_verification")
@@ -193,6 +193,16 @@ async def start_verification(
     now = datetime.now(UTC)
     one_hour_ago = now - timedelta(hours=1)
 
+    # ── Sentinel guard (Spec 1 §1, decision 2) ────────────────────────────────
+    # The 555-555-5555 placeholder is treated as fully SMS-opted-out: it has no
+    # real device behind it, so it can never receive an OTP. Reject before we
+    # generate/store a code or attempt delivery.
+    if is_placeholder_phone(body.phone):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This phone number is a placeholder and can't receive texts.",
+        )
+
     # ── Per-user rate limiting ────────────────────────────────────────────────
     recent_count = await _count_recent_starts(db, current_user.id, since=one_hour_ago)
     if recent_count >= PhoneVerification.MAX_STARTS_PER_HOUR:
@@ -224,16 +234,27 @@ async def start_verification(
     db.add(pv)
     await db.commit()
 
-    # ── Deliver via SMS ───────────────────────────────────────────────────────
-    sms = get_vonage_sms_provider()
-    delivered = sms.send_code(body.phone, raw_code)
+    # ── Deliver via SMS — unified async Messages client (Spec 1 §1) ───────────
+    # Single SMS-emitting channel: the JWT-authenticated Vonage Messages API,
+    # branded via ``brand_outbound_sms`` for 10DLC sender identification. The
+    # legacy sync key/secret OTP client has been retired — no sync HTTP call
+    # blocks the event loop here.
+    from app.routers.conversations import brand_outbound_sms
+    from app.services.vonage_sms import get_vonage_sms_messages_client
 
-    if not delivered:
+    otp_body = brand_outbound_sms(
+        f"Your verification code is {raw_code}. "
+        f"It expires in {PhoneVerification.CODE_TTL_MINUTES} minutes."
+    )
+    sms_result = await get_vonage_sms_messages_client().send_text(body.phone, otp_body)
+
+    if not sms_result.success:
         logger.error(
-            "SMS delivery failed for user %s to %s. "
+            "SMS delivery failed for user %s to %s (error=%s). "
             "Verification row id=%s is stored; user may retry.",
             current_user.id,
             _masked(body.phone),
+            sms_result.error,
             pv.id,
         )
         # We do not roll back the DB row — the OTP is valid and the user

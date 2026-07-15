@@ -57,7 +57,11 @@ import {
   useUpdateInsuranceCin,
   useDeleteAccount,
   useDeactivateAccount,
+  useStartPhoneVerification,
+  useConfirmPhoneVerification,
+  type MemberProfile,
 } from '../../hooks/useApiQueries';
+import { ApiError } from '../../api/client';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { AppShell, PageHeader, Card, ProfilePictureEditor } from '../../components/ui';
 import { DeleteAccountModal } from '../../components/profile/DeleteAccountModal';
@@ -582,6 +586,161 @@ const contactStyles = StyleSheet.create({
   } as TextStyle,
 });
 
+// ─── TextMessagesCard (SMS Output Spec 1 §1) ──────────────────────────────────
+//
+// Lets a member turn on CHW->member SMS by verifying their phone. Three states:
+//   - Placeholder phone (555-555-5555) → no card at all (decision 2: fully
+//     SMS-opted-out; the number can't receive texts).
+//   - Verified (phone_verified_at set) → static "On" row with a masked number
+//     and the standing STOP reminder.
+//   - Unverified real phone → "Turn on text messages" + Send code → inline
+//     6-digit entry → Confirm. On success the member profile query invalidates
+//     and the card flips to the "On" state.
+
+const SMS_SENTINEL_DIGITS = new Set(['5555555555', '15555555555']);
+const SMS_CODE_LENGTH = 6;
+
+/** Normalise a stored phone to E.164 for the /phone endpoints, or null when it
+ *  isn't a plausible US number. */
+function toE164OrNull(rawDigits: string): string | null {
+  if (rawDigits.length === 10) return `+1${rawDigits}`;
+  if (rawDigits.length === 11 && rawDigits.startsWith('1')) return `+${rawDigits}`;
+  return null;
+}
+
+function extractErrorDetail(err: unknown): string | null {
+  if (err instanceof ApiError) return err.message || null;
+  if (
+    err != null &&
+    typeof err === 'object' &&
+    'detail' in err &&
+    typeof (err as { detail: unknown }).detail === 'string'
+  ) {
+    return (err as { detail: string }).detail;
+  }
+  return null;
+}
+
+function TextMessagesCard({ profile }: { profile: MemberProfile | undefined }): React.JSX.Element | null {
+  const startVerification = useStartPhoneVerification();
+  const confirmVerification = useConfirmPhoneVerification();
+  const [entering, setEntering] = useState(false);
+  const [code, setCode] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  const phone = profile?.phone ?? '';
+  const digits = phone.replace(/\D/g, '');
+  const isSentinel = SMS_SENTINEL_DIGITS.has(digits);
+  const e164 = toE164OrNull(digits);
+  const isVerified = profile?.phoneVerifiedAt != null;
+  const last4 = digits.slice(-4);
+
+  // Placeholder phone → no SMS features whatsoever (decision 2).
+  if (!phone || isSentinel) return null;
+
+  const handleSendCode = (): void => {
+    if (!e164) {
+      setError('We need a valid mobile number before we can text you.');
+      return;
+    }
+    setError(null);
+    setEntering(true);
+    startVerification.mutate(
+      { phone: e164 },
+      { onError: () => setError('Could not send a code. Please try again in a moment.') },
+    );
+  };
+
+  const handleConfirm = async (): Promise<void> => {
+    setError(null);
+    if (!e164) return;
+    if (code.length !== SMS_CODE_LENGTH) {
+      setError('Enter the 6-digit code we texted you.');
+      return;
+    }
+    try {
+      await confirmVerification.mutateAsync({ phone: e164, code });
+      // onSuccess invalidates the profile query; the refetch flips this card
+      // to the verified "On" state. Reset local entry state.
+      setEntering(false);
+      setCode('');
+    } catch (err) {
+      setError(extractErrorDetail(err) ?? 'That code was not correct. Please try again.');
+    }
+  };
+
+  return (
+    <Card style={pageStyles.smsCard}>
+      <Text style={pageStyles.bottomCardTitle}>Text messages</Text>
+
+      {isVerified ? (
+        <Text style={pageStyles.smsBody} accessibilityLabel="Text messages are on">
+          On — we text you at •••{last4}. Reply STOP anytime to opt out.
+        </Text>
+      ) : !entering ? (
+        <>
+          <Text style={pageStyles.smsBody}>
+            Turn on text messages so your CHW&apos;s messages and appointment updates
+            also reach you by SMS. Reply STOP anytime to opt out.
+          </Text>
+          <Pressable
+            onPress={handleSendCode}
+            disabled={startVerification.isPending}
+            accessibilityRole="button"
+            accessibilityLabel="Send code"
+            style={({ pressed, hovered }: { pressed: boolean; hovered?: boolean }) => [
+              pageStyles.smsButton,
+              (pressed || hovered) && pageStyles.smsButtonHover,
+              startVerification.isPending && { opacity: 0.6 },
+            ]}
+          >
+            <Text style={pageStyles.smsButtonText}>
+              {startVerification.isPending ? 'Sending…' : 'Send code'}
+            </Text>
+          </Pressable>
+        </>
+      ) : (
+        <>
+          <Text style={pageStyles.smsBody}>
+            Enter the 6-digit code we texted to •••{last4}.
+          </Text>
+          <TextInput
+            value={code}
+            onChangeText={(v) => {
+              setCode(v.replace(/\D/g, '').slice(0, SMS_CODE_LENGTH));
+              if (error) setError(null);
+            }}
+            placeholder="123456"
+            placeholderTextColor="#9CA3AF"
+            keyboardType="number-pad"
+            maxLength={SMS_CODE_LENGTH}
+            editable={!confirmVerification.isPending}
+            accessibilityLabel="Verification code"
+            style={pageStyles.smsInput}
+          />
+          <Pressable
+            onPress={() => void handleConfirm()}
+            disabled={confirmVerification.isPending}
+            accessibilityRole="button"
+            accessibilityLabel="Confirm code"
+            style={({ pressed, hovered }: { pressed: boolean; hovered?: boolean }) => [
+              pageStyles.smsButton,
+              (pressed || hovered) && pageStyles.smsButtonHover,
+              confirmVerification.isPending && { opacity: 0.6 },
+            ]}
+          >
+            <Text style={pageStyles.smsButtonText}>
+              {confirmVerification.isPending ? 'Confirming…' : 'Confirm'}
+            </Text>
+          </Pressable>
+        </>
+      )}
+
+      {error && <Text style={pageStyles.smsError}>{error}</Text>}
+    </Card>
+  );
+}
+
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export function MemberSettingsScreen(): React.JSX.Element {
@@ -1032,6 +1191,11 @@ export function MemberSettingsScreen(): React.JSX.Element {
             </View>
           </Card>
 
+          {/* Text messages (SMS Output Spec 1) — sits between the Profile card
+              and the Privacy & Security summary. Hidden entirely for
+              placeholder-phone members. */}
+          <TextMessagesCard profile={profile} />
+
           {/* Bottom: 2-col grid (always visible) */}
           <View style={pageStyles.bottomGrid}>
             {/* Privacy & Security summary card.
@@ -1301,6 +1465,53 @@ const pageStyles = StyleSheet.create({
     marginTop: 4,
     fontSize:  12,
     color:     '#6B7280',
+  } as TextStyle,
+
+  // ── Text messages card (SMS Output Spec 1) ────────────────────────────────
+  smsCard: {
+    marginTop: 24,
+    padding:   24,
+  } as ViewStyle,
+  smsBody: {
+    marginTop:  8,
+    fontSize:   13,
+    color:      '#374151',
+    lineHeight: 18,
+  } as TextStyle,
+  smsButton: {
+    marginTop:         14,
+    alignSelf:         'flex-start',
+    paddingHorizontal: 16,
+    paddingVertical:   10,
+    borderRadius:      10,
+    backgroundColor:   '#10B981',
+  } as ViewStyle,
+  smsButtonHover: {
+    backgroundColor: '#059669',
+  } as ViewStyle,
+  smsButtonText: {
+    fontSize:   13,
+    fontWeight: '700',
+    color:      '#FFFFFF',
+  } as TextStyle,
+  smsInput: {
+    marginTop:         12,
+    width:             160,
+    fontSize:          16,
+    letterSpacing:     4,
+    color:             '#111827',
+    backgroundColor:   '#F9FAFB',
+    borderWidth:       1,
+    borderColor:       '#E5E7EB',
+    borderRadius:      8,
+    paddingHorizontal: 12,
+    paddingVertical:   10,
+  } as ViewStyle,
+  smsError: {
+    marginTop:  10,
+    fontSize:   13,
+    fontWeight: '500',
+    color:      '#DC2626',
   } as TextStyle,
   outlineBtn: {
     flexDirection:     'row',

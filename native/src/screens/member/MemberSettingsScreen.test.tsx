@@ -491,3 +491,89 @@ describe('MemberSettingsScreen — Profile information shows all signup fields (
     });
   });
 });
+
+// ─── SMS Output Spec 1 §1 — "Text messages" card ──────────────────────────────
+
+describe('MemberSettingsScreen — Text messages card (SMS Output Spec 1)', () => {
+  it('shows "Turn on text messages" + Send code for an unverified real phone', async () => {
+    memberProfileFixture = buildMemberProfileFixture({
+      phone: '5555550100',
+      phone_verified_at: null,
+    });
+    renderScreen();
+
+    await screen.findByText('Text messages');
+    expect(screen.getByLabelText('Send code')).toBeTruthy();
+    expect(screen.getByText(/turn on text messages/i)).toBeTruthy();
+  });
+
+  it('shows the "On" state with a masked number and STOP reminder when verified', async () => {
+    memberProfileFixture = buildMemberProfileFixture({
+      phone: '5555550100',
+      phone_verified_at: '2026-07-15T00:00:00Z',
+    });
+    renderScreen();
+
+    await screen.findByText('Text messages');
+    expect(screen.getByText(/on — we text you at/i)).toBeTruthy();
+    expect(screen.getByText(/reply stop anytime to opt out/i)).toBeTruthy();
+    // No re-verification affordance once already on.
+    expect(screen.queryByLabelText('Send code')).toBeNull();
+  });
+
+  it('renders no card at all for the 555-555-5555 placeholder phone', async () => {
+    memberProfileFixture = buildMemberProfileFixture({
+      phone: '5555555555',
+      phone_verified_at: null,
+    });
+    renderScreen();
+
+    await screen.findByText('Profile information');
+    expect(screen.queryByText('Text messages')).toBeNull();
+    expect(screen.queryByLabelText('Send code')).toBeNull();
+  });
+
+  it('confirm flow fires start + confirm endpoints and flips the card to On', async () => {
+    memberProfileFixture = buildMemberProfileFixture({
+      phone: '5555550100',
+      phone_verified_at: null,
+    });
+    let startCalled = 0;
+    let confirmBody: unknown = null;
+    mockedApi.mockImplementation(async (path: string, options?: { method?: string; body?: string }) => {
+      const method = options?.method ?? 'GET';
+      if (path === '/phone/start-verification' && method === 'POST') {
+        startCalled += 1;
+        return undefined;
+      }
+      if (path === '/phone/confirm-verification' && method === 'POST') {
+        confirmBody = options?.body ? JSON.parse(options.body) : null;
+        memberProfileFixture = {
+          ...memberProfileFixture,
+          phone_verified_at: '2026-07-15T00:00:00Z',
+        };
+        return undefined;
+      }
+      return routeApi(path, options);
+    });
+
+    renderScreen();
+    await screen.findByText('Text messages');
+
+    fireEvent.click(screen.getByLabelText('Send code'));
+    await waitFor(() => expect(startCalled).toBe(1));
+
+    const codeInput = await screen.findByLabelText('Verification code');
+    fireEvent.change(codeInput, { target: { value: '123456' } });
+    fireEvent.click(screen.getByLabelText('Confirm code'));
+
+    await waitFor(() => {
+      expect(confirmBody).toEqual({ phone: '+15555550100', code: '123456' });
+    });
+    // The profile query invalidates on confirm success; the refetch flips the
+    // card into its verified "On" state.
+    await waitFor(() => {
+      expect(screen.getByText(/on — we text you at/i)).toBeTruthy();
+    });
+  });
+});

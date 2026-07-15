@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -97,6 +97,10 @@ class MemberProfileResponse(BaseModel):
     # render without a separate /users/me call.
     name: str | None = None
     phone: str | None = None
+    # ISO-8601 timestamp set by POST /phone/confirm-verification. Null means the
+    # stored phone has not been SMS-verified — the member Settings "Text
+    # messages" card (SMS Output Spec 1) reads this to render its on/off state.
+    phone_verified_at: datetime | None = None
     email: str | None = None
     insurance_provider: str | None = None
     # Profile picture URL stored on the User row (S3 public bucket).
