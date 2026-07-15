@@ -36,11 +36,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import MemberProfile, User
 from app.services.auth_service import _normalize_phone_e164
+from app.utils.phone import PLACEHOLDER_PHONE_E164
 
 # Sentinel placeholder phone number, compared AFTER normalization so every
 # raw formatting variant ("555-555-5555", "(555) 555-5555", "5555555555",
 # "+1 555 555 5555") collapses to this one E.164 value.
-SENTINEL_PHONE_E164 = "+15555555555"
+#
+# Re-exported (not redefined) from app.utils.phone — QA batch (2026-07-14),
+# Part 3 introduced that module as the single named constant for this
+# sentinel, referenced by the phone-uniqueness exemption (migration
+# phoneidx0715) and the call-block guard (routers/communication.py). Kept
+# under this name here too (rather than renaming every call site) since
+# existing tests (tests/test_sms_eligibility.py, tests/test_sms_messaging.py,
+# tests/test_message_sms_fanout.py) already import/assert on
+# ``SENTINEL_PHONE_E164`` and the ``"sentinel_phone"`` reason code.
+SENTINEL_PHONE_E164 = PLACEHOLDER_PHONE_E164
 
 # CTIA-standard SMS opt-out keywords (case-insensitive, whole-message
 # match). Kept here — not only in the inbound webhook — so any future

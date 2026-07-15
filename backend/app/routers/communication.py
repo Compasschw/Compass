@@ -51,6 +51,26 @@ from app.dependencies import get_current_user
 from app.services.communication import get_provider
 from app.services.communication_touch_log import TouchKind, record_touch
 from app.services.session_lookup import resolve_target_session_for_call
+from app.utils.phone import PLACEHOLDER_PHONE_CALL_BLOCK_MESSAGE, is_placeholder_phone
+
+
+def _reject_if_either_leg_is_placeholder_phone(*phones: str | None) -> None:
+    """Raise a clean 422 when any leg of a call resolves to 555-555-5555.
+
+    QA feedback batch (2026-07-14), Part 3: the placeholder sentinel phone
+    (used by CHWs when a member has no phone of their own) has no real
+    device behind it — a call to/from it must never reach Vonage. Called
+    BEFORE ``get_provider().create_proxy_session(...)`` on every call-
+    initiation endpoint so no provider attempt is ever made for a blocked
+    leg. The message is intentionally the exact user-facing copy the
+    frontend shows — every call flow's generic error handler already
+    surfaces ``ApiError.message`` verbatim (see CHWMessagesScreen.handleCall
+    / MemberMessagesScreen.handleCall), so raising it here is sufficient to
+    replace the "Call requested — your phone should ring shortly." banner
+    with the correct on-brand message, with no frontend change required.
+    """
+    if any(is_placeholder_phone(phone) for phone in phones):
+        raise HTTPException(status_code=422, detail=PLACEHOLDER_PHONE_CALL_BLOCK_MESSAGE)
 
 logger = logging.getLogger("compass.communication")
 
@@ -402,6 +422,7 @@ async def call_bridge(
             status_code=400,
             detail="Both parties must have a verified phone number on file.",
         )
+    _reject_if_either_leg_is_placeholder_phone(caller.phone, recipient.phone)
 
     # Finding #8 (HIGH): enforce CHW ↔ member relationship gate on call-bridge.
     # Determine which party is CHW and which is member to use assert_shared_session.
@@ -1124,6 +1145,10 @@ async def sms_inbound(
         logger.warning("sms/inbound: could not normalize from-number — dead-letter")
         return SmsInboundAck(note="dead_letter_bad_from")
 
+    # Cap at a small, defensively-generous limit — we only need to
+    # distinguish "0", "1", or ">1" matches; no legitimate scenario has
+    # dozens of members sharing one phone number, and an unbounded query
+    # here would be an easy DoS vector against a public webhook.
     member_result = await db.execute(
         select(User, MemberProfile)
         .join(MemberProfile, MemberProfile.user_id == User.id)
@@ -1132,13 +1157,88 @@ async def sms_inbound(
             User.phone == normalized_from,
             User.deleted_at.is_(None),
         )
-        .limit(1)
+        .limit(25)
     )
-    row = member_result.first()
-    if row is None:
+    rows = member_result.all()
+    if not rows:
         logger.warning("sms/inbound: no member matches from-number — dead-letter")
         return SmsInboundAck(note="dead_letter_unknown_member")
-    member_user, member_profile = row
+
+    # ── Ambiguous match: >1 member shares this From number ─────────────────
+    # Decision (Akram, 2026-07-14): NEVER guess which member sent an inbound
+    # SMS when more than one account shares the sending number — dead-letter
+    # the message instead of misrouting it into the wrong conversation. With
+    # real-number uniqueness retained (migration chwphone0713 /
+    # phoneidx0715) this can only happen for the 555-555-5555 placeholder
+    # sentinel or a spoofed sender, but it closes the misroute hole
+    # unconditionally. STOP/HELP are compliance-critical (CTIA/10DLC) and
+    # are honored for EVERY matching member regardless of the ambiguity —
+    # opting a member out (or replying HELP) should never silently fail
+    # just because their phone happens to collide with another account's.
+    if len(rows) > 1:
+        matched_ids = [str(user.id) for user, _profile in rows]
+        upper_text = text.strip().upper()
+        if upper_text in _STOP_KEYWORDS:
+            for member_user, member_profile in rows:
+                member_profile.sms_opt_out = True
+                await record_touch(
+                    db,
+                    initiator_id=member_user.id,
+                    recipient_id=member_user.id,
+                    kind=TouchKind.sms,
+                    provider_session_id=str(message_uuid) if message_uuid else None,
+                    extra_data={
+                        "direction": "inbound",
+                        "stop_keyword": True,
+                        "ambiguous_member_phone": True,
+                    },
+                )
+            await db.commit()
+            logger.warning(
+                "sms/inbound: ambiguous from-number matched %d members — STOP "
+                "applied to all, message dead-lettered: %s",
+                len(rows), matched_ids,
+            )
+            return SmsInboundAck(note="ambiguous_member_phone")
+        if upper_text in _HELP_KEYWORDS:
+            try:
+                from app.services.vonage_sms import get_vonage_sms_messages_client
+
+                client = get_vonage_sms_messages_client()
+                await client.send_text(normalized_from, _HELP_REPLY_TEXT)
+            except Exception:  # noqa: BLE001 — best-effort auto-reply
+                logger.exception(
+                    "sms/inbound: HELP auto-reply send failed for ambiguous "
+                    "from-number matching members=%s", matched_ids,
+                )
+            for member_user, _member_profile in rows:
+                await record_touch(
+                    db,
+                    initiator_id=member_user.id,
+                    recipient_id=member_user.id,
+                    kind=TouchKind.sms,
+                    provider_session_id=str(message_uuid) if message_uuid else None,
+                    extra_data={
+                        "direction": "inbound",
+                        "help_keyword": True,
+                        "ambiguous_member_phone": True,
+                    },
+                )
+            await db.commit()
+            logger.warning(
+                "sms/inbound: ambiguous from-number matched %d members — HELP "
+                "applied to all, message dead-lettered: %s",
+                len(rows), matched_ids,
+            )
+            return SmsInboundAck(note="ambiguous_member_phone")
+        logger.warning(
+            "sms/inbound: ambiguous from-number matched %d members — "
+            "dead-letter (no STOP/HELP keyword): %s",
+            len(rows), matched_ids,
+        )
+        return SmsInboundAck(note="ambiguous_member_phone")
+
+    member_user, member_profile = rows[0]
 
     # ── STOP keyword handling ──────────────────────────────────────────────
     if text.strip().upper() in _STOP_KEYWORDS:
@@ -1399,6 +1499,7 @@ async def member_call_chw(
             status_code=400,
             detail="Both parties must have a verified phone number on file.",
         )
+    _reject_if_either_leg_is_placeholder_phone(caller.phone, chw.phone)
 
     # Eligibility: ≥1 shared session (any status).
     await _assert_shared_session(db, chw_id=chw_id, member_id=current_user.id)
@@ -1486,6 +1587,7 @@ async def chw_call_member(
             status_code=400,
             detail="Both parties must have a verified phone number on file.",
         )
+    _reject_if_either_leg_is_placeholder_phone(caller.phone, member.phone)
 
     # Epic D work gate: a CHW whose compliance checklist is incomplete may not
     # initiate an ad-hoc call while chw_work_gate_enabled is True. Flag OFF

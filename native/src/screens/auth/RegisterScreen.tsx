@@ -40,6 +40,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Mail, Lock, User as UserIcon, MapPin, Phone, Eye, EyeOff, ArrowRight, Cake, Users, Building2, IdCard, Home as HomeIcon, ChevronDown, Globe } from 'lucide-react-native';
 
 import { useAuth } from '../../context/AuthContext';
+import { ApiError } from '../../api/client';
 import { isAppleConfigured, isGoogleConfigured, OAuthError } from '../../services/oauth';
 import { PhoneVerificationModal } from '../../components/shared/PhoneVerificationModal';
 import { ConsentCheckboxes } from '../../components/shared/ConsentCheckboxes';
@@ -160,6 +161,12 @@ export function RegisterScreen(): React.JSX.Element {
   const [sex, setSex] = useState<Sex | null>(null);
   const [insuranceCompany, setInsuranceCompany] = useState('');
   const [primaryCin, setPrimaryCin] = useState('');
+  // Set when the backend rejects signup with a 409 duplicate-CIN error
+  // (another member already has this Medi-Cal ID). Rendered inline under
+  // the CIN field — QA feedback batch (2026-07-14), Part 4 — in addition to
+  // the top error banner, so the message sits right next to the field the
+  // user needs to fix.
+  const [cinDuplicateError, setCinDuplicateError] = useState<string | null>(null);
   // Carrier-aware CIN validation result — updated in the cinIsValid useMemo.
   // Separated so the hint text is accessible to the JSX without re-computing.
   const [cinValidation, setCinValidation] = useState<CinValidationResult | null>(null);
@@ -249,6 +256,7 @@ export function RegisterScreen(): React.JSX.Element {
   const handleSubmit = useCallback(async (): Promise<void> => {
     if (!canSubmit) return;
     setError(null);
+    setCinDuplicateError(null);
     setIsSubmitting(true);
     try {
       const trimmedPhone = phone.trim();
@@ -298,11 +306,22 @@ export function RegisterScreen(): React.JSX.Element {
     } catch (err) {
       const message =
         err instanceof Error ? err.message : 'Could not create your account.';
-      setError(
-        message.includes('Email already registered')
-          ? 'This email is already registered. Try signing in instead.'
-          : message,
-      );
+      // QA feedback batch (2026-07-14), Part 4: a 409 whose detail mentions
+      // the CIN (Medi-Cal ID) — "Another member already has this CIN
+      // (Medi-Cal ID)." — is shown inline under the CIN field (next to the
+      // field the user needs to fix) INSTEAD OF the generic top banner, so
+      // the message and the field line up.
+      const isDuplicateCin =
+        err instanceof ApiError && err.status === 409 && /cin|medi-cal id/i.test(message);
+      if (isDuplicateCin) {
+        setCinDuplicateError(message);
+      } else {
+        setError(
+          message.includes('Email already registered')
+            ? 'This email is already registered. Try signing in instead.'
+            : message,
+        );
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -596,6 +615,13 @@ export function RegisterScreen(): React.JSX.Element {
                         You can still register — verify the ID and update it in your profile if needed.
                       </Text>
                     </Text>
+                  </View>
+                )}
+                {/* QA feedback batch (2026-07-14), Part 4 — duplicate-CIN 409
+                    shown inline next to the field, not only the top banner. */}
+                {cinDuplicateError !== null && (
+                  <View style={s.cinDuplicateBanner} accessibilityLiveRegion="polite">
+                    <Text style={s.cinDuplicateText}>{cinDuplicateError}</Text>
                   </View>
                 )}
 
@@ -1164,6 +1190,23 @@ const s = StyleSheet.create({
     color: '#78350F', // amber-900
     fontFamily: fonts.body,
     fontWeight: '400',
+  },
+  // Duplicate-CIN 409 — same red-banner convention as errorBanner/errorText
+  // above, but anchored under the CIN field (QA feedback batch 2026-07-14,
+  // Part 4) rather than only at the top of the form.
+  cinDuplicateBanner: {
+    backgroundColor: '#FEE2E2',
+    borderColor: '#FCA5A5',
+    borderWidth: 1,
+    borderRadius: radii.md,
+    padding: 10,
+    marginTop: 6,
+    marginBottom: 2,
+  },
+  cinDuplicateText: {
+    fontSize: 13,
+    fontFamily: fonts.body,
+    color: '#B91C1C',
   },
 
   // ── Expanded member signup additions ───────────────────────────────────

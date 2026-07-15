@@ -23,8 +23,10 @@ from app.schemas.auth import (
     TokenResponse,
 )
 from app.services.auth_service import (
+    DuplicateCinError,
     DuplicatePhoneError,
     authenticate_user,
+    check_cin_uniqueness,
     create_tokens,
     mark_first_login,
     register_user,
@@ -151,6 +153,17 @@ async def register(
         raise HTTPException(
             status_code=409,
             detail="An account with this phone number already exists.",
+        ) from exc
+    except DuplicateCinError as exc:
+        # Log only the last 2 characters — a CIN is PHI and the full value
+        # has no diagnostic value beyond "which record" that a short
+        # fragment doesn't already provide (mirrors the phone-masking
+        # convention immediately above).
+        _masked_cin_suffix = exc.normalized_cin[-2:] if len(exc.normalized_cin) >= 2 else exc.normalized_cin
+        logger.info("register: rejected duplicate CIN ending in ***%s", _masked_cin_suffix)
+        raise HTTPException(
+            status_code=409,
+            detail="Another member already has this CIN (Medi-Cal ID).",
         ) from exc
     if user is None:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -526,6 +539,18 @@ async def complete_member_onboarding(
     profile = result.scalar_one_or_none()
     if profile is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member profile not found")
+
+    # QA batch (2026-07-14), Part 4 — reject a CIN already on file for
+    # another member BEFORE writing it. exclude_user_id=current_user.id so
+    # re-submitting this same member's own unchanged CIN never 409s against
+    # themselves.
+    try:
+        await check_cin_uniqueness(db, data.medi_cal_id, exclude_user_id=current_user.id)
+    except DuplicateCinError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Another member already has this CIN (Medi-Cal ID).",
+        ) from exc
 
     # Write the Pear-required fields. Mirrors the allow-list in auth_service.register_user.
     profile.date_of_birth = data.date_of_birth

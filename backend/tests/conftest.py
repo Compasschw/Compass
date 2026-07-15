@@ -1,4 +1,5 @@
 import asyncio
+import itertools
 import os
 
 # Disable the slowapi rate limiter for tests BEFORE importing app.main —
@@ -155,6 +156,19 @@ async def member_tokens(client: AsyncClient) -> dict:
 
 def auth_header(tokens: dict) -> dict:
     return {"Authorization": f"Bearer {tokens['access_token']}"}
+
+
+_cin_counter = itertools.count(1)
+
+
+def unique_cin() -> str:
+    """Fresh, valid Medi-Cal-format CIN guaranteed distinct from every other
+    unique_cin() call in the process. QA batch 2026-07-14 Part 4 added a
+    uniqueness constraint on member_profiles.medi_cal_id_hash — tests that
+    create multiple members in the SAME test function must no longer reuse a
+    shared literal CIN (e.g. "91234567A2") across them."""
+    n = next(_cin_counter)
+    return f"9{n:07d}A"
 
 
 def complete_member_signup_payload(

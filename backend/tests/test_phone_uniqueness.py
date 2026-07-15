@@ -17,6 +17,17 @@ Coverage:
   7. The DB-level partial unique index exists (race-safety backstop) —
      verified by attempting a raw duplicate INSERT that bypasses the
      application-layer check entirely.
+
+  QA feedback batch (2026-07-14), Part 3 — 555-555-5555 placeholder phone
+  exemption:
+  8. Any number of members may register with the placeholder sentinel phone
+     via POST /auth/register — the duplicate-phone pre-check is skipped for
+     that one specific value.
+  9. Same exemption via POST /chw/members (CHW-initiated member creation).
+  10. DB-level: two raw User INSERTs sharing the sentinel phone both commit
+      cleanly (widened partial-index WHERE clause), while two raw User
+      INSERTs sharing a REAL (non-sentinel) phone still collide — proving
+      the exemption is scoped to the sentinel only.
 """
 
 import uuid
@@ -25,11 +36,12 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.exc import IntegrityError
 
-from tests.conftest import auth_header
+from tests.conftest import auth_header, unique_cin
 
 pytestmark = pytest.mark.asyncio
 
 _COMPLIANT_PASSWORD = "Testpass123!"
+_PLACEHOLDER_PHONE_RAW = "555-555-5555"
 
 
 def _chw_payload(email: str, phone: str | None, name: str = "Some CHW") -> dict:
@@ -209,6 +221,145 @@ async def test_db_level_partial_unique_index_backstops_races(client: AsyncClient
                 name="Race B",
                 role="chw",
                 phone=shared_phone,
+                is_active=True,
+            )
+        )
+        with pytest.raises(IntegrityError):
+            await db.commit()
+
+
+# ─── QA feedback batch (2026-07-14), Part 3 — 555-555-5555 exemption ───────
+
+
+async def test_two_members_register_with_placeholder_phone_both_succeed(
+    client: AsyncClient,
+) -> None:
+    """Any number of members may share the 555-555-5555 sentinel phone at
+    self-signup — the duplicate-phone pre-check skips it entirely."""
+    first = await client.post(
+        "/api/v1/auth/register",
+        json=_member_payload("sentinel_member_a@example.com", _PLACEHOLDER_PHONE_RAW),
+    )
+    assert first.status_code == 201, first.text
+
+    second = await client.post(
+        "/api/v1/auth/register",
+        json=_member_payload("sentinel_member_b@example.com", _PLACEHOLDER_PHONE_RAW),
+    )
+    assert second.status_code == 201, second.text
+
+
+async def test_two_chw_created_members_with_placeholder_phone_both_succeed(
+    client: AsyncClient, chw_tokens: dict
+) -> None:
+    """POST /chw/members also exempts the sentinel phone from the
+    duplicate-phone guard — a CHW may onboard any number of members who
+    have no phone of their own using the 555-555-5555 convention."""
+    res_a = await client.post(
+        "/api/v1/chw/members",
+        json={
+            "email": "sentinel_chwcreated_a@example.com",
+            "temp_password": "Temp-pass-1234!",
+            "name": "Sentinel Created A",
+            "phone": _PLACEHOLDER_PHONE_RAW,
+            "date_of_birth": "1988-02-02",
+            "gender": "Male",
+            "insurance_company": "Health Net",
+            "medi_cal_id": unique_cin(),
+            "zip_code": "90001",
+            "terms_accepted": True,
+            "communications_consent": True,
+        },
+        headers=auth_header(chw_tokens),
+    )
+    assert res_a.status_code == 201, res_a.text
+
+    res_b = await client.post(
+        "/api/v1/chw/members",
+        json={
+            "email": "sentinel_chwcreated_b@example.com",
+            "temp_password": "Temp-pass-1234!",
+            "name": "Sentinel Created B",
+            "phone": _PLACEHOLDER_PHONE_RAW,
+            "date_of_birth": "1988-02-02",
+            "gender": "Male",
+            "insurance_company": "Health Net",
+            "medi_cal_id": unique_cin(),
+            "zip_code": "90001",
+            "terms_accepted": True,
+            "communications_consent": True,
+        },
+        headers=auth_header(chw_tokens),
+    )
+    assert res_b.status_code == 201, res_b.text
+
+
+async def test_db_level_placeholder_phone_exempt_but_real_phone_still_unique(
+    client: AsyncClient,
+) -> None:
+    """DB-level proof of the widened partial-index WHERE clause: two raw
+    User INSERTs sharing the 555-555-5555 sentinel both commit cleanly, while
+    two raw User INSERTs sharing a REAL (non-sentinel) phone still collide —
+    the exemption is scoped to the sentinel value only, every other non-null
+    phone remains globally unique."""
+    from app.models.user import User
+    from app.utils.security import hash_password
+    from app.utils.phone import PLACEHOLDER_PHONE_E164
+    from tests.conftest import test_session as _session_factory
+
+    async with _session_factory() as db:
+        db.add(
+            User(
+                id=uuid.uuid4(),
+                email="sentinel_db_a@example.com",
+                password_hash=hash_password(_COMPLIANT_PASSWORD),
+                name="Sentinel DB A",
+                role="member",
+                phone=PLACEHOLDER_PHONE_E164,
+                is_active=True,
+            )
+        )
+        await db.commit()
+
+    async with _session_factory() as db:
+        db.add(
+            User(
+                id=uuid.uuid4(),
+                email="sentinel_db_b@example.com",
+                password_hash=hash_password(_COMPLIANT_PASSWORD),
+                name="Sentinel DB B",
+                role="member",
+                phone=PLACEHOLDER_PHONE_E164,
+                is_active=True,
+            )
+        )
+        # Must NOT raise — the sentinel is excluded from the partial index.
+        await db.commit()
+
+    real_shared_phone = "+13105559999"
+    async with _session_factory() as db:
+        db.add(
+            User(
+                id=uuid.uuid4(),
+                email="real_db_a@example.com",
+                password_hash=hash_password(_COMPLIANT_PASSWORD),
+                name="Real DB A",
+                role="member",
+                phone=real_shared_phone,
+                is_active=True,
+            )
+        )
+        await db.commit()
+
+    async with _session_factory() as db:
+        db.add(
+            User(
+                id=uuid.uuid4(),
+                email="real_db_b@example.com",
+                password_hash=hash_password(_COMPLIANT_PASSWORD),
+                name="Real DB B",
+                role="member",
+                phone=real_shared_phone,
                 is_active=True,
             )
         )

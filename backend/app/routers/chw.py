@@ -877,6 +877,7 @@ async def create_chw_member(
     from app.config import settings
     from app.models.request import ServiceRequest
     from app.services.auth_service import (
+        DuplicateCinError,
         DuplicatePhoneError,
         append_new_member_to_csv,
         register_user,
@@ -948,6 +949,12 @@ async def create_chw_member(
         raise HTTPException(
             status_code=409,
             detail="An account with this phone number already exists.",
+        ) from exc
+    except DuplicateCinError as exc:
+        # Same "nothing committed yet" reasoning as DuplicatePhoneError above.
+        raise HTTPException(
+            status_code=409,
+            detail="Another member already has this CIN (Medi-Cal ID).",
         ) from exc
     if member is None:
         raise HTTPException(status_code=400, detail="Email already registered")

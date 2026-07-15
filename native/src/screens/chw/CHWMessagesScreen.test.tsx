@@ -67,7 +67,7 @@ vi.mock('@react-navigation/native', () => ({
   useRoute: () => ({ params: {} }),
 }));
 
-import { api } from '../../api/client';
+import { ApiError, api } from '../../api/client';
 import { CHWMessagesScreen } from './CHWMessagesScreen';
 import { SDOH_PANEL_PANE_BREAKPOINT } from '../../components/assessment/InlineSdohPanel';
 import * as showAlertModule from '../../utils/showAlert';
@@ -174,6 +174,13 @@ let checklistResponse: {
   gate_enabled: boolean;
 } = { can_work: true, missing: [], items: [], gate_enabled: false };
 
+// QA feedback batch (2026-07-14), Part 3 — when true, POST /sessions/{id}/call
+// rejects with the backend's placeholder-phone 422, exactly as it does when
+// the member's phone is the 555-555-5555 sentinel. Lets a single test flip
+// the call endpoint to the blocked path without touching every other test
+// in this file (which all rely on the call succeeding, if they call at all).
+let sessionCallShouldFail = false;
+
 function routeApi(path: string, options?: { method?: string; body?: string }): unknown {
   const method = options?.method ?? 'GET';
 
@@ -235,6 +242,16 @@ function routeApi(path: string, options?: { method?: string; body?: string }): u
   if (path === `/sessions/${SESSION_ID}/no-show` && method === 'PATCH') {
     currentSessionStatus = 'no_show';
     return { ...sessionFixture, status: 'no_show', ended_at: new Date().toISOString() };
+  }
+
+  if (path === `/sessions/${SESSION_ID}/call` && method === 'POST') {
+    if (sessionCallShouldFail) {
+      throw new ApiError(
+        422,
+        "This member's phone number is 555-555-5555 and cannot receive calls.",
+      );
+    }
+    return { proxy_number: '+15005550006', provider_session_id: 'call-1', session_id: SESSION_ID };
   }
 
   if (path === `/sessions/${SESSION_ID}/end` && method === 'POST') {
@@ -356,6 +373,7 @@ beforeEach(() => {
   currentSessionStatus = 'in_progress';
   endSessionEndedAt = '2026-07-11T09:50:00.000Z';
   checklistResponse = { can_work: true, missing: [], items: [], gate_enabled: false };
+  sessionCallShouldFail = false;
   mockNavigate.mockClear();
   mockedApi.mockImplementation(async (path: string, options?: { method?: string; body?: string }) =>
     routeApi(path, options),
@@ -932,5 +950,61 @@ describe('CHWMessagesScreen — composer work gate (QA batch #2)', () => {
     fireEvent.click(note);
 
     expect(mockNavigate).toHaveBeenCalledWith('Profile');
+  });
+});
+
+// QA feedback batch (2026-07-14), Part 3 — a member whose phone is the
+// 555-555-5555 placeholder sentinel cannot generate or receive a call.
+// POST /sessions/{id}/call rejects with a clean 422 whose detail IS the
+// exact user-facing message; the component's existing generic call-failure
+// handler (`err.message` -> showToast) surfaces it verbatim and — because
+// the rejection happens before the success line runs — the
+// "Call requested — your phone should ring shortly." banner can never fire
+// for a blocked call. No source change was needed in this screen to get
+// this behavior; this test proves it end-to-end.
+describe('CHWMessagesScreen — placeholder-phone call block (QA batch 2026-07-14, Part 3)', () => {
+  it('shows the cannot-receive-calls prompt and never the ring-shortly banner', async () => {
+    sessionCallShouldFail = true;
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    try {
+      renderScreen();
+      const callButton = await screen.findByLabelText('Call member — next step', {}, { timeout: 3000 });
+      fireEvent.click(callButton);
+
+      await waitFor(() =>
+        expect(
+          screen.getByText("This member's phone number is 555-555-5555 and cannot receive calls."),
+        ).toBeTruthy(),
+      );
+      expect(
+        screen.queryByText('Call requested — your phone should ring shortly.'),
+      ).toBeNull();
+      expect(mockedApi).toHaveBeenCalledWith(
+        `/sessions/${SESSION_ID}/call`,
+        expect.objectContaining({ method: 'POST' }),
+      );
+    } finally {
+      confirmSpy.mockRestore();
+    }
+  });
+
+  it('a normal call still shows the ring-shortly banner (control case)', async () => {
+    sessionCallShouldFail = false;
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    try {
+      renderScreen();
+      const callButton = await screen.findByLabelText('Call member — next step', {}, { timeout: 3000 });
+      fireEvent.click(callButton);
+
+      await waitFor(() =>
+        expect(
+          screen.getByText('Call requested — your phone should ring shortly.'),
+        ).toBeTruthy(),
+      );
+    } finally {
+      confirmSpy.mockRestore();
+    }
   });
 });

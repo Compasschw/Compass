@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.utils.phone import PLACEHOLDER_PHONE_E164
 from app.utils.security import create_access_token, create_refresh_token, hash_password, verify_password
 
 logger = logging.getLogger("compass.auth")
@@ -27,6 +28,22 @@ class DuplicatePhoneError(Exception):
     def __init__(self, normalized_phone: str) -> None:
         self.normalized_phone = normalized_phone
         super().__init__(f"Phone number already registered: {normalized_phone}")
+
+
+class DuplicateCinError(Exception):
+    """Raised by ``register_user`` / ``check_cin_uniqueness`` when the
+    normalized CIN (Medi-Cal ID) is already on another member's profile.
+
+    Mirrors ``DuplicatePhoneError``'s design exactly: a distinct exception
+    type so callers can surface a specific 409 rather than a generic 500 or
+    an unhandled IntegrityError. Carries the normalized (but still raw —
+    callers must mask before logging, matching the phone convention of
+    logging only a fragment) CIN value.
+    """
+
+    def __init__(self, normalized_cin: str) -> None:
+        self.normalized_cin = normalized_cin
+        super().__init__("Medi-Cal ID (CIN) already registered to another member")
 
 
 async def register_user(
@@ -92,7 +109,14 @@ async def register_user(
             — this in-app check exists to return a clean 409 with a readable
             message on the common (non-racing) path, matching the existing
             duplicate-email UX rather than surfacing a raw
-            IntegrityError/500.
+            IntegrityError/500. Never raised for the 555-555-5555 placeholder
+            sentinel (QA batch 2026-07-14, Part 3) — that value is exempt
+            from uniqueness and may appear on any number of accounts.
+        DuplicateCinError: When ``role == "member"`` and
+            ``member_profile_fields["medi_cal_id"]`` normalizes to a value
+            already stored on another member's profile (QA batch
+            2026-07-14, Part 4). Checked BEFORE creating the User row for
+            the same "no partial row" reason as the phone guard above.
     """
     from app.models.user import CHWProfile, MemberProfile, User
 
@@ -110,14 +134,25 @@ async def register_user(
     # every role, so this only fires when a normalized value is actually
     # present — NULL phones are never compared (any number of accounts may
     # have no phone on file; enforced at the DB layer too via the partial
-    # unique index's `WHERE phone IS NOT NULL` clause).
+    # unique index's `WHERE phone IS NOT NULL` clause). The 555-555-5555
+    # placeholder sentinel is exempt (QA batch 2026-07-14, Part 3) — CHWs
+    # reuse it across any number of members who have no phone of their own,
+    # so it is deliberately never compared here either (mirrors the DB-layer
+    # exemption in migration ``phoneidx0715``).
     normalized_phone = _normalize_phone_e164(phone)
-    if normalized_phone is not None:
+    if normalized_phone is not None and normalized_phone != PLACEHOLDER_PHONE_E164:
         existing_phone = await db.execute(
             select(User).where(User.phone == normalized_phone)
         )
         if existing_phone.scalar_one_or_none():
             raise DuplicatePhoneError(normalized_phone)
+
+    # Duplicate-CIN guard (QA batch 2026-07-14, Part 4). Only members supply
+    # a CIN, and it's optional — this only fires for a non-empty value.
+    if role == "member" and member_profile_fields:
+        candidate_cin = member_profile_fields.get("medi_cal_id")
+        if candidate_cin:
+            await check_cin_uniqueness(db, candidate_cin)
 
     user = User(
         email=normalized_email,
@@ -293,10 +328,66 @@ def _normalize_phone_e164(value: str | None) -> str | None:
     return f"+{digits}"
 
 
+async def check_cin_uniqueness(
+    db: AsyncSession,
+    cin: str | None,
+    *,
+    exclude_user_id: UUID | None = None,
+) -> None:
+    """Raise ``DuplicateCinError`` when ``cin`` collides with another member.
+
+    QA batch (2026-07-14), Part 4. ``member_profiles.medi_cal_id`` is
+    encrypted at rest with a random nonce per row (``EncryptedString`` /
+    AES-256-GCM), so identical plaintext CINs produce different ciphertext —
+    neither a direct column comparison nor a unique index on the encrypted
+    column can detect a duplicate. Instead this compares the deterministic
+    HMAC-SHA256 digest (``MemberProfile.medi_cal_id_hash``, kept in lockstep
+    with ``medi_cal_id`` by the ``set`` event listener in
+    ``app.models.user``) via ``app.utils.encryption.hash_cin``.
+
+    Shared by every write path that sets a member's CIN:
+      - ``register_user`` (self-signup + CHW-initiated member creation)
+      - ``POST /auth/complete-member-onboarding`` (OAuth onboarding)
+      - ``PUT /member/profile`` and ``PATCH /member/profile/insurance-cin``
+
+    Args:
+        db: Active async session.
+        cin: Raw (not-yet-normalized) CIN string, or None/empty — a no-op in
+            that case since CIN is optional; only a non-empty value is
+            checked.
+        exclude_user_id: When editing an EXISTING member's own profile, pass
+            their ``User.id`` so re-submitting their own unchanged CIN never
+            collides with themselves. Omit (default None) at creation time —
+            there is no existing profile to exclude yet.
+
+    Raises:
+        DuplicateCinError: When the normalized CIN's digest already exists
+            on another member's profile.
+    """
+    from app.models.user import MemberProfile
+    from app.schemas.cin_config import normalize_cin
+    from app.utils.encryption import hash_cin
+
+    if not cin or not cin.strip():
+        return
+    normalized = normalize_cin(cin)
+    if not normalized:
+        return
+    candidate_hash = hash_cin(normalized)
+
+    stmt = select(MemberProfile.id).where(MemberProfile.medi_cal_id_hash == candidate_hash)
+    if exclude_user_id is not None:
+        stmt = stmt.where(MemberProfile.user_id != exclude_user_id)
+    existing = await db.execute(stmt.limit(1))
+    if existing.scalar_one_or_none() is not None:
+        raise DuplicateCinError(normalized)
+
+
 # Re-exported for callers that want the type without re-importing date.
 __all__ = [
     "register_user",
     "append_new_member_to_csv",
+    "check_cin_uniqueness",
     "authenticate_user",
     "create_tokens",
     "store_refresh_token",

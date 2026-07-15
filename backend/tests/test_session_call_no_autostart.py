@@ -31,10 +31,12 @@ from httpx import AsyncClient
 from sqlalchemy import select
 
 import app.config as _app_config_module
+from app.models.communication import CommunicationSession
 from app.models.conversation import Conversation
 from app.models.session import Session
 from app.models.user import User
 from app.models.request import ServiceRequest
+from app.utils.phone import PLACEHOLDER_PHONE_CALL_BLOCK_MESSAGE, PLACEHOLDER_PHONE_E164
 from tests.conftest import auth_header, test_session as _test_session_factory
 
 
@@ -251,3 +253,75 @@ async def test_call_with_session_per_call_mints_session_without_starting_it(
             f"got status={new_session.status!r}"
         )
         assert new_session.started_at is None
+
+
+# ─── QA feedback batch (2026-07-14), Part 3 — placeholder-phone call block ──
+#
+# POST /sessions/{id}/call is the endpoint the mobile app actually calls
+# (both the CHW Messages call flow and the member Messages call flow route
+# through it) — see initiate_session_call's docstring. These tests cover
+# both directions (CHW-initiates, member-initiates) when the MEMBER's phone
+# is the 555-555-5555 placeholder sentinel.
+
+
+@pytest.mark.asyncio
+async def test_chw_initiated_call_blocked_when_member_has_placeholder_phone(
+    client: AsyncClient,
+) -> None:
+    """CHW taps call on a session where the member's phone is the sentinel
+    -> clean 422 with the documented message, no Vonage attempt (no
+    CommunicationSession row is written)."""
+    chw_tokens = await _register(client, "call-block-chw1@example.com", "chw")
+    member_tokens = await _register(client, "call-block-member1@example.com", "member")
+    chw_id = UUID(_user_id_from_tokens(chw_tokens))
+    member_id = UUID(_user_id_from_tokens(member_tokens))
+    await _set_phone_via_db(str(chw_id), "+13105550501")
+    await _set_phone_via_db(str(member_id), PLACEHOLDER_PHONE_E164)
+
+    session_id = await _seed_scheduled_session(chw_id, member_id)
+
+    res = await client.post(
+        f"/api/v1/sessions/{session_id}/call",
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 422, f"Expected 422, got {res.status_code}: {res.text}"
+    assert res.json()["detail"] == PLACEHOLDER_PHONE_CALL_BLOCK_MESSAGE
+
+    async with _test_session_factory() as db:
+        rows = (
+            await db.execute(
+                select(CommunicationSession).where(CommunicationSession.session_id == session_id)
+            )
+        ).scalars().all()
+        assert rows == [], "No provider call should have been attempted"
+
+
+@pytest.mark.asyncio
+async def test_member_initiated_call_blocked_when_own_phone_is_placeholder(
+    client: AsyncClient,
+) -> None:
+    """Member (whose own phone is the sentinel) taps call -> same clean 422,
+    no Vonage attempt — covers the member-initiates direction."""
+    chw_tokens = await _register(client, "call-block-chw2@example.com", "chw")
+    member_tokens = await _register(client, "call-block-member2@example.com", "member")
+    chw_id = UUID(_user_id_from_tokens(chw_tokens))
+    member_id = UUID(_user_id_from_tokens(member_tokens))
+    await _set_phone_via_db(str(chw_id), "+13105550502")
+    await _set_phone_via_db(str(member_id), PLACEHOLDER_PHONE_E164)
+
+    session_id = await _seed_scheduled_session(chw_id, member_id)
+
+    res = await client.post(
+        f"/api/v1/sessions/{session_id}/call",
+        headers=auth_header(member_tokens),
+    )
+    assert res.status_code == 422, f"Expected 422, got {res.status_code}: {res.text}"
+    assert res.json()["detail"] == PLACEHOLDER_PHONE_CALL_BLOCK_MESSAGE
+
+    async with _test_session_factory() as db:
+        rows = (
+            await db.execute(
+                select(CommunicationSession).where(CommunicationSession.session_id == session_id)
+            )
+        ).scalars().all()
+        assert rows == [], "No provider call should have been attempted"
