@@ -46,6 +46,7 @@ def _build_member_profile_response(profile, user) -> MemberProfileResponse:
         insurance_provider=profile.insurance_provider,
         name=user.name,
         phone=user.phone,
+        phone_verified_at=user.phone_verified_at,
         email=user.email,
         profile_picture_url=presigned_avatar_url(user.profile_picture_url),
         preferred_name=profile.preferred_name,
