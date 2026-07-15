@@ -13,18 +13,23 @@ POST /api/v1/phone/confirm-verification
 
 Both endpoints require a valid JWT (``Depends(get_current_user)``).
 
+The OTP mechanics (rate-limit cap, argon2 hashing, TTL, attempt decrement)
+live in ``app.services.otp`` and are shared verbatim with the SMS 2FA login
+challenge (Spec 2) — this router only owns the phone-verification-specific
+concerns (sentinel guard, E.164 request validation, and persisting the verified
+phone onto the User row).
+
 HIPAA: phone numbers logged only as last-4 digits at INFO level.
 """
 
 import logging
 import re
-import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, field_validator
-from sqlalchemy import and_, func, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,8 +38,8 @@ from app.dependencies import get_current_user
 from app.limiter import limiter
 from app.models.phone_verification import PhoneVerification
 from app.models.user import User
+from app.services.otp import OtpCheckError, check_otp, create_otp
 from app.utils.phone import is_placeholder_phone
-from app.utils.security import pwd_context
 
 logger = logging.getLogger("compass.phone_verification")
 
@@ -44,6 +49,11 @@ router = APIRouter(prefix="/api/v1/phone", tags=["phone-verification"])
 _E164_PATTERN = re.compile(r"^\+[1-9]\d{6,14}$")
 
 _LOG_SUFFIX_LEN = 4
+
+# TTL as a timedelta for the start-verification response's expires_at. Kept in
+# lockstep with the code's persisted expiry (owned by app.services.otp) via the
+# same PhoneVerification.CODE_TTL_MINUTES constant.
+_CODE_TTL = timedelta(minutes=PhoneVerification.CODE_TTL_MINUTES)
 
 
 def _masked(phone_e164: str) -> str:
@@ -109,57 +119,6 @@ class ConfirmVerificationResponse(BaseModel):
     verified: bool
 
 
-# ─── Helpers ─────────────────────────────────────────────────────────────────
-
-
-def _generate_otp() -> str:
-    """Generate a cryptographically random 6-digit numeric OTP."""
-    # secrets.randbelow(1_000_000) gives [0, 999_999]; zero-pad to always 6
-    # digits so "000123" is a valid code and not ambiguously 3 digits.
-    return f"{secrets.randbelow(1_000_000):06d}"
-
-
-async def _count_recent_starts(
-    db: AsyncSession,
-    user_id,
-    since: datetime,
-) -> int:
-    """Count PhoneVerification rows created for this user since *since*."""
-    result = await db.execute(
-        select(func.count()).where(
-            and_(
-                PhoneVerification.user_id == user_id,
-                PhoneVerification.created_at >= since,
-            )
-        )
-    )
-    return result.scalar_one()
-
-
-async def _find_active_verification(
-    db: AsyncSession,
-    user_id,
-    phone_e164: str,
-    now: datetime,
-) -> PhoneVerification | None:
-    """Return the most recent un-expired, un-verified, un-exhausted row."""
-    result = await db.execute(
-        select(PhoneVerification)
-        .where(
-            and_(
-                PhoneVerification.user_id == user_id,
-                PhoneVerification.phone_e164 == phone_e164,
-                PhoneVerification.expires_at > now,
-                PhoneVerification.verified_at.is_(None),
-                PhoneVerification.attempts_left > 0,
-            )
-        )
-        .order_by(PhoneVerification.created_at.desc())
-        .limit(1)
-    )
-    return result.scalar_one_or_none()
-
-
 # ─── Endpoints ────────────────────────────────────────────────────────────────
 
 
@@ -182,17 +141,15 @@ async def start_verification(
 ) -> StartVerificationResponse:
     """Issue a fresh OTP challenge for *phone*.
 
-    Rate-limit: max 3 PhoneVerification rows per user in the past hour.
-    A new row is always inserted (codes are not recycled) so each SMS
-    carries a fresh, independently-valid code regardless of whether the
-    previous one expired or failed delivery.
+    Rate-limit: max 3 PhoneVerification rows per user in the past hour (enforced
+    by ``app.services.otp.create_otp``, which raises 429 when exceeded). A new
+    row is always inserted (codes are not recycled) so each SMS carries a
+    fresh, independently-valid code regardless of whether the previous one
+    expired or failed delivery.
 
     Returns the challenge expiry timestamp so the client can display a
     countdown and know when to offer the "Resend" button.
     """
-    now = datetime.now(UTC)
-    one_hour_ago = now - timedelta(hours=1)
-
     # ── Sentinel guard (Spec 1 §1, decision 2) ────────────────────────────────
     # The 555-555-5555 placeholder is treated as fully SMS-opted-out: it has no
     # real device behind it, so it can never receive an OTP. Reject before we
@@ -203,36 +160,10 @@ async def start_verification(
             detail="This phone number is a placeholder and can't receive texts.",
         )
 
-    # ── Per-user rate limiting ────────────────────────────────────────────────
-    recent_count = await _count_recent_starts(db, current_user.id, since=one_hour_ago)
-    if recent_count >= PhoneVerification.MAX_STARTS_PER_HOUR:
-        logger.warning(
-            "Phone verification rate limit hit for user %s (phone %s).",
-            current_user.id,
-            _masked(body.phone),
-        )
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=(
-                "Too many verification attempts. "
-                "Please wait before requesting another code."
-            ),
-        )
-
-    # ── Generate and hash the OTP ─────────────────────────────────────────────
-    raw_code = _generate_otp()
-    code_hash = pwd_context.hash(raw_code)
-    expires_at = now + timedelta(minutes=PhoneVerification.CODE_TTL_MINUTES)
-
-    pv = PhoneVerification(
-        user_id=current_user.id,
-        phone_e164=body.phone,
-        code_hash=code_hash,
-        attempts_left=PhoneVerification.MAX_ATTEMPTS,
-        expires_at=expires_at,
-    )
-    db.add(pv)
-    await db.commit()
+    # ── Generate, hash, and persist the OTP (shared machinery) ────────────────
+    # create_otp enforces the 3-per-hour per-user cap and commits the row.
+    raw_code = await create_otp(db, current_user.id, body.phone)
+    expires_at = datetime.now(UTC) + _CODE_TTL
 
     # ── Deliver via SMS — unified async Messages client (Spec 1 §1) ───────────
     # Single SMS-emitting channel: the JWT-authenticated Vonage Messages API,
@@ -251,11 +182,10 @@ async def start_verification(
     if not sms_result.success:
         logger.error(
             "SMS delivery failed for user %s to %s (error=%s). "
-            "Verification row id=%s is stored; user may retry.",
+            "Verification row is stored; user may retry.",
             current_user.id,
             _masked(body.phone),
             sms_result.error,
-            pv.id,
         )
         # We do not roll back the DB row — the OTP is valid and the user
         # can retry sending (within rate limits).  Return 500 so the client
@@ -304,55 +234,53 @@ async def confirm_verification(
       User.phone_verified_at is set.  The PhoneVerification.verified_at
       timestamp is set to mark the row consumed.
     """
-    now = datetime.now(UTC)
-
-    pv = await _find_active_verification(db, current_user.id, body.phone, now)
-
-    if pv is None:
-        logger.info(
-            "No active verification found for user %s phone %s.",
-            current_user.id,
-            _masked(body.phone),
-        )
-        raise HTTPException(
-            status_code=status.HTTP_410_GONE,
-            detail=(
-                "No active verification code for this number. "
-                "Please request a new code."
-            ),
-        )
-
-    # ── Verify the submitted code ──────────────────────────────────────────────
-    code_valid = pwd_context.verify(body.code, pv.code_hash)
-
-    if not code_valid:
-        pv.attempts_left -= 1
-        await db.commit()
-
-        remaining = pv.attempts_left
-        logger.info(
-            "Invalid OTP for user %s phone %s. attempts_left=%d.",
-            current_user.id,
-            _masked(body.phone),
-            remaining,
-        )
-
-        if remaining <= 0:
+    # Scope the lookup/verify to (user, phone) — identical to the pre-extraction
+    # behaviour — via app.services.otp.check_otp. It sets verified_at in-session
+    # (uncommitted) on success so the consumption unwinds atomically with the
+    # User.phone write below if that hits the duplicate-phone constraint.
+    try:
+        await check_otp(db, current_user.id, body.code, phone_e164=body.phone)
+    except OtpCheckError as err:
+        if err.reason == "no_active":
+            logger.info(
+                "No active verification found for user %s phone %s.",
+                current_user.id,
+                _masked(body.phone),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_410_GONE,
+                detail=(
+                    "No active verification code for this number. "
+                    "Please request a new code."
+                ),
+            ) from err
+        if err.reason == "exhausted":
+            logger.info(
+                "OTP exhausted for user %s phone %s.",
+                current_user.id,
+                _masked(body.phone),
+            )
             raise HTTPException(
                 status_code=status.HTTP_410_GONE,
                 detail=(
                     "Too many incorrect attempts. "
                     "Please request a new verification code."
                 ),
-            )
-
+            ) from err
+        # wrong_code
+        logger.info(
+            "Invalid OTP for user %s phone %s. attempts_left=%d.",
+            current_user.id,
+            _masked(body.phone),
+            err.attempts_left,
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Incorrect code. {remaining} attempt(s) remaining.",
-        )
+            detail=f"Incorrect code. {err.attempts_left} attempt(s) remaining.",
+        ) from err
 
     # ── Success — persist verified phone on User ───────────────────────────────
-    pv.verified_at = now
+    now = datetime.now(UTC)
 
     # Captured BEFORE any rollback — db.rollback() expires every ORM-tracked
     # attribute on `user`/`current_user`, so reading .id off either instance
@@ -362,9 +290,7 @@ async def confirm_verification(
     current_user_id = current_user.id
 
     # Reload the user within this session to avoid stale state
-    user_result = await db.execute(
-        select(User).where(User.id == current_user_id)
-    )
+    user_result = await db.execute(select(User).where(User.id == current_user_id))
     user = user_result.scalar_one()
     user.phone = body.phone
     user.phone_verified_at = now
@@ -378,7 +304,9 @@ async def confirm_verification(
         # auth_service.register_user's pre-create duplicate check, so this
         # is the backstop that would otherwise surface as a raw
         # IntegrityError/500 (TESTING.md rule #3: no unhandled 500s) if two
-        # different users ever verified the same number.
+        # different users ever verified the same number. The rollback also
+        # unwinds check_otp's in-session verified_at stamp, so the code row is
+        # NOT consumed and the user can retry with a different number.
         await db.rollback()
         logger.info(
             "confirm-verification: rejected duplicate phone ending in %s for user %s.",
@@ -393,7 +321,7 @@ async def confirm_verification(
     logger.info(
         "Phone %s verified for user %s.",
         _masked(body.phone),
-        current_user.id,
+        current_user_id,
     )
 
     return ConfirmVerificationResponse(verified=True)
