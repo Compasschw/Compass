@@ -306,3 +306,68 @@ async def test_reminder_member_leg_appends_stop_line_on_first_send(client: Async
     assert len(captured) == 1
     assert captured[0].startswith("Compass: ")
     assert captured[0].endswith(STOP_LINE)
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_off_skips_reminder_member_leg(
+    client: AsyncClient, monkeypatch
+):
+    """With the flag off, the eligible member's reminder leg is skipped (no
+    send) but the function still reports fully-handled so the scheduler stamps
+    its dedupe column instead of retrying forever."""
+    from app.services import sms_notifications
+
+    chw_tokens = await _register(client, "stop_rem2_chw@test.com", "chw")
+    member_tokens = await _register(client, "stop_rem2_member@test.com", "member")
+    chw_id = _user_id_from_tokens(chw_tokens)
+    member_id = _user_id_from_tokens(member_tokens)
+    await _set_member_phone_verified(member_id, "+15550400010")
+
+    monkeypatch.setattr(_app_config_module.settings, "sms_mirroring_enabled", False)
+
+    fake_send = AsyncMock(return_value=SmsSendResult(success=True))
+    with patch("app.services.vonage_sms.VonageSmsMessagesClient.send_text", fake_send):
+        async with _test_session_factory() as db:
+            handled = await sms_notifications.send_session_reminder_sms(
+                db,
+                session_id=UUID(member_id),  # arbitrary id; logging only
+                chw_id=UUID(chw_id),
+                member_id=UUID(member_id),
+                scheduled_at=datetime(2026, 7, 20, 21, 0, tzinfo=UTC),
+                window="1h",
+            )
+
+    assert handled is True
+    fake_send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_off_skips_signup_confirmation_sms(
+    client: AsyncClient, monkeypatch
+):
+    """The signup confirmation SMS is member-facing — flag off means no send,
+    and the function never raises."""
+    from sqlalchemy import select as _select
+
+    from app.services.signup_confirmations import _send_confirmation_sms
+
+    member_tokens = await _register(client, "stop_signup_member@test.com", "member")
+    member_id = _user_id_from_tokens(member_tokens)
+    await _set_member_phone_verified(member_id, "+15550400011")
+
+    monkeypatch.setattr(_app_config_module.settings, "sms_mirroring_enabled", False)
+
+    fake_send = AsyncMock(return_value=SmsSendResult(success=True))
+    with patch("app.services.vonage_sms.VonageSmsMessagesClient.send_text", fake_send):
+        async with _test_session_factory() as db:
+            user = await db.get(User, UUID(member_id))
+            profile = (
+                await db.execute(
+                    _select(MemberProfile).where(
+                        MemberProfile.user_id == UUID(member_id)
+                    )
+                )
+            ).scalar_one()
+            await _send_confirmation_sms(db, member_user=user, member_profile=profile)
+
+    fake_send.assert_not_awaited()

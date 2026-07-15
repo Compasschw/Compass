@@ -651,3 +651,38 @@ async def test_untargeted_request_uses_your_chw_fallback(client: AsyncClient):
     assert len(captured) == 1
     assert "your CHW will confirm a time shortly" in captured[0]
     _assert_no_phi(captured[0])
+
+
+# ─── Defensive-branch coverage (diff-cover gate — exception branches) ─────────
+
+
+def test_format_helpers_fall_back_when_scheduled_at_is_none():
+    assert _format_local_datetime(None) == "the scheduled time"
+    assert _format_local_date(None) == "recent"
+
+
+@pytest.mark.asyncio
+async def test_confirmation_commit_and_rollback_failures_are_swallowed(
+    client: AsyncClient,
+):
+    """The stamp-persisting commit raising AND the follow-up rollback raising
+    must both be swallowed — the confirmation is best-effort to the end."""
+    member_tokens = await _register(client, "conf_rb@test.com", "member", "Jamie Rivera")
+    member_id = _user_id_from_tokens(member_tokens)
+    await _verify_member(member_id, "+15550500077")
+
+    ok_send = AsyncMock(
+        return_value=SmsSendResult(success=True, provider_message_id="mid-rb")
+    )
+    with patch("app.services.vonage_sms.VonageSmsMessagesClient.send_text", ok_send):
+        async with _test_session_factory() as db:
+            mu, mp = await _load_member_and_profile(member_id, db)
+            with (
+                patch.object(db, "commit", AsyncMock(side_effect=RuntimeError("commit boom"))),
+                patch.object(db, "rollback", AsyncMock(side_effect=RuntimeError("rollback boom"))),
+            ):
+                # Must not raise despite both failures.
+                await send_request_received_sms(
+                    db, member_user=mu, member_profile=mp, chw_first_name="Alex"
+                )
+    ok_send.assert_awaited_once()
