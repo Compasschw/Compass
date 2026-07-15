@@ -306,6 +306,26 @@ async def test_malformed_json_body_never_500s(client):
 
 
 @pytest.mark.asyncio
+async def test_json_array_body_never_500s(client):
+    """Valid JSON that isn't an object (an array) must also be a clean no-op."""
+    res = await client.post(
+        _STATUS_URL,
+        content=b'["not", "an", "object"]',
+        headers={"Content-Type": "application/json"},
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["note"] == "ignored"
+
+
+@pytest.mark.asyncio
+async def test_terminal_status_without_message_uuid_is_unmatched(client):
+    """A delivered/failed status with no message_uuid can't be matched — dropped."""
+    res = await _post_status(client, {"status": "delivered"})
+    assert res.status_code == 200, res.text
+    assert res.json()["note"] == "unmatched"
+
+
+@pytest.mark.asyncio
 async def test_status_lands_in_communication_touch_when_no_message_row(client):
     """Confirmation/notification sends have no Message row; a status keyed by a
     CommunicationTouch.provider_session_id stamps that touch's extra_data."""
@@ -341,3 +361,17 @@ async def test_status_lands_in_communication_touch_when_no_message_row(client):
         assert refreshed.extra_data is not None
         assert refreshed.extra_data.get("delivery_status") == "failed"
         assert refreshed.extra_data.get("delivery_failed_reason") == "blocked"
+
+    # Replay of the same status against the touch row is an idempotent no-op.
+    replay = await _post_status(
+        client,
+        {"message_uuid": mid, "status": "undeliverable", "error": {"reason": "blocked"}},
+    )
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["note"] == "applied"
+
+    async with _test_session_factory() as session:
+        after_replay = await session.get(CommunicationTouch, touch_id)
+        assert after_replay is not None
+        assert after_replay.extra_data.get("delivery_status") == "failed"
+        assert after_replay.extra_data.get("delivery_failed_reason") == "blocked"
