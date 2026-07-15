@@ -145,34 +145,84 @@ describe('ResetPasswordScreen — confirm mode validation', () => {
     expect(screen.getByText('Choose a new password')).toBeTruthy();
   });
 
-  it('blocks submit with an inline error for a password shorter than 8 characters, firing no POST', () => {
-    renderScreen('reset-token-abc');
-
-    fireEvent.change(screen.getByLabelText('New password'), {
-      target: { value: 'short1' },
-    });
-    fireEvent.change(screen.getByLabelText('Confirm new password'), {
-      target: { value: 'short1' },
-    });
-    fireEvent.click(screen.getByLabelText('Reset password'));
-
-    expect(screen.getByText('Password must be at least 8 characters.')).toBeTruthy();
-    expect(mockedApi).not.toHaveBeenCalled();
-  });
+  // The short-password case is covered in more detail below (QA batch item
+  // 1 — inline complexity feedback names every unmet rule, not just length).
 
   it('blocks submit with an inline mismatch error, firing no POST', () => {
     renderScreen('reset-token-abc');
 
     fireEvent.change(screen.getByLabelText('New password'), {
-      target: { value: 'longenoughpass1' },
+      target: { value: 'LongEnoughPass1!' },
     });
     fireEvent.change(screen.getByLabelText('Confirm new password'), {
-      target: { value: 'differentpass1' },
+      target: { value: 'DifferentPass1!' },
     });
     fireEvent.click(screen.getByLabelText('Reset password'));
 
     expect(screen.getByText(/do not match/i)).toBeTruthy();
     expect(mockedApi).not.toHaveBeenCalled();
+  });
+});
+
+// ─── Confirm mode: inline complexity feedback (QA batch item 1, same bug ────
+// class as RegisterScreen — shared `validatePasswordComplexity` util) ───────
+
+describe('ResetPasswordScreen — inline password-policy feedback', () => {
+  it('names every unmet rule for a weak password (short, no uppercase, no special character), firing no POST', () => {
+    renderScreen('reset-token-abc');
+
+    fireEvent.change(screen.getByLabelText('New password'), {
+      target: { value: 'short1' },
+    });
+    fireEvent.change(screen.getByLabelText('Confirm new password'), {
+      target: { value: 'short1' },
+    });
+    fireEvent.click(screen.getByLabelText('Reset password'));
+
+    expect(
+      screen.getByText(
+        'Password needs at least 8 characters, an uppercase letter and a special character.',
+      ),
+    ).toBeTruthy();
+    expect(mockedApi).not.toHaveBeenCalled();
+  });
+
+  it('names only the special-character rule when every other requirement is met, firing no POST', () => {
+    renderScreen('reset-token-abc');
+
+    fireEvent.change(screen.getByLabelText('New password'), {
+      target: { value: 'Zoro1234' },
+    });
+    fireEvent.change(screen.getByLabelText('Confirm new password'), {
+      target: { value: 'Zoro1234' },
+    });
+    fireEvent.click(screen.getByLabelText('Reset password'));
+
+    expect(screen.getByText('Password needs a special character.')).toBeTruthy();
+    expect(mockedApi).not.toHaveBeenCalled();
+  });
+
+  it('allows submit once the password satisfies the full policy', async () => {
+    mockedApi.mockResolvedValueOnce({ ok: true });
+    renderScreen('reset-token-abc');
+
+    fireEvent.change(screen.getByLabelText('New password'), {
+      target: { value: 'Zoro123!' },
+    });
+    fireEvent.change(screen.getByLabelText('Confirm new password'), {
+      target: { value: 'Zoro123!' },
+    });
+    fireEvent.click(screen.getByLabelText('Reset password'));
+
+    await waitFor(() => {
+      expect(mockedApi).toHaveBeenCalledWith(
+        '/auth/password-reset/confirm',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ token: 'reset-token-abc', new_password: 'Zoro123!' }),
+        }),
+      );
+    });
   });
 });
 
@@ -184,10 +234,10 @@ describe('ResetPasswordScreen — confirm mode success', () => {
     const { navigation } = renderScreen('reset-token-abc');
 
     fireEvent.change(screen.getByLabelText('New password'), {
-      target: { value: 'brandNewPass123' },
+      target: { value: 'brandNewPass123!' },
     });
     fireEvent.change(screen.getByLabelText('Confirm new password'), {
-      target: { value: 'brandNewPass123' },
+      target: { value: 'brandNewPass123!' },
     });
     fireEvent.click(screen.getByLabelText('Reset password'));
 
@@ -196,7 +246,7 @@ describe('ResetPasswordScreen — confirm mode success', () => {
         '/auth/password-reset/confirm',
         expect.objectContaining({
           method: 'POST',
-          body: JSON.stringify({ token: 'reset-token-abc', new_password: 'brandNewPass123' }),
+          body: JSON.stringify({ token: 'reset-token-abc', new_password: 'brandNewPass123!' }),
         }),
       );
     });
@@ -221,10 +271,10 @@ describe('ResetPasswordScreen — confirm mode success', () => {
     renderScreen('reset-token-abc');
 
     fireEvent.change(screen.getByLabelText('New password'), {
-      target: { value: 'brandNewPass123' },
+      target: { value: 'brandNewPass123!' },
     });
     fireEvent.change(screen.getByLabelText('Confirm new password'), {
-      target: { value: 'brandNewPass123' },
+      target: { value: 'brandNewPass123!' },
     });
     const submit = screen.getByLabelText('Reset password');
     fireEvent.click(submit);
@@ -249,10 +299,10 @@ describe('ResetPasswordScreen — expired or already-used token', () => {
     const { navigation } = renderScreen('stale-token');
 
     fireEvent.change(screen.getByLabelText('New password'), {
-      target: { value: 'brandNewPass123' },
+      target: { value: 'brandNewPass123!' },
     });
     fireEvent.change(screen.getByLabelText('Confirm new password'), {
-      target: { value: 'brandNewPass123' },
+      target: { value: 'brandNewPass123!' },
     });
     fireEvent.click(screen.getByLabelText('Reset password'));
 
@@ -278,10 +328,10 @@ describe('ResetPasswordScreen — expired or already-used token', () => {
     renderScreen('reset-token-abc');
 
     fireEvent.change(screen.getByLabelText('New password'), {
-      target: { value: 'longenoughpass1' },
+      target: { value: 'LongEnoughPass1!' },
     });
     fireEvent.change(screen.getByLabelText('Confirm new password'), {
-      target: { value: 'longenoughpass1' },
+      target: { value: 'LongEnoughPass1!' },
     });
     fireEvent.click(screen.getByLabelText('Reset password'));
 
@@ -295,10 +345,10 @@ describe('ResetPasswordScreen — expired or already-used token', () => {
     renderScreen('reset-token-abc');
 
     fireEvent.change(screen.getByLabelText('New password'), {
-      target: { value: 'longenoughpass1' },
+      target: { value: 'LongEnoughPass1!' },
     });
     fireEvent.change(screen.getByLabelText('Confirm new password'), {
-      target: { value: 'longenoughpass1' },
+      target: { value: 'LongEnoughPass1!' },
     });
     fireEvent.click(screen.getByLabelText('Reset password'));
 

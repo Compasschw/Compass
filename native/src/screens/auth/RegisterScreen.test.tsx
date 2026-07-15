@@ -80,7 +80,7 @@ function fillRequiredMemberFields(): void {
     target: { value: 'jordan@example.com' },
   });
   fireEvent.change(screen.getByPlaceholderText('At least 8 characters'), {
-    target: { value: 'temp-pass-1234' },
+    target: { value: 'Temp-Pass1234' },
   });
   fireEvent.change(screen.getByPlaceholderText('MM/DD/YYYY'), {
     target: { value: '04/12/1990' },
@@ -130,6 +130,89 @@ describe('RegisterScreen — communications consent copy (F3)', () => {
   it('conveys call/text/email/in-person communication via the CompassCHW platform, and no-cost insurance billing', () => {
     renderScreen();
     expect(screen.getByText(COMMUNICATIONS_LABEL)).toBeTruthy();
+  });
+});
+
+describe('RegisterScreen — inline password feedback (QA batch item 1)', () => {
+  /** Role = CHW keeps the fixture minimal: canSubmit only needs
+   * accountBasicsOk (no DOB/insurance/CIN/consent required). */
+  function fillChwBasics(): void {
+    fireEvent.click(screen.getByText("I'm a CHW"));
+    fireEvent.change(screen.getByPlaceholderText('First name'), {
+      target: { value: 'Jordan' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('Last name'), {
+      target: { value: 'Rivera' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('you@example.com'), {
+      target: { value: 'jordan@example.com' },
+    });
+  }
+
+  it('shows no inline error while the password field is empty', () => {
+    renderScreen();
+    fillChwBasics();
+    expect(screen.queryByText(/^Password needs/)).toBeNull();
+  });
+
+  it('shows the specific unmet-rule message for a password missing a special character, and keeps submit disabled', () => {
+    renderScreen();
+    fillChwBasics();
+    fireEvent.change(screen.getByPlaceholderText('At least 8 characters'), {
+      target: { value: 'Zoro1234' },
+    });
+
+    expect(screen.getByText('Password needs a special character.')).toBeTruthy();
+    const submit = screen.getByLabelText('Create account');
+    expect(submit.getAttribute('aria-disabled')).toBe('true');
+  });
+
+  it('clears the inline error and enables submit once the password satisfies the full policy', () => {
+    renderScreen();
+    fillChwBasics();
+    fireEvent.change(screen.getByPlaceholderText('At least 8 characters'), {
+      target: { value: 'Zoro123!' },
+    });
+
+    expect(screen.queryByText(/^Password needs/)).toBeNull();
+    const submit = screen.getByLabelText('Create account');
+    expect(submit.getAttribute('aria-disabled')).not.toBe('true');
+  });
+});
+
+describe('RegisterScreen — clean 422 banner text (QA batch item 2)', () => {
+  it('renders a mocked register() rejection message as-is in the error banner (no JSON blob)', async () => {
+    // By the time an error reaches RegisterScreen it has already passed
+    // through the api/client.ts parser (see client.test.ts for that
+    // transformation), so this pins the display contract: whatever clean
+    // string the parser produced is shown verbatim, never re-wrapped or
+    // re-stringified into a raw Pydantic-shaped blob.
+    mockRegister.mockRejectedValueOnce(
+      new Error('Password must contain at least one special character'),
+    );
+    renderScreen();
+    fireEvent.click(screen.getByText("I'm a CHW"));
+    fireEvent.change(screen.getByPlaceholderText('First name'), {
+      target: { value: 'Jordan' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('Last name'), {
+      target: { value: 'Rivera' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('you@example.com'), {
+      target: { value: 'jordan@example.com' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('At least 8 characters'), {
+      target: { value: 'Zoro123!' },
+    });
+
+    fireEvent.click(screen.getByLabelText('Create account'));
+
+    const banner = await screen.findByText(
+      'Password must contain at least one special character',
+    );
+    expect(banner).toBeTruthy();
+    expect(screen.queryByText(/^\{.*\}$/)).toBeNull();
+    expect(screen.queryByText(/"loc"/)).toBeNull();
   });
 });
 

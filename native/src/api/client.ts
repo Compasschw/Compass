@@ -291,11 +291,26 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
       // machine-readable codes (e.g. ANOTHER_SESSION_IN_PROGRESS) can inspect
       // it without re-parsing the message string.
       const errorBody = (await response.json()) as {
-        detail?: string | { message?: string; [k: string]: unknown };
+        detail?:
+          | string
+          | { message?: string; [k: string]: unknown }
+          | Array<{ msg?: string; [k: string]: unknown }>;
       };
       const raw = errorBody.detail;
       if (typeof raw === 'string') {
         detail = raw;
+      } else if (Array.isArray(raw)) {
+        // FastAPI/Pydantic validation errors (422s) return `detail` as a list
+        // of `{loc, msg, type}` objects rather than a string or dict — without
+        // this branch it fell through to the generic-object case below and
+        // rendered as a raw JSON blob in the error banner. Surface the first
+        // item's message, stripping Pydantic's "Value error, " prefix so a
+        // custom validator (e.g. password complexity) reads as plain English.
+        const firstMsg = raw[0]?.msg;
+        detail =
+          typeof firstMsg === 'string'
+            ? firstMsg.replace(/^Value error,\s*/, '')
+            : JSON.stringify(raw);
       } else if (raw && typeof raw === 'object') {
         rawDetail = raw as Record<string, unknown>;
         detail = typeof raw.message === 'string' ? raw.message : JSON.stringify(raw);

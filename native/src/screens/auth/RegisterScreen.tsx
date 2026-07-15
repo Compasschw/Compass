@@ -43,6 +43,7 @@ import { useAuth } from '../../context/AuthContext';
 import { isAppleConfigured, isGoogleConfigured, OAuthError } from '../../services/oauth';
 import { PhoneVerificationModal } from '../../components/shared/PhoneVerificationModal';
 import { ConsentCheckboxes } from '../../components/shared/ConsentCheckboxes';
+import { validatePasswordComplexity } from '../../lib/passwordPolicy';
 import { colors } from '../../theme/colors';
 import { fonts } from '../../theme/typography';
 import { radii, spacing } from '../../theme/spacing';
@@ -216,8 +217,14 @@ export function RegisterScreen(): React.JSX.Element {
     firstName.trim().length > 0 &&
     lastName.trim().length > 0 &&
     EMAIL_PATTERN.test(email.trim()) &&
-    password.length >= 8 &&
+    validatePasswordComplexity(password) === null &&
     !isSubmitting;
+  // Inline password-policy feedback (QA batch item 1): mirrors the backend's
+  // validate_password_complexity via the shared client-side util so users see
+  // exactly which rule is unmet instead of learning only after a 422
+  // round-trip. Suppressed while the field is empty — don't scold an unset
+  // field the moment the form mounts.
+  const passwordError = password.length > 0 ? validatePasswordComplexity(password) : null;
   // Signup CIN validation — WARN only, never blocks submit.
   // Re-runs when either the CIN or the insurance selection changes so a
   // carrier switch that invalidates the current CIN immediately shows the hint.
@@ -501,6 +508,11 @@ export function RegisterScreen(): React.JSX.Element {
                 )}
               </TouchableOpacity>
             </FormField>
+            {passwordError && (
+              <Text style={s.passwordError} accessibilityLiveRegion="polite">
+                {passwordError}
+              </Text>
+            )}
 
             {/* Phone */}
             <FormField
@@ -1007,6 +1019,15 @@ const s = StyleSheet.create({
     fontSize: 13,
     fontFamily: fonts.body,
     color: '#B91C1C',
+  },
+  // Inline password-requirement message — shown directly under the password
+  // field so the unmet rule is visible without a submit round-trip.
+  passwordError: {
+    fontSize: 13,
+    fontFamily: fonts.body,
+    color: colors.destructive,
+    marginTop: -4,
+    marginBottom: spacing.sm,
   },
   field: { marginBottom: spacing.sm },
   fieldLabel: {
