@@ -101,6 +101,12 @@ class MemberProfileResponse(BaseModel):
     # stored phone has not been SMS-verified — the member Settings "Text
     # messages" card (SMS Output Spec 1) reads this to render its on/off state.
     phone_verified_at: datetime | None = None
+    # SMS 2FA opt-in state (SMS Output Spec 2). The member Settings
+    # "Two-factor authentication" toggle reads this to render on/off; the
+    # toggle is only shown when phone_verified_at is set and the phone is not
+    # the 555 sentinel. Defaults False so existing response constructors that
+    # don't pass it stay valid.
+    sms_2fa_enabled: bool = False
     email: str | None = None
     insurance_provider: str | None = None
     # Profile picture URL stored on the User row (S3 public bucket).
@@ -127,6 +133,11 @@ class MemberProfileResponse(BaseModel):
     must_change_password: bool = False
 
 class MemberProfileUpdate(BaseModel):
+    # SMS 2FA opt-in toggle (SMS Output Spec 2) — routed to the User row by
+    # PUT /member/profile. Enabling requires a verified, non-sentinel phone
+    # (422 otherwise); disabling is always allowed. Omitting the field leaves
+    # the current state untouched (exclude_unset partial-update semantics).
+    sms_2fa_enabled: bool | None = None
     zip_code: str | None = None
     primary_language: str | None = None
     primary_need: str | None = None

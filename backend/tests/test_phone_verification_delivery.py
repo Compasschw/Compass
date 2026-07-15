@@ -72,3 +72,55 @@ async def test_sentinel_phone_cannot_start_verification(client, member_tokens):
     res = await _start_verification(client, member_tokens, phone="+15555555555")
     assert res.status_code == 422
     assert "placeholder" in res.json()["detail"].lower()
+
+
+# ─── Confirm-verification error branches (behavior pinned across the Spec 2 ───
+# ─── extraction of the OTP machinery into app.services.otp) ───────────────────
+
+
+async def _confirm(client, tokens, phone, code):
+    from tests.conftest import auth_header
+
+    return await client.post(
+        "/api/v1/phone/confirm-verification",
+        json={"phone": phone, "code": code},
+        headers=auth_header(tokens),
+    )
+
+
+async def test_confirm_with_no_active_code_returns_410(client, member_tokens):
+    res = await _confirm(client, member_tokens, "+13105550188", "123456")
+    assert res.status_code == 410
+    assert "request a new code" in res.json()["detail"].lower()
+
+
+async def test_confirm_wrong_code_400_decrements_then_exhausts_410(
+    client, member_tokens
+):
+    from app.services.vonage_sms import SmsSendResult
+
+    async def ok_send_text(self, to_e164, text):
+        return SmsSendResult(success=True, provider_message_id="mid-x")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            "app.services.vonage_sms.VonageSmsMessagesClient.send_text",
+            ok_send_text,
+        )
+        res = await _start_verification(client, member_tokens)
+    assert res.status_code == 200
+
+    # 4 wrong guesses → 400 with a decrementing remaining count…
+    for expected_remaining in (4, 3, 2, 1):
+        res = await _confirm(client, member_tokens, "+13105550188", "000000")
+        assert res.status_code == 400, res.text
+        assert f"{expected_remaining} attempt(s) remaining" in res.json()["detail"]
+
+    # …the 5th consumes the last attempt → 410 exhausted…
+    res = await _confirm(client, member_tokens, "+13105550188", "000000")
+    assert res.status_code == 410
+    assert "too many incorrect attempts" in res.json()["detail"].lower()
+
+    # …and the exhausted row stays dead on a further try (410, not 400).
+    res = await _confirm(client, member_tokens, "+13105550188", "000000")
+    assert res.status_code == 410

@@ -105,6 +105,17 @@ class Settings(BaseSettings):
     # is on for verified members; flip to False only to halt SMS in an incident.
     sms_mirroring_enabled: bool = True
 
+    # ── CHW SMS 2FA emergency off-switch (SMS Output Spec 2, decision 3) ───────
+    # CHWs are REQUIRED to clear an SMS two-factor challenge at every login
+    # (they hold PHI access); opted-in members are challenged too. This flag is
+    # ONLY an emergency valve: flipping it to False restores today's
+    # password-only login for EVERYONE (CHWs and opted-in members alike) — the
+    # single-toggle escape hatch if the SMS challenge ever wedges logins in an
+    # incident. Default True — 2FA is enforced immediately on deploy (no grace
+    # period; the workforce is small). Mirrors the sms_mirroring_enabled panic
+    # button. Admin-console TOTP 2FA is a separate, unaffected mechanism.
+    chw_sms_2fa_enabled: bool = True
+
     cors_origins: list[str] = [
         "http://localhost:5173",
         "http://localhost:8081",

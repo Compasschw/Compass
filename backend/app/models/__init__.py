@@ -21,6 +21,7 @@ from app.models.resource import Resource, ResourceSuggestion
 from app.models.reward import RedemptionItem, RewardTransaction
 from app.models.session import MemberConsent, Session, SessionDocumentation
 from app.models.testimonial import Testimonial
+from app.models.trusted_device import TrustedDevice
 from app.models.twilio import TwilioProxySession
 from app.models.user import CHWProfile, MemberProfile, User
 from app.models.waitlist import WaitlistEntry
@@ -55,4 +56,5 @@ __all__ = [
     "FlagNote",
     "CaseNote",
     "MemberDocument",
+    "TrustedDevice",
 ]

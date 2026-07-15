@@ -232,6 +232,70 @@ class TokenResponse(BaseModel):
     must_change_password: bool = False
 
 
+class TwoFactorChallengeResponse(BaseModel):
+    """Returned by ``POST /auth/login`` when the user must clear an SMS
+    two-factor challenge before any tokens are issued (SMS Output Spec 2).
+
+    Deliberately carries NO ``access_token`` / ``refresh_token`` — a challenged
+    login yields zero session material until ``POST /auth/2fa/verify`` succeeds.
+    The frontend branches on ``two_fa_required`` to route to the 2FA screen.
+    """
+
+    # Discriminator the client keys on to tell this apart from TokenResponse.
+    two_fa_required: bool = True
+    # Single-purpose JWT (type ``user_2fa_pending``, 10-min TTL) that authorizes
+    # ONLY the two /auth/2fa/* endpoints. Not a session token.
+    pending_token: str
+    # True when the user has no verified, non-sentinel phone yet — the client
+    # must collect a number (enrollment/recovery) before requesting a code.
+    phone_verification_required: bool
+    # Last 4 digits of the user's verified phone (for the "code texted to
+    # •••1234" copy), or null when no verified phone is on file.
+    phone_last4: str | None = None
+
+
+class TwoFactorSendCodeRequest(BaseModel):
+    """Body for ``POST /auth/2fa/send-code``.
+
+    ``phone`` is accepted ONLY when the user has no verified phone yet
+    (enrollment / recovery); it is ignored when a verified phone is on file.
+    """
+
+    pending_token: str = Field(..., min_length=1)
+    phone: str | None = None
+
+
+class TwoFactorSendCodeResponse(BaseModel):
+    """Response for ``POST /auth/2fa/send-code``."""
+
+    sent: bool = True
+    # Last 4 digits of the phone the code was sent to.
+    phone_last4: str
+
+
+class TwoFactorVerifyRequest(BaseModel):
+    """Body for ``POST /auth/2fa/verify``."""
+
+    pending_token: str = Field(..., min_length=1)
+    code: str = Field(..., min_length=1)
+    # When True, a 30-day trusted-device token is minted and returned so the
+    # client can skip the challenge on this device until it expires.
+    remember_device: bool = False
+
+
+class TwoFactorVerifyResponse(TokenResponse):
+    """Response for ``POST /auth/2fa/verify`` — the identical token payload the
+    normal login returns, plus the raw trusted-device token when the caller
+    asked to remember the device.
+
+    ``device_token`` is the ONLY time the raw 256-bit secret is exposed; the
+    server persists only its SHA-256 hash. Null when ``remember_device`` was
+    False.
+    """
+
+    device_token: str | None = None
+
+
 class RefreshRequest(BaseModel):
     refresh_token: str
 

@@ -68,6 +68,20 @@ class User(Base):
         DateTime(timezone=True), nullable=True
     )
     profile_picture_url: Mapped[str | None] = mapped_column(String(500))
+
+    # ── SMS two-factor opt-in (SMS Output Spec 2) ─────────────────────────────
+    # Members are opt-in for SMS 2FA at login (CHWs are always required via the
+    # ``chw_sms_2fa_enabled`` settings flag, not this column). A member is only
+    # challenged when this is True AND they have a verified, non-placeholder
+    # phone — the login gate (``app.services.user_2fa.user_requires_2fa``) fails
+    # OPEN if the opted-in member later loses phone verification (they are
+    # opt-in, not workforce). Server-defaults false so every existing row is
+    # unaffected and the migration never backfills. Toggled by the member
+    # Settings "Two-factor authentication" switch (member-profile PATCH).
+    sms_2fa_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_onboarded: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
