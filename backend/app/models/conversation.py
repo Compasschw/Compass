@@ -129,6 +129,22 @@ class Message(Base):
     # dedup table — a re-delivered Vonage webhook for the same message_uuid
     # cannot create a second Message row.
     provider_message_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # ── Per-message delivery status (SMS Output Spec 1 §4) ────────────────────
+    # Populated only for outbound channel='sms' rows, and only after Vonage's
+    # asynchronous delivery-status webhook (POST /communication/sms/status) fires
+    # for the row's provider_message_id. NULL means "no status yet" — the normal
+    # state for every in_app message and for an SMS whose status callback has not
+    # yet arrived (status is advisory, best-effort; late/unmatched callbacks are
+    # dropped). Only two terminal values are ever written:
+    #   'delivered' — Vonage status 'delivered'.
+    #   'failed'    — Vonage status 'rejected' or 'undeliverable'; the reason is
+    #                 stored in delivery_failed_reason. The CHW thread renders a
+    #                 subtle "Not delivered by text" indicator on this value ONLY.
+    delivery_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Human-readable failure reason from the Vonage status callback's
+    # ``error.reason`` (falls back to the raw status word), truncated to 64 chars.
+    # NULL unless delivery_status == 'failed'. Never surfaced to the member.
+    delivery_failed_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 class FileAttachment(Base):

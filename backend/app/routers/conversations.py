@@ -176,6 +176,7 @@ def _serialize_message(msg, attachment) -> MessageResponse:
         "body": msg.body,
         "type": msg.type,
         "channel": getattr(msg, "channel", "in_app"),
+        "delivery_status": getattr(msg, "delivery_status", None),
         "created_at": msg.created_at,
         "attachment": None,
     }

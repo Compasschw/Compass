@@ -1000,6 +1000,24 @@ class SmsInboundAck(BaseModel):
     note: str | None = None
 
 
+class SmsStatusAck(BaseModel):
+    """Response body for POST /sms/status (Vonage delivery-status callback).
+
+    Always 200 once past signature verification — ``note`` carries a short
+    machine-readable outcome for observability without changing the HTTP
+    contract Vonage sees (Vonage retries on any non-2xx, so a parse/match
+    miss must never surface as an error):
+
+      applied   — a Message row (or fallback CommunicationTouch) was stamped.
+      ignored   — interim/unknown status (e.g. 'submitted') or an unparseable
+                  body; nothing to record.
+      unmatched — a terminal status whose message_uuid matched no Message and
+                  no CommunicationTouch; logged and dropped (status is advisory).
+    """
+    status: str = "ok"
+    note: str | None = None
+
+
 def _extract_phone_field(value: object) -> str | None:
     """Extract a phone-number string from a Vonage `from`/`to` webhook field.
 
@@ -1365,6 +1383,152 @@ async def sms_inbound(
         target_conv.id, member_user.id,
     )
     return SmsInboundAck()
+
+
+# Vonage Messages delivery statuses that map to a terminal outcome we record.
+# Everything else ('submitted', 'accepted', and any future/unknown value) is an
+# interim state we intentionally ignore — status is advisory, not a state machine.
+_DELIVERED_STATUSES = frozenset({"delivered"})
+_FAILED_STATUSES = frozenset({"rejected", "undeliverable", "failed"})
+_DELIVERY_FAILED_REASON_MAX = 64
+
+
+def _extract_status_reason(payload: dict, status_raw: str) -> str:
+    """Best failure reason from a Vonage status payload, truncated to 64 chars.
+
+    Prefers ``error.reason`` (Vonage's human-readable text), then ``error.title``,
+    then falls back to the raw status word so a ``failed`` row always carries
+    *something* explanatory. Never raises on odd shapes.
+    """
+    error = payload.get("error")
+    reason: str | None = None
+    if isinstance(error, dict):
+        candidate = error.get("reason") or error.get("title")
+        if isinstance(candidate, str) and candidate:
+            reason = candidate
+    return (reason or status_raw)[:_DELIVERY_FAILED_REASON_MAX]
+
+
+@router.post("/sms/status", response_model=SmsStatusAck)
+async def sms_status(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    _sig: None = Depends(_verify_vonage_signature),
+) -> SmsStatusAck:
+    """Vonage Messages **delivery-status** webhook (SMS Output Spec 1 §4).
+
+    Vonage POSTs an asynchronous status callback per outbound message:
+
+        {
+          "message_uuid": "<uuid>",
+          "status": "delivered" | "rejected" | "undeliverable" | "submitted",
+          "error": {"reason": "..."}?    # present on failures
+        }
+
+    We match ``message_uuid`` against ``Message.provider_message_id`` (set on
+    every outbound SMS Message row) and stamp:
+
+      - ``delivered``                  -> delivery_status='delivered'
+      - ``rejected`` / ``undeliverable`` -> delivery_status='failed' + reason
+      - ``submitted`` / anything else    -> no write (interim/unknown)
+
+    Confirmation and notification sends have no Message row; when a
+    CommunicationTouch carries this message_uuid as its ``provider_session_id``
+    the status lands in that touch's ``extra_data`` instead. An unmatched or
+    late status is logged and dropped (advisory only — no dead-letter table).
+
+    Idempotent: re-delivery of the same status is a no-op. Signature-gated by
+    the same ``_verify_vonage_signature`` dependency as the inbound webhook, and
+    — like inbound — NEVER returns non-2xx past signature verification, so a
+    malformed body or an unknown uuid cannot make Vonage retry forever.
+    """
+    from app.models.conversation import Message
+
+    payload = await _safely_read_body(request)
+    if not isinstance(payload, dict):
+        payload = {}
+
+    message_uuid = (
+        payload.get("message_uuid")
+        or payload.get("messageUuid")
+        or payload.get("messageId")  # legacy SMS API field name
+    )
+    status_raw = str(payload.get("status") or "").strip().lower()
+
+    if status_raw in _DELIVERED_STATUSES:
+        new_status = "delivered"
+    elif status_raw in _FAILED_STATUSES:
+        new_status = "failed"
+    else:
+        # Interim ('submitted'/'accepted') or unknown status — nothing to record.
+        logger.info(
+            "sms/status: ignoring interim/unknown status=%r message_uuid=%s",
+            status_raw, message_uuid,
+        )
+        return SmsStatusAck(note="ignored")
+
+    if not message_uuid:
+        logger.info("sms/status: terminal status with no message_uuid — dropped")
+        return SmsStatusAck(note="unmatched")
+
+    failed_reason = (
+        _extract_status_reason(payload, status_raw) if new_status == "failed" else None
+    )
+
+    # ── Primary: stamp the matching Message row ──────────────────────────────
+    result = await db.execute(
+        select(Message).where(Message.provider_message_id == str(message_uuid))
+    )
+    message = result.scalars().first()
+    if message is not None:
+        if (
+            message.delivery_status == new_status
+            and message.delivery_failed_reason == failed_reason
+        ):
+            # Idempotent replay — state already correct, no write needed.
+            logger.info(
+                "sms/status: replay for message_uuid=%s status=%s — no-op",
+                message_uuid, new_status,
+            )
+            return SmsStatusAck(note="applied")
+        message.delivery_status = new_status
+        message.delivery_failed_reason = failed_reason
+        await db.commit()
+        logger.info(
+            "sms/status: stamped message_uuid=%s status=%s",
+            message_uuid, new_status,
+        )
+        return SmsStatusAck(note="applied")
+
+    # ── Fallback: a notification/confirmation touch keyed by this uuid ───────
+    from app.services.communication_touch_log import CommunicationTouch
+
+    touch_result = await db.execute(
+        select(CommunicationTouch)
+        .where(CommunicationTouch.provider_session_id == str(message_uuid))
+        .limit(1)
+    )
+    touch = touch_result.scalars().first()
+    if touch is not None:
+        extra = dict(touch.extra_data or {})
+        if extra.get("delivery_status") == new_status:
+            return SmsStatusAck(note="applied")
+        extra["delivery_status"] = new_status
+        if failed_reason is not None:
+            extra["delivery_failed_reason"] = failed_reason
+        touch.extra_data = extra
+        await db.commit()
+        logger.info(
+            "sms/status: stamped communication_touch for message_uuid=%s status=%s",
+            message_uuid, new_status,
+        )
+        return SmsStatusAck(note="applied")
+
+    logger.info(
+        "sms/status: no Message or CommunicationTouch for message_uuid=%s — dropped",
+        message_uuid,
+    )
+    return SmsStatusAck(note="unmatched")
 
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
