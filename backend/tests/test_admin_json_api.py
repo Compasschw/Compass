@@ -129,11 +129,19 @@ async def _create_chw_profile(user_id: uuid.UUID) -> uuid.UUID:
 async def _create_member_profile(
     user_id: uuid.UUID,
     *,
-    medi_cal_id: str = "MEDI-CAL-SENSITIVE-99",
+    medi_cal_id: str | None = None,
     zip_code: str = "90210",
 ) -> uuid.UUID:
-    """Insert a MemberProfile with a known medi_cal_id value via ORM and return UUID."""
+    """Insert a MemberProfile with a known medi_cal_id value via ORM and return UUID.
+
+    When ``medi_cal_id`` is not given, a per-member unique value is generated so
+    multi-member tests don't collide on the ``uq_member_profiles_cin_hash``
+    partial unique index (CIN uniqueness, QA3 Part 4). Tests that assert on a
+    specific CIN pass it explicitly.
+    """
     profile_id = uuid.uuid4()
+    if medi_cal_id is None:
+        medi_cal_id = f"MC{uuid.uuid4().hex[:10].upper()}"
     async with _test_session_factory() as db:
         profile = MemberProfile(
             id=profile_id,
