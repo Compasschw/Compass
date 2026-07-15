@@ -183,15 +183,24 @@ export function LoginScreen(): React.JSX.Element {
     setError(null);
 
     try {
-      await login(email.trim(), password);
-      // Navigation happens automatically via AppNavigator watching isAuthenticated.
+      const outcome = await login(email.trim(), password);
+      // SMS 2FA challenge (Spec 2): no session yet — route to the code screen
+      // with the pending token. A plain authenticated result needs no explicit
+      // navigation (AppNavigator swaps stacks on the isAuthenticated flip).
+      if (outcome && outcome.status === 'two_fa_required') {
+        navigation.navigate('TwoFactor', {
+          pendingToken: outcome.pendingToken,
+          phoneLast4: outcome.phoneLast4,
+          phoneVerificationRequired: outcome.phoneVerificationRequired,
+        });
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Authentication failed.';
       setError(message);
     } finally {
       setIsLoading(false);
     }
-  }, [email, password, login]);
+  }, [email, password, login, navigation]);
 
   // ── Social login (web-only) ───────────────────────────────────────────────
   //

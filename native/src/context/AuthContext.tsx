@@ -16,7 +16,8 @@ import React, {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useQueryClient } from '@tanstack/react-query';
 import { clearTokens, getTokens, setTokens, setSessionExpiredHandler } from '../api/client';
-import { loginUser, logoutUser, oauthApple, oauthGoogle, registerUser } from '../api/auth';
+import { loginUser, logoutUser, oauthApple, oauthGoogle, registerUser, isTwoFactorChallenge } from '../api/auth';
+import { clearTrustedDeviceToken } from '../utils/trustedDevice';
 import { getAppleIdToken, getGoogleIdToken } from '../services/oauth';
 import type { UserRole } from '../data/mock';
 
@@ -44,6 +45,21 @@ interface SignInPayload {
   name: string;
 }
 
+/**
+ * Result of {@link AuthContextValue.login}. Either the session is fully
+ * established (`authenticated`) or the backend requires an SMS 2FA code
+ * (`two_fa_required`) — in which case the caller (LoginScreen) navigates to the
+ * TwoFactorScreen with the pending token; NO tokens or auth state are set yet.
+ */
+export type LoginOutcome =
+  | { status: 'authenticated' }
+  | {
+      status: 'two_fa_required';
+      pendingToken: string;
+      phoneVerificationRequired: boolean;
+      phoneLast4: string | null;
+    };
+
 interface AuthContextValue extends AuthState {
   isLoading: boolean;
   /**
@@ -53,7 +69,7 @@ interface AuthContextValue extends AuthState {
    * starts (login / register / signInWithTokens).
    */
   hasJustSignedOut: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<LoginOutcome>;
   register: (
     email: string,
     password: string,
@@ -202,8 +218,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
 
       // Best-effort storage cleanup (fire-and-forget; failure is non-fatal
       // because the in-memory state flip is what drives the navigator).
+      // A forced expiry means the refresh token was revoked — the "logout
+      // everywhere" / admin-2FA-reset case (Spec 2) which also deletes the
+      // server-side trusted_devices row — so drop the now-useless device-trust
+      // token too, forcing a fresh SMS challenge on the next sign-in.
       void Promise.all([
         clearTokens(),
+        clearTrustedDeviceToken(),
         AsyncStorage.removeItem(AUTH_STATE_KEY),
       ]).catch(() => undefined);
     });
@@ -220,22 +241,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
   }, []);
 
   // ── login ──────────────────────────────────────────────────────────────────
-  const login = useCallback(async (email: string, password: string): Promise<void> => {
-    const response = await loginUser(email, password);
+  const login = useCallback(
+    async (email: string, password: string): Promise<LoginOutcome> => {
+      const response = await loginUser(email, password);
 
-    const newState: AuthState = {
-      isAuthenticated: true,
-      userRole: response.role as UserRole,
-      userName: response.name,
-      // Email/password login never triggers onboarding — that path is
-      // OAuth-only for brand-new social sign-ups.
-      needsOnboarding: false,
-    };
+      // SMS 2FA challenge (Spec 2): the backend withheld tokens pending a code.
+      // Surface the pending token to the caller instead of flipping auth state
+      // — LoginScreen routes to TwoFactorScreen, which completes the flow via
+      // signInWithTokens once /auth/2fa/verify succeeds.
+      if (isTwoFactorChallenge(response)) {
+        return {
+          status: 'two_fa_required',
+          pendingToken: response.pending_token,
+          phoneVerificationRequired: response.phone_verification_required,
+          phoneLast4: response.phone_last4,
+        };
+      }
 
-    await persistAuthState(newState);
-    setAuthState(newState);
-    setHasJustSignedOut(false);
-  }, [persistAuthState]);
+      const newState: AuthState = {
+        isAuthenticated: true,
+        userRole: response.role as UserRole,
+        userName: response.name,
+        // Email/password login never triggers onboarding — that path is
+        // OAuth-only for brand-new social sign-ups.
+        needsOnboarding: false,
+      };
+
+      await persistAuthState(newState);
+      setAuthState(newState);
+      setHasJustSignedOut(false);
+      return { status: 'authenticated' };
+    },
+    [persistAuthState],
+  );
 
   // ── register ───────────────────────────────────────────────────────────────
   const register = useCallback(
@@ -398,6 +436,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
     try {
       await Promise.all([
         clearTokens(),
+        // The account is gone — its trusted devices are meaningless. Drop the
+        // stored device-trust token so it can never be replayed (Spec 2).
+        clearTrustedDeviceToken(),
         AsyncStorage.removeItem(AUTH_STATE_KEY),
       ]);
     } catch {

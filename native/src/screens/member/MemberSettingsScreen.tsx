@@ -785,6 +785,40 @@ export function MemberSettingsScreen(): React.JSX.Element {
 
   const profile = profileQuery.data;
 
+  // ── SMS 2FA opt-in (Spec 2) ───────────────────────────────────────────────
+  // A REAL toggle (unlike the four fake ones removed in QA batch Part 20):
+  // PATCHes User.sms_2fa_enabled through the member-profile update path. Shown
+  // ONLY to a member with a verified, non-sentinel phone — a sentinel or
+  // unverified member can never be SMS-challenged, so the control would be dead
+  // (and enabling it would strand them out of their own account).
+  const twoFaDigits = (profile?.phone ?? '').replace(/\D/g, '');
+  const twoFaPhoneEligible =
+    !!profile?.phone &&
+    !SMS_SENTINEL_DIGITS.has(twoFaDigits) &&
+    profile?.phoneVerifiedAt != null;
+  const [smsTwoFactorEnabled, setSmsTwoFactorEnabled] = useState(false);
+  // Mirror the server value whenever the profile query settles or refetches.
+  React.useEffect(() => {
+    setSmsTwoFactorEnabled(profile?.sms_2faEnabled ?? false);
+  }, [profile?.sms_2faEnabled]);
+
+  const handleToggleSmsTwoFactor = useCallback(
+    async (next: boolean) => {
+      setSmsTwoFactorEnabled(next); // optimistic
+      try {
+        await updateProfile.mutateAsync({ sms_2faEnabled: next });
+      } catch (err) {
+        setSmsTwoFactorEnabled(!next); // roll back on failure
+        const detail = err instanceof ApiError ? err.message : null;
+        Alert.alert(
+          'Could not update',
+          detail ?? 'Two-factor authentication setting was not saved. Please try again.',
+        );
+      }
+    },
+    [updateProfile],
+  );
+
   // ── Delete account (on-brand 3-step modal — shared with MemberProfileScreen) ──
   const [isDeleteModalVisible, setIsDeleteModalVisible] = useState(false);
   const [deleteErrorMessage, setDeleteErrorMessage] = useState<string | null>(null);
@@ -1210,6 +1244,19 @@ export function MemberSettingsScreen(): React.JSX.Element {
               <Text style={pageStyles.bottomCardTitle}>Privacy & Security</Text>
               <Text style={pageStyles.bottomCardSubtitle}>Your data is protected. You're in control.</Text>
 
+              {/* Real SMS 2FA opt-in (Spec 2) — only for a verified,
+                  non-sentinel phone. PATCHes User.sms_2fa_enabled. */}
+              {twoFaPhoneEligible && (
+                <View style={pageStyles.twoFaRow}>
+                  <ToggleRow
+                    label="Two-factor authentication"
+                    description="Text a code to your phone each time you sign in, for an extra layer of security."
+                    value={smsTwoFactorEnabled}
+                    onValueChange={(v) => void handleToggleSmsTwoFactor(v)}
+                  />
+                </View>
+              )}
+
               <Pressable
                 onPress={() => void handleDeactivateAccount()}
                 disabled={isDeactivating}
@@ -1466,6 +1513,9 @@ const pageStyles = StyleSheet.create({
     fontSize:  12,
     color:     '#6B7280',
   } as TextStyle,
+  twoFaRow: {
+    marginTop: 4,
+  } as ViewStyle,
 
   // ── Text messages card (SMS Output Spec 1) ────────────────────────────────
   smsCard: {

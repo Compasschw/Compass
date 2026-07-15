@@ -215,6 +215,14 @@ export interface MemberProfile {
    * MemberHomeScreen.tsx. Always false for a self-registered member.
    */
   mustChangePassword?: boolean;
+  /**
+   * SMS 2FA opt-in (Spec 2). Backend column `sms_2fa_enabled`; `transformKeys`
+   * leaves the `_2` boundary intact, so it arrives (and round-trips back
+   * through `toSnakeCase`) as `sms_2faEnabled`. Absent on older payloads →
+   * treat as false. Only meaningful for members with a verified, non-sentinel
+   * phone — the MemberSettings toggle is hidden otherwise.
+   */
+  sms_2faEnabled?: boolean;
 }
 
 export interface ChwBrowseItem {

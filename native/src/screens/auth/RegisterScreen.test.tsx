@@ -322,4 +322,30 @@ describe('RegisterScreen — verify-at-signup navigation (SMS Output Spec 1)', (
     });
     expect(mockNavigate).not.toHaveBeenCalledWith('VerifyPhone', expect.anything());
   });
+
+  // Spec 2, Task 9 — new CHWs with a real phone are routed to the same
+  // VerifyPhone step so they enroll a verified number for their required
+  // SMS 2FA (previously CHWs fell through to the inline modal).
+  it('routes a new CHW with a real phone to VerifyPhone (E.164-normalised)', async () => {
+    renderScreen();
+    fireEvent.click(screen.getByText("I'm a CHW"));
+    fireEvent.change(screen.getByPlaceholderText('First name'), {
+      target: { value: 'Casey' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('Last name'), {
+      target: { value: 'Worker' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('you@example.com'), {
+      target: { value: 'casey@example.com' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('At least 8 characters'), {
+      target: { value: 'Zoro123!' },
+    });
+    fillPhone('(310) 555-0188');
+    fireEvent.click(screen.getByLabelText('Create account'));
+
+    await waitFor(() => {
+      expect(mockNavigate).toHaveBeenCalledWith('VerifyPhone', { phone: '+13105550188' });
+    });
+  });
 });
