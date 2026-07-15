@@ -29,6 +29,7 @@ import { LoginScreen } from '../screens/auth/LoginScreen';
 import { MagicLinkScreen } from '../screens/auth/MagicLinkScreen';
 import { ResetPasswordScreen } from '../screens/auth/ResetPasswordScreen';
 import { RegisterScreen } from '../screens/auth/RegisterScreen';
+import { VerifyPhoneScreen } from '../screens/auth/VerifyPhoneScreen';
 import { WaitlistScreen } from '../screens/auth/WaitlistScreen';
 import { CompleteProfileScreen } from '../screens/auth/CompleteProfileScreen';
 import { CHWIntakeScreen } from '../screens/chw/CHWIntakeScreen';
@@ -57,6 +58,10 @@ export type AuthStackParamList = {
   Waitlist: undefined;
   MagicLink: { token?: string } | undefined;
   ResetPassword: { token?: string } | undefined;
+  /** Post-signup "Confirm your phone" step (SMS Output Spec 1). Carries the
+   *  member's submitted phone so the screen can display it and confirm the OTP
+   *  RegisterScreen already triggered. */
+  VerifyPhone: { phone: string };
   Legal: { page: LegalPage } | undefined;
 };
 
@@ -120,6 +125,10 @@ function AuthNavigator({ initialRoute = 'Landing' }: AuthNavigatorProps): React.
           Waitlist remains available for pre-launch leads. */}
       <AuthStack.Screen name="Login" component={withErrorBoundary(LoginScreen)} />
       <AuthStack.Screen name="Register" component={withErrorBoundary(RegisterScreen)} />
+      {/* VerifyPhoneScreen — the "Confirm your phone" step RegisterScreen routes a
+          real-phone member to right after signup (SMS Output Spec 1). Skippable;
+          also re-launched from the Member Settings "Text messages" card. */}
+      <AuthStack.Screen name="VerifyPhone" component={withErrorBoundary(VerifyPhoneScreen)} />
       {/* LegalScreen reads `page` from route params so a single registration
           serves Privacy / Terms / HIPAA / Contact via navigation.navigate(
           'Legal', { page: 'privacy' | 'terms' | 'hipaa' | 'contact' }). */}

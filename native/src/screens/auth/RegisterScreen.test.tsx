@@ -14,8 +14,18 @@
  * the form's own validation/gating logic runs for real.
  */
 import React from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+// RegisterScreen now uses useStartPhoneVerification (a react-query mutation)
+// which calls api() best-effort on the member verify-at-signup path. Stub the
+// network boundary so that fire-and-forget send never hits the wire; ApiError
+// is preserved for the existing 409/422 banner tests.
+vi.mock('../../api/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../api/client')>();
+  return { ...actual, api: vi.fn().mockResolvedValue(undefined) };
+});
 
 // react-native-svg's real entry (used here only for the Google/Apple social
 // icons, which never render in this test env — no EXPO_PUBLIC_* OAuth client
@@ -65,7 +75,14 @@ const COMMUNICATIONS_LABEL =
   'I consent to receive communication — by call, text, email, or in person — from my Community Health Worker via the CompassCHW platform, and for Compass to bill my insurance for covered services, always at no cost to me.';
 
 function renderScreen() {
-  return render(<RegisterScreen />);
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <RegisterScreen />
+    </QueryClientProvider>,
+  );
 }
 
 /** Fills every field required to reach canSubmit === true for the default
@@ -268,5 +285,41 @@ describe('RegisterScreen — duplicate CIN 409 (Part 4)', () => {
     await waitFor(() =>
       expect(screen.getByText('Network error. Please try again.')).toBeTruthy(),
     );
+  });
+});
+
+// ─── SMS Output Spec 1 §1 — verify-at-signup navigation ───────────────────────
+describe('RegisterScreen — verify-at-signup navigation (SMS Output Spec 1)', () => {
+  function fillPhone(value: string): void {
+    fireEvent.change(screen.getByPlaceholderText('(555) 123-4567'), {
+      target: { value },
+    });
+  }
+  function submitMemberSignup(): void {
+    fillRequiredMemberFields();
+    fireEvent.click(screen.getByTestId('consent-terms'));
+    fireEvent.click(screen.getByTestId('consent-communications'));
+    fireEvent.click(screen.getByLabelText('Create account'));
+  }
+
+  it('routes a member with a real phone to the VerifyPhone step (E.164-normalised)', async () => {
+    renderScreen();
+    fillPhone('(310) 555-0188');
+    submitMemberSignup();
+
+    await waitFor(() => {
+      expect(mockNavigate).toHaveBeenCalledWith('VerifyPhone', { phone: '+13105550188' });
+    });
+  });
+
+  it('does NOT route a member whose phone is the 555-555-5555 placeholder to VerifyPhone', async () => {
+    renderScreen();
+    fillPhone('555-555-5555');
+    submitMemberSignup();
+
+    await waitFor(() => {
+      expect(mockRegister).toHaveBeenCalledTimes(1);
+    });
+    expect(mockNavigate).not.toHaveBeenCalledWith('VerifyPhone', expect.anything());
   });
 });

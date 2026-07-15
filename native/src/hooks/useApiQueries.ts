@@ -938,6 +938,50 @@ export function useMemberProfile() {
 }
 
 /**
+ * Start the SMS phone-verification OTP flow (Spec 1 §1).
+ *
+ * POSTs to the existing /phone/start-verification endpoint, which generates a
+ * 6-digit code and delivers it via the unified Vonage Messages client. The
+ * mutation is intentionally thin (no cache writes) — verification state lives
+ * on User.phone_verified_at, surfaced through the member profile after a
+ * successful confirm (see useConfirmPhoneVerification).
+ */
+export function useStartPhoneVerification() {
+  return useMutation({
+    mutationFn: async (payload: { phone: string }) => {
+      await api('/phone/start-verification', {
+        method: 'POST',
+        body: JSON.stringify(toSnakeCase(payload)),
+      });
+    },
+  });
+}
+
+/**
+ * Confirm the SMS phone-verification OTP (Spec 1 §1).
+ *
+ * On success the backend stamps User.phone_verified_at — the exact gate
+ * check_sms_eligibility reads — so we invalidate the member profile query to
+ * flip any verified-state UI (e.g. the Settings "Text messages" card) without
+ * a manual refetch.
+ */
+export function useConfirmPhoneVerification() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: { phone: string; code: string }) => {
+      await api('/phone/confirm-verification', {
+        method: 'POST',
+        body: JSON.stringify(toSnakeCase(payload)),
+      });
+    },
+    onSuccess: () => {
+      // phone_verified_at changed — the member profile drives verified-state UI.
+      void qc.invalidateQueries({ queryKey: queryKeys.memberProfile });
+    },
+  });
+}
+
+/**
  * The member's currently-matched CHW, or null when unmatched.
  * Matches backend AssignedCHWResponse (GET /api/v1/member/chw).
  */

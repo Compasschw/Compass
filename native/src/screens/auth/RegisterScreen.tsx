@@ -49,6 +49,7 @@ import { colors } from '../../theme/colors';
 import { fonts } from '../../theme/typography';
 import { radii, spacing } from '../../theme/spacing';
 import type { AuthStackParamList } from '../../navigation/AppNavigator';
+import { useStartPhoneVerification } from '../../hooks/useApiQueries';
 import {
   INSURANCE_OPTIONS,
   validateCinForCarrier,
@@ -57,6 +58,23 @@ import {
 } from '../../constants/insurance';
 
 type RegisterNavProp = NativeStackNavigationProp<AuthStackParamList>;
+
+// Raw digit strings that collapse to the 555-555-5555 placeholder sentinel —
+// a member with this "phone" is treated as fully SMS-opted-out (Spec 1 §1,
+// decision 2) and never routed into the verify-phone step.
+const SENTINEL_PHONE_DIGITS = new Set(['5555555555', '15555555555']);
+
+/**
+ * Normalise a raw user-typed US phone to E.164, or null when it isn't a
+ * plausible 10-digit US number. Mirrors PhoneVerificationModal.toE164US so the
+ * verify-at-signup screen receives the exact E.164 the OTP endpoint expects.
+ */
+function normalizeUsPhoneToE164(raw: string): string | null {
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`;
+  return null;
+}
 
 type Role = 'chw' | 'member';
 type Sex = 'Male' | 'Female';
@@ -134,6 +152,7 @@ function AppleIcon(): React.JSX.Element {
 export function RegisterScreen(): React.JSX.Element {
   const navigation = useNavigation<RegisterNavProp>();
   const { register, signInWithGoogle, signInWithApple } = useAuth();
+  const startVerification = useStartPhoneVerification();
 
   // Social button visibility — hidden when env vars not provisioned or on native.
   const googleEnabled = Platform.OS === 'web' && isGoogleConfigured();
@@ -297,10 +316,23 @@ export function RegisterScreen(): React.JSX.Element {
           : undefined,
       );
       // AuthContext.register stores JWT tokens and flips authState.
-      // If the user provided a phone number, show the verification modal
-      // before the root navigator swaps to the role-appropriate stack.
-      // The modal runs authenticated API calls using the newly-stored JWT.
+      // If the user provided a phone number, kick off phone verification
+      // before the root navigator swaps to the role-appropriate stack. Both
+      // paths run authenticated using the newly-stored JWT.
       if (trimmedPhone) {
+        const rawDigits = trimmedPhone.replace(/\D/g, '');
+        const isSentinelPhone = SENTINEL_PHONE_DIGITS.has(rawDigits);
+        const e164 = normalizeUsPhoneToE164(trimmedPhone);
+        // Members with a real, parseable phone get the dedicated
+        // "Confirm your phone" step (SMS Output Spec 1 §1): send the first OTP
+        // now (best-effort — the screen offers "Resend code" if it fails) and
+        // navigate there. CHWs and placeholder-phone members keep today's
+        // destination — the inline verification modal — unchanged.
+        if (role === 'member' && !isSentinelPhone && e164) {
+          startVerification.mutate({ phone: e164 });
+          navigation.navigate('VerifyPhone', { phone: e164 });
+          return;
+        }
         setRegisteredPhone(trimmedPhone);
         setShowPhoneVerification(true);
         // Note: we intentionally do NOT set isSubmitting = false here.
@@ -336,6 +368,7 @@ export function RegisterScreen(): React.JSX.Element {
     canSubmit, email, password, firstName, lastName, role, phone, register,
     dobIso, sex, addressLine1, addressLine2, city, stateCode, zip,
     insuranceCompany, primaryCin, termsAccepted, communicationsConsent,
+    startVerification, navigation,
   ]);
 
   // Legal links open the in-app Terms / Privacy pages (Auth-stack 'Legal'
