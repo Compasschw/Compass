@@ -93,6 +93,18 @@ class Settings(BaseSettings):
     # first, verify, then prod.
     chw_work_gate_enabled: bool = False
 
+    # ── SMS mirroring kill switch (SMS Output Spec 1 §5) ──────────────────────
+    # Emergency off-switch for ALL member-facing SMS: the CHW->member in-app
+    # message fanout, the request/confirm/cancel/reschedule confirmation texts,
+    # the signup confirmation SMS, and the member leg of session reminders. When
+    # False, those paths short-circuit to a no-op (the in-app / email / push
+    # legs are unaffected). The real per-member control is phone verification
+    # (check_sms_eligibility) — this flag is the platform-wide panic button.
+    # OTP delivery is deliberately NOT behind this flag: phone verification must
+    # always work even with member SMS turned off. Default True — the pipeline
+    # is on for verified members; flip to False only to halt SMS in an incident.
+    sms_mirroring_enabled: bool = True
+
     cors_origins: list[str] = [
         "http://localhost:5173",
         "http://localhost:8081",

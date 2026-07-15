@@ -355,6 +355,20 @@ class MemberProfile(Base):
     # automatic one, so that's deliberately out of scope here.
     sms_opt_out: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
 
+    # STOP-prompt cadence stamp (SMS Output Spec 1 §2). CTIA/10DLC best
+    # practice requires reminding recipients they can opt out, but on EVERY
+    # message it wastes segment budget and annoys a member who already knows.
+    # ``app.routers.conversations.with_stop_prompt`` appends
+    # " Reply STOP to opt out." to the FIRST member-facing SMS in any rolling
+    # 24-hour window (fanout, explicit send, confirmations, reminders), then
+    # stamps this column. Null (never prompted) or a stamp >24h old ⇒ the next
+    # send carries the line and re-stamps; a stamp inside the window ⇒ the body
+    # goes out unchanged. Nullable so the migration never backfills and legacy
+    # members simply get the line on their next outbound SMS.
+    last_stop_prompt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     # ── Signup consent (A2P 10DLC documented opt-in + HIPAA audit) ───────────
     # Timestamped consent captured at member creation on BOTH signup surfaces
     # (self-service /auth/register and CHW-initiated /chw/members). Two distinct

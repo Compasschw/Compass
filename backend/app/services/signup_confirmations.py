@@ -134,11 +134,22 @@ async def _send_confirmation_sms(db, *, member_user, member_profile) -> None:
     Logs and swallows every failure mode (ineligible, unconfigured Vonage,
     network error, unexpected exception) — never raises.
     """
-    from app.routers.conversations import brand_outbound_sms
+    from app.config import settings
+    from app.routers.conversations import brand_outbound_sms, with_stop_prompt
     from app.services.sms_eligibility import check_sms_eligibility
     from app.services.vonage_sms import get_vonage_sms_messages_client
 
     try:
+        # Kill switch (SMS Output Spec 1 §5): member-facing SMS only. OTP
+        # verification is never gated by this flag.
+        if not settings.sms_mirroring_enabled:
+            logger.info(
+                "signup_confirmations: confirmation sms skipped "
+                "(sms_mirroring_enabled off) user=%s",
+                member_user.id,
+            )
+            return
+
         eligibility = await check_sms_eligibility(
             db, member_user=member_user, member_profile=member_profile
         )
@@ -151,8 +162,10 @@ async def _send_confirmation_sms(db, *, member_user, member_profile) -> None:
             return
 
         client = get_vonage_sms_messages_client()
-        body = brand_outbound_sms(
-            "Welcome to CompassCHW! Your account is ready to go."
+        body = await with_stop_prompt(
+            db,
+            member_profile,
+            brand_outbound_sms("Welcome to CompassCHW! Your account is ready to go."),
         )
         send_result = await client.send_text(eligibility.normalized_phone, body)
         if not send_result.success:

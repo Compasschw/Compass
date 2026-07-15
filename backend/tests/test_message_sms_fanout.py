@@ -205,8 +205,11 @@ async def test_chw_message_to_eligible_member_fans_out_as_sms(client: AsyncClien
 
     # 10DLC brand prefix (Compass: …) is added to every outbound SMS while the
     # in-app Message body stays exactly what the CHW typed (asserted above).
+    # This is the member's FIRST outbound SMS, so the STOP-prompt cadence
+    # (SMS Output Spec 1 §2) appends the opt-out line to this send.
     fake_send.assert_awaited_once_with(
-        "+15550300001", "Compass: Hi, this is your CHW checking in!"
+        "+15550300001",
+        "Compass: Hi, this is your CHW checking in! Reply STOP to opt out.",
     )
 
     async with _test_session_factory() as session:
@@ -591,5 +594,8 @@ async def test_regression_thread_and_unread_count_still_work_with_fanout_present
     conv = next(c for c in res.json() if c["id"] == conv_id)
     assert conv["unread_count"] == 1
 
-    # Only the CHW's message triggered a fanout attempt.
-    fake_send.assert_awaited_once_with("+15550300010", "Compass: Hello from CHW")
+    # Only the CHW's message triggered a fanout attempt. First outbound SMS to
+    # this member, so the STOP-prompt cadence appends the opt-out line.
+    fake_send.assert_awaited_once_with(
+        "+15550300010", "Compass: Hello from CHW Reply STOP to opt out."
+    )
