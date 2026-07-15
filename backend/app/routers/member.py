@@ -23,6 +23,7 @@ from app.schemas.member import (
 from app.schemas.user import MemberProfileResponse, MemberProfileUpdate
 from app.services.auth_service import DuplicateCinError, check_cin_uniqueness
 from app.services.storage.avatar_urls import presigned_avatar_url
+from app.utils.phone import is_placeholder_phone
 
 logger = logging.getLogger("compass.member")
 
@@ -47,6 +48,7 @@ def _build_member_profile_response(profile, user) -> MemberProfileResponse:
         name=user.name,
         phone=user.phone,
         phone_verified_at=user.phone_verified_at,
+        sms_2fa_enabled=user.sms_2fa_enabled,
         email=user.email,
         profile_picture_url=presigned_avatar_url(user.profile_picture_url),
         preferred_name=profile.preferred_name,
@@ -104,6 +106,30 @@ async def update_profile(data: MemberProfileUpdate, current_user=Depends(require
         if name:
             current_user.name = name
 
+    # SMS 2FA opt-in (SMS Output Spec 2) — lives on the User row. Enabling
+    # requires a verified, non-sentinel phone (the Settings toggle is only
+    # shown in that state, but enforce server-side too — defense in depth);
+    # disabling is always allowed. CHWs never reach this endpoint (member-only
+    # role gate) — their 2FA is governed by the chw_sms_2fa_enabled settings
+    # flag, not this column.
+    if "sms_2fa_enabled" in payload:
+        desired_2fa = bool(payload.pop("sms_2fa_enabled"))
+        if desired_2fa:
+            has_verified_phone = bool(
+                current_user.phone_verified_at is not None
+                and current_user.phone
+                and not is_placeholder_phone(current_user.phone)
+            )
+            if not has_verified_phone:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=(
+                        "Verify a phone number before enabling two-factor "
+                        "authentication."
+                    ),
+                )
+        current_user.sms_2fa_enabled = desired_2fa
+
     # QA batch (2026-07-14), Part 4 — reject a CIN already on file for
     # another member BEFORE writing it. Only checked when the payload
     # actually supplies a non-empty CIN (medi_cal_id is optional on this
@@ -128,6 +154,7 @@ async def update_profile(data: MemberProfileUpdate, current_user=Depends(require
     await db.commit()
     await db.refresh(profile)
     return _build_member_profile_response(profile, current_user)
+
 
 @router.get("/chw", response_model=AssignedCHWResponse | None)
 async def get_assigned_chw(

@@ -38,7 +38,7 @@ import os
 from datetime import UTC, datetime, timedelta, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Cookie, Depends, Form, Header, HTTPException, Query, Response, status
+from fastapi import APIRouter, Cookie, Depends, Form, Header, HTTPException, Query, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from jose import JWTError, jwt
 from pydantic import BaseModel, Field
@@ -761,6 +761,71 @@ async def update_chw_background_check(
         background_check_status=profile.background_check_status,
         updated_at=datetime.now(UTC),
     )
+
+
+class _Reset2FAResponse(BaseModel):
+    """Returned by ``POST /admin/chws/{chw_id}/reset-2fa``."""
+
+    reset: bool = True
+
+
+@router.post(
+    "/chws/{chw_id}/reset-2fa",
+    response_model=_Reset2FAResponse,
+    summary="Reset a CHW's SMS 2FA enrollment (admin key + TOTP required)",
+)
+async def reset_chw_2fa(
+    chw_id: UUID,
+    request: Request,
+    _key: bool = Depends(require_admin_key),
+    _2fa: None = Depends(require_2fa_token),
+    db: AsyncSession = Depends(get_db),
+) -> _Reset2FAResponse:
+    """Recover a CHW locked out of SMS 2FA (lost/changed phone).
+
+    SMS Output Spec 2 — "Admin recovery". Behind the same admin-key + admin
+    TOTP gate as every other CHW-mutating admin endpoint in this file (a CHW
+    JWT — even the CHW's own — can never reach it). Clears the CHW's phone +
+    verified flag, deletes their trusted devices, revokes their refresh tokens
+    (logout-everywhere), and writes an audit row. The CHW then re-enrolls a new
+    number through the normal login challenge — there is no special recovery
+    flow.
+
+    Returns 404 when ``chw_id`` is not a CHW (members/admins are never a valid
+    target here). Idempotent: resetting an already-reset CHW is a no-op 200.
+    """
+    from app.models.audit import AuditLog
+    from app.services.auth_service import revoke_all_refresh_tokens_for_user
+
+    chw_user = await db.get(User, chw_id)
+    if not chw_user or chw_user.role != "chw":
+        raise HTTPException(status_code=404, detail="CHW not found")
+
+    chw_user.phone = None
+    chw_user.phone_verified_at = None
+
+    # Revokes all outstanding refresh tokens AND deletes every trusted-device
+    # row for the CHW (same helper the password-reset "logout-everywhere" path
+    # uses); does not commit — we own the commit below.
+    revoked_count = await revoke_all_refresh_tokens_for_user(db, chw_id)
+
+    client_ip = request.client.host if request.client else None
+    db.add(
+        AuditLog(
+            user_id=chw_id,
+            action="chw_2fa_reset",
+            resource="chw_2fa",
+            resource_id=str(chw_id),
+            ip_address=client_ip,
+            details={"refresh_tokens_revoked": revoked_count},
+        )
+    )
+
+    await db.commit()
+
+    logger.info("admin.reset_chw_2fa: reset SMS 2FA for chw=%s", chw_id)
+
+    return _Reset2FAResponse(reset=True)
 
 
 @router.get(

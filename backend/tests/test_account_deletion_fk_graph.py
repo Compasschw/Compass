@@ -609,12 +609,22 @@ class TestAccountDeletionFkGraph:
             assert redemption.member_id == g.member_id
             assert redemption.status == "pending"
 
-    async def test_hard_deleted_member_not_in_chw_roster(self, client: AsyncClient):
+    async def test_hard_deleted_member_not_in_chw_roster(
+        self, client: AsyncClient, monkeypatch
+    ):
         """After hard-delete, the member must not appear in the CHW's roster
         (GET /api/v1/chw/members) — proven by both the MemberProfile join
         (row is gone) and the User.role == "member" filter (role is now
         "deleted").
         """
+        # This test exercises account deletion, not login 2FA — disable the CHW
+        # SMS challenge (SMS Output Spec 2) so the re-login below still returns
+        # tokens directly. The challenge flow has its own coverage in
+        # tests/test_chw_sms_2fa.py.
+        from app.config import settings as _settings
+
+        monkeypatch.setattr(_settings, "chw_sms_2fa_enabled", False)
+
         member_tokens, g = await _seed_full_graph(client)
 
         # Re-login as the CHW to fetch their roster (chw_id was created inside

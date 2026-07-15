@@ -490,16 +490,25 @@ async def revoke_all_refresh_tokens_for_user(db: AsyncSession, user_id: UUID) ->
     in bulk rather than the single-token revocation ``revoke_refresh_token``
     performs on login/refresh rotation.
 
+    Also DELETES every trusted-device row for the user (SMS Output Spec 2 —
+    "revoked by logout-everywhere"): a full-session invalidation must not leave
+    a remembered device that would silently skip the SMS challenge on the next
+    login. The deletion rides on the same uncommitted unit of work as the
+    token revocation.
+
     Does NOT commit — the caller (password-reset confirm) performs one
     commit for the whole unit of work (password hash + consumed_at + token
-    revocation) so a partial failure can't leave the account in a half-reset
-    state.
+    revocation + device deletion) so a partial failure can't leave the account
+    in a half-reset state.
 
     Returns:
         The number of refresh-token rows revoked (0 if the user had none
         outstanding — not an error).
     """
+    from sqlalchemy import delete
+
     from app.models.auth import RefreshToken
+    from app.models.trusted_device import TrustedDevice
 
     result = await db.execute(
         select(RefreshToken).where(
@@ -511,4 +520,9 @@ async def revoke_all_refresh_tokens_for_user(db: AsyncSession, user_id: UUID) ->
     tokens = result.scalars().all()
     for rt in tokens:
         rt.revoked = True
+
+    # Logout-everywhere also clears trusted devices so the SMS challenge can't
+    # be bypassed after a session-wide invalidation.
+    await db.execute(delete(TrustedDevice).where(TrustedDevice.user_id == user_id))
+
     return len(tokens)
