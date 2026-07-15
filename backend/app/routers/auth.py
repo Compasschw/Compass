@@ -4,6 +4,8 @@ from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -21,6 +23,11 @@ from app.schemas.auth import (
     RefreshRequest,
     RegisterRequest,
     TokenResponse,
+    TwoFactorChallengeResponse,
+    TwoFactorSendCodeRequest,
+    TwoFactorSendCodeResponse,
+    TwoFactorVerifyRequest,
+    TwoFactorVerifyResponse,
 )
 from app.services.auth_service import (
     DuplicateCinError,
@@ -38,6 +45,15 @@ from app.services.auth_service import (
 )
 from app.services.signup_confirmations import send_signup_confirmations
 from app.services.storage.avatar_urls import presigned_avatar_url
+from app.services.user_2fa import (
+    decode_pending_token,
+    find_valid_trusted_device,
+    hash_device_token,
+    issue_pending_token,
+    mint_device_token,
+    user_requires_2fa,
+)
+from app.utils.phone import is_placeholder_phone
 from app.utils.security import decode_token
 
 logger = logging.getLogger("compass.auth")
@@ -195,18 +211,282 @@ async def register(
     )
 
 
-@router.post("/login", response_model=TokenResponse)
+def _phone_challenge_meta(user: User) -> tuple[bool, str | None]:
+    """Return ``(phone_verification_required, phone_last4)`` for a 2FA challenge.
+
+    A user needs phone enrollment when they have no verified, non-sentinel
+    phone on file. ``phone_last4`` is the last 4 digits of that verified phone
+    (for the "code texted to •••1234" copy), or None when enrollment is
+    required.
+    """
+    phone = user.phone
+    has_verified_phone = bool(
+        user.phone_verified_at is not None
+        and phone
+        and not is_placeholder_phone(phone)
+    )
+    phone_last4 = phone[-4:] if (has_verified_phone and phone) else None
+    return (not has_verified_phone), phone_last4
+
+
+@router.post("/login", response_model=None)
 @limiter.limit("5/minute")
-async def login(request: Request, data: LoginRequest, db: Annotated[AsyncSession, Depends(get_db)]):
+async def login(
+    request: Request,
+    data: LoginRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> TokenResponse | TwoFactorChallengeResponse:
+    """Authenticate with email + password.
+
+    On success EITHER returns today's full ``TokenResponse``, OR — when the
+    user must clear an SMS two-factor challenge (CHWs always while the
+    ``chw_sms_2fa_enabled`` flag is on; opted-in members with a verified phone)
+    and presents no valid trusted-device token — returns a
+    ``TwoFactorChallengeResponse`` carrying a single-purpose pending token and
+    NO access/refresh tokens. The client then drives ``/auth/2fa/send-code`` +
+    ``/auth/2fa/verify``.
+
+    A valid ``X-Device-Token`` header for a remembered device bypasses the
+    challenge (and its ``last_used_at`` is stamped). ``response_model=None`` so
+    FastAPI serializes whichever concrete model is returned without coercing —
+    guaranteeing a challenge response never leaks token fields.
+    """
     user = await authenticate_user(db, data.email, data.password)
     if user is None:
         raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    # ── SMS 2FA challenge gate (Spec 2) ───────────────────────────────────────
+    # Runs AFTER password auth but BEFORE any token issuance / first-login
+    # stamping, so a challenged login yields zero session material and does not
+    # count as a completed sign-in until /auth/2fa/verify succeeds.
+    if await user_requires_2fa(user):
+        device = await find_valid_trusted_device(
+            db, user.id, request.headers.get("X-Device-Token")
+        )
+        if device is None:
+            phone_verification_required, phone_last4 = _phone_challenge_meta(user)
+            return TwoFactorChallengeResponse(
+                pending_token=issue_pending_token(user.id),
+                phone_verification_required=phone_verification_required,
+                phone_last4=phone_last4,
+            )
+        # Trusted-device bypass — record the use.
+        from datetime import UTC, datetime
+
+        device.last_used_at = datetime.now(UTC)
+        await db.commit()
+
     mark_first_login(user)
     access, refresh = create_tokens(user)
     await store_refresh_token(db, user.id, refresh)
     return TokenResponse(
         access_token=access, refresh_token=refresh, role=user.role, name=user.name,
         must_change_password=user.must_change_password,
+    )
+
+
+@router.post("/2fa/send-code", response_model=TwoFactorSendCodeResponse)
+@limiter.limit("10/minute")
+async def send_2fa_code(
+    request: Request,
+    data: TwoFactorSendCodeRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> TwoFactorSendCodeResponse:
+    """Send a 6-digit SMS sign-in code for a pending 2FA challenge.
+
+    Authorized ONLY by a valid pending token (type ``user_2fa_pending``) — an
+    admin 2FA token or a real access token is rejected with 401. The code goes
+    to the user's verified phone; on the enrollment/recovery path (no verified
+    phone yet) the caller must supply ``phone`` (validated E.164, sentinel
+    rejected 422, duplicate rejected 409). Reuses the phone-verification OTP
+    machinery (argon2 hash, 10-min TTL, 3-starts/hour cap → 429) via
+    ``app.services.otp.create_otp``.
+    """
+    from app.models.phone_verification import PhoneVerification
+    from app.routers.conversations import brand_outbound_sms
+    from app.services.auth_service import _normalize_phone_e164
+    from app.services.otp import create_otp
+    from app.services.vonage_sms import get_vonage_sms_messages_client
+    from app.utils.phone import PLACEHOLDER_PHONE_E164
+
+    user_id = decode_pending_token(data.pending_token)
+    user = await db.get(User, user_id)
+    if user is None:
+        # The pending token was validly signed but its subject no longer
+        # exists — treat the same as an invalid session (never a 500).
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or expired sign-in session. Please sign in again.",
+        )
+
+    has_verified_phone = bool(
+        user.phone_verified_at is not None
+        and user.phone
+        and not is_placeholder_phone(user.phone)
+    )
+
+    if has_verified_phone:
+        # Ignore any client-supplied phone — the code always goes to the
+        # already-verified number (a user can't redirect their own OTP).
+        # ``has_verified_phone`` guarantees a non-None phone here.
+        assert user.phone is not None
+        target_phone: str = user.phone
+    else:
+        # Enrollment / recovery: a number is required and fully validated.
+        if not data.phone:
+            raise HTTPException(
+                status_code=422,
+                detail="A phone number is required to receive your sign-in code.",
+            )
+        normalized = _normalize_phone_e164(data.phone)
+        if normalized is None:
+            raise HTTPException(
+                status_code=422,
+                detail="Enter a valid phone number.",
+            )
+        if normalized == PLACEHOLDER_PHONE_E164:
+            raise HTTPException(
+                status_code=422,
+                detail="This phone number is a placeholder and can't receive texts.",
+            )
+        # Duplicate-phone pre-check mirrors register_user: a number already on
+        # another account can't be enrolled here (409). The user's OWN number
+        # (if they somehow re-enter it) is fine.
+        existing = await db.execute(
+            select(User).where(User.phone == normalized, User.id != user.id)
+        )
+        if existing.scalar_one_or_none() is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="An account with this phone number already exists.",
+            )
+        target_phone = normalized
+
+    # create_otp enforces the 3-per-hour cap (→ 429) and commits the row.
+    raw_code = await create_otp(db, user.id, target_phone)
+
+    otp_body = brand_outbound_sms(
+        f"Your Compass sign-in code is {raw_code}. "
+        f"It expires in {PhoneVerification.CODE_TTL_MINUTES} minutes."
+    )
+    sms_result = await get_vonage_sms_messages_client().send_text(target_phone, otp_body)
+    if not sms_result.success:
+        # Row is already committed (retryable); surface a clean 500, never a
+        # bare unhandled crash (TESTING.md rule #3).
+        _last4 = target_phone[-4:] if len(target_phone) >= 4 else target_phone
+        logger.error(
+            "2fa.send_code: SMS delivery failed for user=%s to ***%s error=%s",
+            user.id, _last4, sms_result.error,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Could not send your sign-in code. Please try again.",
+        )
+
+    return TwoFactorSendCodeResponse(sent=True, phone_last4=target_phone[-4:])
+
+
+@router.post("/2fa/verify", response_model=TwoFactorVerifyResponse)
+@limiter.limit("10/minute")
+async def verify_2fa_code(
+    request: Request,
+    data: TwoFactorVerifyRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> TwoFactorVerifyResponse:
+    """Verify a 6-digit SMS code and complete the login.
+
+    On success issues the real access/refresh tokens (identical shape to
+    ``/auth/login``); on the enrollment path also sets the user's verified
+    phone (duplicate-phone → 409). With ``remember_device: true`` mints a
+    30-day trusted-device token, stores ONLY its SHA-256 hash, and returns the
+    raw token once.
+
+    Status contract: 401 bad/expired pending; 410 expired-or-exhausted code;
+    422 wrong code (an attempt is decremented).
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from app.models.trusted_device import TrustedDevice
+    from app.services.otp import OtpCheckError, check_otp
+
+    user_id = decode_pending_token(data.pending_token)
+    user = await db.get(User, user_id)
+    if user is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or expired sign-in session. Please sign in again.",
+        )
+
+    had_verified_phone = bool(
+        user.phone_verified_at is not None
+        and user.phone
+        and not is_placeholder_phone(user.phone)
+    )
+
+    # check_otp sets verified_at IN-SESSION (uncommitted) on success so an
+    # enrollment duplicate-phone failure below unwinds the consumption too.
+    try:
+        verified_phone = await check_otp(db, user.id, data.code)
+    except OtpCheckError as err:
+        if err.reason == "no_active" or err.reason == "exhausted":
+            raise HTTPException(
+                status_code=410,
+                detail=(
+                    "This sign-in code has expired or is no longer valid. "
+                    "Please request a new one."
+                ),
+            ) from err
+        # wrong_code — an attempt was decremented and committed.
+        raise HTTPException(
+            status_code=422,
+            detail=f"Incorrect code. {err.attempts_left} attempt(s) remaining.",
+        ) from err
+
+    # Enrollment path: persist the freshly-verified phone onto the User row.
+    if not had_verified_phone:
+        user.phone = verified_phone
+        user.phone_verified_at = datetime.now(UTC)
+
+    # Mint session tokens (shared with /auth/login). first_login stamped here —
+    # the challenge is now fully cleared.
+    mark_first_login(user)
+    access, refresh = create_tokens(user)
+
+    device_token: str | None = None
+    if data.remember_device:
+        device_token = mint_device_token()
+        user_agent = request.headers.get("user-agent")
+        if user_agent is not None:
+            user_agent = user_agent[:256]
+        db.add(
+            TrustedDevice(
+                user_id=user.id,
+                token_hash=hash_device_token(device_token),
+                user_agent=user_agent,
+                expires_at=datetime.now(UTC)
+                + timedelta(days=TrustedDevice.TRUSTED_DEVICE_TTL_DAYS),
+            )
+        )
+
+    # One commit for the whole unit of work: OTP consumption (verified_at),
+    # optional phone enrollment, and the trusted-device row. A duplicate-phone
+    # collision on the enrollment write rolls ALL of it back → clean 409.
+    try:
+        await store_refresh_token(db, user.id, refresh)
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="An account with this phone number already exists.",
+        ) from exc
+
+    return TwoFactorVerifyResponse(
+        access_token=access,
+        refresh_token=refresh,
+        role=user.role,
+        name=user.name,
+        must_change_password=user.must_change_password,
+        device_token=device_token,
     )
 
 
@@ -590,6 +870,7 @@ async def complete_member_onboarding(
         insurance_company=profile.insurance_company,
         name=current_user.name,
         phone=current_user.phone,
+        sms_2fa_enabled=current_user.sms_2fa_enabled,
         email=current_user.email,
         profile_picture_url=presigned_avatar_url(current_user.profile_picture_url),
         preferred_name=profile.preferred_name,

@@ -49,12 +49,33 @@ async def test_register_short_password(client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_login_success(client: AsyncClient, chw_tokens):
+    """A correct CHW password now yields the SMS 2FA challenge (SMS Output
+    Spec 2) — 200 with a pending token and NO session tokens. The full
+    challenge → tokens flow is covered in tests/test_chw_sms_2fa.py."""
+    res = await client.post("/api/v1/auth/login", json={
+        "email": "testchw@example.com", "password": "Testpass123!",
+    })
+    assert res.status_code == 200
+    data = res.json()
+    assert data["two_fa_required"] is True
+    assert data["pending_token"]
+    assert "access_token" not in data
+
+
+@pytest.mark.asyncio
+async def test_login_success_with_2fa_flag_off(client: AsyncClient, chw_tokens, monkeypatch):
+    """With the chw_sms_2fa_enabled emergency valve off, CHW login returns
+    tokens directly — today's pre-2FA contract."""
+    from app.config import settings as _settings
+
+    monkeypatch.setattr(_settings, "chw_sms_2fa_enabled", False)
     res = await client.post("/api/v1/auth/login", json={
         "email": "testchw@example.com", "password": "Testpass123!",
     })
     assert res.status_code == 200
     data = res.json()
     assert data["role"] == "chw"
+    assert "access_token" in data
 
 
 @pytest.mark.asyncio
