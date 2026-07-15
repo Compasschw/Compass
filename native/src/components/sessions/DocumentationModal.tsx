@@ -832,6 +832,9 @@ function SessionTimesSection({
         e.g. 07/12/2026 02:30 PM. Matches the billing export format. Used to
         auto-calculate units below.
       </Text>
+      <Text style={st.hint}>
+        Note: sessions are limited to 2 hours per member, per day.
+      </Text>
 
       {/* Q1: inline computed-units line (or not-billable notice) — replaces
           the old separate "Units to Bill" Gross/Net/Rate card. */}
@@ -986,6 +989,14 @@ export function DocumentationModal({
   const [showConfirm, setShowConfirm] = useState(false);
   // Tracks whether the notes TextInput is focused, for focus-ring styling.
   const [notesFocused, setNotesFocused] = useState(false);
+  // On-brand inline error banner for a failed documentation submission
+  // (e.g. "Daily unit cap exceeded. 0 units remaining today."). Replaces the
+  // browser `window.alert` / native `Alert.alert` that used to fire from the
+  // caller's onSubmit catch handler — the modal now owns error display so
+  // both web and native share one on-brand surface and the modal explicitly
+  // stays open for the CHW to adjust and retry. Cleared on the next submit
+  // attempt and whenever the CHW edits a field (see the effect below).
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   // Case notes the CHW wrote during this session — used to pre-fill the Session
   // Notes field so they can review/edit rather than retype. Only fetched while
@@ -1057,6 +1068,17 @@ export function DocumentationModal({
     // re-reading on every keystroke would fight the debounced-save effect.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, sessionId]);
+
+  // Clear a previous submit-failure banner as soon as the CHW edits the
+  // form — an error about "Daily unit cap exceeded" (say) is stale the
+  // moment the CHW starts adjusting the times/notes to address it, and
+  // leaving it up would misleadingly suggest the NEW content already failed.
+  useEffect(() => {
+    setSubmitError(null);
+    // Intentionally omits `submitError` itself from deps — this effect only
+    // reacts to field edits, never to the error being set.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chwNotes, sessionStartInput, sessionEndInput, selectedDiagnosisCodes, selectedProcedureCode]);
 
   // Pre-fill Session Notes with this session's case notes, once, without
   // clobbering anything the CHW has already typed OR a just-restored draft
@@ -1201,6 +1223,9 @@ export function DocumentationModal({
     if (!isValid || isSubmitting) return;
 
     setIsSubmitting(true);
+    // A new submit attempt clears any error banner from a previous failed
+    // attempt — the CHW is retrying, so a stale reason must not linger.
+    setSubmitError(null);
 
     const documentation: SessionDocumentation = {
       sessionId,
@@ -1216,16 +1241,21 @@ export function DocumentationModal({
     };
 
     // Await the parent's onSubmit so we only show "submitted" after the
-    // API call actually succeeds. The parent is responsible for surfacing
-    // its own error toast if the mutation fails — we simply re-enable the
-    // button and let the modal stay open for retry.
+    // API call actually succeeds. On failure the parent rethrows (it no
+    // longer shows its own alert — see the three CHW*Screen onSubmit
+    // handlers) so we can surface the reason as an in-app banner here and
+    // keep the modal open for the CHW to adjust and retry.
     try {
       const maybePromise = onSubmit(documentation) as unknown;
       if (maybePromise && typeof (maybePromise as Promise<unknown>).then === 'function') {
         await maybePromise;
       }
-    } catch {
-      // Parent surfaces the error; we just stop the spinner and bail.
+    } catch (err) {
+      const reason =
+        err instanceof Error && err.message
+          ? err.message
+          : 'Something went wrong submitting this documentation.';
+      setSubmitError(reason);
       setIsSubmitting(false);
       return;
     }
@@ -1381,6 +1411,23 @@ export function DocumentationModal({
             <X size={20} color={tokens.textPrimary} />
           </TouchableOpacity>
         </View>
+
+        {/* ── Documentation-submit failure banner (in-app, replaces the browser
+              alert). On-brand, matches the RegisterScreen error-banner
+              convention: #FEE2E2 background / #B91C1C text. Rendered outside
+              the ScrollView so it's visible immediately on failure regardless
+              of scroll position; cleared on the next submit attempt or field
+              edit (see the effect above performSubmit). ──────────────────── */}
+        {submitError && (
+          <View style={mo.submitErrorBanner} accessibilityLiveRegion="polite">
+            <Text style={mo.submitErrorText}>
+              Failed to submit documentation: {submitError}
+            </Text>
+            <Text style={mo.submitErrorHint}>
+              The modal will stay open so you can adjust and try again.
+            </Text>
+          </View>
+        )}
 
         {/* ── Scrollable content ───────────────────────────────────────────── */}
         <ScrollView
@@ -1682,6 +1729,25 @@ const mo = StyleSheet.create({
   scrollContent: {
     padding: spacing.xl,
     paddingBottom: spacing.lg,
+  },
+  // Documentation-submit failure banner — same on-brand palette as the
+  // RegisterScreen inline error banner (#FEE2E2 bg / #B91C1C text).
+  submitErrorBanner: {
+    marginHorizontal: spacing.xl,
+    marginTop: spacing.md,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: '#FEE2E2',
+  },
+  submitErrorText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#B91C1C',
+  },
+  submitErrorHint: {
+    fontSize: 12,
+    color: '#B91C1C',
+    marginTop: 2,
   },
   charCounter: {
     fontSize: 12,

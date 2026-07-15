@@ -45,6 +45,14 @@ class CaseNoteResponse(BaseModel):
     Returned by POST (201 Created), GET list, and PATCH.
     ``deleted_at`` is intentionally absent — callers never see soft-deleted rows
     through the public API.
+
+    ``status`` ('draft' | 'final') is server-determined, never client-supplied
+    (see ``CaseNoteCreate`` — no ``status`` field there): a note attached to a
+    session whose documentation has not yet been submitted is created
+    'draft' and flips to 'final' the moment that session's documentation is
+    submitted (``submit_documentation`` in ``routers/sessions.py``).
+    Standalone notes and notes on an already-completed session are 'final'
+    from creation.
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -55,6 +63,7 @@ class CaseNoteResponse(BaseModel):
     session_id: UUID | None
     body: str
     is_pinned: bool
+    status: str
     created_at: datetime
     updated_at: datetime
 

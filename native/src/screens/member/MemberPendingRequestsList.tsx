@@ -188,7 +188,13 @@ function ProposeNewTimeModal({
   const [dateInput, setDateInput] = useState('');
   const [startTimeInput, setStartTimeInput] = useState('');
   const [endTimeInput, setEndTimeInput] = useState('');
-  const [mode, setMode] = useState<'in_person' | 'virtual' | 'phone'>('in_person');
+  // Phone is the default type (QA batch 2026-07-14 #23), matching
+  // MemberCalendarScreen's schedule dialog. This modal has no Type picker UI
+  // of its own — `mode` is normally overwritten by the prefill effect below
+  // from the original request's mode the instant it opens — so this initial
+  // value and the effect's fallback only matter for the rare request that
+  // somehow has no mode recorded.
+  const [mode, setMode] = useState<'in_person' | 'virtual' | 'phone'>('phone');
   // QA2 A2 #3 — Resource Needs multiselect, mirroring CHWCalendarScreen's
   // ScheduleSessionModal chip grid exactly (same VERTICAL_PICKER_OPTIONS
   // source of truth, same Set-based toggle). Seeded from the original
@@ -218,7 +224,7 @@ function ProposeNewTimeModal({
     setEndTimeInput(
       request.scheduledEndAt ? formatTimeAMPM(request.scheduledEndAt) : formatTimeAMPM(request.scheduledAt),
     );
-    setMode((request.mode as 'in_person' | 'virtual' | 'phone') ?? 'in_person');
+    setMode((request.mode as 'in_person' | 'virtual' | 'phone') ?? 'phone');
     setResourceNeeds(new Set((request.resourceNeeds as Vertical[] | null | undefined) ?? []));
     setFieldError(null);
   }, [visible, request]);

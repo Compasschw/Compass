@@ -1650,23 +1650,17 @@ function ConversationPane({
   const handleDocumentationSubmit = useCallback(
     async (data: SessionDocumentation): Promise<void> => {
       if (documentingSessionId == null) return;
-      try {
-        await submitDocumentation.mutateAsync({
-          sessionId: documentingSessionId,
-          data: data as unknown as Record<string, unknown>,
-        });
-        setDocumentingSessionId(null);
-      } catch (err) {
-        const reason =
-          err instanceof Error && err.message ? err.message : 'Unknown error';
-        if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          window.alert(
-            `Failed to submit documentation\n\n${reason}\n\nThe modal will stay open so you can adjust and try again.`,
-          );
-        } else {
-          Alert.alert('Failed to submit documentation', reason);
-        }
-      }
+      // On failure, let the error propagate — DocumentationModal's own
+      // performSubmit catches it and renders the on-brand inline
+      // `submitError` banner (Part 12, QA batch 2026-07-14 #12). No
+      // window.alert / Alert.alert here: never a browser/OS dialog for this
+      // failure, and the modal stays open (documentingSessionId is left set)
+      // so the CHW can adjust and retry.
+      await submitDocumentation.mutateAsync({
+        sessionId: documentingSessionId,
+        data: data as unknown as Record<string, unknown>,
+      });
+      setDocumentingSessionId(null);
     },
     [documentingSessionId, submitDocumentation],
   );
@@ -2128,7 +2122,16 @@ function ConversationPane({
 
 interface CaseNoteInlineSectionProps {
   readonly memberId: string;
-  readonly sessionId: string;
+  /**
+   * Null when there is no active session — the note is created standalone.
+   * Previously this was typed `string` and the call site passed
+   * `conv.activeSessionId ?? ''`, which silently turned "no active session"
+   * into a session_id of `''` and would have sent an empty-string
+   * session_id to the backend. Typing this `string | null` (matching
+   * `CreateCaseNotePayload.sessionId`) and passing `conv.activeSessionId`
+   * straight through removes that footgun at the type level.
+   */
+  readonly sessionId: string | null;
   readonly onClose: () => void;
 }
 
@@ -3147,7 +3150,7 @@ function MemberContextRail({
         {caseNoteOpen && conv.memberId ? (
           <CaseNoteInlineSection
             memberId={conv.memberId}
-            sessionId={conv.activeSessionId ?? ''}
+            sessionId={conv.activeSessionId}
             onClose={() => setCaseNoteOpen(false)}
           />
         ) : null}
@@ -3521,25 +3524,18 @@ export function CHWMessagesScreen(): React.JSX.Element {
   const handleDocumentationSubmit = useCallback(
     async (data: SessionDocumentation): Promise<void> => {
       if (documentingSessionId == null) return;
-      try {
-        await submitDocumentation.mutateAsync({
-          sessionId: documentingSessionId,
-          data: data as unknown as Record<string, unknown>,
-        });
-        setDocumentingSessionId(null);
-        setDocumentingSessionStartedAt(null);
-        setDocumentingSessionEndedAt(null);
-      } catch (err) {
-        const reason =
-          err instanceof Error && err.message ? err.message : 'Unknown error';
-        if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          window.alert(
-            `Failed to submit documentation\n\n${reason}\n\nThe modal will stay open so you can adjust and try again.`,
-          );
-        } else {
-          Alert.alert('Failed to submit documentation', reason);
-        }
-      }
+      // On failure, let the error propagate — DocumentationModal's own
+      // performSubmit catches it and renders the on-brand inline
+      // `submitError` banner (Part 12, QA batch 2026-07-14 #12). No
+      // window.alert / Alert.alert here: never a browser/OS dialog for this
+      // failure, and the modal stays open so the CHW can adjust and retry.
+      await submitDocumentation.mutateAsync({
+        sessionId: documentingSessionId,
+        data: data as unknown as Record<string, unknown>,
+      });
+      setDocumentingSessionId(null);
+      setDocumentingSessionStartedAt(null);
+      setDocumentingSessionEndedAt(null);
     },
     [documentingSessionId, submitDocumentation],
   );

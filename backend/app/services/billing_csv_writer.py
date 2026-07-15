@@ -525,12 +525,18 @@ def build_row_from_models(
 
     ``communication_session`` (the most recent CommunicationSession for
     this Session) provides the actual call timing.  Activity Start Time is
-    the call's started_at (when the bridged call connected); Activity End
-    Time is the documentation's submitted_at (the moment the CHW clicked
-    Submit on the DocumentationModal) — that's when the billable activity
-    is considered closed for Pear's purposes.  Both fall back to
-    Session.started_at / Session.ended_at when no CommunicationSession
-    exists (in-person sessions with no call leg).
+    the call's started_at (when the bridged call connected), falling back to
+    ``Session.started_at`` when no CommunicationSession exists (in-person
+    sessions with no call leg).
+
+    Activity End Time is ``Session.ended_at`` — the CHW-entered Session End
+    value from the DocumentationModal, which ``submit_documentation``
+    persists as the session's authoritative end time (QA batch 2026-07-14
+    #13: "the official session end time must be published as the value
+    typed in the Session End field ... everywhere it appears"). Falls back
+    to ``SessionDocumentation.submitted_at`` only in the rare case where
+    ``Session.ended_at`` is somehow unset (e.g. a legacy row predating this
+    invariant) so the row still renders something rather than an empty cell.
     """
     del consent_given  # v2 layout drops the Consent column; kept in signature.
 
@@ -559,11 +565,12 @@ def build_row_from_models(
     else:
         start_utc = getattr(session, "started_at", None)
 
-    # SessionDocumentation uses ``submitted_at`` (not created_at) as the
-    # canonical doc-submission timestamp.  Fall back to session.ended_at
-    # for the rare case where documentation is somehow absent.
-    end_utc = getattr(documentation, "submitted_at", None) or getattr(
-        session, "ended_at", None
+    # Activity End Time = Session.ended_at, the CHW-entered Session End value
+    # (authoritative per Part 13's end-time invariant — see the docstring
+    # above). Falls back to the documentation's submitted_at only when
+    # ended_at is unexpectedly unset.
+    end_utc = getattr(session, "ended_at", None) or getattr(
+        documentation, "submitted_at", None
     )
 
     return BillingCsvRow(

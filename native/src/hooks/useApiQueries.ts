@@ -496,6 +496,13 @@ export interface CaseNoteData {
   sessionId: string | null;
   body: string;
   isPinned: boolean;
+  /**
+   * 'draft' | 'final' — a note attached to a session whose documentation
+   * hasn't been submitted yet stays 'draft' until that submit happens.
+   * Standalone notes and notes on an already-completed session are 'final'
+   * from creation. Drives the "Draft" badge wherever notes render.
+   */
+  status: 'draft' | 'final';
   createdAt: string;
   updatedAt: string;
 }
