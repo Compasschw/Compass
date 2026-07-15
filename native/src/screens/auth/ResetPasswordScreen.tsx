@@ -48,6 +48,7 @@ import { fonts } from '../../theme/typography';
 import { radii, spacing } from '../../theme/spacing';
 import { shadows } from '../../theme/shadows';
 import { ApiError } from '../../api/client';
+import { validatePasswordComplexity } from '../../lib/passwordPolicy';
 import {
   useRequestPasswordReset,
   useConfirmPasswordReset,
@@ -108,8 +109,13 @@ export function ResetPasswordScreen({ route, navigation }: Props): React.JSX.Ele
     setFieldError(null);
     setErrorMessage(null);
 
-    if (newPassword.length < MIN_PASSWORD_LENGTH) {
-      setFieldError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
+    // Mirrors RegisterScreen's inline feedback (QA batch item 1, same bug
+    // class): use the shared complexity util instead of a length-only check
+    // so a password missing a rule (uppercase / number / special character)
+    // is named here too, not just discovered via a 422 round-trip.
+    const complexityError = validatePasswordComplexity(newPassword);
+    if (complexityError) {
+      setFieldError(complexityError);
       return;
     }
     if (newPassword !== confirmPassword) {
