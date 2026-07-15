@@ -432,6 +432,44 @@ async def confirm_session(
             "Notification fanout failed on session confirm: %s", e
         )
 
+    # ── Session-confirmed SMS to member (SMS Output Spec 1 §3) ───────────────
+    # Only when a CHW/admin confirmed (the member is the party being notified,
+    # matching the push direction above). A member confirming a CHW-proposed
+    # time notifies the CHW instead — CHWs are app-only, no confirmation SMS.
+    # Best-effort; a failure must never fail the confirm.
+    if current_user.role != "member":
+        try:
+            from app.models.user import MemberProfile
+            from app.services.sms_notifications import send_session_confirmed_sms
+
+            member_user = await db.get(User, session.member_id)
+            chw_user = await db.get(User, session.chw_id)
+            member_profile = (
+                await db.execute(
+                    select(MemberProfile).where(
+                        MemberProfile.user_id == session.member_id
+                    )
+                )
+            ).scalar_one_or_none()
+            if member_user is not None and member_profile is not None:
+                chw_first = (
+                    chw_user.name.split()[0]
+                    if chw_user and chw_user.name
+                    else "your CHW"
+                )
+                await send_session_confirmed_sms(
+                    db,
+                    member_user=member_user,
+                    member_profile=member_profile,
+                    chw_first_name=chw_first,
+                    scheduled_at=session.scheduled_at,
+                )
+        except Exception as e:  # noqa: BLE001
+            import logging
+            logging.getLogger("compass").warning(
+                "Session-confirmed SMS hook failed on confirm: %s", e
+            )
+
     from app.models.user import User as _User
     chw = await db.get(_User, session.chw_id)
     member = await db.get(_User, session.member_id)
@@ -533,6 +571,39 @@ async def cancel_session(
         )
     await db.commit()
     await db.refresh(session)
+
+    # ── Session-cancelled SMS to member (SMS Output Spec 1 §3) ───────────────
+    # A CHW/admin cancelling notifies the member; a member cancelling their own
+    # appointment already knows, so no self-text. Best-effort; never fails the
+    # cancel.
+    if current_user.role != "member":
+        try:
+            from app.models.user import MemberProfile
+            from app.services.sms_notifications import send_session_changed_sms
+
+            member_user = await db.get(User, session.member_id)
+            member_profile = (
+                await db.execute(
+                    select(MemberProfile).where(
+                        MemberProfile.user_id == session.member_id
+                    )
+                )
+            ).scalar_one_or_none()
+            if member_user is not None and member_profile is not None:
+                await send_session_changed_sms(
+                    db,
+                    member_user=member_user,
+                    member_profile=member_profile,
+                    old_scheduled_at=session.scheduled_at,
+                    new_scheduled_at=None,
+                    cancelled=True,
+                )
+        except Exception as e:  # noqa: BLE001
+            import logging
+            logging.getLogger("compass").warning(
+                "Session-cancelled SMS hook failed on cancel: %s", e
+            )
+
     from app.models.user import User as _User
     chw = await db.get(_User, session.chw_id)
     member = await db.get(_User, session.member_id)
@@ -801,6 +872,37 @@ async def schedule_session(
 
     await db.commit()
     await db.refresh(session)
+
+    # ── Session moved/scheduled SMS to member (SMS Output Spec 1 §3) ─────────
+    # When a CHW proposes/reschedules a time (the "Propose New Time" flow books
+    # a new session as the CHW), notify the member of the new time. A member
+    # scheduling with a CHW is the member's own action — no self-text, and the
+    # CHW is app-only. Best-effort; never fails the schedule.
+    if current_user.role == "chw":
+        try:
+            from app.services.sms_notifications import send_session_changed_sms
+
+            member_user = await db.get(User, member_id)
+            member_profile = (
+                await db.execute(
+                    select(MemberProfile).where(MemberProfile.user_id == member_id)
+                )
+            ).scalar_one_or_none()
+            if member_user is not None and member_profile is not None:
+                await send_session_changed_sms(
+                    db,
+                    member_user=member_user,
+                    member_profile=member_profile,
+                    old_scheduled_at=None,
+                    new_scheduled_at=session.scheduled_at,
+                    cancelled=False,
+                )
+        except Exception as e:  # noqa: BLE001
+            import logging
+            logging.getLogger("compass").warning(
+                "Session-moved SMS hook failed on schedule: %s", e
+            )
+
     return session
 
 

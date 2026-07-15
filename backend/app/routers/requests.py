@@ -225,6 +225,38 @@ async def create_request(
             member_id=req.member_id,
         )
 
+    # Member acknowledgement SMS (SMS Output Spec 1 §3): confirm to the member
+    # that we received their request. Best-effort, gated by SMS eligibility +
+    # the kill switch inside the notification helper; a failure here must never
+    # fail the request-creation endpoint (mirrors the neighboring best-effort
+    # SMS/notify convention).
+    try:
+        from app.models.user import MemberProfile
+        from app.services.sms_notifications import send_request_received_sms
+
+        member_profile = (
+            await db.execute(
+                select(MemberProfile).where(MemberProfile.user_id == current_user.id)
+            )
+        ).scalar_one_or_none()
+        if member_profile is not None:
+            if req.target_chw_id is not None and target is not None and target.name:
+                chw_first_name = target.name.split()[0]
+            else:
+                chw_first_name = "your CHW"
+            await send_request_received_sms(
+                db,
+                member_user=current_user,
+                member_profile=member_profile,
+                chw_first_name=chw_first_name,
+            )
+    except Exception as exc:  # noqa: BLE001
+        import logging
+
+        logging.getLogger("compass").warning(
+            "Request-received SMS hook failed: %s", exc
+        )
+
     return ServiceRequestResponse.model_validate(req)
 
 @router.patch("/{request_id}/accept")
@@ -387,6 +419,33 @@ async def accept_request(request_id: UUID, current_user=Depends(require_role("ch
     except Exception as e:  # noqa: BLE001
         import logging
         logging.getLogger("compass").warning("Email send failed on accept: %s", e)
+
+    # ── Session-confirmed SMS to member (SMS Output Spec 1 §3) ───────────────
+    # Fires at the same transition as the request-accepted email/push above.
+    # Best-effort, eligibility- + kill-switch-gated inside the helper; a
+    # failure must never fail the accept.
+    try:
+        from app.models.user import MemberProfile
+        from app.services.sms_notifications import send_session_confirmed_sms
+
+        member_profile = (
+            await db.execute(
+                select(MemberProfile).where(MemberProfile.user_id == req.member_id)
+            )
+        ).scalar_one_or_none()
+        if member_user is not None and member_profile is not None:
+            await send_session_confirmed_sms(
+                db,
+                member_user=member_user,
+                member_profile=member_profile,
+                chw_first_name=chw_first,
+                scheduled_at=scheduled_at,
+            )
+    except Exception as e:  # noqa: BLE001
+        import logging
+        logging.getLogger("compass").warning(
+            "Session-confirmed SMS hook failed on accept: %s", e
+        )
 
     return {"status": "matched", "request_id": str(req.id), "session_id": str(session.id)}
 
