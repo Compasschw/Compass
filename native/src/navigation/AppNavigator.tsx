@@ -30,6 +30,7 @@ import { MagicLinkScreen } from '../screens/auth/MagicLinkScreen';
 import { ResetPasswordScreen } from '../screens/auth/ResetPasswordScreen';
 import { RegisterScreen } from '../screens/auth/RegisterScreen';
 import { VerifyPhoneScreen } from '../screens/auth/VerifyPhoneScreen';
+import { TwoFactorScreen } from '../screens/auth/TwoFactorScreen';
 import { WaitlistScreen } from '../screens/auth/WaitlistScreen';
 import { CompleteProfileScreen } from '../screens/auth/CompleteProfileScreen';
 import { CHWIntakeScreen } from '../screens/chw/CHWIntakeScreen';
@@ -62,6 +63,15 @@ export type AuthStackParamList = {
    *  member's submitted phone so the screen can display it and confirm the OTP
    *  RegisterScreen already triggered. */
   VerifyPhone: { phone: string };
+  /** SMS 2FA challenge after a correct password (Spec 2). Carries the
+   *  single-purpose pending token, the verified phone's last-4 for display
+   *  (null when enrollment is required), and whether the user must first add a
+   *  phone (enrollment/recovery) before a code can be sent. */
+  TwoFactor: {
+    pendingToken: string;
+    phoneLast4: string | null;
+    phoneVerificationRequired: boolean;
+  };
   Legal: { page: LegalPage } | undefined;
 };
 
@@ -129,6 +139,10 @@ function AuthNavigator({ initialRoute = 'Landing' }: AuthNavigatorProps): React.
           real-phone member to right after signup (SMS Output Spec 1). Skippable;
           also re-launched from the Member Settings "Text messages" card. */}
       <AuthStack.Screen name="VerifyPhone" component={withErrorBoundary(VerifyPhoneScreen)} />
+      {/* TwoFactorScreen — SMS 2FA challenge LoginScreen routes to when
+          /auth/login returns a challenge (Spec 2). Skips straight to code
+          entry, or collects a phone first on the enrollment/recovery path. */}
+      <AuthStack.Screen name="TwoFactor" component={withErrorBoundary(TwoFactorScreen)} />
       {/* LegalScreen reads `page` from route params so a single registration
           serves Privacy / Terms / HIPAA / Contact via navigation.navigate(
           'Legal', { page: 'privacy' | 'terms' | 'hipaa' | 'contact' }). */}

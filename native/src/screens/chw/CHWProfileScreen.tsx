@@ -56,15 +56,16 @@ import {
   DollarSign,
   ExternalLink,
   FileText,
-  // Globe, HelpCircle, Mail, MessageSquare, Shield: only used by the
-  // Language / Help / Privacy & Security tab panels, hidden until further
-  // notice (QA batch #7) — see TAB_ORDER above. Re-add when those panels
-  // are restored.
+  MessageSquare,
+  // Globe, HelpCircle, Mail, Shield: only used by the Language / Help /
+  // Privacy & Security tab panels, hidden until further notice (QA batch #7)
+  // — see TAB_ORDER above. Re-add when those panels are restored.
   Trash2,
   Upload,
   XCircle,
 } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
+import { useQueryClient } from '@tanstack/react-query';
 
 import { useAuth } from '../../context/AuthContext';
 import {
@@ -75,10 +76,15 @@ import {
   useChwEarnings,
   useDeleteAccount,
   useChwChecklist,
+  useStartPhoneVerification,
+  useConfirmPhoneVerification,
   useSubmitChecklistCredential,
+  queryKeys,
   type ChwChecklistItemCode,
   type ChwChecklistItemStatus,
+  type ChwProfile,
 } from '../../hooks/useApiQueries';
+import { ApiError } from '../../api/client';
 import { uploadFile, getPresignedUploadUrl } from '../../api/upload';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { AppShell, PageHeader, Card, ProfilePictureEditor } from '../../components/ui';
@@ -984,6 +990,218 @@ const chipStyles = StyleSheet.create({
   } as TextStyle,
 });
 
+// ─── VerifyPhoneCard (SMS 2FA — Spec 2, Task 9) ───────────────────────────────
+//
+// Mirror of the member "Text messages" card (MemberSettingsScreen), adapted for
+// the CHW. Lets a CHW verify their phone so SMS 2FA codes (required at every
+// CHW login) can reach them. Three states, keyed off the CHW profile:
+//   - No phone / sentinel (555-555-5555) → prompt to add a real number in the
+//     Phone field above (can't text a placeholder), no send affordance.
+//   - Verified (phoneVerifiedAt set) → static "On" row with a masked number.
+//   - Unverified real phone → "Verify your phone" + Send code → inline 6-digit
+//     entry → Confirm. On success the CHW profile query invalidates and the
+//     card flips to the verified state.
+//
+// Reuses useStartPhoneVerification / useConfirmPhoneVerification (Spec 1). The
+// confirm hook invalidates the MEMBER profile query, so we additionally
+// invalidate the CHW profile here to flip this card without a manual refetch.
+
+const CHW_SMS_SENTINEL_DIGITS = new Set(['5555555555', '15555555555']);
+const CHW_SMS_CODE_LENGTH = 6;
+
+/** Normalise a stored phone to E.164 for the /phone endpoints, or null when it
+ *  isn't a plausible US number. */
+function chwToE164OrNull(rawDigits: string): string | null {
+  if (rawDigits.length === 10) return `+1${rawDigits}`;
+  if (rawDigits.length === 11 && rawDigits.startsWith('1')) return `+${rawDigits}`;
+  return null;
+}
+
+function VerifyPhoneCard({ profile }: { profile: ChwProfile | undefined }): React.JSX.Element {
+  const qc = useQueryClient();
+  const startVerification = useStartPhoneVerification();
+  const confirmVerification = useConfirmPhoneVerification();
+  const [entering, setEntering] = useState(false);
+  const [code, setCode] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  const phone = profile?.phone ?? '';
+  const digits = phone.replace(/\D/g, '');
+  const isSentinel = CHW_SMS_SENTINEL_DIGITS.has(digits);
+  const e164 = chwToE164OrNull(digits);
+  const isVerified = profile?.phoneVerifiedAt != null;
+  const last4 = digits.slice(-4);
+
+  const handleSendCode = (): void => {
+    if (!e164) {
+      setError('Add a valid US mobile number in the Phone field above first.');
+      return;
+    }
+    setError(null);
+    setEntering(true);
+    startVerification.mutate(
+      { phone: e164 },
+      { onError: () => setError('Could not send a code. Please try again in a moment.') },
+    );
+  };
+
+  const handleConfirm = async (): Promise<void> => {
+    setError(null);
+    if (!e164) return;
+    if (code.length !== CHW_SMS_CODE_LENGTH) {
+      setError('Enter the 6-digit code we texted you.');
+      return;
+    }
+    try {
+      await confirmVerification.mutateAsync({ phone: e164, code });
+      // useConfirmPhoneVerification invalidates the MEMBER profile; the CHW
+      // profile drives THIS card's verified state, so invalidate it too.
+      await qc.invalidateQueries({ queryKey: queryKeys.chwProfile });
+      setEntering(false);
+      setCode('');
+    } catch (err) {
+      const detail = err instanceof ApiError ? err.message : null;
+      setError(detail ?? 'That code was not correct. Please try again.');
+    }
+  };
+
+  return (
+    <Card style={verifyPhoneStyles.card}>
+      <View style={verifyPhoneStyles.titleRow}>
+        <MessageSquare size={18} color="#10B981" />
+        <Text style={verifyPhoneStyles.title}>Phone verification</Text>
+      </View>
+
+      {!phone || isSentinel ? (
+        <Text style={verifyPhoneStyles.body}>
+          Add a real mobile number in the Phone field above, then verify it here.
+          Compass texts a sign-in code to your phone every time you log in.
+        </Text>
+      ) : isVerified ? (
+        <Text style={verifyPhoneStyles.body} accessibilityLabel="Phone verified">
+          Verified — we text your sign-in codes to •••{last4}.
+        </Text>
+      ) : !entering ? (
+        <>
+          <Text style={verifyPhoneStyles.body}>
+            Verify your phone so your sign-in codes can reach you by SMS.
+          </Text>
+          <Pressable
+            onPress={handleSendCode}
+            disabled={startVerification.isPending}
+            accessibilityRole="button"
+            accessibilityLabel="Send code"
+            style={({ pressed, hovered }: { pressed: boolean; hovered?: boolean }) => [
+              verifyPhoneStyles.button,
+              (pressed || hovered) && verifyPhoneStyles.buttonHover,
+              startVerification.isPending && { opacity: 0.6 },
+            ]}
+          >
+            <Text style={verifyPhoneStyles.buttonText}>
+              {startVerification.isPending ? 'Sending…' : 'Send code'}
+            </Text>
+          </Pressable>
+        </>
+      ) : (
+        <>
+          <Text style={verifyPhoneStyles.body}>
+            Enter the 6-digit code we texted to •••{last4}.
+          </Text>
+          <TextInput
+            value={code}
+            onChangeText={(v) => {
+              setCode(v.replace(/\D/g, '').slice(0, CHW_SMS_CODE_LENGTH));
+              if (error) setError(null);
+            }}
+            placeholder="123456"
+            placeholderTextColor="#9CA3AF"
+            keyboardType="number-pad"
+            maxLength={CHW_SMS_CODE_LENGTH}
+            editable={!confirmVerification.isPending}
+            accessibilityLabel="Verification code"
+            style={verifyPhoneStyles.input}
+          />
+          <Pressable
+            onPress={() => void handleConfirm()}
+            disabled={confirmVerification.isPending}
+            accessibilityRole="button"
+            accessibilityLabel="Confirm code"
+            style={({ pressed, hovered }: { pressed: boolean; hovered?: boolean }) => [
+              verifyPhoneStyles.button,
+              (pressed || hovered) && verifyPhoneStyles.buttonHover,
+              confirmVerification.isPending && { opacity: 0.6 },
+            ]}
+          >
+            <Text style={verifyPhoneStyles.buttonText}>
+              {confirmVerification.isPending ? 'Confirming…' : 'Confirm'}
+            </Text>
+          </Pressable>
+        </>
+      )}
+
+      {error && <Text style={verifyPhoneStyles.error}>{error}</Text>}
+    </Card>
+  );
+}
+
+const verifyPhoneStyles = StyleSheet.create({
+  card: {
+    marginTop: 24,
+    padding:   24,
+  } as ViewStyle,
+  titleRow: {
+    flexDirection: 'row',
+    alignItems:    'center',
+    gap:           8,
+  } as ViewStyle,
+  title: {
+    fontSize:   16,
+    fontWeight: '600',
+    color:      '#111827',
+  } as TextStyle,
+  body: {
+    marginTop:  8,
+    fontSize:   13,
+    color:      '#374151',
+    lineHeight: 18,
+  } as TextStyle,
+  button: {
+    marginTop:         14,
+    alignSelf:         'flex-start',
+    paddingHorizontal: 16,
+    paddingVertical:   10,
+    borderRadius:      10,
+    backgroundColor:   '#10B981',
+  } as ViewStyle,
+  buttonHover: {
+    backgroundColor: '#059669',
+  } as ViewStyle,
+  buttonText: {
+    fontSize:   13,
+    fontWeight: '700',
+    color:      '#FFFFFF',
+  } as TextStyle,
+  input: {
+    marginTop:         12,
+    width:             160,
+    fontSize:          16,
+    letterSpacing:     4,
+    color:             '#111827',
+    backgroundColor:   '#F9FAFB',
+    borderWidth:       1,
+    borderColor:       '#E5E7EB',
+    borderRadius:      8,
+    paddingHorizontal: 12,
+    paddingVertical:   10,
+  } as ViewStyle,
+  error: {
+    marginTop:  10,
+    fontSize:   13,
+    fontWeight: '500',
+    color:      '#DC2626',
+  } as TextStyle,
+});
+
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 /**
@@ -1729,6 +1947,11 @@ export function CHWProfileScreen(): React.JSX.Element {
               */}
             </View>
           </Card>
+
+          {/* Phone verification (SMS 2FA — Spec 2). Sits between the main
+              Settings card and the bottom grid, mirroring the member "Text
+              messages" card. */}
+          <VerifyPhoneCard profile={profile} />
 
           {/* Bottom: 2-col grid (always visible) */}
           <View style={pageStyles.bottomGrid}>

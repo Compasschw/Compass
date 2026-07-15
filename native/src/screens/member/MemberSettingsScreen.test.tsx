@@ -577,3 +577,70 @@ describe('MemberSettingsScreen — Text messages card (SMS Output Spec 1)', () =
     });
   });
 });
+
+// ─── SMS 2FA opt-in toggle (Spec 2, Task 9) ───────────────────────────────────
+
+describe('MemberSettingsScreen — SMS 2FA toggle (Spec 2)', () => {
+  it('shows the toggle (reflecting the server value) for a verified, non-sentinel phone', async () => {
+    memberProfileFixture = buildMemberProfileFixture({
+      phone: '5555550100',
+      phone_verified_at: '2026-07-15T00:00:00Z',
+      sms_2fa_enabled: true,
+    });
+    renderScreen();
+
+    await screen.findByText('Profile information');
+    const toggle = screen.getByLabelText('Two-factor authentication') as HTMLInputElement;
+    expect(toggle).toBeTruthy();
+    expect(toggle.checked).toBe(true);
+  });
+
+  it('PATCHes sms_2fa_enabled when toggled on', async () => {
+    memberProfileFixture = buildMemberProfileFixture({
+      phone: '5555550100',
+      phone_verified_at: '2026-07-15T00:00:00Z',
+      sms_2fa_enabled: false,
+    });
+    let lastProfilePutBody: unknown = null;
+    mockedApi.mockImplementation(async (path: string, options?: { method?: string; body?: string }) => {
+      const method = options?.method ?? 'GET';
+      if (path === '/member/profile' && method === 'PUT') {
+        lastProfilePutBody = options?.body ? JSON.parse(options.body) : null;
+        memberProfileFixture = { ...memberProfileFixture, sms_2fa_enabled: true };
+        return undefined;
+      }
+      return routeApi(path, options);
+    });
+
+    renderScreen();
+    await screen.findByText('Profile information');
+
+    fireEvent.click(screen.getByLabelText('Two-factor authentication'));
+
+    await waitFor(() => {
+      expect(lastProfilePutBody).toEqual({ sms_2fa_enabled: true });
+    });
+  });
+
+  it('hides the toggle when the phone is unverified', async () => {
+    memberProfileFixture = buildMemberProfileFixture({
+      phone: '5555550100',
+      phone_verified_at: null,
+    });
+    renderScreen();
+
+    await screen.findByText('Profile information');
+    expect(screen.queryByLabelText('Two-factor authentication')).toBeNull();
+  });
+
+  it('hides the toggle for the 555-555-5555 sentinel phone even if flagged verified', async () => {
+    memberProfileFixture = buildMemberProfileFixture({
+      phone: '5555555555',
+      phone_verified_at: '2026-07-15T00:00:00Z',
+    });
+    renderScreen();
+
+    await screen.findByText('Profile information');
+    expect(screen.queryByLabelText('Two-factor authentication')).toBeNull();
+  });
+});

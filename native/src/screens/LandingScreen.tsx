@@ -107,7 +107,9 @@ interface HeroContent {
   // Param-less Auth routes only — the hero CTA navigates with no params, so
   // exclude VerifyPhone (SMS Output Spec 1), the one route that requires a
   // `{ phone }` param and would break `navigation.navigate(route)`.
-  primaryButtonRoute: Exclude<keyof AuthStackParamList, 'VerifyPhone'>;
+  // Excludes the routes that require params (single-arg navigate can only
+  // target param-optional screens): VerifyPhone and TwoFactor (Spec 2).
+  primaryButtonRoute: Exclude<keyof AuthStackParamList, 'VerifyPhone' | 'TwoFactor'>;
   secondaryButtonLabel: string;
   heroImage: number;
   badges: TrustBadge[];

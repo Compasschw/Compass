@@ -323,12 +323,14 @@ export function RegisterScreen(): React.JSX.Element {
         const rawDigits = trimmedPhone.replace(/\D/g, '');
         const isSentinelPhone = SENTINEL_PHONE_DIGITS.has(rawDigits);
         const e164 = normalizeUsPhoneToE164(trimmedPhone);
-        // Members with a real, parseable phone get the dedicated
+        // Members AND CHWs with a real, parseable phone get the dedicated
         // "Confirm your phone" step (SMS Output Spec 1 §1): send the first OTP
         // now (best-effort — the screen offers "Resend code" if it fails) and
-        // navigate there. CHWs and placeholder-phone members keep today's
-        // destination — the inline verification modal — unchanged.
-        if (role === 'member' && !isSentinelPhone && e164) {
+        // navigate there. New CHWs are routed here too (Spec 2, Task 9) so they
+        // enroll a verified number at signup, ready for their required SMS 2FA
+        // at first login. Only placeholder-phone / unparseable-number signups
+        // keep the legacy inline verification modal.
+        if (!isSentinelPhone && e164) {
           startVerification.mutate({ phone: e164 });
           navigation.navigate('VerifyPhone', { phone: e164 });
           return;

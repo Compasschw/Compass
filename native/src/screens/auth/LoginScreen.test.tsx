@@ -1,14 +1,17 @@
 /**
- * Component test for LoginScreen — forgot-password wiring regression.
+ * Component test for LoginScreen — forgot-password wiring regression + SMS 2FA
+ * challenge routing (Spec 2).
  *
- * Scope: the "Forgot password?" link must route to the ResetPasswordScreen
- * (forgot-password reset flow), not MagicLinkScreen (passwordless sign-in —
- * a separate, untouched flow). Only `useAuth` and `useNavigation` are
- * mocked; the rest of the screen renders for real.
+ * Scope:
+ *   - The "Forgot password?" link routes to ResetPasswordScreen (not MagicLink).
+ *   - When login() resolves a `two_fa_required` outcome, the screen navigates
+ *     to TwoFactor with the pending-token params; a plain authenticated outcome
+ *     does not.
+ * Only `useAuth` and `useNavigation` are mocked; the rest renders for real.
  * Tier 2 — jsdom + react-native-web (see native/TESTING.md).
  */
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Same react-native-svg stub as RegisterScreen.test.tsx — LoginScreen pulls
@@ -22,9 +25,10 @@ vi.mock('react-native-svg', () => {
   return { __esModule: true, default: StubSvg, Path: StubPath };
 });
 
+const { mockLogin } = vi.hoisted(() => ({ mockLogin: vi.fn() }));
 vi.mock('../../context/AuthContext', () => ({
   useAuth: () => ({
-    login: vi.fn(),
+    login: mockLogin,
     signInWithGoogle: vi.fn(),
     signInWithApple: vi.fn(),
   }),
@@ -44,7 +48,18 @@ import { LoginScreen } from './LoginScreen';
 
 beforeEach(() => {
   mockNavigate.mockClear();
+  mockLogin.mockReset();
 });
+
+function signIn(): void {
+  fireEvent.change(screen.getByPlaceholderText('maria@example.com'), {
+    target: { value: 'casey@example.com' },
+  });
+  fireEvent.change(screen.getByPlaceholderText('••••••••'), {
+    target: { value: 'pw' },
+  });
+  fireEvent.click(screen.getByLabelText('Sign in'));
+}
 
 describe('LoginScreen — forgot-password wiring', () => {
   it('navigates to ResetPassword (not MagicLink) when "Forgot password?" is tapped', () => {
@@ -61,5 +76,35 @@ describe('LoginScreen — forgot-password wiring', () => {
     expect(
       screen.getByLabelText('Forgot password? Reset your password'),
     ).toBeTruthy();
+  });
+});
+
+describe('LoginScreen — SMS 2FA challenge routing (Spec 2)', () => {
+  it('navigates to TwoFactor with the pending-token params when a challenge is returned', async () => {
+    mockLogin.mockResolvedValue({
+      status: 'two_fa_required',
+      pendingToken: 'pending-xyz',
+      phoneLast4: '4821',
+      phoneVerificationRequired: false,
+    });
+    render(<LoginScreen />);
+    signIn();
+
+    await waitFor(() =>
+      expect(mockNavigate).toHaveBeenCalledWith('TwoFactor', {
+        pendingToken: 'pending-xyz',
+        phoneLast4: '4821',
+        phoneVerificationRequired: false,
+      }),
+    );
+  });
+
+  it('does NOT navigate to TwoFactor on a plain authenticated result', async () => {
+    mockLogin.mockResolvedValue({ status: 'authenticated' });
+    render(<LoginScreen />);
+    signIn();
+
+    await waitFor(() => expect(mockLogin).toHaveBeenCalled());
+    expect(mockNavigate).not.toHaveBeenCalledWith('TwoFactor', expect.anything());
   });
 });

@@ -160,6 +160,91 @@ describe('CHWProfileScreen — Account & Security', () => {
   });
 });
 
+describe('CHWProfileScreen — Phone verification card (SMS 2FA, Spec 2)', () => {
+  /** Install a per-test api router with a specific /chw/profile payload. */
+  function routeWithProfile(
+    profile: Record<string, unknown>,
+    extra?: (path: string, init?: { method?: string; body?: string }) => unknown,
+  ): void {
+    mockedApi.mockImplementation(async (path: string, init?: { method?: string; body?: string }) => {
+      const method = init?.method ?? 'GET';
+      const fromExtra = extra?.(path, init);
+      if (fromExtra !== undefined) return fromExtra;
+      if (path === '/chw/profile' && method === 'GET') return profile;
+      if (path === '/chw/profile' && method === 'PUT') return {};
+      if (path.startsWith('/chw/availability')) return AVAILABILITY_FIXTURE;
+      if (path.startsWith('/chw/earnings')) return EARNINGS_FIXTURE;
+      if (path.startsWith('/conversations')) return [];
+      if (path === '/credentials/checklist') return CHECKLIST_FIXTURE_ALL_MISSING;
+      return {};
+    });
+  }
+
+  it('shows "Verify your phone" + Send code for an unverified real phone', async () => {
+    renderScreen();
+    await screen.findByText('Phone verification');
+    expect(screen.getByLabelText('Send code')).toBeTruthy();
+    expect(screen.getByText(/verify your phone so your sign-in codes/i)).toBeTruthy();
+  });
+
+  it('shows the verified state with a masked number once phone_verified_at is set', async () => {
+    routeWithProfile({ ...CHW_PROFILE_FIXTURE, phone_verified_at: '2026-07-15T00:00:00Z' });
+    renderScreen();
+    await screen.findByText('Phone verification');
+    expect(screen.getByText(/verified — we text your sign-in codes to •••0100/i)).toBeTruthy();
+    expect(screen.queryByLabelText('Send code')).toBeNull();
+  });
+
+  it('prompts to add a real number for the 555-555-5555 sentinel phone', async () => {
+    routeWithProfile({ ...CHW_PROFILE_FIXTURE, phone: '555-555-5555' });
+    renderScreen();
+    await screen.findByText('Phone verification');
+    expect(screen.getByText(/add a real mobile number/i)).toBeTruthy();
+    expect(screen.queryByLabelText('Send code')).toBeNull();
+  });
+
+  it('confirm flow fires start + confirm and flips the card to verified', async () => {
+    let profile: Record<string, unknown> = { ...CHW_PROFILE_FIXTURE };
+    let startCalled = 0;
+    let confirmBody: unknown = null;
+    mockedApi.mockImplementation(async (path: string, init?: { method?: string; body?: string }) => {
+      const method = init?.method ?? 'GET';
+      if (path === '/chw/profile' && method === 'GET') return profile;
+      if (path === '/phone/start-verification' && method === 'POST') {
+        startCalled += 1;
+        return undefined;
+      }
+      if (path === '/phone/confirm-verification' && method === 'POST') {
+        confirmBody = init?.body ? JSON.parse(init.body) : null;
+        profile = { ...profile, phone_verified_at: '2026-07-15T00:00:00Z' };
+        return undefined;
+      }
+      if (path.startsWith('/chw/availability')) return AVAILABILITY_FIXTURE;
+      if (path.startsWith('/chw/earnings')) return EARNINGS_FIXTURE;
+      if (path.startsWith('/conversations')) return [];
+      if (path === '/credentials/checklist') return CHECKLIST_FIXTURE_ALL_MISSING;
+      return {};
+    });
+
+    renderScreen();
+    await screen.findByText('Phone verification');
+
+    fireEvent.click(screen.getByLabelText('Send code'));
+    await waitFor(() => expect(startCalled).toBe(1));
+
+    const codeInput = await screen.findByLabelText('Verification code');
+    fireEvent.change(codeInput, { target: { value: '123456' } });
+    fireEvent.click(screen.getByLabelText('Confirm code'));
+
+    await waitFor(() =>
+      expect(confirmBody).toEqual({ phone: '+13105550100', code: '123456' }),
+    );
+    await waitFor(() =>
+      expect(screen.getByText(/verified — we text your sign-in codes/i)).toBeTruthy(),
+    );
+  });
+});
+
 describe('CHWProfileScreen — Sign-out confirm modal (QA batch #5)', () => {
   it('does not call logout() immediately on tap — shows an on-brand confirm modal instead', async () => {
     renderScreen();
