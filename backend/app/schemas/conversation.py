@@ -36,6 +36,12 @@ class MessageResponse(BaseModel):
     # Transport the message traveled over: 'in_app' (default) | 'sms'. See
     # app/models/conversation.py::Message.channel for the full rationale.
     channel: str = "in_app"
+    # Per-message SMS delivery status (SMS Output Spec 1 §4): 'delivered' |
+    # 'failed' | null. Only ever non-null for channel='sms' rows once Vonage's
+    # delivery-status webhook has fired. The CHW thread renders a subtle
+    # "Not delivered by text" indicator on 'failed' ONLY; 'delivered'/null show
+    # nothing. Never surfaced to members.
+    delivery_status: str | None = None
     created_at: datetime
     attachment: FileAttachmentInline | None = None
 

@@ -891,6 +891,11 @@ async def test_in_app_message_still_defaults_channel_in_app(client: AsyncClient)
     assert res.status_code == 201, f"Expected 201, got {res.status_code}: {res.text}"
     data = res.json()
     assert data["channel"] == "in_app"
+    # SMS Output Spec 1 §4: the message response exposes delivery_status; a
+    # freshly-created in-app message has none (only outbound SMS rows ever get
+    # stamped, and only after Vonage's status webhook fires).
+    assert "delivery_status" in data
+    assert data["delivery_status"] is None
 
     async with _test_session_factory() as session:
         msg_result = await session.execute(

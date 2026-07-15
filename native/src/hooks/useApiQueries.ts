@@ -306,6 +306,13 @@ export interface MessageData {
   type: string;
   createdAt: string;
   attachment?: FileAttachmentInline | null;
+  /**
+   * Per-message SMS delivery status (SMS Output Spec 1 §4): 'delivered' |
+   * 'failed' | null. Only ever non-null for SMS-channel messages once Vonage's
+   * delivery-status webhook has fired. The CHW thread renders a subtle
+   * "Not delivered by text" note on 'failed' ONLY.
+   */
+  deliveryStatus?: 'delivered' | 'failed' | null;
 }
 
 // ─── Member-facing CHW Profile ───────────────────────────────────────────────

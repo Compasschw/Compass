@@ -181,6 +181,13 @@ let checklistResponse: {
 // in this file (which all rely on the call succeeding, if they call at all).
 let sessionCallShouldFail = false;
 
+// SMS Output Spec 1 §4 — messages the GET /conversations/{id}/messages route
+// returns. Defaults to empty so every pre-existing test still sees an empty
+// thread; the delivery-status tests below set it to a seeded message. Reset in
+// beforeEach so no state leaks. Snake_case on purpose — mirrors the real API
+// wire shape that `transformKeys` camelCases into MessageData.
+let messagesResponse: unknown[] = [];
+
 function routeApi(path: string, options?: { method?: string; body?: string }): unknown {
   const method = options?.method ?? 'GET';
 
@@ -189,7 +196,7 @@ function routeApi(path: string, options?: { method?: string; body?: string }): u
   }
 
   if (path.startsWith(`/conversations/${CONVERSATION_ID}/messages`)) {
-    if (method === 'GET') return [];
+    if (method === 'GET') return messagesResponse;
     if (method === 'POST') {
       const body = options?.body ? JSON.parse(options.body) : {};
       return {
@@ -374,6 +381,7 @@ beforeEach(() => {
   endSessionEndedAt = '2026-07-11T09:50:00.000Z';
   checklistResponse = { can_work: true, missing: [], items: [], gate_enabled: false };
   sessionCallShouldFail = false;
+  messagesResponse = [];
   mockNavigate.mockClear();
   mockedApi.mockImplementation(async (path: string, options?: { method?: string; body?: string }) =>
     routeApi(path, options),
@@ -1006,5 +1014,62 @@ describe('CHWMessagesScreen — placeholder-phone call block (QA batch 2026-07-1
     } finally {
       confirmSpy.mockRestore();
     }
+  });
+});
+
+// ─── SMS delivery-status indicator (Spec 1 §4) ────────────────────────────────
+
+describe('CHWMessagesScreen — SMS "not delivered" indicator', () => {
+  const NOT_DELIVERED_TEXT = 'Not delivered by text — member will see it in the app.';
+
+  /** Build a raw (snake_case) message row exactly as the API returns it. */
+  function smsMessage(overrides: Record<string, unknown>): Record<string, unknown> {
+    return {
+      id: 'msg-sms-1',
+      conversation_id: CONVERSATION_ID,
+      sender_id: CHW_ID,
+      body: 'Your session is confirmed for tomorrow.',
+      type: 'text',
+      channel: 'sms',
+      delivery_status: null,
+      created_at: '2026-07-11T09:30:00.000Z',
+      ...overrides,
+    };
+  }
+
+  it('shows the indicator on a CHW-sent SMS that failed to deliver', async () => {
+    messagesResponse = [smsMessage({ delivery_status: 'failed' })];
+    renderScreen();
+
+    expect(await screen.findByText(NOT_DELIVERED_TEXT)).toBeTruthy();
+  });
+
+  it('renders nothing for a delivered CHW-sent SMS', async () => {
+    messagesResponse = [smsMessage({ delivery_status: 'delivered' })];
+    renderScreen();
+
+    // The message body still renders, but no failure note.
+    expect(await screen.findByText('Your session is confirmed for tomorrow.')).toBeTruthy();
+    expect(screen.queryByText(NOT_DELIVERED_TEXT)).toBeNull();
+  });
+
+  it('renders nothing when delivery_status is null (no status yet)', async () => {
+    messagesResponse = [smsMessage({ delivery_status: null })];
+    renderScreen();
+
+    expect(await screen.findByText('Your session is confirmed for tomorrow.')).toBeTruthy();
+    expect(screen.queryByText(NOT_DELIVERED_TEXT)).toBeNull();
+  });
+
+  it('never shows the indicator on a MEMBER-sent message, even if failed', async () => {
+    // A member-sent (inbound) bubble is not a CHW send — the CHW-only guard
+    // must suppress the note regardless of delivery_status.
+    messagesResponse = [
+      smsMessage({ sender_id: MEMBER_ID, body: 'Got it, thanks!', delivery_status: 'failed' }),
+    ];
+    renderScreen();
+
+    expect(await screen.findByText('Got it, thanks!')).toBeTruthy();
+    expect(screen.queryByText(NOT_DELIVERED_TEXT)).toBeNull();
   });
 });

@@ -405,6 +405,13 @@ interface ConversationMessageLocal {
   createdAt: string;
   attachment?: ConversationMessageAttachment | null;
   status?: 'sending' | 'failed';
+  /**
+   * Server-side SMS delivery status (SMS Output Spec 1 §4). Distinct from the
+   * client-only `status` above: 'failed' here means Vonage could not deliver
+   * the mirrored text, and the CHW bubble shows a "Not delivered by text" note.
+   * 'delivered'/null render nothing.
+   */
+  deliveryStatus?: 'delivered' | 'failed' | null;
 }
 
 /** Groups a flat message list into per-day buckets for day-separator rendering. */
@@ -1262,6 +1269,15 @@ function MessageBubble({ message, isSentByChw }: MessageBubbleProps): React.JSX.
           {message.status === 'sending' ? ' · Sending...' : ''}
           {message.status === 'failed' ? ' · Failed' : ''}
         </Text>
+
+        {/* SMS delivery failure (Spec 1 §4): shown ONLY when Vonage could not
+            deliver a CHW-sent mirrored text. Delivered/null render nothing so
+            the thread stays uncluttered. Member-side UI shows no indicator. */}
+        {isSentByChw && message.deliveryStatus === 'failed' ? (
+          <Text style={styles.bubbleUndelivered}>
+            Not delivered by text — member will see it in the app.
+          </Text>
+        ) : null}
       </View>
     </View>
   );
@@ -4370,6 +4386,14 @@ const styles = StyleSheet.create({
 
   bubbleTimestampInbound: {
     color: tokens.textMuted,
+  } as TextStyle,
+
+  bubbleUndelivered: {
+    fontSize: 10,
+    lineHeight: 14,
+    marginTop: 2,
+    color: tokens.textMuted,
+    textAlign: 'right',
   } as TextStyle,
 
   attachmentRow: {
