@@ -82,6 +82,33 @@ def _format_local_time(scheduled_at: datetime | None) -> str:
     return local.strftime("%I:%M %p").lstrip("0")
 
 
+def _format_local_datetime(scheduled_at: datetime | None) -> str:
+    """Render a full clinic-local 'Mon, Jul 20 at 2:00 PM' label.
+
+    Same ``to_clinic_local`` source of truth as ``_format_local_time`` and the
+    reminder/scheduling surfaces, so every session-time string renders the same
+    wall-clock time. Used by the session-confirmed and rescheduled confirmation
+    SMS bodies (Spec 1 §3).
+    """
+    if scheduled_at is None:
+        return "the scheduled time"
+    from app.services.availability import to_clinic_local
+
+    local = to_clinic_local(scheduled_at)
+    day = local.strftime("%a, %b %d")
+    time = local.strftime("%I:%M %p").lstrip("0")
+    return f"{day} at {time}"
+
+
+def _format_local_date(scheduled_at: datetime | None) -> str:
+    """Render a clinic-local 'Jul 20' date label for the cancelled-session SMS."""
+    if scheduled_at is None:
+        return "recent"
+    from app.services.availability import to_clinic_local
+
+    return to_clinic_local(scheduled_at).strftime("%b %d")
+
+
 def _is_sendable_chw_phone(phone: str | None) -> str | None:
     """Return a normalized E.164 CHW phone, or None if not sendable.
 
@@ -98,17 +125,36 @@ def _is_sendable_chw_phone(phone: str | None) -> str | None:
     return normalized
 
 
-async def _send_best_effort(to_e164: str, body: str, *, context: str) -> bool:
+async def _send_best_effort(
+    to_e164: str,
+    body: str,
+    *,
+    context: str,
+    db: AsyncSession | None = None,
+    member_profile=None,
+) -> bool:
     """Send one SMS via the shared Vonage Messages client; never raises.
 
     Returns True on a successful send, False on any failure (logged here).
+
+    STOP-prompt cadence (SMS Output Spec 1 §2): for MEMBER-facing sends, the
+    caller passes both ``db`` and ``member_profile`` so the branded body is
+    routed through ``with_stop_prompt`` — the opt-out line is appended (and the
+    member's stamp updated) on the first send per rolling 24h window. CHW-facing
+    sends (new-request / new-message / payout alerts) omit both kwargs and their
+    behavior is unchanged — no opt-out line, no member-profile stamp.
     """
     from app.routers.conversations import brand_outbound_sms
     from app.services.vonage_sms import get_vonage_sms_messages_client
 
     try:
+        branded = brand_outbound_sms(body)
+        if db is not None and member_profile is not None:
+            from app.routers.conversations import with_stop_prompt
+
+            branded = await with_stop_prompt(db, member_profile, branded)
         client = get_vonage_sms_messages_client()
-        result = await client.send_text(to_e164, brand_outbound_sms(body))
+        result = await client.send_text(to_e164, branded)
     except Exception as exc:  # noqa: BLE001
         logger.error("sms_notifications: %s send raised error=%s", context, exc)
         return False
@@ -253,6 +299,19 @@ async def send_session_reminder_sms(
         )
         return not transient_failure
 
+    # Kill switch (Spec 1 §5): the member leg is member-facing SMS, so it is
+    # gated by ``sms_mirroring_enabled``. The CHW leg above is NOT — CHW alerts
+    # are operational, not member messaging, and stay on regardless.
+    from app.config import settings
+
+    if not settings.sms_mirroring_enabled:
+        logger.info(
+            "sms_notifications: member reminder skipped (sms_mirroring_enabled off) "
+            "session=%s",
+            session_id,
+        )
+        return not transient_failure
+
     chw_first = _first_name(chw_user.name if chw_user else None, "your CHW")
     if window == "24h":
         body = f"Reminder — you have a session with {chw_first} tomorrow at {local_time}."
@@ -262,6 +321,8 @@ async def send_session_reminder_sms(
         eligibility.normalized_phone,
         body,
         context=f"session_reminder_{window}_member session={session_id}",
+        db=db,
+        member_profile=member_profile,
     )
     if not member_sent:
         transient_failure = True
@@ -482,3 +543,165 @@ async def send_payout_initiated_sms(
     amount = (Decimal(amount_cents) / Decimal(100)).quantize(Decimal("0.01"))
     body = f"A payout of ${amount} has been initiated to your bank account."
     await _send_best_effort(chw_phone, body, context=f"payout_initiated chw={chw_id}")
+
+
+# ─── 5. Session confirmations (member-facing, Spec 1 §3) ────────────────────
+#
+# Three best-effort member confirmation texts, hooked beside the existing
+# email/push trigger at each transition so channels can't drift:
+#   - request received   (POST /requests/           — member ack)
+#   - session confirmed  (accept + confirm transitions)
+#   - session changed    (cancel + reschedule transitions)
+#
+# All follow the same discipline as the notifications above: never raise,
+# gated by check_sms_eligibility AND sms_mirroring_enabled, no PHI beyond the
+# CHW's first name + a session date/time. Like send_session_reminder_sms they
+# write no CommunicationTouch (touches are for direct CHW<->member comms, not
+# transactional notifications). The STOP-prompt line rides along via
+# ``_send_best_effort``'s db/member_profile kwargs (first send per 24h window).
+
+
+async def _send_member_confirmation(
+    db: AsyncSession,
+    *,
+    member_user,
+    member_profile,
+    body: str,
+    context: str,
+) -> None:
+    """Shared member-facing confirmation send: flag + eligibility gate, send,
+    touch-log, commit. Never raises.
+
+    Args:
+        db: Active async session (the caller's request-scoped session).
+        member_user: The recipient member's User row.
+        member_profile: The recipient member's MemberProfile row.
+        body: The message body (no brand prefix — added downstream; no PHI
+            beyond first name + session date/time).
+        context: Stable log/label tag, e.g. ``"request_received member=<id>"``.
+
+    Follows ``send_session_reminder_sms``'s member-notification pattern: no
+    ``CommunicationTouch`` is written (touches are reserved for direct
+    CHW<->member comms in conversations.py; transactional notifications like
+    reminders and these confirmations are not audit-logged as touches). A
+    successful send does commit, solely to persist the ``last_stop_prompt_at``
+    stamp that ``with_stop_prompt`` set — the endpoint already committed its
+    own business change before this hook ran, so this commit only carries the
+    cadence stamp.
+    """
+    from app.config import settings
+    from app.services.sms_eligibility import check_sms_eligibility
+
+    try:
+        # Kill switch (Spec 1 §5) — member-facing SMS only; OTP is never gated.
+        if not settings.sms_mirroring_enabled:
+            logger.info(
+                "sms_notifications: %s skipped (sms_mirroring_enabled off)", context
+            )
+            return
+
+        eligibility = await check_sms_eligibility(
+            db, member_user=member_user, member_profile=member_profile
+        )
+        if not eligibility.eligible or eligibility.normalized_phone is None:
+            logger.debug(
+                "sms_notifications: %s member not SMS-eligible reason=%s",
+                context, eligibility.reason_code,
+            )
+            return
+
+        sent = await _send_best_effort(
+            eligibility.normalized_phone,
+            body,
+            context=context,
+            db=db,
+            member_profile=member_profile,
+        )
+        if not sent:
+            return
+
+        # Persist the STOP-prompt cadence stamp that with_stop_prompt set.
+        await db.commit()
+    except Exception as exc:  # noqa: BLE001
+        # Best-effort: a confirmation SMS must never fail its parent transition
+        # (request create, schedule confirm/cancel/reschedule).
+        logger.error("sms_notifications: %s raised error=%s", context, exc)
+        try:
+            await db.rollback()
+        except Exception as rollback_exc:  # noqa: BLE001
+            logger.error(
+                "sms_notifications: %s rollback also failed error=%s",
+                context, rollback_exc,
+            )
+
+
+async def send_request_received_sms(
+    db: AsyncSession,
+    *,
+    member_user,
+    member_profile,
+    chw_first_name: str,
+) -> None:
+    """Text the member that their session request was received. Never raises."""
+    body = (
+        f"We got your session request — {chw_first_name} will confirm a time shortly."
+    )
+    await _send_member_confirmation(
+        db,
+        member_user=member_user,
+        member_profile=member_profile,
+        body=body,
+        context=f"request_received member={member_user.id}",
+    )
+
+
+async def send_session_confirmed_sms(
+    db: AsyncSession,
+    *,
+    member_user,
+    member_profile,
+    chw_first_name: str,
+    scheduled_at: datetime | None,
+) -> None:
+    """Text the member that their session is confirmed for a time. Never raises."""
+    body = (
+        f"Your session with {chw_first_name} is confirmed for "
+        f"{_format_local_datetime(scheduled_at)}."
+    )
+    await _send_member_confirmation(
+        db,
+        member_user=member_user,
+        member_profile=member_profile,
+        body=body,
+        context=f"session_confirmed member={member_user.id}",
+    )
+
+
+async def send_session_changed_sms(
+    db: AsyncSession,
+    *,
+    member_user,
+    member_profile,
+    old_scheduled_at: datetime | None,
+    new_scheduled_at: datetime | None,
+    cancelled: bool,
+) -> None:
+    """Text the member that their session was cancelled or rescheduled.
+
+    ``cancelled=True`` → "Your {Jul 20} session was cancelled." (uses
+    ``old_scheduled_at``). ``cancelled=False`` → "Your session moved to {Mon,
+    Jul 20 at 2:00 PM}." (uses ``new_scheduled_at``). Never raises.
+    """
+    if cancelled:
+        body = f"Your {_format_local_date(old_scheduled_at)} session was cancelled."
+        context = f"session_cancelled member={member_user.id}"
+    else:
+        body = f"Your session moved to {_format_local_datetime(new_scheduled_at)}."
+        context = f"session_rescheduled member={member_user.id}"
+    await _send_member_confirmation(
+        db,
+        member_user=member_user,
+        member_profile=member_profile,
+        body=body,
+        context=context,
+    )

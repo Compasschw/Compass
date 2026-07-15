@@ -1,4 +1,5 @@
 import logging
+from datetime import timedelta
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
@@ -709,6 +710,56 @@ def brand_outbound_sms(body: str) -> str:
     return f"{SMS_BRAND_PREFIX}{body}"
 
 
+# STOP-prompt opt-out cadence (SMS Output Spec 1 §2). Appended to the FIRST
+# member-facing SMS in any rolling 24h window, not every message — keeps the
+# opt-out reminder present for CTIA/10DLC compliance without spending a segment
+# on it every time or nagging a member who already knows.
+_STOP_PROMPT_SUFFIX = " Reply STOP to opt out."
+_STOP_PROMPT_CADENCE = timedelta(hours=24)
+
+
+async def with_stop_prompt(db: AsyncSession, member_profile, body: str) -> str:
+    """Append the STOP opt-out line to a member's first outbound SMS per 24h.
+
+    Every member-facing outbound SMS body (already brand-prefixed) is passed
+    through this helper immediately before ``send_text``. When the member has
+    never been prompted (``last_stop_prompt_at`` is null) or was last prompted
+    more than 24 hours ago, the opt-out line is appended and the stamp is
+    updated to now; otherwise the body is returned unchanged.
+
+    The stamp mutation is left uncommitted here on purpose — every call site
+    already commits its own transaction after the send (the fanout touch-log
+    commit, the explicit-send commit, the confirmation/notification commit),
+    so the new stamp rides along on that existing write. This helper only
+    mutates the in-memory ``member_profile`` and never raises: a body is always
+    returned so a stamping edge case can never block a send.
+
+    Args:
+        db: Active async session (accepted for signature symmetry with the
+            other send helpers; the stamp is persisted by the caller's commit).
+        member_profile: The recipient member's ``MemberProfile`` row — its
+            ``last_stop_prompt_at`` column is read and conditionally stamped.
+        body: The final, already brand-prefixed SMS body.
+
+    Returns:
+        ``body`` with the opt-out line appended (and the stamp updated) when a
+        prompt is due, else ``body`` unchanged.
+    """
+    from datetime import UTC, datetime
+
+    now = datetime.now(UTC)
+    last_prompt = getattr(member_profile, "last_stop_prompt_at", None)
+    # DB rows may come back naive depending on driver/test setup — normalize to
+    # UTC-aware before comparing, mirroring sms_notifications' throttle guard.
+    if last_prompt is not None and last_prompt.tzinfo is None:
+        last_prompt = last_prompt.replace(tzinfo=UTC)
+
+    if last_prompt is None or (now - last_prompt) >= _STOP_PROMPT_CADENCE:
+        member_profile.last_stop_prompt_at = now
+        return f"{body}{_STOP_PROMPT_SUFFIX}"
+    return body
+
+
 async def _fanout_sms_for_chw_message(
     *,
     conversation_id: UUID,
@@ -735,10 +786,24 @@ async def _fanout_sms_for_chw_message(
             reused here per the existing BackgroundTasks convention in this
             codebase (see ``app.routers.sessions.create_session``).
     """
+    from app.config import settings
     from app.models.user import MemberProfile, User
     from app.services.communication_touch_log import TouchKind, record_touch
     from app.services.sms_eligibility import check_sms_eligibility
     from app.services.vonage_sms import get_vonage_sms_messages_client
+
+    # Runtime kill switch (SMS Output Spec 1 §5): an emergency off-switch for
+    # all member-facing SMS mirroring. The in-app Message is already persisted
+    # and the HTTP response already returned — flipping this off just stops the
+    # SMS leg, never the in-app send. OTP delivery is deliberately NOT gated
+    # here (verification must always work); this is member messaging only.
+    if not settings.sms_mirroring_enabled:
+        logger.info(
+            "sms_fanout: sms_mirroring_enabled is off — in-app only "
+            "conversation=%s member=%s",
+            conversation_id, member_id,
+        )
+        return
 
     try:
         member_user = await db.get(User, member_id)
@@ -775,9 +840,10 @@ async def _fanout_sms_for_chw_message(
             return
 
         client = get_vonage_sms_messages_client()
-        send_result = await client.send_text(
-            eligibility.normalized_phone, brand_outbound_sms(message_body)
+        sms_body = await with_stop_prompt(
+            db, member_profile, brand_outbound_sms(message_body)
         )
+        send_result = await client.send_text(eligibility.normalized_phone, sms_body)
         if not send_result.success:
             # Best-effort: the in-app message is already persisted and the
             # HTTP response already returned success. Log and stop — never
@@ -1088,9 +1154,8 @@ async def send_sms(
         )
 
     client = get_vonage_sms_messages_client()
-    send_result = await client.send_text(
-        eligibility.normalized_phone, brand_outbound_sms(data.text)
-    )
+    sms_body = await with_stop_prompt(db, member_profile, brand_outbound_sms(data.text))
+    send_result = await client.send_text(eligibility.normalized_phone, sms_body)
     if not send_result.success:
         logger.error(
             "sms send failed conversation=%s chw=%s error=%s status=%s",
