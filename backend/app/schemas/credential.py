@@ -77,6 +77,18 @@ class CredentialReviewRequest(BaseModel):
     notes: str = ""
 
 
+class CredentialDownloadUrlResponse(BaseModel):
+    """Response for GET /credentials/{credential_id}/download-url.
+
+    Mirrors app.schemas.member_document.PresignedDownloadUrlResponse's shape
+    so both frontend hooks (useMemberDocumentDownloadUrl /
+    useCredentialDownloadUrl) can share the same transform.
+    """
+
+    download_url: str
+    expires_in_seconds: int = 900  # 15 minutes
+
+
 class ChecklistItemResponse(BaseModel):
     """One row in the CHW's compliance checklist (GET /credentials/checklist)."""
 

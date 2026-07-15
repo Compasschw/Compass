@@ -6,11 +6,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_db
 from app.dependencies import get_current_user, require_role
 from app.schemas.credential import (
     ChecklistItemResponse,
     ChecklistResponse,
+    CredentialDownloadUrlResponse,
     CredentialResponse,
     CredentialReviewRequest,
     CredentialSubmit,
@@ -19,7 +21,9 @@ from app.schemas.credential import (
     CredentialValidationSubmit,
     InstitutionResponse,
 )
+from app.services.audit import record_phi_read
 from app.services.chw_compliance import get_compliance_status
+from app.services.s3_service import generate_presigned_download_url
 
 if TYPE_CHECKING:
     from app.models.credential import CHWCredentialValidation, Credential
@@ -298,6 +302,76 @@ async def list_my_credentials(
         .order_by(Credential.created_at.desc())
     )
     return list(result.scalars().all())
+
+
+# ─── GET /{credential_id}/download-url ──────────────────────────────────────
+
+CREDENTIAL_DOWNLOAD_URL_EXPIRY_SECONDS = 900  # 15 minutes, matches member_documents.py
+
+
+@router.get(
+    "/{credential_id}/download-url",
+    response_model=CredentialDownloadUrlResponse,
+    summary="Get a short-lived presigned GET URL for a CHW compliance-checklist document",
+)
+async def get_credential_download_url(
+    credential_id: UUID,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> CredentialDownloadUrlResponse:
+    """Return a 15-minute presigned S3 GET URL for a Credential row's s3_key.
+
+    QA batch #7 (2026-07-14): admins previously approved these documents
+    "sight-unseen" — no download/view endpoint existed at all for
+    Credential.s3_key. This closes that review-blind-spot while keeping the
+    same ownership boundary as GET /documents/{doc_id}/download-url.
+
+    Authz: the owning CHW, or an admin. Any other caller (a different CHW,
+    a member) receives 403 — enforced explicitly here since Credential rows
+    have no relationship-gate helper of their own (unlike MemberDocument,
+    which uses _assert_member_access).
+    """
+    from app.models.credential import Credential
+
+    row: Credential | None = await db.get(Credential, credential_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Credential not found")
+
+    if current_user.role != "admin" and row.chw_id != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="You may only download your own compliance documents.",
+        )
+
+    if not row.s3_key:
+        raise HTTPException(
+            status_code=404,
+            detail="No document has been uploaded for this credential yet.",
+        )
+
+    try:
+        presigned_url = generate_presigned_download_url(
+            bucket=settings.s3_bucket_phi,
+            key=row.s3_key,
+            expires_in=CREDENTIAL_DOWNLOAD_URL_EXPIRY_SECONDS,
+        )
+    except Exception as exc:  # noqa: BLE001 — never leak a bare 500 (TESTING.md #3)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not generate a download link: {type(exc).__name__}: {exc}",
+        ) from exc
+
+    await record_phi_read(
+        actor_user_id=current_user.id,
+        resource="credential",
+        resource_id=str(credential_id),
+        details={"actor_role": current_user.role, "chw_id": str(row.chw_id)},
+    )
+
+    return CredentialDownloadUrlResponse(
+        download_url=presigned_url,
+        expires_in_seconds=CREDENTIAL_DOWNLOAD_URL_EXPIRY_SECONDS,
+    )
 
 
 @router.patch("/{credential_id}/review", response_model=CredentialResponse)

@@ -823,6 +823,75 @@ export function useSubmitChecklistCredential() {
   });
 }
 
+// ─── My Compliance Documents (Part 7 — CHWDocumentsScreen landing view) ───────
+
+/** A single Credential row as returned by GET /credentials/mine. */
+export interface MyCredentialData {
+  id: string;
+  chwId: string;
+  type: Exclude<ChwChecklistItemCode, 'background_check'>;
+  label: string;
+  status: 'pending' | 'verified' | 'rejected';
+  s3Key: string | null;
+  fileName: string | null;
+  verifiedBy: string | null;
+  verifiedAt: string | null;
+  createdAt: string;
+}
+
+/**
+ * The authenticated CHW's own compliance-checklist document uploads (the 4
+ * document types only — mirrors GET /credentials/mine). Feeds the "My
+ * Compliance Documents" section on CHWDocumentsScreen's landing view.
+ *
+ * A type the CHW has never uploaded simply has no row here (same contract
+ * as the backend) — use useChwChecklist for the "missing" view.
+ *
+ * Query key: ['credentials', 'mine']
+ */
+export function useMyCredentials() {
+  return useQuery({
+    queryKey: ['credentials', 'mine'] as const,
+    queryFn: async () => {
+      const raw = await api<unknown>('/credentials/mine');
+      return transformKeys<MyCredentialData[]>(raw);
+    },
+  });
+}
+
+/** Shape returned by GET /credentials/{id}/download-url. */
+export interface CredentialDownloadUrlData {
+  downloadUrl: string;
+  expiresInSeconds: number;
+}
+
+/**
+ * Lazily fetch a presigned download URL for one of the CHW's own compliance
+ * documents. Mirrors useMemberDocumentDownloadUrl's disabled-by-default /
+ * no-cache pattern (the presigned URL expires in 15 minutes, so it must
+ * never be treated as stale-cacheable).
+ *
+ * Authz is enforced server-side: the owning CHW or an admin only — see
+ * GET /api/v1/credentials/{credential_id}/download-url.
+ */
+export function useCredentialDownloadUrl(
+  credentialId: string | null,
+  options?: { enabled?: boolean },
+) {
+  return useQuery({
+    queryKey: ['credentials', 'download-url', credentialId] as const,
+    queryFn: async () => {
+      if (!credentialId) throw new Error('credentialId is required');
+      const raw = await api<unknown>(`/credentials/${credentialId}/download-url`);
+      return transformKeys<CredentialDownloadUrlData>(raw);
+    },
+    enabled: (options?.enabled ?? false) && !!credentialId,
+    // Never cache — URL expires in 15 min and is only valid for one download.
+    staleTime: 0,
+    gcTime: 0,
+  });
+}
+
 export function useMemberProfile() {
   return useQuery({
     queryKey: queryKeys.memberProfile,
