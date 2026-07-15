@@ -290,8 +290,15 @@ async def get_chw_member_facing_profile(
       sensible defaults (None, [], False) rather than raising a 500.
 
     The ``shared_session_count`` is scoped to the calling member only: it
-    counts sessions WHERE chw_id == path_param AND member_id == current_user.id
-    regardless of session status (scheduled, in_progress, completed, cancelled).
+    counts COMPLETED sessions WHERE chw_id == path_param AND member_id ==
+    current_user.id (QA batch 2026-07-14, Part 17 — a scheduled, cancelled,
+    or missed session is not "time worked together").
+
+    ``my_rating_avg`` / ``my_rating_count`` (Part 18) are likewise scoped to
+    the calling member only: the average/count of THIS member's own
+    post-session Testimonial ratings for THIS CHW, with no approval-status
+    gate (that gate controls public display of testimonial text, not a
+    member's own view of scores they gave).
 
     HIPAA minimum-necessary (45 CFR §164.514(d)):
     - CHW phone and email are NOT returned — members contact CHWs through the
@@ -401,8 +408,12 @@ async def get_chw_member_facing_profile(
         effective_windows = dict(DEFAULT_WINDOWS)
 
     # ── Shared session count (member-scoped) ──────────────────────────────────
-    # Count ALL sessions between this CHW and the calling member — any status.
-    # This tells the member "we've worked together N times" for social proof.
+    # QA batch (2026-07-14) Part 17: count only COMPLETED sessions between
+    # this CHW and the calling member — a scheduled/cancelled/missed session
+    # is not "time worked together". This single field feeds three surfaces
+    # on the member-facing CHW profile screen: the "Sessions Together" tile,
+    # its "N completed" badge, and the "Journey Progress · N sessions
+    # completed" line — all fixed by this one change.
     from app.models.session import Session  # noqa: PLC0415
 
     session_count_result = await db.execute(
@@ -410,8 +421,31 @@ async def get_chw_member_facing_profile(
         .select_from(Session)
         .where(Session.chw_id == chw_id)
         .where(Session.member_id == current_user.id)
+        .where(Session.status == "completed")
     )
     shared_session_count: int = session_count_result.scalar() or 0
+
+    # ── Member's own rating of this CHW (member-scoped) ───────────────────────
+    # QA batch (2026-07-14) Part 18: the "Member Rating" tile must show THIS
+    # member's own post-session review scores for THIS CHW, averaged — not
+    # the CHW's global publicly-approved-testimonial summary (which stays
+    # "No ratings yet" until an admin moderates, hiding a rating the member
+    # just gave). No approval gate here: it's the member's own scores shown
+    # back to them, not public display copy — moderation only gates whether
+    # testimonial *text* is shown to other people.
+    from app.models.testimonial import Testimonial  # noqa: PLC0415
+
+    my_rating_result = await db.execute(
+        select(func.avg(Testimonial.rating), func.count(Testimonial.rating))
+        .where(Testimonial.chw_id == chw_id)
+        .where(Testimonial.member_id == current_user.id)
+        .where(Testimonial.rating.is_not(None))
+    )
+    my_rating_avg_raw, my_rating_count_raw = my_rating_result.one()
+    my_rating_avg: float | None = (
+        float(my_rating_avg_raw) if my_rating_avg_raw is not None else None
+    )
+    my_rating_count: int = my_rating_count_raw or 0
 
     return CHWMemberFacingProfile(
         id=chw_user.id,
@@ -427,6 +461,8 @@ async def get_chw_member_facing_profile(
         available_days=available_days,
         availability_windows=effective_windows,
         shared_session_count=shared_session_count,
+        my_rating_avg=my_rating_avg,
+        my_rating_count=my_rating_count,
         # CHW's avatar lives on the User row; presign for the member client so
         # the member-facing CHW profile shows the photo the CHW set.
         profile_picture_url=presigned_avatar_url(chw_user.profile_picture_url),

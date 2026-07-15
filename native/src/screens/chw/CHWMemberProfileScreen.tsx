@@ -280,10 +280,23 @@ interface AssessmentResponseItem {
 interface AssessmentLatest {
   /** Assessment id — needed to seed an editable AssessmentForm (Wave-2 #25). */
   id: string;
-  completedAt: string;
+  /**
+   * Null while `status === 'in_progress'` (Part 10) — an in_progress
+   * assessment has no `completed_at` yet.
+   */
+  completedAt: string | null;
   responseCounts: Record<string, number>;
   /** Per-question answers (snapshots) returned by the latest-assessment endpoint. */
   responses: AssessmentResponseItem[];
+  /**
+   * QA batch (2026-07-14) Part 10 — `'in_progress' | 'completed' | 'abandoned'`.
+   * The latest-assessment endpoint now prefers an in_progress assessment
+   * (the actionable, resumable one) over an older completed assessment, so
+   * the profile's Screening Results view must brand this distinctly:
+   * "In progress · N answered" + "Continue screening" instead of the
+   * completed-assessment "Edit answers" treatment.
+   */
+  status: 'in_progress' | 'completed' | 'abandoned';
 }
 
 // ─── Query keys ───────────────────────────────────────────────────────────────
@@ -411,6 +424,21 @@ function ScreeningEditableBody({ memberId, onSaved }: ScreeningEditableBodyProps
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const SESSIONS_PAGE_SIZE = 10;
+
+/**
+ * Legacy `backTo` route-name aliases (QA batch 2026-07-14, Part 5). The CHW
+ * Dashboard tab is registered as `DashboardStack` (`Dashboard` nested
+ * inside it — `navigation/CHWTabNavigator.tsx:249`), but `backTo` params
+ * historically carried the bare screen name `'Dashboard'`, which doesn't
+ * match any top-level route and made `navigate()` a silent no-op — the
+ * "Back to Dashboard" button did nothing. All call sites now pass
+ * `'DashboardStack'` directly; this map only protects against stale
+ * params/deep links/persisted navigation state still carrying the old
+ * value, so the button can never regress to a dead no-op.
+ */
+const BACK_TO_LEGACY_ROUTE_ALIASES: Record<string, string> = {
+  Dashboard: 'DashboardStack',
+};
 
 const SESSION_STATUS_LABELS: Record<string, string> = {
   scheduled: 'Scheduled',
@@ -8900,6 +8928,16 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
   const resolvedBackLabel = backLabel && backLabel.trim().length > 0 ? backLabel : 'Members';
   const resolvedBackTo = backTo && backTo.trim().length > 0 ? backTo : 'CHWMembers';
 
+  // Defensive alias: the CHW Dashboard route is registered as `DashboardStack`
+  // (with `Dashboard` nested inside it, `navigation/CHWTabNavigator.tsx:249`),
+  // but callers historically passed the legacy route name `'Dashboard'` as
+  // `backTo`, which `navigate()` silently drops (no matching top-level route)
+  // — the root cause of the dead "Back to Dashboard" button. All current
+  // call sites now pass `'DashboardStack'` directly; this alias only guards
+  // against stale params/deep links/persisted navigation state that still
+  // carry the old value, so the button can never regress to a no-op.
+  const resolvedBackToRouteName = BACK_TO_LEGACY_ROUTE_ALIASES[resolvedBackTo] ?? resolvedBackTo;
+
   const { width: windowWidth } = useWindowDimensions();
 
   // Stack the dense 3-column header vertically when the window is narrow
@@ -9201,7 +9239,7 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                   // CHWMembers tab when no origin was passed in.
                   onPress={() =>
                     (navigation as unknown as { navigate: (name: string) => void }).navigate(
-                      resolvedBackTo,
+                      resolvedBackToRouteName,
                     )
                   }
                   accessibilityRole="button"
@@ -9559,14 +9597,20 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                 </TouchableOpacity>
               </View>
 
-              {/* Compact read-only summary strip — always visible, even while editing. */}
+              {/* Compact read-only summary strip — always visible, even while editing.
+                  QA batch (2026-07-14) Part 10: an in_progress assessment is
+                  branded distinctly ("In progress · N answered") so the CHW
+                  can tell at a glance that this is a resumable screening,
+                  not a finished one. */}
               <Text style={screeningStyles.summaryStrip}>
-                {assessmentLatest?.responses?.length
-                  ? `${assessmentLatest.responses.length} answered${
-                      assessmentLatest.completedAt
-                        ? ` · last updated ${formatDate(assessmentLatest.completedAt)}`
-                        : ''
-                    }`
+                {assessmentLatest
+                  ? assessmentLatest.status === 'in_progress'
+                    ? `In progress · ${assessmentLatest.responses.length} answered`
+                    : `${assessmentLatest.responses.length} answered${
+                        assessmentLatest.completedAt
+                          ? ` · last updated ${formatDate(assessmentLatest.completedAt)}`
+                          : ''
+                      }`
                   : 'No screening completed for this member yet.'}
               </Text>
               <View style={consentModalStyles.divider} />
@@ -9584,23 +9628,41 @@ export function CHWMemberProfileScreen(): React.JSX.Element {
                     });
                   }}
                 />
-              ) : assessmentLatest?.responses?.length ? (
+              ) : assessmentLatest ? (
+                // Either an in_progress assessment (Part 10 — now surfaced
+                // here instead of 404'ing) or a completed one. Both show the
+                // answered-so-far responses; only the action label differs.
                 <>
-                  <ScrollView style={{ maxHeight: 360 }}>
-                    {assessmentLatest.responses.map((r, i) => (
-                      <View key={`${r.questionId}-${i}`} style={screeningStyles.qaRow}>
-                        <Text style={screeningStyles.question}>{r.questionText}</Text>
-                        <Text style={screeningStyles.answer}>{r.answerLabel}</Text>
-                      </View>
-                    ))}
-                  </ScrollView>
+                  {assessmentLatest.responses.length > 0 ? (
+                    <ScrollView style={{ maxHeight: 360 }}>
+                      {assessmentLatest.responses.map((r, i) => (
+                        <View key={`${r.questionId}-${i}`} style={screeningStyles.qaRow}>
+                          <Text style={screeningStyles.question}>{r.questionText}</Text>
+                          <Text style={screeningStyles.answer}>{r.answerLabel}</Text>
+                        </View>
+                      ))}
+                    </ScrollView>
+                  ) : (
+                    <Text style={consentModalStyles.bodyText}>
+                      No answers saved yet — continue the screening below to
+                      start answering.
+                    </Text>
+                  )}
                   <TouchableOpacity
                     style={screeningStyles.editButton}
                     onPress={() => setScreeningEditing(true)}
                     accessibilityRole="button"
-                    accessibilityLabel="Edit answers"
+                    accessibilityLabel={
+                      assessmentLatest.status === 'in_progress'
+                        ? 'Continue screening'
+                        : 'Edit answers'
+                    }
                   >
-                    <Text style={screeningStyles.editButtonText}>Edit answers</Text>
+                    <Text style={screeningStyles.editButtonText}>
+                      {assessmentLatest.status === 'in_progress'
+                        ? 'Continue screening'
+                        : 'Edit answers'}
+                    </Text>
                   </TouchableOpacity>
                 </>
               ) : (

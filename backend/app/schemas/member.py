@@ -47,8 +47,18 @@ class CHWMemberFacingProfile(BaseModel):
     - ``available_days``: extracted from CHWProfile.availability_windows JSONB
       if present; falls back to [] when not set. The JSONB schema stores a
       dict of day-name → time-range, e.g. {"mon": "9-5", "tue": "9-5"}.
-    - ``shared_session_count``: count of sessions WHERE chw_id == chw AND
-      member_id == calling_member. Zero when no shared sessions exist.
+    - ``shared_session_count``: count of COMPLETED sessions WHERE chw_id ==
+      chw AND member_id == calling_member (QA batch 2026-07-14, Part 17 —
+      scheduled/cancelled/missed sessions are not "time worked together").
+      Zero when no completed shared sessions exist. Feeds the "Sessions
+      Together" tile, its "N completed" badge, and the "Journey Progress"
+      line on the member-facing CHW profile screen.
+    - ``my_rating_avg`` / ``my_rating_count`` (QA batch 2026-07-14, Part 18):
+      average and count of THIS calling member's own post-session
+      Testimonial ratings for THIS chw (``rating IS NOT NULL``), with no
+      approval-status gate — moderation gates public display of testimonial
+      *text*, not a member's own view of the scores they gave. Feeds the
+      "Member Rating" tile.
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -92,7 +102,14 @@ class CHWMemberFacingProfile(BaseModel):
     the slot endpoint. Drives the availability shading on the member calendar."""
 
     shared_session_count: int
-    """Sessions this calling member has had with this CHW (any status)."""
+    """COMPLETED sessions this calling member has had with this CHW."""
+
+    my_rating_avg: float | None = None
+    """Average of this member's own post-session ratings for this CHW.
+    None when the member has never rated this CHW."""
+
+    my_rating_count: int = 0
+    """Count of this member's own post-session ratings for this CHW."""
 
     profile_picture_url: str | None = None
     """CHW's self-uploaded avatar, so the member sees the same photo the CHW set.

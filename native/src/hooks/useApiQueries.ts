@@ -344,8 +344,21 @@ export interface MemberFacingCHWProfile {
   availableDays: string[];
   /** Effective weekly hours: { "mon": "09:00-17:00", ... }. Drives calendar shading. */
   availabilityWindows: Record<string, string>;
-  /** Count of sessions the calling member has had with this CHW (any status). */
+  /**
+   * Count of COMPLETED sessions the calling member has had with this CHW
+   * (QA batch 2026-07-14, Part 17 — scheduled/cancelled/missed sessions no
+   * longer count as "time worked together").
+   */
   sharedSessionCount: number;
+  /**
+   * QA batch (2026-07-14) Part 18 — average of THIS member's own
+   * post-session ratings for THIS CHW, with no approval-status gate (that
+   * gate only controls public display of testimonial text). Null when the
+   * member has never rated this CHW.
+   */
+  myRatingAvg: number | null;
+  /** Count of this member's own post-session ratings for this CHW. */
+  myRatingCount: number;
   /** CHW's self-uploaded avatar (presigned). Null → fall back to initials. */
   profilePictureUrl?: string | null;
 }

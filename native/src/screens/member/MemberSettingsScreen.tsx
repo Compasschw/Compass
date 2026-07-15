@@ -44,9 +44,7 @@ import {
 import {
   Globe,
   HelpCircle,
-  Mail,
   MessageSquare,
-  Phone,
   Shield,
   ShieldOff,
   Trash2,
@@ -56,6 +54,7 @@ import { useAuth } from '../../context/AuthContext';
 import {
   useMemberProfile,
   useUpdateMemberProfile,
+  useUpdateInsuranceCin,
   useDeleteAccount,
   useDeactivateAccount,
 } from '../../hooks/useApiQueries';
@@ -96,6 +95,10 @@ const LANGUAGE_OPTIONS = [
   { value: 'Vietnamese', label: 'Tiếng Việt' },
   { value: 'Korean',     label: '한국어' },
 ];
+
+// QA batch (2026-07-14) Part 21 — matches the Pear Suite sex enum the
+// backend's MemberProfileUpdate._validate_gender accepts (schemas/user.py).
+const SEX_OPTIONS = ['Male', 'Female', 'Other'] as const;
 
 // ─── TabBar ───────────────────────────────────────────────────────────────────
 
@@ -330,6 +333,129 @@ const fieldStyles = StyleSheet.create({
   } as TextStyle,
 });
 
+// ─── SexEditableField (Profile tab, Part 21) ───────────────────────────────────
+//
+// Mirrors EditableField's row layout, but edits via a 3-option pill picker
+// (Male / Female / Other) instead of free text — the same closed enum the
+// signup form's "Sex" picker offers and the backend's
+// MemberProfileUpdate._validate_gender accepts. A free-text input would let
+// a member type a value the backend then 422s on.
+
+interface SexEditableFieldProps {
+  value:        string | null | undefined;
+  isEditing:    boolean;
+  onEditStart:  () => void;
+  onEditCancel: () => void;
+  onSave:       (next: string) => Promise<void> | void;
+}
+
+function SexEditableField({
+  value,
+  isEditing,
+  onEditStart,
+  onEditCancel,
+  onSave,
+}: SexEditableFieldProps): React.JSX.Element {
+  const [saving, setSaving] = useState(false);
+
+  const handleSelect = async (next: string): Promise<void> => {
+    if (next === value) {
+      onEditCancel();
+      return;
+    }
+    setSaving(true);
+    try {
+      await onSave(next);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (isEditing) {
+    return (
+      <View style={fieldStyles.row}>
+        <Text style={fieldStyles.label}>Sex</Text>
+        <View style={{ flex: 1, flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+          {SEX_OPTIONS.map((option) => (
+            <Pressable
+              key={option}
+              onPress={() => void handleSelect(option)}
+              disabled={saving}
+              accessibilityRole="radio"
+              accessibilityState={{ checked: option === value }}
+              accessibilityLabel={option}
+              style={({ pressed }: { pressed: boolean }) => [
+                sexFieldStyles.pill,
+                option === value && sexFieldStyles.pillActive,
+                pressed && { opacity: 0.7 },
+              ]}
+            >
+              <Text
+                style={[
+                  sexFieldStyles.pillText,
+                  option === value && sexFieldStyles.pillTextActive,
+                ]}
+              >
+                {option}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+        <Pressable
+          onPress={onEditCancel}
+          disabled={saving}
+          accessibilityRole="button"
+          accessibilityLabel="Cancel edit"
+          style={fieldStyles.editLink}
+        >
+          <Text style={fieldStyles.cancelLinkText}>Cancel</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  return (
+    <View style={fieldStyles.row}>
+      <Text style={fieldStyles.label}>Sex</Text>
+      <Text style={fieldStyles.value} numberOfLines={1}>
+        {value || '—'}
+      </Text>
+      <Pressable
+        onPress={onEditStart}
+        accessibilityRole="button"
+        accessibilityLabel="Edit Sex"
+        style={fieldStyles.editLink}
+      >
+        <Text style={fieldStyles.editLinkText}>Edit</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+const sexFieldStyles = StyleSheet.create({
+  pill: {
+    paddingHorizontal: 12,
+    paddingVertical:   6,
+    borderRadius:      999,
+    borderWidth:       1,
+    borderColor:       '#E5E7EB',
+    backgroundColor:   '#FFFFFF',
+  } as ViewStyle,
+  pillActive: {
+    borderColor:     '#10B981',
+    backgroundColor: '#ECFDF5',
+  } as ViewStyle,
+  pillText: {
+    fontSize:   13,
+    fontWeight: '500',
+    color:      '#374151',
+  } as TextStyle,
+  pillTextActive: {
+    color:      '#047857',
+    fontWeight: '700',
+  } as TextStyle,
+});
+
 // ─── ToggleRow (Privacy + Notifications tabs and bottom card) ────────────────
 
 interface ToggleRowProps {
@@ -464,6 +590,10 @@ export function MemberSettingsScreen(): React.JSX.Element {
   const deactivateAccount = useDeactivateAccount();
   const profileQuery = useMemberProfile();
   const updateProfile = useUpdateMemberProfile();
+  // QA batch (2026-07-14) Part 21 — CIN edits go through the dedicated
+  // insurance-CIN PATCH (not the generic profile PUT), which validates CIN
+  // format and (Part 4, separate PR) enforces cross-member CIN uniqueness.
+  const updateInsuranceCin = useUpdateInsuranceCin();
 
   // Epic K (mobile web polish): pageWrap's 32px side padding plus the
   // profile/bottom grids' 320px minWidth columns force a wider-than-viewport
@@ -485,12 +615,12 @@ export function MemberSettingsScreen(): React.JSX.Element {
   const [activeTab, setActiveTab] = useState<SettingsTab>('profile');
   const [editingField, setEditingField] = useState<string | null>(null);
 
-  // Local-only privacy toggles (no preferences endpoint yet — when one ships,
-  // wire these to that hook the same way profile fields use updateProfile).
-  const [twoFactor, setTwoFactor] = useState(true);
-  const [biometric, setBiometric] = useState(false);
-  const [aiTranscription, setAiTranscription] = useState(true);
-  const [shareForResearch, setShareForResearch] = useState(false);
+  // QA batch (2026-07-14) Part 20: the four Privacy & Security toggles
+  // (two-factor, biometric, AI transcription consent, research sharing)
+  // were removed — they were local `useState` only, never persisted to any
+  // backend setting, so they were misleading fake controls (the REAL
+  // transcription consent is captured per-session in the consent flow, not
+  // here). Deactivate/Delete account remain as the card's only actions.
   const [sessionReminders, setSessionReminders] = useState(true);
   const [pushNotifications, setPushNotifications] = useState(true);
 
@@ -508,11 +638,48 @@ export function MemberSettingsScreen(): React.JSX.Element {
       try {
         await updateProfile.mutateAsync(payload);
         setEditingField(null);
-      } catch {
-        Alert.alert('Could not save', `${field} was not updated. Please try again.`);
+      } catch (err: unknown) {
+        const detail =
+          err != null &&
+          typeof err === 'object' &&
+          'detail' in err &&
+          typeof (err as { detail: unknown }).detail === 'string'
+            ? (err as { detail: string }).detail
+            : null;
+        Alert.alert('Could not save', detail ?? `${field} was not updated. Please try again.`);
       }
     },
     [updateProfile],
+  );
+
+  // QA batch (2026-07-14) Part 21 — the CIN row saves through the dedicated
+  // insurance-CIN endpoint, which requires BOTH insuranceCompany and
+  // mediCalId in the same request. We send the member's current insurance
+  // company alongside the newly-typed CIN so a CIN-only edit doesn't
+  // accidentally blank out (or fail validation on) the insurance company.
+  const handleSaveCin = useCallback(
+    async (nextCin: string) => {
+      try {
+        await updateInsuranceCin.mutateAsync({
+          insuranceCompany: profile?.insuranceCompany ?? profile?.insuranceProvider ?? '',
+          mediCalId: nextCin,
+        });
+        setEditingField(null);
+      } catch (err: unknown) {
+        const detail =
+          err != null &&
+          typeof err === 'object' &&
+          'detail' in err &&
+          typeof (err as { detail: unknown }).detail === 'string'
+            ? (err as { detail: string }).detail
+            : null;
+        Alert.alert(
+          'Could not save',
+          detail ?? 'CIN (Medi-Cal ID) was not updated. Please try again.',
+        );
+      }
+    },
+    [updateInsuranceCin, profile?.insuranceCompany, profile?.insuranceProvider],
   );
 
   const handleDeleteAccountConfirm = useCallback(
@@ -645,6 +812,19 @@ export function MemberSettingsScreen(): React.JSX.Element {
                       onEditCancel={() => setEditingField(null)}
                       onSave={(v) => handleSaveField('Name', { name: v })}
                     />
+                    {/* QA batch (2026-07-14) Part 21: the rows below fill out
+                        Profile information with the rest of the data
+                        captured at signup — previously only 6 rows rendered
+                        even though GET /member/profile already returns every
+                        field (MemberProfileResponse, schemas/user.py). */}
+                    <EditableField
+                      label="Preferred Name"
+                      value={profile?.preferredName ?? ''}
+                      isEditing={editingField === 'preferredName'}
+                      onEditStart={() => setEditingField('preferredName')}
+                      onEditCancel={() => setEditingField(null)}
+                      onSave={(v) => handleSaveField('Preferred Name', { preferredName: v })}
+                    />
                     <EditableField
                       label="Phone"
                       value={profile?.phone ?? ''}
@@ -662,6 +842,54 @@ export function MemberSettingsScreen(): React.JSX.Element {
                       onEditStart={() => setEditingField('email')}
                       onEditCancel={() => setEditingField(null)}
                       onSave={(v) => handleSaveField('Email', { email: v })}
+                    />
+                    <EditableField
+                      label="Date of Birth"
+                      value={profile?.dateOfBirth ?? ''}
+                      placeholder="YYYY-MM-DD"
+                      isEditing={editingField === 'dateOfBirth'}
+                      onEditStart={() => setEditingField('dateOfBirth')}
+                      onEditCancel={() => setEditingField(null)}
+                      onSave={(v) => handleSaveField('Date of Birth', { dateOfBirth: v })}
+                    />
+                    <SexEditableField
+                      value={profile?.gender}
+                      isEditing={editingField === 'gender'}
+                      onEditStart={() => setEditingField('gender')}
+                      onEditCancel={() => setEditingField(null)}
+                      onSave={(v) => handleSaveField('Sex', { gender: v })}
+                    />
+                    <EditableField
+                      label="Address line 1"
+                      value={profile?.addressLine1 ?? ''}
+                      isEditing={editingField === 'addressLine1'}
+                      onEditStart={() => setEditingField('addressLine1')}
+                      onEditCancel={() => setEditingField(null)}
+                      onSave={(v) => handleSaveField('Address line 1', { addressLine1: v })}
+                    />
+                    <EditableField
+                      label="Address line 2"
+                      value={profile?.addressLine2 ?? ''}
+                      isEditing={editingField === 'addressLine2'}
+                      onEditStart={() => setEditingField('addressLine2')}
+                      onEditCancel={() => setEditingField(null)}
+                      onSave={(v) => handleSaveField('Address line 2', { addressLine2: v })}
+                    />
+                    <EditableField
+                      label="City"
+                      value={profile?.city ?? ''}
+                      isEditing={editingField === 'city'}
+                      onEditStart={() => setEditingField('city')}
+                      onEditCancel={() => setEditingField(null)}
+                      onSave={(v) => handleSaveField('City', { city: v })}
+                    />
+                    <EditableField
+                      label="State"
+                      value={profile?.state ?? ''}
+                      isEditing={editingField === 'state'}
+                      onEditStart={() => setEditingField('state')}
+                      onEditCancel={() => setEditingField(null)}
+                      onSave={(v) => handleSaveField('State', { state: v })}
                     />
                     <EditableField
                       label="ZIP Code"
@@ -682,12 +910,28 @@ export function MemberSettingsScreen(): React.JSX.Element {
                     />
                     <EditableField
                       label="Insurance Plan"
-                      value={profile?.insuranceProvider ?? '—'}
+                      value={profile?.insuranceCompany ?? profile?.insuranceProvider ?? '—'}
                       tagLabel="From plan"
                       isEditing={false}
                       onEditStart={() => undefined}
                       onEditCancel={() => undefined}
                       onSave={() => undefined}
+                    />
+                    <EditableField
+                      label="CIN (Medi-Cal ID)"
+                      value={profile?.mediCalId ?? ''}
+                      isEditing={editingField === 'mediCalId'}
+                      onEditStart={() => setEditingField('mediCalId')}
+                      onEditCancel={() => setEditingField(null)}
+                      onSave={handleSaveCin}
+                    />
+                    <EditableField
+                      label="Primary Need"
+                      value={profile?.primaryNeed ?? ''}
+                      isEditing={editingField === 'primaryNeed'}
+                      onEditStart={() => setEditingField('primaryNeed')}
+                      onEditCancel={() => setEditingField(null)}
+                      onSave={(v) => handleSaveField('Primary Need', { primaryNeed: v })}
                     />
                   </View>
                 </View>
@@ -712,32 +956,16 @@ export function MemberSettingsScreen(): React.JSX.Element {
               )}
 
               {activeTab === 'privacy' && (
+                // QA batch (2026-07-14) Part 20: the four fake toggles this
+                // panel used to show (two-factor, biometric, AI
+                // transcription consent, research sharing) were local
+                // `useState` only and never persisted — removed along with
+                // the bottom Privacy & Security card's copy of the same
+                // toggles. This panel is unreachable today (`'privacy'` is
+                // not in TAB_ORDER above) but kept type-checked for a future
+                // restore once real settings are backed by an endpoint.
                 <View style={pageStyles.tabPanel}>
                   <Text style={pageStyles.tabPanelTitle}>Privacy & Security</Text>
-                  <ToggleRow
-                    label="Two-factor authentication"
-                    description="SMS code on every login for an added layer of protection."
-                    value={twoFactor}
-                    onValueChange={setTwoFactor}
-                  />
-                  <ToggleRow
-                    label="Biometric login"
-                    description="Use Face ID or fingerprint to sign in on your device."
-                    value={biometric}
-                    onValueChange={setBiometric}
-                  />
-                  <ToggleRow
-                    label="AI session transcription"
-                    description="Allow AI to transcribe your sessions for CHW notes. Required consent before each session."
-                    value={aiTranscription}
-                    onValueChange={setAiTranscription}
-                  />
-                  <ToggleRow
-                    label="Share data for anonymous research"
-                    description="Helps improve outcomes for other Medi-Cal members."
-                    value={shareForResearch}
-                    onValueChange={setShareForResearch}
-                  />
                   <View style={pageStyles.privacyNote}>
                     <Shield size={14} color="#6B7280" />
                     <Text style={pageStyles.privacyNoteText}>
@@ -806,37 +1034,17 @@ export function MemberSettingsScreen(): React.JSX.Element {
 
           {/* Bottom: 2-col grid (always visible) */}
           <View style={pageStyles.bottomGrid}>
-            {/* Privacy & Security summary card */}
+            {/* Privacy & Security summary card.
+                QA batch (2026-07-14) Part 20: the four toggles that used to
+                render here (two-factor, biometric, AI session transcription
+                consent, share data for research) were local `useState`
+                only — never wired to any backend setting — so they were
+                misleading fake controls. The real per-session transcription
+                consent is captured in the session consent flow, not here.
+                Removed; Deactivate/Delete remain the card's only actions. */}
             <Card style={[pageStyles.bottomCard, isPhone && pageStyles.bottomCardPhone]}>
               <Text style={pageStyles.bottomCardTitle}>Privacy & Security</Text>
               <Text style={pageStyles.bottomCardSubtitle}>Your data is protected. You're in control.</Text>
-
-              <View style={{ marginTop: 8 }}>
-                <ToggleRow
-                  label="Two-factor authentication"
-                  description="SMS code on every login"
-                  value={twoFactor}
-                  onValueChange={setTwoFactor}
-                />
-                <ToggleRow
-                  label="Biometric login"
-                  description="Face ID / fingerprint"
-                  value={biometric}
-                  onValueChange={setBiometric}
-                />
-                <ToggleRow
-                  label="AI session transcription consent"
-                  description="Granted · revoke anytime"
-                  value={aiTranscription}
-                  onValueChange={setAiTranscription}
-                />
-                <ToggleRow
-                  label="Share data for anonymous research"
-                  description="Helps improve outcomes for others"
-                  value={shareForResearch}
-                  onValueChange={setShareForResearch}
-                />
-              </View>
 
               <Pressable
                 onPress={() => void handleDeactivateAccount()}
@@ -869,8 +1077,10 @@ export function MemberSettingsScreen(): React.JSX.Element {
               </Pressable>
             </Card>
 
-            {/* Need help card */}
+            {/* Need help card — slimmed to just "Sign out of this device"
+                (QA batch 2026-07-14, Part 22). */}
             <Card style={[pageStyles.bottomCard, isPhone && pageStyles.bottomCardPhone, pageStyles.helpCard]}>
+              {/* v2: Need help? contact section — commented out until support channels are real (Akram 2026-07-14). Restore by uncommenting.
               <Text style={pageStyles.bottomCardTitle}>Need help?</Text>
               <Text style={pageStyles.bottomCardSubtitle}>We're here for you 24/7</Text>
 
@@ -918,6 +1128,7 @@ export function MemberSettingsScreen(): React.JSX.Element {
                   }
                 />
               </View>
+              */}
 
               <Pressable
                 onPress={handleLogout}

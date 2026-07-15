@@ -28,10 +28,12 @@ Coverage
    - 409 on double-complete
    - 409 on complete after abandon
 
-5. Latest completed assessment
+5. Latest assessment (QA batch 2026-07-14, Part 10)
    - GET /api/v1/chw/members/{member_id}/assessments/latest
-   - Returns most recent completed assessment with all responses
-   - 404 when no completed assessment exists
+   - Returns the most recent in_progress assessment when one exists
+     (preferred — it's the actionable/resumable one), otherwise the most
+     recent completed assessment, with all responses and `status`
+   - 404 when neither an in_progress nor a completed assessment exists
    - 403 for member caller
 
 6. Epic W2 — per-question Skip
@@ -767,6 +769,110 @@ async def test_latest_assessment_returns_newest_of_multiple_completed(
     )
     assert res.status_code == 200
     assert res.json()["id"] == aid2, "Should return the second (newer) assessment"
+
+
+@pytest.mark.asyncio
+async def test_latest_assessment_surfaces_in_progress_with_partial_answers(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_tokens: dict,
+) -> None:
+    """QA batch (2026-07-14) Part 10 — regression.
+
+    Before the fix, /latest only ever queried ``status == "completed"``, so
+    a member with a partially-answered in_progress screening 404'd here and
+    the Member Profile's Screening Results panel wrongly showed "No
+    screening completed for this member yet" even though the CHW had saved
+    partial answers. The in_progress assessment (with its saved responses
+    and status="in_progress") must now be returned instead of a 404.
+    """
+    member_id = _extract_user_id_from_token(member_tokens)
+
+    request_id = await _create_request_and_accept(client, member_tokens, chw_tokens)
+    session_id = await _create_session(client, chw_tokens, request_id)
+
+    body, _ = await _start_assessment(client, chw_tokens, session_id)
+    assessment_id = body["id"]
+
+    await client.post(
+        f"/api/v1/assessments/{assessment_id}/responses",
+        json=_SAMPLE_RESPONSE_BODY,
+        headers=auth_header(chw_tokens),
+    )
+    # Deliberately never completed — the assessment stays in_progress.
+
+    res = await client.get(
+        f"/api/v1/chw/members/{member_id}/assessments/latest",
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 200, res.text
+    data = res.json()
+    assert data["id"] == assessment_id
+    assert data["status"] == "in_progress"
+    assert len(data["responses"]) == 1
+    assert data["responses"][0]["question_id"] == "housing_situation"
+
+
+@pytest.mark.asyncio
+async def test_latest_assessment_prefers_in_progress_over_older_completed(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_tokens: dict,
+) -> None:
+    """The in_progress assessment is the actionable one — it must win even
+    when an older completed assessment also exists for the same member."""
+    member_id = _extract_user_id_from_token(member_tokens)
+
+    request_id = await _create_request_and_accept(client, member_tokens, chw_tokens)
+    session_id = await _create_session(client, chw_tokens, request_id)
+
+    # First assessment — completed.
+    body1, _ = await _start_assessment(client, chw_tokens, session_id)
+    aid1 = body1["id"]
+    await client.post(f"/api/v1/assessments/{aid1}/complete", headers=auth_header(chw_tokens))
+
+    # Second assessment (re-assessment) — left in_progress.
+    body2, code2 = await _start_assessment(client, chw_tokens, session_id)
+    assert code2 == 201
+    aid2 = body2["id"]
+
+    res = await client.get(
+        f"/api/v1/chw/members/{member_id}/assessments/latest",
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["id"] == aid2, "in_progress assessment must be preferred over completed"
+    assert data["status"] == "in_progress"
+
+
+@pytest.mark.asyncio
+async def test_latest_assessment_completed_only_member_unchanged(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_tokens: dict,
+) -> None:
+    """A member with only a completed assessment (no in_progress row) keeps
+    returning that completed assessment — no regression for the common case."""
+    member_id = _extract_user_id_from_token(member_tokens)
+
+    request_id = await _create_request_and_accept(client, member_tokens, chw_tokens)
+    session_id = await _create_session(client, chw_tokens, request_id)
+
+    body, _ = await _start_assessment(client, chw_tokens, session_id)
+    assessment_id = body["id"]
+    await client.post(
+        f"/api/v1/assessments/{assessment_id}/complete", headers=auth_header(chw_tokens)
+    )
+
+    res = await client.get(
+        f"/api/v1/chw/members/{member_id}/assessments/latest",
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["id"] == assessment_id
+    assert data["status"] == "completed"
 
 
 # ─── 6. Per-answer audit trail ────────────────────────────────────────────────

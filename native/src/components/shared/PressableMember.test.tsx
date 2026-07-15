@@ -53,7 +53,7 @@ describe('PressableMember — Epic S follow-up: optional backLabel/backTo', () =
         memberId={MEMBER_ID}
         displayName={DISPLAY_NAME}
         backLabel="Dashboard"
-        backTo="Dashboard"
+        backTo="DashboardStack"
       >
         <span>member row</span>
       </PressableMember>,
@@ -63,7 +63,7 @@ describe('PressableMember — Epic S follow-up: optional backLabel/backTo', () =
 
     expect(mockNavigate).toHaveBeenCalledWith('SessionsStack', {
       screen: 'MemberProfile',
-      params: { memberId: MEMBER_ID, backLabel: 'Dashboard', backTo: 'Dashboard' },
+      params: { memberId: MEMBER_ID, backLabel: 'Dashboard', backTo: 'DashboardStack' },
     });
   });
 
@@ -94,7 +94,7 @@ describe('PressableMember — Epic S follow-up: optional backLabel/backTo', () =
         displayName={DISPLAY_NAME}
         enabled={false}
         backLabel="Dashboard"
-        backTo="Dashboard"
+        backTo="DashboardStack"
       >
         <span>member row</span>
       </PressableMember>,

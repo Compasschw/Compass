@@ -340,7 +340,7 @@ function ScheduleRow({
         displayName={name}
         enabled={!!session.memberId}
         backLabel="Dashboard"
-        backTo="Dashboard"
+        backTo="DashboardStack"
       >
         <Avatar name={name} />
       </PressableMember>
@@ -352,7 +352,7 @@ function ScheduleRow({
           displayName={name}
           enabled={!!session.memberId}
           backLabel="Dashboard"
-          backTo="Dashboard"
+          backTo="DashboardStack"
         >
           <Text style={styles.scheduleNameText}>{name}</Text>
         </PressableMember>
@@ -719,7 +719,7 @@ export function CHWDashboardScreen(): React.JSX.Element {
         'SessionsStack',
         {
           screen: 'MemberProfile',
-          params: { memberId, backLabel: 'Dashboard', backTo: 'Dashboard' },
+          params: { memberId, backLabel: 'Dashboard', backTo: 'DashboardStack' },
         },
       );
     },

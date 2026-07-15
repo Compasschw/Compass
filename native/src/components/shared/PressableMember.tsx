@@ -27,7 +27,7 @@
  * </PressableMember>
  *
  * // Epic S — optional "Back to …" origin params, e.g. from the Dashboard:
- * <PressableMember memberId={m.id} displayName={m.displayName} backLabel="Dashboard" backTo="Dashboard">
+ * <PressableMember memberId={m.id} displayName={m.displayName} backLabel="Dashboard" backTo="DashboardStack">
  *   <Text style={s.name}>{m.displayName}</Text>
  * </PressableMember>
  * ```

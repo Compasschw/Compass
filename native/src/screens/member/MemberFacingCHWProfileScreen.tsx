@@ -54,7 +54,7 @@ import {
 import { colors as tokens, spacing, radius, shadows } from '../../theme/tokens';
 import { fonts } from '../../theme/typography';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
-import { useMemberFacingCHWProfile, useSessions, useTestimonialSummary } from '../../hooks/useApiQueries';
+import { useMemberFacingCHWProfile, useSessions } from '../../hooks/useApiQueries';
 import type { MemberFindStackParamList, MemberTabParamList } from '../../navigation/MemberTabNavigator';
 import {
   AppShell,
@@ -477,11 +477,13 @@ interface PerformanceCardProps {
   yearsExperience: string | null;
   availableDays: string[];
   /**
-   * Average of the CHW's APPROVED Testimonial ratings (1-5), or `null` when
-   * none exist yet. Rounded to 1 decimal by the backend aggregate query.
+   * QA batch (2026-07-14) Part 18 — average of THIS member's own
+   * post-session ratings (1-5) for this CHW, or `null` when the member has
+   * never rated them. No approval-status gate: this is the member's own
+   * scores shown back to them, not public display copy.
    */
   ratingAvg: number | null;
-  /** Count of approved testimonials contributing to `ratingAvg`. */
+  /** Count of this member's own ratings contributing to `ratingAvg`. */
   ratingCount: number;
 }
 
@@ -930,11 +932,13 @@ export function MemberFacingCHWProfileScreen(
 
   const { data: profile, isLoading: profileLoading, error } = useMemberFacingCHWProfile(chwId);
   const sessionsQuery = useSessions();
-  // Real rating aggregate (avg + count of approved Testimonials) — replaces
-  // the previous hardcoded "4.9". Not part of `isLoading`/`error` gating
-  // below: a rating-fetch failure shouldn't block the whole profile from
-  // rendering — it just falls back to the "No ratings yet" empty state.
-  const testimonialSummaryQuery = useTestimonialSummary(chwId);
+  // QA batch (2026-07-14) Part 18: "Member Rating" is THIS member's own
+  // post-session scores for THIS CHW (myRatingAvg/myRatingCount on the
+  // profile response), not the CHW's global approved-testimonial summary —
+  // that summary stayed "No ratings yet" right after the member rated a
+  // session because it excluded unapproved rows. The former
+  // `useTestimonialSummary(chwId)` call was dropped here for that reason;
+  // it's still used by the CHW-side dashboard's satisfaction snapshot.
 
   const isLoading = profileLoading || sessionsQuery.isLoading;
 
@@ -1103,8 +1107,8 @@ export function MemberFacingCHWProfileScreen(
               availableDays={
                 Array.isArray(profile.availableDays) ? profile.availableDays : []
               }
-              ratingAvg={testimonialSummaryQuery.data?.ratingAvg ?? null}
-              ratingCount={testimonialSummaryQuery.data?.ratingCount ?? 0}
+              ratingAvg={profile.myRatingAvg ?? null}
+              ratingCount={profile.myRatingCount ?? 0}
             />
 
             {/* Right — relationship context + actions */}
