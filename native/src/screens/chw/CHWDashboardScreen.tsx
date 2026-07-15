@@ -67,6 +67,7 @@ import {
   useChwProfile,
   useTestimonialSummary,
   useChwChecklist,
+  useChwDashboardStats,
   type SessionData,
   type ServiceRequestData,
   type ChwClaim,
@@ -582,6 +583,46 @@ function NewMemberAlert({ member, onOpenMember, onDismiss }: NewMemberAlertProps
   );
 }
 
+// ─── Pending session-requests banner (QA-batch #24) ──────────────────────────
+//
+// Amber alert surfacing member-proposed pending session requests directly on
+// the Dashboard — previously only visible/actionable on the Appointments tab.
+// Reuses the compliance-banner amber styling convention for visual
+// consistency. No dismiss control (unlike ComplianceBanner/NewMemberAlert):
+// the count is live and actionable, and hides itself entirely at 0.
+
+interface PendingSessionRequestsBannerProps {
+  count: number;
+  onReview: () => void;
+}
+
+function PendingSessionRequestsBanner({
+  count,
+  onReview,
+}: PendingSessionRequestsBannerProps): React.JSX.Element | null {
+  if (count <= 0) return null;
+
+  return (
+    <View style={styles.complianceBanner} accessibilityRole="alert">
+      <View style={styles.complianceBannerIconWrap}>
+        <CalendarCheck size={18} color={tokens.amber700} />
+      </View>
+      <View style={styles.complianceBannerBody}>
+        <Text style={styles.complianceBannerTitle}>
+          {count} session request{count === 1 ? '' : 's'} from members awaiting your confirmation
+        </Text>
+        <TouchableOpacity
+          onPress={onReview}
+          accessibilityRole="button"
+          accessibilityLabel="Review pending session requests"
+        >
+          <Text style={styles.complianceBannerLink}>Review</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
 // ─── AlertsSection ───────────────────────────────────────────────────────────
 //
 // Stacks all dashboard alert cards vertically with a consistent gap — no
@@ -697,6 +738,10 @@ export function CHWDashboardScreen(): React.JSX.Element {
   // Compliance checklist (Epic D) — drives the "Finish your compliance
   // checklist" banner below the greeting row.
   const checklistQuery = useChwChecklist();
+  // QA-batch #15/#24/#25: the single accurate source for the "Completed
+  // Sessions" tile, the member-request alert banner, and the (AppShell-
+  // rendered) Appointments sidebar badge.
+  const dashboardStatsQuery = useChwDashboardStats();
 
   // QA batch #2 (Wave-2 B1): Add New Member is disabled only when the
   // backend gate is actually live (`gateEnabled`) AND this CHW currently
@@ -742,6 +787,7 @@ export function CHWDashboardScreen(): React.JSX.Element {
     void membersQuery.refetch();
     void chwProfileQuery.refetch();
     void testimonialSummaryQuery.refetch();
+    void dashboardStatsQuery.refetch();
   }, [
     sessionsQuery,
     requestsQuery,
@@ -750,6 +796,7 @@ export function CHWDashboardScreen(): React.JSX.Element {
     membersQuery,
     chwProfileQuery,
     testimonialSummaryQuery,
+    dashboardStatsQuery,
   ]);
 
   const refresh = useRefreshControl([
@@ -761,6 +808,7 @@ export function CHWDashboardScreen(): React.JSX.Element {
     intakeQuery.refetch,
     chwProfileQuery.refetch,
     testimonialSummaryQuery.refetch,
+    dashboardStatsQuery.refetch,
   ]);
 
   const allSessions  = sessionsQuery.data  ?? [];
@@ -786,6 +834,23 @@ export function CHWDashboardScreen(): React.JSX.Element {
   const sessionsTodayCount = todaySessions.length;
 
   /**
+   * QA-batch #15: "Completed Sessions" tile values — all-time count of
+   * sessions with status === 'completed' (documentation submitted), plus
+   * today's slice for the "+N today" pill. Sourced from GET
+   * /chw/dashboard/stats (not derived from `allSessions`, which is capped at
+   * 50 rows by default and would silently under-count for an active CHW).
+   */
+  const completedSessionsTotal = dashboardStatsQuery.data?.completedSessionsTotal ?? 0;
+  const completedSessionsToday = dashboardStatsQuery.data?.completedSessionsToday ?? 0;
+
+  /**
+   * QA-batch #24/#25: member-proposed pending session requests awaiting this
+   * CHW's confirm/decline — drives the Dashboard alert banner and (via
+   * AppShell) the Appointments sidebar badge.
+   */
+  const pendingMemberRequests = dashboardStatsQuery.data?.pendingMemberRequests ?? 0;
+
+  /**
    * Overdue follow-ups: matched requests older than 48h.
    * TODO: wire when /chw/dashboard/stats ships with an explicit overdue count.
    */
@@ -805,28 +870,6 @@ export function CHWDashboardScreen(): React.JSX.Element {
   const messagesAwaitingCount = useMemo<number>(() => {
     return allSessions.filter((s) => s.status === 'in_progress').length;
   }, [allSessions]);
-
-  /**
-   * Earnings this week: sum of grossAmount from claims in the current ISO week.
-   * Falls back to earnings.thisMonth from useChwEarnings when no paid claims
-   * exist yet (the summary endpoint gives a coarser view).
-   * TODO: wire to a dedicated /chw/earnings/weekly when it ships.
-   */
-  const earningsThisWeek = useMemo<number>(() => {
-    const weekStart = isoWeekStart(new Date());
-    const weeklyFromClaims = allClaims
-      .filter((c) => {
-        const dateStr = c.serviceDate ?? c.createdAt;
-        if (!dateStr) return false;
-        return new Date(dateStr).getTime() >= weekStart;
-      })
-      .reduce((sum, c) => sum + (c.grossAmount ?? 0), 0);
-
-    // If claims aren't loaded yet (or there are none), use the earnings summary
-    return weeklyFromClaims > 0
-      ? weeklyFromClaims
-      : (earnings?.thisMonth ?? 0);
-  }, [allClaims, earnings]);
 
   // ── Today's schedule ─────────────────────────────────────────────────────────
 
@@ -861,13 +904,17 @@ export function CHWDashboardScreen(): React.JSX.Element {
   }, [allClaims, weekStart]);
 
   /**
-   * Real member satisfaction — avg + count of this CHW's APPROVED Testimonial
-   * rows (GET /chws/{chw_id}/testimonials/summary). Never fabricated: the
-   * SnapshotBox below falls back to an explicit "No ratings yet" state when
-   * ratingCount is 0 (new CHW, or no approved reviews yet).
+   * Real member satisfaction — avg + count of ALL this CHW's member
+   * post-session ratings (GET /chws/{chw_id}/testimonials/summary,
+   * all_ratings_avg / all_ratings_count — QA-batch #16). Deliberately NOT
+   * approval-gated: this is the CHW's own private Dashboard, so a rating a
+   * member just submitted shows up immediately rather than waiting on admin
+   * moderation (which only gates PUBLIC display of testimonial text). Never
+   * fabricated: the SnapshotBox below falls back to an explicit "No ratings
+   * yet" state when allRatingsCount is 0.
    */
-  const memberSatisfactionRatingAvg = testimonialSummaryQuery.data?.ratingAvg ?? null;
-  const memberSatisfactionRatingCount = testimonialSummaryQuery.data?.ratingCount ?? 0;
+  const memberSatisfactionRatingAvg = testimonialSummaryQuery.data?.allRatingsAvg ?? null;
+  const memberSatisfactionRatingCount = testimonialSummaryQuery.data?.allRatingsCount ?? 0;
   const hasMemberSatisfactionRatings =
     memberSatisfactionRatingCount > 0 && memberSatisfactionRatingAvg != null;
 
@@ -984,17 +1031,25 @@ export function CHWDashboardScreen(): React.JSX.Element {
           />
         )}
 
+        {/* ── Pending session-requests banner (QA batch #24) ─────────────── */}
+        <PendingSessionRequestsBanner
+          count={pendingMemberRequests}
+          onReview={() => navigation.navigate('Calendar' as never)}
+        />
+
         {/* ── KPI row — 4 tiles ───────────────────────────────────────────── */}
         {/* StaggerList cascades the 4 stat tiles in on initial mount. */}
         <View style={styles.kpiRow}>
           <StaggerList delayMs={50} durationMs={240}>
-            {/* 1. Sessions today */}
+            {/* 1. Completed Sessions — QA-batch #15: all-time count of
+                documented+submitted sessions, not "any status scheduled
+                today". The "+N today" pill still surfaces today's slice. */}
             <StatTile
               icon={<CalendarCheck size={18} color={tokens.emerald700} />}
               iconBg={tokens.emerald100}
-              label="Sessions today"
-              value={sessionsTodayCount}
-              delta={sessionsTodayCount > 0 ? `+${sessionsTodayCount} today` : 'none today'}
+              label="Completed Sessions"
+              value={completedSessionsTotal}
+              delta={completedSessionsToday > 0 ? `+${completedSessionsToday} today` : 'none today'}
               deltaColor={tokens.emerald700}
               deltaBg="#ecfdf5"
               style={styles.kpiTile}
@@ -1031,14 +1086,14 @@ export function CHWDashboardScreen(): React.JSX.Element {
               onPress={() => navigation.navigate('SessionsStack' as never, { screen: 'Messages' } as never)}
             />
 
-            {/* 4. Earnings this week */}
+            {/* 4. Earnings — QA-batch #14: real, server-computed all-time
+                gross earnings (GET /chw/earnings.total_earned_all_time), not
+                a client-side weekly sum with a silent this_month fallback. */}
             <StatTile
               icon={<DollarSign size={18} color={tokens.purple700} />}
               iconBg={tokens.purple100}
-              label="Earnings this week"
-              value={formatCurrency(earningsThisWeek)}
-              /* MoM delta not derivable without prior-month breakdown — omit cleanly.
-                 TODO: wire when /chw/earnings returns month_over_month_pct. */
+              label="Earnings"
+              value={formatCurrency(earnings?.totalEarnedAllTime ?? 0)}
               delta={earnings?.pendingPayout != null && earnings.pendingPayout > 0
                 ? `${formatCurrency(earnings.pendingPayout)} pending`
                 : undefined}
@@ -1116,10 +1171,11 @@ export function CHWDashboardScreen(): React.JSX.Element {
                 delta="v2 feature"
                 deltaColor={tokens.textSecondary}
               />
-              {/* Member satisfaction — real avg + count of APPROVED
-                  Testimonial rows for this CHW. Never a fabricated number:
-                  shows "No ratings yet" until the CHW has at least one
-                  approved rating. */}
+              {/* Member satisfaction — real avg + count of ALL post-session
+                  ratings for this CHW (QA-batch #16: not approval-gated —
+                  this is the CHW's own private view). Never a fabricated
+                  number: shows "No ratings yet" until the CHW has at least
+                  one rating. */}
               <SnapshotBox
                 label="Member satisfaction"
                 value={hasMemberSatisfactionRatings ? memberSatisfactionRatingAvg!.toFixed(1) : '—'}

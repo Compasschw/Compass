@@ -46,7 +46,7 @@ import { DashboardSidebar } from './DashboardSidebar';
 import { chwSidebarItems, memberSidebarItems } from './sidebarItems';
 import type { UserBlock } from './DashboardSidebar';
 import { colors as tokens, spacing } from '../../theme/tokens';
-import { useConversations } from '../../hooks/useApiQueries';
+import { useConversations, useChwDashboardStats } from '../../hooks/useApiQueries';
 import { ActiveSessionBadge } from '../sessions/ActiveSessionBadge';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -149,9 +149,19 @@ export function AppShell({
     (sum, c) => sum + Math.max(0, c.unreadCount ?? 0),
     0,
   );
+
+  // QA-batch #25: live pending-session-request count for the Appointments
+  // sidebar badge. Shares the same GET /chw/dashboard/stats query the
+  // Dashboard's banner/tile use (same key → no extra fetch once both have
+  // mounted). CHW-only endpoint — disabled for members so a member session
+  // never fires a request that would 403.
+  const { data: dashboardStats } = useChwDashboardStats({ enabled: role === 'chw' });
+  const pendingSessionRequests = role === 'chw' ? (dashboardStats?.pendingMemberRequests ?? 0) : 0;
+
   const mergedBadges: Record<string, string | number> = {
     ...badges,
     unreadMessages,
+    ...(role === 'chw' ? { pendingSessionRequests } : {}),
   };
 
   // Persistent "active session" badge — CHW-only, floats above every CHW

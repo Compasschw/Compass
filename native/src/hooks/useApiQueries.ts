@@ -106,6 +106,10 @@ export interface EarningsSummary {
   paidThisPeriod: number;
   pendingInTransit: boolean;
   nextPayoutDate?: string | null; // ISO date
+  /** QA-batch #14: real, server-computed all-time gross earnings — powers the
+   *  Dashboard "Earnings" tile. Not paginated (unlike a client-side claims
+   *  sum, which would silently truncate past the /chw/claims 200-row cap). */
+  totalEarnedAllTime: number;
 }
 
 /** Period selector for the Earnings page. */
@@ -473,7 +477,9 @@ export interface MembersRosterItem {
   engagement: 'highly' | 'moderately' | 'disengaged';
   /** Most recent active journey, or null if none. */
   activeJourney: ActiveJourneyInfo | null;
-  /** ISO timestamp of most recent session. */
+  /** ISO timestamp of the most recent interaction of any kind (completed
+   *  session, in-app message, or call/SMS touch — QA-batch #8). A merely
+   *  scheduled (not yet completed) session does not count. */
   lastContactAt: string | null;
   /** Primary vertical of the most recent active ServiceRequest. */
   topNeed: string | null;
@@ -557,6 +563,15 @@ export const queryKeys = {
   chwJourneys: ['chw', 'journeys'] as const,
   /** CHW members roster from GET /chw/members. */
   chwMembers: ['chw', 'members'] as const,
+  /**
+   * QA-batch #15/#24/#25: the three CHW-scoped dashboard counts (completed
+   * sessions total/today, pending member session requests) from
+   * GET /chw/dashboard/stats. Single accurate source shared by the
+   * "Completed Sessions" tile, the member-request banner, and the
+   * Appointments sidebar badge — none of them read the limit-50 sessions
+   * list directly, so they can never disagree with each other.
+   */
+  chwDashboardStats: ['chw', 'dashboard', 'stats'] as const,
   /** CHW resource-folder search results, scoped by category + free-text query. */
   chwResources: (category?: string, q?: string) =>
     ['chw', 'resources', category ?? 'all', q ?? ''] as const,
@@ -1141,6 +1156,10 @@ export function useAcceptRequest() {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.requests });
       void qc.invalidateQueries({ queryKey: queryKeys.sessions });
+      // QA-batch #15/#24/#25: keep the "Completed Sessions" tile, the
+      // member-request banner, and the Appointments sidebar badge in sync
+      // with every session-status-changing mutation.
+      void qc.invalidateQueries({ queryKey: queryKeys.chwDashboardStats });
       // Request filter row vanishes after Accept (request becomes a member).
       void qc.invalidateQueries({ queryKey: queryKeys.incomingMemberRequests });
     },
@@ -1265,6 +1284,10 @@ export function useCreateSession() {
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.sessions });
+      // QA-batch #15/#24/#25: keep the "Completed Sessions" tile, the
+      // member-request banner, and the Appointments sidebar badge in sync
+      // with every session-status-changing mutation.
+      void qc.invalidateQueries({ queryKey: queryKeys.chwDashboardStats });
       void qc.invalidateQueries({ queryKey: queryKeys.requests });
     },
     onError: (error: Error) => {
@@ -1323,6 +1346,10 @@ export function useScheduleSession() {
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.sessions });
+      // QA-batch #15/#24/#25: keep the "Completed Sessions" tile, the
+      // member-request banner, and the Appointments sidebar badge in sync
+      // with every session-status-changing mutation.
+      void qc.invalidateQueries({ queryKey: queryKeys.chwDashboardStats });
     },
     onError: (error: Error) => {
       showAlert('Failed to schedule session', error?.message ?? 'Please try again.');
@@ -1382,6 +1409,10 @@ export function useStartSession() {
       // Reconcile with the server (real started_at, active_session_id) once the
       // request resolves — success or failure.
       void qc.invalidateQueries({ queryKey: queryKeys.sessions });
+      // QA-batch #15/#24/#25: keep the "Completed Sessions" tile, the
+      // member-request banner, and the Appointments sidebar badge in sync
+      // with every session-status-changing mutation.
+      void qc.invalidateQueries({ queryKey: queryKeys.chwDashboardStats });
       void qc.invalidateQueries({ queryKey: queryKeys.conversations });
     },
   });
@@ -1406,6 +1437,10 @@ export function useConfirmSession() {
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.sessions });
+      // QA-batch #15/#24/#25: keep the "Completed Sessions" tile, the
+      // member-request banner, and the Appointments sidebar badge in sync
+      // with every session-status-changing mutation.
+      void qc.invalidateQueries({ queryKey: queryKeys.chwDashboardStats });
     },
     onError: (error: Error) => {
       showAlert('Failed to confirm session', error?.message ?? 'Please try again.');
@@ -1433,6 +1468,10 @@ export function useDeclineSession() {
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.sessions });
+      // QA-batch #15/#24/#25: keep the "Completed Sessions" tile, the
+      // member-request banner, and the Appointments sidebar badge in sync
+      // with every session-status-changing mutation.
+      void qc.invalidateQueries({ queryKey: queryKeys.chwDashboardStats });
     },
     onError: (error: Error) => {
       showAlert('Failed to decline session', error?.message ?? 'Please try again.');
@@ -1453,6 +1492,10 @@ export function useCancelSession() {
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.sessions });
+      // QA-batch #15/#24/#25: keep the "Completed Sessions" tile, the
+      // member-request banner, and the Appointments sidebar badge in sync
+      // with every session-status-changing mutation.
+      void qc.invalidateQueries({ queryKey: queryKeys.chwDashboardStats });
     },
     onError: (error: Error) => {
       showAlert('Failed to remove session', error?.message ?? 'Please try again.');
@@ -1493,6 +1536,10 @@ export function useCompleteSession() {
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.sessions });
+      // QA-batch #15/#24/#25: keep the "Completed Sessions" tile, the
+      // member-request banner, and the Appointments sidebar badge in sync
+      // with every session-status-changing mutation.
+      void qc.invalidateQueries({ queryKey: queryKeys.chwDashboardStats });
       void qc.invalidateQueries({ queryKey: queryKeys.chwEarnings });
     },
   });
@@ -1516,6 +1563,10 @@ export function useSubmitDocumentation() {
       //    conversation's active_session_id clears and the rail fully resets.
       //  - Earnings / Claims / Payouts: the new claim + earnings appear.
       void qc.invalidateQueries({ queryKey: queryKeys.sessions });
+      // QA-batch #15/#24/#25: keep the "Completed Sessions" tile, the
+      // member-request banner, and the Appointments sidebar badge in sync
+      // with every session-status-changing mutation.
+      void qc.invalidateQueries({ queryKey: queryKeys.chwDashboardStats });
       void qc.invalidateQueries({ queryKey: queryKeys.conversations });
       void qc.invalidateQueries({ queryKey: queryKeys.chwClaims });
       void qc.invalidateQueries({ queryKey: queryKeys.chwEarnings });
@@ -1544,6 +1595,10 @@ export function useToggleSessionPin() {
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.sessions });
+      // QA-batch #15/#24/#25: keep the "Completed Sessions" tile, the
+      // member-request banner, and the Appointments sidebar badge in sync
+      // with every session-status-changing mutation.
+      void qc.invalidateQueries({ queryKey: queryKeys.chwDashboardStats });
     },
   });
 }
@@ -1563,6 +1618,10 @@ export function useToggleSessionArchive() {
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.sessions });
+      // QA-batch #15/#24/#25: keep the "Completed Sessions" tile, the
+      // member-request banner, and the Appointments sidebar badge in sync
+      // with every session-status-changing mutation.
+      void qc.invalidateQueries({ queryKey: queryKeys.chwDashboardStats });
     },
   });
 }
@@ -1589,6 +1648,10 @@ export function useToggleSessionMute() {
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.sessions });
+      // QA-batch #15/#24/#25: keep the "Completed Sessions" tile, the
+      // member-request banner, and the Appointments sidebar badge in sync
+      // with every session-status-changing mutation.
+      void qc.invalidateQueries({ queryKey: queryKeys.chwDashboardStats });
       void qc.invalidateQueries({ queryKey: queryKeys.conversations });
     },
   });
@@ -1608,6 +1671,10 @@ export function useDeleteSession() {
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.sessions });
+      // QA-batch #15/#24/#25: keep the "Completed Sessions" tile, the
+      // member-request banner, and the Appointments sidebar badge in sync
+      // with every session-status-changing mutation.
+      void qc.invalidateQueries({ queryKey: queryKeys.chwDashboardStats });
     },
   });
 }
@@ -1638,6 +1705,10 @@ export function useEndSession() {
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.sessions });
+      // QA-batch #15/#24/#25: keep the "Completed Sessions" tile, the
+      // member-request banner, and the Appointments sidebar badge in sync
+      // with every session-status-changing mutation.
+      void qc.invalidateQueries({ queryKey: queryKeys.chwDashboardStats });
     },
     onError: (error: Error) => {
       showAlert('Could not end session', error?.message ?? 'Please try again.');
@@ -1686,6 +1757,10 @@ export function useAbortSession() {
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.sessions });
+      // QA-batch #15/#24/#25: keep the "Completed Sessions" tile, the
+      // member-request banner, and the Appointments sidebar badge in sync
+      // with every session-status-changing mutation.
+      void qc.invalidateQueries({ queryKey: queryKeys.chwDashboardStats });
       void qc.invalidateQueries({ queryKey: queryKeys.conversations });
     },
     onError: (error: Error) => {
@@ -1736,6 +1811,10 @@ export function useMarkSessionNoShow() {
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.sessions });
+      // QA-batch #15/#24/#25: keep the "Completed Sessions" tile, the
+      // member-request banner, and the Appointments sidebar badge in sync
+      // with every session-status-changing mutation.
+      void qc.invalidateQueries({ queryKey: queryKeys.chwDashboardStats });
       void qc.invalidateQueries({ queryKey: queryKeys.conversations });
     },
     onError: (error: Error) => {
@@ -4291,6 +4370,40 @@ export function useChwMembers() {
       return transformKeys<MembersRosterItem[]>(raw);
     },
     staleTime: 120_000,
+  });
+}
+
+/** Response shape for GET /chw/dashboard/stats (QA-batch #15/#24/#25). */
+export interface ChwDashboardStats {
+  /** All-time count of this CHW's sessions with status === 'completed'. */
+  completedSessionsTotal: number;
+  /** completedSessionsTotal scoped to today (California wall-clock day). */
+  completedSessionsToday: number;
+  /** Count of scheduled+pending sessions proposed by the member (or a legacy
+   *  row with no proposer) awaiting this CHW's confirm/decline. */
+  pendingMemberRequests: number;
+}
+
+/**
+ * CHW dashboard stats from GET /chw/dashboard/stats — the single accurate
+ * source for the "Completed Sessions" tile, the member-request alert banner,
+ * and the Appointments sidebar badge (QA-batch #15/#24/#25). Deliberately
+ * NOT derived client-side from useSessions(), which defaults to a 50-row
+ * page and would silently under-count for an active CHW.
+ *
+ * @param options.enabled - Set false to skip the fetch (e.g. AppShell renders
+ *   for both roles but this endpoint is CHW-only — a member caller would 403).
+ */
+export function useChwDashboardStats(options?: { enabled?: boolean }) {
+  const enabled = options?.enabled ?? true;
+  return useQuery({
+    queryKey: queryKeys.chwDashboardStats,
+    queryFn: async (): Promise<ChwDashboardStats> => {
+      const raw = await api<unknown>('/chw/dashboard/stats');
+      return transformKeys<ChwDashboardStats>(raw);
+    },
+    enabled,
+    staleTime: 15_000,
   });
 }
 
