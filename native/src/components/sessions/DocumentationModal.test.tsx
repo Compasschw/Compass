@@ -842,3 +842,196 @@ describe('DocumentationModal — #24 case-note prefill vs. draft restoration', (
     });
   });
 });
+
+// ─── Part 11 (QA batch 2026-07-14 #11): 2-hour daily limit hint ────────────
+
+describe('DocumentationModal — Part 11: 2-hour daily limit hint', () => {
+  it('renders the 2-hour per-member-per-day hint under Session End, alongside the existing format hint', () => {
+    renderModal();
+
+    expect(
+      getByExactText('Note: sessions are limited to 2 hours per member, per day.'),
+    ).toBeTruthy();
+    // The pre-existing format hint is untouched — this is an ADDED line, not
+    // a replacement.
+    expect(
+      screen.getByText(
+        /e\.g\. 07\/12\/2026 02:30 PM\. Matches the billing export format\./,
+      ),
+    ).toBeTruthy();
+  });
+});
+
+// ─── Part 12 (QA batch 2026-07-14 #12): on-brand submit-failure banner ─────
+
+describe('DocumentationModal — Part 12: on-brand documentation-submit failure banner', () => {
+  function fillValidForm(): void {
+    selectADiagnosisCode();
+    fillNotes('Discussed housing options and next steps.');
+  }
+
+  async function triggerSubmit(): Promise<void> {
+    const submit = screen.getByLabelText('Submit documentation and billing');
+    fireEvent.click(submit);
+    // Web confirm gate — in-app panel, not window.confirm.
+    fireEvent.click(await screen.findByLabelText('Submit for billing'));
+  }
+
+  it('shows the inline banner with the backend reason on a failed submit, never a window.alert, and keeps the modal open', async () => {
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const onSubmit = vi
+      .fn()
+      .mockRejectedValue(
+        new Error('Daily unit cap exceeded. 0 units remaining today.'),
+      );
+
+    renderModal({
+      sessionStartedAt: START_ISO,
+      sessionEndedAt: END_ISO_50MIN,
+      onSubmit,
+    });
+    fillValidForm();
+    await triggerSubmit();
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          /Failed to submit documentation: Daily unit cap exceeded\. 0 units remaining today\./,
+        ),
+      ).toBeTruthy(),
+    );
+    expect(
+      screen.getByText('The modal will stay open so you can adjust and try again.'),
+    ).toBeTruthy();
+    expect(alertSpy).not.toHaveBeenCalled();
+
+    // Modal itself is still mounted/open — the "Submit Documentation &
+    // Billing" button (footer, always rendered while the modal is visible)
+    // is still present, and the in-app "submitted" success panel never
+    // appeared.
+    expect(screen.getByLabelText('Submit documentation and billing')).toBeTruthy();
+    expect(
+      screen.queryByText('Session submitted for billing pending approval'),
+    ).toBeNull();
+
+    alertSpy.mockRestore();
+  });
+
+  it('clears the banner and succeeds on a retried submit', async () => {
+    const onSubmit = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Daily unit cap exceeded. 0 units remaining today.'))
+      .mockResolvedValueOnce(undefined);
+
+    renderModal({
+      sessionStartedAt: START_ISO,
+      sessionEndedAt: END_ISO_50MIN,
+      onSubmit,
+    });
+    fillValidForm();
+    await triggerSubmit();
+
+    await waitFor(() =>
+      expect(screen.getByText(/Failed to submit documentation:/)).toBeTruthy(),
+    );
+
+    // Retry — the second attempt succeeds. The banner clears at the start of
+    // the new attempt (before onSubmit even resolves).
+    await triggerSubmit();
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText(/Failed to submit documentation:/)).toBeNull();
+    expect(
+      screen.getByText('Session submitted for billing pending approval'),
+    ).toBeTruthy();
+  });
+
+  it('clears the banner as soon as the CHW edits a field after a failed submit', async () => {
+    const onSubmit = vi
+      .fn()
+      .mockRejectedValue(new Error('Daily unit cap exceeded. 0 units remaining today.'));
+
+    renderModal({
+      sessionStartedAt: START_ISO,
+      sessionEndedAt: END_ISO_50MIN,
+      onSubmit,
+    });
+    fillValidForm();
+    await triggerSubmit();
+
+    await waitFor(() =>
+      expect(screen.getByText(/Failed to submit documentation:/)).toBeTruthy(),
+    );
+
+    fillNotes('Discussed housing options and next steps. Adjusted after failure.');
+
+    await waitFor(() =>
+      expect(screen.queryByText(/Failed to submit documentation:/)).toBeNull(),
+    );
+  });
+
+  it('never shows the banner on a successful submit', async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+
+    renderModal({
+      sessionStartedAt: START_ISO,
+      sessionEndedAt: END_ISO_50MIN,
+      onSubmit,
+    });
+    fillValidForm();
+    await triggerSubmit();
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText(/Failed to submit documentation:/)).toBeNull();
+  });
+});
+
+// ─── Part 13 (QA batch 2026-07-14 #13): submit payload carries the exact
+//     typed Session End ──────────────────────────────────────────────────
+
+describe('DocumentationModal — Part 13: submit payload carries the exact parsed Session End', () => {
+  it('sends sessionStartTime/sessionEndTime as the exact parsed ISO of the typed fields, not a live/tracked value', async () => {
+    const { onSubmit } = renderModal({
+      sessionStartedAt: START_ISO,
+      sessionEndedAt: END_ISO_50MIN,
+    });
+
+    selectADiagnosisCode();
+    fillNotes('Discussed housing options and next steps.');
+
+    const submit = screen.getByLabelText('Submit documentation and billing');
+    fireEvent.click(submit);
+    fireEvent.click(await screen.findByLabelText('Submit for billing'));
+
+    await vi.waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({
+      sessionStartTime: START_ISO,
+      sessionEndTime: END_ISO_50MIN,
+    });
+  });
+
+  it('reflects a CHW-edited Session End (not the original prop value) in the submit payload', async () => {
+    const { onSubmit } = renderModal({
+      sessionStartedAt: START_ISO,
+      sessionEndedAt: END_ISO_50MIN,
+    });
+
+    selectADiagnosisCode();
+    fillNotes('Discussed housing options and next steps.');
+    // Push the end time out to 10:30 AM (90-minute duration).
+    setDateTimeField('Session end date and time', '07/12/2026 10:30 AM');
+
+    const submit = screen.getByLabelText('Submit documentation and billing');
+    fireEvent.click(submit);
+    fireEvent.click(await screen.findByLabelText('Submit for billing'));
+
+    await vi.waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    const editedEndIso = new Date(2026, 6, 12, 10, 30, 0).toISOString();
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({
+      sessionStartTime: START_ISO,
+      sessionEndTime: editedEndIso,
+    });
+    // Never the original (unedited) prop value.
+    expect(onSubmit.mock.calls[0][0].sessionEndTime).not.toBe(END_ISO_50MIN);
+  });
+});

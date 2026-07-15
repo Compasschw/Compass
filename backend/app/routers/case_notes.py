@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.dependencies import require_role
 from app.models.audit import AuditLog
-from app.models.case_note import CaseNote
+from app.models.case_note import CASE_NOTE_STATUS_DRAFT, CASE_NOTE_STATUS_FINAL, CaseNote
 from app.models.session import Session
 from app.schemas.case_note import (
     CaseNoteCreate,
@@ -92,7 +92,20 @@ async def create_case_note(
     await assert_shared_session(db, chw_id=current_user.id, member_id=data.member_id)
 
     # Optional session FK validation: guard against attaching a note to a
-    # session that doesn't belong to this CHW↔member relationship.
+    # session that doesn't belong to this CHW↔member relationship. Also
+    # determines the note's initial lifecycle status (Part 9, QA batch
+    # 2026-07-14 #9): a note attached to a session whose documentation has
+    # not yet been submitted starts as a 'draft' — it flips to 'final' the
+    # moment that session's documentation is submitted (see
+    # `submit_documentation` in routers/sessions.py, which bulk-updates every
+    # draft note for the session in the same transaction that marks it
+    # completed). Standalone notes (no session_id) and notes attached to an
+    # already-completed session are 'final' from creation — there's no
+    # pending submission event left to wait for. A session that ends
+    # Missed/Cancelled never calls submit_documentation, so notes on those
+    # sessions stay 'draft' by design (they remain visible/editable; this is
+    # a known, accepted edge case — see the plan's Part 9 item 5).
+    note_status = CASE_NOTE_STATUS_FINAL
     if data.session_id is not None:
         session = await db.get(Session, data.session_id)
         if (
@@ -104,6 +117,8 @@ async def create_case_note(
                 status_code=404,
                 detail="Session not found or does not belong to this CHW/member pair.",
             )
+        if session.status != "completed":
+            note_status = CASE_NOTE_STATUS_DRAFT
 
     note = CaseNote(
         member_id=data.member_id,
@@ -111,6 +126,7 @@ async def create_case_note(
         session_id=data.session_id,
         body=data.body,
         is_pinned=data.is_pinned,
+        status=note_status,
     )
     db.add(note)
 

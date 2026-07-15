@@ -3,12 +3,13 @@ from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.billing import BillingClaim
+from app.models.case_note import CASE_NOTE_STATUS_DRAFT, CASE_NOTE_STATUS_FINAL, CaseNote
 from app.models.request import ServiceRequest
 from app.models.session import ConsentRequest, MemberConsent, Session, SessionDocumentation
 from app.models.user import User
@@ -1457,6 +1458,22 @@ async def submit_documentation(
     # already-completed session.
     if session.status in ("awaiting_documentation", "in_progress"):
         session.status = "completed"
+
+    # Part 9 (QA batch 2026-07-14 #9): finalize this session's draft case
+    # notes in the SAME transaction as the completion above — submitting
+    # documentation is the one event a draft note is waiting on. Scoped
+    # tightly to `session_id` + `status='draft'` + `deleted_at IS NULL` so
+    # other sessions' drafts and soft-deleted notes are never touched.
+    await db.execute(
+        update(CaseNote)
+        .where(
+            CaseNote.session_id == session_id,
+            CaseNote.status == CASE_NOTE_STATUS_DRAFT,
+            CaseNote.deleted_at.is_(None),
+        )
+        .values(status=CASE_NOTE_STATUS_FINAL)
+    )
+
     await db.commit()
     await db.refresh(claim)
 

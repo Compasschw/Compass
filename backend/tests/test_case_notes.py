@@ -105,6 +105,91 @@ async def test_create_case_note_happy_path(
     assert data["is_pinned"] is False
     assert "id" in data
     assert "created_at" in data
+    # Standalone note (no session_id) — final from creation, nothing to wait on.
+    assert data["status"] == "final"
+
+
+# ── Draft/final lifecycle (Part 9, QA batch 2026-07-14 #9) ────────────────────
+
+
+@pytest.mark.asyncio
+async def test_create_case_note_with_active_session_is_draft(
+    client: AsyncClient, chw_tokens, member_tokens
+):
+    """A note attached to a session whose documentation hasn't been submitted
+    yet (status != 'completed') is created as a draft."""
+    request_id, member_id = await _register_and_create_request_match(
+        client, member_tokens, chw_tokens
+    )
+
+    res = await client.post(
+        "/api/v1/sessions/",
+        json={
+            "request_id": request_id,
+            "scheduled_at": "2026-06-10T10:00:00Z",
+            "mode": "in_person",
+        },
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 201
+    session_id = res.json()["id"]
+    assert res.json()["status"] == "scheduled"  # not completed
+
+    res = await client.post(
+        "/api/v1/case-notes",
+        json={
+            "member_id": member_id,
+            "body": "Notes taken mid-session.",
+            "session_id": session_id,
+        },
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 201
+    data = res.json()
+    assert data["session_id"] == session_id
+    assert data["status"] == "draft"
+
+
+@pytest.mark.asyncio
+async def test_create_case_note_on_completed_session_is_final(
+    client: AsyncClient, chw_tokens, member_tokens
+):
+    """A note attached to an already-completed session is final immediately —
+    there is no pending submission event left to wait for."""
+    request_id, member_id = await _register_and_create_request_match(
+        client, member_tokens, chw_tokens
+    )
+
+    res = await client.post(
+        "/api/v1/sessions/",
+        json={
+            "request_id": request_id,
+            "scheduled_at": "2026-06-10T10:00:00Z",
+            "mode": "in_person",
+        },
+        headers=auth_header(chw_tokens),
+    )
+    session_id = res.json()["id"]
+
+    await client.patch(
+        f"/api/v1/sessions/{session_id}/start", headers=auth_header(chw_tokens)
+    )
+    res = await client.patch(
+        f"/api/v1/sessions/{session_id}/complete", headers=auth_header(chw_tokens)
+    )
+    assert res.json()["status"] == "completed"
+
+    res = await client.post(
+        "/api/v1/case-notes",
+        json={
+            "member_id": member_id,
+            "body": "Note added after the session was already completed.",
+            "session_id": session_id,
+        },
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 201
+    assert res.json()["status"] == "final"
 
 
 @pytest.mark.asyncio

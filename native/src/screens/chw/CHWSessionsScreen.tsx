@@ -1690,25 +1690,16 @@ export function CHWSessionsScreen(): React.JSX.Element {
   const handleDocumentationSubmit = useCallback(
     async (data: SessionDocumentation): Promise<void> => {
       if (documentingSessionId == null) return;
-      try {
-        await submitDocumentation.mutateAsync({
-          sessionId: documentingSessionId,
-          data: data as unknown as Record<string, unknown>,
-        });
-        setDocumentingSessionId(null);
-      } catch (err) {
-        // Surface the real error instead of silently closing the modal.
-        // Keeps the modal open so the CHW can fix and resubmit.
-        const reason =
-          err instanceof Error && err.message ? err.message : 'Unknown error';
-        // eslint-disable-next-line no-console
-        console.error('[CHWSessions] submitDocumentation failed:', err);
-        if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          window.alert(`Failed to submit documentation\n\n${reason}\n\nThe modal will stay open so you can adjust and try again.`);
-        } else {
-          Alert.alert('Failed to submit documentation', reason);
-        }
-      }
+      // On failure, let the error propagate — DocumentationModal's own
+      // performSubmit catches it and renders the on-brand inline
+      // `submitError` banner (Part 12, QA batch 2026-07-14 #12) instead of a
+      // browser/OS dialog. The modal stays open (documentingSessionId is
+      // left set) so the CHW can adjust and retry.
+      await submitDocumentation.mutateAsync({
+        sessionId: documentingSessionId,
+        data: data as unknown as Record<string, unknown>,
+      });
+      setDocumentingSessionId(null);
     },
     [documentingSessionId, submitDocumentation],
   );

@@ -2021,7 +2021,12 @@ function MemberScheduleModal({
 }: MemberScheduleModalProps): React.JSX.Element {
   const { mutateAsync, isPending } = useScheduleSession();
   const cancelOldSession = useCancelSession();
-  const [mode, setMode] = useState<'in_person' | 'virtual' | 'phone'>('in_person');
+  // Phone is the default (QA batch 2026-07-14 #23) — most members scheduling
+  // through this dialog don't need to be physically present, and Phone is
+  // also the type most CHWs actually confirm. 'virtual' stays in the union
+  // for rescheduling a legacy virtual session (see the 'virtual' removal
+  // note below); it was never a NEW-selection default.
+  const [mode, setMode] = useState<'in_person' | 'virtual' | 'phone'>('phone');
   const [dateInput, setDateInput] = useState<string>(() => {
     const t = new Date();
     t.setDate(t.getDate() + 1);
@@ -2135,8 +2140,10 @@ function MemberScheduleModal({
             {/* 'virtual' (Video) removed from NEW-selection per product
                 decision 2026-07-14 — legacy virtual sessions still render via
                 the label/icon maps; the mode state union keeps 'virtual' so a
-                reschedule of one carries its mode through unchanged. */}
-            {(['in_person', 'phone'] as const).map((m) => (
+                reschedule of one carries its mode through unchanged.
+                Phone renders first and is pre-selected by default (QA batch
+                2026-07-14 #23). */}
+            {(['phone', 'in_person'] as const).map((m) => (
               <TouchableOpacity
                 key={m}
                 style={[scheduleStyles.segBtn, mode === m && scheduleStyles.segBtnActive]}

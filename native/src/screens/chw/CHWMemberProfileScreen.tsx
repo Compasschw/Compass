@@ -7131,6 +7131,12 @@ interface SessionNoteEntry {
   /** ISO timestamp used for ordering + display. */
   timestamp: string;
   pinned?: boolean;
+  /** True while the underlying case note's status is 'draft' — a note tied
+   *  to a session whose documentation hasn't been submitted yet. Never set
+   *  for 'summary' entries (session documentation summaries are only ever
+   *  written once documentation has already been submitted, so they're
+   *  final by construction). */
+  draft?: boolean;
 }
 
 interface SessionNotesModalProps {
@@ -7201,6 +7207,7 @@ function SessionNotesModal({
           body: n.body,
           timestamp: n.createdAt,
           pinned: n.isPinned,
+          draft: n.status === 'draft',
         });
       }
     }
@@ -7330,6 +7337,7 @@ function SessionNotesModal({
               <Text style={sessionNotesModalStyles.noteMeta}>
                 {formatDateTime(entry.timestamp)}
                 {entry.pinned ? ' · Pinned' : ''}
+                {entry.draft ? ' · Draft' : ''}
               </Text>
             </View>
           ))
@@ -8137,6 +8145,10 @@ interface CaseTimelineEntry {
   sessionId: string | null;
   /** Human date of the linked session, if any (e.g. "Jun 27, 9:21 PM"). */
   sessionLabel?: string;
+  /** True while the underlying case note's status is 'draft'. Never set for
+   *  'summary' entries (documentation summaries are final by construction —
+   *  they're only written once documentation has been submitted). */
+  draft?: boolean;
 }
 
 /**
@@ -8229,6 +8241,7 @@ function CaseNotesModal({
         timestamp: n.createdAt,
         sessionId: n.sessionId,
         sessionLabel: n.sessionId ? sessionLabelById.get(n.sessionId) : undefined,
+        draft: n.status === 'draft',
       });
     }
     return list.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
@@ -8356,10 +8369,11 @@ function CaseNotesModal({
                 : null;
             return (
               <View key={entry.key} style={caseNotesStyles.noteRow}>
-                {tag && (
+                {(tag || entry.draft) && (
                   <Text style={caseNotesStyles.noteTag}>
                     {tag}
                     {entry.sessionLabel ? ` · ${entry.sessionLabel}` : ''}
+                    {entry.draft ? (tag ? ' · Draft' : 'Draft') : ''}
                   </Text>
                 )}
                 <Text style={caseNotesStyles.noteBody}>{entry.body}</Text>

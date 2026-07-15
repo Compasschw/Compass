@@ -225,6 +225,10 @@ let scheduleShouldFail = false;
 /** Extra session rows layered onto the base '/sessions/' GET response, reset
  *  in the top-level beforeEach — individual describe blocks opt in. */
 let additionalSessionFixtures: unknown[] = [];
+/** Open slots returned from the assigned CHW's /available-slots endpoint —
+ *  empty by default (Pending Requests widget tests never need a slot);
+ *  Part 23's Schedule Session tests below opt in with one fixed slot. */
+let availableSlotFixtures: string[] = [];
 
 function routeApi(path: string, options?: { method?: string; body?: string }): unknown {
   const method = options?.method ?? 'GET';
@@ -264,6 +268,10 @@ function routeApi(path: string, options?: { method?: string; body?: string }): u
     return [chwProposedSessionFixture, ...additionalSessionFixtures];
   }
 
+  if (path.includes('/available-slots')) {
+    return { slots: availableSlotFixtures };
+  }
+
   if (path.startsWith('/member/chws/')) {
     return { availabilityWindows: undefined };
   }
@@ -292,6 +300,7 @@ async function openProposeModal(): Promise<void> {
 beforeEach(() => {
   scheduleShouldFail = false;
   additionalSessionFixtures = [];
+  availableSlotFixtures = [];
   mockNavigate.mockClear();
   mockedApi.mockReset();
   mockedApi.mockImplementation(async (path: string, options?: { method?: string; body?: string }) =>
@@ -585,5 +594,77 @@ describe('MemberCalendarScreen — Session Details renders Resource Needs chips 
     expect(screen.queryByText('Resource Needs')).toBeNull();
     expect(screen.queryByLabelText('Resource needs')).toBeNull();
     expect(screen.getByText('Focus Area')).toBeTruthy();
+  });
+});
+
+// ─── Part 23 (QA batch 2026-07-14 #23): Schedule dialog Type picker ───────
+//
+// MemberScheduleModal ("Schedule Session" button, top of the calendar) —
+// Phone must render first and be pre-selected by default, matching the
+// mirrored flip in MemberPendingRequestsList's ProposeNewTimeModal.
+
+async function openScheduleModal(): Promise<void> {
+  const scheduleBtn = await screen.findByLabelText(
+    `Schedule a session with ${CHW_NAME}`,
+  );
+  fireEvent.click(scheduleBtn);
+  await screen.findByText('Schedule a session'); // modal title, proves it opened
+}
+
+describe('MemberCalendarScreen — Schedule Session dialog: Type picker (Part 23)', () => {
+  it('opens with Phone visually selected by default (not In person)', async () => {
+    renderScreen();
+    await openScheduleModal();
+
+    const phoneBtn = screen.getByText('Phone').closest('button') as HTMLElement;
+    const inPersonBtn = screen.getByText('In person').closest('button') as HTMLElement;
+    const initialPhoneClass = phoneBtn.className;
+    const initialInPersonClass = inPersonBtn.className;
+
+    // segBtnActive styling is only applied to the currently-selected type.
+    // Tapping "In person" flips which button carries it — if Phone's class
+    // changes away from its initial value (and In person's changes too),
+    // that proves Phone — not In person — held the active styling by
+    // default, before any tap.
+    fireEvent.click(inPersonBtn);
+
+    expect(phoneBtn.className).not.toBe(initialPhoneClass);
+    expect(inPersonBtn.className).not.toBe(initialInPersonClass);
+  });
+
+  it('renders the Phone option before the In person option', async () => {
+    renderScreen();
+    await openScheduleModal();
+
+    const phoneLabel = screen.getByText('Phone');
+    const inPersonLabel = screen.getByText('In person');
+    const position = phoneLabel.compareDocumentPosition(inPersonLabel);
+    // Node.DOCUMENT_POSITION_FOLLOWING === 4 — In person follows Phone.
+    expect(position & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('requests a phone session when submitted without touching Type', async () => {
+    availableSlotFixtures = [new Date(scheduledStart).toISOString()];
+    renderScreen();
+    await openScheduleModal();
+
+    const slotLabel = new Date(availableSlotFixtures[0]).toLocaleTimeString([], {
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+    fireEvent.click(await screen.findByLabelText(slotLabel));
+
+    fireEvent.click(screen.getByLabelText('Request session'));
+
+    await waitFor(() => {
+      const scheduleCall = mockedApi.mock.calls.find(
+        ([path, opts]) =>
+          path === '/sessions/schedule' &&
+          (opts as { method?: string } | undefined)?.method === 'POST',
+      );
+      expect(scheduleCall).toBeTruthy();
+      const body = JSON.parse((scheduleCall?.[1] as { body: string }).body);
+      expect(body.mode).toBe('phone');
+    });
   });
 });

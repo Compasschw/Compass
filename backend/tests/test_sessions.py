@@ -529,3 +529,312 @@ async def test_roadmap_item_includes_session_id_and_mark_complete_succeeds(
     )
     assert res.status_code == 200, res.text
     assert res.json()["status"] == "completed"
+
+
+# ── Part 9 (QA batch 2026-07-14 #9): draft case notes finalize on submit ──────
+
+
+@pytest.mark.asyncio
+async def test_submit_documentation_finalizes_only_this_sessions_drafts(
+    client: AsyncClient, chw_tokens, member_tokens
+):
+    """submit_documentation must, in the same transaction that completes the
+    session, flip exactly THIS session's draft case notes to 'final' — never
+    another session's drafts, and never a soft-deleted note (it stays exactly
+    as it was, since it's no longer a live record to "finish").
+
+    This test FAILS on the pre-fix code (no case_notes.status column / no
+    finalize step at all — every note stays whatever it was created as).
+    """
+    import uuid as _uuid
+
+    from app.models.case_note import CaseNote
+    from tests.conftest import test_session as _tsf
+
+    session_a = await _create_in_progress_session(client, member_tokens, chw_tokens)
+    session_b = await _create_in_progress_session(client, member_tokens, chw_tokens)
+
+    # Get member_id once (both sessions share the same member/CHW fixtures).
+    profile_res = await client.get(
+        "/api/v1/member/profile", headers=auth_header(member_tokens)
+    )
+    member_id = profile_res.json()["user_id"]
+
+    # Draft note on session A — the one that will be submitted.
+    res = await client.post(
+        "/api/v1/case-notes",
+        json={"member_id": member_id, "body": "Note on session A.", "session_id": session_a},
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 201
+    note_a_id = res.json()["id"]
+    assert res.json()["status"] == "draft"
+
+    # A second draft note on session A that gets soft-deleted before submit —
+    # must be left exactly as-is (deleted_at IS NULL guard on the bulk update).
+    res = await client.post(
+        "/api/v1/case-notes",
+        json={"member_id": member_id, "body": "Deleted before submit.", "session_id": session_a},
+        headers=auth_header(chw_tokens),
+    )
+    note_a_deleted_id = res.json()["id"]
+    res = await client.delete(
+        f"/api/v1/case-notes/{note_a_deleted_id}", headers=auth_header(chw_tokens)
+    )
+    assert res.status_code == 204
+
+    # Draft note on session B — an unrelated, still-open session. Must remain
+    # untouched when session A's documentation is submitted.
+    res = await client.post(
+        "/api/v1/case-notes",
+        json={"member_id": member_id, "body": "Note on session B.", "session_id": session_b},
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 201
+    note_b_id = res.json()["id"]
+    assert res.json()["status"] == "draft"
+
+    # Submit documentation for session A only.
+    doc_payload = {
+        "summary": "Helped with housing",
+        "diagnosis_codes": ["Z59.1"],
+        "procedure_code": "98960",
+        "session_start_time": "2026-06-10T10:00:00Z",
+        "session_end_time": "2026-06-10T10:30:00Z",
+    }
+    res = await client.post(
+        f"/api/v1/sessions/{session_a}/documentation",
+        json=doc_payload,
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 200, res.text
+
+    async with _tsf() as db:
+        note_a = await db.get(CaseNote, _uuid.UUID(note_a_id))
+        note_a_deleted = await db.get(CaseNote, _uuid.UUID(note_a_deleted_id))
+        note_b = await db.get(CaseNote, _uuid.UUID(note_b_id))
+
+    assert note_a.status == "final", "session A's live draft must finalize on submit"
+    assert note_a_deleted.status == "draft", (
+        "a soft-deleted note must never be touched by the finalize bulk-update"
+    )
+    assert note_b.status == "draft", (
+        "session B's draft must stay untouched when session A's docs are submitted"
+    )
+
+    # Sanity: the finalized note is still visible + editable via the normal
+    # list/patch endpoints (finalizing is a status flip, not a lock).
+    res = await client.get(
+        f"/api/v1/members/{member_id}/case-notes",
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 200
+    statuses = {item["id"]: item["status"] for item in res.json()["items"]}
+    assert statuses[note_a_id] == "final"
+    assert statuses[note_b_id] == "draft"
+
+
+# ── Part 13 (QA batch 2026-07-14 #13): session end time = entered value ───────
+
+
+@pytest.mark.asyncio
+async def test_submit_while_in_progress_persists_entered_end_exactly(
+    client: AsyncClient, chw_tokens, member_tokens
+):
+    """Submitting documentation while the session is still 'in_progress' (the
+    CHW's live timer never stopped — Akram's exact QA flow, no /end call in
+    between) must persist the CHW-typed Session End value exactly as the
+    session's ended_at — never `datetime.now()` at submit time.
+    """
+    from uuid import UUID as _UUID
+
+    from app.models.session import Session
+    from tests.conftest import test_session as _tsf
+
+    session_id = await _create_in_progress_session(client, member_tokens, chw_tokens)
+
+    entered_end = "2026-06-10T10:30:00+00:00"
+    doc_payload = {
+        "summary": "Submitted while the timer was still running.",
+        "diagnosis_codes": ["Z59.1"],
+        "procedure_code": "98960",
+        "session_start_time": "2026-06-10T10:00:00Z",
+        "session_end_time": entered_end,
+    }
+    res = await client.post(
+        f"/api/v1/sessions/{session_id}/documentation",
+        json=doc_payload,
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 200, res.text
+
+    async with _tsf() as db:
+        sess = await db.get(Session, _UUID(session_id))
+    assert sess.ended_at.isoformat() == "2026-06-10T10:30:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_submit_after_end_overwrites_tracked_end_with_entered_value(
+    client: AsyncClient, chw_tokens, member_tokens
+):
+    """When the CHW has already pressed Complete (POST /end stamps
+    ended_at=now()), a subsequently CHW-entered Session End on the
+    documentation form must OVERWRITE the tracked now()-stamped value — the
+    typed value is authoritative, not whichever timestamp got there first.
+    """
+    from uuid import UUID as _UUID
+
+    from app.models.session import Session
+    from tests.conftest import test_session as _tsf
+
+    session_id = await _create_in_progress_session(client, member_tokens, chw_tokens)
+
+    res = await client.post(
+        f"/api/v1/sessions/{session_id}/end", headers=auth_header(chw_tokens)
+    )
+    assert res.status_code == 200
+    assert res.json()["status"] == "awaiting_documentation"
+
+    async with _tsf() as db:
+        tracked_end = (await db.get(Session, _UUID(session_id))).ended_at
+    assert tracked_end is not None  # /end stamped now()
+
+    entered_end = "2026-06-10T11:45:00+00:00"
+    doc_payload = {
+        "summary": "Entered a different end time than /end tracked.",
+        "diagnosis_codes": ["Z59.1"],
+        "procedure_code": "98960",
+        "session_start_time": "2026-06-10T10:00:00Z",
+        "session_end_time": entered_end,
+    }
+    res = await client.post(
+        f"/api/v1/sessions/{session_id}/documentation",
+        json=doc_payload,
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 200, res.text
+
+    async with _tsf() as db:
+        sess = await db.get(Session, _UUID(session_id))
+    assert sess.ended_at.isoformat() == "2026-06-10T11:45:00+00:00"
+    assert sess.ended_at != tracked_end
+
+
+@pytest.mark.asyncio
+async def test_entered_end_time_round_trips_across_timezone_offset(
+    client: AsyncClient, chw_tokens, member_tokens
+):
+    """A non-UTC entered end time (e.g. 08:40 PM Pacific, sent as an
+    ISO string carrying a -07:00 offset — the shape
+    parseSessionDateTimeInputToIso produces from the DocumentationModal's
+    typed local time) must round-trip to the exact same instant — no
+    naive-UTC shift when the server normalizes it.
+    """
+    from datetime import datetime as _dt
+    from uuid import UUID as _UUID
+
+    from app.models.session import Session
+    from tests.conftest import test_session as _tsf
+
+    session_id = await _create_in_progress_session(client, member_tokens, chw_tokens)
+
+    # 2026-06-10T20:40:00-07:00 == 2026-06-11T03:40:00Z
+    entered_start = "2026-06-10T19:00:00-07:00"
+    entered_end = "2026-06-10T20:40:00-07:00"
+    doc_payload = {
+        "summary": "Pacific-time entry.",
+        "diagnosis_codes": ["Z59.1"],
+        "procedure_code": "98960",
+        "session_start_time": entered_start,
+        "session_end_time": entered_end,
+    }
+    res = await client.post(
+        f"/api/v1/sessions/{session_id}/documentation",
+        json=doc_payload,
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 200, res.text
+
+    async with _tsf() as db:
+        sess = await db.get(Session, _UUID(session_id))
+
+    expected_instant = _dt.fromisoformat(entered_end)
+    assert sess.ended_at == expected_instant
+    # 100-minute window (19:00 -> 20:40) — confirms no offset was dropped when
+    # computing duration_minutes either.
+    assert sess.duration_minutes == 100
+
+
+@pytest.mark.asyncio
+async def test_csv_export_row_shows_the_entered_end_time(
+    client: AsyncClient, chw_tokens, member_tokens
+):
+    """The billing CSV export's Activity End Time must be the CHW-entered
+    Session End value (Session.ended_at), not the documentation's
+    submitted_at wall-clock timestamp — see billing_csv_writer.build_row_from_models.
+    """
+    from uuid import UUID as _UUID
+
+    from sqlalchemy import select as _select
+
+    from app.models.billing import BillingClaim
+    from app.models.session import Session
+    from app.models.user import MemberProfile, User
+    from app.services.billing_csv_writer import build_row_from_models
+    from tests.conftest import test_session as _tsf
+
+    session_id = await _create_in_progress_session(client, member_tokens, chw_tokens)
+
+    entered_end = "2026-06-10T10:30:00+00:00"
+    doc_payload = {
+        "summary": "CSV export check.",
+        "diagnosis_codes": ["Z59.1"],
+        "procedure_code": "98960",
+        "session_start_time": "2026-06-10T10:00:00Z",
+        "session_end_time": entered_end,
+    }
+    res = await client.post(
+        f"/api/v1/sessions/{session_id}/documentation",
+        json=doc_payload,
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 200, res.text
+
+    async with _tsf() as db:
+        from app.models.session import SessionDocumentation
+
+        sess = await db.get(Session, _UUID(session_id))
+        claim = (
+            await db.execute(
+                _select(BillingClaim).where(BillingClaim.session_id == sess.id)
+            )
+        ).scalar_one()
+        documentation = (
+            await db.execute(
+                _select(SessionDocumentation).where(
+                    SessionDocumentation.session_id == sess.id
+                )
+            )
+        ).scalar_one()
+        member_user = await db.get(User, sess.member_id)
+        member_profile = (
+            await db.execute(
+                _select(MemberProfile).where(MemberProfile.user_id == sess.member_id)
+            )
+        ).scalar_one_or_none()
+        chw_user = await db.get(User, sess.chw_id)
+
+        row = build_row_from_models(
+            claim=claim,
+            session=sess,
+            member_user=member_user,
+            member_profile=member_profile,
+            chw_user=chw_user,
+            documentation=documentation,
+            consent_given=True,
+        )
+
+    assert row.activity_end_utc is not None
+    assert row.activity_end_utc.isoformat() == "2026-06-10T10:30:00+00:00"
+    # Confirms it's NOT the documentation submission wall-clock time.
+    assert row.activity_end_utc != documentation.submitted_at
