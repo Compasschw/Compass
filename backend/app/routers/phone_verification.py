@@ -33,7 +33,6 @@ from app.dependencies import get_current_user
 from app.limiter import limiter
 from app.models.phone_verification import PhoneVerification
 from app.models.user import User
-from app.services.communication.vonage_sms import get_vonage_sms_provider
 from app.utils.security import pwd_context
 
 logger = logging.getLogger("compass.phone_verification")
@@ -224,16 +223,27 @@ async def start_verification(
     db.add(pv)
     await db.commit()
 
-    # ── Deliver via SMS ───────────────────────────────────────────────────────
-    sms = get_vonage_sms_provider()
-    delivered = sms.send_code(body.phone, raw_code)
+    # ── Deliver via SMS — unified async Messages client (Spec 1 §1) ───────────
+    # Single SMS-emitting channel: the JWT-authenticated Vonage Messages API,
+    # branded via ``brand_outbound_sms`` for 10DLC sender identification. The
+    # legacy sync key/secret OTP client has been retired — no sync HTTP call
+    # blocks the event loop here.
+    from app.routers.conversations import brand_outbound_sms
+    from app.services.vonage_sms import get_vonage_sms_messages_client
 
-    if not delivered:
+    otp_body = brand_outbound_sms(
+        f"Your verification code is {raw_code}. "
+        f"It expires in {PhoneVerification.CODE_TTL_MINUTES} minutes."
+    )
+    sms_result = await get_vonage_sms_messages_client().send_text(body.phone, otp_body)
+
+    if not sms_result.success:
         logger.error(
-            "SMS delivery failed for user %s to %s. "
+            "SMS delivery failed for user %s to %s (error=%s). "
             "Verification row id=%s is stored; user may retry.",
             current_user.id,
             _masked(body.phone),
+            sms_result.error,
             pv.id,
         )
         # We do not roll back the DB row — the OTP is valid and the user

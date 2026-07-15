@@ -1,8 +1,11 @@
-"""Vonage Messages API client for masked-number SMS (CHW<->member messaging).
+"""Vonage Messages API client for outbound SMS.
 
-Distinct from ``app/services/communication/vonage_sms.py``, which is the
-LEGACY SMS API client used only for one-time OTP verification codes
-(api_key/api_secret auth, ``client.sms.send``). This module implements the
+This is the SINGLE SMS-emitting channel in the codebase: masked-number
+CHW<->member messaging, member-facing confirmations, and one-time OTP
+verification codes all deliver through ``send_text`` here. (The legacy sync
+key/secret SMS API client — formerly at
+``app/services/communication/vonage_sms.py`` — was retired in Spec 1 so no
+sync HTTP call blocks the event loop.) This module implements the
 shared-masked-number PHI messaging channel:
 
   - Auth: a Vonage "Application" JWT (RS256), the same approach
@@ -114,7 +117,7 @@ class VonageSmsMessagesClient:
     Stub mode: when the application JWT credentials or the from-number
     aren't configured (local dev, CI), ``send_text`` logs at INFO and
     returns a successful placeholder result — mirrors the stub-mode pattern
-    used by ``VonageProvider`` and the legacy OTP ``VonageSmsProvider`` so
+    used by ``VonageProvider`` so
     the rest of the send/persist pipeline can be exercised without a live
     Vonage account. Tests that need to assert failure/error handling mock
     ``send_text`` (or the module-level ``get_vonage_sms_messages_client``
