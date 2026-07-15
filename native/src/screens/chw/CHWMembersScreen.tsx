@@ -127,7 +127,12 @@ function formatRelativeTime(isoString: string | null): string {
   const date = new Date(isoString);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  // Defensive clamp: a future timestamp must never render as a negative day
+  // count ("-1 days ago" — QA-batch #8 repro, a session scheduled for
+  // tomorrow). Treat anything in the future as "today". After the backend
+  // fix (completed-sessions-only last_contact_at) this shouldn't occur, but
+  // the formatter stays safe regardless of the input's provenance.
+  const diffDays = diffMs < 0 ? 0 : Math.floor(diffMs / (1000 * 60 * 60 * 24));
 
   if (diffDays === 0) return 'today';
   if (diffDays === 1) return 'yesterday';

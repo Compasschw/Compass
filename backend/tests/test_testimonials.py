@@ -604,6 +604,99 @@ async def test_summary_returns_correct_avg_and_count(
     assert body2["rating_avg"] == 3.0
 
 
+# ─── 12b. QA-batch #16 — all_ratings_* includes UNAPPROVED post-session ratings ─
+
+
+@pytest.mark.asyncio
+async def test_all_ratings_summary_includes_unapproved_ratings(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_tokens: dict,
+) -> None:
+    """The satisfaction metric for the CHW's own Dashboard (all_ratings_avg/
+    all_ratings_count) must include a member's post-session rating the
+    INSTANT it's submitted — before any admin has approved it. Regression
+    for QA-batch #16: the Dashboard showed "No ratings yet" right after a
+    member rated a session because the summary endpoint only averaged
+    APPROVED testimonials. The public rating_avg/rating_count fields must
+    stay approval-gated (unchanged assertion at the end)."""
+    import base64
+    import json as _json
+
+    token = chw_tokens["access_token"]
+    payload_b64 = token.split(".")[1]
+    padded = payload_b64 + "=" * (4 - len(payload_b64) % 4)
+    chw_id = _json.loads(base64.urlsafe_b64decode(padded))["sub"]
+
+    session_id = await _create_completed_session(client, member_tokens, chw_tokens)
+    r1 = await _submit_testimonial(client, member_tokens, session_id, rating=4)
+    assert r1.json()["status"] == "pending"  # never moderated in this test
+
+    res = await client.get(
+        f"/api/v1/chws/{chw_id}/testimonials/summary",
+        headers=auth_header(member_tokens),
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+
+    # The unapproved rating counts toward the CHW's private aggregate...
+    assert body["all_ratings_count"] == 1
+    assert body["all_ratings_avg"] == 4.0
+    # ...but the PUBLIC-facing approved-only fields are untouched (still 0/None).
+    assert body["rating_count"] == 0
+    assert body["rating_avg"] is None
+
+
+@pytest.mark.asyncio
+async def test_all_ratings_summary_excludes_null_rating_closure_reviews(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_tokens: dict,
+) -> None:
+    """A closure-sourced testimonial (source='account_closure') typically has
+    rating=NULL — it must never be counted toward all_ratings_avg (would
+    otherwise corrupt the average with a phantom NULL-as-zero entry)."""
+    import base64
+    import json as _json
+    import uuid
+
+    from tests.conftest import test_session as _tsf
+
+    token = chw_tokens["access_token"]
+    payload_b64 = token.split(".")[1]
+    padded = payload_b64 + "=" * (4 - len(payload_b64) % 4)
+    chw_id = _json.loads(base64.urlsafe_b64decode(padded))["sub"]
+    member_id_payload = member_tokens["access_token"].split(".")[1]
+    member_padded = member_id_payload + "=" * (4 - len(member_id_payload) % 4)
+    member_id = _json.loads(base64.urlsafe_b64decode(member_padded))["sub"]
+
+    from app.models.testimonial import Testimonial
+
+    async with _tsf() as db:
+        db.add(
+            Testimonial(
+                id=uuid.uuid4(),
+                chw_id=uuid.UUID(chw_id),
+                member_id=uuid.UUID(member_id),
+                session_id=None,
+                rating=None,
+                text="Thanks for everything",
+                status="pending",
+                source="account_closure",
+            )
+        )
+        await db.commit()
+
+    res = await client.get(
+        f"/api/v1/chws/{chw_id}/testimonials/summary",
+        headers=auth_header(member_tokens),
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["all_ratings_count"] == 0
+    assert body["all_ratings_avg"] is None
+
+
 # ─── 13. Summary NULL-safe when no testimonials ───────────────────────────────
 
 
@@ -624,6 +717,8 @@ async def test_summary_null_safe_no_testimonials(
     body = res.json()
     assert body["rating_avg"] is None
     assert body["rating_count"] == 0
+    assert body["all_ratings_avg"] is None
+    assert body["all_ratings_count"] == 0
 
 
 # ─── 14. Rating out-of-range → 422 ───────────────────────────────────────────

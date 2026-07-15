@@ -30,7 +30,7 @@ export const chwSidebarItems = [
   // Hidden 2026-06-20 (revisit later): Journeys.
   // { key: 'journeys',     label: 'Journeys',           icon: 'route',            route: 'CHWJourneys'           },
   { key: 'messages',     label: 'Messages',           icon: 'message-square',   route: 'SessionsStack', rootScreen: Platform.OS === 'web' ? 'Messages' : 'Sessions', badgeKey: 'unreadMessages' },
-  { key: 'appointments', label: 'Appointments',       icon: 'calendar',         route: 'Calendar'              },
+  { key: 'appointments', label: 'Appointments',       icon: 'calendar',         route: 'Calendar', badgeKey: 'pendingSessionRequests' },
   // Hidden 2026-06-20 (revisit later): Resources, Reports, Community Partners.
   // { key: 'resources',    label: 'Resources',          icon: 'folder-open',      route: 'CHWResources'          },
   { key: 'documents',    label: 'Documents',          icon: 'file-text',        route: 'CHWDocuments'          },

@@ -16,7 +16,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../api/client', async (importOriginal) => {
@@ -97,12 +97,37 @@ const earningsFixture = {
   paid_this_period: 400,
   pending_in_transit: true,
   next_payout_date: null,
+  // QA-batch #14: real all-time gross earnings — powers the "Earnings" tile.
+  total_earned_all_time: 1234,
 };
 
-/** Mutable per-test so each `it()` controls the testimonial-summary response. */
-let testimonialSummaryFixture: { rating_avg: number | null; rating_count: number } = {
+/** Mutable per-test so each `it()` controls the testimonial-summary response.
+ *  `all_ratings_avg`/`all_ratings_count` (QA-batch #16) — NOT the approved-
+ *  only `rating_avg`/`rating_count` — is what the Dashboard snapshot box
+ *  reads. */
+let testimonialSummaryFixture: {
+  rating_avg: number | null;
+  rating_count: number;
+  all_ratings_avg: number | null;
+  all_ratings_count: number;
+} = {
   rating_avg: null,
   rating_count: 0,
+  all_ratings_avg: null,
+  all_ratings_count: 0,
+};
+
+/** QA-batch #15/#24/#25 — GET /chw/dashboard/stats fixture. Zeroed by
+ *  default so pre-existing tests (which don't care about these fields)
+ *  never see the pending-request banner unexpectedly. */
+let dashboardStatsResponse: {
+  completed_sessions_total: number;
+  completed_sessions_today: number;
+  pending_member_requests: number;
+} = {
+  completed_sessions_total: 0,
+  completed_sessions_today: 0,
+  pending_member_requests: 0,
 };
 
 // ─── Today's Schedule fixture (Epic S — "Back to …" origin params) ──────────
@@ -163,6 +188,10 @@ function routeApi(path: string, options?: { method?: string }): unknown {
     return testimonialSummaryFixture;
   }
 
+  if (path === '/chw/dashboard/stats' && method === 'GET') {
+    return dashboardStatsResponse;
+  }
+
   if (path.startsWith('/chw/earnings') && method === 'GET') {
     return earningsFixture;
   }
@@ -201,8 +230,13 @@ function renderScreen() {
   );
 }
 
-beforeEach(() => {
-  testimonialSummaryFixture = { rating_avg: null, rating_count: 0 };
+beforeEach(async () => {
+  testimonialSummaryFixture = {
+    rating_avg: null, rating_count: 0, all_ratings_avg: null, all_ratings_count: 0,
+  };
+  dashboardStatsResponse = {
+    completed_sessions_total: 0, completed_sessions_today: 0, pending_member_requests: 0,
+  };
   sessionsResponse = [];
   checklistResponse = { can_work: true, missing: [], items: [] };
   mockNavigate.mockClear();
@@ -210,7 +244,13 @@ beforeEach(() => {
   mockedApi.mockImplementation(async (path: string, options?: { method?: string }) =>
     routeApi(path, options),
   );
-  void AsyncStorageMock.clear();
+  // Cross-test isolation: the new-member-alert dismissal (AsyncStorage) and
+  // the AppShell sidebar-collapsed state (real `localStorage`, DashboardSidebar)
+  // must both start clean each test — a prior test's dismissed-id or
+  // collapsed-state otherwise leaks across tests non-deterministically
+  // depending on suite run order (flaky under `bun run test`'s full-suite run).
+  await AsyncStorageMock.clear();
+  localStorage.clear();
 });
 
 afterEach(() => {
@@ -221,7 +261,9 @@ afterEach(() => {
 
 describe('CHWDashboardScreen — Member satisfaction snapshot box', () => {
   it('never renders the old hardcoded "4.9" literal, regardless of the real rating', async () => {
-    testimonialSummaryFixture = { rating_avg: 4.6, rating_count: 8 };
+    testimonialSummaryFixture = {
+      rating_avg: null, rating_count: 0, all_ratings_avg: 4.6, all_ratings_count: 8,
+    };
     renderScreen();
 
     await waitFor(() => expect(screen.getByText('4.6')).toBeTruthy());
@@ -229,7 +271,9 @@ describe('CHWDashboardScreen — Member satisfaction snapshot box', () => {
   });
 
   it('renders the real average rating with its review count when ratings exist', async () => {
-    testimonialSummaryFixture = { rating_avg: 4.6, rating_count: 8 };
+    testimonialSummaryFixture = {
+      rating_avg: null, rating_count: 0, all_ratings_avg: 4.6, all_ratings_count: 8,
+    };
     renderScreen();
 
     await waitFor(() => expect(screen.getByText('4.6')).toBeTruthy());
@@ -237,7 +281,9 @@ describe('CHWDashboardScreen — Member satisfaction snapshot box', () => {
   });
 
   it('renders a singular "review" (not "reviews") when the count is exactly 1', async () => {
-    testimonialSummaryFixture = { rating_avg: 5.0, rating_count: 1 };
+    testimonialSummaryFixture = {
+      rating_avg: null, rating_count: 0, all_ratings_avg: 5.0, all_ratings_count: 1,
+    };
     renderScreen();
 
     await waitFor(() => expect(screen.getByText('5.0')).toBeTruthy());
@@ -245,8 +291,10 @@ describe('CHWDashboardScreen — Member satisfaction snapshot box', () => {
     expect(screen.queryByText(/1 reviews/)).toBeNull();
   });
 
-  it('shows "No ratings yet" — never a fabricated number — when ratingCount is 0', async () => {
-    testimonialSummaryFixture = { rating_avg: null, rating_count: 0 };
+  it('shows "No ratings yet" — never a fabricated number — when allRatingsCount is 0', async () => {
+    testimonialSummaryFixture = {
+      rating_avg: null, rating_count: 0, all_ratings_avg: null, all_ratings_count: 0,
+    };
     renderScreen();
 
     await waitFor(() => expect(screen.getByText('No ratings yet')).toBeTruthy());
@@ -254,12 +302,24 @@ describe('CHWDashboardScreen — Member satisfaction snapshot box', () => {
     expect(screen.queryByText('4.6')).toBeNull();
   });
 
-  it('shows "No ratings yet" when ratingAvg is present but ratingCount is 0 (defensive)', async () => {
-    testimonialSummaryFixture = { rating_avg: 3.1, rating_count: 0 };
+  it('shows "No ratings yet" when allRatingsAvg is present but allRatingsCount is 0 (defensive)', async () => {
+    testimonialSummaryFixture = {
+      rating_avg: null, rating_count: 0, all_ratings_avg: 3.1, all_ratings_count: 0,
+    };
     renderScreen();
 
     await waitFor(() => expect(screen.getByText('No ratings yet')).toBeTruthy());
     expect(screen.queryByText('3.1')).toBeNull();
+  });
+
+  it('QA-batch #16: an UNAPPROVED rating (rating_count=0, all_ratings_count=1) still renders — the satisfaction metric is not approval-gated', async () => {
+    testimonialSummaryFixture = {
+      rating_avg: null, rating_count: 0, all_ratings_avg: 4.0, all_ratings_count: 1,
+    };
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByText('4.0')).toBeTruthy());
+    expect(screen.getByText(/1 review\b/)).toBeTruthy();
   });
 });
 
@@ -268,7 +328,7 @@ describe('CHWDashboardScreen — Compliance banner (Epic D)', () => {
     checklistResponse = { can_work: true, missing: [], items: [] };
     renderScreen();
 
-    await waitFor(() => expect(screen.getByText(/sessions today/i)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Completed Sessions')).toBeTruthy());
     expect(screen.queryByText('Finish your compliance checklist')).toBeNull();
   });
 
@@ -320,7 +380,7 @@ describe('CHWDashboardScreen — Compliance banner (Epic D)', () => {
     // Remount — same simulated "day" (AsyncStorage mock persists across
     // renders within this test) — banner must stay dismissed.
     renderScreen();
-    await waitFor(() => expect(screen.getByText(/sessions today/i)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Completed Sessions')).toBeTruthy());
     expect(screen.queryByText('Finish your compliance checklist')).toBeNull();
   });
 });
@@ -367,7 +427,7 @@ describe('CHWDashboardScreen — AlertsSection (QA batch #12)', () => {
     });
     renderScreen();
 
-    await waitFor(() => expect(screen.getByText(/sessions today/i)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Completed Sessions')).toBeTruthy());
     expect(screen.queryByText('New member account created')).toBeNull();
   });
 
@@ -409,7 +469,7 @@ describe('CHWDashboardScreen — AlertsSection (QA batch #12)', () => {
     unmount();
     renderScreen();
 
-    await waitFor(() => expect(screen.getByText(/sessions today/i)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Completed Sessions')).toBeTruthy());
     expect(screen.queryByText('Casey Lee')).toBeNull();
   });
 
@@ -488,5 +548,122 @@ describe('CHWDashboardScreen — Member Profile origin params (Epic S "Back to �
       screen: 'MemberProfile',
       params: { memberId: SCHEDULED_MEMBER_ID, backLabel: 'Dashboard', backTo: 'Dashboard' },
     });
+  });
+});
+
+describe('CHWDashboardScreen — "Completed Sessions" tile (QA-batch #15)', () => {
+  it('renders the "Completed Sessions" label (not "Sessions today") with the all-time total and a "+N today" pill', async () => {
+    dashboardStatsResponse = {
+      completed_sessions_total: 42,
+      completed_sessions_today: 3,
+      pending_member_requests: 0,
+    };
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByText('Completed Sessions')).toBeTruthy());
+    expect(screen.getByText('42')).toBeTruthy();
+    expect(screen.getByText('+3 today')).toBeTruthy();
+    expect(screen.queryByText('Sessions today')).toBeNull();
+  });
+
+  it('shows "none today" when completed_sessions_today is 0', async () => {
+    dashboardStatsResponse = {
+      completed_sessions_total: 10,
+      completed_sessions_today: 0,
+      pending_member_requests: 0,
+    };
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByText('Completed Sessions')).toBeTruthy());
+    expect(screen.getByText('10')).toBeTruthy();
+    expect(screen.getByText('none today')).toBeTruthy();
+  });
+});
+
+describe('CHWDashboardScreen — Earnings tile (QA-batch #14)', () => {
+  it('renders the "Earnings" label (not "Earnings this week") with the real all-time total', async () => {
+    renderScreen();
+
+    // "Earnings" also labels the sidebar nav item — getAllByText disambiguates.
+    await waitFor(() => expect(screen.getAllByText('Earnings').length).toBeGreaterThanOrEqual(1));
+    expect(screen.queryByText('Earnings this week')).toBeNull();
+    expect(screen.queryByText(/this week/i)).toBeNull();
+    // earningsFixture.total_earned_all_time = 1234 → formatted as currency.
+    expect(screen.getByText('$1,234')).toBeTruthy();
+  });
+});
+
+describe('CHWDashboardScreen — pending member-request banner (QA-batch #24)', () => {
+  it('renders the banner with the correct count and navigates to Calendar on Review', async () => {
+    dashboardStatsResponse = {
+      completed_sessions_total: 0,
+      completed_sessions_today: 0,
+      pending_member_requests: 2,
+    };
+    renderScreen();
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('2 session requests from members awaiting your confirmation'),
+      ).toBeTruthy(),
+    );
+
+    const reviewLink = screen.getByLabelText('Review pending session requests');
+    reviewLink.click();
+    expect(mockNavigate).toHaveBeenCalledWith('Calendar');
+  });
+
+  it('renders the singular form for exactly 1 pending request', async () => {
+    dashboardStatsResponse = {
+      completed_sessions_total: 0,
+      completed_sessions_today: 0,
+      pending_member_requests: 1,
+    };
+    renderScreen();
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('1 session request from members awaiting your confirmation'),
+      ).toBeTruthy(),
+    );
+  });
+
+  it('hides the banner when pending_member_requests is 0', async () => {
+    dashboardStatsResponse = {
+      completed_sessions_total: 0,
+      completed_sessions_today: 0,
+      pending_member_requests: 0,
+    };
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByText('Completed Sessions')).toBeTruthy());
+    expect(screen.queryByText(/awaiting your confirmation/)).toBeNull();
+  });
+});
+
+describe('CHWDashboardScreen — Appointments sidebar badge (QA-batch #25)', () => {
+  it('shows the pending-member-request count as a badge on the Appointments sidebar item', async () => {
+    dashboardStatsResponse = {
+      completed_sessions_total: 0,
+      completed_sessions_today: 0,
+      pending_member_requests: 5,
+    };
+    renderScreen();
+
+    const appointmentsItem = await screen.findByLabelText('Appointments');
+    await waitFor(() => expect(within(appointmentsItem).getByText('5')).toBeTruthy());
+  });
+
+  it('shows no badge on Appointments when pending_member_requests is 0', async () => {
+    dashboardStatsResponse = {
+      completed_sessions_total: 0,
+      completed_sessions_today: 0,
+      pending_member_requests: 0,
+    };
+    renderScreen();
+
+    const appointmentsItem = await screen.findByLabelText('Appointments');
+    await waitFor(() => expect(screen.getByText('Completed Sessions')).toBeTruthy());
+    expect(within(appointmentsItem).queryByText('0')).toBeNull();
   });
 });

@@ -577,7 +577,11 @@ class MembersRosterItem(BaseModel):
     """Most recent active MemberJourney for this member, or null if none."""
 
     last_contact_at: datetime | None
-    """Most recent session.ended_at or session.scheduled_at; null if no sessions."""
+    """Most recent interaction of any kind with this member (QA-batch #8): the
+    max of completed-session ended_at, in-app message created_at, and
+    call/SMS CommunicationTouch created_at (either direction). A session that
+    is merely scheduled (not yet completed) does NOT count as contact. Null
+    when there has been no interaction at all."""
 
     top_need: str | None
     """Primary vertical of the most recent active ServiceRequest. Null if none."""
@@ -739,6 +743,36 @@ class MemberChatAttachmentItem(BaseModel):
     content_type: str
     size_bytes: int
     created_at: datetime
+
+
+class ChwDashboardStats(BaseModel):
+    """Response for GET /api/v1/chw/dashboard/stats (QA-batch #15/#24/#25).
+
+    Three CHW-scoped scalar counts that back the CHW Dashboard's "Completed
+    Sessions" tile, the member-session-request banner, and the Appointments
+    sidebar badge — one accurate, non-paginated source shared by all three so
+    they never disagree with each other (unlike the prior client-side
+    computations over ``GET /sessions/``, which defaults to ``limit=50`` and
+    silently truncates for an active CHW).
+    """
+
+    completed_sessions_total: int
+    """All-time count of this CHW's sessions with status == 'completed' — i.e.
+    documentation was submitted (the only transition to 'completed'; a
+    badge-Complete alone leaves the session 'awaiting_documentation')."""
+
+    completed_sessions_today: int
+    """Count of the above scoped to sessions whose ``ended_at`` falls within
+    today's California wall-clock day (see ``_LA_TZ`` in routers/chw.py) —
+    drives the tile's '+N today' pill."""
+
+    pending_member_requests: int
+    """Count of this CHW's sessions with status == 'scheduled',
+    scheduling_status == 'pending', and proposed_by != 'chw' (i.e. proposed by
+    the member, or a legacy row with proposed_by NULL) — sessions awaiting
+    THIS CHW's confirm/decline action. Mirrors the CHWCalendarScreen pending-
+    requests filter exactly, so the banner/badge counts never disagree with
+    what the Appointments tab shows."""
 
 
 class CHWCreateMemberResponse(BaseModel):

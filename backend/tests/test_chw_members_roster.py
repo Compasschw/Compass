@@ -96,6 +96,33 @@ async def _create_session(
     return res.json()["id"]
 
 
+async def _get_or_create_conversation(db, chw_id, member_id):
+    """QA-batch #8 test helper: the accept-a-request flow already
+    auto-creates a Conversation for the (chw_id, member_id) pair (session
+    creation back-links it), so directly INSERTing a new row collides with
+    the uq_conversations_chw_member constraint. Reuse the existing row when
+    present; only create one when it genuinely doesn't exist yet."""
+    import uuid as _uuid
+
+    from sqlalchemy import select as _select
+
+    from app.models.conversation import Conversation
+
+    existing = (
+        await db.execute(
+            _select(Conversation).where(
+                Conversation.chw_id == chw_id, Conversation.member_id == member_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+    conv = Conversation(id=_uuid.uuid4(), chw_id=chw_id, member_id=member_id)
+    db.add(conv)
+    await db.flush()
+    return conv
+
+
 # ─── Tests ─────────────────────────────────────────────────────────────────────
 
 
@@ -331,35 +358,54 @@ async def test_ordering_by_last_contact_desc(
 ) -> None:
     """Roster is sorted by last_contact_at descending (most recently contacted first).
 
-    The accept endpoint auto-creates a session with scheduled_at ≈ now. To test
-    ordering we create additional sessions with future timestamps so that one
-    member's max(coalesce(ended_at, scheduled_at)) is clearly newer than the other.
+    QA-batch #8: last_contact_at is the max of completed-session ended_at,
+    message created_at, and call/SMS touch created_at — NOT the old
+    scheduled_at fallback (a future booking is not contact). To test ordering
+    deterministically we complete each member's auto-created session directly
+    via the ORM with distinguishable ended_at timestamps.
     """
+    from uuid import UUID
+
+    from sqlalchemy import select as _select
+
+    from app.models.session import Session
+    from tests.conftest import test_session as _test_session_factory
+
     member_a = await _register(client, "member_a@example.com", "member", "Member Aardvark")
     member_b = await _register(client, "member_b@example.com", "member", "Member Badger")
     member_a_id = _decode_jwt_sub(member_a["access_token"])
     member_b_id = _decode_jwt_sub(member_b["access_token"])
 
-    # Dates are computed relative to "now" — fixed literals here rotted once
-    # the calendar passed them, leaving both members tied at their accept-time
-    # auto-sessions.
-    near_future = (datetime.now(UTC) + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    far_future = (datetime.now(UTC) + timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-    # Member A: accept (auto-session ≈ now) + explicit session in the near future.
     req_a = await _create_and_accept_request(client, member_a, chw_tokens)
-    # Member A's max session is in the near future (still less recent than member_b's).
-    await _create_session(client, chw_tokens, req_a, near_future)
-
-    # Member B: accept + an explicit session further in the future.
     req_b = await _create_and_accept_request(client, member_b, chw_tokens)
-    await _create_session(client, chw_tokens, req_b, far_future)
+
+    older = datetime.now(UTC) - timedelta(days=3)
+    newer = datetime.now(UTC) - timedelta(hours=1)
+
+    async with _test_session_factory() as db:
+        session_a = (
+            await db.execute(
+                _select(Session).where(Session.request_id == UUID(req_a))
+            )
+        ).scalar_one()
+        session_a.status = "completed"
+        session_a.ended_at = older
+
+        session_b = (
+            await db.execute(
+                _select(Session).where(Session.request_id == UUID(req_b))
+            )
+        ).scalar_one()
+        session_b.status = "completed"
+        session_b.ended_at = newer
+
+        await db.commit()
 
     res = await client.get("/api/v1/chw/members", headers=auth_header(chw_tokens))
     assert res.status_code == 200, res.text
     ids = [item["id"] for item in res.json()]
 
-    # Member B has the most future session → must appear first.
+    # Member B's completed session is more recent → must appear first.
     idx_b = ids.index(member_b_id)
     idx_a = ids.index(member_a_id)
     assert idx_b < idx_a, f"Expected member_b (idx {idx_b}) before member_a (idx {idx_a})"
@@ -391,3 +437,189 @@ async def test_response_shape(
     assert item["avatar_initials"] == "TM"
     assert item["status"] in ("active", "inactive")
     assert item["engagement"] in ("highly", "moderately", "disengaged")
+
+
+# ─── QA-batch #8: last_contact_at = last message, call/SMS, or completed session ─
+
+
+@pytest.mark.asyncio
+async def test_last_contact_scheduled_session_does_not_count(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_tokens: dict,
+) -> None:
+    """A session that is only SCHEDULED (never completed) must NOT count as
+    contact — regression for the QA repro where a member with a session
+    scheduled for tomorrow rendered "-1 days ago" (the old scheduled_at
+    fallback treated a future booking as contact)."""
+    member_id = _decode_jwt_sub(member_tokens["access_token"])
+    request_id = await _create_and_accept_request(client, member_tokens, chw_tokens)
+    tomorrow = (datetime.now(UTC) + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    await _create_session(client, chw_tokens, request_id, tomorrow)
+
+    res = await client.get("/api/v1/chw/members", headers=auth_header(chw_tokens))
+    assert res.status_code == 200, res.text
+    item = next((i for i in res.json() if i["id"] == member_id), None)
+    assert item is not None
+    # The accept flow's auto-created session and the explicit future session
+    # are both still 'scheduled' (never completed) — no message/touch either.
+    assert item["last_contact_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_last_contact_no_interactions_is_null(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_tokens: dict,
+) -> None:
+    """A member with only an accepted request (no session/message/touch at
+    all) has a null last_contact_at."""
+    member_id = _decode_jwt_sub(member_tokens["access_token"])
+    await _create_and_accept_request(client, member_tokens, chw_tokens)
+    # Note: accepting a request auto-creates a 'scheduled' session, which per
+    # the rule above does not count — last_contact_at stays null.
+
+    res = await client.get("/api/v1/chw/members", headers=auth_header(chw_tokens))
+    assert res.status_code == 200, res.text
+    item = next((i for i in res.json() if i["id"] == member_id), None)
+    assert item is not None
+    assert item["last_contact_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_last_contact_from_message_only(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_tokens: dict,
+) -> None:
+    """An in-app message (no completed session, no call/SMS touch) sets
+    last_contact_at to the message's created_at."""
+    import uuid as _uuid
+    from uuid import UUID
+
+    from app.models.conversation import Message
+    from tests.conftest import test_session as _test_session_factory
+
+    member_id = _decode_jwt_sub(member_tokens["access_token"])
+    chw_id = _decode_jwt_sub(chw_tokens["access_token"])
+    await _create_and_accept_request(client, member_tokens, chw_tokens)
+
+    message_time = datetime.now(UTC) - timedelta(hours=2)
+
+    async with _test_session_factory() as db:
+        conv = await _get_or_create_conversation(db, UUID(chw_id), UUID(member_id))
+        db.add(Message(
+            id=_uuid.uuid4(),
+            conversation_id=conv.id,
+            sender_id=UUID(member_id),
+            body="Hi, checking in!",
+            created_at=message_time,
+        ))
+        await db.commit()
+
+    res = await client.get("/api/v1/chw/members", headers=auth_header(chw_tokens))
+    assert res.status_code == 200, res.text
+    item = next((i for i in res.json() if i["id"] == member_id), None)
+    assert item is not None
+    assert item["last_contact_at"] is not None
+    returned = datetime.fromisoformat(item["last_contact_at"].replace("Z", "+00:00"))
+    assert abs((returned - message_time).total_seconds()) < 2
+
+
+@pytest.mark.asyncio
+async def test_last_contact_call_touch_newer_than_message_wins(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_tokens: dict,
+) -> None:
+    """When a call/SMS touch is more recent than the last in-app message, the
+    touch's timestamp wins (max of both sources)."""
+    import uuid as _uuid
+    from uuid import UUID
+
+    from app.models.conversation import Message
+    from app.services.communication_touch_log import CommunicationTouch
+    from tests.conftest import test_session as _test_session_factory
+
+    member_id = _decode_jwt_sub(member_tokens["access_token"])
+    chw_id = _decode_jwt_sub(chw_tokens["access_token"])
+    await _create_and_accept_request(client, member_tokens, chw_tokens)
+
+    older_message_time = datetime.now(UTC) - timedelta(days=2)
+    newer_call_time = datetime.now(UTC) - timedelta(hours=1)
+
+    async with _test_session_factory() as db:
+        conv = await _get_or_create_conversation(db, UUID(chw_id), UUID(member_id))
+        db.add(Message(
+            id=_uuid.uuid4(),
+            conversation_id=conv.id,
+            sender_id=UUID(chw_id),
+            body="Old message",
+            created_at=older_message_time,
+        ))
+        # Member calls the CHW back — inbound direction (initiator=member).
+        db.add(CommunicationTouch(
+            id=_uuid.uuid4(),
+            initiator_id=UUID(member_id),
+            recipient_id=UUID(chw_id),
+            kind="call",
+            created_at=newer_call_time,
+        ))
+        await db.commit()
+
+    res = await client.get("/api/v1/chw/members", headers=auth_header(chw_tokens))
+    assert res.status_code == 200, res.text
+    item = next((i for i in res.json() if i["id"] == member_id), None)
+    assert item is not None
+    returned = datetime.fromisoformat(item["last_contact_at"].replace("Z", "+00:00"))
+    assert abs((returned - newer_call_time).total_seconds()) < 2
+
+
+@pytest.mark.asyncio
+async def test_last_contact_completed_session_newest_wins(
+    client: AsyncClient,
+    chw_tokens: dict,
+    member_tokens: dict,
+) -> None:
+    """When a completed session is the most recent interaction (newer than
+    any message or touch), its ended_at wins."""
+    import uuid as _uuid
+    from uuid import UUID
+
+    from sqlalchemy import select as _select
+
+    from app.models.conversation import Message
+    from app.models.session import Session
+    from tests.conftest import test_session as _test_session_factory
+
+    member_id = _decode_jwt_sub(member_tokens["access_token"])
+    chw_id = _decode_jwt_sub(chw_tokens["access_token"])
+    request_id = await _create_and_accept_request(client, member_tokens, chw_tokens)
+
+    old_message_time = datetime.now(UTC) - timedelta(days=5)
+    newest_session_end = datetime.now(UTC) - timedelta(minutes=30)
+
+    async with _test_session_factory() as db:
+        conv = await _get_or_create_conversation(db, UUID(chw_id), UUID(member_id))
+        db.add(Message(
+            id=_uuid.uuid4(),
+            conversation_id=conv.id,
+            sender_id=UUID(member_id),
+            body="Old message",
+            created_at=old_message_time,
+        ))
+        session_row = (
+            await db.execute(
+                _select(Session).where(Session.request_id == UUID(request_id))
+            )
+        ).scalar_one()
+        session_row.status = "completed"
+        session_row.ended_at = newest_session_end
+        await db.commit()
+
+    res = await client.get("/api/v1/chw/members", headers=auth_header(chw_tokens))
+    assert res.status_code == 200, res.text
+    item = next((i for i in res.json() if i["id"] == member_id), None)
+    assert item is not None
+    returned = datetime.fromisoformat(item["last_contact_at"].replace("Z", "+00:00"))
+    assert abs((returned - newest_session_end).total_seconds()) < 2

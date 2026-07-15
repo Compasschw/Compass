@@ -15,6 +15,7 @@ from app.schemas.chw import (
     ActiveJourneyInfo,
     CHWCreateMemberRequest,
     CHWCreateMemberResponse,
+    ChwDashboardStats,
     CHWMapDataResponse,
     CHWMemberProfileDetail,
     CHWMemberProfileView,
@@ -351,6 +352,21 @@ async def get_earnings(
     # Pending payout = ALL outstanding (not period-scoped): what's owed to the CHW.
     pending_payout = await _sum(~_claim_paid_clause())
 
+    # QA-batch #14: real all-time earnings for the Dashboard "Earnings" tile —
+    # SUM(BillingClaim.gross_amount), not paginated. One scalar query, no
+    # ISO-week/month filter — the tile shows a real, non-misleading total
+    # instead of a client-side weekly sum that silently fell back to
+    # `this_month` whenever the current week had zero claims.
+    total_earned_all_time = float(
+        (
+            await db.execute(
+                select(func.coalesce(func.sum(BillingClaim.gross_amount), 0)).where(
+                    BillingClaim.chw_id == current_user.id
+                )
+            )
+        ).scalar()  # type: ignore[arg-type]
+    )
+
     # Sessions this week (completed sessions in the last 7 days) — legacy field.
     week_ago = now - timedelta(days=7)
     sessions_this_week = (
@@ -382,6 +398,7 @@ async def get_earnings(
         paid_this_period=paid_this_period,
         pending_in_transit=pending_payout > 0,
         next_payout_date=_next_friday(now) if pending_payout > 0 else None,
+        total_earned_all_time=total_earned_all_time,
     )
 
 
@@ -503,6 +520,78 @@ async def list_payouts(
     ]
 
 
+# ─── Dashboard stats (QA-batch #15 / #24 / #25) ────────────────────────────────
+
+
+@router.get("/dashboard/stats", response_model=ChwDashboardStats)
+async def get_dashboard_stats(
+    current_user=Depends(require_role("chw")),
+    db: AsyncSession = Depends(get_db),
+) -> ChwDashboardStats:
+    """Return the three CHW-scoped counts backing the Dashboard's "Completed
+    Sessions" tile, the member-session-request alert banner, and the
+    Appointments sidebar badge.
+
+    All three are plain COUNT queries — no pagination concerns like the
+    limit=50/200-capped GET /sessions/ list, which a client-side count over
+    would silently truncate for an active CHW. See ChwDashboardStats for the
+    exact semantics of each field.
+    """
+    from app.models.session import Session
+
+    la_today = datetime.now(_LA_TZ).date()
+    day_start_la = datetime.combine(la_today, datetime.min.time(), tzinfo=_LA_TZ)
+    day_end_la = day_start_la + timedelta(days=1)
+
+    completed_sessions_total = (
+        await db.execute(
+            select(func.count())
+            .select_from(Session)
+            .where(Session.chw_id == current_user.id)
+            .where(Session.status == "completed")
+        )
+    ).scalar() or 0
+
+    completed_sessions_today = (
+        await db.execute(
+            select(func.count())
+            .select_from(Session)
+            .where(Session.chw_id == current_user.id)
+            .where(Session.status == "completed")
+            .where(Session.ended_at.isnot(None))
+            .where(Session.ended_at >= day_start_la)
+            .where(Session.ended_at < day_end_la)
+        )
+    ).scalar() or 0
+
+    # Mirrors CHWCalendarScreen's `pendingRequests` filter exactly: scheduled +
+    # pending + NOT proposed by this CHW (i.e. proposed by the member, or a
+    # legacy row with proposed_by NULL — "unknown initiator, CHW can still act
+    # on it" is the existing product behavior preserved here). Note: a plain
+    # `!= "chw"` clause is NULL-unsafe in SQL (NULL != 'chw' evaluates to NULL,
+    # not TRUE), which would silently exclude proposed_by IS NULL rows — the
+    # explicit `is_(None) | != "chw"` below matches the frontend's
+    # `s.proposedBy !== 'chw'` (TRUE for undefined) exactly.
+    pending_member_requests = (
+        await db.execute(
+            select(func.count())
+            .select_from(Session)
+            .where(Session.chw_id == current_user.id)
+            .where(Session.status == "scheduled")
+            .where(Session.scheduling_status == "pending")
+            .where(
+                (Session.proposed_by.is_(None)) | (Session.proposed_by != "chw")
+            )
+        )
+    ).scalar() or 0
+
+    return ChwDashboardStats(
+        completed_sessions_total=completed_sessions_total,
+        completed_sessions_today=completed_sessions_today,
+        pending_member_requests=pending_member_requests,
+    )
+
+
 # ─── Members Roster ───────────────────────────────────────────────────────────
 
 
@@ -524,7 +613,10 @@ async def list_chw_members(
       - engagement: 'highly' ≥3 sessions last 60 days, 'moderately' 1–2, 'disengaged' 0.
       - risk: always null (v1 — no clinical risk model).
       - active_journey: most recent active MemberJourney.
-      - last_contact_at: most recent session.ended_at or scheduled_at.
+      - last_contact_at: most recent interaction of ANY kind — max of
+        completed-session ended_at, in-app Message.created_at, and
+        CommunicationTouch (call/sms, either direction) created_at. A
+        scheduled-but-not-yet-completed session does NOT count (QA-batch #8).
       - top_need: primary vertical of the most recent active ServiceRequest.
 
     All queries are N+1-aware: member IDs are collected in a single pass, then
@@ -596,19 +688,82 @@ async def list_chw_members(
         row.member_id: row.cnt for row in recent_60_result.all()
     }
 
-    # last_contact: most recent session timestamp per member (ended_at preferred).
-    last_contact_result = await db.execute(
+    # last_contact (QA-batch #8): most recent interaction of ANY kind between
+    # this CHW and each member — the max of three independent sources:
+    #   1. Completed sessions (Session.ended_at) — a future/scheduled booking
+    #      is NOT contact (dropped the old scheduled_at fallback, which made
+    #      a session scheduled for tomorrow render as "-1 days ago").
+    #   2. In-app messages (Message.created_at via the CHW<->member Conversation).
+    #   3. Calls and SMS touches (CommunicationTouch.created_at), either
+    #      direction — a member texting/calling back counts as contact.
+    # Each source is a separate batched query (avoids a triple-join fan-out),
+    # then merged per-member by taking the max of whichever sources have data.
+
+    # Source 1: completed sessions only.
+    last_contact_sessions_result = await db.execute(
         select(
             Session.member_id,
-            func.max(func.coalesce(Session.ended_at, Session.scheduled_at)).label("last_ts"),
+            func.max(Session.ended_at).label("last_ts"),
         )
         .where(Session.chw_id == current_user.id)
         .where(Session.member_id.in_(all_member_ids))
+        .where(Session.ended_at.isnot(None))
         .group_by(Session.member_id)
     )
     last_contact_by_member: dict[UUID, datetime | None] = {
-        row.member_id: row.last_ts for row in last_contact_result.all()
+        row.member_id: row.last_ts for row in last_contact_sessions_result.all()
     }
+
+    # Source 2: in-app messages, via this CHW's Conversation with each member.
+    from app.models.conversation import Conversation, Message
+
+    last_contact_messages_result = await db.execute(
+        select(
+            Conversation.member_id,
+            func.max(Message.created_at).label("last_ts"),
+        )
+        .join(Message, Message.conversation_id == Conversation.id)
+        .where(Conversation.chw_id == current_user.id)
+        .where(Conversation.member_id.in_(all_member_ids))
+        .group_by(Conversation.member_id)
+    )
+    for row in last_contact_messages_result.all():
+        existing = last_contact_by_member.get(row.member_id)
+        if existing is None or (row.last_ts is not None and row.last_ts > existing):
+            last_contact_by_member[row.member_id] = row.last_ts
+
+    # Source 3: call/SMS touches (CommunicationTouch), either direction between
+    # this CHW and each member. `call_logs` is a dead table with zero writers —
+    # CommunicationTouch is the single source of truth for outbound/inbound
+    # call + SMS contact (see app.services.communication_touch_log).
+    from app.services.communication_touch_log import CommunicationTouch
+
+    touch_member_col = case(
+        (CommunicationTouch.initiator_id == current_user.id, CommunicationTouch.recipient_id),
+        else_=CommunicationTouch.initiator_id,
+    )
+    last_contact_touches_result = await db.execute(
+        select(
+            touch_member_col.label("member_id"),
+            func.max(CommunicationTouch.created_at).label("last_ts"),
+        )
+        .where(CommunicationTouch.kind.in_(["call", "sms"]))
+        .where(
+            (
+                (CommunicationTouch.initiator_id == current_user.id)
+                & (CommunicationTouch.recipient_id.in_(all_member_ids))
+            )
+            | (
+                (CommunicationTouch.recipient_id == current_user.id)
+                & (CommunicationTouch.initiator_id.in_(all_member_ids))
+            )
+        )
+        .group_by(touch_member_col)
+    )
+    for row in last_contact_touches_result.all():
+        existing = last_contact_by_member.get(row.member_id)
+        if existing is None or (row.last_ts is not None and row.last_ts > existing):
+            last_contact_by_member[row.member_id] = row.last_ts
 
     # ── Step 4: batch-load open/accepted ServiceRequests for status + top_need ───
     active_requests_result = await db.execute(

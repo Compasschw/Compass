@@ -349,3 +349,22 @@ describe('CHWMembersScreen — phone-width falls back to cards, not a clipped ta
     expect(screen.getByText('CIN')).toBeTruthy();
   });
 });
+
+// ─── QA-batch #8 — relative-date clamp never renders a negative day count ──────
+
+describe('CHWMembersScreen — Last Contact relative-date clamp (QA-batch #8)', () => {
+  it('renders "today" (never "-1 days ago") for a future last_contact_at', async () => {
+    // Regression for the QA repro: a member whose only session was scheduled
+    // for tomorrow rendered "-1 days ago" in the roster. The backend fix
+    // (Part 8) means last_contact_at should never legitimately be in the
+    // future, but the frontend formatter stays defensively clamped
+    // regardless of the input's provenance (stale cache, clock skew, etc.).
+    const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    rosterResponse = [{ ...memberRosterFixture, last_contact_at: tomorrow }];
+    renderScreen();
+
+    await screen.findByText(MEMBER_NAME);
+    expect(screen.getByText('today')).toBeTruthy();
+    expect(screen.queryByText(/-\d+ days? ago/)).toBeNull();
+  });
+});

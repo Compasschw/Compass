@@ -33,6 +33,14 @@ class EarningsSummary(BaseModel):
     pending_in_transit: bool = False
     # Estimated next weekly (Friday) payout date when a balance is pending.
     next_payout_date: date | None = None
+    # QA-batch #14: real, server-computed all-time earnings for the CHW
+    # Dashboard's "Earnings" tile — SUM(BillingClaim.gross_amount) across every
+    # claim, not paginated (GET /chw/claims caps at 200, so a client-side sum
+    # would silently truncate for an active CHW). Distinct from `all_time`
+    # above, which sums `net_payout` (the CHW's post-fee share) for the
+    # Earnings-page "All time" card — total_earned_all_time is the GROSS
+    # amount billed, matching the dashboard tile's "Earnings" label.
+    total_earned_all_time: float = 0.0
 
 
 class SessionEarningItem(BaseModel):

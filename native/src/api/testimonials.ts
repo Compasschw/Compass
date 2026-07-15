@@ -48,10 +48,21 @@ export interface PublicTestimonial {
 
 /** Aggregate rating stats for the CHW Profile header widget. */
 export interface TestimonialSummary {
-  /** Average star rating; null when no approved testimonials exist. */
+  /** Average star rating; null when no approved testimonials exist.
+   *  PUBLIC-facing value — use for any rating shown to someone other than
+   *  the CHW themselves (e.g. the member-facing CHW profile). */
   ratingAvg: number | null;
   /** Number of approved testimonials contributing to the average. */
   ratingCount: number;
+  /** QA-batch #16: average across ALL member post-session ratings
+   *  (regardless of admin-moderation approval) — for the CHW's own private
+   *  Dashboard "Member satisfaction" snapshot only. Null when
+   *  allRatingsCount is 0. Never render this to anyone but the CHW
+   *  themselves; approval still gates public display. */
+  allRatingsAvg: number | null;
+  /** Number of post-session ratings (any approval status) contributing to
+   *  allRatingsAvg. */
+  allRatingsCount: number;
 }
 
 /** Full row enriched with member/CHW names — for admin moderation queue. */

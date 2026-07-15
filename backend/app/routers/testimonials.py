@@ -274,25 +274,54 @@ async def get_testimonial_summary(
     the given CHW. Both values are NULL-safe: when no approved testimonials
     exist, rating_avg is None and rating_count is 0.
 
+    Also returns ``all_ratings_avg``/``all_ratings_count`` (QA-batch #16): the
+    same average computed over EVERY member post-session rating regardless of
+    approval status. Approval moderation gates public display of testimonial
+    TEXT, not the CHW's own aggregate score — see TestimonialSummary's
+    docstring. Callers rendering a PUBLIC rating must keep using
+    rating_avg/rating_count; only the CHW's own Dashboard should read the
+    all_ratings_* pair.
+
     Auth: any authenticated user (CHW or member).
     """
-    stmt = select(
+    approved_stmt = select(
         func.avg(Testimonial.rating).label("rating_avg"),
         func.count(Testimonial.id).label("rating_count"),
     ).where(
         Testimonial.chw_id == chw_id,
         Testimonial.status == "approved",
     )
-    result = await db.execute(stmt)
-    row = result.one()
+    approved_row = (await db.execute(approved_stmt)).one()
 
     avg_value: float | None = None
-    if row.rating_avg is not None:
-        avg_value = round(float(row.rating_avg), 1)
+    if approved_row.rating_avg is not None:
+        avg_value = round(float(approved_row.rating_avg), 1)
+
+    # All post-session ratings regardless of moderation status. Scoped to
+    # source='session' (closure-review testimonials, source='account_closure',
+    # are text-only capture with rating often NULL — excluded by the
+    # rating IS NOT NULL clause below either way, but the explicit source
+    # filter documents intent and matches the module docstring's "Two
+    # sources" note on the Testimonial model).
+    all_ratings_stmt = select(
+        func.avg(Testimonial.rating).label("rating_avg"),
+        func.count(Testimonial.id).label("rating_count"),
+    ).where(
+        Testimonial.chw_id == chw_id,
+        Testimonial.source == "session",
+        Testimonial.rating.isnot(None),
+    )
+    all_ratings_row = (await db.execute(all_ratings_stmt)).one()
+
+    all_ratings_avg_value: float | None = None
+    if all_ratings_row.rating_avg is not None:
+        all_ratings_avg_value = round(float(all_ratings_row.rating_avg), 1)
 
     return TestimonialSummary(
         rating_avg=avg_value,
-        rating_count=int(row.rating_count or 0),
+        rating_count=int(approved_row.rating_count or 0),
+        all_ratings_avg=all_ratings_avg_value,
+        all_ratings_count=int(all_ratings_row.rating_count or 0),
     )
 
 

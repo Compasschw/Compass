@@ -173,6 +173,17 @@ class TestimonialSummary(BaseModel):
 
     ``rating_avg`` is None (not 0.0) when no approved testimonials exist so
     callers can distinguish "no ratings yet" from "average is exactly 0".
+
+    ``all_ratings_avg``/``all_ratings_count`` (QA-batch #16) are a SEPARATE,
+    additive pair: they average every member post-session rating (any
+    ``status``, ``source='session'``, ``rating IS NOT NULL``) regardless of
+    admin-moderation approval. Approval gates PUBLIC display of testimonial
+    TEXT (``rating_avg``/``rating_count`` above, and the public testimonials
+    list) — it was never meant to hide a CHW's own aggregate score from their
+    own Dashboard "Member satisfaction" snapshot, which is what a member sees
+    reflected back the instant they submit a rating, before any admin has
+    reviewed it. Consumers that render a PUBLIC-facing rating (e.g. the
+    member-facing CHW profile) MUST keep using ``rating_avg``/``rating_count``.
     """
 
     rating_avg: float | None = Field(
@@ -181,6 +192,18 @@ class TestimonialSummary(BaseModel):
     )
     rating_count: int = Field(
         description="Number of approved testimonials contributing to the average.",
+    )
+    all_ratings_avg: float | None = Field(
+        default=None,
+        description="Average star rating across ALL member post-session ratings "
+                    "(source='session', rating IS NOT NULL) regardless of "
+                    "approval status. None when all_ratings_count is 0. For the "
+                    "CHW's own private dashboard view only — never public.",
+    )
+    all_ratings_count: int = Field(
+        default=0,
+        description="Number of post-session ratings (any approval status) "
+                    "contributing to all_ratings_avg.",
     )
 
 
