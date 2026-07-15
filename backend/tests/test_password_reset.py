@@ -174,20 +174,20 @@ _MEMBER_PASSWORD = "Original-password-123!"
 
 
 def _member_payload(email: str = _MEMBER_EMAIL, password: str = _MEMBER_PASSWORD) -> dict:
-    # Phone derived from the email so multiple registrations in one test never
-    # collide with the users.phone partial unique index (QA2 A1) — mirrors the
-    # conftest helper's approach.
-    phone_suffix = abs(hash(email)) % 10_000_000
+    # Phone and CIN derived from the email so multiple registrations in one test
+    # never collide with the users.phone partial unique index (QA2 A1) or the
+    # member_profiles CIN unique index (QA3 Part 4) — mirrors the conftest helper.
+    email_suffix = abs(hash(email)) % 10_000_000
     return {
         "email": email,
         "password": password,
         "name": "Password Reset Member",
         "role": "member",
-        "phone": f"+1310{phone_suffix:07d}",
+        "phone": f"+1310{email_suffix:07d}",
         "date_of_birth": "1993-01-05",
         "gender": "Female",
         "insurance_company": "Health Net",
-        "medi_cal_id": "12345678A",
+        "medi_cal_id": f"MC{email_suffix:07d}",
         "address_line1": "1 Main St",
         "city": "Los Angeles",
         "state": "CA",

@@ -21,6 +21,7 @@ from app.schemas.member import (
     ServicesConsentUpdate,
 )
 from app.schemas.user import MemberProfileResponse, MemberProfileUpdate
+from app.services.auth_service import DuplicateCinError, check_cin_uniqueness
 from app.services.storage.avatar_urls import presigned_avatar_url
 
 logger = logging.getLogger("compass.member")
@@ -101,6 +102,21 @@ async def update_profile(data: MemberProfileUpdate, current_user=Depends(require
         name = (payload.pop("name") or "").strip()
         if name:
             current_user.name = name
+
+    # QA batch (2026-07-14), Part 4 — reject a CIN already on file for
+    # another member BEFORE writing it. Only checked when the payload
+    # actually supplies a non-empty CIN (medi_cal_id is optional on this
+    # partial-update schema). exclude_user_id=current_user.id so
+    # re-submitting this same member's own unchanged CIN never 409s against
+    # themselves.
+    if payload.get("medi_cal_id"):
+        try:
+            await check_cin_uniqueness(db, payload["medi_cal_id"], exclude_user_id=current_user.id)
+        except DuplicateCinError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="Another member already has this CIN (Medi-Cal ID).",
+            ) from exc
 
     # Everything else is a MemberProfile column (zip_code, primary_language,
     # primary_need, insurance_provider/_company, preferred_mode/_name, medi_cal_id,
@@ -710,6 +726,19 @@ async def update_insurance_cin(
     profile = result.scalar_one_or_none()
     if profile is None:
         raise HTTPException(status_code=404, detail="Member profile not found.")
+
+    # QA batch (2026-07-14), Part 4 — reject a CIN already on file for
+    # another member BEFORE writing it. exclude_user_id=current_user.id so
+    # re-submitting this same member's own unchanged CIN never 409s against
+    # themselves. InsuranceCINUpdate requires medi_cal_id (non-optional), so
+    # no "was it supplied" guard is needed here (unlike PUT /profile).
+    try:
+        await check_cin_uniqueness(db, data.medi_cal_id, exclude_user_id=current_user.id)
+    except DuplicateCinError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Another member already has this CIN (Medi-Cal ID).",
+        ) from exc
 
     profile.insurance_company = data.insurance_company
     profile.medi_cal_id = data.medi_cal_id  # already normalized to uppercase by validator

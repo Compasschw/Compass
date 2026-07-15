@@ -1,12 +1,27 @@
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import ARRAY, Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text, func, text
+from sqlalchemy import (
+    ARRAY,
+    Boolean,
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    event,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
 from app.utils.encryption import EncryptedString
+from app.utils.phone import PLACEHOLDER_PHONE_E164
 
 
 class User(Base):
@@ -25,11 +40,19 @@ class User(Base):
         # ``app.services.auth_service.register_user`` (returns a clean 409
         # instead of surfacing this constraint's IntegrityError to the
         # caller).
+        #
+        # QA feedback batch (2026-07-14), Part 3: the WHERE clause also
+        # excludes the 555-555-5555 placeholder sentinel — CHWs use it when a
+        # member has no phone of their own, and any number of accounts may
+        # now share that one specific value. Every OTHER non-null phone
+        # remains globally unique. Mirrors migration ``phoneidx0715``.
         Index(
             "uq_users_phone_not_null",
             "phone",
             unique=True,
-            postgresql_where=text("phone IS NOT NULL"),
+            postgresql_where=text(
+                f"phone IS NOT NULL AND phone != '{PLACEHOLDER_PHONE_E164}'"
+            ),
         ),
     )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -154,6 +177,29 @@ class CHWProfile(Base):
 
 class MemberProfile(Base):
     __tablename__ = "member_profiles"
+    __table_args__ = (
+        # QA feedback batch (2026-07-14), Part 4 — CIN (Medi-Cal ID)
+        # uniqueness across members. ``medi_cal_id`` is encrypted at rest
+        # with a random nonce per row (EncryptedString/AES-256-GCM), so
+        # identical plaintext CINs produce different ciphertext and can
+        # never be compared or indexed directly. ``medi_cal_id_hash`` is a
+        # deterministic HMAC-SHA256 digest of the normalized CIN (see
+        # ``app.utils.encryption.hash_cin``), kept in lockstep with
+        # ``medi_cal_id`` by the ``set`` event listener registered below.
+        # Partial index (NULL hashes excluded) so members with no CIN on
+        # file are unaffected. Mirrors migration ``cinhash0715`` — kept in
+        # sync here for the same ``create_all``/fresh-DB reasons documented
+        # on ``User.__table_args__`` above. Race-safe backstop; the primary
+        # UX is the pre-create/pre-edit check in
+        # ``app.services.auth_service.check_cin_uniqueness`` (returns a
+        # clean 409 instead of surfacing this constraint's IntegrityError).
+        Index(
+            "uq_member_profiles_cin_hash",
+            "medi_cal_id_hash",
+            unique=True,
+            postgresql_where=text("medi_cal_id_hash IS NOT NULL"),
+        ),
+    )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), unique=True, nullable=False)
     zip_code: Mapped[str | None] = mapped_column(String(10), index=True)
@@ -173,6 +219,12 @@ class MemberProfile(Base):
     insurance_provider: Mapped[str | None] = mapped_column(String(255))
     # Encrypted at rest (AES-256-GCM). PHI per HIPAA 45 CFR §164.312(a)(2)(iv).
     medi_cal_id: Mapped[str | None] = mapped_column(EncryptedString)
+    # Deterministic HMAC-SHA256 digest of the normalized CIN — see the
+    # uniqueness index in __table_args__ above and app.utils.encryption.
+    # hash_cin. Kept in lockstep automatically by the ``set`` event listener
+    # registered at the bottom of this module — never assign this column
+    # directly; set ``medi_cal_id`` and the hash recomputes itself.
+    medi_cal_id_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     # ── Expanded signup fields (member RegisterScreen) ───────────────────
     # Captured at signup OR later via profile-edit; all nullable so a
@@ -332,3 +384,41 @@ class MemberProfile(Base):
     onboarding_complete: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="true"
     )
+
+
+# ── CIN uniqueness digest: keep medi_cal_id_hash in lockstep automatically ────
+#
+# QA feedback batch (2026-07-14), Part 4. Rather than touching every one of
+# the (currently 5) write paths that set MemberProfile.medi_cal_id —
+# routers/auth.py (self-signup + OAuth-onboarding-completion),
+# routers/chw.py (CHW-initiated member creation, via register_user),
+# routers/member.py (profile PUT + insurance-CIN PATCH) — a single
+# SQLAlchemy attribute-level ``set`` event listener recomputes the digest on
+# every assignment, including any future write path that's added later.
+#
+# This only fires on an explicit Python attribute assignment
+# (``profile.medi_cal_id = value`` or a constructor kwarg) — SQLAlchemy's
+# ORM-load path (hydrating a row fetched from the database) populates
+# attributes directly into instance state without going through the
+# instrumented ``__set__``, so this listener does NOT re-fire (and does not
+# need to — the hash column is loaded from its own row value) every time an
+# existing MemberProfile is read from the database.
+def _sync_medi_cal_id_hash(target: "MemberProfile", value: str | None, oldvalue: object, initiator: object) -> None:
+    """Recompute ``medi_cal_id_hash`` whenever ``medi_cal_id`` is assigned.
+
+    Setting a falsy CIN (None or empty string) clears the hash too, so a
+    member who removes their CIN frees up that CIN for another member (and
+    never leaves a stale hash blocking the partial unique index for no
+    reason).
+    """
+    from app.schemas.cin_config import normalize_cin
+    from app.utils.encryption import hash_cin
+
+    if value:
+        normalized = normalize_cin(value)
+        target.medi_cal_id_hash = hash_cin(normalized) if normalized else None
+    else:
+        target.medi_cal_id_hash = None
+
+
+event.listen(MemberProfile.medi_cal_id, "set", _sync_medi_cal_id_hash, retval=False)

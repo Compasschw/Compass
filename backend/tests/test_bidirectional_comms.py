@@ -27,6 +27,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 
 from app.services.communication_touch_log import CommunicationTouch, TouchKind
+from app.utils.phone import PLACEHOLDER_PHONE_CALL_BLOCK_MESSAGE, PLACEHOLDER_PHONE_E164
 from tests.conftest import auth_header, test_session as _test_session_factory
 
 
@@ -535,3 +536,78 @@ async def test_rate_limit_is_per_pair_not_global(client: AsyncClient):
     assert res.status_code == 200, (
         f"CHW2 should be callable (different pair), got {res.status_code}: {res.text}"
     )
+
+
+# ─── QA feedback batch (2026-07-14), Part 3 — placeholder-phone call block ──
+
+
+@pytest.mark.asyncio
+async def test_member_call_chw_blocked_when_chw_has_placeholder_phone(client: AsyncClient):
+    """POST /member/chws/{chw_id}/call is rejected 422 when either leg
+    resolves to the 555-555-5555 sentinel — here the CHW's phone."""
+    chw_tokens = await _register(client, "call-block-chw-a2a@example.com", "chw")
+    member_tokens = await _register(client, "call-block-member-a2a@example.com", "member")
+
+    chw_id = await _user_id_from_tokens(chw_tokens)
+    member_id = await _user_id_from_tokens(member_tokens)
+    await _set_phone_via_db(chw_id, PLACEHOLDER_PHONE_E164)
+    await _set_phone_via_db(member_id, "+15550000024")
+
+    await _create_session_between(client, chw_tokens, member_tokens)
+
+    res = await client.post(
+        f"/api/v1/member/chws/{chw_id}/call",
+        json={},
+        headers=auth_header(member_tokens),
+    )
+    assert res.status_code == 422, f"Expected 422, got {res.status_code}: {res.text}"
+    assert res.json()["detail"] == PLACEHOLDER_PHONE_CALL_BLOCK_MESSAGE
+
+    async with _test_session_factory() as session:
+        from uuid import UUID as _UUID
+
+        result = await session.execute(
+            select(CommunicationTouch).where(
+                CommunicationTouch.initiator_id == _UUID(member_id),
+                CommunicationTouch.recipient_id == _UUID(chw_id),
+            )
+        )
+        assert result.scalar_one_or_none() is None, (
+            "No CommunicationTouch should be written when the call is blocked"
+        )
+
+
+@pytest.mark.asyncio
+async def test_chw_call_member_blocked_when_member_has_placeholder_phone(client: AsyncClient):
+    """POST /chw/members/{member_id}/call is rejected 422 when either leg
+    resolves to the 555-555-5555 sentinel — here the member's phone."""
+    chw_tokens = await _register(client, "call-block-chw-b2b@example.com", "chw")
+    member_tokens = await _register(client, "call-block-member-b2b@example.com", "member")
+
+    chw_id = await _user_id_from_tokens(chw_tokens)
+    member_id = await _user_id_from_tokens(member_tokens)
+    await _set_phone_via_db(chw_id, "+15550000025")
+    await _set_phone_via_db(member_id, PLACEHOLDER_PHONE_E164)
+
+    await _create_session_between(client, chw_tokens, member_tokens)
+
+    res = await client.post(
+        f"/api/v1/chw/members/{member_id}/call",
+        json={},
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 422, f"Expected 422, got {res.status_code}: {res.text}"
+    assert res.json()["detail"] == PLACEHOLDER_PHONE_CALL_BLOCK_MESSAGE
+
+    async with _test_session_factory() as session:
+        from uuid import UUID as _UUID
+
+        result = await session.execute(
+            select(CommunicationTouch).where(
+                CommunicationTouch.initiator_id == _UUID(chw_id),
+                CommunicationTouch.recipient_id == _UUID(member_id),
+            )
+        )
+        assert result.scalar_one_or_none() is None, (
+            "No CommunicationTouch should be written when the call is blocked"
+        )

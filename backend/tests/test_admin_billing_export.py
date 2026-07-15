@@ -97,7 +97,9 @@ async def _seed_claim_at(
         db.add(MemberProfile(
             id=uuid.uuid4(), user_id=member_id,
             zip_code="90210", primary_language="English",
-            medi_cal_id="MEDI-CAL-XYZ",
+            # Unique per member so multi-claim tests don't collide on the
+            # uq_member_profiles_cin_hash unique index (CIN uniqueness, QA3 Part 4).
+            medi_cal_id=f"MC{member_id.hex[:10].upper()}",
         ))
         db.add(ServiceRequest(
             id=request_id, member_id=member_id, vertical="health",

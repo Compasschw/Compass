@@ -2645,6 +2645,7 @@ async def initiate_session_call(
     from app.models.communication import CommunicationSession
     from app.models.user import User
     from app.services.communication import get_provider
+    from app.utils.phone import PLACEHOLDER_PHONE_CALL_BLOCK_MESSAGE, is_placeholder_phone
 
     session = await _get_session_and_assert_participant(session_id, current_user, db)
 
@@ -2661,6 +2662,18 @@ async def initiate_session_call(
             status_code=400,
             detail="Both parties must have a verified phone number on file.",
         )
+    # QA feedback batch (2026-07-14), Part 3: the 555-555-5555 placeholder
+    # sentinel has no real device behind it — block BEFORE any Vonage
+    # attempt. This is the endpoint the mobile app actually calls
+    # (POST /sessions/{id}/call, see useStartCall in native/src/hooks/
+    # useApiQueries.ts) for both the CHW Messages call flow and the member
+    # Messages call flow, so this single check covers "both directions" —
+    # the app's generic call-failure handler already surfaces
+    # ApiError.message verbatim, so this message reaches the user unchanged,
+    # replacing the "Call requested — your phone should ring shortly."
+    # banner with no frontend change required.
+    if is_placeholder_phone(caller.phone) or is_placeholder_phone(recipient.phone):
+        raise HTTPException(status_code=422, detail=PLACEHOLDER_PHONE_CALL_BLOCK_MESSAGE)
 
     # #193 session-per-call: this endpoint is the one the FE actually hits
     # (NOT /communication/call-bridge — that's a separate path). Delegate

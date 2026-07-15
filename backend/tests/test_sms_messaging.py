@@ -1181,3 +1181,118 @@ async def test_inbound_sms_duplicate_delivery_race_is_idempotent(client: AsyncCl
         matching = msg_result.scalars().all()
         assert len(matching) == 1, "Only the winning Message row should exist"
         assert matching[0].body == "winner of the race"
+
+
+# ─── Inbound: ambiguous match (QA feedback batch 2026-07-14, Part 3) ──────────
+#
+# The 555-555-5555 placeholder sentinel is the only way (given real-number
+# uniqueness is retained) for >1 member to share a phone — so it's the only
+# way to exercise the ">1 member matched" branch of sms_inbound.
+
+_SENTINEL_PHONE_DIGITS = "15555555555"
+
+
+async def _register_two_members_with_sentinel_phone(client: AsyncClient) -> tuple[str, str]:
+    a_tokens = await _register(client, "sms_ambiguous_member_a@example.com", "member")
+    b_tokens = await _register(client, "sms_ambiguous_member_b@example.com", "member")
+    a_id = _user_id_from_tokens(a_tokens)
+    b_id = _user_id_from_tokens(b_tokens)
+    await _set_phone_via_db(a_id, "+15555555555")
+    await _set_phone_via_db(b_id, "+15555555555")
+    return a_id, b_id
+
+
+@pytest.mark.asyncio
+async def test_inbound_sms_ambiguous_phone_ordinary_text_dead_letters(client: AsyncClient):
+    """>1 member sharing the sentinel phone + ordinary text: dead-lettered,
+    never routed to any conversation, nothing persisted."""
+    await _register_two_members_with_sentinel_phone(client)
+
+    res = await _post_sms_inbound(
+        client, from_number_digits=_SENTINEL_PHONE_DIGITS, text="Hi, just checking in"
+    )
+    assert res.status_code == 200, f"Expected 200, got {res.status_code}: {res.text}"
+    assert res.json()["note"] == "ambiguous_member_phone"
+
+    async with _test_session_factory() as session:
+        msg_result = await session.execute(
+            select(Message).where(Message.body == "Hi, just checking in")
+        )
+        assert msg_result.scalars().all() == []
+
+
+@pytest.mark.asyncio
+async def test_inbound_sms_ambiguous_phone_stop_opts_out_both_members(client: AsyncClient):
+    """>1 member sharing the sentinel phone + STOP: EVERY matched member is
+    opted out (compliance-critical), message still dead-lettered."""
+    a_id, b_id = await _register_two_members_with_sentinel_phone(client)
+
+    res = await _post_sms_inbound(
+        client, from_number_digits=_SENTINEL_PHONE_DIGITS, text="STOP"
+    )
+    assert res.status_code == 200
+    assert res.json()["note"] == "ambiguous_member_phone"
+
+    async with _test_session_factory() as session:
+        profiles_result = await session.execute(
+            select(MemberProfile).where(
+                MemberProfile.user_id.in_([UUID(a_id), UUID(b_id)])
+            )
+        )
+        profiles = profiles_result.scalars().all()
+        assert len(profiles) == 2
+        assert all(p.sms_opt_out is True for p in profiles), (
+            "Every member sharing the ambiguous phone must be opted out"
+        )
+
+        touch_result = await session.execute(
+            select(CommunicationTouch).where(
+                CommunicationTouch.initiator_id.in_([UUID(a_id), UUID(b_id)]),
+                CommunicationTouch.kind == TouchKind.sms.value,
+            )
+        )
+        touches = touch_result.scalars().all()
+        assert len(touches) == 2
+        assert all(t.extra_data.get("ambiguous_member_phone") is True for t in touches)
+
+
+@pytest.mark.asyncio
+async def test_inbound_sms_ambiguous_phone_help_replies_once_per_member(client: AsyncClient):
+    """>1 member sharing the sentinel phone + HELP: the auto-reply is sent
+    (mocked to avoid a real network call, mirroring
+    test_inbound_sms_help_keyword_auto_replies_without_opting_out), a touch
+    row is written for every matched member, and neither member is opted
+    out."""
+    a_id, b_id = await _register_two_members_with_sentinel_phone(client)
+
+    captured_reply = AsyncMock(return_value=SmsSendResult(success=True))
+    with patch(
+        "app.services.vonage_sms.VonageSmsMessagesClient.send_text", captured_reply
+    ):
+        res = await _post_sms_inbound(
+            client, from_number_digits=_SENTINEL_PHONE_DIGITS, text="HELP"
+        )
+
+    assert res.status_code == 200
+    assert res.json()["note"] == "ambiguous_member_phone"
+
+    async with _test_session_factory() as session:
+        profiles_result = await session.execute(
+            select(MemberProfile).where(
+                MemberProfile.user_id.in_([UUID(a_id), UUID(b_id)])
+            )
+        )
+        profiles = profiles_result.scalars().all()
+        assert len(profiles) == 2
+        assert all(p.sms_opt_out is False for p in profiles)
+
+        touch_result = await session.execute(
+            select(CommunicationTouch).where(
+                CommunicationTouch.initiator_id.in_([UUID(a_id), UUID(b_id)]),
+                CommunicationTouch.kind == TouchKind.sms.value,
+            )
+        )
+        touches = touch_result.scalars().all()
+        assert len(touches) == 2
+        assert all(t.extra_data.get("ambiguous_member_phone") is True for t in touches)
+        assert all(t.extra_data.get("help_keyword") is True for t in touches)

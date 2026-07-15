@@ -14,7 +14,7 @@
  * the form's own validation/gating logic runs for real.
  */
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // react-native-svg's real entry (used here only for the Google/Apple social
@@ -58,6 +58,7 @@ vi.mock('@react-navigation/native', () => ({
   }),
 }));
 
+import { ApiError } from '../../api/client';
 import { RegisterScreen } from './RegisterScreen';
 
 const COMMUNICATIONS_LABEL =
@@ -231,5 +232,41 @@ describe('RegisterScreen — required consent gate (regression)', () => {
 
     fireEvent.click(screen.getByTestId('consent-communications'));
     expect(submit.getAttribute('aria-disabled')).not.toBe('true');
+  });
+});
+
+// QA feedback batch (2026-07-14), Part 4 — a 409 whose detail mentions the
+// CIN is shown inline under the CIN field (in addition to being surfaced by
+// `register`'s rejection), not only as the generic top banner.
+describe('RegisterScreen — duplicate CIN 409 (Part 4)', () => {
+  function submitMemberSignup(): void {
+    fillRequiredMemberFields();
+    fireEvent.click(screen.getByTestId('consent-terms'));
+    fireEvent.click(screen.getByTestId('consent-communications'));
+    fireEvent.click(screen.getByLabelText('Create account'));
+  }
+
+  it('shows the backend duplicate-CIN message inline under the CIN field', async () => {
+    mockRegister.mockRejectedValueOnce(
+      new ApiError(409, 'Another member already has this CIN (Medi-Cal ID).'),
+    );
+    renderScreen();
+    submitMemberSignup();
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('Another member already has this CIN (Medi-Cal ID).'),
+      ).toBeTruthy(),
+    );
+  });
+
+  it('falls back to the generic top banner for a non-CIN error', async () => {
+    mockRegister.mockRejectedValueOnce(new Error('Network error. Please try again.'));
+    renderScreen();
+    submitMemberSignup();
+
+    await waitFor(() =>
+      expect(screen.getByText('Network error. Please try again.')).toBeTruthy(),
+    );
   });
 });

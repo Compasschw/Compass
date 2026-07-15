@@ -340,7 +340,10 @@ async def test_parity_with_self_register_member(client: AsyncClient, chw_tokens:
         "date_of_birth": self_payload["date_of_birth"],
         "gender": self_payload["gender"],
         "insurance_company": self_payload["insurance_company"],
-        "medi_cal_id": self_payload["medi_cal_id"],
+        # DIFFERENT CIN from the self-signup member — QA3 Part 4 added a
+        # member-wide unique index on the CIN, so two distinct member accounts
+        # can never legitimately share one (same reasoning as the phone above).
+        "medi_cal_id": "97654321B",
         "address_line1": self_payload["address_line1"],
         "city": self_payload["city"],
         "state": self_payload["state"],
@@ -384,12 +387,17 @@ async def test_parity_with_self_register_member(client: AsyncClient, chw_tokens:
     assert chw_user.phone != self_user.phone  # distinct accounts, distinct numbers
     assert (chw_user.password_hash is not None) == (self_user.password_hash is not None)
 
+    # CIN parity: like the phone above, uniqueness forbids sharing one, so the
+    # two members carry DISTINCT CINs. The invariant that matters is that BOTH
+    # paths persist a non-empty, decryptable CIN (not literal equality).
+    assert chw_profile.medi_cal_id and self_profile.medi_cal_id
+    assert chw_profile.medi_cal_id != self_profile.medi_cal_id
+
     # MemberProfile-row parity — every field register_user populates or defaults.
     parity_fields = [
         "date_of_birth",
         "gender",
         "insurance_company",
-        "medi_cal_id",
         "address_line1",
         "address_line2",
         "city",

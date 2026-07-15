@@ -347,6 +347,16 @@ export function AddMemberModal({
             setError('That email is already registered.');
             return;
           }
+          // QA feedback batch (2026-07-14), Parts 3 + 4: a 409 covers BOTH
+          // "duplicate phone" (An account with this phone number already
+          // exists.) and "duplicate CIN" (Another member already has this
+          // CIN (Medi-Cal ID).) — the backend's detail string is already
+          // the exact user-facing message for either case, so surface it
+          // verbatim via the existing inline error text.
+          if (err instanceof ApiError && err.status === 409) {
+            setError(err.message || 'Could not add the member. Please try again.');
+            return;
+          }
           const message =
             err instanceof Error && err.message
               ? err.message

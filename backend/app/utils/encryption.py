@@ -11,6 +11,8 @@ a migration plan.
 """
 
 import base64
+import hashlib
+import hmac
 import os
 from typing import Any
 
@@ -25,11 +27,51 @@ def _get_key() -> bytes:
         # In dev/test without a configured key, fall back to a deterministic
         # test key derived from SECRET_KEY. NEVER used in production — settings
         # validation rejects weak SECRET_KEY values.
-        import hashlib
-
         from app.config import settings
         return hashlib.sha256(settings.secret_key.encode()).digest()
     return base64.urlsafe_b64decode(raw)
+
+
+def _get_cin_hmac_key() -> bytes:
+    """Derive a key for the CIN uniqueness digest, distinct from the AES key.
+
+    Domain-separated from ``_get_key()`` (via a fixed, versioned suffix
+    hashed together with the encryption key) so a compromise of one digest
+    scheme doesn't directly expose key material usable against the other.
+    Deterministic — the same PHI_ENCRYPTION_KEY always derives the same HMAC
+    key, which is required for ``hash_cin`` to be stable across processes
+    and deploys (see ``member_profiles.medi_cal_id_hash``).
+    """
+    return hashlib.sha256(_get_key() + b"compass-cin-hash-v1").digest()
+
+
+def hash_cin(normalized_cin: str) -> str:
+    """Deterministic HMAC-SHA256 digest of an already-normalized CIN.
+
+    Used for ``member_profiles.medi_cal_id_hash`` — a uniqueness digest for
+    the CIN, which itself is stored via ``EncryptedString`` (AES-256-GCM with
+    a random nonce per row, so identical plaintext CINs produce different
+    ciphertext and can never be compared or indexed directly). HMAC (keyed,
+    not a plain SHA-256) so a leaked database dump can't be brute-forced
+    against the small CIN keyspace (CINs are ~10 alphanumeric characters —
+    trivially rainbow-tableable with an unkeyed hash).
+
+    Args:
+        normalized_cin: The CIN AFTER ``app.schemas.cin_config.normalize_cin``
+            has been applied (trimmed, uppercased, spaces/hyphens stripped,
+            BIC-extracted). Callers MUST normalize first — this function does
+            not normalize, so two callers passing differently-cased/formatted
+            raw input for the "same" CIN would silently produce different,
+            non-colliding digests, defeating the uniqueness check.
+
+    Returns:
+        A 64-character lowercase hex digest, stable for the lifetime of
+        PHI_ENCRYPTION_KEY (rotating the key invalidates all previously
+        stored digests — same operational caveat as the AES key itself, see
+        the module docstring above).
+    """
+    mac = hmac.new(_get_cin_hmac_key(), normalized_cin.encode("utf-8"), hashlib.sha256)
+    return mac.hexdigest()
 
 
 class EncryptedString(TypeDecorator):

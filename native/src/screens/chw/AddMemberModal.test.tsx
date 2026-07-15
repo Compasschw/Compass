@@ -20,7 +20,7 @@ vi.mock('../../api/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api/client')>();
   return { ...actual, api: vi.fn() };
 });
-import { api } from '../../api/client';
+import { ApiError, api } from '../../api/client';
 // Assert the on-brand success confirmation without needing AppDialogProvider
 // mounted in the test tree — the modal fires showAlert() on success.
 vi.mock('../../utils/showAlert', () => ({ showAlert: vi.fn() }));
@@ -189,6 +189,47 @@ describe('AddMemberModal — required consent gate', () => {
 
     fireEvent.click(screen.getByLabelText('Add member'));
     expect(mockedApi).not.toHaveBeenCalled();
+  });
+
+  // QA feedback batch (2026-07-14), Parts 3 + 4: a 409 from either the
+  // duplicate-phone guard or the duplicate-CIN guard is surfaced inline via
+  // the existing error text, verbatim (the backend detail string IS the
+  // user-facing message in both cases).
+  it('surfaces a duplicate-CIN 409 inline via the existing error text', async () => {
+    mockedApi.mockRejectedValueOnce(
+      new ApiError(409, 'Another member already has this CIN (Medi-Cal ID).'),
+    );
+    renderModal();
+    fillRequiredFields();
+    fireEvent.click(screen.getByTestId('consent-terms'));
+    fireEvent.click(screen.getByTestId('consent-communications'));
+
+    fireEvent.click(screen.getByLabelText('Add member'));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('Another member already has this CIN (Medi-Cal ID).'),
+      ).toBeTruthy(),
+    );
+    expect(mockedShowAlert).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a duplicate-phone 409 inline via the existing error text', async () => {
+    mockedApi.mockRejectedValueOnce(
+      new ApiError(409, 'An account with this phone number already exists.'),
+    );
+    renderModal();
+    fillRequiredFields();
+    fireEvent.click(screen.getByTestId('consent-terms'));
+    fireEvent.click(screen.getByTestId('consent-communications'));
+
+    fireEvent.click(screen.getByLabelText('Add member'));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('An account with this phone number already exists.'),
+      ).toBeTruthy(),
+    );
   });
 });
 
