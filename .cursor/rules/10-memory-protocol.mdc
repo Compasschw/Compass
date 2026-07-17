@@ -1,0 +1,15 @@
+---
+description: Persistent memory protocol — read at session start, maintain as you learn
+alwaysApply: true
+---
+
+# Memory
+
+Durable memory lives OUTSIDE this repo at `~/.claude/projects/-Users-akrammahmoud/memory/` (harness-agnostic markdown; shared with Claude Code — do not fork it).
+
+- **Session start / before nontrivial work**: read `MEMORY.md` (the index) and open any entry files relevant to the task.
+- **When you learn something durable** (user preference, project decision, prod runbook, recurring-bug rule): write one file per fact with frontmatter (`name`, `description`, `metadata.type: user|feedback|project|reference`), then add a one-line pointer in `MEMORY.md`. Update rather than duplicate; delete entries proven wrong.
+- **Never save** what the repo already records (code structure, git history) or session-only details.
+- Memory entries reflect when they were written — verify a named file/flag/endpoint still exists before recommending it.
+
+High-value entries for this project: `project_compass_sms_output` (SMS + 2FA program state), `reference_compass_prod_box_access` (SSM), `feedback_compass_dev_guardrails` (bug-class rules), `feedback_test_discipline_no_regressions`, `project_compass_qa2_wave` / `qa3_wave` (dedup runbooks).
