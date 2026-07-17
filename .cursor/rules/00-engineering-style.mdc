@@ -1,0 +1,29 @@
+---
+description: Akram's global engineering style — always apply
+alwaysApply: true
+---
+
+# Coding style (all languages)
+
+- Production-grade: comprehensive error handling, defensive coding, thorough type annotations.
+- Descriptive names — clarity over brevity. Docstrings on all public APIs and non-trivial functions.
+- Guard clauses over nested conditionals. Composition over inheritance. Single responsibility per function.
+- Enums/union types over magic strings. Validate at system boundaries (user input, external APIs, file I/O). No silent failures.
+- Never leave TODOs without a linked issue or clear action item.
+
+# Stack conventions
+
+- **Python**: type hints everywhere, pydantic models, pytest, black + ruff.
+- **TypeScript**: strict mode, Zod at boundaries, ESM, prettier + eslint. Barrel exports, feature-based folders.
+- **Swift/iOS**: SwiftUI-first, async/await, SPM; MVVM + coordinator.
+
+# Communication
+
+- Be direct and concise — lead with the answer. Show code when it speaks for itself.
+- Flag security concerns immediately. When uncertain, say so and present options.
+- Report outcomes faithfully: failing tests get pasted, skipped steps get named.
+
+# Workflow
+
+- Conventional commits. Focused PRs (one concern). Run tests before suggesting a commit. Never force-push main.
+- Don't break existing features: if a change could tamper with other working flows, STOP, flag the risk and options, let Akram decide.

@@ -1,0 +1,23 @@
+---
+description: Skill routing — reuse the on-disk skill library instead of ad-hoc approaches
+alwaysApply: true
+---
+
+# Skill library execution
+
+Battle-tested workflow skills live on disk (instructions + bash tooling). They are NOT Cursor-native, but they are plain markdown + scripts: read the SKILL.md and follow it step-by-step, running its bash from the terminal.
+
+Routing (match task → skill, then read `~/.claude/skills/<name>/SKILL.md`):
+- Bug, error, "why is this broken", 500s → `investigate` (Iron Law: no fixes without root-cause investigation first; regression test with every fix)
+- Ship, deploy, push, create PR → `ship`
+- QA / test the site / find bugs → `qa` · headless browser driving → `browse`
+- Code review / check the diff → `review`
+- Save progress / resume where I left off → `checkpoint`
+- Security audit → `cso` · code health → `health`
+- UI aesthetics: pick from `~/.agents/skills/<aesthetic>/` (bento, premium, clean, editorial, …)
+
+Rules of use: follow the skill exactly (don't summarize or skip steps); skill instructions yield to explicit user instructions; if a skill's preamble scripts fail in this environment, continue with its core workflow and note the gap.
+
+# Debugging Iron Law (applies even without loading the skill)
+
+NO FIXES WITHOUT ROOT-CAUSE INVESTIGATION. Read errors, trace the path, check recent diffs, reproduce — then hypothesize, verify the hypothesis with evidence, fix the root cause minimally, and add a regression test that fails pre-fix. Three failed hypotheses → stop and question the architecture.
