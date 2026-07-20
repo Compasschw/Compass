@@ -35,13 +35,14 @@
  *
  * Route param consumption (PRESERVED from #15 / 2026-06-03):
  *   route.params.chwId     — pre-selects the CHW thread.
- *   route.params.autoCall  — fires the masked-number call on mount (one-shot).
+ *   (Members cannot initiate calls, so the former route.params.autoCall
+ *    consumer was removed — only CHWs may start a masked call.)
  *
  * Hard constraints:
  *   - Do NOT claim TLS+at-rest is E2E encryption.
  *   - Do NOT import from theme/colors — use theme/tokens only.
  *   - Do NOT modify backend calls other than the consent gate read.
- *   - Preserve the chwId + autoCall route param consumer unchanged in logic.
+ *   - Preserve the chwId route param consumer unchanged in logic.
  */
 
 import React, {
@@ -62,7 +63,6 @@ import {
   Linking,
   StyleSheet,
   Platform,
-  Alert,
   ActivityIndicator,
   useWindowDimensions,
   type ViewStyle,
@@ -70,7 +70,6 @@ import {
   type ImageStyle,
 } from 'react-native';
 import {
-  Phone,
   Calendar,
   CalendarPlus,
   Paperclip,
@@ -117,7 +116,7 @@ import {
   useConversationMessages,
   useConversationMarkRead,
   useConversationSendMessage,
-  useStartCall,
+  useSessions,
   usePendingConsents,
   useApproveConsentRequest,
   useDenyConsentRequest,
@@ -126,6 +125,7 @@ import {
   useOwnServicesConsent,
   type ConversationData,
   type MessageData,
+  type SessionData,
   type SessionMessageLocal,
   type ConsentRequestData,
 } from '../../hooks/useApiQueries';
@@ -318,6 +318,33 @@ const AVATAR_PALETTE = [
 function avatarColors(name: string): { bg: string; text: string } {
   const idx = (name.charCodeAt(0) ?? 0) % AVATAR_PALETTE.length;
   return AVATAR_PALETTE[idx] ?? { bg: colors.emerald100, text: colors.emerald700 };
+}
+
+/**
+ * Formats a session's ISO `scheduledAt` into the upcoming-appointment label,
+ * e.g. "Thursday, June 12 · 2 PM" (local time). Mirrors the date-label style
+ * used on MemberCalendarScreen. Returns '' for an unparseable input.
+ *
+ * Exported for the CareContextRail test so it can assert the rendered label
+ * without duplicating the formatting logic (and stay timezone-independent).
+ */
+export function formatApptLabel(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const datePart = d.toLocaleDateString('en-US', {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+  });
+  const hours = d.getHours();
+  const minutes = d.getMinutes();
+  const suffix = hours >= 12 ? 'PM' : 'AM';
+  const hour12 = hours % 12 === 0 ? 12 : hours % 12;
+  const timePart =
+    minutes === 0
+      ? `${hour12} ${suffix}`
+      : `${hour12}:${String(minutes).padStart(2, '0')} ${suffix}`;
+  return `${datePart} · ${timePart}`;
 }
 
 // ─── Journey progress percent ─────────────────────────────────────────────────
@@ -1117,8 +1144,6 @@ interface ConversationPaneProps {
   memberFirstName: string;
   onBack?: () => void;
   showBackButton: boolean;
-  autoCallOnMount?: boolean;
-  onAutoCallConsumed?: () => void;
   servicesRefused: boolean;
   onGoToProfile: () => void;
   onGoToCalendar: () => void;
@@ -1133,8 +1158,6 @@ function ConversationPane({
   memberFirstName,
   onBack,
   showBackButton,
-  autoCallOnMount,
-  onAutoCallConsumed,
   servicesRefused,
   onGoToProfile,
   onGoToCalendar,
@@ -1146,7 +1169,6 @@ function ConversationPane({
 
   const [draftText, setDraftText] = useState('');
   const [localMessages, setLocalMessages] = useState<SessionMessageLocal[]>([]);
-  const [callInitiating, setCallInitiating] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [toastIsError, setToastIsError] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
@@ -1188,7 +1210,6 @@ function ConversationPane({
   const messagesQuery  = useConversationMessages(conversation.id);
   const sendMessage    = useConversationSendMessage();
   const markRead       = useConversationMarkRead();
-  const startCall      = useStartCall();
   const approveConsent = useApproveConsentRequest();
   const denyConsent    = useDenyConsentRequest();
 
@@ -1294,68 +1315,9 @@ function ConversationPane({
     }
   }, [uploadAttachment, showToast]);
 
-  // ── Call handler — uses conversation.activeSessionId as the call target ────────
-  const handleCall = useCallback(async () => {
-    if (callInitiating) return;
-    if (!conversation.activeSessionId) {
-      showToast('No active session — ask your CHW to start a session first.', true);
-      return;
-    }
-    const callSessionId = conversation.activeSessionId;
-    const chwFirstName = chwName.split(' ')[0] ?? 'your CHW';
-
-    const doCall = async (): Promise<void> => {
-      setCallInitiating(true);
-      try {
-        await startCall.mutateAsync(callSessionId);
-        showToast('Call requested — your phone should ring shortly.', false);
-      } catch (err) {
-        const detail =
-          err instanceof Error && err.message
-            ? err.message
-            : 'Could not start the call. Try again.';
-        showToast(detail, true);
-      } finally {
-        setCallInitiating(false);
-      }
-    };
-
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      const ok = window.confirm(`Start a call with ${chwFirstName}?`);
-      if (ok) void doCall();
-    } else {
-      Alert.alert(
-        'Start call?',
-        `Start a masked call with ${chwFirstName}? Both phones will ring.`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Call', onPress: () => void doCall() },
-        ],
-      );
-    }
-  }, [callInitiating, conversation.activeSessionId, chwName, startCall, showToast]);
-
-  // ── Auto-call on mount (route.params.autoCall = true) ─────────────────────────
-  useEffect(() => {
-    if (!autoCallOnMount) return;
-    if (callInitiating) return;
-    if (!conversation.activeSessionId) return;
-    const callSessionId = conversation.activeSessionId;
-    setCallInitiating(true);
-    void (async () => {
-      try {
-        await startCall.mutateAsync(callSessionId);
-        showToast('Call requested — your phone should ring shortly.', false);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Call failed.';
-        showToast(msg, true);
-      } finally {
-        setCallInitiating(false);
-        onAutoCallConsumed?.();
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoCallOnMount, conversation.activeSessionId]);
+  // Members cannot initiate calls — only CHWs may start a masked session call.
+  // The former handleCall + auto-call-on-mount effect (route.params.autoCall)
+  // were removed accordingly; the in-conversation Call button is gone too.
 
   // ── Recording consent handlers ────────────────────────────────────────────────
   const handleApproveConsent = useCallback(async () => {
@@ -1507,21 +1469,7 @@ function ConversationPane({
 
         {/* Action buttons — card-style, matching CHW iconBtnCard treatment */}
         <View style={styles.convActions}>
-          {/* Phone / masked-call button — removed for members (2026-07). May be
-              restored later; handleCall + startCall are kept wired for that.
-          <PressableCard
-            onPress={() => void handleCall()}
-            disabled={callInitiating}
-            accessibilityLabel={callInitiating ? 'Call initiating…' : 'Call your CHW'}
-            style={[styles.iconBtnCard, callInitiating && styles.iconBtnDisabled]}
-          >
-            {callInitiating ? (
-              <ActivityIndicator size="small" color={colors.textSecondary} />
-            ) : (
-              <Phone size={18} color={colors.textSecondary} strokeWidth={1.5} />
-            )}
-          </PressableCard>
-          */}
+          {/* No masked-call button for members — only CHWs may initiate calls. */}
 
           {/* Calendar */}
           <PressableCard
@@ -1842,6 +1790,26 @@ function CareContextRail({
   const chwInitials  = getInitials(chwName);
   const { bg, text } = avatarColors(chwName);
 
+  // Next upcoming appointment — the soonest future session the CHW has
+  // scheduled AND confirmed. Member-scoped: useSessions() returns only this
+  // member's sessions. Section 4 is hidden entirely when there is none, so it
+  // can never show a stale/hardcoded date.
+  const sessionsQuery = useSessions();
+  const nextAppt = useMemo<SessionData | null>(() => {
+    const now = Date.now();
+    return (
+      (sessionsQuery.data ?? [])
+        .filter(
+          (s) =>
+            s.status === 'scheduled' &&
+            s.schedulingStatus === 'confirmed' &&
+            Date.parse(s.scheduledAt) > now,
+        )
+        .sort((a, b) => Date.parse(a.scheduledAt) - Date.parse(b.scheduledAt))[0] ??
+      null
+    );
+  }, [sessionsQuery.data]);
+
   const journeysQuery = useMemberJourneys(memberId);
   const activeJourney = useMemo(() => {
     const list = journeysQuery.data ?? [];
@@ -2007,39 +1975,45 @@ function CareContextRail({
           )}
         </View>
 
-        {/* ── Section 4: Upcoming appointment ─────────────────────────────── */}
-        <View style={[styles.railSection, styles.railSectionDivider]}>
-          <Text style={styles.railSectionLabel}>Upcoming appointment</Text>
-          <View style={styles.apptRow}>
-            <View style={styles.apptIconCircle}>
-              <Calendar size={16} color={colors.emerald700} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.apptTime, numerals.tabular]}>
-                Thursday, June 12 · 2 PM
-              </Text>
-              <Text style={styles.apptLocation}>Vermont DPSS office</Text>
-              <View style={styles.apptBtns}>
-                <TouchableOpacity
-                  style={styles.apptBtnOutlined}
-                  onPress={onSchedule}
-                  accessibilityRole="button"
-                  accessibilityLabel="Reschedule appointment"
-                >
-                  <Text style={styles.apptBtnOutlinedText}>Reschedule</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.apptBtnGhost}
-                  accessibilityRole="button"
-                  accessibilityLabel="Get directions"
-                >
-                  <Navigation size={12} color={colors.primary} />
-                  <Text style={styles.apptBtnGhostText}>Get directions</Text>
-                </TouchableOpacity>
+        {/* ── Section 4: Upcoming appointment ───────────────────────────────
+             Rendered ONLY when there's a real next confirmed future session.
+             SessionData carries no location, so there is no address line and
+             "Get directions" appears only for in-person appointments. */}
+        {nextAppt != null && (
+          <View style={[styles.railSection, styles.railSectionDivider]}>
+            <Text style={styles.railSectionLabel}>Upcoming appointment</Text>
+            <View style={styles.apptRow}>
+              <View style={styles.apptIconCircle}>
+                <Calendar size={16} color={colors.emerald700} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.apptTime, numerals.tabular]}>
+                  {formatApptLabel(nextAppt.scheduledAt)}
+                </Text>
+                <View style={styles.apptBtns}>
+                  <TouchableOpacity
+                    style={styles.apptBtnOutlined}
+                    onPress={onSchedule}
+                    accessibilityRole="button"
+                    accessibilityLabel="Reschedule appointment"
+                  >
+                    <Text style={styles.apptBtnOutlinedText}>Reschedule</Text>
+                  </TouchableOpacity>
+                  {nextAppt.mode === 'in_person' && (
+                    <TouchableOpacity
+                      style={styles.apptBtnGhost}
+                      accessibilityRole="button"
+                      accessibilityLabel="Get directions"
+                    >
+                      <Navigation size={12} color={colors.primary} />
+                      <Text style={styles.apptBtnGhostText}>Get directions</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
               </View>
             </View>
           </View>
-        </View>
+        )}
 
         {/* ── Section 5: Earn next reward — hidden while rewards is removed (POINTS_ENABLED) ── */}
         {POINTS_ENABLED && (
@@ -2103,8 +2077,9 @@ type SessionsRoute = RouteProp<MemberTabParamList, 'Sessions'>;
  * MemberMessagesScreen — 3-pane rebuild matching H mockup.
  *
  * Exported and wired into MemberTabNavigator as the Sessions tab on web.
- * Reads route.params.chwId + route.params.autoCall to support deep-links
- * from MemberFacingCHWProfileScreen (T24 / commit #15 2026-06-03).
+ * Reads route.params.chwId to pre-select a thread for deep-links from
+ * MemberFacingCHWProfileScreen (T24 / commit #15 2026-06-03). The former
+ * route.params.autoCall consumer was removed — members cannot start calls.
  */
 export function MemberMessagesScreen(): React.JSX.Element {
   const { userName } = useAuth();
@@ -2114,8 +2089,6 @@ export function MemberMessagesScreen(): React.JSX.Element {
   // ── Route params (PRESERVED from #15) ────────────────────────────────────────
   const route = useRoute<SessionsRoute>();
   const targetCHWId  = route.params?.chwId;
-  const shouldAutoCall = route.params?.autoCall === true;
-  const autoCallFiredRef = useRef(false);
 
   // ── Responsive breakpoints ────────────────────────────────────────────────────
   const hideRail  = width < BP_HIDE_RAIL;
@@ -2355,12 +2328,6 @@ export function MemberMessagesScreen(): React.JSX.Element {
               memberFirstName={memberFirstName}
               onBack={handleBack}
               showBackButton={hideInbox}
-              autoCallOnMount={
-                shouldAutoCall &&
-                !autoCallFiredRef.current &&
-                selectedConversation.chwId === targetCHWId
-              }
-              onAutoCallConsumed={() => { autoCallFiredRef.current = true; }}
               servicesRefused={servicesRefused}
               onGoToProfile={handleGoToProfile}
               onGoToCalendar={handleGoToCalendar}
@@ -3332,11 +3299,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: colors.textPrimary,
-  } as TextStyle,
-  apptLocation: {
-    fontSize: 12,
-    color: colors.textSecondary,
-    marginTop: 2,
   } as TextStyle,
   apptBtns: {
     flexDirection: 'row',

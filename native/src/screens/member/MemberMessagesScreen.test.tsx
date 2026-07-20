@@ -39,7 +39,7 @@ vi.mock('@react-navigation/native', () => ({
 }));
 
 import { api } from '../../api/client';
-import { MemberMessagesScreen } from './MemberMessagesScreen';
+import { MemberMessagesScreen, formatApptLabel } from './MemberMessagesScreen';
 
 const mockedApi = api as unknown as ReturnType<typeof vi.fn>;
 
@@ -79,6 +79,32 @@ const memberProfileFixture = {
   rewards_balance: 0,
 };
 
+/**
+ * Raw (snake_case) session rows returned by the `/sessions/` endpoint mock.
+ * Mutable so each test can stage the exact set the CareContextRail's
+ * "Upcoming appointment" selector should (or should not) surface. Reset to
+ * empty in beforeEach.
+ */
+let sessionsFixture: Array<Record<string, unknown>> = [];
+
+/** Builds a raw session row; override any field per test. */
+function makeSession(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: `sess-${Math.random().toString(36).slice(2)}`,
+    request_id: 'req-1',
+    chw_id: CHW_ID,
+    member_id: MEMBER_ID,
+    vertical: 'housing',
+    status: 'scheduled',
+    mode: 'phone',
+    scheduled_at: '2099-03-05T18:00:00.000Z',
+    scheduled_end_at: '2099-03-05T19:00:00.000Z',
+    scheduling_status: 'confirmed',
+    proposed_by: 'chw',
+    ...overrides,
+  };
+}
+
 function routeApi(path: string, options?: { method?: string; body?: string }): unknown {
   const method = options?.method ?? 'GET';
 
@@ -106,6 +132,12 @@ function routeApi(path: string, options?: { method?: string; body?: string }): u
     return [];
   }
 
+  // useSessions() — member-scoped session list feeding the rail's
+  // "Upcoming appointment" selector.
+  if (path === '/sessions/' || path.startsWith('/sessions/?')) {
+    return sessionsFixture;
+  }
+
   throw new Error(`Unhandled api() call in MemberMessagesScreen test: ${method} ${path}`);
 }
 
@@ -124,6 +156,19 @@ function renderScreen() {
 
 /** Wide desktop viewport — plenty of room for all 3 panes at once. */
 const WIDE_VIEWPORT_WIDTH = 1400;
+
+/**
+ * Waits until useSessions() has actually fetched (the `/sessions/` endpoint was
+ * hit and its query resolved), so that "section is hidden" assertions test the
+ * post-load state rather than the still-loading one.
+ */
+async function waitForSessionsLoaded(): Promise<void> {
+  await waitFor(() =>
+    expect(
+      mockedApi.mock.calls.some(([p]) => String(p).startsWith('/sessions/?') || p === '/sessions/'),
+    ).toBe(true),
+  );
+}
 
 /**
  * See CHWMessagesScreen.test.tsx's identical helper for why the property
@@ -157,6 +202,7 @@ beforeAll(() => {
 beforeEach(() => {
   mockedApi.mockReset();
   mockNavigate.mockClear();
+  sessionsFixture = [];
   mockedApi.mockImplementation(async (path: string, options?: { method?: string; body?: string }) =>
     routeApi(path, options),
   );
@@ -234,5 +280,114 @@ describe('MemberMessagesScreen — phone-width single-pane collapse (Epic K)', (
 
     fireEvent.click(screen.getByLabelText('More options'));
     expect(screen.queryByRole('menuitem', { name: 'Your care context' })).toBeNull();
+  });
+});
+
+describe('CareContextRail — Upcoming appointment (real next confirmed session)', () => {
+  // Wide viewport so the care-context rail renders as its own pane.
+  beforeEach(() => {
+    setViewportWidth(WIDE_VIEWPORT_WIDTH);
+  });
+
+  it('shows the section with the real date when a future confirmed session exists', async () => {
+    const scheduledAt = '2099-03-05T18:00:00.000Z';
+    sessionsFixture = [
+      makeSession({
+        scheduled_at: scheduledAt,
+        scheduling_status: 'confirmed',
+        status: 'scheduled',
+        mode: 'phone',
+      }),
+    ];
+    renderScreen();
+    await screen.findAllByText('Test CHW', {}, { timeout: 3000 });
+
+    // Section is present with a date DERIVED from the session (not a hardcoded
+    // literal). Compute the expected label with the same formatter the screen
+    // uses so the assertion is timezone-independent.
+    expect(await screen.findByText('Upcoming appointment')).toBeTruthy();
+    expect(screen.getByText(formatApptLabel(scheduledAt))).toBeTruthy();
+    // No hardcoded fallbacks remain.
+    expect(screen.queryByText('Vermont DPSS office')).toBeNull();
+    expect(screen.queryByText('Thursday, June 12 · 2 PM')).toBeNull();
+  });
+
+  it('offers "Get directions" only for in-person appointments', async () => {
+    sessionsFixture = [makeSession({ mode: 'in_person' })];
+    renderScreen();
+    await screen.findAllByText('Test CHW', {}, { timeout: 3000 });
+
+    expect(await screen.findByLabelText('Reschedule appointment')).toBeTruthy();
+    expect(screen.getByLabelText('Get directions')).toBeTruthy();
+  });
+
+  it('omits "Get directions" for a phone appointment (no address on SessionData)', async () => {
+    sessionsFixture = [makeSession({ mode: 'phone' })];
+    renderScreen();
+    await screen.findAllByText('Test CHW', {}, { timeout: 3000 });
+
+    expect(await screen.findByLabelText('Reschedule appointment')).toBeTruthy();
+    expect(screen.queryByLabelText('Get directions')).toBeNull();
+  });
+
+  it('hides the section entirely when there are no sessions', async () => {
+    sessionsFixture = [];
+    renderScreen();
+    await screen.findAllByText('Test CHW', {}, { timeout: 3000 });
+    await waitForSessionsLoaded();
+
+    expect(screen.queryByText('Upcoming appointment')).toBeNull();
+    expect(screen.queryByLabelText('Reschedule appointment')).toBeNull();
+  });
+
+  it('hides the section for a PAST confirmed session', async () => {
+    sessionsFixture = [
+      makeSession({ scheduled_at: '2000-01-01T18:00:00.000Z', scheduling_status: 'confirmed' }),
+    ];
+    renderScreen();
+    await screen.findAllByText('Test CHW', {}, { timeout: 3000 });
+    await waitForSessionsLoaded();
+
+    expect(screen.queryByText('Upcoming appointment')).toBeNull();
+  });
+
+  it('hides the section for a future PENDING (unconfirmed) session', async () => {
+    sessionsFixture = [
+      makeSession({ scheduled_at: '2099-03-05T18:00:00.000Z', scheduling_status: 'pending' }),
+    ];
+    renderScreen();
+    await screen.findAllByText('Test CHW', {}, { timeout: 3000 });
+    await waitForSessionsLoaded();
+
+    expect(screen.queryByText('Upcoming appointment')).toBeNull();
+  });
+
+  it('hides the section for a COMPLETED session even if scheduled in the future', async () => {
+    sessionsFixture = [
+      makeSession({
+        scheduled_at: '2099-03-05T18:00:00.000Z',
+        scheduling_status: 'confirmed',
+        status: 'completed',
+      }),
+    ];
+    renderScreen();
+    await screen.findAllByText('Test CHW', {}, { timeout: 3000 });
+    await waitForSessionsLoaded();
+
+    expect(screen.queryByText('Upcoming appointment')).toBeNull();
+  });
+
+  it('picks the SOONEST future confirmed session when several exist', async () => {
+    sessionsFixture = [
+      makeSession({ scheduled_at: '2099-06-10T18:00:00.000Z', scheduling_status: 'confirmed' }),
+      makeSession({ scheduled_at: '2099-03-05T18:00:00.000Z', scheduling_status: 'confirmed' }),
+      makeSession({ scheduled_at: '2099-09-01T18:00:00.000Z', scheduling_status: 'confirmed' }),
+    ];
+    renderScreen();
+    await screen.findAllByText('Test CHW', {}, { timeout: 3000 });
+
+    expect(await screen.findByText('Upcoming appointment')).toBeTruthy();
+    expect(screen.getByText(formatApptLabel('2099-03-05T18:00:00.000Z'))).toBeTruthy();
+    expect(screen.queryByText(formatApptLabel('2099-06-10T18:00:00.000Z'))).toBeNull();
   });
 });
