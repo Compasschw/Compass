@@ -168,6 +168,14 @@ import {
   type ResourceNeedLevel,
 } from '../../hooks/useApiQueries';
 import {
+  RESOURCE_NEED_OPTIONS,
+  GRANDFATHERED_RESOURCE_NEED_OPTIONS,
+  CANONICAL_JOURNEY_NAMES,
+  deriveSeverity,
+  activeJourneysWithLevel,
+  type JourneySeverity,
+} from '../../lib/journeyPriority';
+import {
   INSURANCE_OPTIONS,
   validateCinForCarrier,
   expectedFormatMessage,
@@ -1587,51 +1595,11 @@ const editDemoStyles = StyleSheet.create({
 
 // ─── EditResourceNeedsModal ───────────────────────────────────────────────────
 
-/**
- * The selectable resource-need categories (slug → label).
- *
- * Epic C5: 'housing' is grandfathered — intentionally excluded here so it can
- * never be newly selected again. A member whose saved resource needs already
- * include 'housing' keeps it in `selectedSlugs` (hydrated from `currentNeeds`
- * on modal open) even though no chip renders for it; toggling other chips
- * never touches that entry, so Save still round-trips it to the backend,
- * which continues to accept the legacy value (see backend/app/schemas/chw.py
- * `_RESOURCE_NEED_VALUES`). 'utilities' replaces it as the new option.
- */
-const RESOURCE_NEED_OPTIONS: ReadonlyArray<{ slug: string; label: string }> = [
-  { slug: 'utilities',      label: 'Utilities' },
-  { slug: 'transportation', label: 'Transportation' },
-  { slug: 'food',           label: 'Food Security' },
-  { slug: 'mental_health',  label: 'Mental Health' },
-  { slug: 'healthcare',     label: 'Healthcare' },
-  { slug: 'employment',     label: 'Employment' },
-];
-
-/**
- * Grandfathered superset of RESOURCE_NEED_OPTIONS — adds back 'housing' for
- * NAME↔SLUG RECOGNITION ONLY (never for rendering chips). A legacy member
- * journey named "Housing" must still be recognized as a canonical/fixed-need
- * journey (not misclassified as a CHW-authored custom journey) and must still
- * resolve its CHW-assigned resource-need level. Use this constant — not
- * RESOURCE_NEED_OPTIONS — anywhere template-name/slug matching happens
- * against EXISTING journeys; use RESOURCE_NEED_OPTIONS for anything the CHW
- * can newly select from.
- */
-const GRANDFATHERED_RESOURCE_NEED_OPTIONS: ReadonlyArray<{ slug: string; label: string }> = [
-  { slug: 'housing', label: 'Housing' },
-  ...RESOURCE_NEED_OPTIONS,
-];
-
-/**
- * Canonical journey/template names that correspond 1:1 to a fixed resource need
- * (including the grandfathered 'Housing'). A member journey whose template
- * name is NOT in this set is a CHW-authored CUSTOM journey (i.e. a custom
- * resource need). Used to (a) surface custom journeys in the Resource Needs
- * card and (b) prevent a custom need from duplicating a fixed one.
- */
-const CANONICAL_JOURNEY_NAMES: ReadonlySet<string> = new Set(
-  GRANDFATHERED_RESOURCE_NEED_OPTIONS.map((o) => o.label),
-);
+// Resource-need taxonomy (RESOURCE_NEED_OPTIONS, GRANDFATHERED_RESOURCE_NEED_OPTIONS,
+// CANONICAL_JOURNEY_NAMES) and priority helpers (deriveSeverity, LEVEL_SORT_ORDER,
+// activeJourneysWithLevel, JourneySeverity) now live in ../../lib/journeyPriority
+// — imported at the top of this file — so this screen and CHWMessagesScreen share
+// one source of truth for need priority.
 
 interface EditResourceNeedsModalProps {
   visible: boolean;
@@ -5441,72 +5409,9 @@ const editNodeStyles = StyleSheet.create({
   } as TextStyle,
 });
 
-// ─── Severity helpers ─────────────────────────────────────────────────────────
-
-/**
- * Derive severity level from journey progressPercent.
- *
- * Heuristic (client-side, no backend change required):
- *   progressPercent < 33   → 'high'   — red ring, red Pill
- *   33 ≤ progress < 67     → 'medium' — amber ring, amber Pill
- *   progress ≥ 67          → 'low'    — yellow ring, yellow Pill
- */
-type JourneySeverity = 'high' | 'medium' | 'low';
-
-function deriveSeverity(progressPercent: number): JourneySeverity {
-  if (progressPercent < 33) return 'high';
-  if (progressPercent < 67) return 'medium';
-  return 'low';
-}
-
-/** Stable sort order for CHW-assigned resource need levels. */
-const LEVEL_SORT_ORDER: Record<ResourceNeedLevel, number> = {
-  high: 0,
-  medium: 1,
-  low: 2,
-};
-
-/**
- * The member's active journeys paired with their DISPLAY level, sorted
- * high→medium→low. This is THE single source of truth shared by the Resource
- * Needs card and the Member Journey section, so the two are always in sync — a
- * member need IS an active journey.
- *
- * Level: a fixed-need journey (template name maps to a resource-need slug) uses
- * the CHW-assigned resource-need level when set; everything else (orphan
- * canonical journeys, custom journeys) falls back to a progress-derived severity.
- */
-function activeJourneysWithLevel(
-  journeys: MemberJourneyResponse[] | undefined,
-  resourceNeedLevels: Record<string, ResourceNeedLevel>,
-): { journey: MemberJourneyResponse; level: JourneySeverity }[] {
-  return (journeys ?? [])
-    .filter((j) => j.status === 'active')
-    .map((journey, i) => {
-      // Grandfathered superset — a legacy "Housing" journey must still
-      // resolve to its CHW-assigned resource-need level, not fall back to
-      // progress-derived severity, even though 'housing' is no longer an
-      // offered resource-need chip.
-      const slug = GRANDFATHERED_RESOURCE_NEED_OPTIONS.find((o) => o.label === journey.template.name)?.slug;
-      let level: JourneySeverity;
-      if (slug !== undefined && slug in resourceNeedLevels) {
-        // Fixed need with a CHW-assigned level.
-        level = resourceNeedLevels[slug];
-      } else if (journey.priorityLevel) {
-        // Custom need with a CHW-assigned priority.
-        level = journey.priorityLevel;
-      } else {
-        // Orphan canonical journey (or anything unlabelled): derive from progress.
-        level = deriveSeverity(journey.progressPercent);
-      }
-      return { journey, level, i };
-    })
-    .sort((a, b) => {
-      const diff = LEVEL_SORT_ORDER[a.level] - LEVEL_SORT_ORDER[b.level];
-      return diff !== 0 ? diff : a.i - b.i;
-    })
-    .map(({ journey, level }) => ({ journey, level }));
-}
+// Severity helpers (deriveSeverity, LEVEL_SORT_ORDER, activeJourneysWithLevel,
+// JourneySeverity) are imported from ../../lib/journeyPriority — the shared
+// source of truth for need priority (see import at top of file).
 
 // ─── ResourceNeedsColumn ─────────────────────────────────────────────────────
 

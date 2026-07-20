@@ -153,7 +153,12 @@ import {
   type SessionData,
   type SessionMessageLocal,
   type MemberJourneyResponse,
+  useChwMemberResourceNeedLevels,
 } from '../../hooks/useApiQueries';
+import {
+  activeJourneysWithLevel,
+  type JourneySeverity,
+} from '../../lib/journeyPriority';
 import {
   useEngagementStatus,
 } from '../../hooks/useMessagesInsights';
@@ -458,22 +463,22 @@ function journeyCategoryIcon(category: string | undefined): React.ComponentType<
   }
 }
 
-// ─── Resource-needs severity heuristic ───────────────────────────────────────
+// ─── Resource-needs priority display ─────────────────────────────────────────
 
 /**
- * Severity tier derived from journey progress percentage.
- *   < 33 → High (red), 33–67 → Medium (amber), ≥ 67 → Low (amber)
+ * Display label + pill variant for a CHW-assigned need level. Priority itself
+ * is resolved by the shared `activeJourneysWithLevel` (../../lib/journeyPriority)
+ * from the member's stored resource_need_levels — NOT fabricated from progress —
+ * so this rail matches the Member Journey card's priority exactly.
  */
-type ResourceSeverity = 'High' | 'Medium' | 'Low';
+const SEVERITY_LABEL: Record<JourneySeverity, string> = {
+  high: 'High',
+  medium: 'Medium',
+  low: 'Low',
+};
 
-function deriveSeverity(progressPercent: number): ResourceSeverity {
-  if (progressPercent < 33) return 'High';
-  if (progressPercent < 67) return 'Medium';
-  return 'Low';
-}
-
-function severityPillVariant(severity: ResourceSeverity): PillVariant {
-  if (severity === 'High') return 'red';
+function severityPillVariant(level: JourneySeverity): PillVariant {
+  if (level === 'high') return 'red';
   // Medium and Low both map to amber — consolidated 6-hue palette
   return 'amber';
 }
@@ -2577,6 +2582,19 @@ function MemberContextRail({
     );
   }, [journeysQuery.data, conv.memberId]);
 
+  // CHW-assigned resource-need priorities (authoritative, same source + cache
+  // key as the member-profile screen) so this rail's priority matches the
+  // Member Journey card instead of being fabricated from progress %.
+  const resourceNeedLevelsQuery = useChwMemberResourceNeedLevels(conv.memberId);
+  const resourceNeedLevels = resourceNeedLevelsQuery.data ?? {};
+
+  // Member's active journeys paired with their CHW-assigned level, sorted
+  // high→medium→low — THE shared source of truth (see lib/journeyPriority).
+  const leveledNeeds = useMemo(
+    () => activeJourneysWithLevel(memberJourneys, resourceNeedLevels),
+    [memberJourneys, resourceNeedLevels],
+  );
+
   const activeJourney: MemberJourneyResponse | null = useMemo(
     () =>
       [...memberJourneys].sort(
@@ -2585,12 +2603,11 @@ function MemberContextRail({
     [memberJourneys],
   );
 
-  // Top resource needs — top 3 active journeys ranked by severity (lowest progress first)
-  const topResourceNeeds = useMemo<MemberJourneyResponse[]>(() => {
-    return [...memberJourneys]
-      .sort((a, b) => a.progressPercent - b.progressPercent)
-      .slice(0, 3);
-  }, [memberJourneys]);
+  // Top resource needs — top 3 by CHW-assigned priority (high first).
+  const topResourceNeeds = useMemo<{ journey: MemberJourneyResponse; level: JourneySeverity }[]>(
+    () => leveledNeeds.slice(0, 3),
+    [leveledNeeds],
+  );
 
   // ── Session Focus ───────────────────────────────────────────────────────────
   // The focus journey = the member's top priority: highest CHW-assigned priority
@@ -2661,10 +2678,12 @@ function MemberContextRail({
   useEffect(() => {
     setCareJourneyIndex(0);
   }, [conv.memberId]);
-  const careJourneyCount = memberJourneys.length;
+  // Paginate Care Status over the priority-ordered list so its order matches
+  // the Active Needs ranking (high → low), not raw journey-fetch order.
+  const careJourneyCount = leveledNeeds.length;
   const careIndex =
     careJourneyCount > 0 ? Math.min(careJourneyIndex, careJourneyCount - 1) : 0;
-  const careJourney = memberJourneys[careIndex] ?? null;
+  const careJourney = leveledNeeds[careIndex]?.journey ?? null;
   const careSteps = useMemo(
     () =>
       careJourney
@@ -3035,9 +3054,8 @@ function MemberContextRail({
               <Flag size={13} color={tokens.textSecondary} />
               <Text style={styles.railCardTitle}>Active Needs</Text>
             </View>
-            {topResourceNeeds.map((journey, index) => {
-              const severity = deriveSeverity(journey.progressPercent);
-              const pillVariant = severityPillVariant(severity);
+            {topResourceNeeds.map(({ journey, level }, index) => {
+              const pillVariant = severityPillVariant(level);
               const IconComponent = journeyCategoryIcon(journey.template.category);
               return (
                 <View
@@ -3052,7 +3070,7 @@ function MemberContextRail({
                     </Text>
                   </View>
                   <Pill variant={pillVariant} size="sm">
-                    {severity}
+                    {SEVERITY_LABEL[level]}
                   </Pill>
                 </View>
               );

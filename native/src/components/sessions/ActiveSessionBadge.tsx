@@ -624,8 +624,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     gap:               spacing.sm,
     zIndex:            Z_INDEX,
+    // Web: suppress text selection so a click-drag anywhere on the card moves
+    // it instead of highlighting the member name / timer / button labels
+    // (react-native-web PanResponder maps to mouse events but does not
+    // preventDefault selection — mirrors ResizableDivider.tsx).
+    ...(Platform.OS === 'web' ? { userSelect: 'none' } : {}),
     ...(shadows.elevated as object),
-  } as ViewStyle,
+  } as unknown as ViewStyle,
 
   /**
    * Drag handle — the only region wired to `panResponder.panHandlers`, so a
@@ -640,7 +645,7 @@ const styles = StyleSheet.create({
     marginTop:      -spacing.xs,
     marginBottom:   -spacing.xs,
     paddingVertical: 4,
-    ...(Platform.OS === 'web' ? { cursor: 'grab' } : {}),
+    ...(Platform.OS === 'web' ? { cursor: 'grab', userSelect: 'none' } : {}),
   } as unknown as ViewStyle,
 
   info: {
