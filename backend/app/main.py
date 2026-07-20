@@ -100,11 +100,21 @@ app.add_middleware(
     allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    # X-Admin-2FA-Token is required by every /admin JSON API call from the
-    # React admin SPA. Browsers send a preflight OPTIONS for any non-CORS-
-    # safelisted request header, so omitting it here blocks the entire admin
-    # dashboard at the preflight stage with a "Disallowed CORS headers" 400.
-    allow_headers=["Authorization", "Content-Type", "X-Admin-2FA-Token"],
+    # Browsers send a preflight OPTIONS for any non-CORS-safelisted request
+    # header; omitting one here blocks the whole request at preflight with a
+    # "Disallowed CORS headers" 400, which the app sees as a bare
+    # "Failed to fetch". EVERY custom request header the frontend sends MUST be
+    # listed here:
+    #   - X-Admin-2FA-Token: admin SPA's 2FA-gated /admin JSON API calls.
+    #   - X-Device-Token: sent on /auth/login by the CHW SMS 2FA trusted-device
+    #     check (Spec 2). Missing it broke ALL logins (incl. member/CHW) with
+    #     "Failed to fetch" at preflight, since the header rides on login.
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "X-Admin-2FA-Token",
+        "X-Device-Token",
+    ],
 )
 app.add_middleware(AuditMiddleware)
 
