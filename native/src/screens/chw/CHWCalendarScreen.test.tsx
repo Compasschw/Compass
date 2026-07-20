@@ -1174,3 +1174,110 @@ describe('CHWCalendarScreen — deriveBadgeStatus truthful status tags (O1)', ()
     expect(screen.queryByText('Missed')).toBeNull();
   });
 });
+
+// ─── Tap an empty 30-min grid cell → Schedule modal pre-filled ──────────────
+//
+// Members and CHWs can tap any empty half-hour cell in the Week/Day grid to
+// open the "Schedule Session" modal with that date + time already filled. The
+// modal is opened via the same ScheduleSessionModal (fresh booking — member
+// picker stays unlocked), seeded through its `slotPrefill` path. Session cards
+// sit above the tap layer and win any overlapping tap (Session Details opens,
+// not the scheduler).
+
+/** The accessible label a SlotTapZone renders for a given cell. Mirrors the
+ *  component's own label construction so the test taps the exact empty cell. */
+function slotCellLabel(date: Date, hour: number, minute: 0 | 30): string {
+  const display = hour % 12 === 0 ? 12 : hour % 12;
+  const suffix = hour < 12 ? 'AM' : 'PM';
+  const timeLabel = `${display}:${minute === 0 ? '00' : '30'} ${suffix}`;
+  const dateLabel = date.toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+  return `Schedule a session on ${dateLabel} at ${timeLabel}`;
+}
+
+/** Local midnight Monday of the week the Week view anchors to (this week). */
+function mondayOfThisWeek(): Date {
+  const anchor = new Date();
+  anchor.setHours(0, 0, 0, 0);
+  const day = anchor.getDay();
+  const monday = new Date(anchor);
+  monday.setDate(anchor.getDate() - day + (day === 0 ? -6 : 1));
+  return monday;
+}
+
+/** Local midnight today — the day the Day view is pinned to. */
+function todayMidnight(): Date {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+describe('CHWCalendarScreen — tap an empty slot to schedule (Week + Day)', () => {
+  it('opens the Schedule modal with date + start/end seeded from a Week-view empty cell', async () => {
+    renderScreen();
+
+    const monday = mondayOfThisWeek();
+    fireEvent.click(await screen.findByLabelText(slotCellLabel(monday, 11, 0)));
+
+    const dateInput = (await screen.findByLabelText('Session date')) as HTMLInputElement;
+    expect(dateInput.value).toBe(mmddyyyy(monday));
+    expect((screen.getByLabelText('Session start time') as HTMLInputElement).value).toBe('11:00 AM');
+    expect((screen.getByLabelText('Session end time') as HTMLInputElement).value).toBe('11:30 AM');
+  });
+
+  it('honors the :30 half-hour cell (end time = tapped time + 30 min)', async () => {
+    renderScreen();
+
+    const monday = mondayOfThisWeek();
+    fireEvent.click(await screen.findByLabelText(slotCellLabel(monday, 14, 30)));
+
+    const dateInput = (await screen.findByLabelText('Session date')) as HTMLInputElement;
+    expect(dateInput.value).toBe(mmddyyyy(monday));
+    expect((screen.getByLabelText('Session start time') as HTMLInputElement).value).toBe('2:30 PM');
+    expect((screen.getByLabelText('Session end time') as HTMLInputElement).value).toBe('3:00 PM');
+  });
+
+  it('opens the Schedule modal seeded from a Day-view empty cell', async () => {
+    renderScreen();
+    fireEvent.click(await screen.findByLabelText('day view'));
+
+    const today = todayMidnight();
+    fireEvent.click(await screen.findByLabelText(slotCellLabel(today, 8, 0)));
+
+    const dateInput = (await screen.findByLabelText('Session date')) as HTMLInputElement;
+    expect(dateInput.value).toBe(mmddyyyy(today));
+    expect((screen.getByLabelText('Session start time') as HTMLInputElement).value).toBe('8:00 AM');
+    expect((screen.getByLabelText('Session end time') as HTMLInputElement).value).toBe('8:30 AM');
+  });
+
+  it('leaves the member picker UNLOCKED on a slot-tap open (fresh booking, not a reschedule)', async () => {
+    renderScreen();
+
+    const monday = mondayOfThisWeek();
+    fireEvent.click(await screen.findByLabelText(slotCellLabel(monday, 9, 0)));
+
+    // Propose New Time locks the member; a slot tap must not — the member
+    // search field stays present so the CHW still chooses who to book.
+    await screen.findByLabelText('Session date');
+    expect(screen.getByLabelText('Search members')).toBeTruthy();
+  });
+
+  it('opens Session Details (NOT the scheduler) when an existing session card is tapped', async () => {
+    // confirmedSessionFixture (member Rosa, today) is already in the base
+    // /sessions/ response and lands in Day view's todaySessions bucket.
+    renderScreen();
+    fireEvent.click(await screen.findByLabelText('day view'));
+
+    const card = await screen.findByLabelText(new RegExp(`^Session with ${MEMBER_NAME} at`));
+    fireEvent.click(card);
+
+    // The session block wins the tap: Session Details opens and the Schedule
+    // modal (its Session date field) is never mounted by this tap.
+    await screen.findByText('Session Details');
+    expect(screen.queryByLabelText('Session date')).toBeNull();
+  });
+});
