@@ -4366,6 +4366,30 @@ export function useChwJourneys() {
   });
 }
 
+/**
+ * CHW-assigned resource-need priority levels for one member, as a {slug: level}
+ * map. Sourced from GET /chw/members/{id} (`resource_need_levels`) — the SAME
+ * endpoint + cache key the member-profile screen's detail query uses, so the
+ * two share one fetch. Lets journeys-only screens (e.g. CHWMessagesScreen)
+ * resolve authoritative need priority instead of fabricating it from progress.
+ */
+export function useChwMemberResourceNeedLevels(memberId: string) {
+  return useQuery({
+    queryKey: ['chw', 'members', memberId, 'detail'] as const,
+    enabled: memberId.length > 0,
+    staleTime: 60_000,
+    queryFn: async (): Promise<Record<string, ResourceNeedLevel>> => {
+      const raw = await api<unknown>(`/chw/members/${memberId}`);
+      const detail = transformKeys<{
+        resourceNeedLevels?: Array<{ slug: string; level: ResourceNeedLevel }>;
+      }>(raw);
+      return Object.fromEntries(
+        (detail.resourceNeedLevels ?? []).map((x) => [x.slug, x.level]),
+      );
+    },
+  });
+}
+
 /** Query key for GET /journeys/{journeyId} — full step detail for one journey. */
 export const chwJourneyDetailKey = (journeyId: string) =>
   ['chw', 'journeys', journeyId] as const;
