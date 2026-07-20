@@ -185,6 +185,64 @@ describe('MemberFacingCHWProfileScreen — Sessions Together (Part 17: completed
   });
 });
 
+describe('MemberFacingCHWProfileScreen — Connect: calling is CHW-only', () => {
+  it('renders Message + Schedule but never a Call button (members cannot call)', async () => {
+    renderScreen();
+
+    // Message + Schedule remain.
+    await waitFor(() => expect(screen.getByText('Message')).toBeTruthy());
+    expect(screen.getByLabelText('Message Maria')).toBeTruthy();
+    expect(screen.getByText('Schedule next session')).toBeTruthy();
+
+    // No Call affordance in any form — label, accessibility label, or handler.
+    expect(screen.queryByText('Call')).toBeNull();
+    expect(screen.queryByLabelText('Call Maria')).toBeNull();
+    expect(screen.queryByLabelText(/^Call /)).toBeNull();
+  });
+});
+
+describe('MemberFacingCHWProfileScreen — Availability chips: Mon→Sun order + AM/PM times', () => {
+  it('sorts chips Mon→Sun (not alphabetically) and renders 12-hour AM/PM windows', async () => {
+    chwProfileFixture = {
+      ...baseChwProfileFixture(),
+      // Deliberately out of order AND non-alphabetical to prove the sort.
+      available_days: ['wed', 'mon', 'fri'],
+      availability_windows: {
+        mon: '09:00-17:00',
+        wed: '08:00-12:00',
+        fri: '13:30-18:00',
+      },
+    };
+    renderScreen();
+
+    // Each chip carries its 12-hour window (noon → "12:00 PM", 13:30 → "1:30 PM").
+    await waitFor(() => expect(screen.getByText('Mon 9:00 AM – 5:00 PM')).toBeTruthy());
+    expect(screen.getByText('Wed 8:00 AM – 12:00 PM')).toBeTruthy();
+    expect(screen.getByText('Fri 1:30 PM – 6:00 PM')).toBeTruthy();
+
+    // Chips appear in Mon→Wed→Fri DOM order, regardless of the input array order.
+    const chips = screen
+      .getAllByText(/^(Mon|Tue|Wed|Thu|Fri|Sat|Sun) \d{1,2}:\d{2}/)
+      .map((el) => el.textContent);
+    expect(chips).toEqual([
+      'Mon 9:00 AM – 5:00 PM',
+      'Wed 8:00 AM – 12:00 PM',
+      'Fri 1:30 PM – 6:00 PM',
+    ]);
+  });
+
+  it('renders a day chip with no time suffix when its window is missing', async () => {
+    chwProfileFixture = {
+      ...baseChwProfileFixture(),
+      available_days: ['tue'],
+      availability_windows: {}, // no window for tue
+    };
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByText('Tue')).toBeTruthy());
+  });
+});
+
 describe('MemberFacingCHWProfileScreen — QA2 #11: sparse-profile crash regression', () => {
   it('renders (no error boundary) when the CHW profile is nearly empty', async () => {
     // Reproduces the prod "Something went wrong" crash on /member/my-chw:

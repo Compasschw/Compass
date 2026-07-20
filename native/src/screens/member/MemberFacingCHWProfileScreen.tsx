@@ -11,11 +11,12 @@
  *   Center card — Performance & About: star rating, sessions completed, "About me" bio
  *   Right card  — Relationship context: date assigned, journey progress, Schedule CTA
  *
- * Call / Message wiring (mirrors T15 CHW-side contract):
- *   Tap Call    → navigate Sessions with { chwId, autoCall: true }
+ * Message wiring:
  *   Tap Message → navigate Sessions with { chwId }
  *
- * Uses existing `phone` provider (Vonage masked-number). No new BE endpoints.
+ * Members cannot place calls from this screen — calling is a CHW-only action
+ * (the CHW initiates via the Vonage masked-number provider), so the member's
+ * "My CHW" page exposes Message + Schedule only. No new BE endpoints.
  *
  * Route param: { chwId: string }
  * Navigator: MemberFindStack (MemberTabNavigator)
@@ -45,7 +46,6 @@ import {
   Globe,
   MapPin,
   MessageSquare,
-  Phone,
   ShieldOff,
   Star,
   TrendingUp,
@@ -113,6 +113,9 @@ const DAY_LABELS: Record<string, string> = {
   sat: 'Sat',
   sun: 'Sun',
 } as const;
+
+/** Canonical weekday ordering so availability chips read Mon → Sun, not alphabetically. */
+const WEEKDAY_ORDER = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
 
 // Epic C5: 'housing' is grandfathered (a CHW's pre-existing specialization
 // still renders); 'utilities' is the new selectable specialization.
@@ -187,6 +190,36 @@ function deriveAssignedDate(
     (a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt),
   );
   return sorted[0]?.createdAt ?? null;
+}
+
+/**
+ * Converts a 24-hour "HH:mm" string to a 12-hour "h:mm AM/PM" label.
+ * Returns the raw input unchanged when it doesn't parse (defensive — the
+ * availability window data comes from the wire).
+ */
+function to12h(hhmm: string): string {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(hhmm.trim());
+  if (match == null) return hhmm;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute) || hour > 23 || minute > 59) {
+    return hhmm;
+  }
+  const period = hour < 12 ? 'AM' : 'PM';
+  const hour12 = hour % 12 === 0 ? 12 : hour % 12;
+  return `${hour12}:${String(minute).padStart(2, '0')} ${period}`;
+}
+
+/**
+ * Formats a "HH:mm-HH:mm" availability window into "9:00 AM – 5:00 PM".
+ * Returns an empty string for missing/malformed windows so callers can omit
+ * the time suffix entirely.
+ */
+function formatWindow(win: string | undefined): string {
+  if (win == null || win.trim() === '') return '';
+  const [start, end] = win.split('-');
+  if (start == null || end == null) return '';
+  return `${to12h(start)} – ${to12h(end)}`;
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -477,6 +510,12 @@ interface PerformanceCardProps {
   yearsExperience: string | null;
   availableDays: string[];
   /**
+   * Weekly working-hours windows keyed by day abbrev: { "mon": "09:00-17:00" }.
+   * Drives the AM/PM time suffix on each availability chip. Empty object when
+   * the CHW hasn't set hours.
+   */
+  availabilityWindows: Record<string, string>;
+  /**
    * QA batch (2026-07-14) Part 18 — average of THIS member's own
    * post-session ratings (1-5) for this CHW, or `null` when the member has
    * never rated them. No approval-status gate: this is the member's own
@@ -500,6 +539,7 @@ function PerformanceCard({
   sharedSessionCount,
   yearsExperience,
   availableDays,
+  availabilityWindows,
   ratingAvg,
   ratingCount,
 }: PerformanceCardProps): React.JSX.Element {
@@ -563,11 +603,19 @@ function PerformanceCard({
         <View style={cardStyles.chipBlock}>
           <Text style={cardStyles.chipBlockLabel}>Availability</Text>
           <View style={cardStyles.chipRow}>
-            {availableDays.map((day) => (
-              <Pill key={day} variant="gray" size="sm">
-                {DAY_LABELS[day] ?? day}
-              </Pill>
-            ))}
+            {[...availableDays]
+              .sort(
+                (a, b) => WEEKDAY_ORDER.indexOf(a as (typeof WEEKDAY_ORDER)[number]) -
+                  WEEKDAY_ORDER.indexOf(b as (typeof WEEKDAY_ORDER)[number]),
+              )
+              .map((day) => {
+                const time = formatWindow(availabilityWindows[day]);
+                return (
+                  <Pill key={day} variant="gray" size="sm">
+                    {`${DAY_LABELS[day] ?? day}${time ? ' ' + time : ''}`}
+                  </Pill>
+                );
+              })}
           </View>
         </View>
       )}
@@ -587,7 +635,6 @@ interface RelationshipCardProps {
   chwFirstName: string;
   assignedDate: string | null;
   sharedSessionCount: number;
-  onCall: () => void;
   onMessage: () => void;
   onSchedule: () => void;
 }
@@ -596,7 +643,6 @@ function RelationshipCard({
   chwFirstName,
   assignedDate,
   sharedSessionCount,
-  onCall,
   onMessage,
   onSchedule,
 }: RelationshipCardProps): React.JSX.Element {
@@ -650,15 +696,10 @@ function RelationshipCard({
 
       <SectionHeader title="Connect" marginBottom={spacing.md} />
 
-      {/* Call / Message action row */}
+      {/* Message action — full-width (calling is a CHW-only action). Because
+          ActionButton has flex:1 and actionRow is still a row, Message
+          stretches to full width, matching the Schedule CTA below. */}
       <View style={cardStyles.actionRow}>
-        <ActionButton
-          icon={<Phone size={17} color={tokens.cardBg} />}
-          label="Call"
-          onPress={onCall}
-          variant="primary"
-          accessibilityLabel={`Call ${chwFirstName}`}
-        />
         <ActionButton
           icon={<MessageSquare size={17} color={tokens.textPrimary} />}
           label="Message"
@@ -986,11 +1027,6 @@ export function MemberFacingCHWProfileScreen(
     }
   }, [navigation]);
 
-  /** Navigate to Sessions tab pre-selecting this CHW's thread + auto-call. */
-  const handleCall = useCallback(() => {
-    navigation.navigate('Sessions', { chwId, autoCall: true } satisfies MemberTabParamList['Sessions']);
-  }, [navigation, chwId]);
-
   /** Navigate to Sessions tab pre-selecting this CHW's thread (no call). */
   const handleMessage = useCallback(() => {
     navigation.navigate('Sessions', { chwId } satisfies MemberTabParamList['Sessions']);
@@ -1107,6 +1143,7 @@ export function MemberFacingCHWProfileScreen(
               availableDays={
                 Array.isArray(profile.availableDays) ? profile.availableDays : []
               }
+              availabilityWindows={profile.availabilityWindows ?? {}}
               ratingAvg={profile.myRatingAvg ?? null}
               ratingCount={profile.myRatingCount ?? 0}
             />
@@ -1116,7 +1153,6 @@ export function MemberFacingCHWProfileScreen(
               chwFirstName={profile.firstName}
               assignedDate={assignedDate}
               sharedSessionCount={profile.sharedSessionCount}
-              onCall={handleCall}
               onMessage={handleMessage}
               onSchedule={handleSchedule}
             />
