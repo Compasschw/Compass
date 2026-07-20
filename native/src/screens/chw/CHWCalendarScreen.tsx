@@ -23,6 +23,7 @@ import {
   ScrollView,
   StyleSheet,
   TouchableOpacity,
+  Pressable,
   Modal,
   Platform,
   ActivityIndicator,
@@ -437,6 +438,52 @@ const sessionCardStyles = StyleSheet.create({
   },
 });
 
+// ─── Empty-slot tap zone ──────────────────────────────────────────────────────
+
+/** Callback fired when an empty 30-minute grid cell is tapped. */
+export type OnSlotPress = (date: Date, hour: number, minute: 0 | 30) => void;
+
+interface SlotTapZoneProps {
+  /** The calendar day this cell belongs to (the grid column's date). */
+  date: Date;
+  /** Hour (24h) of the parent hour cell. */
+  hour: number;
+  /** Which half of the hour this zone covers — 0 = :00, 30 = :30. */
+  minute: 0 | 30;
+  onSlotPress: OnSlotPress;
+}
+
+/**
+ * A single half-hour tap target laid over one half of an hour cell. Two of
+ * these stack to split each 1-hour grid cell into the :00 and :30 slots the
+ * 30-minute grid already draws, so tapping empty space opens the schedule
+ * modal pre-filled with that exact date + time. Session cards sit above this
+ * layer (see `cardsLayer` + its `box-none` pointer events) and win any tap
+ * that overlaps a booked block.
+ */
+function SlotTapZone({ date, hour, minute, onSlotPress }: SlotTapZoneProps): React.JSX.Element {
+  const display = hour % 12 === 0 ? 12 : hour % 12;
+  const suffix = hour < 12 ? 'AM' : 'PM';
+  const timeLabel = `${display}:${minute === 0 ? '00' : '30'} ${suffix}`;
+  const dateLabel = date.toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+  return (
+    <Pressable
+      style={({ pressed, hovered }: { pressed: boolean; hovered?: boolean }) => [
+        weekStyles.slotZone,
+        (pressed || hovered) && weekStyles.slotZoneActive,
+      ]}
+      onPress={() => onSlotPress(date, hour, minute)}
+      accessibilityRole="button"
+      accessibilityLabel={`Schedule a session on ${dateLabel} at ${timeLabel}`}
+    />
+  );
+}
+
 // ─── WeekViewGrid ─────────────────────────────────────────────────────────────
 
 interface WeekViewGridProps {
@@ -445,6 +492,8 @@ interface WeekViewGridProps {
   today: { year: number; month: number; day: number };
   now: Date;
   onSessionPress: (session: SessionData) => void;
+  /** Tapping an empty 30-min cell reports its date/hour/minute for scheduling. */
+  onSlotPress?: OnSlotPress;
   /** The CHW's own availability — cells outside these hours/days are greyed. */
   availabilityWindows?: AvailabilityWindows;
 }
@@ -460,6 +509,7 @@ function WeekViewGrid({
   today,
   now,
   onSessionPress,
+  onSlotPress,
   availabilityWindows,
 }: WeekViewGridProps): React.JSX.Element {
   const totalGridHeight = WEEK_VIEW_HOURS.length * SLOT_HEIGHT;
@@ -511,7 +561,8 @@ function WeekViewGrid({
 
           return (
             <View key={key} style={[weekStyles.dayColumn, isToday && weekStyles.dayColumnToday]}>
-              {/* Hour grid lines with a lighter :30 half-hour divider. */}
+              {/* Hour grid lines with a lighter :30 half-hour divider. Each
+                  hour cell splits into two half-hour tap zones for scheduling. */}
               {WEEK_VIEW_HOURS.map((hour) => {
                 const unavailable =
                   availabilityWindows !== undefined &&
@@ -521,12 +572,22 @@ function WeekViewGrid({
                     key={hour}
                     style={[weekStyles.hourLine, unavailable && weekStyles.hourUnavailable]}
                   >
+                    {onSlotPress ? (
+                      <>
+                        <SlotTapZone date={date} hour={hour} minute={0} onSlotPress={onSlotPress} />
+                        <SlotTapZone date={date} hour={hour} minute={30} onSlotPress={onSlotPress} />
+                      </>
+                    ) : null}
                     <View style={weekStyles.halfHourLine} />
                   </View>
                 );
               })}
-              {/* Absolute-position session cards */}
-              <View style={[weekStyles.cardsLayer, { height: totalGridHeight }]}>
+              {/* Absolute-position session cards — box-none lets empty-cell taps
+                  fall through to the SlotTapZones below while each card still
+                  captures its own tap (session block wins any overlap). */}
+              <View
+                style={[weekStyles.cardsLayer, { height: totalGridHeight, pointerEvents: 'box-none' }]}
+              >
                 {daySessions.map((session) => (
                   <SessionCard
                     key={session.id}
@@ -607,6 +668,15 @@ const weekStyles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#F3F4F6',
   },
+  // Each half of an hour cell is a tap target for scheduling a 30-min slot.
+  slotZone: {
+    flex: 1,
+    cursor: 'pointer',
+  },
+  // Subtle web hover/press affordance over an empty schedulable half-hour.
+  slotZoneActive: {
+    backgroundColor: tokens.primary + '0F',
+  },
   // Lighter divider at the :30 half-hour mark inside each hour cell.
   halfHourLine: {
     position: 'absolute',
@@ -615,6 +685,7 @@ const weekStyles = StyleSheet.create({
     right: 0,
     height: 1,
     backgroundColor: '#F9FAFB',
+    pointerEvents: 'none',
   },
   // Outside the CHW's working hours.
   hourUnavailable: {
@@ -641,6 +712,8 @@ interface DayViewGridProps {
   sessions: SessionData[];
   now: Date;
   onSessionPress: (session: SessionData) => void;
+  /** Tapping an empty 30-min cell reports its date/hour/minute for scheduling. */
+  onSlotPress?: OnSlotPress;
   /** The CHW's own availability — cells outside these hours are greyed. */
   availabilityWindows?: AvailabilityWindows;
 }
@@ -650,6 +723,7 @@ function DayViewGrid({
   sessions,
   now,
   onSessionPress,
+  onSlotPress,
   availabilityWindows,
 }: DayViewGridProps): React.JSX.Element {
   const totalGridHeight = WEEK_VIEW_HOURS.length * SLOT_HEIGHT;
@@ -679,11 +753,19 @@ function DayViewGrid({
                 key={hour}
                 style={[weekStyles.hourLine, unavailable && weekStyles.hourUnavailable]}
               >
+                {onSlotPress ? (
+                  <>
+                    <SlotTapZone date={date} hour={hour} minute={0} onSlotPress={onSlotPress} />
+                    <SlotTapZone date={date} hour={hour} minute={30} onSlotPress={onSlotPress} />
+                  </>
+                ) : null}
                 <View style={weekStyles.halfHourLine} />
               </View>
             );
           })}
-          <View style={[weekStyles.cardsLayer, { height: totalGridHeight }]}>
+          <View
+            style={[weekStyles.cardsLayer, { height: totalGridHeight, pointerEvents: 'box-none' }]}
+          >
             {sessions.map((session) => (
               <SessionCard
                 key={session.id}
@@ -1655,6 +1737,13 @@ interface ScheduleSessionModalProps {
    * session.
    */
   replaceSessionId?: string;
+  /**
+   * Slot-tap open: the modal was opened by tapping an empty 30-min grid cell,
+   * so the prefill effect must ALSO seed the date/start/end fields even though
+   * this is a fresh booking with no `replaceSessionId`. The member picker
+   * stays unlocked (no `prefillMemberId`) — the CHW still chooses who.
+   */
+  slotPrefill?: boolean;
 }
 
 /**
@@ -1686,6 +1775,7 @@ function ScheduleSessionModal({
   prefillEndTime,
   prefillResourceNeeds,
   replaceSessionId,
+  slotPrefill,
 }: ScheduleSessionModalProps): React.JSX.Element {
   const { mutateAsync, isPending } = useScheduleSession();
   const declineOldSession = useDeclineSession();
@@ -1746,12 +1836,15 @@ function ScheduleSessionModal({
     onClose();
   }, [resetForm, onClose]);
 
-  // Propose New Time: seed the form from the request's member + scheduled
-  // time whenever the modal opens in reschedule mode. The modal stays
-  // mounted between opens (visible toggles), so this can't just be an
-  // initializer — it must re-run each time `visible` flips true.
+  // Seed the form from prefill props whenever the modal opens in a seeded
+  // mode — "Propose New Time" (`replaceSessionId`, member locked) OR an
+  // empty-cell slot tap (`slotPrefill`, member left unlocked for the CHW to
+  // choose). Skipped for the plain "Schedule Session" button open so its
+  // reset defaults stand. The modal stays mounted between opens (visible
+  // toggles), so this can't just be an initializer — it must re-run each time
+  // `visible` flips true.
   useEffect(() => {
-    if (!visible || !replaceSessionId) return;
+    if (!visible || (!replaceSessionId && !slotPrefill)) return;
     setSelectedMemberId(prefillMemberId ?? '');
     setSelectedMemberName(prefillMemberName ?? '');
     setMemberSearch('');
@@ -1760,12 +1853,14 @@ function ScheduleSessionModal({
     if (prefillEndTime) setEndTimeInput(prefillEndTime);
     // QA2 A2 #15 — seed from the ORIGINAL session's resourceNeeds instead of
     // resetting to empty, so counter-offering a new time doesn't silently
-    // drop needs the member already has on record.
+    // drop needs the member already has on record. A slot-tap open carries no
+    // original session, so this resets to empty there.
     setResourceNeeds(new Set(prefillResourceNeeds ?? []));
     setFieldError(null);
   }, [
     visible,
     replaceSessionId,
+    slotPrefill,
     prefillMemberId,
     prefillMemberName,
     prefillDate,
@@ -2513,13 +2608,36 @@ export function CHWCalendarScreen(): React.JSX.Element {
   // reschedule/prefill mode (see replaceSessionId prop).
   const [proposeRequest, setProposeRequest] = useState<SessionData | null>(null);
 
+  // Empty-cell slot tap — the date/start/end seeded into ScheduleSessionModal
+  // (member left unlocked). Distinct from proposeRequest: this is a fresh
+  // booking, not a reschedule of an existing session.
+  const [slotPrefill, setSlotPrefill] = useState<{
+    date: string;
+    start: string;
+    end: string;
+  } | null>(null);
+
   const handleProposeNewTime = useCallback((request: SessionData) => {
     setProposeRequest(request);
+  }, []);
+
+  // Tapping an empty 30-min grid cell opens the Schedule modal with that exact
+  // date + time seeded (start = tapped slot, end = +30 min).
+  const handleSlotPress = useCallback((date: Date, hour: number, minute: 0 | 30) => {
+    const start = new Date(date);
+    start.setHours(hour, minute, 0, 0);
+    const end = new Date(start.getTime() + 30 * 60 * 1000);
+    setSlotPrefill({
+      date: formatDateInputValue(start.toISOString()),
+      start: formatTimeAMPM(start.toISOString()),
+      end: formatTimeAMPM(end.toISOString()),
+    });
   }, []);
 
   const handleScheduleModalClose = useCallback(() => {
     setIsScheduleModalOpen(false);
     setProposeRequest(null);
+    setSlotPrefill(null);
   }, []);
 
   const allSessions = rawSessions ?? [];
@@ -2710,6 +2828,7 @@ export function CHWCalendarScreen(): React.JSX.Element {
           today={{ year: TODAY_YEAR, month: TODAY_MONTH, day: TODAY_DAY }}
           now={nowRef}
           onSessionPress={handleSessionPress}
+          onSlotPress={handleSlotPress}
         />
       ) : viewMode === 'day' ? (
         <DayViewGrid
@@ -2717,6 +2836,7 @@ export function CHWCalendarScreen(): React.JSX.Element {
           sessions={todaySessions}
           now={nowRef}
           onSessionPress={handleSessionPress}
+          onSlotPress={handleSlotPress}
         />
       ) : (
         <>
@@ -2812,19 +2932,28 @@ export function CHWCalendarScreen(): React.JSX.Element {
         {/* Schedule Session modal — also powers "Propose New Time" (see
             proposeRequest) when opened from a pending request row below. */}
         <ScheduleSessionModal
-          visible={isScheduleModalOpen || proposeRequest !== null}
+          visible={isScheduleModalOpen || proposeRequest !== null || slotPrefill !== null}
           onClose={handleScheduleModalClose}
           members={allMembers}
           isLoadingMembers={isLoadingMembers}
           prefillMemberId={proposeRequest?.memberId}
           prefillMemberName={proposeRequest?.memberName}
-          prefillDate={proposeRequest ? formatDateInputValue(proposeRequest.scheduledAt) : undefined}
-          prefillStartTime={proposeRequest ? formatTimeAMPM(proposeRequest.scheduledAt) : undefined}
+          prefillDate={
+            proposeRequest ? formatDateInputValue(proposeRequest.scheduledAt) : slotPrefill?.date
+          }
+          prefillStartTime={
+            proposeRequest ? formatTimeAMPM(proposeRequest.scheduledAt) : slotPrefill?.start
+          }
           prefillEndTime={
-            proposeRequest?.scheduledEndAt ? formatTimeAMPM(proposeRequest.scheduledEndAt) : undefined
+            proposeRequest
+              ? proposeRequest.scheduledEndAt
+                ? formatTimeAMPM(proposeRequest.scheduledEndAt)
+                : undefined
+              : slotPrefill?.end
           }
           prefillResourceNeeds={proposeRequest?.resourceNeeds as Vertical[] | undefined}
           replaceSessionId={proposeRequest?.id}
+          slotPrefill={slotPrefill !== null && proposeRequest === null}
         />
       </AppShell>
     );

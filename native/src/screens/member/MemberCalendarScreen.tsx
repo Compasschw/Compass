@@ -30,6 +30,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Platform,
+  Pressable,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -508,6 +509,52 @@ const sessionCardStyles = StyleSheet.create({
   },
 });
 
+// ─── Empty-slot tap zone ──────────────────────────────────────────────────────
+
+/** Callback fired when an empty 30-minute grid cell is tapped. */
+export type OnSlotPress = (date: Date, hour: number, minute: 0 | 30) => void;
+
+interface SlotTapZoneProps {
+  /** The calendar day this cell belongs to (the grid column's date). */
+  date: Date;
+  /** Hour (24h) of the parent hour cell. */
+  hour: number;
+  /** Which half of the hour this zone covers — 0 = :00, 30 = :30. */
+  minute: 0 | 30;
+  onSlotPress: OnSlotPress;
+}
+
+/**
+ * A single half-hour tap target laid over one half of an hour cell. Two of
+ * these stack to split each 1-hour grid cell into the :00 and :30 slots the
+ * 30-minute grid already draws, so tapping empty space opens the schedule
+ * modal pre-filled with that exact date + time. Session blocks sit above this
+ * layer (see `cardsLayer` + its `box-none` pointer events) and win any tap
+ * that overlaps a booked block.
+ */
+function SlotTapZone({ date, hour, minute, onSlotPress }: SlotTapZoneProps): React.JSX.Element {
+  const display = hour % 12 === 0 ? 12 : hour % 12;
+  const suffix = hour < 12 ? 'AM' : 'PM';
+  const timeLabel = `${display}:${minute === 0 ? '00' : '30'} ${suffix}`;
+  const dateLabel = date.toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+  return (
+    <Pressable
+      style={({ pressed, hovered }: { pressed: boolean; hovered?: boolean }) => [
+        weekStyles.slotZone,
+        (pressed || hovered) && weekStyles.slotZoneActive,
+      ]}
+      onPress={() => onSlotPress(date, hour, minute)}
+      accessibilityRole="button"
+      accessibilityLabel={`Schedule a session on ${dateLabel} at ${timeLabel}`}
+    />
+  );
+}
+
 // ─── WeekViewGrid (ported) ────────────────────────────────────────────────────
 
 interface WeekViewGridProps {
@@ -516,6 +563,8 @@ interface WeekViewGridProps {
   today: { year: number; month: number; day: number };
   now: Date;
   onSessionPress: (session: SessionData) => void;
+  /** Tapping an empty 30-min cell reports its date/hour/minute for scheduling. */
+  onSlotPress?: OnSlotPress;
   /** CHW availability windows — cells outside these hours/days are greyed. */
   availabilityWindows?: AvailabilityWindows;
 }
@@ -531,6 +580,7 @@ function WeekViewGrid({
   today,
   now,
   onSessionPress,
+  onSlotPress,
   availabilityWindows,
 }: WeekViewGridProps): React.JSX.Element {
   const totalGridHeight = WEEK_VIEW_HOURS.length * SLOT_HEIGHT;
@@ -583,7 +633,8 @@ function WeekViewGrid({
           return (
             <View key={key} style={[weekStyles.dayColumn, isToday && weekStyles.dayColumnToday]}>
               {/* Hour grid lines with a lighter :30 half-hour divider —
-                  greyed when outside the CHW's working hours. */}
+                  greyed when outside the CHW's working hours. Each hour cell
+                  splits into two half-hour tap zones for scheduling. */}
               {WEEK_VIEW_HOURS.map((hour) => {
                 const unavailable =
                   availabilityWindows !== undefined &&
@@ -593,12 +644,22 @@ function WeekViewGrid({
                     key={hour}
                     style={[weekStyles.hourLine, unavailable && weekStyles.hourUnavailable]}
                   >
+                    {onSlotPress ? (
+                      <>
+                        <SlotTapZone date={date} hour={hour} minute={0} onSlotPress={onSlotPress} />
+                        <SlotTapZone date={date} hour={hour} minute={30} onSlotPress={onSlotPress} />
+                      </>
+                    ) : null}
                     <View style={weekStyles.halfHourLine} />
                   </View>
                 );
               })}
-              {/* Absolute-position session blocks */}
-              <View style={[weekStyles.cardsLayer, { height: totalGridHeight }]}>
+              {/* Absolute-position session blocks — box-none lets empty-cell
+                  taps fall through to the SlotTapZones below while each block
+                  still captures its own tap (session block wins any overlap). */}
+              <View
+                style={[weekStyles.cardsLayer, { height: totalGridHeight, pointerEvents: 'box-none' }]}
+              >
                 {daySessions.map((session) => (
                   <SessionBlock
                     key={session.id}
@@ -679,6 +740,15 @@ const weekStyles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#F3F4F6',
   },
+  // Each half of an hour cell is a tap target for scheduling a 30-min slot.
+  slotZone: {
+    flex: 1,
+    cursor: 'pointer',
+  },
+  // Subtle web hover/press affordance over an empty schedulable half-hour.
+  slotZoneActive: {
+    backgroundColor: tokens.primary + '0F',
+  },
   // Lighter divider at the :30 half-hour mark inside each hour cell.
   halfHourLine: {
     position: 'absolute',
@@ -687,6 +757,7 @@ const weekStyles = StyleSheet.create({
     right: 0,
     height: 1,
     backgroundColor: '#F9FAFB',
+    pointerEvents: 'none',
   },
   // Outside the CHW's working hours — visually blocked for booking.
   hourUnavailable: {
@@ -713,6 +784,8 @@ interface DayViewGridProps {
   sessions: SessionData[];
   now: Date;
   onSessionPress: (session: SessionData) => void;
+  /** Tapping an empty 30-min cell reports its date/hour/minute for scheduling. */
+  onSlotPress?: OnSlotPress;
   /** CHW availability windows — cells outside these hours are greyed. */
   availabilityWindows?: AvailabilityWindows;
 }
@@ -722,6 +795,7 @@ function DayViewGrid({
   sessions,
   now,
   onSessionPress,
+  onSlotPress,
   availabilityWindows,
 }: DayViewGridProps): React.JSX.Element {
   const totalGridHeight = WEEK_VIEW_HOURS.length * SLOT_HEIGHT;
@@ -751,11 +825,19 @@ function DayViewGrid({
                 key={hour}
                 style={[weekStyles.hourLine, unavailable && weekStyles.hourUnavailable]}
               >
+                {onSlotPress ? (
+                  <>
+                    <SlotTapZone date={date} hour={hour} minute={0} onSlotPress={onSlotPress} />
+                    <SlotTapZone date={date} hour={hour} minute={30} onSlotPress={onSlotPress} />
+                  </>
+                ) : null}
                 <View style={weekStyles.halfHourLine} />
               </View>
             );
           })}
-          <View style={[weekStyles.cardsLayer, { height: totalGridHeight }]}>
+          <View
+            style={[weekStyles.cardsLayer, { height: totalGridHeight, pointerEvents: 'box-none' }]}
+          >
             {sessions.map((session) => (
               <SessionBlock
                 key={session.id}
@@ -1549,15 +1631,34 @@ export function MemberCalendarScreen(): React.JSX.Element {
   // Session being rescheduled via "Edit". On a successful re-book the old slot
   // is cancelled. null = a fresh booking.
   const [rescheduleSession, setRescheduleSession] = useState<SessionData | null>(null);
+  // Empty-cell slot tap — the date (MM/DD/YYYY) + tapped ISO seeded into
+  // MemberScheduleModal so it opens with the date filled and the matching
+  // 30-min slot auto-selected (when the CHW has it open). Fresh booking, not
+  // a reschedule — mutually exclusive with rescheduleSession in practice.
+  const [slotPrefill, setSlotPrefill] = useState<{ date: string; iso: string } | null>(null);
 
   const handleEditSession = useCallback((s: SessionData) => {
     setRescheduleSession(s);
     setIsScheduleOpen(true);
   }, []);
 
+  // Tapping an empty 30-min grid cell opens the schedule modal pre-filled with
+  // that date + time. The tapped slot must equal one of the CHW's returned
+  // open slots to auto-select; otherwise the date is filled with no slot.
+  const handleSlotPress = useCallback((date: Date, hour: number, minute: 0 | 30) => {
+    const start = new Date(date);
+    start.setHours(hour, minute, 0, 0);
+    const dateInputValue = `${String(start.getMonth() + 1).padStart(2, '0')}/${String(
+      start.getDate(),
+    ).padStart(2, '0')}/${start.getFullYear()}`;
+    setSlotPrefill({ date: dateInputValue, iso: start.toISOString() });
+    setIsScheduleOpen(true);
+  }, []);
+
   const handleScheduleClose = useCallback(() => {
     setIsScheduleOpen(false);
     setRescheduleSession(null);
+    setSlotPrefill(null);
   }, []);
 
   // Assigned CHW's working hours → grey out off-days/off-hours on the grid.
@@ -1780,7 +1881,8 @@ export function MemberCalendarScreen(): React.JSX.Element {
         </View>
       )}
 
-      {/* Grid */}
+      {/* Grid — empty cells are only tappable when the member has an assigned
+          CHW to schedule with (the modal renders only then). */}
       {viewMode === 'week' ? (
         <WeekViewGrid
           weekDays={weekDays}
@@ -1788,6 +1890,7 @@ export function MemberCalendarScreen(): React.JSX.Element {
           today={{ year: TODAY_YEAR, month: TODAY_MONTH, day: TODAY_DAY }}
           now={nowRef}
           onSessionPress={handleSessionPress}
+          onSlotPress={assignedChw ? handleSlotPress : undefined}
           availabilityWindows={chwWindows}
         />
       ) : viewMode === 'day' ? (
@@ -1796,6 +1899,7 @@ export function MemberCalendarScreen(): React.JSX.Element {
           sessions={todaySessions}
           now={nowRef}
           onSessionPress={handleSessionPress}
+          onSlotPress={assignedChw ? handleSlotPress : undefined}
           availabilityWindows={chwWindows}
         />
       ) : (
@@ -1895,6 +1999,8 @@ export function MemberCalendarScreen(): React.JSX.Element {
             chwId={assignedChw.id}
             chwName={assignedChw.name}
             replaceSessionId={rescheduleSession?.id}
+            prefillDate={slotPrefill?.date}
+            prefillSlotIso={slotPrefill?.iso}
           />
         )}
       </AppShell>
@@ -1988,6 +2094,8 @@ export function MemberCalendarScreen(): React.JSX.Element {
           chwId={assignedChw.id}
           chwName={assignedChw.name}
           replaceSessionId={rescheduleSession?.id}
+          prefillDate={slotPrefill?.date}
+          prefillSlotIso={slotPrefill?.iso}
         />
       )}
     </AppShell>
@@ -2003,6 +2111,18 @@ interface MemberScheduleModalProps {
   chwName: string;
   /** When set (Edit flow), the old session is cancelled after the re-book. */
   replaceSessionId?: string;
+  /**
+   * "MM/DD/YYYY" — seeds the Date field when the modal is opened by tapping an
+   * empty grid cell. Matches the Date TextInput's own format.
+   */
+  prefillDate?: string;
+  /**
+   * ISO datetime of the tapped 30-min slot. Once the CHW's available slots for
+   * `prefillDate` resolve, the slot whose instant equals this is auto-selected.
+   * If the tapped slot isn't in the available list, the modal still opens with
+   * the date filled and no slot selected.
+   */
+  prefillSlotIso?: string;
 }
 
 /**
@@ -2018,6 +2138,8 @@ function MemberScheduleModal({
   chwId,
   chwName,
   replaceSessionId,
+  prefillDate,
+  prefillSlotIso,
 }: MemberScheduleModalProps): React.JSX.Element {
   const { mutateAsync, isPending } = useScheduleSession();
   const cancelOldSession = useCancelSession();
@@ -2034,6 +2156,10 @@ function MemberScheduleModal({
   });
   const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The tapped-slot ISO awaiting auto-selection once the CHW's open slots for
+  // the prefilled date resolve. Consumed (cleared) after the first settled
+  // slots response so it never re-applies to a later, unrelated date.
+  const [pendingSlotIso, setPendingSlotIso] = useState<string | null>(null);
 
   // MM/DD/YYYY → YYYY-MM-DD for the slots API. null when the date is malformed.
   const isoDate = useMemo(() => {
@@ -2050,6 +2176,31 @@ function MemberScheduleModal({
   useEffect(() => {
     setSelectedSlot(null);
   }, [isoDate]);
+
+  // Slot-tap open: seed the Date field and arm the tapped slot for
+  // auto-selection whenever the modal opens with prefill props. Runs on the
+  // `visible` transition (the modal stays mounted between opens), and never
+  // clobbers the default date on a plain header-button open (prefillDate
+  // undefined). Re-arms pendingSlotIso fresh each open so a stale unmatched
+  // ISO from a previous open can't linger.
+  useEffect(() => {
+    if (!visible) return;
+    if (prefillDate) setDateInput(prefillDate);
+    setPendingSlotIso(prefillSlotIso ?? null);
+  }, [visible, prefillDate, prefillSlotIso]);
+
+  // Once the open slots for the prefilled date have settled, auto-select the
+  // slot whose instant equals the tapped one (compared by getTime so ISO
+  // formatting differences don't matter), then consume the pending ISO. If the
+  // tapped slot isn't among the CHW's open slots, nothing is selected — the
+  // modal simply stays on the filled date with no slot chosen.
+  useEffect(() => {
+    if (!pendingSlotIso || slotsQuery.isLoading) return;
+    const target = new Date(pendingSlotIso).getTime();
+    const match = slots.find((iso) => new Date(iso).getTime() === target);
+    if (match) setSelectedSlot(match);
+    setPendingSlotIso(null);
+  }, [pendingSlotIso, slots, slotsQuery.isLoading]);
 
   const handleSubmit = useCallback(async () => {
     setError(null);

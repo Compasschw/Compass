@@ -668,3 +668,142 @@ describe('MemberCalendarScreen — Schedule Session dialog: Type picker (Part 23
     });
   });
 });
+
+// ─── Tap an empty 30-min grid cell → Schedule modal pre-filled ──────────────
+//
+// A member can tap any empty half-hour cell in the Week/Day grid to open the
+// "Schedule a session" modal with that date filled and — when the CHW has that
+// exact 30-min slot open — the matching slot auto-selected. If the tapped slot
+// isn't among the CHW's open slots, the modal still opens with the date filled
+// and no slot selected. Tapping a booked session card opens Session Details.
+
+/** The accessible label a SlotTapZone renders for a given cell. Mirrors the
+ *  component's own label construction so the test taps the exact empty cell. */
+function slotCellLabel(date: Date, hour: number, minute: 0 | 30): string {
+  const display = hour % 12 === 0 ? 12 : hour % 12;
+  const suffix = hour < 12 ? 'AM' : 'PM';
+  const timeLabel = `${display}:${minute === 0 ? '00' : '30'} ${suffix}`;
+  const dateLabel = date.toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+  return `Schedule a session on ${dateLabel} at ${timeLabel}`;
+}
+
+/** Local midnight Monday of the week the Week view anchors to (this week). */
+function mondayOfThisWeek(): Date {
+  const anchor = new Date();
+  anchor.setHours(0, 0, 0, 0);
+  const day = anchor.getDay();
+  const monday = new Date(anchor);
+  monday.setDate(anchor.getDate() - day + (day === 0 ? -6 : 1));
+  return monday;
+}
+
+/** Local midnight today — the day the Day view is pinned to. */
+function todayMidnight(): Date {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+/** A Date at a specific hour/minute on the given local calendar day. */
+function atTime(day: Date, hour: number, minute: 0 | 30): Date {
+  const d = new Date(day);
+  d.setHours(hour, minute, 0, 0);
+  return d;
+}
+
+/** The slot-pill label the modal renders for an ISO slot — derived the same
+ *  way the component does so the assertion is locale-agnostic in CI. */
+function pillLabel(date: Date): string {
+  return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+describe('MemberCalendarScreen — tap an empty slot to schedule (Week + Day)', () => {
+  it('opens the Schedule modal with the date filled from a Week-view empty cell', async () => {
+    renderScreen();
+    // Wait for the assigned-CHW-dependent grid to mount (its Schedule button
+    // proves the CHW is known, so the tap zones and modal are wired).
+    await screen.findByLabelText(`Schedule a session with ${CHW_NAME}`);
+
+    const monday = mondayOfThisWeek();
+    const slot = atTime(monday, 11, 0);
+    availableSlotFixtures = [slot.toISOString()];
+
+    fireEvent.click(await screen.findByLabelText(slotCellLabel(monday, 11, 0)));
+
+    await screen.findByText('Schedule a session'); // modal title
+    expect(screen.getByDisplayValue(mmddyyyy(monday))).toBeTruthy();
+    // The CHW has this exact slot open → it auto-selects once slots resolve.
+    expect(await screen.findByLabelText(`${pillLabel(slot)}, selected`)).toBeTruthy();
+  });
+
+  it('auto-selects the matching 30-min slot from a Day-view empty cell', async () => {
+    const today = todayMidnight();
+    const slot = atTime(today, 9, 0);
+    availableSlotFixtures = [slot.toISOString()];
+
+    renderScreen();
+    await screen.findByLabelText(`Schedule a session with ${CHW_NAME}`);
+    fireEvent.click(await screen.findByLabelText('day view'));
+
+    fireEvent.click(await screen.findByLabelText(slotCellLabel(today, 9, 0)));
+
+    await screen.findByText('Schedule a session');
+    expect(screen.getByDisplayValue(mmddyyyy(today))).toBeTruthy();
+    expect(await screen.findByLabelText(`${pillLabel(slot)}, selected`)).toBeTruthy();
+  });
+
+  it('opens with the date filled and NO slot selected when the tapped slot is not available', async () => {
+    const today = todayMidnight();
+    // The CHW is open at 10:00, but the member taps the 9:00 cell — no match.
+    const openSlot = atTime(today, 10, 0);
+    availableSlotFixtures = [openSlot.toISOString()];
+
+    renderScreen();
+    await screen.findByLabelText(`Schedule a session with ${CHW_NAME}`);
+    fireEvent.click(await screen.findByLabelText('day view'));
+
+    fireEvent.click(await screen.findByLabelText(slotCellLabel(today, 9, 0)));
+
+    await screen.findByText('Schedule a session');
+    expect(screen.getByDisplayValue(mmddyyyy(today))).toBeTruthy();
+    // The 10:00 pill is offered but nothing is auto-selected (no 9:00 match).
+    await screen.findByLabelText(pillLabel(openSlot));
+    expect(screen.queryByLabelText(`${pillLabel(openSlot)}, selected`)).toBeNull();
+    expect(screen.queryByLabelText(`${pillLabel(atTime(today, 9, 0))}, selected`)).toBeNull();
+  });
+
+  it('honors the :30 half-hour cell (auto-selects the :30 slot)', async () => {
+    const today = todayMidnight();
+    const slot = atTime(today, 13, 30);
+    availableSlotFixtures = [slot.toISOString()];
+
+    renderScreen();
+    await screen.findByLabelText(`Schedule a session with ${CHW_NAME}`);
+    fireEvent.click(await screen.findByLabelText('day view'));
+
+    fireEvent.click(await screen.findByLabelText(slotCellLabel(today, 13, 30)));
+
+    await screen.findByText('Schedule a session');
+    expect(await screen.findByLabelText(`${pillLabel(slot)}, selected`)).toBeTruthy();
+  });
+
+  it('opens Session Details (NOT the scheduler) when an existing session card is tapped', async () => {
+    additionalSessionFixtures = [confirmedTodayFixture];
+    renderScreen();
+    await screen.findByLabelText(`Schedule a session with ${CHW_NAME}`);
+    fireEvent.click(await screen.findByLabelText('day view'));
+
+    const card = await screen.findByLabelText(new RegExp(`^Session with ${CHW_NAME_CONTROL} at`));
+    fireEvent.click(card);
+
+    // The session block wins the tap: Session Details opens; the Schedule modal
+    // title is never rendered by this tap.
+    await screen.findByText('Session Details');
+    expect(screen.queryByText('Schedule a session')).toBeNull();
+  });
+});
