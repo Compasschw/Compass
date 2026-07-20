@@ -1188,6 +1188,13 @@ export function useTestimonialPrompt() {
       return transformKeys<TestimonialPrompt>(raw);
     },
     staleTime: 30_000,
+    // A CHW completes the session while the member is passive — there's no
+    // push/websocket, so surface a newly completed+unrated session by polling
+    // (and on refocus). Mirrors useSessions so the post-session rating prompt
+    // (PostSessionRatingGate, mounted member-wide) appears within ~30s / on
+    // focus regardless of which tab the member is on.
+    refetchInterval: 30_000,
+    refetchOnWindowFocus: true,
   });
 }
 

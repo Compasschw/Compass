@@ -38,6 +38,7 @@ import { LegalScreen, type LegalPage } from '../screens/LegalScreen';
 import { AdminHomeScreen } from '../screens/admin/AdminHomeScreen';
 import { CHWTabNavigator } from './CHWTabNavigator';
 import { MemberTabNavigator } from './MemberTabNavigator';
+import { PostSessionRatingGate } from '../components/member/PostSessionRatingGate';
 
 // ─── Web-only preview hatch (for team demos) ─────────────────────────────────
 //
@@ -164,7 +165,16 @@ function CHWNavigator(): React.JSX.Element {
 // ─── Member root ──────────────────────────────────────────────────────────────
 
 function MemberNavigator(): React.JSX.Element {
-  return <MemberTabNavigator />;
+  return (
+    <>
+      <MemberTabNavigator />
+      {/* Post-session rating prompt — mounted ONCE above the member tabs so the
+       *  "How was your session?" modal can overlay on ANY tab the moment a CHW
+       *  completes the session (detected via React Query refetch/focus), not
+       *  just when the member returns to Home. See PostSessionRatingGate. */}
+      <PostSessionRatingGate />
+    </>
+  );
 }
 
 // ─── Admin root ───────────────────────────────────────────────────────────────

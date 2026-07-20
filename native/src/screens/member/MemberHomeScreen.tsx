@@ -76,8 +76,6 @@ import {
   useRequests,
   useAssignedCHW,
   useChangePassword,
-  useTestimonialPrompt,
-  useSubmitTestimonial,
   type MemberJourneyResponse,
   type SessionData,
 } from '../../hooks/useApiQueries';
@@ -338,20 +336,6 @@ function UpcomingSessionRow({ session }: UpcomingSessionRowProps): React.JSX.Ele
   );
 }
 
-// ─── Epic B2: post-session rating prompt — session-scoped "Maybe later" ──────
-//
-// Module-level (not component state, not persisted storage): "Maybe later"
-// dismisses the CURRENT app session's copy of the prompt only. This is a
-// deliberate product choice (see prompt task spec) — a rating nudge that's
-// permanently suppressed after one dismissal would mean a member who taps
-// "Maybe later" in a rush never gets asked again, even for a LATER session.
-// Re-opening the app (fresh JS module load / cold start) clears this set, so
-// the prompt can resurface next visit. This mirrors no other gate in this
-// screen (G2's password gate is mandatory/non-dismissable; Epic M's pending-
-// requests widget has no dismiss action) — it is intentionally the ONLY
-// "soft dismiss" pattern here, scoped narrowly to this one feature.
-const dismissedTestimonialPromptSessionIds = new Set<string>();
-
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.JSX.Element {
@@ -488,92 +472,12 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
     [passwordFieldErrors],
   );
 
-  // ── Post-session star-rating prompt (Epic B2) ────────────────────────────
-  // GET /testimonials/prompts surfaces the member's single most-recent
-  // completed-but-unrated session (backend caps staleness at 14 days and
-  // returns at most one). This prompt is a DISMISSABLE overlay (onCancel is
-  // supplied to PromptDialog below) — unlike G2's mandatory password gate,
-  // "Maybe later" always lets the member continue. It is shown ONLY when
-  // the G2 gate is not showing (see the `showTestimonialPrompt` derivation
-  // near the render below) — the two modals must never stack.
-  const testimonialPromptQuery = useTestimonialPrompt();
-  const submitTestimonialMutation = useSubmitTestimonial();
-  const [ratingFields, setRatingFields] = useState({ rating: '', text: '' });
-  const [ratingFormError, setRatingFormError] = useState<string | null>(null);
-  // Locally track the id of the session most recently dismissed via "Maybe
-  // later", so the dialog closes immediately without waiting on a refetch.
-  // Keyed by session id (not a plain boolean) so if the prompts query later
-  // resolves to a DIFFERENT session (e.g. after this one's testimonial is
-  // submitted through another path), the new session is still offered —
-  // the source of truth for "don't show THIS session again this app
-  // session" remains the module-level Set above.
-  const [lastDismissedSessionId, setLastDismissedSessionId] = useState<string | null>(null);
-
-  const handleRatingFieldChange = useCallback((key: string, value: string) => {
-    setRatingFields((prev) => ({ ...prev, [key]: value }));
-    setRatingFormError(null);
-  }, []);
-
-  const activePromptSessionId = testimonialPromptQuery.data?.sessionId ?? null;
-
-  const handleSubmitRating = useCallback(() => {
-    if (!activePromptSessionId) return;
-    const ratingValue = Number(ratingFields.rating);
-    if (!ratingValue || ratingValue < 1 || ratingValue > 5) {
-      setRatingFormError('Please select a star rating.');
-      return;
-    }
-    setRatingFormError(null);
-
-    submitTestimonialMutation.mutate(
-      {
-        sessionId: activePromptSessionId,
-        payload: {
-          rating: ratingValue,
-          text: ratingFields.text.trim().length > 0 ? ratingFields.text.trim() : null,
-        },
-      },
-      {
-        onSuccess: () => {
-          setRatingFields({ rating: '', text: '' });
-          setRatingFormError(null);
-        },
-        onError: (err: unknown) => {
-          // Non-blocking inline error — the member can retry or dismiss via
-          // "Maybe later"; a transient failure here must never crash the
-          // screen or block the rest of the dashboard.
-          setRatingFormError(
-            err instanceof ApiError && err.message
-              ? err.message
-              : 'Could not submit your rating. Please try again.',
-          );
-        },
-      },
-    );
-  }, [activePromptSessionId, ratingFields, submitTestimonialMutation]);
-
-  const handleDismissRatingPrompt = useCallback(() => {
-    if (activePromptSessionId) {
-      dismissedTestimonialPromptSessionIds.add(activePromptSessionId);
-      setLastDismissedSessionId(activePromptSessionId);
-    }
-    setRatingFields({ rating: '', text: '' });
-    setRatingFormError(null);
-  }, [activePromptSessionId]);
-
-  const ratingPromptFields: PromptDialogField[] = useMemo(
-    () => [
-      { key: 'rating', label: 'Your rating', type: 'star' as const },
-      {
-        key: 'text',
-        label: 'Tell us more (optional)',
-        placeholder: 'What went well? Anything we could improve?',
-        multiline: true,
-        maxLength: 120,
-      },
-    ],
-    [],
-  );
+  // NOTE: the post-session star-rating prompt (Epic B2) is no longer rendered
+  // here. It now lives in a member-wide host — PostSessionRatingGate, mounted
+  // once above the member tab navigator (see navigation/AppNavigator.tsx) — so
+  // the "How was your session?" modal can overlay on ANY tab the moment a CHW
+  // completes the session, not only when the member is on Home. This screen
+  // keeps only the mandatory first-login password gate (Epic G2) below.
 
   const allSessions  = sessionsQuery.data ?? [];
   const profile      = profileQuery.data;
@@ -771,20 +675,6 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
     userBlock: { initials: memberInitials, name: userName ?? 'Member', role: 'Member' },
     badges: { wellnessPoints: rewardsBalance },
   };
-
-  // ── Prompt-stacking rule (Epic B2) ───────────────────────────────────────
-  // The G2 password gate ALWAYS wins — a CHW-created member must set their
-  // password before anything else, so the rating prompt is only offered
-  // once that gate is clear. Also gated on: a prompt session actually being
-  // returned by the backend, and that session id not having been dismissed
-  // via "Maybe later" earlier in THIS app session (module-level Set, cleared
-  // on reload — see its docstring above). These two modals must never
-  // render at the same time.
-  const showTestimonialPrompt =
-    !mustChangePassword &&
-    activePromptSessionId !== null &&
-    activePromptSessionId !== lastDismissedSessionId &&
-    !dismissedTestimonialPromptSessionIds.has(activePromptSessionId);
 
   // ─── Loading state ─────────────────────────────────────────────────────────
 
@@ -1193,32 +1083,10 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
       testID="first-login-password-prompt"
     />
 
-    {/* ── Post-session star-rating prompt (Epic B2) ────────────────────────
-     *  Dismissable (onCancel supplied) — "Maybe later" always closes this
-     *  without submitting. Only ever rendered when the G2 password gate is
-     *  NOT showing (see `showTestimonialPrompt` above) so the two modals
-     *  never stack. Uses the SAME PromptDialog component + POST
-     *  /sessions/{id}/testimonials endpoint as the pre-existing
-     *  RateChwModal self-serve flow — this is just a second, proactive
-     *  entry point into the identical backend contract (source stays
-     *  'session', rating stays required).
-     */}
-    {testimonialPromptQuery.data ? (
-      <PromptDialog
-        visible={showTestimonialPrompt}
-        title={`How was your session with ${testimonialPromptQuery.data.chwName}?`}
-        fields={ratingPromptFields}
-        values={ratingFields}
-        onChangeValue={handleRatingFieldChange}
-        onConfirm={handleSubmitRating}
-        onCancel={handleDismissRatingPrompt}
-        confirmLabel="Submit"
-        cancelLabel="Maybe later"
-        submitting={submitTestimonialMutation.isPending}
-        errorText={ratingFormError}
-        testID="testimonial-rating-prompt"
-      />
-    ) : null}
+    {/* The post-session star-rating prompt (Epic B2) is no longer rendered on
+     *  this screen — it moved to PostSessionRatingGate, mounted member-wide
+     *  above the tab navigator (see navigation/AppNavigator.tsx) so it can
+     *  overlay on any tab the moment a session completes. */}
     </>
   );
 }
