@@ -54,6 +54,10 @@ export interface JourneyStepSpringProps {
 /** Circle diameter in points. */
 const CIRCLE_SIZE = 32;
 
+/** In-progress step fill — amber (#EAB308), matching the CHW journey track's
+ *  in-progress dot so completed (green) and in-progress (yellow) read distinctly. */
+const IN_PROGRESS_AMBER = '#EAB308';
+
 /** Distance the "+pts" chip travels upward. */
 const CHIP_TRAVEL = -34;
 
@@ -270,7 +274,13 @@ export function JourneyStepSpring({
 
   // ── Derived visual state ────────────────────────────────────────────────────
 
-  const circleBg = completed || current ? colors.primary : colors.gray100;
+  // Completed = green; in-progress (current) = amber (#EAB308, matching the CHW
+  // journey track); upcoming = grey.
+  const circleBg = completed
+    ? colors.primary
+    : current
+      ? IN_PROGRESS_AMBER
+      : colors.gray100;
 
   const circleStyle: ViewStyle[] = [
     styles.circle,
@@ -360,10 +370,10 @@ const styles = StyleSheet.create({
   } as ViewStyle,
 
   circleCurrent: {
-    backgroundColor: colors.primary,
+    backgroundColor: IN_PROGRESS_AMBER,
     ...Platform.select({
       ios: {
-        shadowColor:   colors.primary,
+        shadowColor:   IN_PROGRESS_AMBER,
         shadowOffset:  { width: 0, height: 0 },
         shadowOpacity: 0.4,
         shadowRadius:  6,
@@ -373,7 +383,7 @@ const styles = StyleSheet.create({
       },
       web: {
         // boxShadow cast as any — StyleSheet doesn't type web-only props
-        boxShadow: `0 0 0 4px rgba(22, 163, 74, 0.2)`,
+        boxShadow: `0 0 0 4px rgba(234, 179, 8, 0.2)`,
       } as unknown as ViewStyle,
       default: {},
     }),
@@ -385,7 +395,7 @@ const styles = StyleSheet.create({
     height:          CIRCLE_SIZE,
     borderRadius:    CIRCLE_SIZE / 2,
     borderWidth:     2,
-    borderColor:     colors.primary,
+    borderColor:     IN_PROGRESS_AMBER,
     zIndex:          1,
   } as ViewStyle,
 

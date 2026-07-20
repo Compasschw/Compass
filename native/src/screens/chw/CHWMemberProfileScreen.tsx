@@ -6205,8 +6205,10 @@ const SingleJourneyTrack = React.memo(function SingleJourneyTrack({
             const hasName = step.stepName.trim().length > 0;
             const isPressed = pressedStepId === step.id;
 
-            const dotBg = isCompleted ? '#16A34A' : isInProgress ? '#16A34A' : '#E5E7EB';
-            const dotBorderColor = isInProgress ? '#34D399' : 'transparent';
+            // Completed = green, in-progress = amber (#EAB308, matching the
+            // read-mode StepCircle track), upcoming = grey.
+            const dotBg = isCompleted ? '#16A34A' : isInProgress ? '#EAB308' : '#E5E7EB';
+            const dotBorderColor = isInProgress ? '#CA8A04' : 'transparent';
 
             return (
               <React.Fragment key={step.id}>

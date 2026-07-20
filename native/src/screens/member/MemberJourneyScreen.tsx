@@ -276,10 +276,9 @@ function JourneyStepNode({
 }: JourneyStepNodeProps): React.JSX.Element {
   const isCompleted = step.status === 'completed';
   const isInProgress = step.status === 'in_progress';
-  // Filled green = done or current; everything else (upcoming/missed) is a muted
-  // grey bubble. Mirrors the Active Journey JourneyStepSpring look — a clean
-  // filled bubble, no ring/icon/pill.
-  const isFilled = isCompleted || isInProgress;
+  // Completed = green filled; in-progress = amber filled (matches the CHW
+  // journey track's #EAB308 in-progress dot); everything else (upcoming/missed)
+  // is a muted grey bubble.
 
   return (
     <Pressable
@@ -296,7 +295,11 @@ function JourneyStepNode({
       <View
         style={[
           stepNodeStyles.circle,
-          isFilled ? stepNodeStyles.circleFilled : stepNodeStyles.circleUpcoming,
+          isCompleted
+            ? stepNodeStyles.circleFilled
+            : isInProgress
+              ? stepNodeStyles.circleInProgress
+              : stepNodeStyles.circleUpcoming,
           isInProgress && stepNodeStyles.circleCurrent,
         ]}
       >
@@ -338,13 +341,18 @@ const stepNodeStyles = StyleSheet.create({
   circleFilled: {
     backgroundColor: tokens.primary,
   } as ViewStyle,
+  // In-progress step: amber fill (#EAB308, matching the CHW journey track's
+  // in-progress dot) so completed (green) and in-progress (yellow) read distinctly.
+  circleInProgress: {
+    backgroundColor: '#EAB308',
+  } as ViewStyle,
   circleUpcoming: {
     backgroundColor: tokens.gray100,
   } as ViewStyle,
-  // Soft green glow on the current step (matches JourneyStepSpring).
+  // Soft amber glow on the current (in-progress) step.
   circleCurrent: {
     ...Platform.select({
-      web: { boxShadow: '0 0 0 4px rgba(22, 163, 74, 0.2)' } as unknown as ViewStyle,
+      web: { boxShadow: '0 0 0 4px rgba(234, 179, 8, 0.2)' } as unknown as ViewStyle,
       default: {},
     }),
   } as ViewStyle,
