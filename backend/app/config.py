@@ -304,6 +304,42 @@ class Settings(BaseSettings):
         """True when Apple OAuth Service ID is configured."""
         return bool(self.apple_oauth_client_id and self.apple_oauth_client_id.strip())
 
+    # ── Google Calendar sync (server-side push) — feature-inert when empty ────
+    # One-way Compass → Google Calendar push of session events via a stored,
+    # encrypted per-user refresh token (see app.services.google_calendar).
+    #
+    # Requires BOTH the existing GOOGLE_OAUTH_CLIENT_ID (identity) AND the Web
+    # OAuth client SECRET below (needed for the authorization-code exchange and
+    # for minting access tokens from the stored refresh token). Kept separate
+    # from Apple's private key; obtain from console.cloud.google.com → APIs &
+    # Services → Credentials → the Web application OAuth 2.0 Client → client
+    # secret.
+    google_oauth_client_secret: str = ""
+
+    # Master kill-switch for the calendar-sync fan-out. Flag OFF (default) means
+    # every push/delete hook is a silent no-op and the Google client is never
+    # built — safe to ship before the Google Cloud consent screen is configured.
+    # Flip to True only AFTER the calendar.events scope is added + the consent
+    # screen is PUBLISHED and GOOGLE_OAUTH_CLIENT_SECRET is set (see
+    # docs/specs/2026-07-21-google-calendar-sync-design.md).
+    google_calendar_sync_enabled: bool = False
+
+    @property
+    def is_google_calendar_configured(self) -> bool:
+        """True only when BOTH the Google OAuth client id AND secret are set.
+
+        Gate for every Google Calendar API interaction: the authorization-code
+        exchange and the refresh-token → access-token mint both require the
+        client secret, so an id-only configuration (today's identity-only Google
+        sign-in) must NOT attempt any calendar call.
+        """
+        return bool(
+            self.google_oauth_client_id
+            and self.google_oauth_client_id.strip()
+            and self.google_oauth_client_secret
+            and self.google_oauth_client_secret.strip()
+        )
+
     class Config:
         env_file = ".env"
 

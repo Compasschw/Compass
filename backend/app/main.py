@@ -137,6 +137,7 @@ from app.routers.conversations import router as conversations_router
 from app.routers.credentials import router as credentials_router
 from app.routers.devices import router as devices_router
 from app.routers.health import router as health_router
+from app.routers.integrations import router as integrations_router
 from app.routers.journeys import router as journeys_router
 from app.routers.matching import router as matching_router
 from app.routers.member import members_router as members_flag_note_router
@@ -202,6 +203,7 @@ app.include_router(conversations_router)
 app.include_router(credentials_router)
 app.include_router(upload_router)
 app.include_router(health_router)
+app.include_router(integrations_router)
 app.include_router(waitlist_router)
 app.include_router(admin_router)
 app.include_router(admin_demo_router)

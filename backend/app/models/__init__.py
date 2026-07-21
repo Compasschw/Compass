@@ -13,6 +13,7 @@ from app.models.device import DeviceToken
 from app.models.enums import *
 from app.models.flag_note import FlagNote
 from app.models.followup import SessionFollowup
+from app.models.google_calendar import GoogleCalendarCredential
 from app.models.magic_link import MagicLinkToken
 from app.models.member_document import MemberDocument
 from app.models.password_reset import PasswordResetToken
@@ -35,6 +36,7 @@ __all__ = [
     "Credential", "CHWCredentialValidation", "InstitutionRegistry",
     "Conversation", "Message", "FileAttachment", "CallLog",
     "CalendarEvent",
+    "GoogleCalendarCredential",
     "RewardTransaction", "RedemptionItem",
     "AuditLog",
     "RefreshToken",

@@ -32,6 +32,9 @@ dependencies = [
     # Social OAuth token verification
     "google-auth>=2.28.0",
     "PyJWT>=2.8.0",
+    # Google Calendar sync (server-side push) — build Credentials from a stored
+    # refresh token and create/update/delete events on a user's primary calendar.
+    "google-api-python-client>=2.100.0",
 ]
 
 [project.optional-dependencies]

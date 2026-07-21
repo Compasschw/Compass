@@ -447,6 +447,22 @@ async def accept_request(request_id: UUID, current_user=Depends(require_role("ch
             "Session-confirmed SMS hook failed on accept: %s", e
         )
 
+    # ── Google Calendar push for both participants ───────────────────────────
+    # Best-effort, one-way Compass → Google. No-op unless the feature flag is on,
+    # the integration is configured, and the participant has connected their
+    # calendar. A failure must never fail the accept (mirrors the notify/SMS
+    # hooks above). See app.services.google_calendar.
+    try:
+        from app.services.google_calendar import push_session_event
+
+        for participant_id in (session.chw_id, session.member_id):
+            await push_session_event(db, session=session, user_id=participant_id)
+    except Exception as e:  # noqa: BLE001
+        import logging
+        logging.getLogger("compass").warning(
+            "Google Calendar push hook failed on accept: %s", e
+        )
+
     return {"status": "matched", "request_id": str(req.id), "session_id": str(session.id)}
 
 
