@@ -388,6 +388,65 @@ def test_email_from_id_token_handles_bad_input():
     assert google_calendar.email_from_id_token("a.b.c") is None  # non-base64 payload
 
 
+# ─── exchange_code_for_tokens / revoke unit branches ─────────────────────────
+
+
+async def test_exchange_returns_none_when_not_configured(monkeypatch):
+    monkeypatch.setattr(settings, "google_oauth_client_secret", "")
+    assert await google_calendar.exchange_code_for_tokens(code="c", redirect_uri="postmessage") is None
+
+
+async def test_exchange_returns_none_on_network_error(monkeypatch):
+    _enable_sync(monkeypatch)
+
+    class _Boom:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, *a, **k):
+            raise RuntimeError("connection reset")
+
+    monkeypatch.setattr(google_calendar.httpx, "AsyncClient", _Boom)
+    assert await google_calendar.exchange_code_for_tokens(code="c", redirect_uri="postmessage") is None
+
+
+async def test_exchange_returns_none_on_non_200(monkeypatch):
+    _enable_sync(monkeypatch)
+    _fake_httpx(monkeypatch, token_payload={"error": "invalid_grant"}, status_code=400)
+    assert await google_calendar.exchange_code_for_tokens(code="c", redirect_uri="postmessage") is None
+
+
+async def test_exchange_returns_none_on_non_json_body(monkeypatch):
+    _enable_sync(monkeypatch)
+    _fake_httpx(monkeypatch, token_payload=None, status_code=200)  # json() raises ValueError
+    assert await google_calendar.exchange_code_for_tokens(code="c", redirect_uri="postmessage") is None
+
+
+async def test_revoke_swallows_network_error(monkeypatch):
+    class _Boom:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, *a, **k):
+            raise RuntimeError("revoke failed")
+
+    monkeypatch.setattr(google_calendar.httpx, "AsyncClient", _Boom)
+    # Must not raise.
+    await google_calendar.revoke_refresh_token("some-token")
+
+
 # ─── push_session_event ──────────────────────────────────────────────────────
 
 
@@ -725,4 +784,50 @@ async def test_hook_except_branch_swallows_delete_error(client: AsyncClient, mem
 
     monkeypatch.setattr(google_calendar, "delete_session_event", _raise)
     res = await client.patch(f"/api/v1/sessions/{session_id}/cancel", headers=auth_header(member_tokens))
+    assert res.status_code == 200, res.text
+
+
+async def test_confirm_hook_except_branch_swallows_push_error(client: AsyncClient, member_tokens: dict, chw_tokens: dict, monkeypatch):
+    session_id = await _establish_relationship(client, member_tokens, chw_tokens)
+    _enable_sync(monkeypatch)
+
+    async def _raise(*a, **k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(google_calendar, "push_session_event", _raise)
+    res = await client.patch(f"/api/v1/sessions/{session_id}/confirm", headers=auth_header(chw_tokens))
+    assert res.status_code == 200, res.text
+
+
+async def test_schedule_hook_except_branch_swallows_push_error(client: AsyncClient, member_tokens: dict, chw_tokens: dict, monkeypatch):
+    await _establish_relationship(client, member_tokens, chw_tokens)
+    _enable_sync(monkeypatch)
+
+    async def _raise(*a, **k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(google_calendar, "push_session_event", _raise)
+    res = await client.post(
+        "/api/v1/sessions/schedule",
+        json={
+            "member_id": _sub(member_tokens),
+            "scheduled_at": (datetime.now(UTC) + timedelta(days=3)).isoformat(),
+            "mode": "phone",
+        },
+        headers=auth_header(chw_tokens),
+    )
+    assert res.status_code == 201, res.text
+
+
+async def test_no_show_hook_except_branch_swallows_delete_error(client: AsyncClient, member_tokens: dict, chw_tokens: dict, monkeypatch):
+    from tests.test_sessions import _create_in_progress_session
+
+    session_id = await _create_in_progress_session(client, member_tokens, chw_tokens)
+    _enable_sync(monkeypatch)
+
+    async def _raise(*a, **k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(google_calendar, "delete_session_event", _raise)
+    res = await client.patch(f"/api/v1/sessions/{session_id}/no-show", headers=auth_header(chw_tokens))
     assert res.status_code == 200, res.text
