@@ -88,6 +88,7 @@ import { ApiError } from '../../api/client';
 import { uploadFile, getPresignedUploadUrl } from '../../api/upload';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { AppShell, PageHeader, Card, ProfilePictureEditor } from '../../components/ui';
+import { GoogleCalendarConnect } from '../../components/integrations/GoogleCalendarConnect';
 import { colors as tokens, radius, shadows, spacing } from '../../theme/tokens';
 
 // ─── Types & constants ────────────────────────────────────────────────────────
@@ -1952,6 +1953,10 @@ export function CHWProfileScreen(): React.JSX.Element {
               Settings card and the bottom grid, mirroring the member "Text
               messages" card. */}
           <VerifyPhoneCard profile={profile} />
+
+          {/* Calendar — connect Google Calendar so sessions sync to it.
+              Web-only + hidden when Google OAuth isn't configured. */}
+          <GoogleCalendarConnect />
 
           {/* Bottom: 2-col grid (always visible) */}
           <View style={pageStyles.bottomGrid}>

@@ -65,6 +65,7 @@ import { ApiError } from '../../api/client';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { AppShell, PageHeader, Card, ProfilePictureEditor } from '../../components/ui';
 import { DeleteAccountModal } from '../../components/profile/DeleteAccountModal';
+import { GoogleCalendarConnect } from '../../components/integrations/GoogleCalendarConnect';
 import { colors as tokens } from '../../theme/tokens';
 import { confirmAsync } from '../../utils/confirm';
 import { BP_PHONE } from '../../constants/breakpoints';
@@ -1229,6 +1230,10 @@ export function MemberSettingsScreen(): React.JSX.Element {
               and the Privacy & Security summary. Hidden entirely for
               placeholder-phone members. */}
           <TextMessagesCard profile={profile} />
+
+          {/* Calendar — connect Google Calendar so sessions sync to it.
+              Web-only + hidden when Google OAuth isn't configured. */}
+          <GoogleCalendarConnect />
 
           {/* Bottom: 2-col grid (always visible) */}
           <View style={pageStyles.bottomGrid}>
