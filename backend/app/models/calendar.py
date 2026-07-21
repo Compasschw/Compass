@@ -20,3 +20,13 @@ class CalendarEvent(Base):
     vertical: Mapped[str | None] = mapped_column(String(50))
     event_type: Mapped[str] = mapped_column(String(30), default="session")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # ── Google Calendar sync (one-way Compass → Google push) ─────────────────
+    # Populated by app.services.google_calendar.push_session_event when the
+    # owning user has connected their Google Calendar and the feature flag is
+    # on. ``google_event_id`` is the id of the event on the user's primary
+    # Google calendar (used to PATCH/DELETE it on subsequent changes);
+    # ``google_synced_at`` records the last successful push. Both NULL until a
+    # push succeeds — the vast majority of rows (feature off / user not
+    # connected) keep them NULL forever.
+    google_event_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    google_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

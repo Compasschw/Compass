@@ -470,6 +470,19 @@ async def confirm_session(
                 "Session-confirmed SMS hook failed on confirm: %s", e
             )
 
+    # ── Google Calendar push (updates the event: title flips to confirmed) ───
+    # Best-effort for both participants; no-op unless enabled/configured/connected.
+    try:
+        from app.services.google_calendar import push_session_event
+
+        for participant_id in (session.chw_id, session.member_id):
+            await push_session_event(db, session=session, user_id=participant_id)
+    except Exception as e:  # noqa: BLE001
+        import logging
+        logging.getLogger("compass").warning(
+            "Google Calendar push hook failed on confirm: %s", e
+        )
+
     from app.models.user import User as _User
     chw = await db.get(_User, session.chw_id)
     member = await db.get(_User, session.member_id)
@@ -603,6 +616,20 @@ async def cancel_session(
             logging.getLogger("compass").warning(
                 "Session-cancelled SMS hook failed on cancel: %s", e
             )
+
+    # ── Google Calendar delete for both participants ─────────────────────────
+    # Best-effort; removes the mirrored Google event when a scheduled session is
+    # cancelled. No-op unless enabled/configured/connected with a stored event id.
+    try:
+        from app.services.google_calendar import delete_session_event
+
+        for participant_id in (session.chw_id, session.member_id):
+            await delete_session_event(db, session=session, user_id=participant_id)
+    except Exception as e:  # noqa: BLE001
+        import logging
+        logging.getLogger("compass").warning(
+            "Google Calendar delete hook failed on cancel: %s", e
+        )
 
     from app.models.user import User as _User
     chw = await db.get(_User, session.chw_id)
@@ -902,6 +929,21 @@ async def schedule_session(
             logging.getLogger("compass").warning(
                 "Session-moved SMS hook failed on schedule: %s", e
             )
+
+    # ── Google Calendar push for both participants (create-or-update) ────────
+    # Covers the "Propose New Time" reschedule flow (a new session at the new
+    # time) and any member/CHW booking. Best-effort; no-op unless enabled/
+    # configured/connected.
+    try:
+        from app.services.google_calendar import push_session_event
+
+        for participant_id in (session.chw_id, session.member_id):
+            await push_session_event(db, session=session, user_id=participant_id)
+    except Exception as e:  # noqa: BLE001
+        import logging
+        logging.getLogger("compass").warning(
+            "Google Calendar push hook failed on schedule: %s", e
+        )
 
     return session
 
@@ -1383,6 +1425,19 @@ async def mark_session_no_show(
         "session %s marked no_show by chw %s (was %s)",
         session_id, current_user.id, previous_status,
     )
+
+    # ── Google Calendar delete for both participants ─────────────────────────
+    # A no-show is a terminal state — remove the mirrored Google event.
+    # Best-effort; no-op unless enabled/configured/connected with a stored id.
+    try:
+        from app.services.google_calendar import delete_session_event
+
+        for participant_id in (session.chw_id, session.member_id):
+            await delete_session_event(db, session=session, user_id=participant_id)
+    except Exception as e:  # noqa: BLE001
+        _logging.getLogger("compass").warning(
+            "Google Calendar delete hook failed on no_show: %s", e
+        )
 
     chw = await db.get(User, session.chw_id)
     member = await db.get(User, session.member_id)
