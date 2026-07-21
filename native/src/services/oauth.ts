@@ -98,9 +98,51 @@ interface GoogleCredentialResponse {
   client_id: string;
 }
 
+/**
+ * Result delivered to the `initCodeClient` callback for the Google
+ * authorization-CODE flow (distinct from the id_token / credential flow).
+ * `code` is the one-time authorization code the backend exchanges — with the
+ * client secret and `redirect_uri` — for access + refresh tokens.
+ */
 interface GoogleCodeResponse {
   code?: string;
+  scope?: string;
   error?: string;
+  error_description?: string;
+}
+
+/**
+ * Error object passed to `initCodeClient`'s `error_callback` when the popup
+ * fails to open or the user dismisses it (GIS does not route these through the
+ * success `callback`).
+ */
+interface GoogleOAuth2ErrorResponse {
+  type?: string;
+  message?: string;
+}
+
+/** The client returned by `initCodeClient`; `requestCode()` opens the popup. */
+interface GoogleCodeClient {
+  requestCode: () => void;
+}
+
+/**
+ * The `google.accounts.oauth2` namespace — the authorization-code half of GIS,
+ * previously stubbed as `unknown`. `initCodeClient` builds a client for the
+ * OAuth 2.0 authorization-code flow (offline access → refresh token on the
+ * server), used by "Connect Google Calendar".
+ */
+interface GoogleOAuth2 {
+  initCodeClient: (config: {
+    client_id: string;
+    scope: string;
+    ux_mode?: 'popup' | 'redirect';
+    redirect_uri?: string;
+    access_type?: 'online' | 'offline';
+    prompt?: string;
+    callback: (response: GoogleCodeResponse) => void;
+    error_callback?: (error: GoogleOAuth2ErrorResponse) => void;
+  }) => GoogleCodeClient;
 }
 
 interface GoogleAccounts {
@@ -129,7 +171,7 @@ interface GoogleAccounts {
     ) => void;
     revoke: (hint: string, done: (response: GoogleCodeResponse) => void) => void;
   };
-  oauth2: unknown;
+  oauth2: GoogleOAuth2;
 }
 
 declare global {
@@ -297,4 +339,103 @@ export async function getAppleIdToken(): Promise<string> {
   }
 
   return idToken;
+}
+
+// ─── Google Calendar authorization-code flow ──────────────────────────────────
+
+/**
+ * OAuth scope requested for calendar sync. `calendar.events` grants read/write
+ * on the user's events only (not full calendar management) — the minimum needed
+ * to push Compass sessions onto their Google Calendar.
+ */
+export const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
+
+/**
+ * The redirect URI paired with the authorization code in the GIS `popup`
+ * ux_mode. Google fixes this to the literal string `'postmessage'` for the
+ * popup code flow, and the backend MUST pass the SAME value when exchanging the
+ * code for tokens — otherwise the exchange fails with `redirect_uri_mismatch`.
+ */
+export const GOOGLE_CALENDAR_REDIRECT_URI = 'postmessage';
+
+/**
+ * Run Google's authorization-CODE flow (offline access) and return the one-time
+ * auth `code` plus the `redirectUri` the backend must echo when exchanging it.
+ *
+ * Unlike {@link getGoogleIdToken} (which returns an id_token for sign-in), this
+ * requests the calendar scope with `access_type: 'offline'` + `prompt:
+ * 'consent'` so Google issues a REFRESH token to the backend on exchange —
+ * required to push sessions to the calendar long after the popup closes.
+ *
+ * WEB ONLY. Mirrors {@link getGoogleIdToken}: throws an OAuthError with code
+ * `not_configured` on native or when the client ID is unset.
+ *
+ * @returns `{ code, redirectUri }` on success, or `null` if the user closed the
+ *   popup without granting access (a benign cancellation, not an error).
+ * @throws {OAuthError} on script-load failure or a provider error
+ *   (`script_load_failed` | `provider_error` | `no_credential`).
+ */
+export async function getGoogleCalendarAuthCode(): Promise<{ code: string; redirectUri: string } | null> {
+  if (Platform.OS !== 'web') {
+    throw new OAuthError('not_configured', 'Google Calendar sync is only available on web.');
+  }
+
+  const clientId = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID ?? '';
+  if (!clientId.trim()) {
+    throw new OAuthError('not_configured', 'EXPO_PUBLIC_GOOGLE_CLIENT_ID is not set.');
+  }
+
+  await loadScript(GOOGLE_GSI_URL);
+
+  // Give the library one tick to attach its namespace (see getGoogleIdToken).
+  await new Promise<void>((r) => setTimeout(r, 0));
+
+  const oauth2 = window.google?.accounts?.oauth2;
+  if (!oauth2?.initCodeClient) {
+    throw new OAuthError('script_load_failed', 'Google Identity Services failed to initialise.');
+  }
+
+  return new Promise<{ code: string; redirectUri: string } | null>((resolve, reject) => {
+    const codeClient = oauth2.initCodeClient({
+      client_id: clientId,
+      scope: GOOGLE_CALENDAR_SCOPE,
+      ux_mode: 'popup',
+      access_type: 'offline',
+      prompt: 'consent',
+      callback: (response: GoogleCodeResponse) => {
+        if (response.error) {
+          // `access_denied` fires when the user unticks the calendar scope on
+          // the consent screen — treat as a benign cancellation.
+          if (response.error === 'access_denied') {
+            resolve(null);
+            return;
+          }
+          reject(
+            new OAuthError(
+              'provider_error',
+              `Google returned an error: ${response.error_description ?? response.error}`,
+            ),
+          );
+          return;
+        }
+        if (!response.code) {
+          reject(new OAuthError('no_credential', 'Google did not return an authorization code.'));
+          return;
+        }
+        resolve({ code: response.code, redirectUri: GOOGLE_CALENDAR_REDIRECT_URI });
+      },
+      error_callback: (err: GoogleOAuth2ErrorResponse) => {
+        // The popup was closed or blocked before consent — a benign cancel.
+        if (err?.type === 'popup_closed' || err?.type === 'popup_failed_to_open') {
+          resolve(null);
+          return;
+        }
+        reject(
+          new OAuthError('provider_error', `Google sign-in failed: ${err?.message ?? err?.type ?? 'unknown error'}`),
+        );
+      },
+    });
+
+    codeClient.requestCode();
+  });
 }

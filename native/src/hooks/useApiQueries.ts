@@ -613,6 +613,13 @@ export const queryKeys = {
   /** Case notes for a member, scoped to the authenticated CHW. */
   caseNotes: (memberId: string, limit?: number, offset?: number) =>
     ['case-notes', memberId, limit ?? 50, offset ?? 0] as const,
+  /**
+   * Google Calendar integration connection state for the authenticated user
+   * (member OR CHW) from GET /integrations/google-calendar/status. Not
+   * role-scoped: the endpoint keys off the caller's own identity, so the same
+   * key is correct for both roles.
+   */
+  googleCalendarStatus: ['integrations', 'google-calendar', 'status'] as const,
 };
 
 /** Re-export so callers don't need a second import from api/sessions. */
@@ -5600,5 +5607,78 @@ export function useMessageAttachmentDownloadUrl(
     enabled: (options?.enabled ?? false) && !!messageId,
     staleTime: 0,
     gcTime: 0,
+  });
+}
+
+// ─── Google Calendar integration (members + CHWs) ─────────────────────────────
+
+/**
+ * Connection state for the authenticated user's Google Calendar integration,
+ * from GET /integrations/google-calendar/status.
+ *
+ * `googleEmail` is the Google account the refresh token belongs to (shown in
+ * the connected-state UI); it is `null` whenever `connected` is false.
+ */
+export interface GoogleCalendarStatus {
+  connected: boolean;
+  googleEmail: string | null;
+}
+
+/**
+ * Read the user's Google Calendar connection state.
+ *
+ * Gated by `enabled` so callers can skip the request entirely on native or when
+ * Google OAuth isn't configured (the GoogleCalendarConnect card is web-only and
+ * hidden when unconfigured, so there is nothing to fetch in those cases).
+ */
+export function useGoogleCalendarStatus(options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: queryKeys.googleCalendarStatus,
+    queryFn: async () => {
+      const raw = await api<unknown>('/integrations/google-calendar/status');
+      return transformKeys<GoogleCalendarStatus>(raw);
+    },
+    enabled: options?.enabled ?? true,
+  });
+}
+
+/**
+ * Exchange a Google authorization code (from getGoogleCalendarAuthCode) for a
+ * server-side refresh token via POST /integrations/google-calendar/connect.
+ *
+ * `redirectUri` is the value GIS paired with the code (`'postmessage'` for the
+ * popup flow) and MUST match what the backend passes to Google's token
+ * endpoint. On success we invalidate the status query so the card flips to its
+ * connected state without a manual refetch.
+ */
+export function useConnectGoogleCalendar() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: { code: string; redirectUri: string }) => {
+      await api('/integrations/google-calendar/connect', {
+        method: 'POST',
+        body: JSON.stringify(toSnakeCase(payload)),
+      });
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.googleCalendarStatus });
+    },
+  });
+}
+
+/**
+ * Revoke the stored Google refresh token via POST
+ * /integrations/google-calendar/disconnect and flip the card back to its
+ * not-connected state (status query invalidated on success).
+ */
+export function useDisconnectGoogleCalendar() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      await api('/integrations/google-calendar/disconnect', { method: 'POST' });
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.googleCalendarStatus });
+    },
   });
 }
