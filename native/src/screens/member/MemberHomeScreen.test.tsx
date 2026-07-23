@@ -12,8 +12,8 @@
  * only a defensive fallback.
  *
  * Only the network boundary (`../../api/client`) and auth context are
- * mocked — useSessions, useMemberProfile, useMemberRoadmap, useRequests,
- * useMemberJourneys, and useAssignedCHW all run for real against a routed
+ * mocked — useSessions, useMemberProfile, useRequests, useMemberJourneys,
+ * and useAssignedCHW all run for real against a routed
  * `api()` mock (Tier 2 — jsdom + react-native-web, see native/TESTING.md).
  */
 import React from 'react';
@@ -98,7 +98,7 @@ const chwProposedSessionFixture = {
 
 let assignedChwResponse: unknown = null;
 let sessionsResponse: unknown[] = [];
-let roadmapFixture: unknown[] = [];
+let journeysFixture: unknown[] = [];
 let memberProfileFixture: Record<string, unknown> = buildMemberProfileFixture();
 /** Controls what POST /auth/change-password does for the next call. */
 let changePasswordBehavior: 'success' | 'wrong-current' | 'weak' | null = 'success';
@@ -115,9 +115,6 @@ function routeApi(path: string, options?: { method?: string; body?: string }): u
   if (path.startsWith('/sessions/') && method === 'GET') {
     return sessionsResponse;
   }
-  if (path === '/member/roadmap' && method === 'GET') {
-    return roadmapFixture;
-  }
   if (path === '/requests/' && method === 'GET') {
     return [];
   }
@@ -125,7 +122,7 @@ function routeApi(path: string, options?: { method?: string; body?: string }): u
     return assignedChwResponse;
   }
   if (path === `/members/${MEMBER_USER_ID}/journeys` && method === 'GET') {
-    return [];
+    return journeysFixture;
   }
   if (path === '/auth/change-password' && method === 'POST') {
     const body = JSON.parse(options?.body ?? '{}') as {
@@ -201,7 +198,7 @@ function renderScreen() {
 beforeEach(() => {
   assignedChwResponse = null;
   sessionsResponse = [];
-  roadmapFixture = [];
+  journeysFixture = [];
   memberProfileFixture = buildMemberProfileFixture();
   changePasswordBehavior = 'success';
   changePasswordRequestBodies = [];
@@ -552,44 +549,97 @@ describe('MemberHomeScreen — QA2 #10: password complexity at the first-login g
   });
 });
 
-describe('MemberHomeScreen — "To do list" tile (QA batch 2026-07-14, Part 26)', () => {
-  function buildRoadmapFixture(id: string, status: string) {
+describe('MemberHomeScreen — "To do list" tile counts in-progress journey steps', () => {
+  type StepStatus = 'upcoming' | 'in_progress' | 'completed' | 'missed';
+
+  // Raw (snake_case) member-journey the API returns; useMemberJourneys runs it
+  // through transformKeys → camelCase. Only `status` + each step's `status`
+  // drive the tile count; the rest keeps the Your Journeys cards rendering.
+  function buildJourneyFixture(
+    id: string,
+    stepStatuses: StepStatus[],
+    journeyStatus: 'active' | 'paused' | 'completed' | 'abandoned' = 'active',
+  ) {
+    const steps = stepStatuses.map((status, i) => ({
+      id: `${id}-step-${i + 1}`,
+      member_journey_id: id,
+      template_step_id: `tmpl-step-${i + 1}`,
+      step_order: i + 1,
+      step_name: `Step ${i + 1}`,
+      step_description: '',
+      points_on_completion: 10,
+      required_documents: [],
+      status,
+      started_at: null,
+      completed_at: null,
+      due_date: null,
+      points_awarded: 0,
+      created_at: '2026-07-01T00:00:00.000Z',
+    }));
+    const completed = steps.filter((s) => s.status === 'completed').length;
     return {
       id,
-      kind: 'action_item',
-      description: `Task ${id}`,
-      owner: 'member',
-      vertical: 'housing',
-      priority: 'medium',
-      due_date: null,
-      status,
-      auto_created: false,
-      show_on_roadmap: true,
-      confirmed_by_user_id: null,
-      confirmed_at: null,
+      member_id: MEMBER_USER_ID,
+      chw_id: CHW_ID,
+      template: { name: `Journey ${id}`, slug: 'food_security' },
+      steps,
+      status: journeyStatus,
+      progress_percent: steps.length
+        ? Math.round((completed / steps.length) * 100)
+        : 0,
+      current_step: steps.find((s) => s.status === 'in_progress') ?? steps[0] ?? null,
+      wellness_points_earned: 0,
+      started_at: '2026-07-01T00:00:00.000Z',
+      completed_at: null,
       created_at: '2026-07-01T00:00:00.000Z',
-      session_date: null,
-      chw_name: CHW_NAME,
-      session_id: 'sess-1',
     };
   }
 
-  it('counts only open items — 3 open mixed with a completed and a dismissed one → tile shows 3', async () => {
-    roadmapFixture = [
-      buildRoadmapFixture('1', 'pending'),
-      buildRoadmapFixture('2', 'confirmed'),
-      buildRoadmapFixture('3', 'pending'),
-      buildRoadmapFixture('4', 'completed'),
-      buildRoadmapFixture('5', 'dismissed'),
+  it('sums in-progress steps across all active journeys', async () => {
+    // Two journeys, each with one step underway → tile shows 2.
+    journeysFixture = [
+      buildJourneyFixture('j1', ['completed', 'in_progress', 'upcoming']),
+      buildJourneyFixture('j2', ['completed', 'in_progress', 'upcoming']),
+    ];
+    renderScreen();
+
+    // Journeys load async (not part of the page loading gate), so wait on the
+    // count label itself rather than the tile's static "To do list" text.
+    expect(await screen.findByLabelText('To do list: 2')).toBeTruthy();
+  });
+
+  it('counts multiple in-progress steps within a single journey', async () => {
+    journeysFixture = [
+      buildJourneyFixture('j1', ['in_progress', 'in_progress', 'completed']),
+    ];
+    renderScreen();
+
+    expect(await screen.findByLabelText('To do list: 2')).toBeTruthy();
+  });
+
+  it('shows 0 when no steps are in progress', async () => {
+    journeysFixture = [
+      buildJourneyFixture('j1', ['completed', 'completed', 'upcoming']),
+      buildJourneyFixture('j2', ['upcoming', 'upcoming']),
     ];
     renderScreen();
 
     await screen.findByText('To do list');
-    expect(screen.getByLabelText('To do list: 3')).toBeTruthy();
+    expect(screen.getByLabelText('To do list: 0')).toBeTruthy();
   });
 
-  it('renders the "Journeys" pill (was "On your roadmap")', async () => {
-    roadmapFixture = [buildRoadmapFixture('1', 'pending')];
+  it('ignores in-progress steps in non-active (paused) journeys', async () => {
+    journeysFixture = [
+      buildJourneyFixture('j1', ['in_progress'], 'active'),
+      buildJourneyFixture('j2', ['in_progress', 'in_progress'], 'paused'),
+    ];
+    renderScreen();
+
+    expect(await screen.findByLabelText('To do list: 1')).toBeTruthy();
+  });
+
+  it('renders the "Journeys" pill', async () => {
+    journeysFixture = [buildJourneyFixture('j1', ['in_progress'])];
     renderScreen();
 
     await screen.findByText('To do list');
@@ -598,39 +648,12 @@ describe('MemberHomeScreen — "To do list" tile (QA batch 2026-07-14, Part 26)'
     expect(screen.queryByText('Active Goals')).toBeNull();
   });
 
-  it('shows 2 when there are 2 open items', async () => {
-    roadmapFixture = [
-      buildRoadmapFixture('1', 'pending'),
-      buildRoadmapFixture('2', 'pending'),
-    ];
-    renderScreen();
-
-    await screen.findByText('To do list');
-    expect(screen.getByLabelText('To do list: 2')).toBeTruthy();
-  });
-
-  // Regression companion to the "shows 2" case above: the ONLY difference
-  // between these two fixtures is item "2" flipping from pending → completed
-  // (same shape the real app sees after a mark-complete + refetch). Both
-  // read through the identical selectOpenTodoItems() selector the visible
-  // to-do list uses, so the tile can never drift out of sync with it.
-  it('drops to 1 when a previously-open item is completed (list/tile share one selector)', async () => {
-    roadmapFixture = [
-      buildRoadmapFixture('1', 'pending'),
-      buildRoadmapFixture('2', 'completed'),
-    ];
-    renderScreen();
-
-    await screen.findByText('To do list');
-    expect(screen.getByLabelText('To do list: 1')).toBeTruthy();
-  });
-
   it('tapping the tile navigates to MemberJourney (unchanged tap-through)', async () => {
-    roadmapFixture = [buildRoadmapFixture('1', 'pending')];
+    journeysFixture = [buildJourneyFixture('j1', ['in_progress'])];
     renderScreen();
 
-    await screen.findByText('To do list');
-    fireEvent.click(screen.getByLabelText('To do list: 1'));
+    const tile = await screen.findByLabelText('To do list: 1');
+    fireEvent.click(tile);
 
     expect(mockNavigation.navigate).toHaveBeenCalledWith('MemberJourney');
   });
