@@ -745,9 +745,11 @@ const weekStyles = StyleSheet.create({
     flex: 1,
     cursor: 'pointer',
   },
-  // Subtle web hover/press affordance over an empty schedulable half-hour.
+  // Clearly-visible light-green web hover/press affordance over an empty
+  // schedulable half-hour — the slot under the cursor shades emerald-100 so the
+  // 30-min click-to-schedule target is discoverable as you glide across the grid.
   slotZoneActive: {
-    backgroundColor: tokens.primary + '0F',
+    backgroundColor: tokens.emerald100,
   },
   // Lighter divider at the :30 half-hour mark inside each hour cell.
   halfHourLine: {

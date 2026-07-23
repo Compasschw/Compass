@@ -20,7 +20,7 @@
  * Data sources (all real APIs — unchanged):
  *   - useMemberProfile  → rewards balance, profile name fallback
  *   - useSessions       → upcoming + completed session counts
- *   - useMemberRoadmap  → active goals count + preview rows
+ *   - useMemberJourneys → Your Journeys cards + "To do list" in-progress step count
  *   - useRequests       → open (unmatched) request count
  *
  * Token rules (T18):
@@ -92,7 +92,6 @@ import {
   StaggerList,
 } from '../../components/ui';
 import type { PillVariant } from '../../components/ui/Pill';
-import { selectOpenTodoItems, useMemberRoadmap } from '../../hooks/useFollowupQueries';
 import { useRefreshControl } from '../../hooks/useRefreshControl';
 import { countAwaitingChw } from './memberDashboard';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
@@ -343,7 +342,6 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
 
   const sessionsQuery     = useSessions();
   const profileQuery      = useMemberProfile();
-  const roadmapQuery      = useMemberRoadmap();
   const requestsQuery     = useRequests();
   const assignedCHWQuery  = useAssignedCHW();
 
@@ -356,7 +354,6 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
   const refresh = useRefreshControl([
     sessionsQuery.refetch,
     profileQuery.refetch,
-    roadmapQuery.refetch,
     requestsQuery.refetch,
     journeysQuery.refetch,
     assignedCHWQuery.refetch,
@@ -481,7 +478,6 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
 
   const allSessions  = sessionsQuery.data ?? [];
   const profile      = profileQuery.data;
-  const roadmap      = roadmapQuery.data ?? [];
   const allRequests  = requestsQuery.data ?? [];
 
   // CHW-proposed sessions awaiting this member's approval → dashboard widget.
@@ -529,12 +525,6 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
   );
   const completedSessionsCount = allSessions.filter((s) => s.status === 'completed').length;
 
-  // QA batch (2026-07-14) Part 26 — "To do list" tile count. Uses the same
-  // selectOpenTodoItems() selector MemberJourneyScreen's visible "From Your
-  // Sessions" action-items list filters through, so the tile can never
-  // disagree with what the member actually sees when they tap through.
-  const activeRoadmapItems = selectOpenTodoItems(roadmap);
-
   // "Awaiting CHW" — pending-approval sessions + open service requests. See
   // countAwaitingChw for why (keeps this tile in sync with the Appointments page).
   const openRequestsCount = countAwaitingChw(allSessions, allRequests);
@@ -542,6 +532,16 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
   // Active journeys for the Your Journeys section.
   const allJourneys   = journeysQuery.data ?? [];
   const activeJourneys = allJourneys.filter((j) => j.status === 'active');
+
+  // "To do list" tile — total steps currently in progress across ALL of the
+  // member's active journeys, so they see how many tasks are underway at a
+  // glance. Mirrors the amber "in progress" nodes on the Journey screen; tapping
+  // the tile deep-links there.
+  const inProgressStepCount = activeJourneys.reduce(
+    (sum, journey) =>
+      sum + journey.steps.filter((step) => step.status === 'in_progress').length,
+    0,
+  );
 
   // Recent Activity — derived from data already loaded (sessions + requests),
   // newest first, capped at 4. The section hides entirely when empty so a
@@ -642,14 +642,13 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
   const isLoading =
     sessionsQuery.isLoading ||
     profileQuery.isLoading ||
-    roadmapQuery.isLoading ||
     requestsQuery.isLoading;
 
   // journeysQuery loading is tracked separately so the journey section can
   // render its own skeleton without blocking the full page.
   const journeysLoading = journeysQuery.isLoading;
 
-  // Only hard-error on sessions or profile. Roadmap and requests degrade
+  // Only hard-error on sessions or profile. Requests and journeys degrade
   // gracefully to empty arrays so partial-load never tombstones the screen.
   const hasError =
     !isLoading && (sessionsQuery.error !== null || profileQuery.error !== null);
@@ -657,9 +656,8 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
   const handleRetry = useCallback(() => {
     void sessionsQuery.refetch();
     void profileQuery.refetch();
-    void roadmapQuery.refetch();
     void requestsQuery.refetch();
-  }, [sessionsQuery, profileQuery, roadmapQuery, requestsQuery]);
+  }, [sessionsQuery, profileQuery, requestsQuery]);
 
   // Sidebar avatar initials
   const memberInitials = (userName ?? profile?.name ?? 'M')
@@ -867,12 +865,12 @@ export function MemberHomeScreen({ navigation }: MemberHomeScreenProps): React.J
                 icon={<Target color={tokens.amber700} size={18} />}
                 iconBg={tokens.amber100}
                 label="To do list"
-                value={activeRoadmapItems.length}
+                value={inProgressStepCount}
                 delta="Journeys"
                 deltaColor={tokens.amber700}
                 style={styles.statGridTile}
                 onPress={handleOpenRoadmap}
-                accessibilityLabel={`To do list: ${activeRoadmapItems.length}`}
+                accessibilityLabel={`To do list: ${inProgressStepCount}`}
               />
               <StatTile
                 icon={<ClipboardList color={tokens.purple700} size={18} />}

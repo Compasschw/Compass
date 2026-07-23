@@ -37,10 +37,7 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
   CheckCircle,
-  ChevronDown,
-  ChevronUp,
   Filter,
-  Map as MapIcon,
   Search,
   User,
   X,
@@ -78,67 +75,18 @@ import {
 } from '../../hooks/useApiQueries';
 import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
-import { ChwMapWebView } from '../../components/find/ChwMapWebView';
-import { zipToLatLng } from '../../utils/geocoding';
 import { BP_PHONE } from '../../constants/breakpoints';
-
-// ─── Platform-gated expo-maps module references ───────────────────────────────
-// expo-maps is a native-only module — it has no web build. The previous
-// version of this file used a top-level `require('expo-maps')` guarded by
-// `Platform.OS === 'ios'`, but Metro statically resolves all `require()`
-// strings into the dependency graph regardless of conditional code paths.
-// On web that meant Metro tried to resolve `expo-maps` at bundle time and
-// either crashed silently or shipped a bundle that threw on load — leaving
-// /member/find blank.
-//
-// Fix: wrap the require in try/catch and explicitly never invoke it on web.
-// Metro still sees the literal `require('expo-maps')` string but the
-// runtime expression is now defensive — a missing module returns null
-// instead of throwing. The map fallback (ChwMapWebView) takes over on web.
-// Type imports are erased by TypeScript so they don't reach the bundle.
-//
-// The proper fix would be a `.web.tsx` shim file, but that's a larger
-// refactor; this defensive guard unblocks the screen for v1.
-
-// Loose typing because we never directly construct these on web; the actual
-// JSX consumers cast at the call site. Avoiding the type-only import from
-// expo-maps as well, since TS-erased imports can still trip platform-
-// specific bundler analyses on Metro for Web.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type MapsViewComponent = React.ComponentType<any>;
-
-const AppleMapsView: MapsViewComponent | null = (() => {
-  if (Platform.OS !== 'ios') return null;
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-member-access
-    return require('expo-maps').AppleMaps.View as MapsViewComponent;
-  } catch {
-    return null;
-  }
-})();
-
-const GoogleMapsView: MapsViewComponent | null = (() => {
-  if (Platform.OS !== 'android') return null;
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-member-access
-    return require('expo-maps').GoogleMaps.View as MapsViewComponent;
-  } catch {
-    return null;
-  }
-})();
 
 // ─── Layout constants ─────────────────────────────────────────────────────────
 
 /**
- * Minimum viewport width at which the three-column layout activates.
- * Below this threshold the screen collapses to single-column with a
- * collapsible map toggle, matching native mobile behaviour.
+ * Minimum viewport width at which the two-column (filter rail + list) layout
+ * activates. Below this threshold the screen collapses to a single column.
  */
 const THREE_COL_BREAKPOINT = 768;
 
-/** Fixed widths for the left-filter and right-map rails in three-col mode. */
+/** Fixed width for the left-filter rail in two-col mode. */
 const FILTER_RAIL_WIDTH = 240;
-const MAP_RAIL_WIDTH    = 280;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -179,12 +127,6 @@ const TIME_SLOTS = [
   '13:00', '14:00', '15:00',
   '16:00', '17:00', '18:00',
 ];
-
-/** The LA County geographic center, used as the default camera target. */
-const LA_CENTER = { latitude: 34.0522, longitude: -118.2437 } as const;
-
-/** Zoom level that comfortably frames all of LA County (~county-wide view). */
-const LA_COUNTY_ZOOM = 9;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1213,202 +1155,6 @@ const chwCardStyles = StyleSheet.create({
   },
 });
 
-// ─── CHW Map Rail (native only) ───────────────────────────────────────────────
-
-interface ChwMapViewProps {
-  chws: ChwBrowseItem[];
-  onMarkerPress: (chw: ChwBrowseItem) => void;
-}
-
-/**
- * Renders a native map centered on LA County with one pin per CHW whose ZIP
- * resolves to a coordinate. CHWs with unknown ZIPs are silently skipped.
- *
- * Uses AppleMaps on iOS, GoogleMaps on Android. Not rendered on web.
- */
-function ChwMapView({ chws, onMarkerPress }: ChwMapViewProps): React.JSX.Element | null {
-  const chwById = useMemo(() => {
-    const lookup = new Map<string, ChwBrowseItem>();
-    for (const chw of chws) lookup.set(chw.id, chw);
-    return lookup;
-  }, [chws]);
-
-  const markers = useMemo(() => {
-    return chws.flatMap((chw) => {
-      const coords = zipToLatLng(chw.zipCode);
-      if (!coords) return [];
-      return [
-        {
-          id:          chw.id,
-          coordinates: { latitude: coords.lat, longitude: coords.lng },
-          title:       chw.name,
-        },
-      ];
-    });
-  }, [chws]);
-
-  if (Platform.OS === 'ios' && AppleMapsView) {
-    return (
-      <AppleMapsView
-        style={mapViewStyles.map}
-        cameraPosition={{ coordinates: LA_CENTER, zoom: LA_COUNTY_ZOOM }}
-        markers={markers}
-        onMarkerClick={(marker: { id?: string }) => {
-          if (!marker.id) return;
-          const chw = chwById.get(marker.id);
-          if (chw) onMarkerPress(chw);
-        }}
-      />
-    );
-  }
-
-  if (Platform.OS === 'android' && GoogleMapsView) {
-    return (
-      <GoogleMapsView
-        style={mapViewStyles.map}
-        cameraPosition={{ coordinates: LA_CENTER, zoom: LA_COUNTY_ZOOM }}
-        markers={markers}
-        onMarkerClick={(marker: { id?: string }) => {
-          if (!marker.id) return;
-          const chw = chwById.get(marker.id);
-          if (chw) onMarkerPress(chw);
-        }}
-      />
-    );
-  }
-
-  return null;
-}
-
-const mapViewStyles = StyleSheet.create({
-  map: {
-    flex:         1,
-    borderRadius: radius.xl,
-    overflow:     'hidden',
-  } as ViewStyle,
-});
-
-// ─── Map Rail (right column — web 3-col) ─────────────────────────────────────
-
-interface MapRailProps {
-  chws: ChwBrowseItem[];
-  onMarkerPress: (chw: ChwBrowseItem) => void;
-}
-
-/**
- * Sticky right-rail card containing the CHW map.
- * On web this renders the Mapbox WebView; on native it renders the expo-maps view.
- */
-function MapRail({ chws, onMarkerPress }: MapRailProps): React.JSX.Element {
-  return (
-    <Card style={mapRailStyles.railCard}>
-      <SectionHeader
-        title="CHW Locations"
-        subtitle="LA County"
-        marginBottom={spacing.md}
-      />
-      <View style={mapRailStyles.mapWrap}>
-        {Platform.OS === 'web' ? (
-          <ChwMapWebView chws={chws} onMarkerPress={onMarkerPress} />
-        ) : (
-          <ChwMapView chws={chws} onMarkerPress={onMarkerPress} />
-        )}
-      </View>
-    </Card>
-  );
-}
-
-const mapRailStyles = StyleSheet.create({
-  railCard: {
-    width:      MAP_RAIL_WIDTH,
-    flexShrink: 0,
-    padding:    spacing.xl,
-    alignSelf:  'flex-start',
-  } as ViewStyle,
-  mapWrap: {
-    height:       320,
-    borderRadius: radius.lg,
-    overflow:     'hidden',
-    borderWidth:  1,
-    borderColor:  tokens.cardBorder,
-  } as ViewStyle,
-});
-
-// ─── Collapsible Map (single-col / narrow) ────────────────────────────────────
-
-interface CollapsibleMapProps {
-  chws: ChwBrowseItem[];
-  onMarkerPress: (chw: ChwBrowseItem) => void;
-  expanded: boolean;
-  onToggle: () => void;
-}
-
-function CollapsibleMap({
-  chws,
-  onMarkerPress,
-  expanded,
-  onToggle,
-}: CollapsibleMapProps): React.JSX.Element {
-  return (
-    <View style={collapseMapStyles.wrapper}>
-      <TouchableOpacity
-        style={collapseMapStyles.toggleRow}
-        onPress={onToggle}
-        accessibilityRole="button"
-        accessibilityLabel={expanded ? 'Collapse map view' : 'Expand map view'}
-      >
-        <MapIcon color={tokens.primary} size={14} />
-        <Text style={collapseMapStyles.toggleLabel}>Map view</Text>
-        {expanded
-          ? <ChevronUp color={tokens.textMuted} size={14} />
-          : <ChevronDown color={tokens.textMuted} size={14} />
-        }
-      </TouchableOpacity>
-
-      {expanded && (
-        <View style={collapseMapStyles.mapWrap}>
-          {Platform.OS === 'web' ? (
-            <ChwMapWebView chws={chws} onMarkerPress={onMarkerPress} />
-          ) : (
-            <ChwMapView chws={chws} onMarkerPress={onMarkerPress} />
-          )}
-        </View>
-      )}
-    </View>
-  );
-}
-
-const collapseMapStyles = StyleSheet.create({
-  wrapper: {
-    marginBottom: spacing.lg,
-  } as ViewStyle,
-  toggleRow: {
-    flexDirection:   'row',
-    alignItems:      'center',
-    gap:             spacing.sm,
-    backgroundColor: tokens.cardBg,
-    borderWidth:     1,
-    borderColor:     tokens.cardBorder,
-    borderRadius:    radius.lg,
-    paddingHorizontal: spacing.lg,
-    paddingVertical:   spacing.sm + 2,
-    marginBottom:    spacing.sm,
-  } as ViewStyle,
-  toggleLabel: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize:   13,
-    color:      tokens.textPrimary,
-    flex:       1,
-  },
-  mapWrap: {
-    height:       220,
-    borderRadius: radius.xl,
-    overflow:     'hidden',
-    borderWidth:  1,
-    borderColor:  tokens.cardBorder,
-  } as ViewStyle,
-});
-
 // ─── Empty State ──────────────────────────────────────────────────────────────
 
 function EmptyState(): React.JSX.Element {
@@ -1483,7 +1229,6 @@ export function MemberFindScreen(): React.JSX.Element {
   const [selectedVerticals, setSelectedVerticals] = useState<Set<Vertical>>(new Set());
   const [schedulingChw, setSchedulingChw]     = useState<ChwBrowseItem | null>(null);
   const [toastMessage, setToastMessage]       = useState<string | null>(null);
-  const [mapExpanded, setMapExpanded]         = useState(true);
 
   const chwQuery       = useChwBrowse(undefined);
   const sessionsQuery  = useSessions();
@@ -1569,14 +1314,6 @@ export function MemberFindScreen(): React.JSX.Element {
 
   const handleModalClose = useCallback(() => {
     setSchedulingChw(null);
-  }, []);
-
-  /**
-   * Tapping a map pin opens the schedule modal for that CHW — same pattern
-   * as tapping the Schedule button on a card.
-   */
-  const handleMapMarkerPress = useCallback((chw: ChwBrowseItem) => {
-    setSchedulingChw(chw);
   }, []);
 
   const handleModalSubmit = useCallback(
@@ -1690,7 +1427,7 @@ export function MemberFindScreen(): React.JSX.Element {
             />
 
             {isThreeCol ? (
-              // ── Three-column layout ────────────────────────────────────────
+              // ── Two-column layout (filter rail + CHW list) ─────────────────
               <View style={screenStyles.threeColRow}>
                 {/* Left: filter rail */}
                 <FilterRail
@@ -1703,16 +1440,10 @@ export function MemberFindScreen(): React.JSX.Element {
                   isRail
                 />
 
-                {/* Centre: CHW cards */}
+                {/* Right: CHW cards */}
                 <View style={screenStyles.centerCol}>
                   {renderChwList()}
                 </View>
-
-                {/* Right: map rail */}
-                <MapRail
-                  chws={filteredChws}
-                  onMarkerPress={handleMapMarkerPress}
-                />
               </View>
             ) : (
               // ── Single-column layout ───────────────────────────────────────
@@ -1725,13 +1456,6 @@ export function MemberFindScreen(): React.JSX.Element {
                   onClearFilters={clearFilters}
                   verticalCount={verticalCount}
                   isRail={false}
-                />
-
-                <CollapsibleMap
-                  chws={filteredChws}
-                  onMarkerPress={handleMapMarkerPress}
-                  expanded={mapExpanded}
-                  onToggle={() => setMapExpanded((prev) => !prev)}
                 />
 
                 {renderChwList()}
